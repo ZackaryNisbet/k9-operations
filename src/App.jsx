@@ -534,34 +534,104 @@ function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime
   // Add-ons per dog
   if (dogs && dogs.length > 0) {
     const stayDays = type === "boarding" ? Math.max(1, countNights(checkIn, checkOut)) : 1;
+    // Build day-by-day date range for feeding/med charge calculations
+    const dayDates = [];
+    if (checkIn && checkOut && type === "boarding") {
+      let cur = checkIn;
+      while (cur <= checkOut) { dayDates.push(cur); cur = addDays(cur, 1); }
+    } else if (checkIn) {
+      dayDates.push(checkIn);
+    }
+    const ciHour = checkInTime ? parseInt(checkInTime.split(":")[0]) : 9;
+    const coHour = checkOutTime ? parseInt(checkOutTime.split(":")[0]) : 11;
+    const ftp = p.foodTypePricing || {};
+    const mp = p.medPricing || {};
+
     dogs.forEach(dog => {
       const profile = dogProfiles ? dogProfiles.find(d => d.id === dog.id) : null;
       const fields = profile ? profile.fields : (dog.fields || {});
+      const dogName = fields.name || "Dog";
       // Bath
       if (fields.bath_type && fields.bath_type !== "None") {
         const bathRate = (p.bathPrices || {})[fields.bath_type] || 0;
         if (bathRate > 0) {
-          lines.push({ label: `${fields.bath_type} Bath — ${fields.name || "Dog"}`, rate: bathRate, qty: 1, total: bathRate, isAddon: true });
+          lines.push({ label: `${fields.bath_type} Bath — ${dogName}`, rate: bathRate, qty: 1, total: bathRate, isAddon: true });
           subtotal += bathRate;
         }
       }
-      // Medication admin
-      const meds = fields.medicationSchedules || [];
-      if (meds.length > 0) {
-        const medFee = (p.medicationAdminFee || 0) * meds.length * stayDays;
-        if (medFee > 0) {
-          lines.push({ label: `Med admin (${meds.length} med${meds.length > 1 ? "s" : ""} × ${stayDays}d) — ${fields.name || "Dog"}`, rate: p.medicationAdminFee, qty: meds.length * stayDays, total: medFee, isAddon: true });
-          subtotal += medFee;
+      // Feeding pricing — per serving with AM/PM skip logic
+      const feeds = fields.feedingSchedules || [];
+      if (feeds.length > 0 && dayDates.length > 0) {
+        const feedDetail = []; // {date, am, noon, pm} for breakdown
+        let totalServings = 0;
+        let totalFeedCost = 0;
+        const feedsByTime = { am: [], noon: [], pm: [] };
+        feeds.forEach(f => {
+          (f.times || []).forEach(t => {
+            const tl = t.toLowerCase();
+            if (tl.includes("am")) feedsByTime.am.push(f);
+            else if (tl.includes("noon") || tl.includes("12")) feedsByTime.noon.push(f);
+            else if (tl.includes("pm")) feedsByTime.pm.push(f);
+          });
+        });
+        dayDates.forEach((d, di) => {
+          const isFirst = di === 0;
+          const isLast = di === dayDates.length - 1;
+          const row = { date: d, am: true, noon: true, pm: true };
+          // Skip AM on first day if check-in after 6 AM
+          if (isFirst && ciHour > 6) row.am = false;
+          // Skip PM on last day if check-out before 17 (5 PM)
+          if (isLast && coHour < 17) row.pm = false;
+          // If no noon feeds exist, mark as N/A
+          if (feedsByTime.noon.length === 0) row.noon = false;
+          // Calculate cost for this day
+          const dayCost = (row.am ? feedsByTime.am.reduce((s, f) => s + (ftp[f.foodType] || 0), 0) : 0)
+            + (row.noon ? feedsByTime.noon.reduce((s, f) => s + (ftp[f.foodType] || 0), 0) : 0)
+            + (row.pm ? feedsByTime.pm.reduce((s, f) => s + (ftp[f.foodType] || 0), 0) : 0);
+          const dayServings = (row.am ? feedsByTime.am.length : 0) + (row.noon ? feedsByTime.noon.length : 0) + (row.pm ? feedsByTime.pm.length : 0);
+          totalServings += dayServings;
+          totalFeedCost += dayCost;
+          feedDetail.push(row);
+        });
+        if (totalFeedCost > 0) {
+          const foodTypeLabel = feeds.length === 1 && feeds[0].foodType ? feeds[0].foodType : "Food";
+          lines.push({ label: `${foodTypeLabel} (${totalServings} servings) — ${dogName}`, total: totalFeedCost, isAddon: true, feedDetail, feedsByTime, dogName });
+          subtotal += totalFeedCost;
         }
       }
-      // Special feeding (resort-provided food)
-      const feeds = fields.feedingSchedules || [];
-      const resortFood = feeds.some(f => f.foodSource === "Resort Provided");
-      if (resortFood) {
-        const feedFee = (p.specialFeedingFee || 0) * stayDays;
-        if (feedFee > 0) {
-          lines.push({ label: `Resort food (${stayDays}d) — ${fields.name || "Dog"}`, rate: p.specialFeedingFee, qty: stayDays, total: feedFee, isAddon: true });
-          subtotal += feedFee;
+      // Medication pricing — per serving with same AM/PM logic
+      const meds = fields.medicationSchedules || [];
+      if (meds.length > 0 && dayDates.length > 0) {
+        let totalMedCost = 0;
+        let totalMedServings = 0;
+        const medDetail = [];
+        const medsByTime = { am: [], noon: [], pm: [] };
+        meds.forEach(m => {
+          (m.times || []).forEach(t => {
+            const tl = t.toLowerCase();
+            if (tl.includes("am")) medsByTime.am.push(m);
+            else if (tl.includes("noon") || tl.includes("12")) medsByTime.noon.push(m);
+            else if (tl.includes("pm")) medsByTime.pm.push(m);
+          });
+        });
+        dayDates.forEach((d, di) => {
+          const isFirst = di === 0;
+          const isLast = di === dayDates.length - 1;
+          const row = { date: d, am: true, noon: true, pm: true };
+          if (isFirst && ciHour > 6) row.am = false;
+          if (isLast && coHour < 17) row.pm = false;
+          if (medsByTime.noon.length === 0) row.noon = false;
+          const dayCost = (row.am ? medsByTime.am.length : 0) * (mp.Bagged || mp.Unbagged || 0)
+            + (row.noon ? medsByTime.noon.length : 0) * (mp.Bagged || mp.Unbagged || 0)
+            + (row.pm ? medsByTime.pm.length : 0) * (mp.Bagged || mp.Unbagged || 0);
+          const dayServings = (row.am ? medsByTime.am.length : 0) + (row.noon ? medsByTime.noon.length : 0) + (row.pm ? medsByTime.pm.length : 0);
+          totalMedServings += dayServings;
+          totalMedCost += dayCost;
+          medDetail.push(row);
+        });
+        if (totalMedCost > 0) {
+          lines.push({ label: `Medication admin (${totalMedServings} doses) — ${dogName}`, total: totalMedCost, isAddon: true, medDetail, medsByTime, dogName });
+          subtotal += totalMedCost;
         }
       }
     });
@@ -1127,6 +1197,26 @@ const DEF_PRICING = {
   bathPrices: { "Standard": 25, "Hypo": 35, "Medicated": 45, "Whitening": 40 },
   medicationAdminFee: 5, // per dose per day
   specialFeedingFee: 8, // per day (resort-provided food)
+  // Food type per-serving pricing
+  foodTypePricing: {
+    "Food From Home - Bagged": 3,
+    "Food From Home - Unbagged": 5,
+    "Blue Buffalo Chicken": 0,
+    "Blue Buffalo Salmon": 0,
+  },
+  // Medication per-serving pricing
+  medPricing: {
+    "Bagged": 3,
+    "Unbagged": 5,
+  },
+  // General add-ons (per stay)
+  addOns: {
+    "Dog Bath": 30,
+    "Evian Spring Water": 4,
+    "Upgraded Dog Bed": 12,
+    "Extra Personal Playtime": 15,
+    "Gourmet Doggie Ice Cream": 4,
+  },
   // Discount rules
   multiDogDiscount: 20, // % off 2nd dog same room same owner
   // Payment rules
@@ -1285,7 +1375,6 @@ function generateDemoData() {
             amount: w<35 ? rp(["1","0.5","0.75"]) : rp(["2","2.5","3","1.5"]),
             unit:"Cup",
             foodType: rp(["Food From Home - Bagged","Food From Home - Unbagged","Blue Buffalo Chicken","Blue Buffalo Salmon"]),
-            foodSource: srand()>0.2 ? "From Home" : "Resort Provided",
             instruction: rp(["Regular","Regular","Regular","Slow Feeder","Elevated Bowl","Separate from Others"]),
             notes: srand()>0.85 ? rp(["Eats too fast","Picky eater","No chicken","Grain-free only",""]) : ""
           }],
@@ -1591,7 +1680,6 @@ function generateDemoData() {
     feedingTimeOptions: DEF_FEEDING_TIME_OPTIONS,
     feedingUnitOptions: DEF_FEEDING_UNIT_OPTIONS,
     foodTypeOptions: DEF_FOOD_TYPE_OPTIONS,
-    foodSourceOptions: DEF_FOOD_SOURCE_OPTIONS,
     feedingInstructionOptions: DEF_FEEDING_INSTRUCTION_OPTIONS,
     medicationUnitOptions: DEF_MEDICATION_UNIT_OPTIONS,
     bathTypeOptions: DEF_BATH_TYPE_OPTIONS,
@@ -1728,10 +1816,41 @@ const NAV_PERM_MAP = {
 };
 
 // ─── Itemized Receipt ───────────────────────────────────────────────────────
+function FeedMedBreakdown({ detail, label }) {
+  if (!detail || detail.length === 0) return null;
+  const hasNoon = detail.some(d => d.noon);
+  const shortDate = (d) => { const dt = new Date(d + "T12:00:00"); return dt.toLocaleDateString("en-US", { month: "numeric", day: "numeric" }); };
+  const cell = (active, skipped) => (
+    <span style={{ fontSize: 10, fontWeight: 700, color: active ? C.suc : C.textMut, textAlign: "center" }}>
+      {active ? "\u2713" : "\u2717"}
+    </span>
+  );
+  return (
+    <div style={{ margin: "4px 0 2px", padding: "6px 8px", borderRadius: 8, background: C.bg, border: `1px solid ${C.borderLight}` }}>
+      <div style={{ display: "grid", gridTemplateColumns: hasNoon ? "48px 1fr 1fr 1fr" : "48px 1fr 1fr", gap: 0, fontSize: 10 }}>
+        <span style={{ fontWeight: 700, color: C.textMut, padding: "2px 4px" }}>Date</span>
+        <span style={{ fontWeight: 700, color: C.textMut, padding: "2px 4px", textAlign: "center" }}>AM</span>
+        {hasNoon && <span style={{ fontWeight: 700, color: C.textMut, padding: "2px 4px", textAlign: "center" }}>Noon</span>}
+        <span style={{ fontWeight: 700, color: C.textMut, padding: "2px 4px", textAlign: "center" }}>PM</span>
+        {detail.map((row, i) => (
+          <React.Fragment key={i}>
+            <span style={{ fontSize: 10, fontWeight: 600, color: C.text, padding: "2px 4px", borderTop: `1px solid ${C.borderLight}` }}>{shortDate(row.date)}</span>
+            <span style={{ textAlign: "center", padding: "2px 4px", borderTop: `1px solid ${C.borderLight}` }}>{cell(row.am)}</span>
+            {hasNoon && <span style={{ textAlign: "center", padding: "2px 4px", borderTop: `1px solid ${C.borderLight}` }}>{cell(row.noon)}</span>}
+            <span style={{ textAlign: "center", padding: "2px 4px", borderTop: `1px solid ${C.borderLight}` }}>{cell(row.pm)}</span>
+          </React.Fragment>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ItemizedReceipt({ pricingResult }) {
   if (!pricingResult || pricingResult.lineItems.length === 0) return null;
   const pr = pricingResult;
   const fmt = (v) => `$${Math.abs(v).toFixed(2)}`;
+  const [expandedLines, setExpandedLines] = useState({});
+  const toggleLine = (i) => setExpandedLines(prev => ({ ...prev, [i]: !prev[i] }));
   return (
     <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
       <div style={{ padding: "14px 20px", background: `linear-gradient(135deg, ${C.priLt}, ${C.surface})`, borderBottom: `1px solid ${C.borderLight}` }}>
@@ -1741,16 +1860,28 @@ function ItemizedReceipt({ pricingResult }) {
         </div>
       </div>
       <div style={{ padding: "12px 20px" }}>
-        {pr.lineItems.map((line, i) => (
-          <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: i < pr.lineItems.length - 1 ? `1px solid ${C.borderLight}` : "none" }}>
-            <span style={{ fontSize: 13, color: line.isDiscount ? C.suc : line.isAddon ? C.textSec : C.text, fontWeight: line.isDiscount ? 600 : 500, fontStyle: line.isAddon ? "italic" : "normal" }}>
-              {line.isDiscount && "↓ "}{line.label}
-            </span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: line.isDiscount ? C.suc : C.text, whiteSpace: "nowrap" }}>
-              {line.total < 0 ? `−${fmt(line.total)}` : fmt(line.total)}
-            </span>
-          </div>
-        ))}
+        {pr.lineItems.map((line, i) => {
+          const hasDetail = line.feedDetail || line.medDetail;
+          const expanded = expandedLines[i];
+          return (
+            <div key={i}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: (!hasDetail || !expanded) && i < pr.lineItems.length - 1 ? `1px solid ${C.borderLight}` : "none", cursor: hasDetail ? "pointer" : "default" }} onClick={() => hasDetail && toggleLine(i)}>
+                <span style={{ fontSize: 13, color: line.isDiscount ? C.suc : line.isAddon ? C.textSec : C.text, fontWeight: line.isDiscount ? 600 : 500, fontStyle: line.isAddon ? "italic" : "normal", display: "flex", alignItems: "center", gap: 4 }}>
+                  {line.isDiscount && "↓ "}{line.label}
+                  {hasDetail && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round" style={{ transition: "transform 0.15s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)" }}><polyline points="6 9 12 15 18 9"/></svg>}
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: line.isDiscount ? C.suc : C.text, whiteSpace: "nowrap" }}>
+                  {line.total < 0 ? `−${fmt(line.total)}` : fmt(line.total)}
+                </span>
+              </div>
+              {hasDetail && expanded && (
+                <div style={{ paddingBottom: 6, borderBottom: i < pr.lineItems.length - 1 ? `1px solid ${C.borderLight}` : "none" }}>
+                  <FeedMedBreakdown detail={line.feedDetail || line.medDetail} label={line.feedDetail ? "Feeding" : "Medication"} />
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
       <div style={{ padding: "14px 20px", background: C.bg, borderTop: `1.5px solid ${C.border}` }}>
         {pr.discountTotal > 0 && (
@@ -4296,7 +4427,6 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
                     {(s.times||[]).map(t => <span key={t} style={{display:"inline-block",padding:"2px 8px",borderRadius:6,background:C.priLt,color:C.pri,fontSize:11,fontWeight:700}}>{t}</span>)}
                     <span style={{fontSize:13,fontWeight:600,color:C.text}}>{s.amount} {s.unit}</span>
                     {s.foodType && <span style={{fontSize:12,color:C.textSec}}>· {s.foodType}</span>}
-                    {s.foodSource && <span style={{fontSize:12,color:C.textMut}}>({s.foodSource})</span>}
                   </div>
                   {(s.instruction && s.instruction !== "Regular") && <div style={{fontSize:12,color:C.acc,fontWeight:600,marginTop:4}}>{s.instruction}</div>}
                   {s.notes && <div style={{fontSize:12,color:C.textSec,marginTop:2,fontStyle:"italic"}}>{s.notes}</div>}
@@ -4585,10 +4715,9 @@ function FeedingScheduleEditor({ schedules, onChange, data }) {
   const timeOpts = data.feedingTimeOptions || DEF_FEEDING_TIME_OPTIONS;
   const unitOpts = data.feedingUnitOptions || DEF_FEEDING_UNIT_OPTIONS;
   const foodTypeOpts = data.foodTypeOptions || DEF_FOOD_TYPE_OPTIONS;
-  const foodSrcOpts = data.foodSourceOptions || DEF_FOOD_SOURCE_OPTIONS;
   const instrOpts = data.feedingInstructionOptions || DEF_FEEDING_INSTRUCTION_OPTIONS;
 
-  const blank = { id: gid(), times: [], amount: "", unit: "", foodType: "", foodSource: "", instruction: "", notes: "" };
+  const blank = { id: gid(), times: [], amount: "", unit: "", foodType: "", instruction: "", notes: "" };
   const [draft, setDraft] = useState(blank);
 
   const openAdd = () => { setDraft({ ...blank, id: gid() }); setEditIdx(-1); setShowModal(true); };
@@ -4613,7 +4742,7 @@ function FeedingScheduleEditor({ schedules, onChange, data }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{s.times.join(", ") || "No time set"}</div>
                 <div style={{ fontSize: 12, color: C.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {[s.amount && s.unit ? `${s.amount} ${s.unit}` : s.amount, s.foodType, s.foodSource].filter(Boolean).join(" · ") || "No details"}
+                  {[s.amount && s.unit ? `${s.amount} ${s.unit}` : s.amount, s.foodType].filter(Boolean).join(" · ") || "No details"}
                 </div>
               </div>
               <button onClick={() => openEdit(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 4 }}><I.Edit /></button>
@@ -4646,13 +4775,10 @@ function FeedingScheduleEditor({ schedules, onChange, data }) {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <Inp label="Amount" value={draft.amount} onChange={v => setDraft({ ...draft, amount: v })} placeholder="e.g. 1/2" />
-              <Inp label="Unit" type="select" value={draft.unit} onChange={v => setDraft({ ...draft, unit: v })} options={["", ...unitOpts]} />
+              <Inp label="Unit" type="select" value={draft.unit} onChange={v => setDraft({ ...draft, unit: v })} options={unitOpts} />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <Inp label="Food Type" type="select" value={draft.foodType} onChange={v => setDraft({ ...draft, foodType: v })} options={["", ...foodTypeOpts]} />
-              <Inp label="Food Source" type="select" value={draft.foodSource} onChange={v => setDraft({ ...draft, foodSource: v })} options={["", ...foodSrcOpts]} />
-            </div>
-            <Inp label="Feeding Instruction" type="select" value={draft.instruction} onChange={v => setDraft({ ...draft, instruction: v })} options={["", ...instrOpts]} />
+            <Inp label="Food Type" type="select" value={draft.foodType} onChange={v => setDraft({ ...draft, foodType: v })} options={foodTypeOpts} />
+            <Inp label="Feeding Instruction" type="select" value={draft.instruction} onChange={v => setDraft({ ...draft, instruction: v })} options={instrOpts} />
             <Inp label="Feeding Notes" value={draft.notes} onChange={v => setDraft({ ...draft, notes: v })} placeholder="Any special notes…" />
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 4 }}>
               <Btn variant="secondary" onClick={() => setShowModal(false)}>Cancel</Btn>
@@ -5393,7 +5519,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
           {(type==="boarding"||type==="dayboarding")&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>{type==="dayboarding"?"Day boarding: drop-off & pick-up during regular operating hours — 7 AM – 7 PM Mon–Fri, 9 AM – 5:30 PM Sat–Sun.":"Boarding drop-off hours are from 9 AM – 5:30 PM, 7 days a week."}</div></div>}
           {type==="boarding"&&<div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} required/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{checkOut&&(data.closedDates||[]).some(cd=>cd.date===checkOut)&&<div style={{fontSize:11,fontWeight:700,color:C.dan,marginTop:2}}>Resort closed: {(data.closedDates||[]).find(cd=>cd.date===checkOut)?.label||"Closed"}</div>}{errors.checkOut&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkOut}</div>}</div>}
           {type==="boarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
-          {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Boarding pick-up hours start at 9 AM. Check-out time is 12:30 PM. Extended checkout to 5:30 PM available 7 days a week for a half-day daycare fee (${`$${((data.pricing||DEF_PRICING).daycareRates?.halfDay||30).toFixed(2)}`}).</div></div>}
+          {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Boarding pick-up hours start at 9 AM. Check-out time is 12:30 PM. Extended checkout to 5:30 PM available 7 days a week for a half-day daycare fee ({`$${((data.pricing||DEF_PRICING).daycareRates?.halfDay||30).toFixed(2)}`}).</div></div>}
           {type==="dayboarding"&&<div><Inp label="Pick-Up Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
           {type!=="boarding"&&type!=="dayboarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
         </div>
@@ -8781,7 +8907,7 @@ function PricingTab({ data, save }) {
     const next = JSON.parse(JSON.stringify(p));
     const keys = path.split(".");
     let obj = next;
-    for (let i = 0; i < keys.length - 1; i++) obj = obj[keys[i]];
+    for (let i = 0; i < keys.length - 1; i++) { if (!obj[keys[i]]) obj[keys[i]] = {}; obj = obj[keys[i]]; }
     obj[keys[keys.length - 1]] = val;
     await save({ ...data, pricing: next });
   };
@@ -8845,26 +8971,30 @@ function PricingTab({ data, save }) {
         {bathTypes.map(bt => rateRow(bt, `bathPrices.${bt}`, bPrices[bt], "0"))}
       </Card>
 
-      {/* Add-on Fees */}
+      {/* Food Type Pricing (per serving) */}
       <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
-        {sectionTitle("Add-On Fees", "Additional charges for special services during a stay.")}
-        {rateRow("Medication Administration (per dose/day)", "medicationAdminFee", p.medicationAdminFee, "5")}
-        {rateRow("Special Feeding / Resort Food (per day)", "specialFeedingFee", p.specialFeedingFee, "8")}
+        {sectionTitle("Food Pricing (Per Serving)", "Charge per feeding for each food type. AM/PM feeding is auto-calculated based on check-in/check-out times.")}
+        {(data.foodTypeOptions || DEF_FOOD_TYPE_OPTIONS).map(ft => {
+          const ftp = p.foodTypePricing || {};
+          return rateRow(ft, `foodTypePricing.${ft}`, ftp[ft], "0");
+        })}
       </Card>
 
-      {/* Boarding Add-Ons */}
+      {/* Medication Pricing (per serving) */}
       <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
-        {sectionTitle("Boarding Add-Ons", "Optional services offered during boarding stays. Select which add-ons to offer during reservation booking.")}
-        <div style={{padding:"12px 16px",borderRadius:10,background:C.bg,border:`1px solid ${C.borderLight}`,marginBottom:8}}>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-            <div>
-              <div style={{fontSize:13,fontWeight:600,color:C.text}}>Bathing</div>
-              <div style={{fontSize:11,color:C.textSec,marginTop:2}}>Offer bath add-ons during boarding reservations. Prices are configured in the Bath Pricing section above.</div>
-            </div>
-            <Badge color="success" size="sm">Active</Badge>
-          </div>
-        </div>
-        <div style={{fontSize:11,color:C.textMut,fontStyle:"italic",marginTop:8}}>More add-on categories coming soon. Contact support to request custom add-ons.</div>
+        {sectionTitle("Medication Pricing (Per Serving)", "Charge per medication administration. Same AM/PM logic as food.")}
+        {["Bagged", "Unbagged"].map(mt => {
+          const mp = p.medPricing || {};
+          return rateRow(`Medication (${mt})`, `medPricing.${mt}`, mp[mt], "0");
+        })}
+      </Card>
+
+      {/* General Add-Ons */}
+      <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
+        {sectionTitle("Add-Ons (Per Stay)", "Optional services added to any reservation type. Pricing is per stay.")}
+        {Object.keys(p.addOns || DEF_PRICING.addOns).map(addon =>
+          rateRow(addon, `addOns.${addon}`, (p.addOns || {})[addon], "0")
+        )}
       </Card>
 
       {/* Discount Rules */}
@@ -8930,7 +9060,6 @@ function DropdownListsTab({ data, save }) {
     { key: "feedingTimeOptions", label: "Feeding Times", def: DEF_FEEDING_TIME_OPTIONS, desc: "Time slots for feeding schedules." },
     { key: "feedingUnitOptions", label: "Feeding Units", def: DEF_FEEDING_UNIT_OPTIONS, desc: "Units of measurement for food amounts." },
     { key: "foodTypeOptions", label: "Food Types", def: DEF_FOOD_TYPE_OPTIONS, desc: "Types of food available for dogs." },
-    { key: "foodSourceOptions", label: "Food Sources", def: DEF_FOOD_SOURCE_OPTIONS, desc: "Where the food comes from." },
     { key: "feedingInstructionOptions", label: "Feeding Instructions", def: DEF_FEEDING_INSTRUCTION_OPTIONS, desc: "Special feeding instructions." },
     { key: "medicationUnitOptions", label: "Medication Units", def: DEF_MEDICATION_UNIT_OPTIONS, desc: "Units for medication dosages." },
     { key: "bathTypeOptions", label: "Bath Types", def: DEF_BATH_TYPE_OPTIONS, desc: "Bath service options offered." },
