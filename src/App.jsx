@@ -3157,10 +3157,10 @@ function DashboardPage({ data, save, nav, onNew }) {
           <div style={colHeaderStyle("dog")} onClick={() => handleSort("dog")}>Dog <SortIcon col="dog" /></div>
           <div style={colHeaderStyle("service")} onClick={() => handleSort("service")}>Service <SortIcon col="service" /></div>
           <div style={colHeaderStyle("lodging")} onClick={() => handleSort("lodging")}>Lodging <SortIcon col="lodging" /></div>
-          <div style={colHeaderStyle("inTime")} onClick={() => handleSort("inTime")}>In Time <SortIcon col="inTime" /></div>
-          <div style={colHeaderStyle("outTime")} onClick={() => handleSort("outTime")}>Out Time <SortIcon col="outTime" /></div>
           <div style={colHeaderStyle("inDate")} onClick={() => handleSort("inDate")}>In Date <SortIcon col="inDate" /></div>
+          <div style={colHeaderStyle("inTime")} onClick={() => handleSort("inTime")}>In Time <SortIcon col="inTime" /></div>
           <div style={colHeaderStyle("outDate")} onClick={() => handleSort("outDate")}>Out Date <SortIcon col="outDate" /></div>
+          <div style={colHeaderStyle("outTime")} onClick={() => handleSort("outTime")}>Out Time <SortIcon col="outTime" /></div>
           <div>Add-Ons</div>
           <div style={{ textAlign: "right" }}>Action</div>
         </div>
@@ -3232,21 +3232,21 @@ function DashboardPage({ data, save, nav, onNew }) {
                           <div style={{ minWidth: 0, overflow: "hidden" }}>
                             {(res.type === "boarding" || res.type === "dayboarding") && res.roomType && <><div style={{ fontSize: 12, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{res.roomType}</div>{res.room && <div style={{ fontSize: 11, color: C.textSec }}>{res.room}</div>}</>}
                           </div>
-                          {/* In Time */}
-                          <div style={{ fontVariantNumeric: "tabular-nums" }}>
-                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkInTime)}</span>
-                          </div>
-                          {/* Out Time */}
-                          <div style={{ fontVariantNumeric: "tabular-nums" }}>
-                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkOutTime)}</span>
-                          </div>
                           {/* In Date */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
                             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtDate(res.checkIn)}</span>
                           </div>
+                          {/* In Time */}
+                          <div style={{ fontVariantNumeric: "tabular-nums" }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkInTime)}</span>
+                          </div>
                           {/* Out Date */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
                             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtDate(res.checkOut)}</span>
+                          </div>
+                          {/* Out Time */}
+                          <div style={{ fontVariantNumeric: "tabular-nums" }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkOutTime)}</span>
                           </div>
                           {/* Add-Ons */}
                           <div style={{ position: "relative" }} onClick={e => e.stopPropagation()}
