@@ -1041,6 +1041,7 @@ const DEF_CLIENT_FIELDS = [
   { id:"vet_name",name:"Veterinarian Name",type:"text",required:false,locked:false,order:7 },
   { id:"vet_phone",name:"Veterinarian Phone",type:"tel",required:false,locked:false,order:8 },
   { id:"notes",name:"Notes",type:"textarea",required:false,locked:false,order:9 },
+  { id:"referral_source",name:"Referral Source",type:"select",required:false,locked:false,order:10,options:["Friend/Family","Google","Social Media","Website","Walk-In","Vet Referral","Other"] },
 ];
 
 const DEF_DOG_FIELDS = [
@@ -3346,12 +3347,16 @@ function ClientsPage({ data, nav }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENT DETAIL
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientDetailPage({ data, save, clientId, nav }) {
+function ClientDetailPage({ data, save, clientId, nav, profile }) {
   const client = data.clients.find(c=>c.id===clientId);
   const dogs = data.dogs.filter(d=>d.clientId===clientId);
   const reservations = data.reservations.filter(r=>r.clientId===clientId).sort((a,b)=>b.checkIn.localeCompare(a.checkIn));
   const [editing, setEditing] = useState(false);
   const [editFields, setEditFields] = useState({});
+  const [activeTab, setActiveTab] = useState("dogs");
+  const [resSubTab, setResSubTab] = useState("upcoming");
+  const [newNote, setNewNote] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
 
   if (!client) return <div style={{padding:40,textAlign:"center",color:C.textSec}}>Client not found</div>;
 
@@ -3377,18 +3382,97 @@ function ClientDetailPage({ data, save, clientId, nav }) {
   const tl=(t)=>t==="boarding"?"Boarding":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
   const sc=(s)=>s==="checked-in"?"success":s==="upcoming"?"info":"default";
 
+  // Stats calculations
+  const stats = useMemo(() => {
+    const pmts = (data.payments || []).filter(p => p.clientId === clientId);
+    const totalSpent = pmts.filter(p => p.status === "completed" && p.type !== "refund").reduce((s, p) => s + p.amount, 0);
+    const sorted = [...reservations].sort((a, b) => b.checkIn.localeCompare(a.checkIn));
+    const lastRes = sorted.find(r => r.checkIn <= todayStr());
+    let daysSince = null;
+    if (lastRes) {
+      const lastDate = new Date(lastRes.checkIn + "T00:00:00");
+      const now = new Date(); now.setHours(0,0,0,0);
+      daysSince = Math.floor((now - lastDate) / (1000 * 60 * 60 * 24));
+    }
+    return { totalSpent, totalRes: reservations.length, daysSince };
+  }, [reservations, data.payments, clientId]);
+
+  // Notes data
+  const handleSaveNote = async () => {
+    if (!newNote.trim()) return;
+    setNoteSaving(true);
+    const entry = { id: gid(), text: newNote.trim(), createdAt: new Date().toISOString(), authorName: profile?.full_name || profile?.email || "Staff" };
+    const updated = { ...client, clientNotes: [...(client.clientNotes || []), entry] };
+    await save({ ...data, clients: data.clients.map(c => c.id === clientId ? updated : c) });
+    setNewNote("");
+    setNoteSaving(false);
+  };
+  const handleDeleteNote = async (noteId) => {
+    const updated = { ...client, clientNotes: (client.clientNotes || []).filter(n => n.id !== noteId) };
+    await save({ ...data, clients: data.clients.map(c => c.id === clientId ? updated : c) });
+  };
+
+  // EOD mentions
+  const dogIds = dogs.map(d => d.id);
+  const eodMentions = useMemo(() => (data.eodEntries || []).flatMap(e => (e.mentions || []).filter(m => (m.entityType === "client" && m.entityId === clientId) || (m.entityType === "dog" && dogIds.includes(m.entityId))).map(m => ({ ...m, date: e.date, eodId: e.id, sections: e.sections }))).sort((a, b) => b.date.localeCompare(a.date)), [data.eodEntries, clientId, dogIds.join(",")]);
+
+  // Payments
+  const pmts = useMemo(() => (data.payments || []).filter(p => p.clientId === clientId).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)), [data.payments, clientId]);
+  const statusClr = { completed: C.suc, pending: "#f59e0b", refunded: C.dan, failed: C.dan };
+  const typeClr = { payment: C.pri, deposit: "#0ea5e9", tip: "#ec4899", refund: C.dan };
+
+  // Reservation subtabs
+  const upcomingRes = reservations.filter(r => r.status === "upcoming");
+  const currentRes = reservations.filter(r => r.status === "checked-in");
+  const pastRes = reservations.filter(r => r.status === "checked-out");
+
+  // Tab config
+  const clientNotes = client.clientNotes || [];
+  const notesCount = clientNotes.length + eodMentions.length;
+  const tabs = [
+    { id: "dogs", label: "Dogs", count: dogs.length, color: C.pri },
+    { id: "reservations", label: "Reservations", count: reservations.length, color: C.acc },
+    { id: "payments", label: "Payments", count: pmts.length, color: C.info },
+    { id: "notes", label: "Notes", count: notesCount, color: "#8B5CF6" },
+  ];
+
+  // Reservation card renderer
+  const renderResCard = (res) => (
+    <Card key={res.id} style={{padding:"12px 18px",cursor:res.type==="boarding"?"pointer":"default"}} onClick={()=>{if(res.type==="boarding")setBoardingPreviewId(res.id);}}>
+      <div style={{display:"flex",alignItems:"center",gap:14}}>
+        <div style={{flex:1}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+            <span style={{fontSize:14,fontWeight:700,color:C.pri}}>{dn(res.dogId)}</span>
+            <Badge color={tl(res.type)==="Tour"?"accent":tl(res.type)==="Daycare"?"success":tl(res.type)==="Evaluation"?"warning":"primary"} size="sm">{tl(res.type)}</Badge>
+            {res.roomType && <Badge color="default" size="sm">{res.roomType}</Badge>}
+            {res.type==="evaluation" && res.evalResult && res.evalResult !== "pending" && <Badge color={res.evalResult==="passed_group"?"success":"info"} size="sm">{res.evalResult==="passed_group"?"Passed Group":"Passed Private"}</Badge>}
+          </div>
+          <div style={{fontSize:13,color:C.textSec,marginTop:4}}>{fmtDate(res.checkIn)}{res.type!=="tour"&&res.type!=="evaluation"&&res.checkIn!==res.checkOut?` \u2192 ${fmtDate(res.checkOut)}`:""}{res.notes?` \u00B7 ${res.notes}`:""}</div>
+        </div>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0,minWidth:90}}>
+          <div style={{display:"flex",alignItems:"center",gap:3}}><I.Clock/><span style={{fontSize:10,fontWeight:600,color:C.textMut}}>IN</span><span style={{fontSize:12,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmtTime(res.checkInTime)}</span></div>
+          <div style={{display:"flex",alignItems:"center",gap:3}}><I.Clock/><span style={{fontSize:10,fontWeight:600,color:C.textMut}}>OUT</span><span style={{fontSize:12,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmtTime(res.checkOutTime)}</span></div>
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          {res.status==="upcoming"&&<Btn size="sm" variant="success" onClick={e=>{e.stopPropagation();handleCheckIn(res.id);}} icon={<I.LogIn/>}>Check In</Btn>}
+          {res.status==="checked-in"&&<Btn size="sm" variant="accent" onClick={e=>{e.stopPropagation();handleCheckOut(res.id);}} icon={<I.LogOut/>}>Check Out</Btn>}
+        </div>
+      </div>
+    </Card>
+  );
+
   return (
     <div>
       <button onClick={()=>nav("clients")} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.textSec,fontSize:14,fontWeight:600,padding:0,marginBottom:20,fontFamily:"inherit"}}><I.Back/> Back to Clients</button>
 
       {/* Header */}
-      <Card style={{marginBottom:20,padding:"24px 28px"}}>
+      <Card style={{marginBottom:16,padding:"24px 28px"}}>
         <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:16}}>
           <div style={{display:"flex",alignItems:"center",gap:16}}>
             <div style={{width:56,height:56,borderRadius:16,background:`linear-gradient(135deg, ${C.pri}, ${C.priL})`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:20,color:"#fff"}}>{(client.fields.first_name||"?")[0]}{(client.fields.last_name||"?")[0]}</div>
             <div>
               <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.text}}>{client.fields.first_name} {client.fields.last_name}</h2>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4,fontSize:14,color:C.textSec}}><I.Phone/><span>{fmtPhone(client.fields.phone)}</span>{client.fields.email&&<span>· {client.fields.email}</span>}</div>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4,fontSize:14,color:C.textSec}}><I.Phone/><span>{fmtPhone(client.fields.phone)}</span>{client.fields.email&&<span>&middot; {client.fields.email}</span>}</div>
             </div>
           </div>
           <div style={{display:"flex",gap:8}}>
@@ -3421,144 +3505,227 @@ function ClientDetailPage({ data, save, clientId, nav }) {
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(200px, 1fr))",gap:"12px 20px"}}>
           {data.clientFields.filter(f=>!["phone","first_name","last_name","email","notes"].includes(f.id)&&client.fields[f.id]).map(f=>(<div key={f.id}><div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{f.name}</div><div style={{fontSize:14,color:C.text}}>{f.type==="tel"?fmtPhone(client.fields[f.id]):client.fields[f.id]}</div></div>))}
         </div>
-        {client.fields.notes && <div style={{marginTop:12,padding:"10px 14px",background:C.bg,borderRadius:10}}><div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:4}}>Notes</div><div style={{fontSize:14,color:C.text,lineHeight:1.5}}>{client.fields.notes}</div></div>}
       </Card>
 
-      {/* Dogs */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-        <h3 style={{margin:0,fontSize:17,fontWeight:700,color:C.text}}>Dogs ({dogs.length})</h3>
-        <Btn variant="secondary" size="sm" onClick={()=>nav("new-dog",{clientId})} icon={<I.Plus/>}>Add Dog</Btn>
-      </div>
-      <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:20}}>
-        {dogs.length === 0 ? (
-          <Card style={{flex:1,textAlign:"center",padding:32}}><div style={{fontSize:14,fontWeight:600,color:C.textSec,marginBottom:12}}>No dogs yet</div><Btn size="sm" onClick={()=>nav("new-dog",{clientId})} icon={<I.Plus/>}>Add Dog</Btn></Card>
-        ) : dogs.map(dog => {
-          const vs = getVaxStatus(dog, data.requiredVaccines, data.resortPolicies);
+      {/* Stats Bar */}
+      <Card style={{marginBottom:16,padding:"16px 24px"}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {[
+            { label: "Referral Source", value: client.fields.referral_source || "Not set", color: client.fields.referral_source ? C.text : C.textMut },
+            { label: "Client Since", value: client.createdAt ? fmtDate(client.createdAt) : "N/A", color: C.text },
+            { label: "Total Spent", value: `$${stats.totalSpent.toFixed(2)}`, color: C.suc },
+            { label: "Total Reservations", value: String(stats.totalRes), color: C.pri },
+            { label: "Days Since Last Visit", value: stats.daysSince === null ? "N/A" : stats.daysSince === 0 ? "Today" : `${stats.daysSince} days`, color: stats.daysSince !== null && stats.daysSince <= 7 ? C.suc : stats.daysSince !== null && stats.daysSince <= 30 ? C.warn : C.textSec },
+          ].map(st => (
+            <div key={st.label} style={{flex:"1 1 140px",padding:"10px 14px",background:C.bg,borderRadius:10,textAlign:"center",minWidth:120}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>{st.label}</div>
+              <div style={{fontSize:16,fontWeight:800,color:st.color}}>{st.value}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* Tab Bar */}
+      <div style={{ display: "flex", borderBottom: `2px solid ${C.borderLight}`, background: C.bg, borderRadius: "12px 12px 0 0", marginBottom: 0 }}>
+        {tabs.map(tab => {
+          const active = activeTab === tab.id;
           return (
-            <Card key={dog.id} hoverable onClick={()=>nav("dog-detail",{clientId,dogId:dog.id})} style={{flex:"1 1 280px",maxWidth:400,padding:"14px 18px"}}>
-              <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
-                <div style={{width:40,height:40,borderRadius:12,background:`linear-gradient(135deg, ${C.accLt}, ${C.priLt})`,display:"flex",alignItems:"center",justifyContent:"center"}}><svg width="20" height="20" viewBox="0 0 24 24" fill={C.acc} opacity="0.85"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm4 0c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm-6-6c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm8 0c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg></div>
-                <div style={{flex:1}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{fontSize:15,fontWeight:700,color:C.pri}}>{dog.fields.name}</span>
-                    <VaxIcon dog={dog} requiredVaccines={data.requiredVaccines} policies={data.resortPolicies} />
-                  </div>
-                  <div style={{fontSize:12,color:C.textSec}}>{dog.fields.breed}{dog.fields.weight?` · ${dog.fields.weight} lbs`:""}{dog.fields.dob ? ` · ${calcAge(dog.fields.dob)}` : ""}{` · ${fixedLabel(dog)}`}</div>
-                </div>
-                <span style={{color:C.textMut}}><I.ChevronRight/></span>
-              </div>
-              <DogTagChips dog={dog} dogTags={data.dogTags} size="md" />
-            </Card>
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 16px", border: "none", borderBottom: `3px solid ${active ? tab.color : "transparent"}`, background: active ? C.surface : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", marginBottom: -2 }}>
+              <span style={{ fontSize: 14, fontWeight: active ? 700 : 600, color: active ? C.text : C.textSec }}>{tab.label}</span>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 24, height: 24, padding: "0 8px", borderRadius: 12, fontSize: 13, fontWeight: 800, background: active ? tab.color : C.surfaceHover, color: active ? "#fff" : C.textSec, transition: "all 0.15s" }}>{tab.count}</span>
+            </button>
           );
         })}
       </div>
 
-      {/* Reservations */}
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
-        <h3 style={{margin:0,fontSize:17,fontWeight:700,color:C.text}}>Reservations</h3>
-        <Btn variant="secondary" size="sm" onClick={()=>nav("new-reservation",{clientId})} icon={<I.Plus/>}>New Reservation</Btn>
-      </div>
-      {reservations.length===0?(
-        <Card style={{textAlign:"center",padding:32}}><div style={{fontSize:14,color:C.textSec}}>No reservations yet</div></Card>
-      ):(
-        <div style={{display:"flex",flexDirection:"column",gap:8}}>
-          {reservations.map(res=>(
-            <Card key={res.id} style={{padding:"12px 18px",cursor:res.type==="boarding"?"pointer":"default"}} onClick={()=>{if(res.type==="boarding")setBoardingPreviewId(res.id);}}>
-              <div style={{display:"flex",alignItems:"center",gap:14}}>
-                <div style={{flex:1}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                    <span style={{fontSize:14,fontWeight:700,color:C.pri}}>{dn(res.dogId)}</span>
-                    <Badge color={tl(res.type)==="Tour"?"accent":tl(res.type)==="Daycare"?"success":tl(res.type)==="Evaluation"?"warning":"primary"} size="sm">{tl(res.type)}</Badge>
-                    {res.roomType && <Badge color="default" size="sm">{res.roomType}</Badge>}
-                    {res.type==="evaluation" && res.evalResult && res.evalResult !== "pending" && <Badge color={res.evalResult==="passed_group"?"success":"info"} size="sm">{res.evalResult==="passed_group"?"Passed Group":"Passed Private"}</Badge>}
-                    <Badge color={sc(res.status)} size="sm">{res.status==="checked-in"?"Checked In":res.status==="upcoming"?"Upcoming":"Checked Out"}</Badge>
-                  </div>
-                  <div style={{fontSize:13,color:C.textSec,marginTop:4}}>{fmtDate(res.checkIn)}{res.type!=="tour"&&res.type!=="evaluation"&&res.checkIn!==res.checkOut?` → ${fmtDate(res.checkOut)}`:""}{res.notes?` · ${res.notes}`:""}</div>
-                </div>
-                {/* Times */}
-                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0,minWidth:90}}>
-                  <div style={{display:"flex",alignItems:"center",gap:3}}><I.Clock/><span style={{fontSize:10,fontWeight:600,color:C.textMut}}>IN</span><span style={{fontSize:12,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmtTime(res.checkInTime)}</span></div>
-                  <div style={{display:"flex",alignItems:"center",gap:3}}><I.Clock/><span style={{fontSize:10,fontWeight:600,color:C.textMut}}>OUT</span><span style={{fontSize:12,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmtTime(res.checkOutTime)}</span></div>
-                </div>
-                <div style={{display:"flex",gap:6}}>
-                  {res.status==="upcoming"&&<Btn size="sm" variant="success" onClick={e=>{e.stopPropagation();handleCheckIn(res.id);}} icon={<I.LogIn/>}>Check In</Btn>}
-                  {res.status==="checked-in"&&<Btn size="sm" variant="accent" onClick={e=>{e.stopPropagation();handleCheckOut(res.id);}} icon={<I.LogOut/>}>Check Out</Btn>}
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      )}
+      {/* Tab Content */}
+      <div style={{marginTop:16}}>
 
-      {/* EOD Mentions */}
-      {(() => {
-        const dogIds = dogs.map(d => d.id);
-        const mentions = (data.eodEntries || []).flatMap(e => (e.mentions || []).filter(m => (m.entityType === "client" && m.entityId === clientId) || (m.entityType === "dog" && dogIds.includes(m.entityId))).map(m => ({ ...m, date: e.date, eodId: e.id, sections: e.sections })));
-        if (!mentions.length) return null;
-        const sorted = mentions.sort((a, b) => b.date.localeCompare(a.date));
-        return (
-          <div style={{marginTop:24}}>
-            <h3 style={{margin:"0 0 12px",fontSize:17,fontWeight:700,color:C.text}}>EOD Mentions</h3>
-            <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {sorted.slice(0, 20).map((m, i) => {
-                const sec = (m.sections || []).find(s => s.id === m.sectionId);
-                const sectionLabel = (data.eodTemplate || DEF_EOD_TEMPLATE).find(t => t.id === m.sectionId);
-                return (
-                  <Card key={m.id || i} style={{padding:"12px 18px",cursor:"pointer"}} onClick={() => nav("eod")}>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                          <span style={{fontSize:13,fontWeight:700,color:C.pri}}>{fmtDate(m.date)}</span>
-                          {sectionLabel && <Badge color="default" size="sm">{sectionLabel.emoji} {sectionLabel.label}</Badge>}
-                          <span style={{fontSize:12,fontWeight:600,color:C.suc}}>@{m.entityName}</span>
-                        </div>
-                        {sec && sec.content && <div style={{fontSize:12,color:C.textSec,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:500}}>{sec.content.slice(0, 150)}</div>}
+        {/* ──── DOGS TAB ──── */}
+        {activeTab === "dogs" && (
+          <div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+              <h3 style={{margin:0,fontSize:17,fontWeight:700,color:C.text}}>Dogs ({dogs.length})</h3>
+              <Btn variant="secondary" size="sm" onClick={()=>nav("new-dog",{clientId})} icon={<I.Plus/>}>Add Dog</Btn>
+            </div>
+            <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+              {dogs.length === 0 ? (
+                <Card style={{flex:1,textAlign:"center",padding:32}}><div style={{fontSize:14,fontWeight:600,color:C.textSec,marginBottom:12}}>No dogs yet</div><Btn size="sm" onClick={()=>nav("new-dog",{clientId})} icon={<I.Plus/>}>Add Dog</Btn></Card>
+              ) : dogs.map(dog => (
+                <Card key={dog.id} hoverable onClick={()=>nav("dog-detail",{clientId,dogId:dog.id})} style={{flex:"1 1 280px",maxWidth:400,padding:"14px 18px"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
+                    <DogAvatar dog={dog} size={40} />
+                    <div style={{flex:1}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontSize:15,fontWeight:700,color:C.pri}}>{dog.fields.name}</span>
+                        <VaxIcon dog={dog} requiredVaccines={data.requiredVaccines} policies={data.resortPolicies} />
+                        <DogTagChips dog={dog} dogTags={data.dogTags} size="sm" />
                       </div>
+                      <div style={{fontSize:12,color:C.textSec}}>{dog.fields.breed}{dog.fields.weight?` \u00B7 ${dog.fields.weight} lbs`:""}{dog.fields.dob ? ` \u00B7 ${calcAge(dog.fields.dob)}` : ""}{` \u00B7 ${fixedLabel(dog)}`}</div>
                     </div>
-                  </Card>
-                );
-              })}
-              {sorted.length > 20 && <div style={{fontSize:12,color:C.textMut,textAlign:"center",padding:8}}>+ {sorted.length - 20} more mentions</div>}
+                    <span style={{color:C.textMut}}><I.ChevronRight/></span>
+                  </div>
+                  <DogTagChips dog={dog} dogTags={data.dogTags} size="md" />
+                </Card>
+              ))}
             </div>
           </div>
-        );
-      })()}
+        )}
 
-      {/* Payment History */}
-      {(() => {
-        const pmts = (data.payments || []).filter(p => p.clientId === clientId).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-        if (!pmts.length) return null;
-        const totalPaid = pmts.filter(p => p.status === "completed" && p.type !== "refund").reduce((s, p) => s + p.amount, 0);
-        const statusClr = { completed: C.suc, pending: "#f59e0b", refunded: C.dan, failed: C.dan };
-        const typeClr = { payment: C.pri, deposit: "#0ea5e9", tip: "#ec4899", refund: C.dan };
-        return (
-          <div style={{marginTop:24}}>
+        {/* ──── RESERVATIONS TAB ──── */}
+        {activeTab === "reservations" && (
+          <div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+              <h3 style={{margin:0,fontSize:17,fontWeight:700,color:C.text}}>Reservations</h3>
+              <Btn variant="secondary" size="sm" onClick={()=>nav("new-reservation",{clientId})} icon={<I.Plus/>}>New Reservation</Btn>
+            </div>
+            {/* Subtabs */}
+            <div style={{display:"flex",gap:6,marginBottom:16}}>
+              {[
+                { id: "upcoming", label: "Upcoming", count: upcomingRes.length, color: C.info },
+                { id: "current", label: "Current", count: currentRes.length, color: C.suc },
+                { id: "past", label: "Past", count: pastRes.length, color: C.textMut },
+              ].map(st => {
+                const active = resSubTab === st.id;
+                return (
+                  <button key={st.id} onClick={() => setResSubTab(st.id)} style={{
+                    padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${active ? st.color : C.border}`,
+                    background: active ? st.color + "14" : C.bg, cursor: "pointer", fontFamily: "inherit",
+                    display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s",
+                  }}>
+                    <span style={{ fontSize: 13, fontWeight: active ? 700 : 600, color: active ? st.color : C.textSec }}>{st.label}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: active ? st.color : C.textMut, background: active ? st.color + "20" : C.surfaceHover, padding: "1px 7px", borderRadius: 8 }}>{st.count}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {/* Reservation list */}
+            {(() => {
+              const list = resSubTab === "upcoming" ? upcomingRes : resSubTab === "current" ? currentRes : pastRes;
+              return list.length === 0 ? (
+                <Card style={{textAlign:"center",padding:32}}><div style={{fontSize:14,color:C.textSec}}>No {resSubTab} reservations</div></Card>
+              ) : (
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>{list.map(renderResCard)}</div>
+              );
+            })()}
+          </div>
+        )}
+
+        {/* ──── PAYMENTS TAB ──── */}
+        {activeTab === "payments" && (
+          <div>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
               <h3 style={{margin:0,fontSize:17,fontWeight:700,color:C.text}}>Payment History ({pmts.length})</h3>
-              <span style={{fontSize:14,fontWeight:700,color:C.pri}}>Total: ${totalPaid.toFixed(2)}</span>
+              <span style={{fontSize:14,fontWeight:700,color:C.pri}}>Total: ${stats.totalSpent.toFixed(2)}</span>
             </div>
-            <div style={{display:"flex",flexDirection:"column",gap:6}}>
-              {pmts.slice(0, 10).map(p => {
-                const r = data.reservations.find(res => res.id === p.reservationId);
-                return (
-                  <Card key={p.id} style={{padding:"10px 16px"}}>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      <span style={{padding:"2px 7px",borderRadius:4,fontSize:11,fontWeight:600,background:typeClr[p.type]+"18",color:typeClr[p.type]}}>{p.type}</span>
-                      <span style={{fontSize:15,fontWeight:700,color:C.text}}>${p.amount.toFixed(2)}</span>
-                      <span style={{fontSize:12,color:C.textMut}}>{p.method === "card" ? `Card ····${p.cardLast4||""}` : p.method}</span>
-                      {r && <span style={{fontSize:12,color:C.textMut}}>· {r.roomType}</span>}
-                      <span style={{fontSize:12,color:C.textMut,marginLeft:"auto"}}>{new Date(p.timestamp).toLocaleDateString()}</span>
-                      <span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:600,background:statusClr[p.status]+"18",color:statusClr[p.status]}}>{p.status}</span>
-                    </div>
-                    {p.note && <div style={{fontSize:12,color:C.textMut,marginTop:4}}>{p.note}</div>}
-                  </Card>
-                );
-              })}
-              {pmts.length > 10 && <div style={{fontSize:12,color:C.textMut,textAlign:"center",padding:8}}>+ {pmts.length - 10} more payments · <span style={{color:C.pri,cursor:"pointer",fontWeight:600}} onClick={()=>nav("payments")}>View All</span></div>}
-            </div>
+            {pmts.length === 0 ? (
+              <Card style={{textAlign:"center",padding:32}}><div style={{fontSize:14,color:C.textSec}}>No payments yet</div></Card>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {pmts.map(p => {
+                  const r = data.reservations.find(res => res.id === p.reservationId);
+                  return (
+                    <Card key={p.id} style={{padding:"10px 16px"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <span style={{padding:"2px 7px",borderRadius:4,fontSize:11,fontWeight:600,background:typeClr[p.type]+"18",color:typeClr[p.type]}}>{p.type}</span>
+                        <span style={{fontSize:15,fontWeight:700,color:C.text}}>${p.amount.toFixed(2)}</span>
+                        <span style={{fontSize:12,color:C.textMut}}>{p.method === "card" ? `Card \u00B7\u00B7\u00B7\u00B7${p.cardLast4||""}` : p.method}</span>
+                        {r && <span style={{fontSize:12,color:C.textMut}}>\u00B7 {r.roomType}</span>}
+                        <span style={{fontSize:12,color:C.textMut,marginLeft:"auto"}}>{new Date(p.timestamp).toLocaleDateString()}</span>
+                        <span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:600,background:statusClr[p.status]+"18",color:statusClr[p.status]}}>{p.status}</span>
+                      </div>
+                      {p.note && <div style={{fontSize:12,color:C.textMut,marginTop:4}}>{p.note}</div>}
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
           </div>
-        );
-      })()}
+        )}
+
+        {/* ──── NOTES TAB ──── */}
+        {activeTab === "notes" && (
+          <div>
+            <h3 style={{margin:"0 0 12px",fontSize:17,fontWeight:700,color:C.text}}>Notes</h3>
+
+            {/* Pinned client notes field */}
+            {client.fields.notes && (
+              <Card style={{padding:"12px 18px",marginBottom:16,borderLeft:`4px solid ${C.pri}`}}>
+                <div style={{fontSize:11,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:4}}>Client Notes (Profile)</div>
+                <div style={{fontSize:14,color:C.text,lineHeight:1.5}}>{client.fields.notes}</div>
+              </Card>
+            )}
+
+            {/* New note composer */}
+            <Card style={{padding:"16px 20px",marginBottom:16}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:8}}>Add Note</div>
+              <textarea value={newNote} onChange={e=>setNewNote(e.target.value)} placeholder="Write a note about this client..." rows={3}
+                style={{width:"100%",padding:"10px 14px",borderRadius:10,border:`1.5px solid ${C.border}`,fontSize:13,fontFamily:"inherit",resize:"vertical",outline:"none",background:C.bg,boxSizing:"border-box"}}
+                onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border} />
+              <div style={{display:"flex",justifyContent:"flex-end",marginTop:8}}>
+                <Btn size="sm" onClick={handleSaveNote} disabled={!newNote.trim()||noteSaving}>{noteSaving?"Saving...":"Add Note"}</Btn>
+              </div>
+            </Card>
+
+            {/* Combined timeline: client notes + EOD mentions */}
+            {(() => {
+              const noteItems = clientNotes.map(n => ({ type: "note", id: n.id, date: n.createdAt ? n.createdAt.slice(0,10) : "", sortKey: n.createdAt || "", ...n }));
+              const eodItems = eodMentions.map((m, i) => ({ type: "eod", id: m.id || `eod_${i}`, date: m.date, sortKey: m.date + "T00:00:00", ...m }));
+              const all = [...noteItems, ...eodItems].sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+              if (all.length === 0) return <Card style={{textAlign:"center",padding:32}}><div style={{fontSize:14,color:C.textSec}}>No notes yet</div></Card>;
+              return (
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  {all.map(item => {
+                    if (item.type === "note") {
+                      const dt = item.createdAt ? new Date(item.createdAt) : null;
+                      return (
+                        <Card key={item.id} style={{padding:"12px 18px"}}>
+                          <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                            <div style={{width:28,height:28,borderRadius:8,background:"#8B5CF620",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:2}}>
+                              <I.Edit size={14} style={{color:"#8B5CF6"}} />
+                            </div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                                <span style={{fontSize:13,fontWeight:700,color:C.text}}>{item.authorName || "Staff"}</span>
+                                {dt && <span style={{fontSize:11,color:C.textMut}}>{dt.toLocaleDateString()} {dt.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</span>}
+                              </div>
+                              <div style={{fontSize:13,color:C.text,lineHeight:1.5}}>{item.text}</div>
+                            </div>
+                            <button onClick={()=>handleDeleteNote(item.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,padding:4,borderRadius:6,flexShrink:0}} title="Delete note"><I.Trash size={14}/></button>
+                          </div>
+                        </Card>
+                      );
+                    } else {
+                      // EOD mention
+                      const sec = (item.sections || []).find(s => s.id === item.sectionId);
+                      const sectionLabel = (data.eodTemplate || DEF_EOD_TEMPLATE).find(t => t.id === item.sectionId);
+                      return (
+                        <Card key={item.id} style={{padding:"12px 18px",cursor:"pointer"}} onClick={() => nav("eod")}>
+                          <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                            <div style={{width:28,height:28,borderRadius:8,background:C.priLt,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:2}}>
+                              <I.Clipboard size={14} style={{color:C.pri}} />
+                            </div>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4}}>
+                                <span style={{fontSize:13,fontWeight:700,color:C.pri}}>{fmtDate(item.date)}</span>
+                                {sectionLabel && <Badge color="default" size="sm">{sectionLabel.emoji} {sectionLabel.label}</Badge>}
+                                <span style={{fontSize:12,fontWeight:600,color:C.suc}}>@{item.entityName}</span>
+                              </div>
+                              {sec && sec.content && <div style={{fontSize:12,color:C.textSec,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:500}}>{sec.content.slice(0, 150)}</div>}
+                            </div>
+                          </div>
+                        </Card>
+                      );
+                    }
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+      </div>
 
       {/* Edit Modal */}
       {editing&&<Modal title="Edit Client" onClose={()=>setEditing(false)} wide>
