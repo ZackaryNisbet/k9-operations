@@ -743,6 +743,31 @@ const OPERATIONS_CATALOG = [
   { id:"monthly-deep-clean", label:"Monthly Deep Clean", frequency:"monthly", comingSoon:true },
 ];
 
+function getRoomCleaningStats(data, date) {
+  const td = date || todayStr();
+  const allRooms = data.rooms || {};
+  const reservations = data.reservations || [];
+  const boardingToday = reservations.filter(r => r.type === "boarding" && r.checkIn <= td && r.checkOut >= td && (r.status === "checked-in" || r.status === "upcoming"));
+  const boardingCheckedOut = reservations.filter(r => r.type === "boarding" && r.checkOut === td && r.status === "checked-out");
+  let totalNeeded = 0, totalDone = 0;
+  const entryId = `ops_room_cleaning_${td}`;
+  const entry = (data.dailyOps || []).find(e => e.id === entryId);
+  const ei = entry ? entry.items || {} : {};
+  ROOM_TYPES.forEach(rt => {
+    (allRooms[rt] || []).forEach(rm => {
+      const activeRes = boardingToday.find(r => r.room === rm);
+      const coRes = boardingCheckedOut.find(r => r.room === rm);
+      const notFirst = activeRes && activeRes.checkIn < td;
+      const notLast = activeRes && activeRes.checkOut > td;
+      const needsRefresh = !!(activeRes && notFirst && notLast);
+      const needsDisinfect = !!coRes;
+      if (needsRefresh) { totalNeeded++; if (ei[rm] && ei[rm].refresh) totalDone++; }
+      if (needsDisinfect) { totalNeeded++; if (ei[rm] && ei[rm].disinfect) totalDone++; }
+    });
+  });
+  return { totalNeeded, totalDone };
+}
+
 function getOpsCardStatus(data, item, date) {
   if (item.comingSoon) return "coming_soon";
   if (item.dataKey === "eodEntries") return "none"; // EOD is not measured
@@ -763,6 +788,12 @@ function getOpsCardStatus(data, item, date) {
     const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : Array.isArray(ei) ? ei.filter(i => i.checked).length : 0;
     if (total > 0 && checked >= total) return "completed";
     return checked > 0 ? "in_progress" : "not_started";
+  }
+  if (item.typeSub === "room_cleaning") {
+    const stats = getRoomCleaningStats(data, td);
+    if (stats.totalNeeded === 0) return "not_started";
+    if (stats.totalDone >= stats.totalNeeded) return "completed";
+    return stats.totalDone > 0 ? "in_progress" : "not_started";
   }
   if (Array.isArray(ei)) {
     return ei.some(i => i.checked) ? "in_progress" : "not_started";
@@ -798,10 +829,8 @@ function getOpsProgress(data, item, date) {
     return vals.length > 0 ? Math.round((done / vals.length) * 100) : 0;
   }
   if (item.typeSub === "room_cleaning") {
-    // Can't compute a true %, just show that work is happening
-    const rooms = Object.values(ei);
-    const anyDone = rooms.some(r => r && (r.refresh || r.disinfect || r.asNeededDone));
-    return anyDone ? 50 : 0;
+    const stats = getRoomCleaningStats(data, td);
+    return stats.totalNeeded > 0 ? Math.round((stats.totalDone / stats.totalNeeded) * 100) : 0;
   }
   if (Array.isArray(ei)) {
     const total = ei.length;
@@ -830,15 +859,9 @@ function getOpsCountLabel(data, item, date) {
     return `${checked}/${total} tasks`;
   }
   if (item.typeSub === "room_cleaning") {
-    if (!entry || !entry.items) return "";
-    const ei = entry.items;
-    const rooms = Object.values(ei);
-    const refreshes = rooms.filter(r => r && r.refresh).length;
-    const disinfects = rooms.filter(r => r && r.disinfect).length;
-    const parts = [];
-    if (refreshes) parts.push(`${refreshes} refresh${refreshes !== 1 ? "es" : ""}`);
-    if (disinfects) parts.push(`${disinfects} disinfect${disinfects !== 1 ? "s" : ""}`);
-    return parts.length > 0 ? parts.join(", ") + " done" : "";
+    const stats = getRoomCleaningStats(data, td);
+    if (stats.totalNeeded === 0) return "No rooms to clean";
+    return `${stats.totalDone}/${stats.totalNeeded} rooms`;
   }
   if (item.typeSub === "pictures") {
     if (!entry || !entry.items) return "0 photos";
