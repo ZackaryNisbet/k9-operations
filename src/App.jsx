@@ -7674,8 +7674,11 @@ function TeamTab({ profile, data, save }) {
     fetchTeam();
   };
 
+  const [inviteSending, setInviteSending] = useState(false);
+
   const addInvite = async () => {
     if (!inviteEmail.trim()) return;
+    setInviteSending(true);
     const inv = {
       id: gid(),
       email: inviteEmail.trim().toLowerCase(),
@@ -7683,9 +7686,24 @@ function TeamTab({ profile, data, save }) {
       role: inviteRole,
       invitedAt: new Date().toISOString(),
     };
+    // Save the pending invite to the data blob
     await save({ ...data, pendingInvites: [...pendingInvites, inv] });
+
+    // Try to auto-send invite email via Supabase Auth API
+    let emailSent = false;
+    try {
+      const { data: result } = await supabase.rpc('send_team_invite', {
+        invite_email: inv.email,
+        invite_name: inv.name || '',
+      });
+      emailSent = result && result.success;
+    } catch (e) {
+      console.log('send_team_invite not available:', e.message);
+    }
+
     setInviteEmail(""); setInviteName(""); setInviteRole("role_staff");
-    setInviteMsg(inv.name || inv.email);
+    setInviteSending(false);
+    setInviteMsg(emailSent ? ("email:" + (inv.name || inv.email)) : (inv.name || inv.email));
   };
 
   const removeInvite = async (invId) => {
@@ -7762,34 +7780,47 @@ function TeamTab({ profile, data, save }) {
         <Card style={{ padding: "24px 28px" }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Invite Team Member</div>
           <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>
-            Add a team member below. Once invited, tell them to create an account at <strong>k9operations.com</strong> — they will be automatically assigned to your location.
+            Enter their details and click Invite. They'll receive an email with a link to join your team.
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 130px auto", gap: 12, alignItems: "flex-end" }}>
             <Inp label="Email" type="email" value={inviteEmail} onChange={v => setInviteEmail(v)} placeholder="staff@k9resorts.com" />
             <Inp label="Full Name" value={inviteName} onChange={v => setInviteName(v)} placeholder="Jane Vance" />
             <Inp label="Role" type="select" value={inviteRole} onChange={v => setInviteRole(v)} options={(data.roles || DEFAULT_ROLES).map(r => ({ value: r.id, label: r.name }))} />
-            <Btn onClick={addInvite}>Invite</Btn>
+            <Btn onClick={addInvite} disabled={inviteSending}>{inviteSending ? "Sending..." : "Invite"}</Btn>
           </div>
-          {inviteMsg && (
+          {inviteMsg && inviteMsg.startsWith("email:") && (
+            <div style={{ marginTop: 16, padding: "16px 20px", borderRadius: 12, background: C.sucLt, border: "1.5px solid " + C.suc + "30" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <I.CheckCircle />
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.suc }}>Invite email sent to {inviteMsg.slice(6)}</span>
+              </div>
+              <div style={{ fontSize: 13, color: C.textSec, marginTop: 6 }}>
+                They'll receive an email with a link to join. Once they click it, they'll be automatically added to your team.
+              </div>
+              <button onClick={() => setInviteMsg(null)} style={{ marginTop: 10, padding: "6px 14px", background: "none", color: C.textSec, border: "1.5px solid " + C.border, borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                Dismiss
+              </button>
+            </div>
+          )}
+          {inviteMsg && !inviteMsg.startsWith("email:") && (
             <div style={{ marginTop: 16, padding: "16px 20px", borderRadius: 12, background: C.sucLt, border: "1.5px solid " + C.suc + "30" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <I.CheckCircle />
                 <span style={{ fontSize: 14, fontWeight: 700, color: C.suc }}>Invitation saved for {inviteMsg}</span>
               </div>
               <div style={{ fontSize: 13, color: C.text, lineHeight: 1.6, marginBottom: 10 }}>
-                Now send them these instructions:
+                Send them these instructions to get started:
               </div>
               <div style={{ background: C.surface, borderRadius: 8, padding: "12px 16px", border: "1px solid " + C.border, fontSize: 13, color: C.text, lineHeight: 1.6, fontFamily: "inherit" }}>
                 <div>1. Go to <strong>k9operations.com</strong></div>
                 <div>2. Click <strong>"Create Account"</strong> using your email</div>
-                <div>3. Confirm your email, then sign in</div>
-                <div>4. You'll be automatically connected to the team</div>
+                <div>3. Check your inbox and confirm your email</div>
+                <div>4. Sign in — you'll be automatically connected to the team</div>
               </div>
               <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
                 <button onClick={() => {
                   navigator.clipboard.writeText("You've been invited to K9 Operations! Here's how to get started:\n\n1. Go to k9operations.com\n2. Click \"Create Account\" using your email address\n3. Check your inbox and confirm your email\n4. Sign in \u2014 you'll be automatically connected to the team!\n\nSee you there!");
                   setInviteMsg(null);
-                  setTimeout(() => setInviteMsg(null), 100);
                 }} style={{ padding: "7px 16px", background: C.pri, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
                   Copy Instructions
                 </button>
