@@ -3818,7 +3818,7 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
                     {hasExperience !== null && !dog?.fields?.dob && (
                       <div>
                         <div style={{ padding: "8px 12px", borderRadius: 8, background: C.warnLt, border: `1px solid ${C.warn}30`, marginBottom: 10 }}>
-                          <div style={{ fontSize: 12, fontWeight: 600, color: C.warn }}>No date of birth on file \u2014 select age score manually</div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: C.warn }}>No date of birth on file &mdash; select age score manually</div>
                         </div>
                         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                           {[{ value: "green", label: hasExperience ? "6 months \u2013 3 years" : "Under 5 months", description: hasExperience ? "Young dog with off-leash experience" : "Very young puppy, no experience needed yet" },
