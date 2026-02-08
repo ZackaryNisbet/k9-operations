@@ -3713,14 +3713,12 @@ function ClientDetailPage({ data, save, clientId, nav, profile }) {
       {/* Header */}
       <Card style={{marginBottom:16,padding:"24px 28px"}}>
         <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:16}}>
-          <div style={{display:"flex",alignItems:"center",gap:16}}>
-            <div style={{width:56,height:56,borderRadius:16,background:`linear-gradient(135deg, ${C.pri}, ${C.priL})`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:20,color:"#fff"}}>{(client.fields.first_name||"?")[0]}{(client.fields.last_name||"?")[0]}</div>
-            <div>
-              <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.text}}>{client.fields.first_name} {client.fields.last_name}</h2>
-              <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4,fontSize:14,color:C.textSec}}><I.Phone/><span>{fmtPhone(client.fields.phone)}</span>{client.fields.email&&<span>&middot; {client.fields.email}</span>}</div>
-            </div>
+          <div>
+            <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.text}}>{client.fields.first_name} {client.fields.last_name}</h2>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4,fontSize:14,color:C.textSec}}><I.Phone/><span>{fmtPhone(client.fields.phone)}</span>{client.fields.email&&<span>&middot; {client.fields.email}</span>}</div>
           </div>
           <div style={{display:"flex",gap:8}}>
+            <Btn variant="primary" onClick={()=>nav("new-reservation",{clientId})} icon={<I.Plus/>} size="sm">New</Btn>
             <Btn variant="ghost" onClick={()=>nav("messages")} icon={<I.MessageSquare/>} size="sm">Message</Btn>
             <Btn variant="secondary" onClick={startEdit} icon={<I.Edit/>} size="sm">Edit</Btn>
           </div>
@@ -3757,7 +3755,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile }) {
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {[
             { label: "Referral Source", value: client.fields.referral_source || "Not set", color: client.fields.referral_source ? C.text : C.textMut },
-            { label: "Client Since", value: client.createdAt ? fmtDate(client.createdAt) : "N/A", color: C.text },
+            { label: "Client Since", value: (() => { const firstRes = reservations.length > 0 ? reservations[reservations.length - 1] : null; return firstRes ? fmtDate(firstRes.checkIn) : "N/A"; })(), color: C.text },
             { label: "Total Spent", value: `$${stats.totalSpent.toFixed(2)}`, color: C.suc },
             { label: "Total Reservations", value: String(stats.totalRes), color: C.pri },
             { label: "Days Since Last Visit", value: stats.daysSince === null ? "N/A" : stats.daysSince === 0 ? "Today" : `${stats.daysSince} days`, color: stats.daysSince !== null && stats.daysSince <= 7 ? C.suc : stats.daysSince !== null && stats.daysSince <= 30 ? C.warn : C.textSec },
