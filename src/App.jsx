@@ -3794,7 +3794,7 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
                   <div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: C.textMut, marginBottom: 8 }}>Has prior off-leash play experience?</div>
                     <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
-                      {[{ v: true, l: "Yes — Has Experience" }, { v: false, l: "No — No Experience" }].map(opt => (
+                      {[{ v: true, l: "Yes \u2014 Has Experience" }, { v: false, l: "No \u2014 No Experience" }].map(opt => (
                         <button key={String(opt.v)} onClick={() => setHasExperience(opt.v)} style={{
                           flex: 1, padding: "10px 14px", borderRadius: 10, fontFamily: "inherit",
                           border: `2px solid ${hasExperience === opt.v ? C.pri : C.border}`,
@@ -3803,13 +3803,46 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
                         }}>{opt.l}</button>
                       ))}
                     </div>
-                    {hasExperience !== null && (
+                    {/* DOB exists: auto-score and display */}
+                    {hasExperience !== null && dog?.fields?.dob && (
                       <div style={{ padding: "10px 14px", borderRadius: 10, background: answers.age === "green" ? C.sucLt : answers.age === "yellow" ? C.warnLt : answers.age === "red" ? C.danLt : C.bg, border: `1.5px solid ${answers.age === "green" ? C.suc : answers.age === "yellow" ? C.warn : answers.age === "red" ? C.dan : C.border}30` }}>
                         <div style={{ fontSize: 13, fontWeight: 700, color: answers.age === "green" ? C.suc : answers.age === "yellow" ? C.warn : C.dan }}>
                           Auto-scored: {(answers.age || "").toUpperCase()} ({EVAL_SCORE_PTS[answers.age] || 0} pts)
                         </div>
                         <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>
                           Dog age: {ageDisplay} · {hasExperience ? "Has" : "No"} prior off-leash experience
+                        </div>
+                      </div>
+                    )}
+                    {/* No DOB: manual selection with age-range labels */}
+                    {hasExperience !== null && !dog?.fields?.dob && (
+                      <div>
+                        <div style={{ padding: "8px 12px", borderRadius: 8, background: C.warnLt, border: `1px solid ${C.warn}30`, marginBottom: 10 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: C.warn }}>No date of birth on file \u2014 select age score manually</div>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {[{ value: "green", label: hasExperience ? "6 months \u2013 3 years" : "Under 5 months", description: hasExperience ? "Young dog with off-leash experience" : "Very young puppy, no experience needed yet" },
+                            { value: "yellow", label: hasExperience ? "3 \u2013 7 years" : "6 months \u2013 3 years", description: hasExperience ? "Middle-aged with experience" : "Young dog, no prior off-leash experience" },
+                            { value: "red", label: hasExperience ? "8+ years" : "Over 3 years", description: hasExperience ? "Senior dog" : "Adult dog with no off-leash experience" },
+                          ].map(opt => {
+                            const sel = answers.age === opt.value;
+                            const oc = opt.value === "green" ? C.suc : opt.value === "yellow" ? C.warn : C.dan;
+                            const ob = opt.value === "green" ? C.sucLt : opt.value === "yellow" ? C.warnLt : C.danLt;
+                            return (
+                              <button key={opt.value} onClick={() => handleAnswer("age", opt.value)} style={{
+                                padding: "12px 16px", borderRadius: 10, fontFamily: "inherit", textAlign: "left",
+                                border: `2px solid ${sel ? oc : C.border}`, background: sel ? ob : "transparent",
+                                cursor: "pointer", transition: "all 0.15s",
+                              }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: oc, flexShrink: 0 }}/>
+                                  <div style={{ fontSize: 13, fontWeight: 700, color: sel ? oc : C.text }}>{opt.label}</div>
+                                  {sel && <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: oc }}>{EVAL_SCORE_PTS[opt.value]} pts</span>}
+                                </div>
+                                <div style={{ fontSize: 12, color: C.textSec, marginTop: 4, marginLeft: 18 }}>{opt.description}</div>
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
