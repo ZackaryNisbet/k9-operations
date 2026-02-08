@@ -7309,12 +7309,33 @@ function RolesPermissionsTab({ data, save, profile }) {
   const badgeColorMap = {default:{bg:C.surfaceHover,text:C.textSec},primary:{bg:C.priLt,text:C.pri},success:{bg:C.sucLt,text:C.suc},warning:{bg:C.warnLt,text:C.warn},danger:{bg:C.danLt,text:C.dan},info:{bg:C.infoLt,text:C.info},accent:{bg:C.accLt,text:C.accDk}};
 
   const enabledCount = (perms) => ALL_PERM_KEYS.filter(k => perms[k]).length;
+  const [lockoutWarning, setLockoutWarning] = useState(null);
+
+  // Determine which role the current user is on (so we can protect it)
+  const myRoleId = LEGACY_ROLE_MAP[profile?.role] || profile?.role;
+  // Critical permissions that, if removed from your own role, lock you out
+  const SELF_PROTECTED = ["manage_roles", "view_settings"];
+
+  // Check if a toggle would lock the current user out
+  const wouldLockSelf = (roleId, permKey, newValue) => {
+    if (roleId !== myRoleId) return false; // only protect your own role
+    if (!SELF_PROTECTED.includes(permKey)) return false;
+    return newValue === false; // turning OFF a critical perm on your own role
+  };
 
   // Toggle a single permission for a role — saves immediately
   const togglePerm = async (roleId, permKey) => {
+    const role = roles.find(r => r.id === roleId);
+    if (!role) return;
+    const newVal = !role.permissions[permKey];
+    if (wouldLockSelf(roleId, permKey, newVal)) {
+      setLockoutWarning("You can't remove \"" + (PERMISSION_CATEGORIES.flatMap(c => c.permissions).find(p => p.key === permKey)?.label || permKey) + "\" from your own role — it would lock you out.");
+      setTimeout(() => setLockoutWarning(null), 4000);
+      return;
+    }
     const updated = roles.map(r => {
       if (r.id !== roleId) return r;
-      return { ...r, permissions: { ...r.permissions, [permKey]: !r.permissions[permKey] } };
+      return { ...r, permissions: { ...r.permissions, [permKey]: newVal } };
     });
     await save({ ...data, roles: updated });
   };
@@ -7326,10 +7347,21 @@ function RolesPermissionsTab({ data, save, profile }) {
     const role = roles.find(r => r.id === roleId);
     if (!role) return;
     const allOn = cat.permissions.every(p => role.permissions[p.key]);
+    // If turning OFF, check for self-lockout
+    if (allOn && roleId === myRoleId) {
+      const blocked = cat.permissions.filter(p => SELF_PROTECTED.includes(p.key));
+      if (blocked.length > 0) {
+        setLockoutWarning("Can't disable all — \"" + blocked.map(b => b.label).join(", ") + "\" would lock you out. Those will stay enabled.");
+        setTimeout(() => setLockoutWarning(null), 4000);
+      }
+    }
     const updated = roles.map(r => {
       if (r.id !== roleId) return r;
       const np = { ...r.permissions };
-      cat.permissions.forEach(p => { np[p.key] = !allOn; });
+      cat.permissions.forEach(p => {
+        if (wouldLockSelf(roleId, p.key, !allOn)) return; // skip protected
+        np[p.key] = !allOn;
+      });
       return { ...r, permissions: np };
     });
     await save({ ...data, roles: updated });
@@ -7340,10 +7372,17 @@ function RolesPermissionsTab({ data, save, profile }) {
     const role = roles.find(r => r.id === roleId);
     if (!role) return;
     const allOn = ALL_PERM_KEYS.every(k => role.permissions[k]);
+    if (allOn && roleId === myRoleId) {
+      setLockoutWarning("Protected permissions (Manage Roles, Settings) will stay enabled on your own role to prevent lockout.");
+      setTimeout(() => setLockoutWarning(null), 4000);
+    }
     const updated = roles.map(r => {
       if (r.id !== roleId) return r;
       const np = {};
-      ALL_PERM_KEYS.forEach(k => { np[k] = !allOn; });
+      ALL_PERM_KEYS.forEach(k => {
+        if (wouldLockSelf(roleId, k, !allOn)) { np[k] = true; return; } // keep protected ON
+        np[k] = !allOn;
+      });
       return { ...r, permissions: np };
     });
     await save({ ...data, roles: updated });
@@ -7392,6 +7431,14 @@ function RolesPermissionsTab({ data, save, profile }) {
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+      {/* Lockout Warning Toast */}
+      {lockoutWarning && (
+        <div style={{ padding:"12px 16px", background:"#FEF3C7", border:"1.5px solid #F59E0B", borderRadius:10, display:"flex", alignItems:"center", gap:10 }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0 }}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <div style={{ fontSize:13, color:"#92400E", flex:1, fontWeight:500 }}>{lockoutWarning}</div>
+          <button onClick={() => setLockoutWarning(null)} style={{ background:"none", border:"none", cursor:"pointer", padding:2, color:"#D97706" }}><I.X /></button>
+        </div>
+      )}
       {/* Header */}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         <div>
