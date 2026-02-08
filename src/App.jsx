@@ -3241,12 +3241,12 @@ function DashboardPage({ data, save, nav, onNew }) {
                             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkOutTime)}</span>
                           </div>
                           {/* In Date */}
-                          <div>
-                            <span style={{ fontSize: 11, color: C.textSec, fontVariantNumeric: "tabular-nums" }}>{fmtDate(res.checkIn)}</span>
+                          <div style={{ fontVariantNumeric: "tabular-nums" }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtDate(res.checkIn)}</span>
                           </div>
                           {/* Out Date */}
-                          <div>
-                            <span style={{ fontSize: 11, color: C.textSec, fontVariantNumeric: "tabular-nums" }}>{fmtDate(res.checkOut)}</span>
+                          <div style={{ fontVariantNumeric: "tabular-nums" }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtDate(res.checkOut)}</span>
                           </div>
                           {/* Add-Ons */}
                           <div style={{ position: "relative" }} onClick={e => e.stopPropagation()}
