@@ -313,6 +313,7 @@ const getDogDaycareSize = (dog) => {
 };
 
 const todayStr = () => new Date().toISOString().split("T")[0];
+const formatTime12hr = (t) => { if (!t) return ""; const [h, m] = t.split(":").map(Number); if (isNaN(h)) return t; const suffix = h >= 12 ? "PM" : "AM"; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m || 0).padStart(2, "0")} ${suffix}`; };
 const addDays = (d, n) => { const dt = new Date(d + "T12:00:00"); dt.setDate(dt.getDate() + n); return dt.toISOString().split("T")[0]; };
 const getMonday = (d) => { const dt = new Date(d + "T12:00:00"); const day = dt.getDay(); const diff = day === 0 ? -6 : 1 - day; dt.setDate(dt.getDate() + diff); return dt.toISOString().split("T")[0]; };
 const getWeekDays = (monday) => Array.from({ length: 7 }, (_, i) => addDays(monday, i));
@@ -720,7 +721,7 @@ const DEF_CLOSING_TEMPLATE = [
   {id:"ct13",label:"Set your alarm & lock front doors"},
 ];
 
-const OPS_TYPES = {opening:{key:"openingTemplate",def:DEF_OPENING_TEMPLATE,title:"Opening Checklist"},fe:{key:"feTemplate",def:DEF_FE_TEMPLATE,title:"FE Checklist",showTime:true},be:{key:"beTemplate",def:DEF_BE_TEMPLATE,title:"BE Checklist",showTime:true},closing:{key:"closingTemplate",def:DEF_CLOSING_TEMPLATE,title:"Closing Checklist"},room_cleaning:{title:"Room Cleaning"},pictures:{title:"Picture Checklist"},pp:{title:"PP Checklist"}};
+const OPS_TYPES = {opening:{key:"openingTemplate",def:DEF_OPENING_TEMPLATE,title:"Opening Checklist"},fe:{key:"feTemplate",def:DEF_FE_TEMPLATE,title:"Front-End Checklist",showTime:true},be:{key:"beTemplate",def:DEF_BE_TEMPLATE,title:"Back-End Checklist",showTime:true},closing:{key:"closingTemplate",def:DEF_CLOSING_TEMPLATE,title:"Closing Checklist"},room_cleaning:{title:"Room Cleaning"},pictures:{title:"Picture Checklist"},pp:{title:"Private Play Checklist"}};
 const DAY_NAMES_SHORT=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
 // ─── Operations Hub Catalog ───────────────────────────────────────────────────
@@ -742,9 +743,9 @@ const OPERATIONS_CATALOG = [
   { id:"monthly-deep-clean", label:"Monthly Deep Clean", frequency:"monthly", comingSoon:true },
 ];
 
-function getOpsCardStatus(data, item) {
+function getOpsCardStatus(data, item, date) {
   if (item.comingSoon) return "coming_soon";
-  const td = todayStr();
+  const td = date || todayStr();
   if (item.dataKey === "eodEntries") {
     const entry = (data.eodEntries || []).find(e => e.date === td);
     if (!entry) return "not_started";
@@ -752,34 +753,22 @@ function getOpsCardStatus(data, item) {
     const hasContent = (entry.sections || []).some(s => (s.content || "").trim() !== "" || (s.items || []).some(i => i.checked));
     return hasContent ? "in_progress" : "not_started";
   }
-  // dailyOps checklist items
   const entryId = `ops_${item.typeSub}_${td}`;
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   if (!entry) return "not_started";
   if (entry.locked) return "completed";
-  // items can be an array (template checklists) or an object (room_cleaning, pictures, pp)
   const ei = entry.items;
   if (!ei) return "not_started";
   if (Array.isArray(ei)) {
     return ei.some(i => i.checked) ? "in_progress" : "not_started";
   }
-  // Object-based items: any key with a truthy value means started
   return Object.keys(ei).length > 0 ? "in_progress" : "not_started";
 }
 
-function getOpsProgress(data, item) {
+function getOpsProgress(data, item, date) {
   if (item.comingSoon) return 0;
-  const td = todayStr();
-  if (item.dataKey === "eodEntries") {
-    const entry = (data.eodEntries || []).find(e => e.date === td);
-    if (!entry) return 0;
-    if (entry.locked) return 100;
-    const template = data.eodTemplate || DEF_EOD_TEMPLATE;
-    const total = template.length;
-    if (total === 0) return 0;
-    const filled = (entry.sections || []).filter(s => (s.content || "").trim() !== "" || (s.items || []).some(i => i.checked)).length;
-    return Math.round((filled / total) * 100);
-  }
+  const td = date || todayStr();
+  if (item.dataKey === "eodEntries") return 0; // EOD doesn't show percentage
   const entryId = `ops_${item.typeSub}_${td}`;
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   if (!entry) return 0;
@@ -792,21 +781,71 @@ function getOpsProgress(data, item) {
     const todayItems = template.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
     const total = todayItems.length;
     if (total === 0) return 0;
-    const checked = Array.isArray(entry.items) ? (entry.items || []).filter(i => i.checked).length : 0;
+    const ei = entry.items || {};
+    const checked = isTemplate && !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : Array.isArray(ei) ? ei.filter(i => i.checked).length : 0;
     return Math.round((checked / total) * 100);
   }
-  // Non-template items (room_cleaning, pictures, pp) — items is an object
   const ei = entry.items;
   if (!ei) return 0;
   if (Array.isArray(ei)) {
     const total = ei.length;
-    if (total === 0) return 0;
-    return Math.round((ei.filter(i => i.checked).length / total) * 100);
+    return total === 0 ? 0 : Math.round((ei.filter(i => i.checked).length / total) * 100);
   }
-  // Object-based: for pictures it's { dogId: true/false }, for room_cleaning it's { room: {...} }
-  // Just show that work has started — can't easily compute % without knowing the total
+  // Object-based: pictures={dogId:bool}, room_cleaning={room:{...}}, pp={dogId:{sessions:[...]}}
+  if (item.typeSub === "pictures") {
+    const vals = Object.values(ei);
+    const done = vals.filter(v => v === true).length;
+    return vals.length > 0 ? Math.round((done / vals.length) * 100) : 0;
+  }
   const keys = Object.keys(ei);
   return keys.length > 0 ? 50 : 0;
+}
+
+function getOpsCountLabel(data, item, date) {
+  if (item.comingSoon) return "";
+  const td = date || todayStr();
+  // EOD — just status, no counts
+  if (item.dataKey === "eodEntries") return "";
+  const entryId = `ops_${item.typeSub}_${td}`;
+  const entry = (data.dailyOps || []).find(e => e.id === entryId);
+  const meta = OPS_TYPES[item.typeSub];
+  const isTemplate = meta && !!meta.key;
+  if (isTemplate) {
+    const template = data[meta.key] || meta.def;
+    const dayIdx = new Date(td + "T12:00:00").getDay();
+    const todayItems = template.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
+    const total = todayItems.length;
+    if (!entry) return `0/${total} tasks`;
+    const ei = entry.items || {};
+    const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : Array.isArray(ei) ? ei.filter(i => i.checked).length : 0;
+    return `${checked}/${total} tasks`;
+  }
+  if (item.typeSub === "room_cleaning") {
+    if (!entry || !entry.items) return "0 rooms done";
+    const ei = entry.items;
+    const rooms = Object.values(ei);
+    const refreshes = rooms.filter(r => r && r.refresh).length;
+    const disinfects = rooms.filter(r => r && r.disinfect).length;
+    const parts = [];
+    if (refreshes) parts.push(`${refreshes} refresh${refreshes !== 1 ? "es" : ""}`);
+    if (disinfects) parts.push(`${disinfects} disinfect${disinfects !== 1 ? "s" : ""}`);
+    return parts.length > 0 ? parts.join(", ") : "0 rooms done";
+  }
+  if (item.typeSub === "pictures") {
+    if (!entry || !entry.items) return "0 photos";
+    const ei = entry.items;
+    const done = Object.values(ei).filter(v => v === true).length;
+    const total = Object.keys(ei).length;
+    return `${done}/${total} photos`;
+  }
+  if (item.typeSub === "pp") {
+    if (!entry || !entry.items) return "0 sessions";
+    const ei = entry.items;
+    let sessCount = 0;
+    Object.values(ei).forEach(d => { if (d && d.sessions) d.sessions.forEach(s => { if (s.time || s.urinate || s.defecate) sessCount++; }); });
+    return `${sessCount} session${sessCount !== 1 ? "s" : ""} logged`;
+  }
+  return "";
 }
 
 // ─── Default Field Configs ──────────────────────────────────────────────────
@@ -5262,8 +5301,78 @@ function LodgingCalendarPage({ data, save, nav, onNew }) {
 // ═══════════════════════════════════════════════════════════════════════════
 function OperationsHub({ data, save, nav, profile }) {
   const td = todayStr();
-  const dateLbl = new Date(td + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const [viewDate, setViewDate] = useState(td);
+  const isToday = viewDate === td;
+  const shiftDate = (days) => { const d = new Date(viewDate + "T12:00:00"); d.setDate(d.getDate() + days); setViewDate(d.toISOString().split("T")[0]); };
+  const dateLbl = new Date(viewDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
   const hp = (k) => hasPermission(profile, data, k);
+
+  // Calendar popup
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [calMonth, setCalMonth] = useState(() => new Date(viewDate + "T12:00:00").getMonth());
+  const [calYear, setCalYear] = useState(() => new Date(viewDate + "T12:00:00").getFullYear());
+  useEffect(() => { const d = new Date(viewDate + "T12:00:00"); setCalMonth(d.getMonth()); setCalYear(d.getFullYear()); }, [showCalendar]);
+  const calDays = useMemo(() => { const first = new Date(calYear, calMonth, 1); const startDay = first.getDay(); const dim = new Date(calYear, calMonth + 1, 0).getDate(); const cells = []; for (let i = 0; i < startDay; i++) cells.push(null); for (let d = 1; d <= dim; d++) cells.push(d); return cells; }, [calMonth, calYear]);
+  const calMonthLabel = new Date(calYear, calMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const calPrev = () => { if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); };
+  const calNext = () => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); };
+  const calSelect = (day) => { const m = String(calMonth + 1).padStart(2, "0"); const d = String(day).padStart(2, "0"); setViewDate(`${calYear}-${m}-${d}`); setShowCalendar(false); };
+  const calRef = useRef(null);
+  useEffect(() => { if (!showCalendar) return; const handler = (e) => { if (calRef.current && !calRef.current.contains(e.target)) setShowCalendar(false); }; document.addEventListener("mousedown", handler); return () => document.removeEventListener("mousedown", handler); }, [showCalendar]);
+
+  // Summary analytics
+  const [expandSummary, setExpandSummary] = useState(false);
+  const summaryStats = useMemo(() => {
+    const activeItems = OPERATIONS_CATALOG.filter(c => c.frequency === "daily" && !c.comingSoon);
+    // Today stats
+    const todayCompleted = activeItems.filter(c => getOpsCardStatus(data, c, viewDate) === "completed").length;
+    const todayTotal = activeItems.length;
+    const todayPct = todayTotal > 0 ? Math.round((todayCompleted / todayTotal) * 100) : 0;
+    // Weekly averages (past 7 days)
+    const weeklyByChecklist = {};
+    const lastWeekByChecklist = {};
+    for (let i = 0; i < 14; i++) {
+      const d = addDays(viewDate, -i);
+      activeItems.forEach(item => {
+        const status = getOpsCardStatus(data, item, d);
+        const completed = status === "completed" ? 1 : 0;
+        if (i < 7) {
+          if (!weeklyByChecklist[item.label]) weeklyByChecklist[item.label] = { sum: 0, count: 0 };
+          weeklyByChecklist[item.label].sum += completed;
+          weeklyByChecklist[item.label].count++;
+        } else {
+          if (!lastWeekByChecklist[item.label]) lastWeekByChecklist[item.label] = { sum: 0, count: 0 };
+          lastWeekByChecklist[item.label].sum += completed;
+          lastWeekByChecklist[item.label].count++;
+        }
+      });
+    }
+    // MTD averages
+    const mtdByChecklist = {};
+    const dObj = new Date(viewDate + "T12:00:00");
+    const dayOfMonth = dObj.getDate();
+    for (let i = 0; i < dayOfMonth; i++) {
+      const d = addDays(viewDate, -i);
+      activeItems.forEach(item => {
+        const status = getOpsCardStatus(data, item, d);
+        if (!mtdByChecklist[item.label]) mtdByChecklist[item.label] = { sum: 0, count: 0 };
+        mtdByChecklist[item.label].sum += (status === "completed" ? 1 : 0);
+        mtdByChecklist[item.label].count++;
+      });
+    }
+    // Build per-checklist rows
+    const rows = activeItems.map(item => {
+      const wk = weeklyByChecklist[item.label] || { sum: 0, count: 1 };
+      const lw = lastWeekByChecklist[item.label] || { sum: 0, count: 1 };
+      const mt = mtdByChecklist[item.label] || { sum: 0, count: 1 };
+      const weeklyAvg = Math.round((wk.sum / wk.count) * 100);
+      const lastWeekAvg = Math.round((lw.sum / lw.count) * 100);
+      const mtdAvg = Math.round((mt.sum / mt.count) * 100);
+      const wowDiff = weeklyAvg - lastWeekAvg;
+      return { label: item.label, weeklyAvg, lastWeekAvg, wowDiff, mtdAvg };
+    });
+    return { todayCompleted, todayTotal, todayPct, rows };
+  }, [data, viewDate]);
 
   const groups = [
     { key: "daily", label: "Daily Operations", items: OPERATIONS_CATALOG.filter(c => c.frequency === "daily") },
@@ -5278,33 +5387,78 @@ function OperationsHub({ data, save, nav, profile }) {
     coming_soon: { label: "Coming Soon", bg: "#F3F4F6", color: "#9CA3AF", barColor: "#E5E7EB" },
   };
 
-  // Count daily completion
-  const dailyItems = OPERATIONS_CATALOG.filter(c => c.frequency === "daily" && !c.comingSoon);
-  const dailyCompleted = dailyItems.filter(c => getOpsCardStatus(data, c) === "completed").length;
-  const dailyTotal = dailyItems.length;
+  const nbtn = { border: "none", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", fontWeight: 600, fontSize: 12 };
 
   return (
     <div style={{ padding: "0 8px" }}>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
-        <div>
-          <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Operations</h2>
-          <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>{dateLbl}</div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ fontSize: 13, color: C.textSec }}>
-            Today: <span style={{ fontWeight: 700, color: dailyCompleted === dailyTotal && dailyTotal > 0 ? "#059669" : C.text }}>{dailyCompleted}/{dailyTotal}</span> completed
-          </div>
-          {dailyTotal > 0 && (
-            <div style={{ width: 120, height: 8, borderRadius: 4, background: C.borderLight, overflow: "hidden" }}>
-              <div style={{ width: `${Math.round((dailyCompleted / dailyTotal) * 100)}%`, height: "100%", borderRadius: 4, background: dailyCompleted === dailyTotal ? "#10B981" : "#F59E0B", transition: "width 0.3s" }} />
+      {/* Header with date nav */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+        <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Operations</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
+          <button onClick={() => shiftDate(-1)} style={{ ...nbtn, background: C.surfaceHover, color: C.text }}>‹</button>
+          <button onClick={() => setShowCalendar(v => !v)} style={{ ...nbtn, background: "transparent", color: C.text, minWidth: 220, textAlign: "center", fontSize: 14, fontWeight: 700 }}>{dateLbl}</button>
+          <button onClick={() => shiftDate(1)} style={{ ...nbtn, background: C.surfaceHover, color: C.text }}>›</button>
+          {!isToday && <button onClick={() => setViewDate(td)} style={{ ...nbtn, background: C.pri, color: "#fff" }}>Today</button>}
+          {showCalendar && (
+            <div ref={calRef} style={{ position: "absolute", top: "100%", right: 0, marginTop: 8, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 14, padding: 16, boxShadow: "0 12px 40px rgba(0,0,0,0.12)", zIndex: 100, width: 280 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <button onClick={calPrev} style={{ ...nbtn, background: C.surfaceHover }}>‹</button>
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{calMonthLabel}</span>
+                <button onClick={calNext} style={{ ...nbtn, background: C.surfaceHover }}>›</button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+                {["Su","Mo","Tu","We","Th","Fr","Sa"].map(d => <div key={d} style={{ textAlign: "center", fontSize: 10, fontWeight: 700, color: C.textMut, padding: 4 }}>{d}</div>)}
+                {calDays.map((d, i) => d ? (
+                  <button key={i} onClick={() => calSelect(d)} style={{ border: "none", borderRadius: 6, padding: 6, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", background: `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}` === viewDate ? C.pri : "transparent", color: `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}` === viewDate ? "#fff" : C.text }}>{d}</button>
+                ) : <div key={i} />)}
+              </div>
             </div>
           )}
         </div>
       </div>
 
+      {/* Summary section */}
+      <Card style={{ marginBottom: 20, padding: "14px 20px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }} onClick={() => setExpandSummary(v => !v)}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+              {isToday ? "Today" : dateLbl}: <span style={{ color: summaryStats.todayCompleted === summaryStats.todayTotal && summaryStats.todayTotal > 0 ? "#059669" : C.text }}>{summaryStats.todayCompleted}/{summaryStats.todayTotal}</span> completed ({summaryStats.todayPct}%)
+            </span>
+            <div style={{ width: 100, height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
+              <div style={{ width: `${summaryStats.todayPct}%`, height: "100%", borderRadius: 3, background: summaryStats.todayPct === 100 ? "#10B981" : "#F59E0B", transition: "width 0.3s" }} />
+            </div>
+          </div>
+          <span style={{ fontSize: 12, color: C.textMut, fontWeight: 600 }}>{expandSummary ? "Hide Details" : "View Analytics"}</span>
+        </div>
+        {expandSummary && (
+          <div style={{ marginTop: 14, borderTop: `1px solid ${C.borderLight}`, paddingTop: 14, overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: `2px solid ${C.border}` }}>
+                  <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 700, color: C.textMut, fontSize: 11 }}>CHECKLIST</th>
+                  <th style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: C.textMut, fontSize: 11 }}>7-DAY AVG</th>
+                  <th style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: C.textMut, fontSize: 11 }}>WoW</th>
+                  <th style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: C.textMut, fontSize: 11 }}>MTD AVG</th>
+                  <th style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: C.textMut, fontSize: 11 }}>TREND</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summaryStats.rows.map(row => (
+                  <tr key={row.label} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                    <td style={{ padding: "8px 8px", fontWeight: 600, color: C.text }}>{row.label}</td>
+                    <td style={{ padding: "8px 8px", textAlign: "center", fontWeight: 600, color: row.weeklyAvg >= 80 ? "#059669" : row.weeklyAvg >= 50 ? "#D97706" : "#6B7280" }}>{row.weeklyAvg}%</td>
+                    <td style={{ padding: "8px 8px", textAlign: "center", fontWeight: 700, color: row.wowDiff > 0 ? "#059669" : row.wowDiff < 0 ? "#DC2626" : C.textMut }}>{row.wowDiff > 0 ? "+" : ""}{row.wowDiff}%</td>
+                    <td style={{ padding: "8px 8px", textAlign: "center", fontWeight: 600, color: row.mtdAvg >= 80 ? "#059669" : row.mtdAvg >= 50 ? "#D97706" : "#6B7280" }}>{row.mtdAvg}%</td>
+                    <td style={{ padding: "8px 8px", textAlign: "center", fontSize: 14 }}>{row.wowDiff > 0 ? "↑" : row.wowDiff < 0 ? "↓" : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
       {groups.map(group => {
-        // Filter by permissions for non-comingSoon items
         const visibleItems = group.items.filter(item => item.comingSoon || !item.permission || hp(item.permission));
         if (visibleItems.length === 0) return null;
         return (
@@ -5317,10 +5471,12 @@ function OperationsHub({ data, save, nav, profile }) {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
               {visibleItems.map(item => {
-                const status = getOpsCardStatus(data, item);
-                const progress = getOpsProgress(data, item);
+                const status = getOpsCardStatus(data, item, viewDate);
+                const progress = getOpsProgress(data, item, viewDate);
+                const countLabel = getOpsCountLabel(data, item, viewDate);
                 const sc = statusConfig[status];
                 const isComingSoon = item.comingSoon;
+                const isEod = item.dataKey === "eodEntries";
                 return (
                   <div key={item.id}
                     onClick={() => !isComingSoon && nav(item.routeTo)}
@@ -5337,21 +5493,19 @@ function OperationsHub({ data, save, nav, profile }) {
                   >
                     <div style={{ marginBottom: 10 }}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{item.label}</div>
+                      {countLabel && <div style={{ fontSize: 12, color: C.textSec, marginTop: 3 }}>{countLabel}</div>}
                     </div>
-                    {/* Status badge */}
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
                       <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: sc.bg, color: sc.color, textTransform: "uppercase", letterSpacing: "0.04em" }}>
                         {sc.label}
                       </span>
-                      {!isComingSoon && <span style={{ fontSize: 12, fontWeight: 600, color: sc.color }}>{progress}%</span>}
+                      {!isComingSoon && !isEod && <span style={{ fontSize: 12, fontWeight: 600, color: sc.color }}>{progress}%</span>}
                     </div>
-                    {/* Progress bar */}
-                    {!isComingSoon && (
+                    {!isComingSoon && !isEod && (
                       <div style={{ marginTop: 8, height: 5, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
                         <div style={{ width: `${progress}%`, height: "100%", borderRadius: 3, background: sc.barColor, transition: "width 0.3s" }} />
                       </div>
                     )}
-                    {/* Arrow indicator for clickable cards */}
                     {!isComingSoon && (
                       <div style={{ position: "absolute", top: 18, right: 16, color: C.textMut, fontSize: 16 }}>›</div>
                     )}
@@ -5369,7 +5523,7 @@ function OperationsHub({ data, save, nav, profile }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // DAILY OPERATIONS PAGE
 // ═══════════════════════════════════════════════════════════════════════════
-function DailyOpsPage({ data, save, sub, nav }) {
+function DailyOpsPage({ data, save, sub, nav, profile }) {
   const td = todayStr();
   const [viewDate, setViewDate] = useState(td);
   const dayIdx = new Date(viewDate + "T12:00:00").getDay();
@@ -5416,7 +5570,21 @@ function DailyOpsPage({ data, save, sub, nav }) {
 
   const toggleItem = (key, field, val) => {
     if (isLocked) return;
-    setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val } }));
+    const userName = profile?.full_name || "";
+    // Auto-fill name when checking a checkbox
+    if (field === "checked" && val === true) {
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, initials: userName } }));
+    } else if (field === "refresh" && val === true) {
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, refreshBy: userName } }));
+    } else if (field === "disinfect" && val === true) {
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, disinfectBy: userName } }));
+    } else if (field === "asNeeded" && val === true) {
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededBy: userName } }));
+    } else if (field === "asNeededDone" && val === true) {
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededDoneBy: userName } }));
+    } else {
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val } }));
+    }
     setDirty(true);
   };
 
@@ -5426,7 +5594,7 @@ function DailyOpsPage({ data, save, sub, nav }) {
     const isFirstSave = idx < 0;
     const prevHistory = isFirstSave ? [] : (entries[idx].history || []);
     const newHistory = [...prevHistory, { ts: new Date().toISOString(), action: isFirstSave ? "created" : "saved" }];
-    const entry = { id: entryId, type: sub, date: viewDate, locked: false, items, completedBy, history: newHistory };
+    const entry = { id: entryId, type: sub, date: viewDate, locked: false, items, history: newHistory };
     if (idx >= 0) entries[idx] = entry; else entries.push(entry);
     await save({ ...data, dailyOps: entries });
     setDirty(false);
@@ -5439,7 +5607,7 @@ function DailyOpsPage({ data, save, sub, nav }) {
       const newLocked = !entries[idx].locked;
       entries[idx] = { ...entries[idx], locked: newLocked, history: [...(entries[idx].history || []), { ts: new Date().toISOString(), action: newLocked ? "locked" : "unlocked" }] };
     } else {
-      entries.push({ id: entryId, type: sub, date: viewDate, locked: true, items, completedBy, history: [{ ts: new Date().toISOString(), action: "locked" }] });
+      entries.push({ id: entryId, type: sub, date: viewDate, locked: true, items, history: [{ ts: new Date().toISOString(), action: "locked" }] });
     }
     await save({ ...data, dailyOps: entries });
   };
@@ -5507,12 +5675,12 @@ function DailyOpsPage({ data, save, sub, nav }) {
       {/* Items */}
       <Card>
         <div style={{ display: "flex", flexDirection: "column" }}>
-          {meta.showTime && <div style={{ display: "flex", padding: "8px 14px", borderBottom: `2px solid ${C.border}`, background: C.surfaceHover }}>
+          <div style={{ display: "flex", padding: "8px 14px", borderBottom: `2px solid ${C.border}`, background: C.surfaceHover }}>
             <div style={{ width: 36 }} />
-            <div style={{ width: 60, fontSize: 11, fontWeight: 700, color: C.textMut }}>TIME</div>
+            {meta.showTime && <div style={{ width: 70, fontSize: 11, fontWeight: 700, color: C.textMut }}>TIME</div>}
             <div style={{ flex: 1, fontSize: 11, fontWeight: 700, color: C.textMut }}>TASK</div>
-            <div style={{ width: 70, fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>INITIALS</div>
-          </div>}
+            <div style={{ width: 140, fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>COMPLETED BY</div>
+          </div>
           {todayItems.map((t, i) => {
             const it = items[t.id] || {};
             const isWeekly = t.dayOfWeek != null;
@@ -5521,24 +5689,19 @@ function DailyOpsPage({ data, save, sub, nav }) {
                 <div style={{ width: 36 }}>
                   <input type="checkbox" checked={!!it.checked} disabled={isLocked} onChange={e => toggleItem(t.id, "checked", e.target.checked)} style={{ width: 18, height: 18, cursor: isLocked ? "default" : "pointer", accentColor: C.pri }} />
                 </div>
-                {meta.showTime && <div style={{ width: 60, fontSize: 12, fontWeight: 600, color: t.time ? C.pri : C.textMut, fontVariantNumeric: "tabular-nums" }}>{t.time || (isWeekly ? DAY_NAMES_SHORT[t.dayOfWeek] : "")}</div>}
+                {meta.showTime && <div style={{ width: 70, fontSize: 12, fontWeight: 600, color: t.time ? C.pri : C.textMut, fontVariantNumeric: "tabular-nums" }}>{t.time ? formatTime12hr(t.time) : (isWeekly ? DAY_NAMES_SHORT[t.dayOfWeek] : "")}</div>}
                 <div style={{ flex: 1, fontSize: 13, color: it.checked ? C.textMut : C.text, textDecoration: it.checked ? "line-through" : "none", lineHeight: 1.4 }}>
                   {t.label}
                   {isWeekly && <Badge color="accent" size="sm" style={{ marginLeft: 6 }}>{DAY_NAMES_SHORT[t.dayOfWeek]}</Badge>}
                 </div>
-                <div style={{ width: 70 }}>
-                  <input type="text" value={it.initials || ""} disabled={isLocked} onChange={e => toggleItem(t.id, "initials", e.target.value)} placeholder="—" maxLength={5} style={{ width: "100%", textAlign: "center", border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 0", fontSize: 12, fontWeight: 600, fontFamily: "inherit", background: isLocked ? C.surfaceHover : "#fff", color: C.text }} />
+                <div style={{ width: 140, textAlign: "center", fontSize: 12, fontWeight: 500, color: it.initials ? C.textSec : C.textMut }}>
+                  {it.initials || "—"}
                 </div>
               </div>
             );
           })}
         </div>
       </Card>
-      {/* Completed by */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>Completed by:</span>
-        <input type="text" value={completedBy} disabled={isLocked} onChange={e => { setCompletedBy(e.target.value); setDirty(true); }} placeholder="Employee name / initials" style={{ flex: 1, maxWidth: 300, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", fontSize: 13, fontFamily: "inherit", background: isLocked ? C.surfaceHover : "#fff" }} />
-      </div>
     </div>
   );
 
@@ -5577,20 +5740,29 @@ function DailyOpsPage({ data, save, sub, nav }) {
                         {aDog && <div style={{ fontSize: 10, color: C.textMut }}>{aDog}</div>}
                       </div>
                       <div style={{ textAlign: "center" }}>
-                        {needsRefresh ? <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                          <input type="checkbox" checked={!!ri.refresh} disabled={isLocked} onChange={e => toggleItem(rm, "refresh", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.suc }} />
-                          <span style={{ fontSize: 11, fontWeight: 700, color: C.pri }}>Required</span>
+                        {needsRefresh ? <div>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                            <input type="checkbox" checked={!!ri.refresh} disabled={isLocked} onChange={e => toggleItem(rm, "refresh", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.suc }} />
+                            <span style={{ fontSize: 11, fontWeight: 700, color: C.pri }}>Required</span>
+                          </div>
+                          {ri.refresh && ri.refreshBy && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.refreshBy}</div>}
                         </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
                       </div>
                       <div style={{ textAlign: "center" }}>
-                        {needsDisinfect ? (canDisinfect ? <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                          <input type="checkbox" checked={!!ri.disinfect} disabled={isLocked} onChange={e => toggleItem(rm, "disinfect", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.dan }} />
-                          <span style={{ fontSize: 11, fontWeight: 700, color: C.dan }}>Required</span>
+                        {needsDisinfect ? (canDisinfect ? <div>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                            <input type="checkbox" checked={!!ri.disinfect} disabled={isLocked} onChange={e => toggleItem(rm, "disinfect", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.dan }} />
+                            <span style={{ fontSize: 11, fontWeight: 700, color: C.dan }}>Required</span>
+                          </div>
+                          {ri.disinfect && ri.disinfectBy && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.disinfectBy}</div>}
                         </div> : <span style={{ fontSize: 11, fontWeight: 600, color: C.textMut, fontStyle: "italic" }}>Awaiting checkout</span>) : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
                       </div>
-                      <div style={{ textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                        <input type="checkbox" checked={!!ri.asNeeded} disabled={isLocked} onChange={e => toggleItem(rm, "asNeeded", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.acc }} />
-                        {ri.asNeeded && <input type="checkbox" checked={!!ri.asNeededDone} disabled={isLocked} onChange={e => toggleItem(rm, "asNeededDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.suc }} title="Mark done" />}
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                          <input type="checkbox" checked={!!ri.asNeeded} disabled={isLocked} onChange={e => toggleItem(rm, "asNeeded", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.acc }} />
+                          {ri.asNeeded && <input type="checkbox" checked={!!ri.asNeededDone} disabled={isLocked} onChange={e => toggleItem(rm, "asNeededDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.suc }} title="Mark done" />}
+                        </div>
+                        {ri.asNeeded && ri.asNeededBy && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.asNeededBy}</div>}
                       </div>
                     </div>
                   );
@@ -5685,19 +5857,23 @@ function DailyOpsPage({ data, save, sub, nav }) {
                     <tr key={r.id} style={{ borderBottom: ri < dogs.length - 1 ? `1px solid ${C.border}` : "none" }}>
                       <td style={{ padding: "8px 12px", fontWeight: 700, color: C.text }}>{d ? d.fields.name : "?"}</td>
                       <td style={{ padding: "8px 12px", color: C.textSec, fontSize: 11 }}>{ownerName(r.clientId)}</td>
-                      {ses.map((s, si) => (
+                      {ses.map((s, si) => {
+                        const ppName = profile?.full_name || "";
+                        return (
                         <React.Fragment key={si}>
                           <td style={{ padding: "4px 2px", borderLeft: `1px solid ${C.border}` }}>
-                            <input type="text" value={s.time} disabled={isLocked} onChange={e => { const nSes = [...ses]; nSes[si] = { ...nSes[si], time: e.target.value }; setItems(prev => ({ ...prev, [r.dogId]: { sessions: nSes } })); setDirty(true); }} placeholder="—" style={{ width: 52, textAlign: "center", border: `1px solid ${C.border}`, borderRadius: 4, padding: "3px 0", fontSize: 11, fontFamily: "inherit", background: isLocked ? C.surfaceHover : "#fff" }} />
+                            <input type="text" value={s.time} disabled={isLocked} onChange={e => { const nSes = [...ses]; nSes[si] = { ...nSes[si], time: e.target.value, completedBy: ppName }; setItems(prev => ({ ...prev, [r.dogId]: { sessions: nSes } })); setDirty(true); }} placeholder="—" style={{ width: 52, textAlign: "center", border: `1px solid ${C.border}`, borderRadius: 4, padding: "3px 0", fontSize: 11, fontFamily: "inherit", background: isLocked ? C.surfaceHover : "#fff" }} />
+                            {s.completedBy && s.time && <div style={{ fontSize: 9, color: C.textMut, textAlign: "center", marginTop: 1 }}>{s.completedBy}</div>}
                           </td>
                           <td style={{ padding: "4px 2px", textAlign: "center" }}>
-                            <input type="checkbox" checked={!!s.urinate} disabled={isLocked} onChange={e => { const nSes = [...ses]; nSes[si] = { ...nSes[si], urinate: e.target.checked }; setItems(prev => ({ ...prev, [r.dogId]: { sessions: nSes } })); setDirty(true); }} style={{ width: 16, height: 16, accentColor: C.pri }} />
+                            <input type="checkbox" checked={!!s.urinate} disabled={isLocked} onChange={e => { const nSes = [...ses]; nSes[si] = { ...nSes[si], urinate: e.target.checked, completedBy: ppName }; setItems(prev => ({ ...prev, [r.dogId]: { sessions: nSes } })); setDirty(true); }} style={{ width: 16, height: 16, accentColor: C.pri }} />
                           </td>
                           <td style={{ padding: "4px 2px", textAlign: "center" }}>
-                            <input type="checkbox" checked={!!s.defecate} disabled={isLocked} onChange={e => { const nSes = [...ses]; nSes[si] = { ...nSes[si], defecate: e.target.checked }; setItems(prev => ({ ...prev, [r.dogId]: { sessions: nSes } })); setDirty(true); }} style={{ width: 16, height: 16, accentColor: C.acc }} />
+                            <input type="checkbox" checked={!!s.defecate} disabled={isLocked} onChange={e => { const nSes = [...ses]; nSes[si] = { ...nSes[si], defecate: e.target.checked, completedBy: ppName }; setItems(prev => ({ ...prev, [r.dogId]: { sessions: nSes } })); setDirty(true); }} style={{ width: 16, height: 16, accentColor: C.acc }} />
                           </td>
                         </React.Fragment>
-                      ))}
+                        );
+                      })}
                     </tr>
                   );
                 })}
@@ -10665,7 +10841,7 @@ export default function App() {
   function renderPage() {
     if (isOpsPage) {
       const oc = opsChildren.find(c => c.id === page);
-      return <DailyOpsPage data={data} save={save} sub={oc ? oc.sub : "opening"} nav={nav}/>;
+      return <DailyOpsPage data={data} save={save} sub={oc ? oc.sub : "opening"} nav={nav} profile={profile}/>;
     }
     // Permission-gated routing
     const hp = (k) => hasPermission(profile, data, k);
