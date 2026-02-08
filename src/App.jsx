@@ -445,6 +445,124 @@ const TAG_COLORS = [
   { bg: "#E5E7EB", text: "#374151", name: "Gray" },
 ];
 
+// ─── Permissions System ──────────────────────────────────────────────────────
+const PERMISSION_CATEGORIES = [
+  { key:"pages", label:"Page Access", permissions:[
+    {key:"view_dashboard",label:"Dashboard",desc:"View daily operations overview"},
+    {key:"view_calendar",label:"Lodging Calendar",desc:"View and interact with reservation calendar"},
+    {key:"view_clients",label:"Clients",desc:"Search and view client list"},
+    {key:"view_client_detail",label:"Client Detail",desc:"View individual client profiles"},
+    {key:"view_dog_detail",label:"Dog Detail",desc:"View individual dog profiles"},
+    {key:"view_crm",label:"CRM",desc:"Access tours and evaluations tracking"},
+    {key:"view_messages",label:"Messages",desc:"Access SMS message center"},
+    {key:"view_payments",label:"Payments",desc:"View payment ledger and history"},
+    {key:"view_daily_ops",label:"Daily Ops",desc:"View daily operation checklists"},
+    {key:"view_eod",label:"End-of-Day",desc:"View end-of-day reports"},
+    {key:"view_ai",label:"AI Command",desc:"Access AI chat interface"},
+    {key:"view_settings",label:"Settings",desc:"Access settings pages"},
+  ]},
+  { key:"clients", label:"Client Management", permissions:[
+    {key:"create_client",label:"Create Client",desc:"Add new client profiles"},
+    {key:"edit_client",label:"Edit Client",desc:"Modify client information and agreements"},
+  ]},
+  { key:"dogs", label:"Dog Management", permissions:[
+    {key:"create_dog",label:"Create Dog",desc:"Add new dog profiles"},
+    {key:"edit_dog",label:"Edit Dog Profile",desc:"Modify dog basic info (name, breed, weight, etc.)"},
+    {key:"edit_vaccines",label:"Edit Vaccines",desc:"Update vaccination records and expiration dates"},
+    {key:"edit_feeding",label:"Edit Feeding",desc:"Modify feeding schedules and instructions"},
+    {key:"edit_medications",label:"Edit Medications",desc:"Manage medication records"},
+    {key:"edit_dog_tags",label:"Edit Dog Tags",desc:"Add/remove tags on dog profiles"},
+  ]},
+  { key:"reservations", label:"Reservation Management", permissions:[
+    {key:"create_reservation",label:"Create Reservation",desc:"Book new boarding, daycare, tour, or eval reservations"},
+    {key:"check_in",label:"Check In",desc:"Process reservation check-ins"},
+    {key:"check_out",label:"Check Out",desc:"Process reservation check-outs"},
+    {key:"cancel_reservation",label:"Cancel Reservation",desc:"Cancel existing bookings"},
+  ]},
+  { key:"payments", label:"Payment Management", permissions:[
+    {key:"view_payment_history",label:"View Payment History",desc:"See payment records and transaction details"},
+    {key:"collect_payment",label:"Collect Payment",desc:"Process deposits and payments"},
+    {key:"issue_refund",label:"Issue Refund",desc:"Process refunds on payments"},
+  ]},
+  { key:"operations", label:"Daily Operations", permissions:[
+    {key:"edit_daily_ops",label:"Edit Checklists",desc:"Fill out daily operation checklists"},
+    {key:"lock_daily_ops",label:"Lock Checklists",desc:"Lock/unlock completed checklists"},
+    {key:"edit_eod",label:"Edit EOD Reports",desc:"Write and modify end-of-day reports"},
+    {key:"lock_eod",label:"Lock EOD Reports",desc:"Lock/unlock completed EOD reports"},
+  ]},
+  { key:"crm", label:"CRM & Evaluations", permissions:[
+    {key:"edit_tours",label:"Edit Tours",desc:"Modify tour CRM records and follow-ups"},
+    {key:"edit_evaluations",label:"Edit Evaluations",desc:"Modify evaluation results and follow-ups"},
+  ]},
+  { key:"messages", label:"Messaging", permissions:[
+    {key:"view_message_threads",label:"View Messages",desc:"Read SMS message threads"},
+    {key:"send_messages",label:"Send Messages",desc:"Send SMS messages to clients"},
+  ]},
+  { key:"settings", label:"Settings & Administration", permissions:[
+    {key:"manage_team",label:"Manage Team",desc:"Invite, remove, and manage team members"},
+    {key:"manage_roles",label:"Manage Roles",desc:"Create and edit roles and permissions"},
+    {key:"edit_pricing",label:"Edit Pricing",desc:"Configure room rates, fees, and discounts"},
+    {key:"edit_facility",label:"Edit Facility",desc:"Configure daycare square footage and capacity"},
+    {key:"edit_rooms",label:"Edit Rooms",desc:"Manage room inventory"},
+    {key:"edit_fields",label:"Edit Custom Fields",desc:"Customize client and dog profile fields"},
+    {key:"edit_tags_config",label:"Edit Tag Settings",desc:"Manage dog tag definitions"},
+    {key:"edit_vaccines_config",label:"Edit Vaccine Settings",desc:"Configure required vaccines and policies"},
+    {key:"edit_agreements",label:"Edit Agreements",desc:"Manage boarding/daycare agreements"},
+    {key:"edit_eod_template",label:"Edit EOD Template",desc:"Configure end-of-day report template"},
+    {key:"edit_ops_template",label:"Edit Ops Templates",desc:"Configure daily ops checklist templates"},
+    {key:"edit_dropdowns",label:"Edit Dropdown Lists",desc:"Customize breed, food, medication dropdowns"},
+    {key:"reset_data",label:"Reset Data",desc:"Reset all data back to demo dataset"},
+  ]},
+  { key:"ai", label:"AI Features", permissions:[
+    {key:"use_ai",label:"Use AI Command",desc:"Access and use the AI chat assistant"},
+  ]},
+];
+
+const ALL_PERM_KEYS = PERMISSION_CATEGORIES.flatMap(c => c.permissions.map(p => p.key));
+
+function buildPerms(overrides = {}) {
+  const p = {};
+  ALL_PERM_KEYS.forEach(k => { p[k] = overrides[k] !== undefined ? overrides[k] : false; });
+  return p;
+}
+
+const DEFAULT_ROLES = [
+  {
+    id: "role_owner", name: "Owner", builtIn: true, color: "accent",
+    description: "Full access to all features and settings",
+    permissions: buildPerms(Object.fromEntries(ALL_PERM_KEYS.map(k => [k, true]))),
+  },
+  {
+    id: "role_manager", name: "Manager", builtIn: true, color: "primary",
+    description: "Full operational access with limited admin",
+    permissions: buildPerms({
+      view_dashboard:true,view_calendar:true,view_clients:true,view_client_detail:true,view_dog_detail:true,
+      view_crm:true,view_messages:true,view_payments:true,view_daily_ops:true,view_eod:true,view_ai:true,view_settings:true,
+      create_client:true,edit_client:true,create_dog:true,edit_dog:true,edit_vaccines:true,edit_feeding:true,edit_medications:true,edit_dog_tags:true,
+      create_reservation:true,check_in:true,check_out:true,cancel_reservation:true,
+      view_payment_history:true,collect_payment:true,issue_refund:true,
+      edit_daily_ops:true,lock_daily_ops:true,edit_eod:true,lock_eod:true,
+      edit_tours:true,edit_evaluations:true,
+      view_message_threads:true,send_messages:true,
+      edit_pricing:true,edit_fields:true,edit_tags_config:true,edit_vaccines_config:true,edit_agreements:true,
+      edit_eod_template:true,edit_ops_template:true,edit_dropdowns:true,use_ai:true,
+      manage_team:false,manage_roles:false,edit_facility:false,edit_rooms:false,reset_data:false,
+    }),
+  },
+  {
+    id: "role_staff", name: "Front Desk", builtIn: true, color: "default",
+    description: "Customer-facing operations and basic tasks",
+    permissions: buildPerms({
+      view_dashboard:true,view_calendar:true,view_clients:true,view_client_detail:true,view_dog_detail:true,
+      view_messages:true,view_payments:true,
+      create_client:true,edit_client:true,create_dog:true,
+      create_reservation:true,check_in:true,check_out:true,
+      view_payment_history:true,collect_payment:true,
+      view_message_threads:true,send_messages:true,
+    }),
+  },
+];
+
 // ─── EOD Template ─────────────────────────────────────────────────────────────
 const DEF_EOD_TEMPLATE = [
   { id:"sales", title:"Sales", emoji:"💵", type:"text", defaultContent:"Today's Goal:\nWTD:\nMTD:\nYTD:" },
@@ -1146,6 +1264,8 @@ function generateDemoData() {
       { id: gid(), name: "Thank You", body: "Thank you for choosing K9 Resorts, {clientName}! We loved having {dogName} stay with us. We'd appreciate a review if you have a moment. See you next time!", active: true },
     ],
     payments: generateDemoPayments(clients, reservations),
+    pendingInvites: [],
+    roles: DEFAULT_ROLES,
   };
 }
 
@@ -1230,6 +1350,43 @@ function Modal({title,onClose,children,wide}) {
   useEffect(() => { const h = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }; document.addEventListener("keydown", h); return () => document.removeEventListener("keydown", h); }, [onClose]);
   return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:20}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:18,width:"100%",maxWidth:wide?720:520,maxHeight:"90vh",overflow:"auto",boxShadow:"0 24px 48px rgba(0,0,0,0.15)"}}><div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"20px 24px",borderBottom:`1px solid ${C.borderLight}`}}><h3 style={{margin:0,fontSize:18,fontWeight:700,color:C.text}}>{title}</h3><button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,display:"flex",padding:4,borderRadius:8}}><I.X/></button></div><div style={{padding:24}}>{children}</div></div></div>;
 }
+
+// ─── Permission Helper ──────────────────────────────────────────────────────
+const LEGACY_ROLE_MAP = { owner:"role_owner", manager:"role_manager", staff:"role_staff" };
+
+function hasPermission(profile, data, permKey) {
+  if (!profile || !data) return true; // graceful fallback during loading
+  if (!data.roles || data.roles.length === 0) return true; // no roles system yet
+  // Map legacy string role → role ID
+  let roleId = profile.role;
+  if (LEGACY_ROLE_MAP[roleId]) roleId = LEGACY_ROLE_MAP[roleId];
+  const role = data.roles.find(r => r.id === roleId);
+  if (!role) return true; // unknown role = allow (graceful)
+  return role.permissions[permKey] === true;
+}
+
+function getRoleName(profile, data) {
+  if (!profile || !data || !data.roles) return profile?.role || "staff";
+  let roleId = profile.role;
+  if (LEGACY_ROLE_MAP[roleId]) roleId = LEGACY_ROLE_MAP[roleId];
+  const role = data.roles.find(r => r.id === roleId);
+  return role ? role.name : (profile.role || "Staff");
+}
+
+function getRoleColor(profile, data) {
+  if (!profile || !data || !data.roles) return "default";
+  let roleId = profile.role;
+  if (LEGACY_ROLE_MAP[roleId]) roleId = LEGACY_ROLE_MAP[roleId];
+  const role = data.roles.find(r => r.id === roleId);
+  return role ? role.color : "default";
+}
+
+// NAV_PERM_MAP: maps sidebar nav IDs to required view permissions
+const NAV_PERM_MAP = {
+  dashboard:"view_dashboard", reservations:"view_calendar", clients:"view_clients",
+  crm:"view_crm", messages:"view_messages", payments:"view_payments",
+  "daily-ops":"view_daily_ops", eod:"view_eod", ai:"view_ai", settings:"view_settings",
+};
 
 // ─── Itemized Receipt ───────────────────────────────────────────────────────
 function ItemizedReceipt({ pricingResult }) {
@@ -7126,6 +7283,259 @@ function DailyOpsTemplateTab({ data, save }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ROLES & PERMISSIONS TAB (used inside Settings)
+// ═══════════════════════════════════════════════════════════════════════════
+function RolesPermissionsTab({ data, save, profile }) {
+  const [editingId, setEditingId] = useState(null);
+  const [editPerms, setEditPerms] = useState({});
+  const [editName, setEditName] = useState("");
+  const [editColor, setEditColor] = useState("default");
+  const [editDesc, setEditDesc] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState("default");
+  const [newDesc, setNewDesc] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const roles = data.roles || DEFAULT_ROLES;
+  const totalPerms = ALL_PERM_KEYS.length;
+
+  const BADGE_COLORS = [
+    { value:"default", label:"Gray" }, { value:"primary", label:"Blue" },
+    { value:"success", label:"Green" }, { value:"warning", label:"Amber" },
+    { value:"danger", label:"Red" }, { value:"info", label:"Sky" },
+    { value:"accent", label:"Bronze" },
+  ];
+
+  const openEdit = (role) => {
+    setEditingId(role.id);
+    setEditPerms({ ...role.permissions });
+    setEditName(role.name);
+    setEditColor(role.color || "default");
+    setEditDesc(role.description || "");
+  };
+
+  const saveEdit = async () => {
+    const updated = roles.map(r => r.id === editingId ? { ...r, name: editName, color: editColor, description: editDesc, permissions: editPerms } : r);
+    await save({ ...data, roles: updated });
+    setEditingId(null);
+  };
+
+  const createRole = async () => {
+    if (!newName.trim()) return;
+    const role = {
+      id: "role_" + gid(), name: newName.trim(), builtIn: false,
+      color: newColor, description: newDesc.trim(),
+      permissions: buildPerms({}), // all false by default
+    };
+    await save({ ...data, roles: [...roles, role] });
+    setNewName(""); setNewColor("default"); setNewDesc(""); setShowCreate(false);
+  };
+
+  const duplicateRole = async (role) => {
+    const dup = { ...role, id: "role_" + gid(), name: role.name + " (Copy)", builtIn: false, permissions: { ...role.permissions } };
+    await save({ ...data, roles: [...roles, dup] });
+  };
+
+  const deleteRole = async (roleId) => {
+    await save({ ...data, roles: roles.filter(r => r.id !== roleId) });
+    setConfirmDelete(null);
+  };
+
+  const togglePerm = (key) => setEditPerms(p => ({ ...p, [key]: !p[key] }));
+
+  const toggleCategory = (catKey) => {
+    const cat = PERMISSION_CATEGORIES.find(c => c.key === catKey);
+    if (!cat) return;
+    const allOn = cat.permissions.every(p => editPerms[p.key]);
+    setEditPerms(p => {
+      const np = { ...p };
+      cat.permissions.forEach(perm => { np[perm.key] = !allOn; });
+      return np;
+    });
+  };
+
+  const enabledCount = (perms) => ALL_PERM_KEYS.filter(k => perms[k]).length;
+
+  // ── EDIT VIEW ──
+  if (editingId) {
+    const editingRole = roles.find(r => r.id === editingId);
+    return (
+      <div>
+        <button onClick={() => setEditingId(null)} style={{ display:"flex", alignItems:"center", gap:6, border:"none", background:"none", cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:600, color:C.pri, padding:"6px 0", marginBottom:16 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+          Back to Roles
+        </button>
+
+        {/* Role Info */}
+        <Card style={{ padding:"24px 28px", marginBottom:20 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 180px", gap:16, alignItems:"flex-end" }}>
+            <Inp label="Role Name" value={editName} onChange={v => setEditName(v)} placeholder="e.g. Kennel Tech" />
+            <Inp label="Description" value={editDesc} onChange={v => setEditDesc(v)} placeholder="Brief description" />
+            <div>
+              <div style={{ fontSize:11, fontWeight:600, color:C.textSec, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.03em" }}>Badge Color</div>
+              <div style={{ display:"flex", gap:4 }}>
+                {BADGE_COLORS.map(bc => {
+                  const cm = {default:{bg:C.surfaceHover,text:C.textSec},primary:{bg:C.priLt,text:C.pri},success:{bg:C.sucLt,text:C.suc},warning:{bg:C.warnLt,text:C.warn},danger:{bg:C.danLt,text:C.dan},info:{bg:C.infoLt,text:C.info},accent:{bg:C.accLt,text:C.accDk}};
+                  const s = cm[bc.value] || cm.default;
+                  return (
+                    <button key={bc.value} onClick={() => setEditColor(bc.value)} title={bc.label}
+                      style={{ width:28, height:28, borderRadius:8, background:s.bg, border:`2.5px solid ${editColor === bc.value ? s.text : "transparent"}`, cursor:"pointer", transition:"all 0.15s" }} />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          <div style={{ marginTop:16, display:"flex", gap:10 }}>
+            <Btn onClick={saveEdit}>Save Changes</Btn>
+            <Btn variant="ghost" onClick={() => setEditingId(null)}>Cancel</Btn>
+            <div style={{ flex:1 }} />
+            <div style={{ fontSize:13, color:C.textSec, display:"flex", alignItems:"center", gap:6 }}>
+              <Badge color={editColor}>{enabledCount(editPerms)}/{totalPerms}</Badge> permissions enabled
+            </div>
+          </div>
+        </Card>
+
+        {/* Permission Categories */}
+        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+          {PERMISSION_CATEGORIES.map(cat => {
+            const catEnabled = cat.permissions.filter(p => editPerms[p.key]).length;
+            const allOn = catEnabled === cat.permissions.length;
+            return (
+              <Card key={cat.key} style={{ padding:0, overflow:"hidden" }}>
+                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"16px 24px", background:C.bg, borderBottom:`1px solid ${C.border}` }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                    <div style={{ fontSize:14, fontWeight:700, color:C.text }}>{cat.label}</div>
+                    <Badge color={allOn ? "success" : catEnabled > 0 ? "primary" : "default"}>{catEnabled}/{cat.permissions.length}</Badge>
+                  </div>
+                  <button onClick={() => toggleCategory(cat.key)}
+                    style={{ border:"none", background:"none", cursor:"pointer", fontFamily:"inherit", fontSize:12, fontWeight:600, color:C.pri }}>
+                    {allOn ? "Deselect All" : "Select All"}
+                  </button>
+                </div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, padding:"16px 24px" }}>
+                  {cat.permissions.map(perm => {
+                    const on = editPerms[perm.key];
+                    return (
+                      <label key={perm.key} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"12px 14px", borderRadius:10, border:`1.5px solid ${on ? C.pri+"40" : C.border}`, background:on ? C.priLt : C.surface, cursor:"pointer", transition:"all 0.15s" }}>
+                        <div style={{ width:20, height:20, borderRadius:6, border:`2px solid ${on ? C.pri : C.border}`, background:on ? C.pri : "#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:1 }}>
+                          {on && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                        </div>
+                        <input type="checkbox" checked={on || false} onChange={() => togglePerm(perm.key)} style={{ display:"none" }} />
+                        <div style={{ flex:1 }}>
+                          <div style={{ fontSize:13, fontWeight:600, color:C.text }}>{perm.label}</div>
+                          <div style={{ fontSize:11, color:C.textSec, marginTop:2, lineHeight:1.4 }}>{perm.desc}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+
+        {/* Bottom Save Bar */}
+        <div style={{ position:"sticky", bottom:0, padding:"16px 0", marginTop:20 }}>
+          <Card style={{ padding:"14px 24px", display:"flex", alignItems:"center", gap:12, boxShadow:"0 -4px 20px rgba(0,0,0,0.08)" }}>
+            <Btn onClick={saveEdit}>Save Changes</Btn>
+            <Btn variant="ghost" onClick={() => setEditingId(null)}>Cancel</Btn>
+            <div style={{ flex:1, textAlign:"right", fontSize:13, color:C.textSec }}>{enabledCount(editPerms)} of {totalPerms} permissions enabled</div>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // ── LIST VIEW ──
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
+      {/* Header */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+        <div>
+          <div style={{ fontSize:16, fontWeight:700, color:C.text }}>Roles & Permissions</div>
+          <div style={{ fontSize:13, color:C.textSec, marginTop:2 }}>Define what each team member role can access and do.</div>
+        </div>
+        {hasPermission(profile, data, "manage_roles") && (
+          <Btn size="sm" onClick={() => setShowCreate(!showCreate)} icon={showCreate ? <I.X /> : <I.Plus />}>
+            {showCreate ? "Cancel" : "Create Role"}
+          </Btn>
+        )}
+      </div>
+
+      {/* Create New Role Form */}
+      {showCreate && (
+        <Card style={{ padding:"20px 24px", background:C.priLt, border:`1.5px solid ${C.pri}20` }}>
+          <div style={{ fontSize:14, fontWeight:700, color:C.text, marginBottom:12 }}>New Custom Role</div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+            <Inp label="Role Name" value={newName} onChange={v => setNewName(v)} placeholder="e.g. Kennel Tech" />
+            <Inp label="Description" value={newDesc} onChange={v => setNewDesc(v)} placeholder="Brief description of this role" />
+          </div>
+          <div style={{ display:"flex", alignItems:"flex-end", gap:12 }}>
+            <div>
+              <div style={{ fontSize:11, fontWeight:600, color:C.textSec, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.03em" }}>Badge Color</div>
+              <div style={{ display:"flex", gap:4 }}>
+                {BADGE_COLORS.map(bc => {
+                  const cm = {default:{bg:C.surfaceHover,text:C.textSec},primary:{bg:C.priLt,text:C.pri},success:{bg:C.sucLt,text:C.suc},warning:{bg:C.warnLt,text:C.warn},danger:{bg:C.danLt,text:C.dan},info:{bg:C.infoLt,text:C.info},accent:{bg:C.accLt,text:C.accDk}};
+                  const s = cm[bc.value] || cm.default;
+                  return (
+                    <button key={bc.value} onClick={() => setNewColor(bc.value)} title={bc.label}
+                      style={{ width:28, height:28, borderRadius:8, background:s.bg, border:`2.5px solid ${newColor === bc.value ? s.text : "transparent"}`, cursor:"pointer" }} />
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ flex:1 }} />
+            <Btn size="sm" onClick={createRole}>Create Role</Btn>
+          </div>
+          <div style={{ fontSize:11, color:C.textMut, marginTop:10 }}>New roles start with all permissions disabled. Click "Edit" after creating to configure permissions.</div>
+        </Card>
+      )}
+
+      {/* Roles List */}
+      {roles.map(role => {
+        const ec = enabledCount(role.permissions);
+        const pct = Math.round((ec / totalPerms) * 100);
+        return (
+          <Card key={role.id} style={{ padding:"20px 24px" }}>
+            <div style={{ display:"flex", alignItems:"center", gap:16 }}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
+                  <div style={{ fontSize:15, fontWeight:700, color:C.text }}>{role.name}</div>
+                  <Badge color={role.color}>{role.color === "accent" ? "Bronze" : role.color === "primary" ? "Blue" : role.color === "default" ? "Gray" : role.color === "success" ? "Green" : role.color === "warning" ? "Amber" : role.color === "danger" ? "Red" : "Sky"}</Badge>
+                  {role.builtIn && <Badge>Built-in</Badge>}
+                </div>
+                {role.description && <div style={{ fontSize:13, color:C.textSec, marginBottom:8 }}>{role.description}</div>}
+                {/* Permission bar */}
+                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                  <div style={{ flex:1, maxWidth:200, height:6, borderRadius:3, background:C.surfaceHover, overflow:"hidden" }}>
+                    <div style={{ width: pct + "%", height:"100%", borderRadius:3, background: pct === 100 ? C.suc : pct > 50 ? C.pri : pct > 0 ? C.warn : C.border, transition:"width 0.3s" }} />
+                  </div>
+                  <div style={{ fontSize:12, fontWeight:600, color:C.textSec, whiteSpace:"nowrap" }}>{ec}/{totalPerms} permissions</div>
+                </div>
+              </div>
+              {hasPermission(profile, data, "manage_roles") && (
+                <div style={{ display:"flex", gap:6, flexShrink:0 }}>
+                  <Btn size="sm" variant="secondary" onClick={() => openEdit(role)}>Edit</Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => duplicateRole(role)}>Duplicate</Btn>
+                  {!role.builtIn && (
+                    confirmDelete === role.id ? (
+                      <Btn size="sm" variant="danger" onClick={() => deleteRole(role.id)}>Confirm Delete</Btn>
+                    ) : (
+                      <Btn size="sm" variant="ghost" onClick={() => setConfirmDelete(role.id)} style={{ color:C.dan }}>Delete</Btn>
+                    )
+                  )}
+                </div>
+              )}
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // TEAM MANAGEMENT TAB (used inside Settings)
 // ═══════════════════════════════════════════════════════════════════════════
 function TeamTab({ profile, data, save }) {
@@ -7133,7 +7543,7 @@ function TeamTab({ profile, data, save }) {
   const [teamLoading, setTeamLoading] = useState(true);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteName, setInviteName] = useState("");
-  const [inviteRole, setInviteRole] = useState("staff");
+  const [inviteRole, setInviteRole] = useState("role_staff");
   const [inviteMsg, setInviteMsg] = useState("");
   const [confirmRemove, setConfirmRemove] = useState(null);
 
@@ -7178,7 +7588,7 @@ function TeamTab({ profile, data, save }) {
       invitedAt: new Date().toISOString(),
     };
     await save({ ...data, pendingInvites: [...pendingInvites, inv] });
-    setInviteEmail(""); setInviteName(""); setInviteRole("staff");
+    setInviteEmail(""); setInviteName(""); setInviteRole("role_staff");
     setInviteMsg("Invitation created! Tell " + (inv.name || inv.email) + " to sign up at k9operations.com");
     setTimeout(() => setInviteMsg(""), 6000);
   };
@@ -7186,8 +7596,6 @@ function TeamTab({ profile, data, save }) {
   const removeInvite = async (invId) => {
     await save({ ...data, pendingInvites: pendingInvites.filter(i => i.id !== invId) });
   };
-
-  const roleBadgeColor = (r) => r === "owner" ? "accent" : r === "manager" ? "primary" : "default";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -7220,12 +7628,14 @@ function TeamTab({ profile, data, save }) {
                   {isOwner && m.id !== profile.id ? (
                     <select value={m.role || "staff"} onChange={e => updateRole(m.id, e.target.value)}
                       style={{ padding: "5px 8px", borderRadius: 6, border: "1.5px solid " + C.border, fontSize: 12, fontWeight: 600, color: C.text, background: C.surface, cursor: "pointer", fontFamily: "inherit" }}>
-                      <option value="owner">Owner</option>
-                      <option value="manager">Manager</option>
-                      <option value="staff">Staff</option>
+                      {(data.roles || DEFAULT_ROLES).map(r => (
+                        <option key={r.id} value={r.id}>{r.name}</option>
+                      ))}
+                      {/* Legacy fallbacks if profile.role is a plain string */}
+                      {!((data.roles || []).some(r => r.id === m.role)) && m.role && <option value={m.role}>{m.role}</option>}
                     </select>
                   ) : (
-                    <Badge color={roleBadgeColor(m.role)}>{m.role || "staff"}</Badge>
+                    <Badge color={getRoleColor(m, data)}>{getRoleName(m, data)}</Badge>
                   )}
                 </div>
                 <div style={{ textAlign: "center" }}>
@@ -7262,7 +7672,7 @@ function TeamTab({ profile, data, save }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 130px auto", gap: 12, alignItems: "flex-end" }}>
             <Inp label="Email" type="email" value={inviteEmail} onChange={v => setInviteEmail(v)} placeholder="staff@k9resorts.com" />
             <Inp label="Full Name" value={inviteName} onChange={v => setInviteName(v)} placeholder="Jane Smith" />
-            <Inp label="Role" type="select" value={inviteRole} onChange={v => setInviteRole(v)} options={["staff", "manager", "owner"]} />
+            <Inp label="Role" type="select" value={inviteRole} onChange={v => setInviteRole(v)} options={(data.roles || DEFAULT_ROLES).map(r => ({ value: r.id, label: r.name }))} />
             <Btn onClick={addInvite}>Invite</Btn>
           </div>
           {inviteMsg && (
@@ -7389,17 +7799,32 @@ function SettingsPage({ data, save, profile }) {
     ]},
     { label: "Administration", items: [
       { id: "team", label: "Team Management", desc: "View, invite, and manage team members and roles", keywords: "team users staff members invite roles owner manager admin" },
+      { id: "roles", label: "Roles & Permissions", desc: "Create custom roles and configure granular permissions", keywords: "roles permissions access control rbac custom staff owner manager security" },
     ]},
     { label: null, items: [
       { id: "hotkeys", label: "Hotkeys", desc: "Enable or disable keyboard shortcuts and shortcut hints", keywords: "hotkeys keyboard shortcuts keys bindings hints" },
       { id: "reset", label: "Demo Data", desc: "Reset all data back to the demo dataset", keywords: "reset demo data restore" },
     ]},
   ];
-  const settingsCategories = settingsSections.flatMap(s => s.items);
+  // Map settings tab IDs → required permission keys
+  const SETTINGS_PERM_MAP = {
+    client:"edit_fields",dog:"edit_fields",tags:"edit_tags_config",vaccines:"edit_vaccines_config",
+    agreements:"edit_agreements",pricing:"edit_pricing",dropdowns:"edit_dropdowns",
+    eod:"edit_eod_template","daily-ops":"edit_ops_template",
+    facility:"edit_facility",rooms:"edit_rooms",policies:"edit_vaccines_config",
+    team:"manage_team",roles:"manage_roles",reset:"reset_data",
+  };
+  const hp = (k) => hasPermission(profile, data, k);
+  // Filter settings items by permission
+  const permFilteredSections = settingsSections.map(sec => ({
+    ...sec, items: sec.items.filter(item => { const perm = SETTINGS_PERM_MAP[item.id]; return !perm || hp(perm); })
+  })).filter(sec => sec.items.length > 0);
+
+  const settingsCategories = permFilteredSections.flatMap(s => s.items);
   const sq = settingsSearch.trim().toLowerCase();
   const filteredSections = sq
     ? [{ label: null, items: settingsCategories.filter(c => c.label.toLowerCase().includes(sq) || c.desc.toLowerCase().includes(sq) || c.keywords.includes(sq)) }]
-    : settingsSections;
+    : permFilteredSections;
 
   // If a tab is selected, show the content; otherwise show the list
   if (tab) {
@@ -7416,6 +7841,8 @@ function SettingsPage({ data, save, profile }) {
 
         {tab === "team" ? (
           <TeamTab profile={profile} data={data} save={save} />
+        ) : tab === "roles" ? (
+          <RolesPermissionsTab data={data} save={save} profile={profile} />
         ) : tab === "hotkeys" ? (() => {
           const hk = data.hotkeySettings || { enabled: true, showHints: true };
           const toggle = async (key) => await save({ ...data, hotkeySettings: { ...hk, [key]: !hk[key] } });
@@ -9700,6 +10127,8 @@ export default function App() {
   // If no data yet in Supabase, initialize with DEMO data
   const data = rawData || (loading ? null : DEMO);
   useEffect(() => { if (!loading && !rawData && locationId) { save(DEMO); } }, [loading, rawData, locationId]);
+  // Auto-initialize roles system for existing data that predates the permissions feature
+  useEffect(() => { if (data && !data.roles) { save({ ...data, roles: DEFAULT_ROLES }); } }, [data?.roles]);
   const [page, setPage] = useState("dashboard");
   const [params, setParams] = useState({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -9869,23 +10298,26 @@ export default function App() {
       const oc = opsChildren.find(c => c.id === page);
       return <DailyOpsPage data={data} save={save} sub={oc ? oc.sub : "opening"} nav={nav}/>;
     }
+    // Permission-gated routing
+    const hp = (k) => hasPermission(profile, data, k);
+    const denied = <div style={{padding:"60px 40px",textAlign:"center"}}><div style={{fontSize:36,marginBottom:12}}>🔒</div><div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:6}}>Access Restricted</div><div style={{fontSize:14,color:C.textSec}}>You don't have permission to view this page. Contact your admin to update your role.</div></div>;
     switch(page) {
-      case "dashboard": return <DashboardPage data={data} save={save} nav={nav} onNew={openNew}/>;
-      case "clients": return <ClientsPage data={data} nav={nav}/>;
-      case "client-detail": return <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav}/>;
-      case "new-client": return <NewClientPage data={data} save={save} nav={nav} prefill={params.prefill} addGlobalToast={addGlobalToast}/>;
-      case "dog-detail": return <DogDetailPage data={data} save={save} clientId={params.clientId} dogId={params.dogId} nav={nav}/>;
-      case "new-dog": return <NewDogPage data={data} save={save} clientId={params.clientId} nav={nav}/>;
-      case "reservations": return <LodgingCalendarPage data={data} save={save} nav={nav} onNew={openNew}/>;
-      case "new-reservation": return <NewReservationPage data={data} save={save} preClientId={params.clientId} nav={nav}/>;
+      case "dashboard": return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
+      case "clients": return hp("view_clients") ? <ClientsPage data={data} nav={nav} profile={profile}/> : denied;
+      case "client-detail": return hp("view_client_detail") ? <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile}/> : denied;
+      case "new-client": return hp("create_client") ? <NewClientPage data={data} save={save} nav={nav} prefill={params.prefill} addGlobalToast={addGlobalToast}/> : denied;
+      case "dog-detail": return hp("view_dog_detail") ? <DogDetailPage data={data} save={save} clientId={params.clientId} dogId={params.dogId} nav={nav} profile={profile}/> : denied;
+      case "new-dog": return hp("create_dog") ? <NewDogPage data={data} save={save} clientId={params.clientId} nav={nav}/> : denied;
+      case "reservations": return hp("view_calendar") ? <LodgingCalendarPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/> : denied;
+      case "new-reservation": return hp("create_reservation") ? <NewReservationPage data={data} save={save} preClientId={params.clientId} nav={nav}/> : denied;
       case "unified-new": return <UnifiedNewPage data={data} save={save} nav={nav} prefill={params.prefill}/>;
-      case "eod": return <EODPage data={data} save={save} nav={nav}/>;
-      case "crm": return <CRMPage data={data} save={save} nav={nav}/>;
-      case "messages": return <MessagesPage data={data} save={save} nav={nav}/>;
-      case "payments": return <PaymentsPage data={data} save={save} nav={nav}/>;
-      case "ai": return <AIPage data={data} save={save} nav={nav}/>;
-      case "settings": return <SettingsPage data={data} save={save} profile={profile}/>;
-      default: return <DashboardPage data={data} save={save} nav={nav} onNew={openNew}/>;
+      case "eod": return hp("view_eod") ? <EODPage data={data} save={save} nav={nav} profile={profile}/> : denied;
+      case "crm": return hp("view_crm") ? <CRMPage data={data} save={save} nav={nav} profile={profile}/> : denied;
+      case "messages": return hp("view_messages") ? <MessagesPage data={data} save={save} nav={nav} profile={profile}/> : denied;
+      case "payments": return hp("view_payments") ? <PaymentsPage data={data} save={save} nav={nav} profile={profile}/> : denied;
+      case "ai": return hp("use_ai") ? <AIPage data={data} save={save} nav={nav}/> : denied;
+      case "settings": return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile}/> : denied;
+      default: return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
     }
   }
 
@@ -9918,7 +10350,7 @@ export default function App() {
             <div key={si}>
               {sec.label && sidebarOpen && <div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}
               {!sec.label && si > 0 && <div style={{margin:sidebarOpen?"10px 14px":"10px 4px",height:1,background:"rgba(175,141,84,0.12)"}}/>}
-              {sec.items.map(item=>{const act=activeNav===item.id;const hasKids=!!item.children;
+              {sec.items.filter(item => { const perm = NAV_PERM_MAP[item.id]; return !perm || hasPermission(profile, data, perm); }).map(item=>{const act=activeNav===item.id;const hasKids=!!item.children;
                 return(<div key={item.id}>
                   <button onMouseEnter={!sidebarOpen?(e)=>{const r=e.currentTarget.getBoundingClientRect();setNavTooltip({label:item.label,top:r.top+r.height/2,left:r.right+10});}:undefined} onMouseLeave={!sidebarOpen?()=>setNavTooltip(null):undefined} onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:sidebarOpen?(item.indent?"8px 14px 8px 28px":"10px 14px"):"10px 0",justifyContent:sidebarOpen?"flex-start":"center",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.5)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap",position:"relative"}}>
                     <span style={{flexShrink:0}}>{item.icon}</span>{sidebarOpen&&<><span style={{flex:1,textAlign:"left"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'Inter',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
