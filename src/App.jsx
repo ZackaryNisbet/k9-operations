@@ -554,9 +554,10 @@ function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime
       const dogName = fields.name || "Dog";
       // Bath
       if (fields.bath_type && fields.bath_type !== "None") {
-        const bathRate = (p.bathPrices || {})[fields.bath_type] || 0;
+        const bathKey = `${fields.bath_type} Bath`;
+        const bathRate = (p.addOns || {})[bathKey] ?? (p.bathPrices || {})[fields.bath_type] ?? 0;
         if (bathRate > 0) {
-          lines.push({ label: `${fields.bath_type} Bath — ${dogName}`, rate: bathRate, qty: 1, total: bathRate, isAddon: true });
+          lines.push({ label: `${bathKey} — ${dogName}`, rate: bathRate, qty: 1, total: bathRate, isAddon: true });
           subtotal += bathRate;
         }
       }
@@ -1194,8 +1195,6 @@ const DEF_PRICING = {
   dayboardingRate: 49,
   evaluationFee: 25,
   tourFee: 0,
-  // Add-on pricing
-  bathPrices: { "Standard": 25, "Hypo": 35, "Medicated": 45, "Whitening": 40 },
   medicationAdminFee: 5, // per dose per day
   specialFeedingFee: 8, // per day (resort-provided food)
   // Food type per-serving pricing
@@ -1210,13 +1209,22 @@ const DEF_PRICING = {
     "Bagged": 3,
     "Unbagged": 5,
   },
-  // General add-ons (per stay)
+  // All add-ons (per stay) — includes bathing, food handling, meds, extras
   addOns: {
-    "Dog Bath": 30,
+    "Standard Bath": 30,
+    "Hypo Bath": 30,
+    "Medicated Bath": 30,
+    "Whitening Bath": 30,
+    "Fresh N' Clean Bath": 30,
+    "Food From Home (Bagged)": 3,
+    "Food From Home (Unbagged)": 5,
+    "Medication (Bagged)": 3,
+    "Medication (Unbagged)": 5,
     "Evian Spring Water": 4,
     "Upgraded Dog Bed": 12,
     "Extra Personal Playtime": 15,
     "Gourmet Doggie Ice Cream": 4,
+    "Lunch": 8,
   },
   // Discount rules
   multiDogDiscount: 20, // % off 2nd dog same room same owner
@@ -2830,7 +2838,7 @@ function DashboardPage({ data, save, nav, onNew }) {
     ]},
   ];
 
-  const grid = "140px 1fr 78px minmax(80px,0.6fr) 72px 72px 82px 82px minmax(90px,0.7fr) 70px";
+  const grid = "130px 1fr 74px minmax(100px,140px) 68px 68px 78px 78px minmax(70px,120px) 64px";
   const [addOnPopup, setAddOnPopup] = useState(null); // { resId, anchorRect }
   const addOnPopupRef = useRef(null);
   useEffect(() => {
@@ -3198,7 +3206,7 @@ function DashboardPage({ data, save, nav, onNew }) {
                       const snLabel = dog ? fixedLabel(dog) : "";
                       const dogDetails = [age, weight ? `${weight}lbs` : null, snLabel].filter(Boolean).join(" · ");
                       return (
-                        <div key={res.id} onClick={() => setBoardingPreviewId(res.id)} style={{ display: "grid", gridTemplateColumns: "1fr 78px minmax(80px,0.6fr) 72px 72px 82px 82px minmax(90px,0.7fr) 70px", alignItems: "center", minHeight: 40, cursor: "pointer" }}>
+                        <div key={res.id} onClick={() => setBoardingPreviewId(res.id)} style={{ display: "grid", gridTemplateColumns: "1fr 74px minmax(100px,140px) 68px 68px 78px 78px minmax(70px,120px) 64px", alignItems: "center", minHeight: 40, cursor: "pointer" }}>
                           {/* Dog info */}
                           <div style={{ minWidth: 0 }} onClick={(e) => { e.stopPropagation(); if (dog) nav("dog-detail", { clientId: res.clientId, dogId: res.dogId }); }}
                             onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
@@ -3221,8 +3229,8 @@ function DashboardPage({ data, save, nav, onNew }) {
                             <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{typeLabel(res.type)}</span>
                           </div>
                           {/* Lodging */}
-                          <div>
-                            {(res.type === "boarding" || res.type === "dayboarding") && res.roomType && <><div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{res.roomType}</div>{res.room && <div style={{ fontSize: 11, color: C.textSec }}>{res.room}</div>}</>}
+                          <div style={{ minWidth: 0, overflow: "hidden" }}>
+                            {(res.type === "boarding" || res.type === "dayboarding") && res.roomType && <><div style={{ fontSize: 11, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{res.roomType}</div>{res.room && <div style={{ fontSize: 10, color: C.textSec }}>{res.room}</div>}</>}
                           </div>
                           {/* In Time */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
@@ -6172,20 +6180,19 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
                       </div>
                     </div>
                     {/* Add-Ons */}
-                    {type==="boarding"&&(
+                    {type!=="tour"&&(
                       <div style={{marginTop:10}}>
                         <button onClick={()=>setExpandedAddOns(prev=>({...prev,[did]:!prev[did]}))} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.pri,fontSize:12,fontWeight:600,padding:0,fontFamily:"inherit"}}>
                           <I.Plus/> {expandedAddOns[did]?"Hide Add-Ons":"Add Add-Ons"}
                         </button>
                         {expandedAddOns[did]&&(
                           <div style={{marginTop:8,padding:"12px 16px",borderRadius:8,border:`1px solid ${C.borderLight}`,background:C.surface}}>
-                            <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:8}}>Bathing</div>
-                            <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center"}}>
-                              {(BATH_OPTS).map(bt=>{
-                                const price=(data.pricing||DEF_PRICING).bathPrices?.[bt]||0;
-                                const selected=(dogAddOns[did]?.bath_type)===bt;
-                                return <button key={bt} onClick={()=>setDogAddOns(prev=>({...prev,[did]:{...prev[did],bath_type:selected?"":bt}}))} style={{padding:"8px 12px",borderRadius:8,border:`1.5px solid ${selected?C.pri:C.border}`,background:selected?C.priLt:C.bg,color:selected?C.pri:C.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
-                                  <span>{bt}</span><span style={{color:C.textSec,fontWeight:400}}>${price.toFixed(2)}</span>
+                            <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:8}}>Add-Ons</div>
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"stretch"}}>
+                              {Object.entries((data.pricing||DEF_PRICING).addOns||{}).map(([addon,price])=>{
+                                const selected=(dogAddOns[did]?.selectedAddOns||[]).includes(addon);
+                                return <button key={addon} onClick={()=>setDogAddOns(prev=>{const curr=prev[did]?.selectedAddOns||[];const next=curr.includes(addon)?curr.filter(a=>a!==addon):[...curr,addon];return{...prev,[did]:{...prev[did],selectedAddOns:next}};})} style={{padding:"8px 12px",borderRadius:8,border:`1.5px solid ${selected?C.pri:C.border}`,background:selected?C.priLt:C.bg,color:selected?C.pri:C.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,textAlign:"left"}}>
+                                  <span>{addon}</span><span style={{color:C.textSec,fontWeight:400,whiteSpace:"nowrap"}}>${Number(price).toFixed(2)}</span>
                                 </button>;
                               })}
                             </div>
@@ -9008,8 +9015,7 @@ function PricingTab({ data, save }) {
     </div>
   );
 
-  const bathTypes = data.bathTypeOptions || DEF_BATH_TYPE_OPTIONS;
-  const bPrices = p.bathPrices || {};
+
 
   return (
     <div>
@@ -9041,12 +9047,6 @@ function PricingTab({ data, save }) {
         {rateRow("Tour", "tourFee", p.tourFee, "0")}
       </Card>
 
-      {/* Bath Pricing */}
-      <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
-        {sectionTitle("Bath Pricing", "Price per bath by type. Bath types can be managed in the Dropdown Lists tab.")}
-        {bathTypes.map(bt => rateRow(bt, `bathPrices.${bt}`, bPrices[bt], "0"))}
-      </Card>
-
       {/* Food Type Pricing (per serving) */}
       <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
         {sectionTitle("Food Pricing (Per Serving)", "Charge per feeding for each food type. AM/PM feeding is auto-calculated based on check-in/check-out times.")}
@@ -9065,9 +9065,9 @@ function PricingTab({ data, save }) {
         })}
       </Card>
 
-      {/* General Add-Ons */}
+      {/* Add-Ons */}
       <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
-        {sectionTitle("Add-Ons (Per Stay)", "Optional services added to any reservation type. Pricing is per stay.")}
+        {sectionTitle("Add-Ons", "All available add-ons including baths, food handling, medications, and extras. Pricing is per stay.")}
         {Object.keys(p.addOns || DEF_PRICING.addOns).map(addon =>
           rateRow(addon, `addOns.${addon}`, (p.addOns || {})[addon], "0")
         )}
@@ -12798,7 +12798,7 @@ export default function App() {
 
       {/* Main */}
       <div className="main-content" style={{flex:1,overflow:"auto",padding:"28px 32px",scrollbarGutter:"stable"}}>
-        <div style={{maxWidth:1100,margin:"0 auto"}}>
+        <div style={{maxWidth: page === "home" ? 1440 : 1100, margin:"0 auto", transition:"max-width 0.2s"}}>
           {navStack.length > 1 && (
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:16,fontSize:13,flexWrap:"wrap"}}>
               {navStack.map((entry, i) => (
