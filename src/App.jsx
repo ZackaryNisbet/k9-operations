@@ -5286,7 +5286,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
           {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Boarding drop-off hours are from 9 AM – 5:30 PM, 7 days a week.</div></div>}
           {type==="boarding"&&<div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} required/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{errors.checkOut&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkOut}</div>}</div>}
           {type==="boarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
-          {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Boarding pick-up hours start at 9 AM. Check-out time is 12:30 PM. Extended checkout to 5:30 PM available 7 days a week for a half-day daycare fee ({fmtMoney((data.pricing||DEF_PRICING).daycareRates?.halfDay||30)}).</div></div>}
+          {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Boarding pick-up hours start at 9 AM. Check-out time is 12:30 PM. Extended checkout to 5:30 PM available 7 days a week for a half-day daycare fee (${`$${((data.pricing||DEF_PRICING).daycareRates?.halfDay||30).toFixed(2)}`}).</div></div>}
           {type!=="boarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
         </div>
 
@@ -5712,7 +5712,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
                                 const price=(data.pricing||DEF_PRICING).bathPrices?.[bt]||0;
                                 const selected=(dogAddOns[did]?.bath_type)===bt;
                                 return <button key={bt} onClick={()=>setDogAddOns(prev=>({...prev,[did]:{...prev[did],bath_type:selected?"":bt}}))} style={{padding:"8px 12px",borderRadius:8,border:`1.5px solid ${selected?C.pri:C.border}`,background:selected?C.priLt:C.bg,color:selected?C.pri:C.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
-                                  <span>{bt}</span><span style={{color:C.textSec,fontWeight:400}}>{fmtMoney(price)}</span>
+                                  <span>{bt}</span><span style={{color:C.textSec,fontWeight:400}}>${price.toFixed(2)}</span>
                                 </button>;
                               })}
                             </div>
