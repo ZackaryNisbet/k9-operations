@@ -3226,11 +3226,11 @@ function DashboardPage({ data, save, nav, onNew }) {
                           </div>
                           {/* Service */}
                           <div>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{typeLabel(res.type)}</span>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{typeLabel(res.type)}</span>
                           </div>
                           {/* Lodging */}
                           <div style={{ minWidth: 0, overflow: "hidden" }}>
-                            {(res.type === "boarding" || res.type === "dayboarding") && res.roomType && <><div style={{ fontSize: 12, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{res.roomType}</div>{res.room && <div style={{ fontSize: 11, color: C.textSec }}>{res.room}</div>}</>}
+                            {(res.type === "boarding" || res.type === "dayboarding") && res.roomType && <><div style={{ fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{res.roomType}</div>{res.room && <div style={{ fontSize: 11, color: C.textSec }}>{res.room}</div>}</>}
                           </div>
                           {/* In Date */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
