@@ -3664,7 +3664,7 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
     return (
       <div style={{ maxWidth: 800, margin: "0 auto" }}>
         <button onClick={() => nav("dashboard")} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "8px 0", marginBottom: 16, fontFamily: "inherit" }}>
-          <I.ChevronLeft size={16}/> Dashboard
+          <I.Back size={16}/> Dashboard
         </button>
         <Card style={{ padding: "24px 28px", marginBottom: 20 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
@@ -3727,7 +3727,7 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
   return (
     <div style={{ maxWidth: 800, margin: "0 auto" }}>
       <button onClick={() => nav("dashboard")} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "8px 0", marginBottom: 16, fontFamily: "inherit" }}>
-        <I.ChevronLeft size={16}/> Dashboard
+        <I.Back size={16}/> Dashboard
       </button>
 
       {/* Header card */}
