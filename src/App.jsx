@@ -2838,7 +2838,7 @@ function DashboardPage({ data, save, nav, onNew }) {
     ]},
   ];
 
-  const grid = "130px 1fr 74px minmax(100px,140px) 68px 68px 78px 78px minmax(70px,120px) 64px";
+  const grid = "130px minmax(160px,1.2fr) 74px minmax(120px,1fr) 68px 68px 78px 78px minmax(70px,120px) 64px";
   const [addOnPopup, setAddOnPopup] = useState(null); // { resId, anchorRect }
   const addOnPopupRef = useRef(null);
   useEffect(() => {
@@ -3206,7 +3206,7 @@ function DashboardPage({ data, save, nav, onNew }) {
                       const snLabel = dog ? fixedLabel(dog) : "";
                       const dogDetails = [age, weight ? `${weight}lbs` : null, snLabel].filter(Boolean).join(" · ");
                       return (
-                        <div key={res.id} onClick={() => setBoardingPreviewId(res.id)} style={{ display: "grid", gridTemplateColumns: "1fr 74px minmax(100px,140px) 68px 68px 78px 78px minmax(70px,120px) 64px", alignItems: "center", minHeight: 40, cursor: "pointer" }}>
+                        <div key={res.id} onClick={() => setBoardingPreviewId(res.id)} style={{ display: "grid", gridTemplateColumns: "minmax(160px,1.2fr) 74px minmax(120px,1fr) 68px 68px 78px 78px minmax(70px,120px) 64px", alignItems: "center", minHeight: 40, cursor: "pointer" }}>
                           {/* Dog info */}
                           <div style={{ minWidth: 0 }} onClick={(e) => { e.stopPropagation(); if (dog) nav("dog-detail", { clientId: res.clientId, dogId: res.dogId }); }}
                             onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
@@ -3230,7 +3230,7 @@ function DashboardPage({ data, save, nav, onNew }) {
                           </div>
                           {/* Lodging */}
                           <div style={{ minWidth: 0, overflow: "hidden" }}>
-                            {(res.type === "boarding" || res.type === "dayboarding") && res.roomType && <><div style={{ fontSize: 11, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{res.roomType}</div>{res.room && <div style={{ fontSize: 10, color: C.textSec }}>{res.room}</div>}</>}
+                            {(res.type === "boarding" || res.type === "dayboarding") && res.roomType && <><div style={{ fontSize: 12, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{res.roomType}</div>{res.room && <div style={{ fontSize: 11, color: C.textSec }}>{res.room}</div>}</>}
                           </div>
                           {/* In Time */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
