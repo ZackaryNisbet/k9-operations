@@ -723,6 +723,80 @@ const DEF_CLOSING_TEMPLATE = [
 const OPS_TYPES = {opening:{key:"openingTemplate",def:DEF_OPENING_TEMPLATE,title:"Opening Checklist"},fe:{key:"feTemplate",def:DEF_FE_TEMPLATE,title:"FE Checklist",showTime:true},be:{key:"beTemplate",def:DEF_BE_TEMPLATE,title:"BE Checklist",showTime:true},closing:{key:"closingTemplate",def:DEF_CLOSING_TEMPLATE,title:"Closing Checklist"},room_cleaning:{title:"Room Cleaning"},pictures:{title:"Picture Checklist"},pp:{title:"PP Checklist"}};
 const DAY_NAMES_SHORT=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
+// ─── Operations Hub Catalog ───────────────────────────────────────────────────
+const OPERATIONS_CATALOG = [
+  // Daily items (route to existing pages)
+  { id:"ops-opening", label:"Opening Checklist", subtitle:"Start-of-day prep", emoji:"🌅", frequency:"daily", dataKey:"dailyOps", typeSub:"opening", routeTo:"ops-opening", permission:"view_daily_ops" },
+  { id:"ops-fe", label:"FE Checklist", subtitle:"Front-end tasks", emoji:"🖥️", frequency:"daily", dataKey:"dailyOps", typeSub:"fe", routeTo:"ops-fe", permission:"view_daily_ops" },
+  { id:"ops-be", label:"BE Checklist", subtitle:"Back-end tasks", emoji:"🔧", frequency:"daily", dataKey:"dailyOps", typeSub:"be", routeTo:"ops-be", permission:"view_daily_ops" },
+  { id:"ops-rooms", label:"Room Cleaning", subtitle:"Room inspections", emoji:"🛏️", frequency:"daily", dataKey:"dailyOps", typeSub:"room_cleaning", routeTo:"ops-rooms", permission:"view_daily_ops" },
+  { id:"ops-pictures", label:"Pictures", subtitle:"Photo checklist", emoji:"📸", frequency:"daily", dataKey:"dailyOps", typeSub:"pictures", routeTo:"ops-pictures", permission:"view_daily_ops" },
+  { id:"ops-pp", label:"PP Checklist", subtitle:"Private play tasks", emoji:"🐾", frequency:"daily", dataKey:"dailyOps", typeSub:"pp", routeTo:"ops-pp", permission:"view_daily_ops" },
+  { id:"ops-closing", label:"Closing Checklist", subtitle:"End-of-day lockup", emoji:"🌙", frequency:"daily", dataKey:"dailyOps", typeSub:"closing", routeTo:"ops-closing", permission:"view_daily_ops" },
+  { id:"eod", label:"EOD Report", subtitle:"End of day summary", emoji:"📋", frequency:"daily", dataKey:"eodEntries", typeSub:null, routeTo:"eod", permission:"view_eod" },
+  // Weekly placeholders
+  { id:"weekly-inventory", label:"Weekly Inventory", subtitle:"Supplies & stock check", emoji:"📦", frequency:"weekly", comingSoon:true },
+  { id:"weekly-maintenance", label:"Weekly Maintenance", subtitle:"Equipment & facility", emoji:"🔩", frequency:"weekly", comingSoon:true },
+  // Monthly placeholders
+  { id:"monthly-safety", label:"Monthly Safety Audit", subtitle:"Safety & compliance", emoji:"🛡️", frequency:"monthly", comingSoon:true },
+  { id:"monthly-deep-clean", label:"Monthly Deep Clean", subtitle:"Full facility deep clean", emoji:"✨", frequency:"monthly", comingSoon:true },
+];
+
+function getOpsCardStatus(data, item) {
+  if (item.comingSoon) return "coming_soon";
+  const td = todayStr();
+  if (item.dataKey === "eodEntries") {
+    const entry = (data.eodEntries || []).find(e => e.date === td);
+    if (!entry) return "not_started";
+    if (entry.locked) return "completed";
+    const hasContent = (entry.sections || []).some(s => (s.content || "").trim() !== "" || (s.items || []).some(i => i.checked));
+    return hasContent ? "in_progress" : "not_started";
+  }
+  // dailyOps checklist items
+  const entryId = `ops_${item.typeSub}_${td}`;
+  const entry = (data.dailyOps || []).find(e => e.id === entryId);
+  if (!entry) return "not_started";
+  if (entry.locked) return "completed";
+  const checkedCount = (entry.items || []).filter(i => i.checked).length;
+  if (checkedCount === 0) return "not_started";
+  return "in_progress";
+}
+
+function getOpsProgress(data, item) {
+  if (item.comingSoon) return 0;
+  const td = todayStr();
+  if (item.dataKey === "eodEntries") {
+    const entry = (data.eodEntries || []).find(e => e.date === td);
+    if (!entry) return 0;
+    if (entry.locked) return 100;
+    const template = data.eodTemplate || DEF_EOD_TEMPLATE;
+    const total = template.length;
+    if (total === 0) return 0;
+    const filled = (entry.sections || []).filter(s => (s.content || "").trim() !== "" || (s.items || []).some(i => i.checked)).length;
+    return Math.round((filled / total) * 100);
+  }
+  const entryId = `ops_${item.typeSub}_${td}`;
+  const entry = (data.dailyOps || []).find(e => e.id === entryId);
+  if (!entry) return 0;
+  if (entry.locked) return 100;
+  const meta = OPS_TYPES[item.typeSub];
+  const isTemplate = meta && !!meta.key;
+  if (isTemplate) {
+    const template = data[meta.key] || meta.def;
+    const dayIdx = new Date(td + "T12:00:00").getDay();
+    const todayItems = template.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
+    const total = todayItems.length;
+    if (total === 0) return 0;
+    const checked = (entry.items || []).filter(i => i.checked).length;
+    return Math.round((checked / total) * 100);
+  }
+  // Non-template items (room_cleaning, pictures, pp)
+  const total = (entry.items || []).length;
+  if (total === 0) return 0;
+  const checked = (entry.items || []).filter(i => i.checked).length;
+  return Math.round((checked / total) * 100);
+}
+
 // ─── Default Field Configs ──────────────────────────────────────────────────
 const DEF_CLIENT_FIELDS = [
   { id:"phone",name:"Phone Number",type:"tel",required:true,isKey:true,locked:true,order:0 },
@@ -1385,7 +1459,7 @@ function getRoleColor(profile, data) {
 const NAV_PERM_MAP = {
   dashboard:"view_dashboard", reservations:"view_calendar", clients:"view_clients",
   crm:"view_crm", messages:"view_messages", payments:"view_payments",
-  "daily-ops":"view_daily_ops", eod:"view_eod", ai:"view_ai", settings:"view_settings",
+  operations:"view_daily_ops", "daily-ops":"view_daily_ops", eod:"view_eod", ai:"view_ai", settings:"view_settings",
 };
 
 // ─── Itemized Receipt ───────────────────────────────────────────────────────
@@ -5172,6 +5246,121 @@ function LodgingCalendarPage({ data, save, nav, onNew }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// OPERATIONS HUB
+// ═══════════════════════════════════════════════════════════════════════════
+function OperationsHub({ data, save, nav, profile }) {
+  const td = todayStr();
+  const dateLbl = new Date(td + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+  const hp = (k) => hasPermission(profile, data, k);
+
+  const groups = [
+    { key: "daily", label: "Daily Operations", emoji: "☀️", items: OPERATIONS_CATALOG.filter(c => c.frequency === "daily") },
+    { key: "weekly", label: "Weekly Maintenance", emoji: "📅", items: OPERATIONS_CATALOG.filter(c => c.frequency === "weekly") },
+    { key: "monthly", label: "Monthly Inspections", emoji: "🗓️", items: OPERATIONS_CATALOG.filter(c => c.frequency === "monthly") },
+  ];
+
+  const statusConfig = {
+    not_started: { label: "Not Started", bg: "#F3F4F6", color: "#6B7280", barColor: "#E5E7EB" },
+    in_progress: { label: "In Progress", bg: "#FEF3C7", color: "#D97706", barColor: "#F59E0B" },
+    completed: { label: "Completed", bg: "#D1FAE5", color: "#059669", barColor: "#10B981" },
+    coming_soon: { label: "Coming Soon", bg: "#F3F4F6", color: "#9CA3AF", barColor: "#E5E7EB" },
+  };
+
+  // Count daily completion
+  const dailyItems = OPERATIONS_CATALOG.filter(c => c.frequency === "daily" && !c.comingSoon);
+  const dailyCompleted = dailyItems.filter(c => getOpsCardStatus(data, c) === "completed").length;
+  const dailyTotal = dailyItems.length;
+
+  return (
+    <div style={{ padding: "0 8px" }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 28, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Operations</h2>
+          <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>{dateLbl}</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ fontSize: 13, color: C.textSec }}>
+            Today: <span style={{ fontWeight: 700, color: dailyCompleted === dailyTotal && dailyTotal > 0 ? "#059669" : C.text }}>{dailyCompleted}/{dailyTotal}</span> completed
+          </div>
+          {dailyTotal > 0 && (
+            <div style={{ width: 120, height: 8, borderRadius: 4, background: C.borderLight, overflow: "hidden" }}>
+              <div style={{ width: `${Math.round((dailyCompleted / dailyTotal) * 100)}%`, height: "100%", borderRadius: 4, background: dailyCompleted === dailyTotal ? "#10B981" : "#F59E0B", transition: "width 0.3s" }} />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {groups.map(group => {
+        // Filter by permissions for non-comingSoon items
+        const visibleItems = group.items.filter(item => item.comingSoon || !item.permission || hp(item.permission));
+        if (visibleItems.length === 0) return null;
+        return (
+          <div key={group.key} style={{ marginBottom: 32 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+              <span>{group.emoji}</span> {group.label}
+              <span style={{ fontSize: 12, fontWeight: 500, color: C.textMut, marginLeft: 4 }}>
+                ({visibleItems.length} {visibleItems.length === 1 ? "item" : "items"})
+              </span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
+              {visibleItems.map(item => {
+                const status = getOpsCardStatus(data, item);
+                const progress = getOpsProgress(data, item);
+                const sc = statusConfig[status];
+                const isComingSoon = item.comingSoon;
+                return (
+                  <div key={item.id}
+                    onClick={() => !isComingSoon && nav(item.routeTo)}
+                    style={{
+                      background: C.surface, borderRadius: 14, padding: "18px 20px",
+                      border: `1.5px solid ${status === "completed" ? "#10B981" : status === "in_progress" ? "#F59E0B" : C.border}`,
+                      cursor: isComingSoon ? "default" : "pointer",
+                      opacity: isComingSoon ? 0.55 : 1,
+                      transition: "all 0.2s",
+                      position: "relative",
+                    }}
+                    onMouseEnter={e => { if (!isComingSoon) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)"; }}}
+                    onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}
+                  >
+                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: 22 }}>{item.emoji}</span>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{item.label}</div>
+                          <div style={{ fontSize: 12, color: C.textMut, marginTop: 1 }}>{item.subtitle}</div>
+                        </div>
+                      </div>
+                    </div>
+                    {/* Status badge */}
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: sc.bg, color: sc.color, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                        {sc.label}
+                      </span>
+                      {!isComingSoon && <span style={{ fontSize: 12, fontWeight: 600, color: sc.color }}>{progress}%</span>}
+                    </div>
+                    {/* Progress bar */}
+                    {!isComingSoon && (
+                      <div style={{ marginTop: 8, height: 5, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
+                        <div style={{ width: `${progress}%`, height: "100%", borderRadius: 3, background: sc.barColor, transition: "width 0.3s" }} />
+                      </div>
+                    )}
+                    {/* Arrow indicator for clickable cards */}
+                    {!isComingSoon && (
+                      <div style={{ position: "absolute", top: 18, right: 16, color: C.textMut, fontSize: 16 }}>›</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // DAILY OPERATIONS PAGE
 // ═══════════════════════════════════════════════════════════════════════════
 function DailyOpsPage({ data, save, sub, nav }) {
@@ -5552,6 +5741,7 @@ function DailyOpsPage({ data, save, sub, nav }) {
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+      <button onClick={() => nav("operations")} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.pri, padding: "0 0 12px", fontFamily: "inherit" }}>← Operations</button>
       {renderDateNav()}
       {showHistory && existing && (
         <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
@@ -6586,6 +6776,7 @@ function EODPage({ data, save, nav }) {
 
   return (
     <div>
+      <button onClick={() => nav("operations")} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.pri, padding: "0 0 12px", fontFamily: "inherit" }}>← Operations</button>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -10314,7 +10505,7 @@ export default function App() {
     try { localStorage.setItem("k9_location", locId); } catch {}
   }, []);
 
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard","clients","reservations","crm","messages","payments","eod","ops-opening","ops-forms","ops-closing","ai","settings"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard","clients","reservations","crm","messages","payments","operations","eod","ops-opening","ops-forms","ops-closing","ai","settings"]), []);
   const nav = useCallback((pg, prms = {}) => {
     setPage(pg); setParams(prms); setMobileMenuOpen(false);
     if (TOP_LEVEL_PAGES.has(pg)) {
@@ -10402,12 +10593,18 @@ export default function App() {
       case "crm": return "CRM";
       case "messages": return "Messages";
       case "payments": return "Payments";
+      case "operations": return "Operations";
       case "eod": return "End of Day";
       case "ai": return "AI Command";
       case "settings": return "Settings";
       case "ops-opening": return "Opening";
-      case "ops-forms": return "Forms";
+      case "ops-fe": return "FE Checklist";
+      case "ops-be": return "BE Checklist";
+      case "ops-rooms": return "Room Cleaning";
+      case "ops-pictures": return "Pictures";
+      case "ops-pp": return "PP Checklist";
       case "ops-closing": return "Closing";
+      case "ops-forms": return "Forms";
       case "client-detail": {
         const c = (data?.clients||[]).find(cl => cl.id === prms?.clientId);
         return c ? `${c.fields?.first_name||""} ${c.fields?.last_name||""}`.trim() || "Client" : "Client";
@@ -10445,20 +10642,19 @@ export default function App() {
       { id:"payments",label:"Payments",icon:<I.DollarSign/> },
     ]},
     { label:"Operations", items:[
-      { id:"daily-ops",label:"Daily Ops",icon:<I.Clipboard/>,children:opsChildren,hotkey:"6" },
-      { id:"eod",label:"EOD",icon:<I.Clipboard/>,hotkey:"7" },
+      { id:"operations",label:"Operations",icon:<I.Clipboard/>,hotkey:"6" },
     ]},
     { label:null, items:[
-      { id:"ai",label:"AI Command",icon:<I.Sparkle/>,hotkey:"8" },
+      { id:"ai",label:"AI Command",icon:<I.Sparkle/>,hotkey:"7" },
     ]},
     { label:null, items:[
-      { id:"settings",label:"Settings",icon:<I.Settings/>,hotkey:"9" },
+      { id:"settings",label:"Settings",icon:<I.Settings/>,hotkey:"8" },
     ]},
   ];
   // Flat list for lookups
   const navItems = navSections.flatMap(s => s.items);
   const isOpsPage = page.startsWith("ops-");
-  const activeNav = isOpsPage?"daily-ops":["dashboard","clients","reservations","crm","messages","payments","settings","eod","ai"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":"dashboard";
+  const activeNav = isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","crm","messages","payments","settings","ai"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":"dashboard";
 
   function renderPage() {
     if (isOpsPage) {
@@ -10469,6 +10665,7 @@ export default function App() {
     const hp = (k) => hasPermission(profile, data, k);
     const denied = <div style={{padding:"60px 40px",textAlign:"center"}}><div style={{fontSize:36,marginBottom:12}}>🔒</div><div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:6}}>Access Restricted</div><div style={{fontSize:14,color:C.textSec}}>You don't have permission to view this page. Contact your admin to update your role.</div></div>;
     switch(page) {
+      case "operations": return hp("view_daily_ops") ? <OperationsHub data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "dashboard": return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
       case "clients": return hp("view_clients") ? <ClientsPage data={data} nav={nav} profile={profile}/> : denied;
       case "client-detail": return hp("view_client_detail") ? <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile}/> : denied;
