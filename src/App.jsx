@@ -9909,6 +9909,8 @@ function SettingsPage({ data, save, profile }) {
   const [tab, setTab] = useState(null);
   const [settingsSearch, setSettingsSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
+  const [newClosedDate, setNewClosedDate] = useState("");
+  const [newClosedLabel, setNewClosedLabel] = useState("");
   const [newField, setNewField] = useState({ name: "", type: "text", required: false, options: "" });
   const [showAddTag, setShowAddTag] = useState(false);
   const [newTag, setNewTag] = useState({ name: "", colorIdx: 0 });
@@ -10209,8 +10211,6 @@ function SettingsPage({ data, save, profile }) {
 
       ) : tab === "closed-dates" ? (() => {
         const closedDates = data.closedDates || [];
-        const [newClosedDate, setNewClosedDate] = React.useState("");
-        const [newClosedLabel, setNewClosedLabel] = React.useState("");
         const addClosed = async () => {
           if (!newClosedDate) return;
           const already = closedDates.some(cd => cd.date === newClosedDate);
