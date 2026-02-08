@@ -7685,8 +7685,7 @@ function TeamTab({ profile, data, save }) {
     };
     await save({ ...data, pendingInvites: [...pendingInvites, inv] });
     setInviteEmail(""); setInviteName(""); setInviteRole("role_staff");
-    setInviteMsg("Invitation created! Tell " + (inv.name || inv.email) + " to sign up at k9operations.com");
-    setTimeout(() => setInviteMsg(""), 6000);
+    setInviteMsg(inv.name || inv.email);
   };
 
   const removeInvite = async (invId) => {
@@ -7772,7 +7771,33 @@ function TeamTab({ profile, data, save }) {
             <Btn onClick={addInvite}>Invite</Btn>
           </div>
           {inviteMsg && (
-            <div style={{ marginTop: 14, padding: "10px 16px", borderRadius: 10, background: C.sucLt, color: C.suc, fontSize: 13, fontWeight: 600 }}>{inviteMsg}</div>
+            <div style={{ marginTop: 16, padding: "16px 20px", borderRadius: 12, background: C.sucLt, border: "1.5px solid " + C.suc + "30" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <I.CheckCircle />
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.suc }}>Invitation saved for {inviteMsg}</span>
+              </div>
+              <div style={{ fontSize: 13, color: C.text, lineHeight: 1.6, marginBottom: 10 }}>
+                Now send them these instructions:
+              </div>
+              <div style={{ background: C.surface, borderRadius: 8, padding: "12px 16px", border: "1px solid " + C.border, fontSize: 13, color: C.text, lineHeight: 1.6, fontFamily: "inherit" }}>
+                <div>1. Go to <strong>k9operations.com</strong></div>
+                <div>2. Click <strong>"Create Account"</strong> using your email</div>
+                <div>3. Confirm your email, then sign in</div>
+                <div>4. You'll be automatically connected to the team</div>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                <button onClick={() => {
+                  navigator.clipboard.writeText("You've been invited to K9 Operations! Here's how to get started:\n\n1. Go to k9operations.com\n2. Click \"Create Account\" using your email address\n3. Check your inbox and confirm your email\n4. Sign in \u2014 you'll be automatically connected to the team!\n\nSee you there!");
+                  setInviteMsg(null);
+                  setTimeout(() => setInviteMsg(null), 100);
+                }} style={{ padding: "7px 16px", background: C.pri, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                  Copy Instructions
+                </button>
+                <button onClick={() => setInviteMsg(null)} style={{ padding: "7px 16px", background: "none", color: C.textSec, border: "1.5px solid " + C.border, borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                  Dismiss
+                </button>
+              </div>
+            </div>
           )}
         </Card>
       )}
@@ -7784,24 +7809,39 @@ function TeamTab({ profile, data, save }) {
             <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Pending Invitations</div>
             <p style={{ fontSize: 13, color: C.textSec, margin: 0 }}>These people have been invited but haven't signed up yet.</p>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 48px", padding: "10px 24px", background: C.bg, borderTop: "1px solid " + C.border, borderBottom: "1px solid " + C.border, fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 80px", padding: "10px 24px", background: C.bg, borderTop: "1px solid " + C.border, borderBottom: "1px solid " + C.border, fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
             <div>Email</div><div>Name</div><div>Role</div><div/>
           </div>
-          {pendingInvites.map(inv => (
-            <div key={inv.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 48px", padding: "14px 24px", borderBottom: "1px solid " + C.borderLight, alignItems: "center" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{inv.email}</div>
-              <div style={{ fontSize: 13, color: C.textSec }}>{inv.name || "\u2014"}</div>
-              <Badge>{inv.role}</Badge>
-              <div style={{ textAlign: "center" }}>
-                {canManage && (
-                  <button onClick={() => removeInvite(inv.id)} title="Cancel invitation"
-                    style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, padding: 4, borderRadius: 6 }}>
-                    <I.X />
-                  </button>
-                )}
+          {pendingInvites.map(inv => {
+            const daysAgo = inv.invitedAt ? Math.floor((Date.now() - new Date(inv.invitedAt).getTime()) / 86400000) : null;
+            const timeLabel = daysAgo === null ? "" : daysAgo === 0 ? "Today" : daysAgo === 1 ? "1 day ago" : daysAgo + " days ago";
+            return (
+              <div key={inv.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 80px", padding: "14px 24px", borderBottom: "1px solid " + C.borderLight, alignItems: "center" }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{inv.email}</div>
+                  {timeLabel && <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>Invited {timeLabel}</div>}
+                </div>
+                <div style={{ fontSize: 13, color: C.textSec }}>{inv.name || "\u2014"}</div>
+                <Badge>{((data.roles || DEFAULT_ROLES).find(r => r.id === inv.role) || {}).name || inv.role}</Badge>
+                <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                  {canManage && (
+                    <>
+                      <button onClick={() => {
+                        navigator.clipboard.writeText("You've been invited to K9 Operations! Here's how to get started:\n\n1. Go to k9operations.com\n2. Click \"Create Account\" using your email address (" + inv.email + ")\n3. Check your inbox and confirm your email\n4. Sign in \u2014 you'll be automatically connected to the team!\n\nSee you there!");
+                      }} title="Copy invite instructions"
+                        style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, padding: 4, borderRadius: 6 }}>
+                        <I.Send />
+                      </button>
+                      <button onClick={() => removeInvite(inv.id)} title="Cancel invitation"
+                        style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, padding: 4, borderRadius: 6 }}>
+                        <I.X />
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </Card>
       )}
     </div>
