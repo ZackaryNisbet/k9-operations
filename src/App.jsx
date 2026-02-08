@@ -3027,8 +3027,8 @@ function DashboardPage({ data, save, nav, onNew }) {
                               {dog && <DogPicHover dog={dog} size={20} />}
                               {dog && <VaxIcon dog={dog} requiredVaccines={data.requiredVaccines} policies={data.resortPolicies} />}
                               {dog && <DogTagChips dog={dog} dogTags={data.dogTags} size="sm" />}
-                              {dog && (() => { const le = (data.evaluations||[]).filter(e=>e.dogId===res.dogId&&e.locked).sort((a,b)=>(b.date||"").localeCompare(a.date||""))[0]; if (!le) return null; return (
-                                <Tip text={`Eval: ${le.result==="green"?"Approved":"Not Approved"} \u2014 ${le.totalScore||0}/${le.maxScore||0} pts (${fmtDate(le.date)})`}>
+                              {dog && (() => { const allEvals = (data.evaluations||[]).filter(e=>e.dogId===res.dogId&&e.locked).sort((a,b)=>(b.date||"").localeCompare(a.date||"")); if (!allEvals.length) return null; const le = allEvals[0]; const tipLines = allEvals.map((ev,i) => `Eval ${i+1}: ${ev.result==="green"?"Approved":"Not Approved"} \u2014 ${ev.totalScore||0}/${ev.maxScore||0} pts (${fmtDate(ev.date)})`).join("\n"); return (
+                                <Tip text={tipLines}>
                                   <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:16,height:16,borderRadius:"50%",background:le.result==="green"?C.suc:C.dan,color:"#fff",fontSize:9,fontWeight:800,flexShrink:0}}>{le.result==="green"?"\u2713":"\u2717"}</span>
                                 </Tip>); })()}
                             </div>
@@ -3060,10 +3060,10 @@ function DashboardPage({ data, save, nav, onNew }) {
                             onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
                             onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}>
                             {showCheckIn && <Btn size="sm" variant="success" onClick={() => handleCheckIn(res.id)} icon={<I.LogIn/>}>In</Btn>}
-                            {showCheckOut && res.type === "evaluation" && !hasCompletedEval(data, res) && (
+                            {showCheckOut && ((res.type === "evaluation" && !hasCompletedEval(data, res)) || (res.type === "boarding" && res.needsEval && !hasCompletedEval(data, res))) && (
                               <Btn size="sm" variant="warning" onClick={() => nav("evaluation-form", { reservationId: res.id })} icon={<I.Clipboard/>}>Eval</Btn>
                             )}
-                            {showCheckOut && (res.type !== "evaluation" || hasCompletedEval(data, res)) && (
+                            {showCheckOut && (res.type === "boarding" || (res.type === "evaluation" && hasCompletedEval(data, res)) || (res.type !== "evaluation" && res.type !== "boarding")) && (
                               <Btn size="sm" variant="accent" onClick={() => handleCheckOut(res.id)} icon={<I.LogOut/>}>Out</Btn>
                             )}
                             {activeTab === "checkedout" && <Badge color="default" size="sm">Done</Badge>}
@@ -3837,7 +3837,7 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
       dogs: updatedDogs,
       dogTags: newDogTags,
       evaluations: [...(data.evaluations || []), evalObj],
-      reservations: data.reservations.map(r => r.id === reservationId ? { ...r, evalResult } : r),
+      reservations: data.reservations.map(r => r.id === reservationId ? { ...r, evalResult, ...(r.needsEval ? { needsEval: false } : {}) } : r),
     };
     await save(newData);
     setSubmitting(false);
@@ -4211,8 +4211,8 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.text}}>{dog.fields.name}</h2>
                 <VaxIcon dog={dog} requiredVaccines={data.requiredVaccines} policies={data.resortPolicies} />
-                {(() => { const evs = (data.evaluations || []).filter(e => e.dogId === dogId).sort((a, b) => (b.date||"").localeCompare(a.date||"")); if (!evs.length) return null; const le = evs[0]; return (
-                  <Tip text={`Eval: ${le.result === "green" ? "Approved" : "Not Approved"} \u2014 ${le.totalScore||0}/${le.maxScore||0} pts (${fmtDate(le.date)})`}>
+                {(() => { const evs = (data.evaluations || []).filter(e => e.dogId === dogId && e.locked).sort((a, b) => (b.date||"").localeCompare(a.date||"")); if (!evs.length) return null; const le = evs[0]; const tipLines = evs.map((ev,i) => `Eval ${i+1}: ${ev.result==="green"?"Approved":"Not Approved"} \u2014 ${ev.totalScore||0}/${ev.maxScore||0} pts (${fmtDate(ev.date)})`).join("\n"); return (
+                  <Tip text={tipLines}>
                     <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: "50%", background: le.result === "green" ? C.suc : C.dan, color: "#fff", fontSize: 12, fontWeight: 800 }}>
                       {le.result === "green" ? "\u2713" : "\u2717"}
                     </span>
@@ -5056,7 +5056,18 @@ function NewReservationPage({ data, save, preClientId, nav }) {
         if (!saveDogTags.find(t => t.id === "tag_eval")) saveDogTags = [...saveDogTags, { id: "tag_eval", name: "Evaluation", colorIdx: 2 }];
         saveDogs = saveDogs.map(d => selectedDogs.includes(d.id) && !(d.tags || []).includes("tag_eval") ? { ...d, tags: [...(d.tags || []), "tag_eval"] } : d);
       }
-      await save({...data, dogs: saveDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...newRes]});
+      let saveRes = [...newRes];
+      if (type === "boarding") {
+        selectedDogs.forEach(did => {
+          const dogHasEval = (data.evaluations || []).some(e => e.dogId === did && e.locked);
+          if (!dogHasEval) {
+            saveRes = saveRes.map(r => r.dogId === did ? { ...r, needsEval: true } : r);
+            if (!saveDogTags.find(t => t.id === "tag_eval")) saveDogTags = [...saveDogTags, { id: "tag_eval", name: "Evaluation", colorIdx: 2 }];
+            saveDogs = saveDogs.map(d => d.id === did && !(d.tags || []).includes("tag_eval") ? { ...d, tags: [...(d.tags || []), "tag_eval"] } : d);
+          }
+        });
+      }
+      await save({...data, dogs: saveDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...saveRes]});
       nav("client-detail",{clientId});
     }
   };
@@ -5070,11 +5081,22 @@ function NewReservationPage({ data, save, preClientId, nav }) {
       });
     }
     let saveDogTags = data.dogTags;
+    let saveRes = [...pendingReservations];
     if (type === "evaluation") {
       if (!saveDogTags.find(t => t.id === "tag_eval")) saveDogTags = [...saveDogTags, { id: "tag_eval", name: "Evaluation", colorIdx: 2 }];
       newDogs = newDogs.map(d => selectedDogs.includes(d.id) && !(d.tags || []).includes("tag_eval") ? { ...d, tags: [...(d.tags || []), "tag_eval"] } : d);
     }
-    await save({...data, dogs: newDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...pendingReservations]});
+    if (type === "boarding") {
+      selectedDogs.forEach(did => {
+        const dogHasEval = (data.evaluations || []).some(e => e.dogId === did && e.locked);
+        if (!dogHasEval) {
+          saveRes = saveRes.map(r => r.dogId === did ? { ...r, needsEval: true } : r);
+          if (!saveDogTags.find(t => t.id === "tag_eval")) saveDogTags = [...saveDogTags, { id: "tag_eval", name: "Evaluation", colorIdx: 2 }];
+          newDogs = newDogs.map(d => d.id === did && !(d.tags || []).includes("tag_eval") ? { ...d, tags: [...(d.tags || []), "tag_eval"] } : d);
+        }
+      });
+    }
+    await save({...data, dogs: newDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...saveRes]});
     setShowUpdateModal(false);
     nav("client-detail",{clientId});
   };
