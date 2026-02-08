@@ -585,7 +585,7 @@ const C = {
 const TAG_COLORS = [
   { bg: "#DBEAFE", text: "#1E40AF", name: "Blue" },
   { bg: "#D1FAE5", text: "#065F46", name: "Green" },
-  { bg: "#FEF3C7", text: "#92400E", name: "Amber" },
+  { bg: "#FEF9C3", text: "#CA8A04", name: "Yellow" },
   { bg: "#FCE7F3", text: "#9D174D", name: "Pink" },
   { bg: "#E0E7FF", text: "#3730A3", name: "Indigo" },
   { bg: "#FED7AA", text: "#9A3412", name: "Orange" },
@@ -3606,8 +3606,7 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
   const [notes, setNotes] = useState("");
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
-  const [classifyModal, setClassifyModal] = useState(null); // { evalId, dogName, result, clientId, dogId, weight, totalScore, maxScore }
-  const [classifySelected, setClassifySelected] = useState(null); // "tag_lp" | "tag_sp" | "tag_pp"
+  const [selectedClassTag, setSelectedClassTag] = useState(null); // "tag_lp" | "tag_sp" | "tag_pp"
 
   // Compute scores
   const visibleSections = getEvalVisibleSections(evalType);
@@ -3631,6 +3630,13 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
     setErrors(prev => ({ ...prev, [qid]: undefined }));
   };
 
+  // Auto-recommend classification tag based on eval result
+  const dogWeight = parseFloat(dog?.fields?.weight) || 0;
+  const recommendedTag = result === "red" ? "tag_pp" : result === "green" ? (dogWeight > 0 ? (dogWeight >= 35 ? "tag_lp" : "tag_sp") : null) : null;
+  useEffect(() => {
+    if (recommendedTag && !selectedClassTag) setSelectedClassTag(recommendedTag);
+  }, [recommendedTag]);
+
   const handleSubmit = async () => {
     const errs = {};
     visibleQuestions.forEach(q => { if (!answers[q.id]) errs[q.id] = "Required"; });
@@ -3647,57 +3653,28 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
       notes, locked: true, createdAt: new Date().toISOString(),
     };
     const evalResult = finalResult === "green" ? "passed_group" : "pending";
-    // Remove tag_eval from the dog
-    const updatedDogs = data.dogs.map(d => d.id === dog.id ? { ...d, tags: (d.tags || []).filter(t => t !== "tag_eval") } : d);
+    // Remove tag_eval, add classification tag, remove other classification tags
+    let newDogTags = [...data.dogTags];
+    if (selectedClassTag && !newDogTags.find(t => t.id === selectedClassTag)) {
+      const def = DEF_DOG_TAGS.find(t => t.id === selectedClassTag);
+      if (def) newDogTags.push({ ...def });
+    }
+    const updatedDogs = data.dogs.map(d => {
+      if (d.id !== dog.id) return d;
+      let tags = (d.tags || []).filter(t => t !== "tag_eval" && !CLASSIFICATION_TAG_IDS.includes(t));
+      if (selectedClassTag) tags = [...tags, selectedClassTag];
+      return { ...d, tags };
+    });
     const newData = {
       ...data,
       dogs: updatedDogs,
+      dogTags: newDogTags,
       evaluations: [...(data.evaluations || []), evalObj],
       reservations: data.reservations.map(r => r.id === reservationId ? { ...r, evalResult } : r),
     };
     await save(newData);
     setSubmitting(false);
-    setClassifyModal({ evalId: evalObj.id, dogName: dog.fields.name, result: finalResult, clientId: client?.id || "", dogId: dog.id, weight: parseFloat(dog.fields?.weight) || 0, totalScore, maxScore });
-    setClassifySelected(null);
-  };
-
-  const handleClassify = async (tagId) => {
-    if (!classifyModal) return;
-    // Ensure tag exists in dogTags
-    let newDogTags = [...data.dogTags];
-    if (!newDogTags.find(t => t.id === tagId)) {
-      const def = DEF_DOG_TAGS.find(t => t.id === tagId);
-      if (def) newDogTags.push({ ...def });
-    }
-    // Remove other classification tags from dog, add selected one
-    const newDogs = data.dogs.map(d => {
-      if (d.id !== classifyModal.dogId) return d;
-      const cleaned = (d.tags || []).filter(t => !CLASSIFICATION_TAG_IDS.includes(t));
-      return { ...d, tags: [...cleaned, tagId] };
-    });
-    await save({ ...data, dogs: newDogs, dogTags: newDogTags });
-    setClassifyModal(null);
     nav("dashboard");
-  };
-
-  const handleUndoEval = async () => {
-    if (!classifyModal) return;
-    const eid = classifyModal.evalId;
-    // Re-add tag_eval, remove any classification tag that may have been added
-    const newDogs = data.dogs.map(d => {
-      if (d.id !== classifyModal.dogId) return d;
-      const cleaned = (d.tags || []).filter(t => !CLASSIFICATION_TAG_IDS.includes(t));
-      const withEval = cleaned.includes("tag_eval") ? cleaned : [...cleaned, "tag_eval"];
-      return { ...d, tags: withEval };
-    });
-    const newData = {
-      ...data,
-      dogs: newDogs,
-      evaluations: (data.evaluations || []).filter(e => e.id !== eid),
-      reservations: data.reservations.map(r => r.id === reservationId ? { ...r, evalResult: "pending" } : r),
-    };
-    await save(newData);
-    setClassifyModal(null);
   };
 
   if (!reservation || !dog) return <div style={{ padding: 40, textAlign: "center", color: C.textMut }}>Reservation or dog not found.</div>;
@@ -3974,87 +3951,57 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
         </div>
       </Card>
 
+      {/* Tag Classification */}
+      <Card style={{ padding: "20px 24px", marginBottom: 20 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, letterSpacing: "0.05em", marginBottom: 14, textTransform: "uppercase" }}>Update Dog Tag</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          {/* Current Tag */}
+          <div style={{ textAlign: "center" }}>
+            {(() => { const evalTag = data.dogTags.find(t => t.id === "tag_eval"); const tc = evalTag ? TAG_COLORS[evalTag.colorIdx % TAG_COLORS.length] : TAG_COLORS[2]; return (
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 32, height: 32, borderRadius: 6, fontSize: 13, fontWeight: 800, background: tc.text, color: "#fff", padding: "0 8px" }}>EV</span>
+            ); })()}
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, marginTop: 4 }}>Current</div>
+          </div>
+          {/* Arrow */}
+          <span style={{ fontSize: 22, color: C.textMut, fontWeight: 700 }}>&rarr;</span>
+          {/* Classification options */}
+          {[
+            { id: "tag_sp", name: "Small Playgroup", short: "SP", colorIdx: 1 },
+            { id: "tag_lp", name: "Large Playgroup", short: "LP", colorIdx: 0 },
+            { id: "tag_pp", name: "Private Play", short: "PP", colorIdx: 3 },
+          ].map(opt => {
+            const tc = TAG_COLORS[opt.colorIdx % TAG_COLORS.length];
+            const isSel = selectedClassTag === opt.id;
+            const isRec = recommendedTag === opt.id;
+            const passed = result === "green";
+            const isDimmed = passed && dogWeight === 0 && opt.id === "tag_pp";
+            return (
+              <button key={opt.id} onClick={() => setSelectedClassTag(opt.id)} style={{
+                position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+                padding: "10px 14px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit",
+                background: isSel ? tc.bg : C.bg,
+                border: `2.5px solid ${isSel ? tc.text : C.border}`,
+                opacity: isDimmed ? 0.5 : 1,
+                transition: "all 0.15s",
+              }}>
+                {isRec && (
+                  <div style={{ position: "absolute", top: -9, left: "50%", transform: "translateX(-50%)", background: passed ? C.suc : C.warn, color: "#fff", fontSize: 8, fontWeight: 800, padding: "1px 6px", borderRadius: 8, whiteSpace: "nowrap", letterSpacing: "0.05em", textTransform: "uppercase" }}>Recommended</div>
+                )}
+                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 28, height: 28, borderRadius: 5, fontSize: 12, fontWeight: 800, background: tc.text, color: "#fff", padding: "0 5px" }}>{opt.short}</span>
+                <div style={{ fontSize: 10, fontWeight: 700, color: isSel ? tc.text : C.textSec, whiteSpace: "nowrap" }}>{opt.name}</div>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
       {/* Actions */}
       <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginBottom: 40 }}>
         <Btn variant="secondary" onClick={() => nav("dashboard")}>Cancel</Btn>
-        <Btn onClick={handleSubmit} disabled={submitting || !allAnswered || !!classifyModal}>
-          {submitting ? "Saving..." : "Submit Evaluation"}
+        <Btn onClick={handleSubmit} disabled={submitting || !allAnswered}>
+          {submitting ? "Saving..." : selectedClassTag ? "Submit and Update Tags" : "Submit Evaluation"}
         </Btn>
       </div>
-
-      {/* Classification Modal */}
-      {classifyModal && (() => {
-        const cm = classifyModal;
-        const w = cm.weight;
-        const passed = cm.result === "green";
-        const hasWeight = w > 0;
-        // Recommendation logic
-        const recTag = !passed ? "tag_pp" : (hasWeight ? (w >= 35 ? "tag_lp" : "tag_sp") : null);
-        const classOpts = [
-          { id: "tag_lp", name: "Large Playgroup", colorIdx: 0, icon: "\uD83D\uDC3E" },
-          { id: "tag_sp", name: "Small Playgroup", colorIdx: 1, icon: "\uD83D\uDC3E" },
-          { id: "tag_pp", name: "Private Play", colorIdx: 3, icon: "\uD83D\uDC15" },
-        ];
-        return (
-          <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }}>
-            <div style={{ background: C.surface, borderRadius: 16, padding: "32px 36px", maxWidth: 560, width: "90%", boxShadow: "0 8px 40px rgba(0,0,0,0.2)" }}>
-              {/* Header */}
-              <div style={{ textAlign: "center", marginBottom: 24 }}>
-                <div style={{ width: 56, height: 56, borderRadius: "50%", background: passed ? C.sucLt : C.danLt, border: `3px solid ${passed ? C.suc : C.dan}`, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
-                  <span style={{ fontSize: 24, fontWeight: 800, color: passed ? C.suc : C.dan }}>{passed ? "\u2713" : "\u2717"}</span>
-                </div>
-                <h2 style={{ margin: 0, fontSize: 20, fontWeight: 800, color: C.text }}>{cm.dogName}</h2>
-                <div style={{ fontSize: 14, fontWeight: 600, color: passed ? C.suc : C.dan, marginTop: 4 }}>
-                  {passed ? "Approved" : "Not Approved"} &mdash; {cm.totalScore}/{cm.maxScore} pts
-                </div>
-                <div style={{ fontSize: 13, color: C.textSec, marginTop: 8 }}>Select a classification for this dog</div>
-              </div>
-              {/* Options */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 24 }}>
-                {classOpts.map(opt => {
-                  const tc = TAG_COLORS[opt.colorIdx % TAG_COLORS.length];
-                  const isRec = recTag === opt.id;
-                  const isSel = classifySelected === opt.id;
-                  // For passed dogs with no weight: highlight LP and SP as preferred, dim PP
-                  const isPreferred = passed && !hasWeight && (opt.id === "tag_lp" || opt.id === "tag_sp");
-                  const isDimmed = passed && !hasWeight && opt.id === "tag_pp";
-                  return (
-                    <button key={opt.id} onClick={() => setClassifySelected(opt.id)} style={{
-                      position: "relative", padding: "20px 12px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit",
-                      background: isSel ? tc.bg : C.bg,
-                      border: `2.5px solid ${isSel ? tc.text : isPreferred ? `${C.suc}60` : C.border}`,
-                      opacity: isDimmed ? 0.55 : 1,
-                      transition: "all 0.15s",
-                      display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
-                    }}>
-                      {isRec && (
-                        <div style={{ position: "absolute", top: -10, left: "50%", transform: "translateX(-50%)", background: passed ? C.suc : C.warn, color: "#fff", fontSize: 9, fontWeight: 800, padding: "2px 8px", borderRadius: 10, whiteSpace: "nowrap", letterSpacing: "0.05em", textTransform: "uppercase" }}>Recommended</div>
-                      )}
-                      <div style={{ width: 44, height: 44, borderRadius: 12, background: tc.bg, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                        <span style={{ fontSize: 22 }}>{opt.icon}</span>
-                      </div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: isSel ? tc.text : C.text, textAlign: "center" }}>{opt.name}</div>
-                      {isDimmed && <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>Not recommended</div>}
-                    </button>
-                  );
-                })}
-              </div>
-              {/* Actions */}
-              <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-                <Btn onClick={() => classifySelected && handleClassify(classifySelected)} disabled={!classifySelected}>
-                  {classifySelected ? `Assign ${classOpts.find(o => o.id === classifySelected)?.name || ""}` : "Select a classification"}
-                </Btn>
-                <Btn variant="secondary" onClick={handleUndoEval}>Undo Evaluation</Btn>
-              </div>
-              <div style={{ textAlign: "center", marginTop: 12 }}>
-                <button onClick={() => { setClassifyModal(null); nav("dashboard"); }} style={{ background: "none", border: "none", color: C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}>
-                  Skip &mdash; classify later
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
     </div>
   );
 }
@@ -8960,6 +8907,7 @@ function SettingsPage({ data, save, profile }) {
   const [newField, setNewField] = useState({ name: "", type: "text", required: false, options: "" });
   const [showAddTag, setShowAddTag] = useState(false);
   const [newTag, setNewTag] = useState({ name: "", colorIdx: 0 });
+  const [editingTagColor, setEditingTagColor] = useState(null); // tag id being color-edited
   const [resetConfirm, setResetConfirm] = useState(false);
 
   // Facility settings
@@ -9006,6 +8954,10 @@ function SettingsPage({ data, save, profile }) {
     const t = { id: "tag_" + gid(), name: newTag.name.trim(), colorIdx: newTag.colorIdx };
     await save({ ...data, dogTags: [...data.dogTags, t] });
     setNewTag({ name: "", colorIdx: 0 }); setShowAddTag(false);
+  };
+  const updateTagColor = async (tid, colorIdx) => {
+    await save({ ...data, dogTags: data.dogTags.map(t => t.id === tid ? { ...t, colorIdx } : t) });
+    setEditingTagColor(null);
   };
   const removeTag = async (tid) => {
     const newTags = data.dogTags.filter(t => t.id !== tid);
@@ -9327,10 +9279,20 @@ function SettingsPage({ data, save, profile }) {
             {data.dogTags.map(tag => {
               const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
               const abbr = tag.name.split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
+              const isEditingColor = editingTagColor === tag.id;
               return (
                 <div key={tag.id} style={{ display: "grid", gridTemplateColumns: "1fr 100px 80px 48px", padding: "12px 20px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center" }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{tag.name}</div>
-                  <div><span style={{ width: 20, height: 20, borderRadius: 6, background: tc.bg, border: `2px solid ${tc.text}`, display: "inline-block" }} /></div>
+                  <div style={{ position: "relative" }}>
+                    <button onClick={() => setEditingTagColor(isEditingColor ? null : tag.id)} style={{ width: 24, height: 24, borderRadius: 6, background: tc.bg, border: `2px solid ${tc.text}`, cursor: "pointer", display: "inline-block", padding: 0 }} title={`Color: ${tc.name} — click to change`} />
+                    {isEditingColor && (
+                      <div style={{ position: "absolute", top: 30, left: 0, zIndex: 100, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", display: "flex", gap: 4, flexWrap: "wrap", width: 160 }}>
+                        {TAG_COLORS.map((c, i) => (
+                          <button key={i} onClick={() => updateTagColor(tag.id, i)} style={{ width: 24, height: 24, borderRadius: 6, background: c.bg, border: `2px solid ${tag.colorIdx === i ? c.text : "transparent"}`, cursor: "pointer", padding: 0 }} title={c.name} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div><span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, borderRadius: 4, fontSize: 10, fontWeight: 800, background: tc.text, color: "#fff", padding: "0 3px", letterSpacing: 0 }}>{abbr}</span></div>
                   <div style={{ textAlign: "center" }}><button onClick={() => removeTag(tag.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, padding: 4, borderRadius: 6 }}><I.Trash /></button></div>
                 </div>
