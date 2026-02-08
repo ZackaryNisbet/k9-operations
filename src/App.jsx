@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import ReactDOM from "react-dom";
 import { useData } from "./useData";
 import { useAuth } from "./AuthProvider";
 import { supabase } from "./supabaseClient";
@@ -2716,7 +2717,8 @@ function DashboardPage({ data, save, nav, onNew }) {
       else if (sortCol === "client") { va = cn(a.clientId).toLowerCase(); vb = cn(b.clientId).toLowerCase(); }
       else if (sortCol === "service") { va = a.type || ""; vb = b.type || ""; }
       else if (sortCol === "lodging") { va = a.type === "boarding" ? `${a.roomType || ""} ${a.room || ""}` : ""; vb = b.type === "boarding" ? `${b.roomType || ""} ${b.room || ""}` : ""; }
-      else if (sortCol === "dates") { va = a.checkIn || ""; vb = b.checkIn || ""; }
+      else if (sortCol === "inDate") { va = a.checkIn || ""; vb = b.checkIn || ""; }
+      else if (sortCol === "outDate") { va = a.checkOut || ""; vb = b.checkOut || ""; }
       else { va = ""; vb = ""; }
       if (va < vb) return sortDir === "asc" ? -1 : 1;
       if (va > vb) return sortDir === "asc" ? 1 : -1;
@@ -2828,7 +2830,23 @@ function DashboardPage({ data, save, nav, onNew }) {
     ]},
   ];
 
-  const grid = "160px 280px 82px minmax(0,1fr) 80px 80px 100px 70px";
+  const grid = "140px 1fr 78px minmax(80px,0.6fr) 72px 72px 82px 82px minmax(90px,0.7fr) 70px";
+  const [addOnPopup, setAddOnPopup] = useState(null); // { resId, anchorRect }
+  const addOnPopupRef = useRef(null);
+  useEffect(() => {
+    if (!addOnPopup) return;
+    const handler = (e) => { if (addOnPopupRef.current && !addOnPopupRef.current.contains(e.target)) setAddOnPopup(null); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [addOnPopup]);
+  const availableAddOns = Object.keys((data.pricing || {}).addOns || DEF_PRICING.addOns);
+  const toggleResAddOn = async (resId, addon) => {
+    const res = data.reservations.find(r => r.id === resId);
+    if (!res) return;
+    const curr = res.addOns || [];
+    const next = curr.includes(addon) ? curr.filter(a => a !== addon) : [...curr, addon];
+    await save({ ...data, reservations: data.reservations.map(r => r.id === resId ? { ...r, addOns: next } : r) });
+  };
   const summaryGrid = "160px repeat(4, 1fr)";
 
   // Group active items by clientId for merged rows
@@ -3126,21 +3144,23 @@ function DashboardPage({ data, save, nav, onNew }) {
         </div>
 
         {/* Table Header */}
-        <div style={{ display: "grid", gridTemplateColumns: grid, padding: "10px 20px", background: C.bg, borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", alignItems: "center" }}>
+        <div style={{ display: "grid", gridTemplateColumns: grid, padding: "10px 12px", background: C.bg, borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", alignItems: "center" }}>
           <div style={colHeaderStyle("client")} onClick={() => handleSort("client")}>Client <SortIcon col="client" /></div>
           <div style={colHeaderStyle("dog")} onClick={() => handleSort("dog")}>Dog <SortIcon col="dog" /></div>
           <div style={colHeaderStyle("service")} onClick={() => handleSort("service")}>Service <SortIcon col="service" /></div>
           <div style={colHeaderStyle("lodging")} onClick={() => handleSort("lodging")}>Lodging <SortIcon col="lodging" /></div>
-          <div style={colHeaderStyle("inTime")} onClick={() => handleSort("inTime")}>In <SortIcon col="inTime" /></div>
-          <div style={colHeaderStyle("outTime")} onClick={() => handleSort("outTime")}>Out <SortIcon col="outTime" /></div>
-          <div style={colHeaderStyle("dates")} onClick={() => handleSort("dates")}>Dates <SortIcon col="dates" /></div>
+          <div style={colHeaderStyle("inTime")} onClick={() => handleSort("inTime")}>In Time <SortIcon col="inTime" /></div>
+          <div style={colHeaderStyle("outTime")} onClick={() => handleSort("outTime")}>Out Time <SortIcon col="outTime" /></div>
+          <div style={colHeaderStyle("inDate")} onClick={() => handleSort("inDate")}>In Date <SortIcon col="inDate" /></div>
+          <div style={colHeaderStyle("outDate")} onClick={() => handleSort("outDate")}>Out Date <SortIcon col="outDate" /></div>
+          <div>Add-Ons</div>
           <div style={{ textAlign: "right" }}>Action</div>
         </div>
 
         {/* Rows */}
         <div style={{ minHeight: 200 }}>
           {groupedItems.length === 0 ? (
-            <div style={{ padding: "48px 20px", textAlign: "center" }}>
+            <div style={{ padding: "48px 12px", textAlign: "center" }}>
               <div style={{ fontSize: 15, fontWeight: 600, color: C.textSec }}>
                 {activeTab === "expected" ? "No arrivals expected today" : activeTab === "inhouse" ? "No dogs currently in-house" : activeTab === "goinghome" ? "No departures today" : "No check-outs yet today"}
               </div>
@@ -3150,7 +3170,7 @@ function DashboardPage({ data, save, nav, onNew }) {
               const client = data.clients.find(x => x.id === group.clientId);
               const resCount = group.reservations.length;
               return (
-                <div key={group.clientId} data-row style={{ display: "grid", gridTemplateColumns: grid, padding: "12px 20px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "start", transition: "background 0.1s" }}
+                <div key={group.clientId} data-row style={{ display: "grid", gridTemplateColumns: grid, padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "start", transition: "background 0.1s" }}
                   onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
                   onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                 >
@@ -3178,7 +3198,7 @@ function DashboardPage({ data, save, nav, onNew }) {
                       const snLabel = dog ? fixedLabel(dog) : "";
                       const dogDetails = [age, weight ? `${weight}lbs` : null, snLabel].filter(Boolean).join(" · ");
                       return (
-                        <div key={res.id} onClick={() => setBoardingPreviewId(res.id)} style={{ display: "grid", gridTemplateColumns: "280px 82px minmax(0,1fr) 80px 80px 100px 70px", alignItems: "center", minHeight: 40, cursor: "pointer" }}>
+                        <div key={res.id} onClick={() => setBoardingPreviewId(res.id)} style={{ display: "grid", gridTemplateColumns: "1fr 78px minmax(80px,0.6fr) 72px 72px 82px 82px minmax(90px,0.7fr) 70px", alignItems: "center", minHeight: 40, cursor: "pointer" }}>
                           {/* Dog info */}
                           <div style={{ minWidth: 0 }} onClick={(e) => { e.stopPropagation(); if (dog) nav("dog-detail", { clientId: res.clientId, dogId: res.dogId }); }}
                             onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
@@ -3212,9 +3232,37 @@ function DashboardPage({ data, save, nav, onNew }) {
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
                             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkOutTime)}</span>
                           </div>
-                          {/* Dates */}
+                          {/* In Date */}
                           <div>
-                            <span style={{ fontSize: 11, color: C.textSec }}>{fmtDate(res.checkIn)}{res.checkIn !== res.checkOut ? ` → ${fmtDate(res.checkOut)}` : ""}</span>
+                            <span style={{ fontSize: 11, color: C.textSec, fontVariantNumeric: "tabular-nums" }}>{fmtDate(res.checkIn)}</span>
+                          </div>
+                          {/* Out Date */}
+                          <div>
+                            <span style={{ fontSize: 11, color: C.textSec, fontVariantNumeric: "tabular-nums" }}>{fmtDate(res.checkOut)}</span>
+                          </div>
+                          {/* Add-Ons */}
+                          <div style={{ position: "relative" }} onClick={e => e.stopPropagation()}
+                            onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
+                            onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}>
+                            {res.type !== "tour" ? (() => {
+                              const resAddOns = res.addOns || [];
+                              return (
+                                <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", minHeight: 24 }}
+                                  onMouseEnter={e => { const b = e.currentTarget.querySelector("[data-addon-plus]"); if (b) b.style.opacity = "1"; }}
+                                  onMouseLeave={e => { const b = e.currentTarget.querySelector("[data-addon-plus]"); if (b) b.style.opacity = resAddOns.length > 0 ? "0.6" : "0"; }}>
+                                  {resAddOns.map(a => (
+                                    <span key={a} style={{ fontSize: 9, background: C.priO, color: C.pri, padding: "1px 6px", borderRadius: 8, fontWeight: 600, whiteSpace: "nowrap" }}>{a}</span>
+                                  ))}
+                                  <span data-addon-plus
+                                    onClick={(e) => {
+                                      const rect = e.currentTarget.getBoundingClientRect();
+                                      setAddOnPopup(prev => prev?.resId === res.id ? null : { resId: res.id, x: rect.left, y: rect.bottom + 4 });
+                                    }}
+                                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: "50%", border: `1.5px dashed ${C.border}`, color: C.textMut, fontSize: 14, cursor: "pointer", opacity: resAddOns.length > 0 ? 0.6 : 0, transition: "opacity 0.15s" }}
+                                  >+</span>
+                                </div>
+                              );
+                            })() : null}
                           </div>
                           {/* Action */}
                           <div style={{ textAlign: "right" }} onClick={e => e.stopPropagation()}
@@ -3240,7 +3288,34 @@ function DashboardPage({ data, save, nav, onNew }) {
         </div>
       </Card>
 
-
+      {/* Add-On Quick-Add Popup */}
+      {addOnPopup && (() => {
+        const res = data.reservations.find(r => r.id === addOnPopup.resId);
+        if (!res) return null;
+        const resAddOns = res.addOns || [];
+        const addonPrices = (data.pricing || {}).addOns || DEF_PRICING.addOns;
+        return ReactDOM.createPortal(
+          <div ref={addOnPopupRef} style={{ position: "fixed", left: Math.min(addOnPopup.x, window.innerWidth - 230), top: Math.min(addOnPopup.y, window.innerHeight - 300), zIndex: 9999, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.18)", padding: "8px 0", minWidth: 210, maxHeight: 320, overflowY: "auto" }}>
+            <div style={{ padding: "6px 14px 8px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: `1px solid ${C.borderLight}` }}>Add-Ons</div>
+            {availableAddOns.map(addon => {
+              const active = resAddOns.includes(addon);
+              const price = addonPrices[addon] ?? 0;
+              return (
+                <div key={addon} onClick={() => toggleResAddOn(addOnPopup.resId, addon)}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", cursor: "pointer", transition: "background 0.1s", fontSize: 13 }}
+                  onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                  <span style={{ width: 18, height: 18, borderRadius: 4, border: `1.5px solid ${active ? C.pri : C.border}`, background: active ? C.pri : "transparent", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{active ? "\u2713" : ""}</span>
+                  <span style={{ flex: 1, fontWeight: 500, color: C.text }}>{addon}</span>
+                  <span style={{ fontSize: 11, color: C.textMut, fontWeight: 600 }}>${price}</span>
+                </div>
+              );
+            })}
+            {availableAddOns.length === 0 && <div style={{ padding: "12px 14px", fontSize: 12, color: C.textMut }}>No add-ons configured. Add them in Settings → Pricing.</div>}
+          </div>,
+          document.body
+        );
+      })()}
 
       {/* Quick Daycare Check-in Modal */}
       {showQuickDC && (
