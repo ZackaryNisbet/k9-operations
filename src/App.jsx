@@ -320,6 +320,155 @@ const getWeekDays = (monday) => Array.from({ length: 7 }, (_, i) => addDays(mond
 const shortDay = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
 const dayNum = (d) => new Date(d + "T12:00:00").getDate();
 
+// ─── Evaluation Form Schema & Helpers ────────────────────────────────────────
+const EVAL_SECTIONS = [
+  { id:"dog-background", name:"Dog Background", maxScore:18, questions:[
+    { id:"age", label:"Age", background:"Dogs with prior off-leash play experience vs dogs with no prior experience", type:"age-toggle" },
+    { id:"social-experience", label:"Social Experience", background:"Type of prior social experience with other dogs", type:"radio", options:[
+      { value:"green", label:"Dog daycare (ops known)", description:"Dog daycare – operations known to owner" },
+      { value:"yellow", label:"Dog daycare (ops unknown) / dog park", description:"Dog daycare – ops unknown, dog park" },
+      { value:"red", label:"Few dogs / on leash only / none / expelled", description:"Few dogs, on leash only, none, or expelled from daycare" },
+    ]},
+    { id:"play-style", label:"Play Style", background:"Description of typical play style as known to owners", type:"radio", options:[
+      { value:"green", label:"Easygoing", description:"Easygoing play style" },
+      { value:"yellow", label:"Likes to wrestle / roughhouse / vocal", description:"Likes to wrestle/roughhouse, vocal during play" },
+      { value:"red", label:"Rough play / non-responsive / stalks / humper", description:"Rough play, non-responsive to dog cues, doesn't self-regulate, insistent and stalks, humper" },
+    ]},
+    { id:"bite-history", label:"Bite History", background:"Dog's bite history or reaction when pushed", type:"radio", options:[
+      { value:"green", label:"No bites or aggressive responses", description:"No bites or aggressive responses seen" },
+      { value:"yellow", label:"Growls/snaps, maybe a bite at vet", description:"Growls/snaps, maybe a bite in history at vet or in presence of stranger" },
+      { value:"red", label:"High-level history, multiple incidents", description:"High level history with dogs or people, multiple incidents" },
+    ]},
+    { id:"obedience", label:"Obedience", background:"Obedience classes and level of training at home", type:"radio", options:[
+      { value:"green", label:"Multiple classes, consistent use at home", description:"Multiple classes attended and consistent use at home (e.g. owners adamant about telling dog not to jump)" },
+      { value:"yellow", label:"Puppy class, some follow-up", description:"Puppy class attended; some follow up at home" },
+      { value:"red", label:"No classes, low consistency", description:"No classes known, low or no consistency of use in home" },
+    ]},
+    { id:"why-daycare", label:"Why Daycare", background:"Reason this client wants dog to attend daycare", type:"radio", options:[
+      { value:"green", label:"Play with dogs / exercise / stay active", description:"To play with other dogs, additional exercise to what is already received at home, keep them active during the day" },
+      { value:"yellow", label:"Suggested by another / separation anxiety", description:"Suggested by another, separation anxiety known, only source of exercise" },
+      { value:"red", label:"Socialization (adult dog)", description:"Socialization (if dog is adult)" },
+    ]},
+  ]},
+  { id:"temperament-handling", name:"Temperament & Handling", maxScore:9, stopForDayboarding:true, questions:[
+    { id:"handling-unleash", label:"Handling: Unleash Safely", background:"Can you unleash the dog safely?", type:"binary", options:[
+      { value:"green", label:"Yes", description:"Can safely unleash the dog" },
+      { value:"red", label:"No", description:"Cannot safely unleash the dog" },
+    ]},
+    { id:"handling-room", label:"Handling: Exit & Re-enter Room", background:"Can you exit and reenter the room safely?", type:"binary", options:[
+      { value:"green", label:"Yes", description:"Can safely exit and re-enter the room" },
+      { value:"red", label:"No", description:"Cannot safely exit and re-enter the room" },
+    ]},
+    { id:"handling-leash", label:"Handling: Leash & Playtime Outside", background:"Can you leash the dog and perform a playtime outside safely?", type:"binary", options:[
+      { value:"green", label:"Yes", description:"Can safely leash and perform playtime outside" },
+      { value:"red", label:"No", description:"Cannot safely leash the dog for playtime outside" },
+    ]},
+  ]},
+  { id:"human-interactions", name:"Human Interactions", maxScore:9, questions:[
+    { id:"meeting-people", label:"Meeting", background:"Responses to new people (in lobby)", type:"radio", options:[
+      { value:"green", label:"Initiates interaction, stays 2+ seconds", description:"Initiates interaction and stays for longer than 2 seconds" },
+      { value:"yellow", label:"Tolerates, some stress signals", description:"Tolerates interaction, displays some stress signals" },
+      { value:"red", label:"Avoids greeting, warning signals", description:"Avoids greeting, shows warning signals or aggression" },
+    ]},
+    { id:"handling-touch", label:"Handling", background:"Responses to touch and handling", type:"radio", options:[
+      { value:"green", label:"Very accepting", description:"Very accepting of touch and handling" },
+      { value:"yellow", label:"Tolerates, shy, stress signs", description:"Tolerates, but shy and shows signs of stress" },
+      { value:"red", label:"Warning signs (growls, teeth, whale eye)", description:"Displays warning signs: growls, shows teeth, lowers head, whale eye" },
+    ]},
+    { id:"obedience-cues", label:"Obedience", background:"Responses to cues", type:"radio", options:[
+      { value:"green", label:"Attentive and responsive", description:"Attentive and responsive to cues" },
+      { value:"yellow", label:"Some positive responses, easily distracted", description:"Some positive responses but easily distracted" },
+      { value:"red", label:"Ignores most cues, avoids eye contact", description:"Ignores most or all cues, avoids eye contact" },
+    ]},
+  ]},
+  { id:"dog-greetings", name:"Dog Greetings", maxScore:12, questions:[
+    { id:"calm-adults", label:"Calm Low-Key Adult Dogs", background:"Reaction to meeting balanced/confident experienced dogs", type:"radio", options:[
+      { value:"green", label:"Polite", description:"Polite greeting behavior" },
+      { value:"yellow", label:"Some rude behaviors tolerated", description:"Some rude behaviors tolerated (licking face, chewing, jumping on them)" },
+      { value:"red", label:"Rude behaviors corrected / avoids", description:"Rude behaviors corrected – avoids greeting dog" },
+    ]},
+    { id:"other-dogs", label:"Other Dogs (5+)", background:"Reaction to meeting wide number of dogs (5+)", type:"radio", options:[
+      { value:"green", label:"Polite", description:"Polite greeting behavior with multiple dogs" },
+      { value:"yellow", label:"Some rude behaviors tolerated", description:"Some rude behaviors tolerated (licking face, chewing, jumping on them)" },
+      { value:"red", label:"Rude behaviors corrected / avoids", description:"Rude behaviors corrected – avoids greeting dog" },
+    ]},
+    { id:"small-group", label:"Small Group (Less than 10 dogs)", background:"Reaction in small group", type:"radio", options:[
+      { value:"green", label:"Enjoys interaction, plays, confident", description:"Enjoys interaction, plays, confidence shown" },
+      { value:"yellow", label:"Tolerates, some stress shown", description:"Tolerates interactions, some stress shown (runs away, sniffing objects instead of interacting)" },
+      { value:"red", label:"Avoids, stress/warning signals", description:"Avoids interactions, stress and warning signals shown – hiding, trying to get out, extreme panting, snapping or growling" },
+    ]},
+    { id:"large-group", label:"Large Group (More than 10 dogs)", background:"Reaction to being in a larger group – 10 being pass/fail threshold", type:"radio", options:[
+      { value:"green", label:"Enjoys interaction, plays, confident", description:"Enjoys interaction, plays, confidence shown" },
+      { value:"yellow", label:"Tolerates, some stress shown", description:"Tolerates interactions, some stress shown (runs away, sniffing objects instead of interacting)" },
+      { value:"red", label:"Avoids, stress/warning signals", description:"Avoids interactions, stress and warning signals shown – hiding, trying to get out, extreme panting, snapping or growling" },
+    ]},
+  ]},
+  { id:"playgroup-behavior", name:"Playgroup Behavior", maxScore:15, questions:[
+    { id:"play-style-group", label:"Play", background:"Play style observed during evaluation", type:"radio", options:[
+      { value:"green", label:"Appropriate, easily corrected", description:"Appropriate for the most part, easily corrected/responsive" },
+      { value:"yellow", label:"Frequent inappropriate, little interest", description:"Frequent inappropriate behaviors, shows little interest in playing" },
+      { value:"red", label:"Consistently inappropriate, needs interference", description:"Consistently inappropriate, requires interference from staff" },
+    ]},
+    { id:"stress-signals", label:"Stress", background:"Number of stress signals in a specific time (length of evaluation)", type:"radio", options:[
+      { value:"green", label:"None / very few", description:"None or very few stress signals observed" },
+      { value:"yellow", label:"Moderate and short spurts", description:"Moderate stress signals in short spurts" },
+      { value:"red", label:"Consistent for extended periods", description:"Consistent stress signals for extended periods of time" },
+    ]},
+    { id:"body-posture", label:"Body Posture", background:"Overall dog body language displayed", type:"radio", options:[
+      { value:"green", label:"Relaxed and playful", description:"Relaxed and playful most of the time" },
+      { value:"yellow", label:"Alert, anxious, or submissive", description:"Alert, anxious, confident, or submissive postures displayed, urination when approached" },
+      { value:"red", label:"Aroused, fearful, aggressive", description:"Aroused, fearful, aggressive posture" },
+    ]},
+    { id:"energy-level", label:"Energy Level", background:"Average energy level displayed during evaluation", type:"radio", options:[
+      { value:"green", label:"Low to moderate, self-regulation", description:"Low to moderate, play and rest cycles noticed, self-regulation" },
+      { value:"yellow", label:"Moderate to high, heightened at events", description:"Moderate to high, heightened at arrival or key arousal events" },
+      { value:"red", label:"High most of the time, no rest", description:"High most of the time, no rest, 'annoying' to other dogs trying to rest" },
+    ]},
+    { id:"other-behaviors", label:"Other Behaviors", background:"Instances observing inappropriate off-leash behaviors", type:"radio", options:[
+      { value:"green", label:"Minimal or rare", description:"Minimal or rare (e.g. poop eater)" },
+      { value:"yellow", label:"Some instances, responds to redirection", description:"Some instances, responds well with redirection, other dogs tolerate behaviors" },
+      { value:"red", label:"Frequent, bully behavior, aggression", description:"Frequent, multiple redirections needed in short period, bully behavior, aggression displayed and/or overly fearful or stressed" },
+    ]},
+  ]},
+];
+
+const EVAL_SCORE_PTS = { green:3, yellow:2, red:1 };
+const getEvalAgeBucket = (dob) => {
+  if (!dob) return null;
+  const b = new Date(dob + "T00:00:00"), now = new Date();
+  const ageMonths = (now - b) / (30.44 * 24 * 60 * 60 * 1000);
+  if (ageMonths < 5) return "under5m";
+  if (ageMonths < 6) return "5to6m";
+  if (ageMonths < 36) return "6m3y";
+  if (ageMonths < 84) return "3to7y";
+  return "8plus";
+};
+const scoreEvalAge = (dob, hasExperience) => {
+  const b = getEvalAgeBucket(dob);
+  if (!b) return null;
+  if (hasExperience) {
+    if (b === "under5m" || b === "5to6m" || b === "6m3y") return "green";
+    if (b === "3to7y") return "yellow";
+    return "red";
+  }
+  if (b === "under5m") return "green";
+  if (b === "5to6m" || b === "6m3y") return "yellow";
+  return "red";
+};
+const calcEvalSectionPts = (answers, questions) => questions.reduce((s, q) => s + (EVAL_SCORE_PTS[answers[q.id]] || 0), 0);
+const getEvalVisibleSections = (evalType) => evalType === "dayboarding" ? EVAL_SECTIONS.slice(0, 2) : EVAL_SECTIONS;
+const getEvalVisibleQuestions = (evalType) => getEvalVisibleSections(evalType).flatMap(s => s.questions);
+const getEvalMaxScore = (evalType) => getEvalVisibleSections(evalType).reduce((s, sec) => s + sec.maxScore, 0);
+const getEvalTotalScore = (answers, evalType) => getEvalVisibleSections(evalType).reduce((s, sec) => s + calcEvalSectionPts(answers, sec.questions), 0);
+const getEvalResult = (totalScore, evalType, answers) => {
+  if (evalType === "dayboarding") {
+    const allHandlingGreen = ["handling-unleash","handling-room","handling-leash"].every(id => answers[id] === "green");
+    return allHandlingGreen ? "green" : "red";
+  }
+  return totalScore >= 40 ? "green" : "red";
+};
+const hasCompletedEval = (data, res) => (data.evaluations || []).some(e => e.reservationId === res.id && e.locked);
+
 // ─── Pricing Engine ──────────────────────────────────────────────────────────
 const countNights = (ci, co) => {
   const a = new Date(ci + "T12:00:00"), b = new Date(co + "T12:00:00");
@@ -2284,7 +2433,19 @@ function DashboardPage({ data, save, nav, onNew }) {
   const handleCheckOut = async (rid) => {
     const res = data.reservations.find(r=>r.id===rid);
     if (res && res.type === "evaluation") {
-      setEvalModalRes(rid);
+      const existingEval = (data.evaluations || []).find(e => e.reservationId === rid && e.locked);
+      if (!existingEval) {
+        nav("evaluation-form", { reservationId: rid });
+        return;
+      }
+      // Eval already done — proceed with checkout, set evalResult from evaluation
+      const evalResultVal = existingEval.result === "green" ? "passed_group" : "pending";
+      const origRes = res ? { ...res } : null;
+      await save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out",evalResult:evalResultVal}:r)});
+      if (origRes) {
+        const dog = data.dogs.find(d => d.id === origRes.dogId);
+        addDashToast({ dogName: dog ? dog.fields.name : "?", action: "checked out", oldVal: "Checked In", newVal: "Checked Out", undoRes: origRes });
+      }
       return;
     }
     const origRes = res ? { ...res } : null;
@@ -2294,18 +2455,7 @@ function DashboardPage({ data, save, nav, onNew }) {
       addDashToast({ dogName: dog ? dog.fields.name : "?", action: "checked out", oldVal: "Checked In", newVal: "Checked Out", undoRes: origRes });
     }
   };
-  const [evalModalRes, setEvalModalRes] = useState(null);
-  const handleEvalResult = async (result) => {
-    const origRes = data.reservations.find(r => r.id === evalModalRes);
-    const origCopy = origRes ? { ...origRes } : null;
-    await save({...data,reservations:data.reservations.map(r=>r.id===evalModalRes?{...r,status:"checked-out",evalResult:result}:r)});
-    if (origCopy) {
-      const dog = data.dogs.find(d => d.id === origCopy.dogId);
-      const resultLabel = result === "passed_group" ? "Passed Group" : "Passed Private";
-      addDashToast({ dogName: dog ? dog.fields.name : "?", action: "eval completed", oldVal: "Pending", newVal: resultLabel, undoRes: origCopy });
-    }
-    setEvalModalRes(null);
-  };
+  // Old evalModalRes removed — now uses EvaluationFormPage
 
   const typeLabel=(t)=>t==="boarding"?"Boarding":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
   const typeColor=(t)=>t==="boarding"?"primary":t==="daycare"?"success":t==="evaluation"?"warning":"accent";
@@ -2877,6 +3027,10 @@ function DashboardPage({ data, save, nav, onNew }) {
                                   <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 4, fontSize: 10, fontWeight: 800, background: isLg ? "#3B82F6" : "#22C55E", color: "#fff", cursor: "default", flexShrink: 0, letterSpacing: 0 }}>{isLg ? "L" : "S"}</span>
                                 </Tip>); })()}
                               {dog && <DogTagChips dog={dog} dogTags={data.dogTags} size="sm" />}
+                              {dog && (() => { const le = (data.evaluations||[]).filter(e=>e.dogId===res.dogId&&e.locked).sort((a,b)=>(b.date||"").localeCompare(a.date||""))[0]; if (!le) return null; return (
+                                <Tip text={`Eval: ${le.result==="green"?"Approved":"Not Approved"} (${fmtDate(le.date)})`}>
+                                  <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:16,height:16,borderRadius:"50%",background:le.result==="green"?C.suc:C.dan,color:"#fff",fontSize:9,fontWeight:800,flexShrink:0}}>{le.result==="green"?"\u2713":"\u2717"}</span>
+                                </Tip>); })()}
                             </div>
                             <div style={{ fontSize: 11, color: C.textSec, marginTop: 1 }}>{dog?.fields?.breed ? `${dog.fields.breed} · ` : ""}{dogDetails}</div>
                             {res.notes && <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic", marginTop: 2 }}>{res.notes}</div>}
@@ -2906,7 +3060,12 @@ function DashboardPage({ data, save, nav, onNew }) {
                             onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
                             onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}>
                             {showCheckIn && <Btn size="sm" variant="success" onClick={() => handleCheckIn(res.id)} icon={<I.LogIn/>}>In</Btn>}
-                            {showCheckOut && <Btn size="sm" variant="accent" onClick={() => handleCheckOut(res.id)} icon={<I.LogOut/>}>Out</Btn>}
+                            {showCheckOut && res.type === "evaluation" && !hasCompletedEval(data, res) && (
+                              <Btn size="sm" variant="warning" onClick={() => nav("evaluation-form", { reservationId: res.id })} icon={<I.Clipboard/>}>Eval</Btn>
+                            )}
+                            {showCheckOut && (res.type !== "evaluation" || hasCompletedEval(data, res)) && (
+                              <Btn size="sm" variant="accent" onClick={() => handleCheckOut(res.id)} icon={<I.LogOut/>}>Out</Btn>
+                            )}
                             {activeTab === "checkedout" && <Badge color="default" size="sm">Done</Badge>}
                           </div>
                         </div>
@@ -2921,20 +3080,6 @@ function DashboardPage({ data, save, nav, onNew }) {
       </Card>
 
 
-
-      {/* Evaluation Result Modal */}
-      {evalModalRes && (
-        <Modal title="Evaluation Result" onClose={() => setEvalModalRes(null)}>
-          <p style={{ fontSize: 14, color: C.text, lineHeight: 1.6, margin: "0 0 20px" }}>
-            How did <strong>{dn(data.reservations.find(r=>r.id===evalModalRes)?.dogId)}</strong> do in their evaluation?
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <Btn variant="success" onClick={() => handleEvalResult("passed_group")} style={{ justifyContent: "center" }}>Passed for Group Play</Btn>
-            <Btn variant="primary" onClick={() => handleEvalResult("passed_private")} style={{ justifyContent: "center" }}>Passed for Private Play</Btn>
-            <Btn variant="secondary" onClick={() => setEvalModalRes(null)} style={{ justifyContent: "center" }}>Cancel</Btn>
-          </div>
-        </Modal>
-      )}
 
       {/* Quick Daycare Check-in Modal */}
       {showQuickDC && (
@@ -3448,6 +3593,322 @@ function ClientDetailPage({ data, save, clientId, nav }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// EVALUATION FORM
+// ═══════════════════════════════════════════════════════════════════════════
+function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
+  const reservation = (data.reservations || []).find(r => r.id === reservationId);
+  const dog = reservation ? (data.dogs || []).find(d => d.id === reservation.dogId) : null;
+  const client = reservation ? (data.clients || []).find(c => c.id === reservation.clientId) : null;
+  const existingEval = (data.evaluations || []).find(e => e.reservationId === reservationId && e.locked);
+
+  const [evalType, setEvalType] = useState("daycare");
+  const [answers, setAnswers] = useState({});
+  const [hasExperience, setHasExperience] = useState(null);
+  const [notes, setNotes] = useState("");
+  const [errors, setErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+
+  // Compute scores
+  const visibleSections = getEvalVisibleSections(evalType);
+  const visibleQuestions = getEvalVisibleQuestions(evalType);
+  const maxScore = getEvalMaxScore(evalType);
+  const totalScore = getEvalTotalScore(answers, evalType);
+  const answeredCount = visibleQuestions.filter(q => answers[q.id]).length;
+  const allAnswered = answeredCount === visibleQuestions.length;
+  const result = allAnswered ? getEvalResult(totalScore, evalType, answers) : null;
+
+  // Auto-score age when toggle changes
+  useEffect(() => {
+    if (hasExperience !== null && dog?.fields?.dob) {
+      const ageResult = scoreEvalAge(dog.fields.dob, hasExperience);
+      if (ageResult) setAnswers(prev => ({ ...prev, age: ageResult }));
+    }
+  }, [hasExperience, dog?.fields?.dob]);
+
+  const handleAnswer = (qid, val) => {
+    setAnswers(prev => ({ ...prev, [qid]: val }));
+    setErrors(prev => ({ ...prev, [qid]: undefined }));
+  };
+
+  const handleSubmit = async () => {
+    const errs = {};
+    visibleQuestions.forEach(q => { if (!answers[q.id]) errs[q.id] = "Required"; });
+    if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+    setSubmitting(true);
+    const subtotals = {};
+    visibleSections.forEach(s => { subtotals[s.id] = calcEvalSectionPts(answers, s.questions); });
+    const finalResult = getEvalResult(totalScore, evalType, answers);
+    const evalObj = {
+      id: "eval_" + gid(), dogId: dog.id, clientId: client?.id || "", reservationId,
+      date: todayStr(), evaluatorName: profile?.full_name || "",
+      evalType, hasExperience: !!hasExperience, answers: { ...answers },
+      subtotals, totalScore, maxScore, result: finalResult,
+      notes, locked: true, createdAt: new Date().toISOString(),
+    };
+    const evalResult = finalResult === "green" ? "passed_group" : "pending";
+    const newData = {
+      ...data,
+      evaluations: [...(data.evaluations || []), evalObj],
+      reservations: data.reservations.map(r => r.id === reservationId ? { ...r, evalResult } : r),
+    };
+    await save(newData);
+    setSubmitting(false);
+    nav("dashboard");
+  };
+
+  if (!reservation || !dog) return <div style={{ padding: 40, textAlign: "center", color: C.textMut }}>Reservation or dog not found.</div>;
+
+  // Read-only view for completed eval
+  if (existingEval) {
+    const ev = existingEval;
+    return (
+      <div style={{ maxWidth: 800, margin: "0 auto" }}>
+        <button onClick={() => nav("dashboard")} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "8px 0", marginBottom: 16, fontFamily: "inherit" }}>
+          <I.ChevronLeft size={16}/> Dashboard
+        </button>
+        <Card style={{ padding: "24px 28px", marginBottom: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
+            <DogAvatar dog={dog} size={56}/>
+            <div>
+              <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: C.text }}>{dog.fields.name} — Evaluation</h2>
+              <div style={{ fontSize: 13, color: C.textSec, marginTop: 2 }}>{dog.fields.breed}{dog.fields.dob ? ` · ${calcAge(dog.fields.dob)}` : ""} · {client?.fields?.first_name} {client?.fields?.last_name}</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, padding: "16px 20px", borderRadius: 12, background: ev.result === "green" ? C.sucLt : C.danLt, border: `1.5px solid ${ev.result === "green" ? C.suc : C.dan}30` }}>
+            <div style={{ width: 48, height: 48, borderRadius: "50%", background: ev.result === "green" ? C.suc : C.dan, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 800 }}>
+              {ev.result === "green" ? "\u2713" : "\u2717"}
+            </div>
+            <div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: ev.result === "green" ? C.suc : C.dan }}>
+                {ev.result === "green" ? "Green Dog — Approved" : "Red Dog — Not Approved"}
+              </div>
+              <div style={{ fontSize: 13, color: C.textSec, marginTop: 2 }}>
+                Score: {ev.totalScore}/{ev.maxScore} · {ev.evalType === "dayboarding" ? "Day Boarding" : "Daycare"} · {fmtDate(ev.date)} · {ev.evaluatorName}
+              </div>
+            </div>
+          </div>
+        </Card>
+        {/* Read-only sections */}
+        {getEvalVisibleSections(ev.evalType).map((sec, si) => (
+          <Card key={sec.id} style={{ padding: "20px 24px", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: C.text }}>{si + 1}. {sec.name}</h3>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{ev.subtotals[sec.id] || 0}/{sec.maxScore} pts</span>
+            </div>
+            {sec.questions.map(q => {
+              const ans = ev.answers[q.id];
+              const color = ans === "green" ? C.suc : ans === "yellow" ? C.warn : ans === "red" ? C.dan : C.textMut;
+              const bg = ans === "green" ? C.sucLt : ans === "yellow" ? C.warnLt : ans === "red" ? C.danLt : C.bg;
+              const opt = (q.options || []).find(o => o.value === ans);
+              return (
+                <div key={q.id} style={{ padding: "10px 14px", borderRadius: 10, marginBottom: 8, background: bg, border: `1.5px solid ${color}30` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{q.label}</div>
+                      <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{opt ? opt.label : ans || "—"}</div>
+                    </div>
+                    <Badge color={ans === "green" ? "success" : ans === "yellow" ? "warning" : "danger"} size="sm">{EVAL_SCORE_PTS[ans] || 0} pts</Badge>
+                  </div>
+                </div>
+              );
+            })}
+          </Card>
+        ))}
+        {ev.notes && <Card style={{ padding: "16px 20px", marginBottom: 16 }}><div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, marginBottom: 6 }}>NOTES</div><div style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>{ev.notes}</div></Card>}
+        <div style={{ textAlign: "right", marginTop: 12 }}>
+          <Btn variant="secondary" onClick={() => nav("dashboard")}>Back to Dashboard</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  // Active form
+  const ageDisplay = dog.fields.dob ? calcAge(dog.fields.dob) : "Unknown";
+  return (
+    <div style={{ maxWidth: 800, margin: "0 auto" }}>
+      <button onClick={() => nav("dashboard")} style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", padding: "8px 0", marginBottom: 16, fontFamily: "inherit" }}>
+        <I.ChevronLeft size={16}/> Dashboard
+      </button>
+
+      {/* Header card */}
+      <Card style={{ padding: "24px 28px", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20 }}>
+          <DogAvatar dog={dog} size={56}/>
+          <div style={{ flex: 1 }}>
+            <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: C.text }}>{dog.fields.name} — Evaluation</h2>
+            <div style={{ fontSize: 13, color: C.textSec, marginTop: 2 }}>{dog.fields.breed}{dog.fields.dob ? ` · ${ageDisplay}` : ""} · {client?.fields?.first_name} {client?.fields?.last_name}</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut }}>PROGRESS</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>{answeredCount}/{visibleQuestions.length}</div>
+          </div>
+        </div>
+        {/* Eval type toggle */}
+        <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, letterSpacing: "0.05em", marginBottom: 8 }}>EVALUATION TYPE</div>
+          <div style={{ display: "flex", gap: 10 }}>
+            {[{ v: "daycare", l: "Full Daycare Evaluation" }, { v: "dayboarding", l: "Day Boarding Evaluation" }].map(opt => (
+              <button key={opt.v} onClick={() => setEvalType(opt.v)} style={{
+                flex: 1, padding: "10px 14px", borderRadius: 10, fontFamily: "inherit",
+                border: `2px solid ${evalType === opt.v ? C.pri : C.border}`,
+                background: evalType === opt.v ? C.priLt : "transparent",
+                color: evalType === opt.v ? C.pri : C.text, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                transition: "all 0.15s",
+              }}>{opt.l}</button>
+            ))}
+          </div>
+        </div>
+      </Card>
+
+      {/* Sections */}
+      {visibleSections.map((sec, si) => {
+        const secPts = calcEvalSectionPts(answers, sec.questions);
+        return (
+          <Card key={sec.id} style={{ padding: "20px 24px", marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: C.text }}>{si + 1}. {sec.name}</h3>
+              <span style={{ fontSize: 14, fontWeight: 800, color: secPts > 0 ? C.pri : C.textMut }}>{secPts}/{sec.maxScore} pts</span>
+            </div>
+
+            {sec.questions.map(q => (
+              <div key={q.id} style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 2 }}>{q.label}</div>
+                <div style={{ fontSize: 12, color: C.textSec, marginBottom: 10 }}>{q.background}</div>
+
+                {/* Age toggle question */}
+                {q.type === "age-toggle" && (
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.textMut, marginBottom: 8 }}>Has prior off-leash play experience?</div>
+                    <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+                      {[{ v: true, l: "Yes — Has Experience" }, { v: false, l: "No — No Experience" }].map(opt => (
+                        <button key={String(opt.v)} onClick={() => setHasExperience(opt.v)} style={{
+                          flex: 1, padding: "10px 14px", borderRadius: 10, fontFamily: "inherit",
+                          border: `2px solid ${hasExperience === opt.v ? C.pri : C.border}`,
+                          background: hasExperience === opt.v ? C.priLt : "transparent",
+                          color: hasExperience === opt.v ? C.pri : C.text, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                        }}>{opt.l}</button>
+                      ))}
+                    </div>
+                    {hasExperience !== null && (
+                      <div style={{ padding: "10px 14px", borderRadius: 10, background: answers.age === "green" ? C.sucLt : answers.age === "yellow" ? C.warnLt : answers.age === "red" ? C.danLt : C.bg, border: `1.5px solid ${answers.age === "green" ? C.suc : answers.age === "yellow" ? C.warn : answers.age === "red" ? C.dan : C.border}30` }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: answers.age === "green" ? C.suc : answers.age === "yellow" ? C.warn : C.dan }}>
+                          Auto-scored: {(answers.age || "").toUpperCase()} ({EVAL_SCORE_PTS[answers.age] || 0} pts)
+                        </div>
+                        <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>
+                          Dog age: {ageDisplay} · {hasExperience ? "Has" : "No"} prior off-leash experience
+                        </div>
+                      </div>
+                    )}
+                    {errors.age && <div style={{ color: C.dan, fontSize: 12, marginTop: 6, fontWeight: 600 }}>{errors.age}</div>}
+                  </div>
+                )}
+
+                {/* Binary (handling) questions */}
+                {q.type === "binary" && (
+                  <div>
+                    <div style={{ display: "flex", gap: 10 }}>
+                      {q.options.map(opt => {
+                        const sel = answers[q.id] === opt.value;
+                        const oc = opt.value === "green" ? C.suc : C.dan;
+                        const ob = opt.value === "green" ? C.sucLt : C.danLt;
+                        return (
+                          <button key={opt.value} onClick={() => handleAnswer(q.id, opt.value)} style={{
+                            flex: 1, padding: "14px 16px", borderRadius: 10, fontFamily: "inherit", textAlign: "left",
+                            border: `2px solid ${sel ? oc : C.border}`, background: sel ? ob : "transparent",
+                            cursor: "pointer", transition: "all 0.15s",
+                          }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: sel ? oc : C.text }}>{opt.label}</div>
+                            <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{opt.description}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {errors[q.id] && <div style={{ color: C.dan, fontSize: 12, marginTop: 6, fontWeight: 600 }}>{errors[q.id]}</div>}
+                  </div>
+                )}
+
+                {/* Standard radio (green/yellow/red) */}
+                {q.type === "radio" && (
+                  <div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {q.options.map(opt => {
+                        const sel = answers[q.id] === opt.value;
+                        const oc = opt.value === "green" ? C.suc : opt.value === "yellow" ? C.warn : C.dan;
+                        const ob = opt.value === "green" ? C.sucLt : opt.value === "yellow" ? C.warnLt : C.danLt;
+                        return (
+                          <button key={opt.value} onClick={() => handleAnswer(q.id, opt.value)} style={{
+                            padding: "12px 16px", borderRadius: 10, fontFamily: "inherit", textAlign: "left",
+                            border: `2px solid ${sel ? oc : C.border}`, background: sel ? ob : "transparent",
+                            cursor: "pointer", transition: "all 0.15s",
+                          }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <div style={{ width: 10, height: 10, borderRadius: "50%", background: oc, flexShrink: 0 }}/>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: sel ? oc : C.text }}>{opt.label}</div>
+                              {sel && <span style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, color: oc }}>{EVAL_SCORE_PTS[opt.value]} pts</span>}
+                            </div>
+                            <div style={{ fontSize: 12, color: C.textSec, marginTop: 4, marginLeft: 18 }}>{opt.description}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {errors[q.id] && <div style={{ color: C.dan, fontSize: 12, marginTop: 6, fontWeight: 600 }}>{errors[q.id]}</div>}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* Day boarding stop banner */}
+            {sec.stopForDayboarding && evalType === "dayboarding" && (
+              <div style={{ padding: "14px 18px", borderRadius: 10, background: C.warnLt, border: `1.5px solid ${C.warn}30`, marginTop: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.warn }}>Day Boarding Evaluation Complete</div>
+                <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>If all handling questions are answered YES, the dog is approved for day boarding.</div>
+              </div>
+            )}
+          </Card>
+        );
+      })}
+
+      {/* Score summary */}
+      <Card style={{ padding: "24px 28px", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, letterSpacing: "0.05em", marginBottom: 6 }}>TOTAL SCORE</div>
+            <div style={{ fontSize: 32, fontWeight: 800, color: C.text }}>{totalScore} <span style={{ fontSize: 18, fontWeight: 600, color: C.textMut }}>/ {maxScore}</span></div>
+            {allAnswered && (
+              <div style={{ fontSize: 15, fontWeight: 700, color: result === "green" ? C.suc : C.dan, marginTop: 8 }}>
+                {result === "green" ? `Green Dog \u2014 Approved for ${evalType === "dayboarding" ? "Day Boarding" : "Daycare"}` : "Red Dog \u2014 Not Approved"}
+              </div>
+            )}
+          </div>
+          {allAnswered && (
+            <div style={{ width: 72, height: 72, borderRadius: "50%", background: result === "green" ? C.sucLt : C.danLt, border: `3px solid ${result === "green" ? C.suc : C.dan}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <span style={{ fontSize: 32, fontWeight: 800, color: result === "green" ? C.suc : C.dan }}>{result === "green" ? "\u2713" : "\u2717"}</span>
+            </div>
+          )}
+        </div>
+        {/* Progress bar */}
+        <div style={{ marginTop: 16, height: 6, borderRadius: 3, background: C.border }}>
+          <div style={{ height: 6, borderRadius: 3, background: allAnswered ? (result === "green" ? C.suc : C.dan) : C.pri, width: `${maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0}%`, transition: "width 0.3s" }}/>
+        </div>
+        {/* Notes */}
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, letterSpacing: "0.05em", marginBottom: 6 }}>NOTES (OPTIONAL)</div>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Additional observations..." rows={3} style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical", outline: "none", background: C.bg }} onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border}/>
+        </div>
+      </Card>
+
+      {/* Actions */}
+      <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginBottom: 40 }}>
+        <Btn variant="secondary" onClick={() => nav("dashboard")}>Cancel</Btn>
+        <Btn onClick={handleSubmit} disabled={submitting || !allAnswered}>
+          {submitting ? "Saving..." : "Submit Evaluation"}
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // DOG DETAIL
 // ═══════════════════════════════════════════════════════════════════════════
 function DogDetailPage({ data, save, clientId, dogId, nav }) {
@@ -3485,6 +3946,13 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.text}}>{dog.fields.name}</h2>
                 <VaxIcon dog={dog} requiredVaccines={data.requiredVaccines} policies={data.resortPolicies} />
+                {(() => { const evs = (data.evaluations || []).filter(e => e.dogId === dogId).sort((a, b) => (b.date||"").localeCompare(a.date||"")); if (!evs.length) return null; const le = evs[0]; return (
+                  <Tip text={`Eval: ${le.result === "green" ? "Approved" : "Not Approved"} — ${fmtDate(le.date)}`}>
+                    <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: "50%", background: le.result === "green" ? C.suc : C.dan, color: "#fff", fontSize: 12, fontWeight: 800 }}>
+                      {le.result === "green" ? "\u2713" : "\u2717"}
+                    </span>
+                  </Tip>
+                ); })()}
               </div>
               <div style={{fontSize:14,color:C.textSec,marginTop:2}}>{dog.fields.breed}{dog.fields.weight?` · ${dog.fields.weight} lbs`:""}{dog.fields.sex?` · ${dog.fields.sex}`:""}{dog.fields.dob ? ` · ${calcAge(dog.fields.dob)}` : ""}{` · ${fixedLabel(dog)}`}</div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
@@ -3623,6 +4091,39 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
                 );
               })}
               {sorted.length > 15 && <div style={{fontSize:12,color:C.textMut,textAlign:"center",padding:8}}>+ {sorted.length - 15} more mentions</div>}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Evaluations History */}
+      {(() => {
+        const evals = (data.evaluations || []).filter(e => e.dogId === dogId).sort((a, b) => (b.date||"").localeCompare(a.date||""));
+        if (!evals.length) return null;
+        return (
+          <div style={{marginTop:24}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+              <h3 style={{margin:0,fontSize:17,fontWeight:700,color:C.text}}>Evaluations</h3>
+              <span style={{fontSize:12,color:C.textMut}}>{evals.length} total</span>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {evals.map(ev => (
+                <Card key={ev.id} style={{padding:"14px 18px",cursor:"pointer"}} onClick={() => nav("evaluation-form", { reservationId: ev.reservationId })}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}>
+                    <div>
+                      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                        <span style={{fontSize:13,fontWeight:700,color:C.pri}}>{fmtDate(ev.date)}</span>
+                        <Badge color={ev.result === "green" ? "success" : "danger"} size="sm">{ev.result === "green" ? "Approved" : "Not Approved"}</Badge>
+                        <Badge color="default" size="sm">{ev.evalType === "dayboarding" ? "Day Boarding" : "Daycare"}</Badge>
+                      </div>
+                      <div style={{fontSize:12,color:C.textSec}}>{ev.totalScore}/{ev.maxScore} pts · Evaluated by {ev.evaluatorName || "Staff"}</div>
+                    </div>
+                    <div style={{width:28,height:28,borderRadius:"50%",background:ev.result==="green"?C.suc:C.dan,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,fontWeight:800,flexShrink:0}}>
+                      {ev.result === "green" ? "\u2713" : "\u2717"}
+                    </div>
+                  </div>
+                </Card>
+              ))}
             </div>
           </div>
         );
@@ -10834,6 +11335,11 @@ export default function App() {
       case "new-dog": return "New Dog";
       case "new-reservation": return "New Reservation";
       case "unified-new": return "New Client & Reservation";
+      case "evaluation-form": {
+        const evRes = (data?.reservations||[]).find(r => r.id === prms?.reservationId);
+        const evDog = evRes ? (data?.dogs||[]).find(d => d.id === evRes.dogId) : null;
+        return evDog ? `Evaluate ${evDog.fields.name}` : "Evaluation Form";
+      }
       default: return pg;
     }
   }, [data]);
@@ -10871,7 +11377,7 @@ export default function App() {
   // Flat list for lookups
   const navItems = navSections.flatMap(s => s.items);
   const isOpsPage = page.startsWith("ops-");
-  const activeNav = isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","crm","messages","payments","settings","ai"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":"dashboard";
+  const activeNav = isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","crm","messages","payments","settings","ai"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
 
   function renderPage() {
     if (isOpsPage) {
@@ -10892,6 +11398,7 @@ export default function App() {
       case "reservations": return hp("view_calendar") ? <LodgingCalendarPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/> : denied;
       case "new-reservation": return hp("create_reservation") ? <NewReservationPage data={data} save={save} preClientId={params.clientId} nav={nav}/> : denied;
       case "unified-new": return <UnifiedNewPage data={data} save={save} nav={nav} prefill={params.prefill}/>;
+      case "evaluation-form": return hp("edit_evaluations") ? <EvaluationFormPage data={data} save={save} reservationId={params.reservationId} nav={nav} profile={profile}/> : denied;
       case "eod": return hp("view_eod") ? <EODPage data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "crm": return hp("view_crm") ? <CRMPage data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "messages": return hp("view_messages") ? <MessagesPage data={data} save={save} nav={nav} profile={profile}/> : denied;
