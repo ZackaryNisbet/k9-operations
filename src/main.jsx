@@ -68,9 +68,9 @@ function Root() {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8F9FB', fontFamily: "'Inter', sans-serif" }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8F9FB', fontFamily: "'GT Eesti', sans-serif" }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 24, fontWeight: 800, color: '#003462', fontFamily: "'Playfair Display', Georgia, serif" }}>K9 Operations</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#003462', fontFamily: "'Canela', Georgia, serif" }}>K9 Operations</div>
           <div style={{ fontSize: 13, color: '#6B7280', marginTop: 8 }}>Loading...</div>
         </div>
       </div>
@@ -83,11 +83,11 @@ function Root() {
   // User needs to set a password (came from reset link or invite link)
   if (needsPasswordSet) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8F9FB', fontFamily: "'Inter', sans-serif" }}>
-        <style>{`@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&display=swap');`}</style>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8F9FB', fontFamily: "'GT Eesti', sans-serif" }}>
+        {/* fonts loaded via App.jsx @font-face */}
         <div style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 20, padding: '40px 36px', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
           <div style={{ textAlign: 'center', marginBottom: 28 }}>
-            <div style={{ fontSize: 24, fontWeight: 800, color: '#003462', fontFamily: "'Playfair Display', Georgia, serif" }}>K9 Operations</div>
+            <div style={{ fontSize: 24, fontWeight: 800, color: '#003462', fontFamily: "'Canela', Georgia, serif" }}>K9 Operations</div>
             <div style={{ fontSize: 11, color: '#AF8D54', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 4 }}>Luxury Pet Hotel Management</div>
           </div>
 
@@ -136,9 +136,9 @@ function Root() {
   // Claiming invitation in progress
   if (claiming) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8F9FB', fontFamily: "'Inter', sans-serif" }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8F9FB', fontFamily: "'GT Eesti', sans-serif" }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 24, fontWeight: 800, color: '#003462', fontFamily: "'Playfair Display', Georgia, serif" }}>K9 Operations</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#003462', fontFamily: "'Canela', Georgia, serif" }}>K9 Operations</div>
           <div style={{ fontSize: 13, color: '#6B7280', marginTop: 8 }}>Setting up your account...</div>
         </div>
       </div>
@@ -148,12 +148,12 @@ function Root() {
   // Logged in but no location assigned → show waiting message
   if (!profile?.location_id) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8F9FB', fontFamily: "'Inter', sans-serif" }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8F9FB', fontFamily: "'GT Eesti', sans-serif" }}>
         <div style={{ textAlign: 'center', maxWidth: 480, padding: 40 }}>
           <div style={{ width: 64, height: 64, borderRadius: 16, background: '#003462', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           </div>
-          <div style={{ fontSize: 24, fontWeight: 800, color: '#003462', fontFamily: "'Playfair Display', Georgia, serif", marginBottom: 8 }}>Welcome to K9 Operations!</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: '#003462', fontFamily: "'Canela', Georgia, serif", marginBottom: 8 }}>Welcome to K9 Operations!</div>
           <p style={{ fontSize: 14, color: '#6B7280', lineHeight: 1.7, margin: '0 0 24px' }}>
             Your account is set up and ready to go. You just need to be assigned to a location by your manager.
           </p>

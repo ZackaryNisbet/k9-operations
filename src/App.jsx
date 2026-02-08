@@ -234,6 +234,7 @@ const titleCase = (s) => (s || "").replace(/\b\w/g, c => c.toUpperCase());
 const fmtPhone = (p) => { const d = (p||"").replace(/\D/g,""); return d.length===10?`(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`:p||""; };
 const fmtDate = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00"); return dt.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}); };
 const fmtDateFull = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00"); return `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${dt.getFullYear()}`; };
+const fmtDateShort = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00"); return `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${String(dt.getFullYear()).slice(2)}`; };
 const fmtTime = (t) => { if(!t) return ""; const [h,m] = t.split(":").map(Number); const ampm = h >= 12 ? "PM" : "AM"; const h12 = h % 12 || 12; return `${h12}:${String(m).padStart(2,"0")} ${ampm}`; };
 const summarizeFeeding = (schedules) => { if(!schedules||!schedules.length) return ""; return schedules.map(s => { const t = (s.times||[]).join("/"); return `${s.amount||""} ${s.unit||""} ${t} ${s.foodType||""}`.trim(); }).join("; "); };
 const summarizeMeds = (schedules) => { if(!schedules||!schedules.length) return "None"; return schedules.map(s => `${s.name||""} ${s.amount||""} ${s.unit||""} @ ${s.time||""}`.trim()).join("; "); };
@@ -2954,8 +2955,8 @@ function DashboardPage({ data, save, nav, onNew }) {
           </div>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <span data-shortcut-quickdc="1" onClick={()=>setShowQuickDC(true)} style={{display:"inline-flex"}}><Btn variant="success" onClick={()=>setShowQuickDC(true)} icon={<I.Plus/>}>Quick Daycare{(data.hotkeySettings||{}).showHints!==false&&<kbd style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.6)",background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'Inter',monospace",lineHeight:1.4}}>Q</kbd>}</Btn></span>
-          <Btn onClick={onNew} icon={<I.Plus/>}>New {(data.hotkeySettings||{}).showHints!==false&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'Inter',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
+          <span data-shortcut-quickdc="1" onClick={()=>setShowQuickDC(true)} style={{display:"inline-flex"}}><Btn variant="success" onClick={()=>setShowQuickDC(true)} icon={<I.Plus/>}>Quick Daycare{(data.hotkeySettings||{}).showHints!==false&&<kbd style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.6)",background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>Q</kbd>}</Btn></span>
+          <Btn onClick={onNew} icon={<I.Plus/>}>New {(data.hotkeySettings||{}).showHints!==false&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
         </div>
       </div>
 
@@ -3115,7 +3116,7 @@ function DashboardPage({ data, save, nav, onNew }) {
         <div style={{ display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={sq ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input data-shortcut-search value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search by client name, dog name, phone, or email…" style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }} />
-          {!sq && (data.hotkeySettings||{}).showHints!==false && <kbd style={{fontSize:11,fontWeight:600,color:C.textMut,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:5,padding:"2px 7px",fontFamily:"'Inter',monospace",flexShrink:0,lineHeight:1.4}}>/</kbd>}
+          {!sq && (data.hotkeySettings||{}).showHints!==false && <kbd style={{fontSize:11,fontWeight:600,color:C.textMut,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:5,padding:"2px 7px",fontFamily:"'GT Eesti',monospace",flexShrink:0,lineHeight:1.4}}>/</kbd>}
           {sq && <button onClick={() => setSearchQuery("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex", fontFamily: "inherit" }} title="Clear search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
           {/* Type filter pills */}
           <div style={{ display: "flex", gap: 4, marginLeft: 8, flexShrink: 0 }}>
@@ -3303,14 +3304,14 @@ function DashboardPage({ data, save, nav, onNew }) {
         const resAddOns = res.addOns || [];
         const addonPrices = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
         return ReactDOM.createPortal(
-          <div ref={addOnPopupRef} style={{ position: "fixed", left: Math.min(addOnPopup.x, window.innerWidth - 230), top: Math.min(addOnPopup.y, window.innerHeight - 300), zIndex: 9999, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.18)", padding: "8px 0", minWidth: 210, maxHeight: 320, overflowY: "auto" }}>
+          <div ref={addOnPopupRef} style={{ position: "fixed", left: Math.min(addOnPopup.x, window.innerWidth - 260), top: Math.min(addOnPopup.y, window.innerHeight - 400), zIndex: 9999, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.18)", padding: "8px 0", minWidth: 240, maxHeight: 400, overflowY: "auto", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>
             <div style={{ padding: "6px 14px 8px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: `1px solid ${C.borderLight}` }}>Add-Ons</div>
             {availableAddOns.map(addon => {
               const active = resAddOns.includes(addon);
               const price = addonPrices[addon] ?? 0;
               return (
                 <div key={addon} onClick={() => toggleResAddOn(addOnPopup.resId, addon)}
-                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", cursor: "pointer", transition: "background 0.1s", fontSize: 13 }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 14px", cursor: "pointer", transition: "background 0.1s", fontSize: 13, borderBottom: `1px solid ${C.borderLight}` }}
                   onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
                   onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                   <span style={{ width: 18, height: 18, borderRadius: 4, border: `1.5px solid ${active ? C.pri : C.border}`, background: active ? C.pri : "transparent", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 12, fontWeight: 700, flexShrink: 0 }}>{active ? "\u2713" : ""}</span>
@@ -3445,7 +3446,9 @@ function ClientsPage({ data, nav }) {
       const lastRes = sorted.find(r => r.checkIn <= todayStr());
       const nextRes = sorted.filter(r => r.checkIn >= todayStr() && r.status === "upcoming").sort((a, b) => a.checkIn.localeCompare(b.checkIn))[0];
       const totalSpent = cRes.reduce((s, r) => s + ((r.pricing && r.pricing.total) || 0), 0);
-      map[c.id] = { dogCount: dogs.length, daycareCount, boardingCount, evalCount, tourCount, lastRes, nextRes, totalSpent, totalRes: cRes.length };
+      const daysSinceLast = lastRes ? Math.round((new Date(todayStr()+"T12:00:00") - new Date(lastRes.checkIn+"T12:00:00")) / 86400000) : null;
+      const dogNames = dogs.map(d => d.fields.name || "Unknown");
+      map[c.id] = { dogCount: dogs.length, dogNames, daycareCount, boardingCount, evalCount, tourCount, lastRes, nextRes, totalSpent, totalRes: cRes.length, daysSinceLast };
     });
     return map;
   }, [data.clients, data.reservations, data.dogs]);
@@ -3476,6 +3479,8 @@ function ClientsPage({ data, nav }) {
         case "boarding": va = sa.boardingCount || 0; vb = sb.boardingCount || 0; break;
         case "evals": va = sa.evalCount || 0; vb = sb.evalCount || 0; break;
         case "tours": va = sa.tourCount || 0; vb = sb.tourCount || 0; break;
+        case "totalRes": va = sa.totalRes || 0; vb = sb.totalRes || 0; break;
+        case "daysSince": va = sa.daysSinceLast ?? 99999; vb = sb.daysSinceLast ?? 99999; break;
         case "totalSpent": va = sa.totalSpent || 0; vb = sb.totalSpent || 0; break;
         case "lastRes": va = sa.lastRes ? sa.lastRes.checkIn : ""; vb = sb.lastRes ? sb.lastRes.checkIn : ""; break;
         case "nextRes": va = sa.nextRes ? sa.nextRes.checkIn : "zzzz"; vb = sb.nextRes ? sb.nextRes.checkIn : "zzzz"; break;
@@ -3526,7 +3531,7 @@ function ClientsPage({ data, nav }) {
       ) : (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1100 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1250 }}>
               <thead>
                 <tr style={{ borderBottom: `1.5px solid ${C.border}`, background: C.bg }}>
                   <th style={{ ...thStyle("last_name"), textAlign: "left", paddingLeft: 20 }} onClick={() => toggleSort("last_name")}>Last Name{sortIcon("last_name")}</th>
@@ -3534,7 +3539,9 @@ function ClientsPage({ data, nav }) {
                   <th style={{ ...thStyle("phone"), textAlign: "left" }} onClick={() => toggleSort("phone")}>Phone{sortIcon("phone")}</th>
                   <th style={{ ...thStyle("email"), textAlign: "left" }} onClick={() => toggleSort("email")}>Email{sortIcon("email")}</th>
                   <th style={{ ...thStyle("dogs"), textAlign: "center" }} onClick={() => toggleSort("dogs")}>Dogs{sortIcon("dogs")}</th>
+                  <th style={{ ...thStyle("totalRes"), textAlign: "center" }} onClick={() => toggleSort("totalRes")}>Total Res{sortIcon("totalRes")}</th>
                   <th style={{ ...thStyle("lastRes"), textAlign: "left" }} onClick={() => toggleSort("lastRes")}>Last Res{sortIcon("lastRes")}</th>
+                  <th style={{ ...thStyle("daysSince"), textAlign: "center" }} onClick={() => toggleSort("daysSince")}>Days Since{sortIcon("daysSince")}</th>
                   <th style={{ ...thStyle("daycare"), textAlign: "center" }} onClick={() => toggleSort("daycare")}>Daycare{sortIcon("daycare")}</th>
                   <th style={{ ...thStyle("boarding"), textAlign: "center" }} onClick={() => toggleSort("boarding")}>Board{sortIcon("boarding")}</th>
                   <th style={{ ...thStyle("evals"), textAlign: "center" }} onClick={() => toggleSort("evals")}>Eval{sortIcon("evals")}</th>
@@ -3555,15 +3562,21 @@ function ClientsPage({ data, nav }) {
                       <td style={tdStyle}>{client.fields.first_name || "—"}</td>
                       <td style={{ ...tdStyle, fontSize: 12 }}>{fmtPhone(client.fields.phone)}</td>
                       <td style={{ ...tdStyle, fontSize: 12, color: C.textSec, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{client.fields.email || "—"}</td>
-                      <td style={{ ...tdStyle, textAlign: "center" }}><Badge>{s.dogCount || 0}</Badge></td>
+                      <td style={{ ...tdStyle, textAlign: "center", position: "relative" }} title={s.dogNames && s.dogNames.length > 0 ? s.dogNames.join("\n") : ""}>
+                        <span style={{ cursor: "default", position: "relative" }}>
+                          <Badge>{s.dogCount || 0}</Badge>
+                        </span>
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: s.totalRes > 0 ? C.text : C.textMut }}>{s.totalRes || 0}</td>
                       <td style={tdStyle}>
                         {s.lastRes ? (
                           <div>
-                            <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDate(s.lastRes.checkIn)}</span>
+                            <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDateShort(s.lastRes.checkIn)}</span>
                             <span style={{ display: "inline-block", marginLeft: 6, padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: typeColor(s.lastRes.type) + "18", color: typeColor(s.lastRes.type) }}>{typeLabel(s.lastRes.type)}</span>
                           </div>
                         ) : <span style={{ color: C.textMut, fontSize: 12 }}>—</span>}
                       </td>
+                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.daysSinceLast != null ? (s.daysSinceLast > 90 ? C.dan : s.daysSinceLast > 30 ? C.warn : C.suc) : C.textMut }}>{s.daysSinceLast != null ? s.daysSinceLast : "—"}</td>
                       <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.daycareCount ? C.suc : C.textMut }}>{s.daycareCount || 0}</td>
                       <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.boardingCount ? C.pri : C.textMut }}>{s.boardingCount || 0}</td>
                       <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.evalCount ? C.warn : C.textMut }}>{s.evalCount || 0}</td>
@@ -3572,7 +3585,7 @@ function ClientsPage({ data, nav }) {
                       <td style={tdStyle}>
                         {s.nextRes ? (
                           <div>
-                            <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDate(s.nextRes.checkIn)}</span>
+                            <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDateShort(s.nextRes.checkIn)}</span>
                             <span style={{ display: "inline-block", marginLeft: 6, padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: typeColor(s.nextRes.type) + "18", color: typeColor(s.nextRes.type) }}>{typeLabel(s.nextRes.type)}</span>
                           </div>
                         ) : <span style={{ color: C.textMut, fontSize: 12 }}>—</span>}
@@ -5108,6 +5121,15 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
     const totalRooms = roomsForType.length;
     const occupancy = totalRooms > 0 ? (totalRooms - availableRooms.length) / totalRooms : 0;
 
+    // Private play zone boost
+    const ppPol = (data.resortPolicies || {});
+    const ppEnabled = ppPol.privatePlayEnabled !== false;
+    const ppRooms = ppPol.privatePlayRooms || [];
+    const hasPrivatePlayDog = selectedDogs.some(did => {
+      const dog = data.dogs.find(d => d.id === did);
+      return dog && (dog.tags || []).includes("tag_pp");
+    });
+
     const scored = roomsForType.map(room => {
       const booked = bookedRoomNames.has(room);
       const roomRes = allBoardingRes.filter(r => r.room === room);
@@ -5126,15 +5148,20 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
       const gapAfter = nextIn ? daysBetween(co, nextIn) : 999;
 
       // Hybrid score: at low occupancy prefer big gaps (staff comfort), at high occupancy prefer tight fit (maximize inventory)
-      // Low occ (< 50%): score = gapBefore + gapAfter (bigger is better)
-      // High occ (> 75%): score = -(gapBefore + gapAfter) (tighter is better, but still must be >= 0 gap)
-      // Blend between 50-75%
       const comfortScore = Math.min(gapBefore, 30) + Math.min(gapAfter, 30);
-      const packScore = 60 - comfortScore; // inverse: tighter = higher
+      const packScore = 60 - comfortScore;
       const blend = occupancy < 0.5 ? 0 : occupancy > 0.75 ? 1 : (occupancy - 0.5) / 0.25;
-      const score = booked ? -9999 : (1 - blend) * comfortScore + blend * packScore;
+      let score = booked ? -9999 : (1 - blend) * comfortScore + blend * packScore;
 
-      return { room, booked, lastOut, nextIn, gapBefore, gapAfter, score, occupancy };
+      // Boost private play zone rooms for dogs with private play tag
+      const isPPRoom = ppEnabled && ppRooms.includes(room);
+      if (!booked && ppEnabled && ppRooms.length > 0) {
+        if (hasPrivatePlayDog && isPPRoom) score += 100;
+        else if (hasPrivatePlayDog && !isPPRoom) score -= 20;
+        else if (!hasPrivatePlayDog && isPPRoom) score -= 10; // non-PP dogs deprioritize PP rooms
+      }
+
+      return { room, booked, lastOut, nextIn, gapBefore, gapAfter, score, occupancy, isPPRoom };
     });
 
     // Sort: available first (by score desc), then booked
@@ -5148,7 +5175,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
     if (topAvail) topAvail.recommended = true;
 
     return scored;
-  }, [roomsForType, bookedRoomNames, checkIn, checkOut, roomType, data.reservations, availableRooms.length]);
+  }, [roomsForType, bookedRoomNames, checkIn, checkOut, roomType, data.reservations, availableRooms.length, selectedDogs, data.resortPolicies, data.dogs]);
 
   // Auto-select recommended room when room type or dates change
   useEffect(() => {
@@ -5666,6 +5693,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
                         {rs.recommended && !booked && <div style={{ position: "absolute", top: -8, right: 8, fontSize: 9, fontWeight: 700, color: "#fff", background: C.suc, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Best</div>}
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
                           <span style={{ fontSize: 14, fontWeight: 800, color: booked ? C.textMut : sel ? C.pri : C.text, textDecoration: booked ? "line-through" : "none" }}>{rs.room}</span>
+                          {rs.isPPRoom && <span style={{ fontSize: 8, fontWeight: 700, color: C.acc, background: C.accLt, padding: "1px 5px", borderRadius: 3, letterSpacing: "0.04em" }}>PP</span>}
                         </div>
                         {!booked && (
                           <div style={{ fontSize: 10, color: C.textMut, lineHeight: 1.5 }}>
@@ -6590,7 +6618,7 @@ function LodgingCalendarPage({ data, save, nav, onNew }) {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>Lodging Calendar</h1>
-        <Btn onClick={onNew} icon={<I.Plus />}>New {(data.hotkeySettings||{}).showHints!==false&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'Inter',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
+        <Btn onClick={onNew} icon={<I.Plus />}>New {(data.hotkeySettings||{}).showHints!==false&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
       </div>
 
       {/* Week navigation */}
@@ -7667,7 +7695,7 @@ function DailyOpsPage({ data, save, sub, nav, profile }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // CRM PAGE
 // ═══════════════════════════════════════════════════════════════════════════
-function CRMPage({ data, save, nav }) {
+function CRMPage({ data, save, nav, profile }) {
   const [activeTab, setActiveTab] = useState("evaluations");
   const crm = data.crmEntries || [];
 
@@ -7679,8 +7707,22 @@ function CRMPage({ data, save, nav }) {
     { id: "tours", label: "Tours" },
   ];
 
+  // Get user initials for auto-fill
+  const userInitials = profile ? (profile.full_name || profile.email || "").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0,2) : "";
+  const todayShort = fmtDateShort(todayStr());
+
   const updateEntry = async (entryId, field, value) => {
     const updated = crm.map(e => e.id === entryId ? { ...e, [field]: value } : e);
+    await save({ ...data, crmEntries: updated });
+  };
+
+  // Enhanced update: auto-fill initials/date when checkbox fields toggled on
+  const updateEntryWithAutoFill = async (entryId, field, value, initialField) => {
+    const updates = { [field]: value };
+    if (value === true && initialField) {
+      updates[initialField] = `${userInitials} ${todayShort}`;
+    }
+    const updated = crm.map(e => e.id === entryId ? { ...e, ...updates } : e);
     await save({ ...data, crmEntries: updated });
   };
 
@@ -7688,12 +7730,25 @@ function CRMPage({ data, save, nav }) {
     await save({ ...data, crmEntries: crm.filter(e => e.id !== entryId) });
   };
 
+  // Auto-sync eval pass/fail from evaluation forms
+  const getAutoPassFail = (entry) => {
+    if (entry.tab !== "evaluations" || !entry.reservationId) return entry.passOrFail || "";
+    const evalForm = (data.evaluations || []).find(ev => ev.reservationId === entry.reservationId && ev.locked);
+    if (!evalForm) return entry.passOrFail || "";
+    const dog = data.dogs.find(d => d.id === (data.reservations.find(r => r.id === entry.reservationId) || {}).dogId);
+    const weight = dog ? parseInt(dog.fields.weight) || 0 : 0;
+    const size = weight >= 35 ? "Lg" : "Sm";
+    if (evalForm.result === "green") return `Pass - ${size}`;
+    if (evalForm.result === "red") return `Fail - ${size}`;
+    return entry.passOrFail || "";
+  };
+
   // Editable cell helper
-  const ECell = ({ entry, field, width, type, options }) => {
+  const ECell = ({ entry, field, width, type, options, autoFillInitial }) => {
     if (type === "checkbox") {
       return (
         <div style={{ width, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <input type="checkbox" checked={!!entry[field]} onChange={e => updateEntry(entry.id, field, e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
+          <input type="checkbox" checked={!!entry[field]} onChange={e => autoFillInitial ? updateEntryWithAutoFill(entry.id, field, e.target.checked, autoFillInitial) : updateEntry(entry.id, field, e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
         </div>
       );
     }
@@ -7730,6 +7785,15 @@ function CRMPage({ data, save, nav }) {
   );
 
   const entries = crm.filter(e => e.tab === activeTab);
+
+  // Conversion rate stats
+  const evalEntries = crm.filter(e => e.tab === "evaluations");
+  const tourEntries = crm.filter(e => e.tab === "tours");
+  const evalConverted = evalEntries.filter(e => e.results === "Converted").length;
+  const evalConvRate = evalEntries.length > 0 ? Math.round((evalConverted / evalEntries.length) * 100) : 0;
+  const tourConverted = tourEntries.filter(e => e.results === "Converted").length;
+  const tourConvRate = tourEntries.length > 0 ? Math.round((tourConverted / tourEntries.length) * 100) : 0;
+
   const OUTCOME_OPTS = ["Converted", "Did not convert", "Left Voicemail", "Other - see notes"];
   const PASS_OPTS = ["Pass - Sm", "Pass - Lg", "Fail - Sm", "Fail - Lg"];
   const FEEDBACK_OPTS = ["Passed with flying colors", "Successful with staff support", "Nervous at first - came around", "Struggled", "Failed"];
@@ -7852,7 +7916,14 @@ function CRMPage({ data, save, nav }) {
               <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Evaluations</div>
               <div style={{ fontSize: 12, color: C.textMut }}>Auto-populated when a dog is checked in for an evaluation</div>
             </div>
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{entries.length} total</span>
+            <div style={{display:"flex",alignItems:"center",gap:16}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:11,color:C.textMut,fontWeight:600}}>Conversion:</span>
+                <span style={{fontSize:14,fontWeight:800,color:evalConvRate >= 70 ? C.suc : evalConvRate >= 40 ? C.warn : C.dan}}>{evalConvRate}%</span>
+                <span style={{fontSize:11,color:C.textMut}}>({evalConverted}/{evalEntries.length})</span>
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{entries.length} total</span>
+            </div>
           </div>
           <div style={{ overflowX: "auto" }}>
             <div style={{ minWidth: 2200 }}>
@@ -7882,15 +7953,24 @@ function CRMPage({ data, save, nav }) {
               {/* Rows */}
               {entries.length === 0 ? (
                 <div style={{ padding: "30px 24px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No evaluations yet. When you check in a dog for an evaluation on the Dashboard, it will appear here automatically.</div>
-              ) : entries.map(e => (
+              ) : entries.map(e => {
+                const autoPassFail = getAutoPassFail(e);
+                const hasEvalForm = e.reservationId && (data.evaluations || []).some(ev => ev.reservationId === e.reservationId && ev.locked);
+                return (
                 <div key={e.id} style={{ display: "flex", borderBottom: `1px solid ${C.borderLight}`, minHeight: 38, alignItems: "stretch" }}>
                   <RCell width={130}><span style={{ fontWeight: 600, cursor: "pointer", color: C.pri }} onClick={() => { const c = data.clients.find(cl => `${cl.fields.first_name} ${cl.fields.last_name}`.trim() === e.clientName); if (c) nav("client-detail", { clientId: c.id }); }}>{e.clientName}</span></RCell>
                   <RCell width={90}>{e.dogName}</RCell>
                   <RCell width={110}>{e.phone}</RCell>
-                  <RCell width={90}><ECell entry={e} field="passOrFail" width={80} type="select" options={PASS_OPTS} /></RCell>
+                  <RCell width={90}>
+                    {hasEvalForm ? (
+                      <span style={{ fontSize: 12, fontWeight: 700, color: autoPassFail.startsWith("Pass") ? C.suc : autoPassFail.startsWith("Fail") ? C.dan : C.textMut, cursor: "pointer", textDecoration: "underline" }}
+                        onClick={() => nav("evaluation-form", { reservationId: e.reservationId })}
+                        title="View evaluation form">{autoPassFail || "—"}</span>
+                    ) : <ECell entry={e} field="passOrFail" width={80} type="select" options={PASS_OPTS} />}
+                  </RCell>
                   <RCell width={160}><ECell entry={e} field="feedback" width={150} type="select" options={FEEDBACK_OPTS} /></RCell>
-                  <RCell width={90}>{e.date ? fmtDate(e.date) : "—"}</RCell>
-                  <RCell width={90}><ECell entry={e} field="textDuringEval" width={30} type="checkbox" /></RCell>
+                  <RCell width={90}>{e.date ? fmtDateShort(e.date) : "—"}</RCell>
+                  <RCell width={90}><ECell entry={e} field="textDuringEval" width={30} type="checkbox" autoFillInitial="initialEval" /></RCell>
                   <RCell width={80}><ECell entry={e} field="initialEval" width={70} /></RCell>
                   <RCell width={140}><ECell entry={e} field="atCheckout" width={130} type="select" options={CHECKOUT_OPTS} /></RCell>
                   <RCell width={80}><ECell entry={e} field="toolBox" width={70} /></RCell>
@@ -7905,7 +7985,8 @@ function CRMPage({ data, save, nav }) {
                   <RCell width={150}><ECell entry={e} field="comments" width={140} /></RCell>
                   <RCell width={40}><button onClick={() => deleteEntry(e.id)} style={{ border: "none", background: "transparent", color: C.textMut, cursor: "pointer", fontSize: 14, fontFamily: "inherit", padding: 2 }} title="Delete">×</button></RCell>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </Card>
@@ -7953,9 +8034,9 @@ function CRMPage({ data, save, nav }) {
                   <RCell width={130}><span style={{ fontWeight: 600, cursor: "pointer", color: C.pri }} onClick={() => { const c = data.clients.find(cl => `${cl.fields.first_name} ${cl.fields.last_name}`.trim() === e.clientName); if (c) nav("client-detail", { clientId: c.id }); }}>{e.clientName}</span></RCell>
                   <RCell width={90}>{e.dogName}</RCell>
                   <RCell width={110}>{e.phone}</RCell>
-                  <RCell width={90}>{e.resStart ? fmtDate(e.resStart) : "—"}</RCell>
-                  <RCell width={90}>{e.resEnd ? fmtDate(e.resEnd) : "—"}</RCell>
-                  <RCell width={90}><ECell entry={e} field="textBefore" width={30} type="checkbox" /></RCell>
+                  <RCell width={90}>{e.resStart ? fmtDateShort(e.resStart) : "—"}</RCell>
+                  <RCell width={90}>{e.resEnd ? fmtDateShort(e.resEnd) : "—"}</RCell>
+                  <RCell width={90}><ECell entry={e} field="textBefore" width={30} type="checkbox" autoFillInitial="initialBefore" /></RCell>
                   <RCell width={80}><ECell entry={e} field="initialBefore" width={70} /></RCell>
                   <RCell width={140}><ECell entry={e} field="duringStay" width={130} /></RCell>
                   <RCell width={80}><ECell entry={e} field="initialDuring" width={70} /></RCell>
@@ -7986,7 +8067,14 @@ function CRMPage({ data, save, nav }) {
               <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Tours</div>
               <div style={{ fontSize: 12, color: C.textMut }}>Auto-populated when a client is checked in for a tour</div>
             </div>
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{entries.length} total</span>
+            <div style={{display:"flex",alignItems:"center",gap:16}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:11,color:C.textMut,fontWeight:600}}>Conversion:</span>
+                <span style={{fontSize:14,fontWeight:800,color:tourConvRate >= 70 ? C.suc : tourConvRate >= 40 ? C.warn : C.dan}}>{tourConvRate}%</span>
+                <span style={{fontSize:11,color:C.textMut}}>({tourConverted}/{tourEntries.length})</span>
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{entries.length} total</span>
+            </div>
           </div>
           <div style={{ overflowX: "auto" }}>
             <div style={{ minWidth: 2200 }}>
@@ -8019,7 +8107,7 @@ function CRMPage({ data, save, nav }) {
                   <RCell width={130}><span style={{ fontWeight: 600, cursor: "pointer", color: C.pri }} onClick={() => { const c = data.clients.find(cl => `${cl.fields.first_name} ${cl.fields.last_name}`.trim() === e.clientName); if (c) nav("client-detail", { clientId: c.id }); }}>{e.clientName}</span></RCell>
                   <RCell width={90}>{e.dogName}</RCell>
                   <RCell width={110}>{e.phone}</RCell>
-                  <RCell width={90}>{e.tourDate ? fmtDate(e.tourDate) : "—"}</RCell>
+                  <RCell width={90}>{e.tourDate ? fmtDateShort(e.tourDate) : "—"}</RCell>
                   <RCell width={110}><ECell entry={e} field="walkInOrScheduled" width={100} type="select" options={["Walk-In", "Scheduled"]} /></RCell>
                   <RCell width={100}><ECell entry={e} field="interestedIn" width={90} type="select" options={INTERESTED_OPTS} /></RCell>
                   <RCell width={130}><ECell entry={e} field="atCheckout" width={120} type="select" options={TOUR_CHECKOUT_OPTS} /></RCell>
@@ -8160,12 +8248,12 @@ function AgreementsPage({ data, save }) {
                   <span style={{ fontSize: 12, color: C.textSec }}>Required for all clients</span>
                 </label>
               </div>
-              <textarea value={editBody} onChange={e => setEditBody(e.target.value)} placeholder="Paste or type the full agreement text here..." rows={20} style={{ width: "100%", padding: "16px 18px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 13, fontFamily: "'Inter', -apple-system, sans-serif", color: C.text, background: C.surface, outline: "none", resize: "vertical", minHeight: 300, lineHeight: 1.7, boxSizing: "border-box", whiteSpace: "pre-wrap" }} onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
+              <textarea value={editBody} onChange={e => setEditBody(e.target.value)} placeholder="Paste or type the full agreement text here..." rows={20} style={{ width: "100%", padding: "16px 18px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 13, fontFamily: "'GT Eesti', -apple-system, sans-serif", color: C.text, background: C.surface, outline: "none", resize: "vertical", minHeight: 300, lineHeight: 1.7, boxSizing: "border-box", whiteSpace: "pre-wrap" }} onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
             </div>
           ) : (
             <div style={{ background: C.bg, borderRadius: 12, border: `1px solid ${C.borderLight}`, padding: "24px 28px", maxHeight: 600, overflow: "auto" }}>
               {(viewAgr.body || "").trim() ? (
-                <div style={{ fontSize: 13, color: C.text, lineHeight: 1.8, whiteSpace: "pre-wrap", fontFamily: "'Inter', -apple-system, sans-serif" }}>{viewAgr.body}</div>
+                <div style={{ fontSize: 13, color: C.text, lineHeight: 1.8, whiteSpace: "pre-wrap", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>{viewAgr.body}</div>
               ) : (
                 <div style={{ textAlign: "center", padding: "40px 20px" }}>
                   <div style={{ fontSize: 14, color: C.textMut, marginBottom: 12 }}>No agreement text yet</div>
@@ -8282,7 +8370,7 @@ function AgreementsPage({ data, save }) {
             <Inp label="Agreement Name" value={newName} onChange={setNewName} placeholder="e.g. Boarding & Daycare Agreement" required autoFocus />
             <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Agreement Text</div>
-              <textarea value={newBody} onChange={e => setNewBody(e.target.value)} placeholder="Paste or type the full agreement text here...&#10;&#10;You can include sections, numbered clauses, signature lines — anything you need customers to agree to." rows={14} style={{ width: "100%", padding: "14px 16px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "'Inter', -apple-system, sans-serif", color: C.text, background: C.surface, outline: "none", resize: "vertical", minHeight: 200, lineHeight: 1.7, boxSizing: "border-box", whiteSpace: "pre-wrap" }} onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
+              <textarea value={newBody} onChange={e => setNewBody(e.target.value)} placeholder="Paste or type the full agreement text here...&#10;&#10;You can include sections, numbered clauses, signature lines — anything you need customers to agree to." rows={14} style={{ width: "100%", padding: "14px 16px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "'GT Eesti', -apple-system, sans-serif", color: C.text, background: C.surface, outline: "none", resize: "vertical", minHeight: 200, lineHeight: 1.7, boxSizing: "border-box", whiteSpace: "pre-wrap" }} onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
               <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Tip: You can always edit this later. Paste an existing agreement or start from scratch.</div>
             </div>
             <Inp type="checkbox" label="Required for all clients" value={newReq} onChange={setNewReq} />
@@ -8401,8 +8489,8 @@ function EODSearchOverlay({ data, onClose, onSelectDate }) {
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={handleKeyDown}
             placeholder="Search all EOD reports…"
-            style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 17, fontWeight: 500, color: C.text, fontFamily: "'Inter', sans-serif", letterSpacing: "-0.01em" }} />
-          <kbd style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'Inter', monospace", whiteSpace: "nowrap" }}>Esc</kbd>
+            style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 17, fontWeight: 500, color: C.text, fontFamily: "'GT Eesti', sans-serif", letterSpacing: "-0.01em" }} />
+          <kbd style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', monospace", whiteSpace: "nowrap" }}>Esc</kbd>
         </div>
         {/* Results */}
         <div style={{ maxHeight: 440, overflow: "auto", padding: "8px 0" }}>
@@ -10170,7 +10258,7 @@ function SettingsPage({ data, save, profile }) {
                     return (
                       <div key={action} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: isDupe ? C.danLt : C.bg, border: `1px solid ${isDupe ? C.dan + "40" : C.border}` }}>
                         <input
-                          style={{ width: 32, textAlign: "center", padding: "3px 0", borderRadius: 5, border: `1.5px solid ${isDupe ? C.dan : C.border}`, background: C.surface, fontSize: 12, fontWeight: 700, color: C.text, fontFamily: "'Inter', monospace", cursor: "pointer" }}
+                          style={{ width: 32, textAlign: "center", padding: "3px 0", borderRadius: 5, border: `1.5px solid ${isDupe ? C.dan : C.border}`, background: C.surface, fontSize: 12, fontWeight: 700, color: C.text, fontFamily: "'GT Eesti', monospace", cursor: "pointer" }}
                           value={currentKey === "/" ? "/" : currentKey.toUpperCase()}
                           onFocus={e => { e.target.value = ""; e.target.style.borderColor = C.pri; }}
                           onBlur={e => { e.target.value = currentKey === "/" ? "/" : currentKey.toUpperCase(); e.target.style.borderColor = isDupe ? C.dan : C.border; }}
@@ -10433,6 +10521,64 @@ function SettingsPage({ data, save, profile }) {
                 </div>
               )}
             </Card>
+
+            {/* Private Play Zones */}
+            <Card style={{ padding: "24px 28px" }}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Private Play Zones</div>
+                <button onClick={()=>updatePol("privatePlayEnabled", !(pol.privatePlayEnabled !== false))} style={{padding:"6px 16px",borderRadius:8,border:`1.5px solid ${pol.privatePlayEnabled !== false?C.suc:C.border}`,background:pol.privatePlayEnabled !== false?C.suc:C.surface,color:pol.privatePlayEnabled !== false?"#fff":C.textSec,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{pol.privatePlayEnabled !== false?"Enabled":"Disabled"}</button>
+              </div>
+              <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>Designate specific rooms or wings for dogs tagged as "Private Play." When enabled, the room recommendation algorithm will prefer these rooms for private play dogs.</p>
+              {pol.privatePlayEnabled !== false && (() => {
+                const ppRooms = pol.privatePlayRooms || [];
+                const allRoomsMap = data.rooms || {};
+                const roomTypes = Object.keys(allRoomsMap);
+                const toggleRoom = (room) => {
+                  const next = ppRooms.includes(room) ? ppRooms.filter(r => r !== room) : [...ppRooms, room];
+                  updatePol("privatePlayRooms", next);
+                };
+                const toggleWing = (rooms) => {
+                  const allSelected = rooms.every(r => ppRooms.includes(r));
+                  const next = allSelected ? ppRooms.filter(r => !rooms.includes(r)) : [...new Set([...ppRooms, ...rooms])];
+                  updatePol("privatePlayRooms", next);
+                };
+                return (
+                  <div style={{display:"flex",flexDirection:"column",gap:16}}>
+                    {roomTypes.map(rt => {
+                      const rooms = allRoomsMap[rt] || [];
+                      if (rooms.length === 0) return null;
+                      const allSelected = rooms.every(r => ppRooms.includes(r));
+                      const someSelected = rooms.some(r => ppRooms.includes(r));
+                      return (
+                        <div key={rt} style={{padding:"14px 18px",borderRadius:10,border:`1.5px solid ${C.border}`,background:C.bg}}>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
+                            <div style={{fontSize:14,fontWeight:700,color:C.text}}>{rt}</div>
+                            <button onClick={()=>toggleWing(rooms)} style={{padding:"4px 14px",borderRadius:6,border:`1.5px solid ${allSelected?C.pri:someSelected?C.acc:C.border}`,background:allSelected?C.priLt:someSelected?C.accLt:"transparent",color:allSelected?C.pri:someSelected?C.acc:C.textSec,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+                              {allSelected?"Deselect All":"Select All"}
+                            </button>
+                          </div>
+                          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                            {rooms.map(room => {
+                              const sel = ppRooms.includes(room);
+                              return (
+                                <button key={room} onClick={()=>toggleRoom(room)} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:C.surface,color:sel?C.pri:C.textSec,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
+                                  {room}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {ppRooms.length > 0 && (
+                      <div style={{padding:"10px 16px",borderRadius:8,background:C.accLt,border:`1px solid ${C.acc}30`}}>
+                        <div style={{fontSize:12,color:C.text}}><strong>{ppRooms.length}</strong> room{ppRooms.length !== 1 ? "s" : ""} designated as private play zone{ppRooms.length !== 1 ? "s" : ""}. Dogs tagged "Private Play" will be preferentially assigned to these rooms.</div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </Card>
           </div>
         );
       })() : tab === "vaccines" ? (
@@ -10549,7 +10695,7 @@ function SettingsPage({ data, save, profile }) {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </div>
         <input value={settingsSearch} onChange={e => setSettingsSearch(e.target.value)} placeholder="Search settings…"
-          style={{ width: "100%", padding: "14px 16px 14px 46px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 15, fontWeight: 500, color: C.text, fontFamily: "'Inter', sans-serif", outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" }}
+          style={{ width: "100%", padding: "14px 16px 14px 46px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 15, fontWeight: 500, color: C.text, fontFamily: "'GT Eesti', sans-serif", outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" }}
           onFocus={e => { e.target.style.borderColor = C.pri; }} onBlur={e => { e.target.style.borderColor = C.border; }} />
         {settingsSearch && <button onClick={() => setSettingsSearch("")} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", color: C.textMut, display: "flex", padding: 4 }}><I.X /></button>}
       </div>
@@ -10655,8 +10801,8 @@ function NewOverlay({ data, nav, onClose }) {
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={handleKeyDown}
             placeholder="Search clients by name, phone, email, or dog…"
-            style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 17, fontWeight: 500, color: C.text, fontFamily: "'Inter', sans-serif", letterSpacing: "-0.01em" }} />
-          <kbd style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'Inter', monospace", whiteSpace: "nowrap" }}>Esc</kbd>
+            style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 17, fontWeight: 500, color: C.text, fontFamily: "'GT Eesti', sans-serif", letterSpacing: "-0.01em" }} />
+          <kbd style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', monospace", whiteSpace: "nowrap" }}>Esc</kbd>
         </div>
         {/* Results */}
         <div style={{ maxHeight: 380, overflow: "auto", padding: "8px 0" }}>
@@ -10700,7 +10846,7 @@ function NewOverlay({ data, nav, onClose }) {
                   <div style={{ fontSize: 15, fontWeight: 700, color: active ? C.suc : C.pri }}>Create New Client</div>
                   <div style={{ fontSize: 12, color: C.textMut }}>Set up "{q.trim()}" with their dogs & first reservation</div>
                 </div>
-                <kbd style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 10, fontWeight: 700, color: C.textMut, fontFamily: "'Inter', monospace" }}>↵</kbd>
+                <kbd style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 10, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', monospace" }}>↵</kbd>
               </button>
             );
           })()}
@@ -11314,7 +11460,9 @@ function MessagesPage({ data, save, nav }) {
   const [showTpl, setShowTpl] = useState(false);
   const [showNewMsg, setShowNewMsg] = useState(false);
   const [clientSearch, setClientSearch] = useState("");
+  const [attachments, setAttachments] = useState([]);
   const threadRef = useRef(null);
+  const fileInputRef = useRef(null);
   const msgs = data.messages || [];
   const templates = data.messageTemplates || [];
   const clients = data.clients || [];
@@ -11322,6 +11470,7 @@ function MessagesPage({ data, save, nav }) {
 
   const clientName = (c) => c ? `${c.fields?.first_name || ""} ${c.fields?.last_name || ""}`.trim() || "Client" : "";
   const clientPhone = (c) => c?.fields?.phone || "";
+  const clientInitials = (c) => c ? `${(c.fields?.first_name || "?")[0]}${(c.fields?.last_name || "")[0]}`.toUpperCase() : "?";
 
   // Group messages by client, sorted by most recent
   const convos = useMemo(() => {
@@ -11340,18 +11489,16 @@ function MessagesPage({ data, save, nav }) {
 
   const filteredConvos = search ? convos.filter(c => clientName(c.client).toLowerCase().includes(search.toLowerCase())) : convos;
 
-  // Selected conversation messages chronological
   const thread = useMemo(() => {
     if (!selClient) return [];
     return msgs.filter(m => m.clientId === selClient).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
   }, [selClient, msgs]);
 
   const selClientObj = clients.find(c => c.id === selClient);
+  const selClientDogs = dogs.filter(d => d.clientId === selClient);
 
-  // Auto-scroll thread
   useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [thread]);
 
-  // Mark as read when selecting conversation
   useEffect(() => {
     if (!selClient) return;
     const unread = msgs.filter(m => m.clientId === selClient && m.direction === "inbound" && !m.readAt);
@@ -11363,10 +11510,16 @@ function MessagesPage({ data, save, nav }) {
   }, [selClient]);
 
   const sendMessage = async () => {
-    if (!compose.trim() || !selClient) return;
-    const msg = { id: gid(), clientId: selClient, direction: "outbound", channel: "sms", body: compose.trim(), timestamp: new Date().toISOString(), status: "sent", twilioSid: null, templateId: null, readAt: null };
+    if ((!compose.trim() && attachments.length === 0) || !selClient) return;
+    const msg = {
+      id: gid(), clientId: selClient, direction: "outbound", channel: "sms",
+      body: compose.trim(),
+      attachments: attachments.length > 0 ? attachments.map(a => ({ name: a.name, size: a.size, type: a.type })) : undefined,
+      timestamp: new Date().toISOString(), status: "sent", twilioSid: null, templateId: null, readAt: null
+    };
     await save({ ...data, messages: [...msgs, msg] });
     setCompose("");
+    setAttachments([]);
   };
 
   const insertTemplate = (tpl) => {
@@ -11383,6 +11536,14 @@ function MessagesPage({ data, save, nav }) {
     setShowTpl(false);
   };
 
+  const handleFileSelect = (e) => {
+    const files = Array.from(e.target.files || []);
+    setAttachments(prev => [...prev, ...files.map(f => ({ name: f.name, size: f.size, type: f.type }))]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const removeAttachment = (idx) => setAttachments(prev => prev.filter((_, i) => i !== idx));
+
   const selectNewClient = (cid) => { setSelClient(cid); setShowNewMsg(false); setClientSearch(""); };
 
   const fmtTime = (ts) => {
@@ -11394,104 +11555,240 @@ function MessagesPage({ data, save, nav }) {
     return d.toLocaleDateString([], { month: "short", day: "numeric" });
   };
 
-  const cardS = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" };
-  const inputS = { width: "100%", padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" };
+  const fmtMsgTime = (ts) => {
+    const d = new Date(ts);
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  };
+
+  const fmtFileSize = (bytes) => bytes < 1024 ? bytes + " B" : bytes < 1048576 ? (bytes / 1024).toFixed(1) + " KB" : (bytes / 1048576).toFixed(1) + " MB";
+
+  const inputS = { width: "100%", padding: "10px 14px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 14, color: C.text, background: C.surface, outline: "none", boxSizing: "border-box", fontFamily: "inherit" };
+
+  // Group consecutive messages from same direction together
+  const groupedThread = useMemo(() => {
+    const groups = [];
+    thread.forEach((m, i) => {
+      const prev = i > 0 ? thread[i - 1] : null;
+      const sameDir = prev && prev.direction === m.direction;
+      const sameMinute = prev && Math.abs(new Date(m.timestamp) - new Date(prev.timestamp)) < 120000;
+      if (sameDir && sameMinute) {
+        groups[groups.length - 1].messages.push(m);
+      } else {
+        groups.push({ direction: m.direction, messages: [m], timestamp: m.timestamp });
+      }
+    });
+    return groups;
+  }, [thread]);
 
   return (
-    <div style={{ display: "flex", height: "100%", gap: 0 }}>
-      {/* Left - Conversation List */}
-      <div style={{ width: 320, minWidth: 320, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", background: C.card }}>
-        <div style={{ padding: "16px 16px 12px", borderBottom: `1px solid ${C.border}` }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.text }}>Messages</h2>
-            <button onClick={() => setShowNewMsg(true)} style={{ background: C.pri, color: "#fff", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}><I.Plus /> New</button>
+    <div style={{ display: "flex", height: "calc(100vh - 56px)", gap: 0, marginTop: -28, marginLeft: -32, marginRight: -32, marginBottom: -28 }}>
+      {/* Left Panel - Conversations */}
+      <div style={{ width: 360, minWidth: 360, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", background: "#fff" }}>
+        {/* Header */}
+        <div style={{ padding: "20px 20px 16px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <h2 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>Messages</h2>
+            <button onClick={() => setShowNewMsg(true)} style={{ width: 34, height: 34, borderRadius: "50%", background: C.pri, color: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "transform 0.15s" }}
+              onMouseEnter={e => e.currentTarget.style.transform = "scale(1.05)"}
+              onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"}>
+              <I.Plus />
+            </button>
           </div>
           <div style={{ position: "relative" }}>
-            <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4 }}><I.Search /></div>
-            <input data-shortcut-search="1" placeholder="Search conversations..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputS, paddingLeft: 34 }} />
+            <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: C.textMut, opacity: 0.5 }}><I.Search /></div>
+            <input data-shortcut-search="1" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)}
+              style={{ width: "100%", padding: "10px 14px 10px 38px", border: "none", borderRadius: 10, fontSize: 14, color: C.text, background: C.bg, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
           </div>
         </div>
+
+        {/* Conversation List */}
         <div style={{ flex: 1, overflowY: "auto" }}>
-          {filteredConvos.length === 0 && <div style={{ padding: 24, textAlign: "center", color: C.textMut, fontSize: 14 }}>No conversations</div>}
-          {filteredConvos.map(cv => (
-            <div key={cv.clientId} onClick={() => setSelClient(cv.clientId)} style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: selClient === cv.clientId ? C.priLight : "transparent", transition: "background 0.15s" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <span style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{clientName(cv.client)}</span>
-                <span style={{ fontSize: 11, color: C.textMut }}>{fmtTime(cv.last.timestamp)}</span>
+          {filteredConvos.length === 0 && <div style={{ padding: 32, textAlign: "center", color: C.textMut, fontSize: 14 }}>No conversations yet</div>}
+          {filteredConvos.map(cv => {
+            const active = selClient === cv.clientId;
+            return (
+              <div key={cv.clientId} onClick={() => setSelClient(cv.clientId)}
+                style={{ padding: "14px 20px", cursor: "pointer", background: active ? C.priLt : "transparent", transition: "background 0.12s", display: "flex", gap: 12, alignItems: "center" }}
+                onMouseEnter={e => { if (!active) e.currentTarget.style.background = C.surfaceHover; }}
+                onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}>
+                {/* Avatar */}
+                <div style={{ width: 48, height: 48, borderRadius: "50%", background: active ? C.pri : `linear-gradient(135deg, ${C.pri}20, ${C.acc}30)`, color: active ? "#fff" : C.pri, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 15, flexShrink: 0, letterSpacing: "0.02em" }}>
+                  {clientInitials(cv.client)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+                    <span style={{ fontWeight: cv.unread > 0 ? 700 : 600, fontSize: 14, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{clientName(cv.client)}</span>
+                    <span style={{ fontSize: 11, color: cv.unread > 0 ? C.pri : C.textMut, fontWeight: cv.unread > 0 ? 600 : 400, flexShrink: 0, marginLeft: 8 }}>{fmtTime(cv.last.timestamp)}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 13, color: cv.unread > 0 ? C.text : C.textMut, fontWeight: cv.unread > 0 ? 500 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1.3 }}>
+                      {cv.last.direction === "outbound" && <span style={{ color: C.textMut }}>You: </span>}
+                      {cv.last.attachments ? "Sent a file" : cv.last.body}
+                    </span>
+                    {cv.unread > 0 && <span style={{ background: C.pri, color: "#fff", borderRadius: 12, fontSize: 11, fontWeight: 700, minWidth: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 7px", flexShrink: 0, marginLeft: 8 }}>{cv.unread}</span>}
+                  </div>
+                </div>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 13, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
-                  {cv.last.direction === "outbound" && <span style={{ color: C.textMut }}>You: </span>}
-                  {cv.last.body}
-                </span>
-                {cv.unread > 0 && <span style={{ background: C.pri, color: "#fff", borderRadius: 10, fontSize: 11, fontWeight: 700, minWidth: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px" }}>{cv.unread}</span>}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
-      {/* Right - Thread View */}
+      {/* Right Panel - Thread */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", background: C.bg }}>
         {!selClient ? (
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, color: C.textMut }}>
-            <I.MessageSquare />
-            <span style={{ fontSize: 16 }}>Select a conversation to start messaging</span>
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 16 }}>
+            <div style={{ width: 72, height: 72, borderRadius: "50%", background: `linear-gradient(135deg, ${C.pri}12, ${C.acc}15)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity="0.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            </div>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 4 }}>Your Messages</div>
+              <div style={{ fontSize: 14, color: C.textMut }}>Select a conversation or start a new one</div>
+            </div>
           </div>
         ) : (
           <>
-            {/* Header */}
-            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 36, height: 36, borderRadius: "50%", background: C.pri, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14 }}>
-                {(selClientObj?.fields?.first_name || "?")[0]}{(selClientObj?.fields?.last_name || "")[0]}
+            {/* Thread Header */}
+            <div style={{ padding: "16px 24px", borderBottom: `1px solid ${C.border}`, background: "rgba(255,255,255,0.8)", backdropFilter: "blur(12px)", display: "flex", alignItems: "center", gap: 14 }}>
+              <div style={{ width: 42, height: 42, borderRadius: "50%", background: `linear-gradient(135deg, ${C.pri}, #004a8f)`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 15, letterSpacing: "0.02em" }}>
+                {clientInitials(selClientObj)}
               </div>
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 15, color: C.text }}>{clientName(selClientObj)}</div>
-                <div style={{ fontSize: 12, color: C.textMut, display: "flex", alignItems: "center", gap: 4 }}><I.Phone /> {clientPhone(selClientObj) || "No phone"}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 16, color: C.text, letterSpacing: "-0.01em" }}>{clientName(selClientObj)}</div>
+                <div style={{ fontSize: 12, color: C.textSec, marginTop: 1 }}>
+                  {clientPhone(selClientObj) || "No phone"}
+                  {selClientDogs.length > 0 && <span style={{ marginLeft: 8, color: C.textMut }}>{selClientDogs.map(d => d.fields.name).join(", ")}</span>}
+                </div>
               </div>
-              <div style={{ marginLeft: "auto" }}>
-                <button onClick={() => nav("client-detail", { clientId: selClient })} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 10px", fontSize: 12, color: C.pri, cursor: "pointer", fontWeight: 500 }}>View Profile</button>
-              </div>
+              <button onClick={() => nav("client-detail", { clientId: selClient })} style={{ background: "none", border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "8px 16px", fontSize: 13, color: C.pri, cursor: "pointer", fontWeight: 600, fontFamily: "inherit", transition: "all 0.15s" }}
+                onMouseEnter={e => { e.currentTarget.style.background = C.priLt; e.currentTarget.style.borderColor = C.pri; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = C.border; }}>
+                Profile
+              </button>
             </div>
 
-            {/* Messages Thread */}
-            <div ref={threadRef} style={{ flex: 1, overflowY: "auto", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
-              {thread.map(m => {
-                const isOut = m.direction === "outbound";
+            {/* Thread Messages */}
+            <div ref={threadRef} style={{ flex: 1, overflowY: "auto", padding: "20px 24px", display: "flex", flexDirection: "column", gap: 4 }}>
+              {groupedThread.map((group, gi) => {
+                const isOut = group.direction === "outbound";
                 return (
-                  <div key={m.id} style={{ display: "flex", justifyContent: isOut ? "flex-end" : "flex-start" }}>
-                    <div style={{ maxWidth: "70%", padding: "10px 14px", borderRadius: 16, borderBottomRightRadius: isOut ? 4 : 16, borderBottomLeftRadius: isOut ? 16 : 4, background: isOut ? C.pri : C.card, color: isOut ? "#fff" : C.text, fontSize: 14, lineHeight: 1.5, border: isOut ? "none" : `1px solid ${C.border}` }}>
-                      <div>{m.body}</div>
-                      <div style={{ fontSize: 10, marginTop: 4, opacity: 0.6, textAlign: isOut ? "right" : "left", display: "flex", alignItems: "center", gap: 4, justifyContent: isOut ? "flex-end" : "flex-start" }}>
-                        {fmtTime(m.timestamp)}
-                        {isOut && m.status === "sent" && <I.Check />}
-                      </div>
+                  <div key={gi} style={{ marginBottom: 8 }}>
+                    {group.messages.map((m, mi) => {
+                      const isFirst = mi === 0;
+                      const isLast = mi === group.messages.length - 1;
+                      return (
+                        <div key={m.id} style={{ display: "flex", justifyContent: isOut ? "flex-end" : "flex-start", marginBottom: 2 }}>
+                          <div style={{
+                            maxWidth: "65%", padding: "10px 16px",
+                            borderRadius: 20,
+                            borderTopLeftRadius: !isOut && !isFirst ? 6 : 20,
+                            borderBottomLeftRadius: !isOut && !isLast ? 6 : 20,
+                            borderTopRightRadius: isOut && !isFirst ? 6 : 20,
+                            borderBottomRightRadius: isOut && !isLast ? 6 : 20,
+                            background: isOut ? `linear-gradient(135deg, ${C.pri}, #004a8f)` : "#fff",
+                            color: isOut ? "#fff" : C.text,
+                            fontSize: 14, lineHeight: 1.5,
+                            boxShadow: isOut ? "none" : "0 1px 3px rgba(0,0,0,0.06)",
+                          }}>
+                            <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.body}</div>
+                            {m.attachments && m.attachments.length > 0 && (
+                              <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                                {m.attachments.map((a, ai) => (
+                                  <div key={ai} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, background: isOut ? "rgba(255,255,255,0.15)" : C.bg, fontSize: 12 }}>
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                                    <span style={{ fontWeight: 500 }}>{a.name}</span>
+                                    <span style={{ opacity: 0.6 }}>{fmtFileSize(a.size)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {/* Timestamp after group */}
+                    <div style={{ textAlign: isOut ? "right" : "left", fontSize: 10, color: C.textMut, marginTop: 2, padding: isOut ? "0 4px 0 0" : "0 0 0 4px" }}>
+                      {fmtMsgTime(group.messages[group.messages.length - 1].timestamp)}
+                      {isOut && <span style={{ marginLeft: 4, opacity: 0.7 }}>Sent</span>}
                     </div>
                   </div>
                 );
               })}
+              {thread.length === 0 && (
+                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8, padding: 40 }}>
+                  <div style={{ fontSize: 14, color: C.textMut }}>No messages yet. Send one below to start the conversation.</div>
+                </div>
+              )}
             </div>
 
-            {/* Compose Bar */}
-            <div style={{ padding: "12px 20px", borderTop: `1px solid ${C.border}`, background: C.card }}>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 8, position: "relative" }}>
-                <div style={{ position: "relative" }}>
-                  <button onClick={() => setShowTpl(!showTpl)} style={{ background: showTpl ? C.priLight : C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontSize: 12, color: C.pri, fontWeight: 500, whiteSpace: "nowrap" }}>Templates</button>
-                  {showTpl && (
-                    <div style={{ position: "absolute", bottom: "100%", left: 0, marginBottom: 4, background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", minWidth: 260, zIndex: 10 }}>
-                      {templates.filter(t => t.active).map(t => (
-                        <div key={t.id} onClick={() => insertTemplate(t)} style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
-                          <div style={{ fontWeight: 600, color: C.text, marginBottom: 2 }}>{t.name}</div>
-                          <div style={{ color: C.textMut, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.body.slice(0, 60)}...</div>
-                        </div>
-                      ))}
+            {/* Compose Area */}
+            <div style={{ padding: "14px 24px 16px", borderTop: `1px solid ${C.border}`, background: "rgba(255,255,255,0.8)", backdropFilter: "blur(12px)" }}>
+              {/* Attachments Preview */}
+              {attachments.length > 0 && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                  {attachments.map((a, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8, background: C.bg, border: `1px solid ${C.border}`, fontSize: 12 }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.textSec} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                      <span style={{ fontWeight: 500, color: C.text, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.name}</span>
+                      <button onClick={() => removeAttachment(i)} style={{ border: "none", background: "none", color: C.textMut, cursor: "pointer", padding: 0, fontSize: 14, lineHeight: 1 }}>×</button>
                     </div>
-                  )}
+                  ))}
                 </div>
-                <textarea value={compose} onChange={e => setCompose(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Type a message..." rows={1} style={{ flex: 1, padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, color: C.text, background: C.surface, resize: "none", outline: "none", fontFamily: "inherit", minHeight: 40, maxHeight: 100 }} />
-                <button onClick={sendMessage} disabled={!compose.trim()} style={{ background: compose.trim() ? C.pri : C.border, color: "#fff", border: "none", borderRadius: 8, padding: "10px 14px", cursor: compose.trim() ? "pointer" : "default", display: "flex", alignItems: "center", gap: 4, fontWeight: 600, fontSize: 13 }}><I.Send /> Send</button>
+              )}
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
+                {/* Action buttons */}
+                <div style={{ display: "flex", gap: 4, paddingBottom: 4 }}>
+                  <button onClick={() => fileInputRef.current?.click()} title="Attach file"
+                    style={{ width: 36, height: 36, borderRadius: "50%", border: "none", background: "transparent", color: C.pri, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.12s" }}
+                    onMouseEnter={e => e.currentTarget.style.background = C.priLt}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                  </button>
+                  <input ref={fileInputRef} type="file" multiple style={{ display: "none" }} onChange={handleFileSelect} />
+                  <div style={{ position: "relative" }}>
+                    <button onClick={() => setShowTpl(!showTpl)} title="Templates"
+                      style={{ width: 36, height: 36, borderRadius: "50%", border: "none", background: showTpl ? C.priLt : "transparent", color: C.pri, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.12s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.priLt}
+                      onMouseLeave={e => { if (!showTpl) e.currentTarget.style.background = "transparent"; }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+                    </button>
+                    {showTpl && (
+                      <div style={{ position: "absolute", bottom: "calc(100% + 8px)", left: 0, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 14, boxShadow: "0 8px 32px rgba(0,0,0,0.12)", minWidth: 280, zIndex: 10, overflow: "hidden" }}>
+                        <div style={{ padding: "10px 16px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", borderBottom: `1px solid ${C.borderLight}` }}>Templates</div>
+                        {templates.filter(t => t.active).map(t => (
+                          <div key={t.id} onClick={() => insertTemplate(t)} style={{ padding: "12px 16px", cursor: "pointer", transition: "background 0.1s" }}
+                            onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
+                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                            <div style={{ fontWeight: 600, fontSize: 13, color: C.text, marginBottom: 2 }}>{t.name}</div>
+                            <div style={{ color: C.textMut, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.body.slice(0, 65)}...</div>
+                          </div>
+                        ))}
+                        {templates.filter(t => t.active).length === 0 && <div style={{ padding: "14px 16px", fontSize: 13, color: C.textMut }}>No templates configured</div>}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Input */}
+                <div style={{ flex: 1, position: "relative" }}>
+                  <textarea value={compose} onChange={e => setCompose(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+                    placeholder="Type a message..."
+                    rows={1}
+                    style={{ width: "100%", padding: "10px 16px", border: `1.5px solid ${C.border}`, borderRadius: 22, fontSize: 14, color: C.text, background: C.surface, resize: "none", outline: "none", fontFamily: "inherit", minHeight: 42, maxHeight: 120, boxSizing: "border-box", lineHeight: 1.5, transition: "border-color 0.15s" }}
+                    onFocus={e => e.target.style.borderColor = C.pri}
+                    onBlur={e => e.target.style.borderColor = C.border} />
+                </div>
+
+                {/* Send */}
+                <button onClick={sendMessage} disabled={!compose.trim() && attachments.length === 0}
+                  style={{ width: 42, height: 42, borderRadius: "50%", background: (compose.trim() || attachments.length > 0) ? C.pri : C.border, color: "#fff", border: "none", cursor: (compose.trim() || attachments.length > 0) ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", transition: "background 0.15s, transform 0.1s", flexShrink: 0, marginBottom: 0 }}
+                  onMouseEnter={e => { if (compose.trim() || attachments.length > 0) e.currentTarget.style.transform = "scale(1.05)"; }}
+                  onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                </button>
               </div>
-              <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>Twilio SMS integration ready — messages are simulated until connected</div>
+              <div style={{ fontSize: 10, color: C.textMut, marginTop: 8, textAlign: "center" }}>Twilio SMS integration ready — messages are simulated until connected</div>
             </div>
           </>
         )}
@@ -11502,10 +11799,16 @@ function MessagesPage({ data, save, nav }) {
         <Modal title="New Message" onClose={() => { setShowNewMsg(false); setClientSearch(""); }}>
           <div style={{ padding: 16 }}>
             <input placeholder="Search clients..." value={clientSearch} onChange={e => setClientSearch(e.target.value)} style={inputS} autoFocus />
-            <div style={{ maxHeight: 300, overflowY: "auto", marginTop: 12 }}>
+            <div style={{ maxHeight: 360, overflowY: "auto", marginTop: 12 }}>
               {clients.filter(c => !clientSearch || clientName(c).toLowerCase().includes(clientSearch.toLowerCase())).slice(0, 20).map(c => (
-                <div key={c.id} onClick={() => selectNewClient(c.id)} style={{ padding: "10px 12px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
+                <div key={c.id} onClick={() => selectNewClient(c.id)}
+                  style={{ padding: "12px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 12, borderRadius: 10, transition: "background 0.1s" }}
+                  onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                  <div style={{ width: 40, height: 40, borderRadius: "50%", background: `linear-gradient(135deg, ${C.pri}20, ${C.acc}30)`, color: C.pri, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14 }}>
+                    {clientInitials(c)}
+                  </div>
+                  <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{clientName(c)}</div>
                     <div style={{ fontSize: 12, color: C.textMut }}>{c.fields?.phone || "No phone"}</div>
                   </div>
@@ -12667,7 +12970,7 @@ export default function App() {
     }
   }, [data]);
 
-  if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,fontFamily:"'Inter', sans-serif"}}><div style={{textAlign:"center"}}><K9Logo size={48}/><div style={{fontSize:14,fontWeight:600,color:C.pri,marginTop:12,letterSpacing:"0.05em",textTransform:"uppercase"}}>Loading...</div></div></div>;
+  if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,fontFamily:"'GT Eesti', sans-serif"}}><div style={{textAlign:"center"}}><K9Logo size={48}/><div style={{fontSize:14,fontWeight:600,color:C.pri,marginTop:12,letterSpacing:"0.05em",textTransform:"uppercase"}}>Loading...</div></div></div>;
 
   const opsChildren = [
     {id:"ops-opening",label:"Opening",sub:"opening"},
@@ -12679,7 +12982,7 @@ export default function App() {
     {id:"ops-closing",label:"Closing",sub:"closing"},
   ];
   const navSections = [
-    { label:"Sales", items:[
+    { label:null, items:[
       { id:"dashboard",label:"Dashboard",icon:<I.Dashboard/>,hotkey:"1" },
       { id:"reservations",label:"Lodging Calendar",icon:<I.Calendar/>,hotkey:"2" },
       { id:"clients",label:"Clients",icon:<I.Users/>,hotkey:"3" },
@@ -12687,7 +12990,7 @@ export default function App() {
       { id:"messages",label:"Messages",icon:<I.MessageSquare/>,hotkey:"5" },
       { id:"payments",label:"Payments",icon:<I.DollarSign/> },
     ]},
-    { label:"Operations", items:[
+    { label:null, items:[
       { id:"operations",label:"Operations",icon:<I.Clipboard/>,hotkey:"6" },
     ]},
     { label:null, items:[
@@ -12734,15 +13037,23 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-    <div style={{display:"flex",height:"100vh",fontFamily:"'Inter', -apple-system, sans-serif",background:C.bg,overflow:"hidden"}}>
+    <div style={{display:"flex",height:"100vh",fontFamily:"'GT Eesti', -apple-system, sans-serif",background:C.bg,overflow:"hidden"}}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&display=swap');
+        @font-face{font-family:'Canela';font-weight:700;font-style:normal;src:url('/fonts/Canela-Bold-Web.woff2') format('woff2'),url('/fonts/Canela-Bold-Web.woff') format('woff'),url('/fonts/Canela-Bold.otf') format('opentype');font-display:swap;}
+        @font-face{font-family:'Canela';font-weight:700;font-style:italic;src:url('/fonts/Canela-BoldItalic-Web.woff2') format('woff2'),url('/fonts/Canela-BoldItalic-Web.woff') format('woff'),url('/fonts/Canela-BoldItalic.otf') format('opentype');font-display:swap;}
+        @font-face{font-family:'GT Eesti';font-weight:300;font-style:normal;src:url('/fonts/GT-Eesti-Text-Light.otf') format('opentype');font-display:swap;}
+        @font-face{font-family:'GT Eesti';font-weight:300;font-style:italic;src:url('/fonts/GT-Eesti-Text-Light-Italic.otf') format('opentype');font-display:swap;}
+        @font-face{font-family:'GT Eesti';font-weight:500;font-style:normal;src:url('/fonts/GT-Eesti-Text-Medium.otf') format('opentype');font-display:swap;}
+        @font-face{font-family:'GT Eesti';font-weight:500;font-style:italic;src:url('/fonts/GT-Eesti-Text-Medium-Italic.otf') format('opentype');font-display:swap;}
+        @font-face{font-family:'GT Eesti';font-weight:700;font-style:normal;src:url('/fonts/GT-Eesti-Text-Bold.otf') format('opentype');font-display:swap;}
+        @font-face{font-family:'GT Eesti';font-weight:700;font-style:italic;src:url('/fonts/GT-Eesti-Text-Bold-Italic.otf') format('opentype');font-display:swap;}
+        @font-face{font-family:'GT Eesti Display';font-weight:500;font-style:normal;src:url('/fonts/GT-Eesti-Display-Medium.otf') format('opentype');font-display:swap;}
         *{box-sizing:border-box;margin:0;padding:0;}
         ::-webkit-scrollbar{width:6px;} ::-webkit-scrollbar-thumb{background:#C4C8D0;border-radius:3px;} ::-webkit-scrollbar-track{background:transparent;}
         input:focus,select:focus,textarea:focus{border-color:${C.pri}!important;box-shadow:0 0 0 3px rgba(0,52,98,0.08);}
         @media(max-width:900px){.sidebar-d{display:none!important;}.mob-h{display:flex!important;}.main-content{padding:20px 16px!important;padding-top:72px!important;}}
         @media(min-width:901px){.mob-h{display:none!important;}.mob-ov{display:none!important;}}
-        h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Playfair Display', Georgia, serif !important;}
+        h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Canela', Georgia, serif !important;font-weight:700;}
         @keyframes k9toast{from{opacity:0;transform:translateX(40px);}to{opacity:1;transform:translateX(0);}}
         @keyframes k9overlay{from{opacity:0;transform:translateY(-16px) scale(0.97);}to{opacity:1;transform:translateY(0) scale(1);}}
         .nav-tip{position:relative;} .nav-tip::after{content:attr(data-tip);position:absolute;left:calc(100% + 12px);top:50%;transform:translateY(-50%);background:#1a2940;color:#fff;padding:5px 10px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity 0.15s;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.2);} .nav-tip:hover::after{opacity:1;}
@@ -12752,7 +13063,7 @@ export default function App() {
       <div className="sidebar-d" style={{width:sidebarOpen?240:68,background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,display:"flex",flexDirection:"column",transition:"width 0.25s ease",overflow:"hidden",flexShrink:0}}>
         <div style={{padding:sidebarOpen?"22px 18px 18px":"22px 0 18px",display:"flex",alignItems:"center",justifyContent:sidebarOpen?"flex-start":"center",gap:12}}>
           <div style={{flexShrink:0}}>{sidebarOpen ? <K9Logo size={38}/> : <K9LogoMini size={34}/>}</div>
-          {sidebarOpen&&<div><div style={{fontSize:16,fontWeight:700,color:C.acc,whiteSpace:"nowrap",fontFamily:"'Playfair Display', Georgia, serif",letterSpacing:"0.02em"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div>}
+          {sidebarOpen&&<div><div style={{fontSize:16,fontWeight:700,color:C.acc,whiteSpace:"nowrap",fontFamily:"'Canela', Georgia, serif",letterSpacing:"0.02em"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div>}
         </div>
         <div style={{margin:"0 16px 14px",height:1,background:"rgba(175,141,84,0.15)"}}/>
         <LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={!sidebarOpen} />
@@ -12763,8 +13074,8 @@ export default function App() {
               {!sec.label && si > 0 && <div style={{margin:sidebarOpen?"10px 14px":"10px 4px",height:1,background:"rgba(175,141,84,0.12)"}}/>}
               {sec.items.filter(item => { const perm = NAV_PERM_MAP[item.id]; return !perm || hasPermission(profile, data, perm); }).map(item=>{const act=activeNav===item.id;const hasKids=!!item.children;
                 return(<div key={item.id}>
-                  <button onMouseEnter={!sidebarOpen?(e)=>{const r=e.currentTarget.getBoundingClientRect();setNavTooltip({label:item.label,top:r.top+r.height/2,left:r.right+10});}:undefined} onMouseLeave={!sidebarOpen?()=>setNavTooltip(null):undefined} onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:sidebarOpen?(item.indent?"8px 14px 8px 28px":"10px 14px"):"10px 0",justifyContent:sidebarOpen?"flex-start":"center",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.5)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap",position:"relative"}}>
-                    <span style={{flexShrink:0}}>{item.icon}</span>{sidebarOpen&&<><span style={{flex:1,textAlign:"left"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'Inter',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
+                  <button onMouseEnter={!sidebarOpen?(e)=>{const r=e.currentTarget.getBoundingClientRect();setNavTooltip({label:item.label,top:r.top+r.height/2,left:r.right+10});}:undefined} onMouseLeave={!sidebarOpen?()=>setNavTooltip(null):undefined} onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:sidebarOpen?(item.indent?"8px 14px 8px 28px":"10px 14px"):"10px 0",justifyContent:sidebarOpen?"flex-start":"center",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap",position:"relative"}}>
+                    <span style={{flexShrink:0}}>{item.icon}</span>{sidebarOpen&&<><span style={{flex:1,textAlign:"left"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'GT Eesti',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
                   </button>
                   {hasKids&&opsExpanded&&sidebarOpen&&<div style={{marginLeft:20,marginBottom:4}}>
                     {item.children.map(ch=>{const chAct=page===ch.id;return(<button key={ch.id} onClick={()=>nav(ch.id)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 12px",border:"none",borderRadius:8,background:chAct?"rgba(175,141,84,0.12)":"transparent",color:chAct?C.acc:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:chAct?600:400,cursor:"pointer",marginBottom:1,fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>
@@ -12788,15 +13099,15 @@ export default function App() {
 
       {/* Mobile Header */}
       <div className="mob-h" style={{display:"none",position:"fixed",top:0,left:0,right:0,height:56,background:C.pri,alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}><button onClick={()=>setMobileMenuOpen(!mobileMenuOpen)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",padding:4}}><I.Menu/></button><div><span style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Playfair Display', Georgia, serif"}}>K9 Resorts</span><div style={{fontSize:9,color:"rgba(175,141,84,0.6)",letterSpacing:"0.05em",textTransform:"uppercase"}}>{(K9_LOCATIONS.find(l=>l.id===currentLocation)||{}).name}</div></div></div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}><button onClick={()=>setMobileMenuOpen(!mobileMenuOpen)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",padding:4}}><I.Menu/></button><div><span style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</span><div style={{fontSize:9,color:"rgba(175,141,84,0.6)",letterSpacing:"0.05em",textTransform:"uppercase"}}>{(K9_LOCATIONS.find(l=>l.id===currentLocation)||{}).name}</div></div></div>
         <K9LogoMini size={28}/>
       </div>
 
-      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Playfair Display', Georgia, serif"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}{sec.items.map(item=>{const hasKids=!!item.children;return(<div key={item.id}><button onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else{nav(item.id);setMobileMenuOpen(false);}}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(175,141,84,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.5)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span>{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</button>{hasKids&&opsExpanded&&<div style={{marginLeft:28,marginBottom:4}}>{item.children.map(ch=>(<button key={ch.id} onClick={()=>{nav(ch.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 12px",border:"none",borderRadius:8,background:page===ch.id?"rgba(175,141,84,0.12)":"transparent",color:page===ch.id?C.acc:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:page===ch.id?600:400,cursor:"pointer",marginBottom:2,fontFamily:"inherit"}}><span style={{width:4,height:4,borderRadius:2,background:page===ch.id?C.acc:"rgba(255,255,255,0.2)"}}/>{ch.label}</button>))}</div>}</div>);})}</div>))}</div></div>}
+      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}{sec.items.map(item=>{const hasKids=!!item.children;return(<div key={item.id}><button onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else{nav(item.id);setMobileMenuOpen(false);}}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(175,141,84,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span>{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</button>{hasKids&&opsExpanded&&<div style={{marginLeft:28,marginBottom:4}}>{item.children.map(ch=>(<button key={ch.id} onClick={()=>{nav(ch.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 12px",border:"none",borderRadius:8,background:page===ch.id?"rgba(175,141,84,0.12)":"transparent",color:page===ch.id?C.acc:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:page===ch.id?600:400,cursor:"pointer",marginBottom:2,fontFamily:"inherit"}}><span style={{width:4,height:4,borderRadius:2,background:page===ch.id?C.acc:"rgba(255,255,255,0.2)"}}/>{ch.label}</button>))}</div>}</div>);})}</div>))}</div></div>}
 
       {/* Main */}
       <div className="main-content" style={{flex:1,overflow:"auto",padding:"28px 32px",scrollbarGutter:"stable"}}>
-        <div style={{maxWidth: page === "dashboard" ? 1440 : 1100, margin:"0 auto", transition:"max-width 0.2s"}}>
+        <div style={{maxWidth: page === "dashboard" ? 1440 : 1100, margin:"0 auto", transition:"max-width 0.24s"}}>
           {navStack.length > 1 && (
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:16,fontSize:13,flexWrap:"wrap"}}>
               {navStack.map((entry, i) => (
