@@ -757,9 +757,14 @@ function getOpsCardStatus(data, item) {
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   if (!entry) return "not_started";
   if (entry.locked) return "completed";
-  const checkedCount = (entry.items || []).filter(i => i.checked).length;
-  if (checkedCount === 0) return "not_started";
-  return "in_progress";
+  // items can be an array (template checklists) or an object (room_cleaning, pictures, pp)
+  const ei = entry.items;
+  if (!ei) return "not_started";
+  if (Array.isArray(ei)) {
+    return ei.some(i => i.checked) ? "in_progress" : "not_started";
+  }
+  // Object-based items: any key with a truthy value means started
+  return Object.keys(ei).length > 0 ? "in_progress" : "not_started";
 }
 
 function getOpsProgress(data, item) {
@@ -787,14 +792,21 @@ function getOpsProgress(data, item) {
     const todayItems = template.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
     const total = todayItems.length;
     if (total === 0) return 0;
-    const checked = (entry.items || []).filter(i => i.checked).length;
+    const checked = Array.isArray(entry.items) ? (entry.items || []).filter(i => i.checked).length : 0;
     return Math.round((checked / total) * 100);
   }
-  // Non-template items (room_cleaning, pictures, pp)
-  const total = (entry.items || []).length;
-  if (total === 0) return 0;
-  const checked = (entry.items || []).filter(i => i.checked).length;
-  return Math.round((checked / total) * 100);
+  // Non-template items (room_cleaning, pictures, pp) — items is an object
+  const ei = entry.items;
+  if (!ei) return 0;
+  if (Array.isArray(ei)) {
+    const total = ei.length;
+    if (total === 0) return 0;
+    return Math.round((ei.filter(i => i.checked).length / total) * 100);
+  }
+  // Object-based: for pictures it's { dogId: true/false }, for room_cleaning it's { room: {...} }
+  // Just show that work has started — can't easily compute % without knowing the total
+  const keys = Object.keys(ei);
+  return keys.length > 0 ? 50 : 0;
 }
 
 // ─── Default Field Configs ──────────────────────────────────────────────────
