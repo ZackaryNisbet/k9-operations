@@ -3607,6 +3607,7 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
   const [notes, setNotes] = useState("");
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
+  const [submitToast, setSubmitToast] = useState(null); // { evalId, dogName, result, clientId, dogId }
 
   // Compute scores
   const visibleSections = getEvalVisibleSections(evalType);
@@ -3653,7 +3654,20 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
     };
     await save(newData);
     setSubmitting(false);
-    nav("dashboard");
+    setSubmitToast({ evalId: evalObj.id, dogName: dog.fields.name, result: finalResult, clientId: client?.id || "", dogId: dog.id });
+    setTimeout(() => setSubmitToast(prev => prev?.evalId === evalObj.id ? null : prev), 12000);
+  };
+
+  const handleUndoEval = async () => {
+    if (!submitToast) return;
+    const eid = submitToast.evalId;
+    const newData = {
+      ...data,
+      evaluations: (data.evaluations || []).filter(e => e.id !== eid),
+      reservations: data.reservations.map(r => r.id === reservationId ? { ...r, evalResult: "pending" } : r),
+    };
+    await save(newData);
+    setSubmitToast(null);
   };
 
   if (!reservation || !dog) return <div style={{ padding: 40, textAlign: "center", color: C.textMut }}>Reservation or dog not found.</div>;
@@ -3900,10 +3914,35 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
       {/* Actions */}
       <div style={{ display: "flex", gap: 12, justifyContent: "flex-end", marginBottom: 40 }}>
         <Btn variant="secondary" onClick={() => nav("dashboard")}>Cancel</Btn>
-        <Btn onClick={handleSubmit} disabled={submitting || !allAnswered}>
+        <Btn onClick={handleSubmit} disabled={submitting || !allAnswered || !!submitToast}>
           {submitting ? "Saving..." : "Submit Evaluation"}
         </Btn>
       </div>
+
+      {/* Submit toast */}
+      {submitToast && (
+        <div style={{ position: "fixed", top: 20, right: 20, zIndex: 9999, pointerEvents: "auto", animation: "k9toast 0.3s ease-out" }}>
+          <div style={{
+            background: "rgba(255,255,255,0.97)", backdropFilter: "blur(8px)",
+            border: `1.5px solid ${submitToast.result === "green" ? C.suc : C.dan}40`, borderRadius: 12,
+            padding: "14px 18px", maxWidth: 400, minWidth: 280,
+            boxShadow: "0 4px 20px rgba(0,0,0,0.14)",
+            display: "flex", alignItems: "center", gap: 12, fontSize: 13,
+          }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", background: submitToast.result === "green" ? C.suc : C.dan, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, flexShrink: 0 }}>
+              {submitToast.result === "green" ? "\u2713" : "\u2717"}
+            </div>
+            <div style={{ flex: 1, cursor: "pointer" }} onClick={() => nav("dog-detail", { clientId: submitToast.clientId, dogId: submitToast.dogId })}>
+              <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>
+                {submitToast.dogName} <span style={{ fontWeight: 500, color: submitToast.result === "green" ? C.suc : C.dan }}>{submitToast.result === "green" ? "approved" : "not approved"}</span>
+              </div>
+              <div style={{ fontSize: 11, color: C.pri, fontWeight: 600 }}>Click to view dog profile &rarr;</div>
+            </div>
+            <button onClick={handleUndoEval} style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: C.pri, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>Undo</button>
+            <button onClick={() => { setSubmitToast(null); nav("dashboard"); }} style={{ width: 22, height: 22, borderRadius: 11, border: "none", background: "transparent", cursor: "pointer", color: C.textMut, fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit" }}>&times;</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
