@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useData } from "./useData";
 import { useAuth } from "./AuthProvider";
+import { supabase } from "./supabaseClient";
 
 // ─── Icons ──────────────────────────────────────────────────────────────────
 const I = {
@@ -7125,9 +7126,186 @@ function DailyOpsTemplateTab({ data, save }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// TEAM MANAGEMENT TAB (used inside Settings)
+// ═══════════════════════════════════════════════════════════════════════════
+function TeamTab({ profile, data, save }) {
+  const [team, setTeam] = useState([]);
+  const [teamLoading, setTeamLoading] = useState(true);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteRole, setInviteRole] = useState("staff");
+  const [inviteMsg, setInviteMsg] = useState("");
+  const [confirmRemove, setConfirmRemove] = useState(null);
+
+  const isOwner = profile?.role === "owner";
+  const isManager = profile?.role === "manager";
+  const canManage = isOwner || isManager;
+  const pendingInvites = data.pendingInvites || [];
+
+  useEffect(() => { fetchTeam(); }, []);
+
+  const fetchTeam = async () => {
+    setTeamLoading(true);
+    const { data: members, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("location_id", profile.location_id);
+    if (!error) setTeam(members || []);
+    else setTeam([profile]); // Fallback: show at least current user
+    setTeamLoading(false);
+  };
+
+  const updateRole = async (userId, newRole) => {
+    const { error } = await supabase.from("profiles").update({ role: newRole }).eq("id", userId);
+    if (error) console.error("Failed to update role:", error);
+    fetchTeam();
+  };
+
+  const removeMember = async (userId) => {
+    const { error } = await supabase.from("profiles").update({ location_id: null }).eq("id", userId);
+    if (error) console.error("Failed to remove member:", error);
+    setConfirmRemove(null);
+    fetchTeam();
+  };
+
+  const addInvite = async () => {
+    if (!inviteEmail.trim()) return;
+    const inv = {
+      id: gid(),
+      email: inviteEmail.trim().toLowerCase(),
+      name: inviteName.trim(),
+      role: inviteRole,
+      invitedAt: new Date().toISOString(),
+    };
+    await save({ ...data, pendingInvites: [...pendingInvites, inv] });
+    setInviteEmail(""); setInviteName(""); setInviteRole("staff");
+    setInviteMsg("Invitation created! Tell " + (inv.name || inv.email) + " to sign up at k9operations.com");
+    setTimeout(() => setInviteMsg(""), 6000);
+  };
+
+  const removeInvite = async (invId) => {
+    await save({ ...data, pendingInvites: pendingInvites.filter(i => i.id !== invId) });
+  };
+
+  const roleBadgeColor = (r) => r === "owner" ? "accent" : r === "manager" ? "primary" : "default";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Current Team Members */}
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ padding: "20px 24px 16px" }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Team Members</div>
+          <p style={{ fontSize: 13, color: C.textSec, margin: 0 }}>
+            {canManage ? "Manage your team's access and roles." : "View your team members."}
+          </p>
+        </div>
+        {teamLoading ? (
+          <div style={{ padding: "24px", textAlign: "center", color: C.textMut, fontSize: 13 }}>Loading team...</div>
+        ) : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 130px 48px", padding: "10px 24px", background: C.bg, borderTop: "1px solid " + C.border, borderBottom: "1px solid " + C.border, fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              <div>Name</div><div>Email</div><div>Role</div><div/>
+            </div>
+            {team.sort((a, b) => {
+              const ro = { owner: 0, manager: 1, staff: 2 };
+              return (ro[a.role] || 9) - (ro[b.role] || 9);
+            }).map(m => (
+              <div key={m.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 130px 48px", padding: "14px 24px", borderBottom: "1px solid " + C.borderLight, alignItems: "center" }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>
+                  {m.full_name || "\u2014"}
+                  {m.id === profile.id && <span style={{ marginLeft: 8, fontSize: 11, color: C.acc, fontWeight: 700 }}>(You)</span>}
+                </div>
+                <div style={{ fontSize: 13, color: C.textSec }}>{m.email}</div>
+                <div>
+                  {isOwner && m.id !== profile.id ? (
+                    <select value={m.role || "staff"} onChange={e => updateRole(m.id, e.target.value)}
+                      style={{ padding: "5px 8px", borderRadius: 6, border: "1.5px solid " + C.border, fontSize: 12, fontWeight: 600, color: C.text, background: C.surface, cursor: "pointer", fontFamily: "inherit" }}>
+                      <option value="owner">Owner</option>
+                      <option value="manager">Manager</option>
+                      <option value="staff">Staff</option>
+                    </select>
+                  ) : (
+                    <Badge color={roleBadgeColor(m.role)}>{m.role || "staff"}</Badge>
+                  )}
+                </div>
+                <div style={{ textAlign: "center" }}>
+                  {isOwner && m.id !== profile.id && (
+                    confirmRemove === m.id ? (
+                      <button onClick={() => removeMember(m.id)} title="Confirm remove"
+                        style={{ background: C.dan, border: "none", cursor: "pointer", color: "#fff", padding: "3px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, fontFamily: "inherit" }}>
+                        Remove
+                      </button>
+                    ) : (
+                      <button onClick={() => setConfirmRemove(m.id)} title="Remove from team"
+                        style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, padding: 4, borderRadius: 6 }}>
+                        <I.X />
+                      </button>
+                    )
+                  )}
+                </div>
+              </div>
+            ))}
+            {team.length === 0 && (
+              <div style={{ padding: "24px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No team members found.</div>
+            )}
+          </>
+        )}
+      </Card>
+
+      {/* Invite New Member */}
+      {canManage && (
+        <Card style={{ padding: "24px 28px" }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Invite Team Member</div>
+          <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>
+            Add a team member below. Once invited, tell them to create an account at <strong>k9operations.com</strong> — they will be automatically assigned to your location.
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 130px auto", gap: 12, alignItems: "flex-end" }}>
+            <Inp label="Email" type="email" value={inviteEmail} onChange={v => setInviteEmail(v)} placeholder="staff@k9resorts.com" />
+            <Inp label="Full Name" value={inviteName} onChange={v => setInviteName(v)} placeholder="Jane Smith" />
+            <Inp label="Role" type="select" value={inviteRole} onChange={v => setInviteRole(v)} options={["staff", "manager", "owner"]} />
+            <Btn onClick={addInvite}>Invite</Btn>
+          </div>
+          {inviteMsg && (
+            <div style={{ marginTop: 14, padding: "10px 16px", borderRadius: 10, background: C.sucLt, color: C.suc, fontSize: 13, fontWeight: 600 }}>{inviteMsg}</div>
+          )}
+        </Card>
+      )}
+
+      {/* Pending Invitations */}
+      {pendingInvites.length > 0 && (
+        <Card style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ padding: "20px 24px 16px" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Pending Invitations</div>
+            <p style={{ fontSize: 13, color: C.textSec, margin: 0 }}>These people have been invited but haven't signed up yet.</p>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 48px", padding: "10px 24px", background: C.bg, borderTop: "1px solid " + C.border, borderBottom: "1px solid " + C.border, fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            <div>Email</div><div>Name</div><div>Role</div><div/>
+          </div>
+          {pendingInvites.map(inv => (
+            <div key={inv.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 48px", padding: "14px 24px", borderBottom: "1px solid " + C.borderLight, alignItems: "center" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{inv.email}</div>
+              <div style={{ fontSize: 13, color: C.textSec }}>{inv.name || "\u2014"}</div>
+              <Badge>{inv.role}</Badge>
+              <div style={{ textAlign: "center" }}>
+                {canManage && (
+                  <button onClick={() => removeInvite(inv.id)} title="Cancel invitation"
+                    style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, padding: 4, borderRadius: 6 }}>
+                    <I.X />
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SETTINGS (Fields + Dog Tags)
 // ═══════════════════════════════════════════════════════════════════════════
-function SettingsPage({ data, save }) {
+function SettingsPage({ data, save, profile }) {
   const [tab, setTab] = useState(null);
   const [settingsSearch, setSettingsSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
@@ -7209,6 +7387,9 @@ function SettingsPage({ data, save }) {
       { id: "rooms", label: "Rooms", desc: "Configure room numbers for each boarding room type", keywords: "rooms boarding luxury executive double single compartment" },
       { id: "policies", label: "Resort Policies", desc: "Vaccine grace periods, age limits, grandfathering rules", keywords: "policies compliance vaccines grace period age limit grandfather senior" },
     ]},
+    { label: "Administration", items: [
+      { id: "team", label: "Team Management", desc: "View, invite, and manage team members and roles", keywords: "team users staff members invite roles owner manager admin" },
+    ]},
     { label: null, items: [
       { id: "hotkeys", label: "Hotkeys", desc: "Enable or disable keyboard shortcuts and shortcut hints", keywords: "hotkeys keyboard shortcuts keys bindings hints" },
       { id: "reset", label: "Demo Data", desc: "Reset all data back to the demo dataset", keywords: "reset demo data restore" },
@@ -7233,7 +7414,9 @@ function SettingsPage({ data, save }) {
           <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{(settingsCategories.find(c => c.id === tab) || {}).label}</span>
         </div>
 
-        {tab === "hotkeys" ? (() => {
+        {tab === "team" ? (
+          <TeamTab profile={profile} data={data} save={save} />
+        ) : tab === "hotkeys" ? (() => {
           const hk = data.hotkeySettings || { enabled: true, showHints: true };
           const toggle = async (key) => await save({ ...data, hotkeySettings: { ...hk, [key]: !hk[key] } });
           return (
@@ -9520,6 +9703,7 @@ export default function App() {
   const [page, setPage] = useState("dashboard");
   const [params, setParams] = useState({});
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [navTooltip, setNavTooltip] = useState(null); // {label, top, left}
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [opsExpanded, setOpsExpanded] = useState(false);
   const [currentLocation, setCurrentLocation] = useState("deerfield");
@@ -9700,7 +9884,7 @@ export default function App() {
       case "messages": return <MessagesPage data={data} save={save} nav={nav}/>;
       case "payments": return <PaymentsPage data={data} save={save} nav={nav}/>;
       case "ai": return <AIPage data={data} save={save} nav={nav}/>;
-      case "settings": return <SettingsPage data={data} save={save}/>;
+      case "settings": return <SettingsPage data={data} save={save} profile={profile}/>;
       default: return <DashboardPage data={data} save={save} nav={nav} onNew={openNew}/>;
     }
   }
@@ -9722,7 +9906,7 @@ export default function App() {
       `}</style>
 
       {/* Sidebar Desktop */}
-      <div className="sidebar-d" style={{width:sidebarOpen?240:68,background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,display:"flex",flexDirection:"column",transition:"width 0.25s ease",overflow:sidebarOpen?"hidden":"visible",flexShrink:0}}>
+      <div className="sidebar-d" style={{width:sidebarOpen?240:68,background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,display:"flex",flexDirection:"column",transition:"width 0.25s ease",overflow:"hidden",flexShrink:0}}>
         <div style={{padding:sidebarOpen?"22px 18px 18px":"22px 0 18px",display:"flex",alignItems:"center",justifyContent:sidebarOpen?"flex-start":"center",gap:12}}>
           <div style={{flexShrink:0}}>{sidebarOpen ? <K9Logo size={38}/> : <K9LogoMini size={34}/>}</div>
           {sidebarOpen&&<div><div style={{fontSize:16,fontWeight:700,color:C.acc,whiteSpace:"nowrap",fontFamily:"'Playfair Display', Georgia, serif",letterSpacing:"0.02em"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div>}
@@ -9736,7 +9920,7 @@ export default function App() {
               {!sec.label && si > 0 && <div style={{margin:sidebarOpen?"10px 14px":"10px 4px",height:1,background:"rgba(175,141,84,0.12)"}}/>}
               {sec.items.map(item=>{const act=activeNav===item.id;const hasKids=!!item.children;
                 return(<div key={item.id}>
-                  <button className={!sidebarOpen?"nav-tip":""} data-tip={!sidebarOpen?item.label:undefined} onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:sidebarOpen?(item.indent?"8px 14px 8px 28px":"10px 14px"):"10px 0",justifyContent:sidebarOpen?"flex-start":"center",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.5)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap",position:"relative"}}>
+                  <button onMouseEnter={!sidebarOpen?(e)=>{const r=e.currentTarget.getBoundingClientRect();setNavTooltip({label:item.label,top:r.top+r.height/2,left:r.right+10});}:undefined} onMouseLeave={!sidebarOpen?()=>setNavTooltip(null):undefined} onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:sidebarOpen?(item.indent?"8px 14px 8px 28px":"10px 14px"):"10px 0",justifyContent:sidebarOpen?"flex-start":"center",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.5)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap",position:"relative"}}>
                     <span style={{flexShrink:0}}>{item.icon}</span>{sidebarOpen&&<><span style={{flex:1,textAlign:"left"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'Inter',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
                   </button>
                   {hasKids&&opsExpanded&&sidebarOpen&&<div style={{marginLeft:20,marginBottom:4}}>
@@ -9755,6 +9939,9 @@ export default function App() {
           <button onClick={()=>setSidebarOpen(!sidebarOpen)} style={{width:"100%",padding:"7px 0",border:"none",borderRadius:8,background:"rgba(175,141,84,0.08)",color:"rgba(175,141,84,0.5)",cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{sidebarOpen?"‹ Collapse":"›"}</button>
         </div>
       </div>
+
+      {/* Sidebar Tooltip */}
+      {navTooltip && !sidebarOpen && <div style={{position:"fixed",top:navTooltip.top,left:navTooltip.left,transform:"translateY(-50%)",background:"#1a2940",color:"#fff",padding:"6px 12px",borderRadius:6,fontSize:12,fontWeight:600,whiteSpace:"nowrap",pointerEvents:"none",zIndex:9999,boxShadow:"0 4px 12px rgba(0,0,0,0.25)"}}>{navTooltip.label}</div>}
 
       {/* Mobile Header */}
       <div className="mob-h" style={{display:"none",position:"fixed",top:0,left:0,right:0,height:56,background:C.pri,alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100}}>
