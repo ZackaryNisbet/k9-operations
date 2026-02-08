@@ -481,20 +481,32 @@ const countHours = (tIn, tOut) => {
   return Math.max(0, (h2 * 60 + m2 - h1 * 60 - m1) / 60);
 };
 
-function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, dogs, dogProfiles, pricing, isSecondDogSameRoom }) {
+function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, dogs, dogProfiles, pricing, isSecondDogSameRoom, roomSegments }) {
   const p = pricing || DEF_PRICING;
   const lines = [];
   let subtotal = 0;
   let discountTotal = 0;
 
   if (type === "boarding") {
-    const nights = countNights(checkIn, checkOut);
-    const rate = (p.boardingRates || {})[roomType] || 0;
-    const lineTotal = nights * rate;
-    lines.push({ label: `${roomType} × ${nights} night${nights !== 1 ? "s" : ""}`, rate, qty: nights, total: lineTotal });
-    subtotal += lineTotal;
+    if (roomSegments && roomSegments.length > 0) {
+      // Price each room segment separately
+      roomSegments.forEach(seg => {
+        const segNights = countNights(seg.startDate, seg.endDate);
+        const segRate = (p.boardingRates || {})[seg.roomType] || 0;
+        const segTotal = segNights * segRate;
+        lines.push({ label: `${seg.roomType} × ${segNights} night${segNights !== 1 ? "s" : ""}`, rate: segRate, qty: segNights, total: segTotal });
+        subtotal += segTotal;
+      });
+    } else {
+      const nights = countNights(checkIn, checkOut);
+      const rate = (p.boardingRates || {})[roomType] || 0;
+      const lineTotal = nights * rate;
+      lines.push({ label: `${roomType} × ${nights} night${nights !== 1 ? "s" : ""}`, rate, qty: nights, total: lineTotal });
+      subtotal += lineTotal;
+    }
     if (isSecondDogSameRoom && p.multiDogDiscount > 0) {
-      const disc = Math.round(lineTotal * (p.multiDogDiscount / 100) * 100) / 100;
+      const boardingSubtotal = lines.reduce((s, l) => s + (l.isDiscount ? 0 : l.total), 0);
+      const disc = Math.round(boardingSubtotal * (p.multiDogDiscount / 100) * 100) / 100;
       discountTotal += disc;
       lines.push({ label: `Multi-dog discount (${p.multiDogDiscount}% off)`, total: -disc, isDiscount: true });
     }
@@ -4808,14 +4820,14 @@ function NewDogPage({ data, save, clientId, nav }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // NEW RESERVATION
 // ═══════════════════════════════════════════════════════════════════════════
-function NewReservationPage({ data, save, preClientId, nav }) {
+function NewReservationPage({ data, save, preClientId, nav, profile }) {
   const [clientId, setClientId] = useState(preClientId||"");
   const [selectedDogs, setSelectedDogs] = useState([]); // array of dogIds
   const [type, setType] = useState("boarding");
   const [roomType, setRoomType] = useState("Luxury Suite");
   const [daycareSize, setDaycareSize] = useState("large");
   const [checkIn, setCheckIn] = useState(todayStr());
-  const [checkOut, setCheckOut] = useState(todayStr());
+  const [checkOut, setCheckOut] = useState(addDays(todayStr(), 1));
   const [checkInTime, setCheckInTime] = useState("09:00");
   const [checkOutTime, setCheckOutTime] = useState("11:00");
   const [notes, setNotes] = useState("");
@@ -4825,6 +4837,14 @@ function NewReservationPage({ data, save, preClientId, nav }) {
 
   // Per-dog care overrides: { [dogId]: { feeding, medications, bath_type } }
   const [careFields, setCareFields] = useState({});
+  // Per-dog add-ons: { [dogId]: { bath_type, ... } }
+  const [dogAddOns, setDogAddOns] = useState({});
+  const [expandedAddOns, setExpandedAddOns] = useState({});
+  // Per-dog room config
+  const [perDogMode, setPerDogMode] = useState(false);
+  const [perDogConfig, setPerDogConfig] = useState({});
+  // Compliance expand state
+  const [complianceExpand, setComplianceExpand] = useState(null);
 
   // Auto-set daycare size from first selected dog
   useEffect(() => {
@@ -4989,6 +5009,25 @@ function NewReservationPage({ data, save, preClientId, nav }) {
   useEffect(()=>{if(type==="daycare"){setCheckInTime("07:00");setCheckOutTime("18:00");}else if(type==="tour"){setCheckInTime("14:00");setCheckOutTime("14:30");}else if(type==="evaluation"){setCheckInTime("09:00");setCheckOutTime("10:00");}else{setCheckInTime("09:00");setCheckOutTime("11:00");}},[type]);
   useEffect(()=>{setSelectedRoom("");},[roomType]);
 
+  // Hotkeys: T cycles type, R cycles room type
+  useEffect(() => {
+    const types = ["boarding","daycare","evaluation","tour"];
+    const handler = (e) => {
+      const tag = e.target.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "t" || e.key === "T") {
+        e.preventDefault();
+        setType(prev => types[(types.indexOf(prev) + 1) % types.length]);
+      }
+      if ((e.key === "r" || e.key === "R") && type === "boarding") {
+        e.preventDefault();
+        setRoomType(prev => ROOM_TYPES[(ROOM_TYPES.indexOf(prev) + 1) % ROOM_TYPES.length]);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [type]);
+
   const toggleDog = (did) => {
     setSelectedDogs(prev => prev.includes(did) ? prev.filter(d=>d!==did) : [...prev, did]);
   };
@@ -5009,21 +5048,30 @@ function NewReservationPage({ data, save, preClientId, nav }) {
     const newRes = selectedDogs.map((did, idx) => {
       const dog = data.dogs.find(d => d.id === did);
       const autoDaycareSize = dog ? getDogDaycareSize(dog) : "large";
+      // Per-dog room config
+      const cfg = (type === "boarding" && perDogMode) ? (perDogConfig[did] || {}) : {};
+      const dogRoomType = cfg.roomType || roomType;
+      const dogRoom = cfg.room || selectedRoom;
+      const dogCheckOut = cfg.checkOut || checkOut;
+      const dogSegments = cfg.roomSegments || ((perDogConfig[did] || {}).roomSegments || []);
+      const isSecondInRoom = !perDogMode && type === "boarding" && idx > 0;
       const resPricing = calcReservationPricing({
-        type, roomType, checkIn, checkOut: type === "boarding" ? checkOut : checkIn,
+        type, roomType: dogRoomType, checkIn, checkOut: type === "boarding" ? dogCheckOut : checkIn,
         checkInTime, checkOutTime, daycareSize: autoDaycareSize,
         dogs: dog ? [dog] : [], dogProfiles: data.dogs, pricing: data.pricing,
-        isSecondDogSameRoom: type === "boarding" && idx > 0,
+        isSecondDogSameRoom: isSecondInRoom,
+        roomSegments: dogSegments.length > 0 ? dogSegments : undefined,
       });
       return {
         id:gid(),clientId,dogId:did,type,
-        ...(type==="boarding" ? {roomType, ...(selectedRoom ? {room: selectedRoom} : {})} : {}),
+        ...(type==="boarding" ? {roomType: dogRoomType, ...(dogRoom ? {room: dogRoom} : {}), ...(dogSegments.length > 0 ? {roomSegments: dogSegments} : {})} : {}),
         ...(type==="daycare" ? {daycareSize: autoDaycareSize} : {}),
         ...(type==="evaluation" ? {evalResult:"pending"} : {}),
-        checkIn,checkOut:type==="boarding"?checkOut:checkIn,
+        checkIn,checkOut:type==="boarding"?dogCheckOut:checkIn,
         checkInTime,checkOutTime,status:"upcoming",notes,
         careOverrides: careFields[did] || {},
         pricing: resPricing,
+        ...(isSecondInRoom ? {isSecondDogSameRoom: true} : {}),
       };
     });
 
@@ -5106,17 +5154,23 @@ function NewReservationPage({ data, save, preClientId, nav }) {
   // Live pricing calculation
   const livePricing = useMemo(() => {
     if (!type || selectedDogs.length === 0) return null;
-    // For multi-dog same room boarding, compute per-dog then combine
+    // For multi-dog boarding, compute per-dog then combine
     if (type === "boarding" && selectedDogs.length > 1) {
       let combined = { lineItems: [], subtotal: 0, discountTotal: 0, total: 0, deposit: 0, balance: 0, payAt: "booking", depositRefundable: false, depositPercent: 0 };
       selectedDogs.forEach((did, idx) => {
         const dog = data.dogs.find(d => d.id === did);
+        const cfg = perDogMode ? (perDogConfig[did] || {}) : {};
+        const dogRT = cfg.roomType || roomType;
+        const dogCO = cfg.checkOut || checkOut;
+        const dogSegs = cfg.roomSegments || ((perDogConfig[did] || {}).roomSegments || []);
+        const isSecond = !perDogMode && idx > 0;
         const pr = calcReservationPricing({
-          type, roomType, checkIn, checkOut, checkInTime, checkOutTime,
+          type, roomType: dogRT, checkIn, checkOut: dogCO, checkInTime, checkOutTime,
           dogs: dog ? [dog] : [], dogProfiles: data.dogs, pricing: data.pricing,
-          isSecondDogSameRoom: idx > 0,
+          isSecondDogSameRoom: isSecond,
+          roomSegments: dogSegs.length > 0 ? dogSegs : undefined,
         });
-        combined.lineItems.push(...pr.lineItems);
+        combined.lineItems.push(...(dog ? [{label: dog.fields.name, isDogHeader: true}] : []), ...pr.lineItems);
         combined.subtotal += pr.subtotal;
         combined.discountTotal += pr.discountTotal;
         combined.total += pr.total;
@@ -5133,13 +5187,16 @@ function NewReservationPage({ data, save, preClientId, nav }) {
       combined.balance = Math.round(combined.balance * 100) / 100;
       return combined;
     }
-    const dog = data.dogs.find(d => d.id === selectedDogs[0]);
+    const did = selectedDogs[0];
+    const dog = data.dogs.find(d => d.id === did);
+    const singleSegs = (perDogConfig[did] || {}).roomSegments || [];
     return calcReservationPricing({
       type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize,
       dogs: dog ? [dog] : [], dogProfiles: data.dogs, pricing: data.pricing,
       isSecondDogSameRoom: false,
+      roomSegments: singleSegs.length > 0 ? singleSegs : undefined,
     });
-  }, [type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, selectedDogs.join(","), data.pricing]);
+  }, [type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, selectedDogs.join(","), data.pricing, perDogMode, JSON.stringify(perDogConfig)]);
 
   return (
     <div>
@@ -5213,7 +5270,7 @@ function NewReservationPage({ data, save, preClientId, nav }) {
             {errors.clientId&&<div style={{color:C.dan,fontSize:12,fontWeight:600,marginTop:4}}>{errors.clientId}</div>}
           </div>
           <div>
-            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"}}>Type</div>
+            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"}}>Type <span style={{color:C.textMut,fontWeight:400,textTransform:"none"}}>(T)</span></div>
             <div style={{display:"flex",gap:8}}>
               {[{v:"boarding",l:"Boarding"},{v:"daycare",l:"Daycare"},{v:"evaluation",l:"Evaluation"},{v:"tour",l:"Tour"}].map(t=>(
                 <button key={t.v} onClick={()=>setType(t.v)} style={{flex:1,padding:"10px 0",borderRadius:10,border:`2px solid ${type===t.v?C.pri:C.border}`,background:type===t.v?C.priLt:C.surface,color:type===t.v?C.pri:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{t.l}</button>
@@ -5226,15 +5283,17 @@ function NewReservationPage({ data, save, preClientId, nav }) {
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginTop:20}}>
           <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn} required/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{errors.checkIn&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkIn}</div>}</div>
           <div><Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime}/></div>
+          {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Boarding drop-off hours are from 9 AM – 5:30 PM, 7 days a week.</div></div>}
           {type==="boarding"&&<div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} required/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{errors.checkOut&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkOut}</div>}</div>}
           {type==="boarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
+          {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Boarding pick-up hours start at 9 AM. Check-out time is 12:30 PM. Extended checkout to 5:30 PM available 7 days a week for a half-day daycare fee ({fmtMoney((data.pricing||DEF_PRICING).daycareRates?.halfDay||30)}).</div></div>}
           {type!=="boarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
         </div>
 
         {/* Sub-type selectors */}
         {type === "boarding" && (
           <div style={{marginTop:20}}>
-            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Room Type <span style={{color:C.dan}}>*</span></div>
+            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Room Type <span style={{color:C.dan}}>*</span> <span style={{color:C.textMut,fontWeight:400,textTransform:"none"}}>(R)</span></div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               {ROOM_TYPES.map(rt => (
                 <button key={rt} onClick={()=>setRoomType(rt)}
@@ -5308,6 +5367,183 @@ function NewReservationPage({ data, save, preClientId, nav }) {
             )}
           </div>
         )}
+        {/* Per-Dog Room Config (multi-dog boarding) */}
+        {type==="boarding"&&selectedDogs.length>1&&(
+          <div style={{marginTop:16}}>
+            <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",padding:"12px 16px",borderRadius:10,border:`1.5px solid ${perDogMode?C.pri:C.borderLight}`,background:perDogMode?C.priLt+"30":C.bg}}>
+              <input type="checkbox" checked={perDogMode} onChange={e=>setPerDogMode(e.target.checked)} style={{accentColor:C.pri,width:16,height:16}}/>
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:C.text}}>Customize rooms per dog</div>
+                <div style={{fontSize:11,color:C.textSec}}>Assign each dog their own room type, room, or checkout date.</div>
+              </div>
+            </label>
+            {perDogMode&&(
+              <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:12}}>
+                {selectedDogs.map(did=>{
+                  const dog=data.dogs.find(d=>d.id===did);
+                  if(!dog)return null;
+                  const cfg=perDogConfig[did]||{};
+                  const dogRT=cfg.roomType||roomType;
+                  const dogCO=cfg.checkOut||checkOut;
+                  const dogRoomsForType=(data.rooms||{})[dogRT]||[];
+                  // Filter out rooms selected by OTHER dogs
+                  const otherSelectedRooms=selectedDogs.filter(d2=>d2!==did).map(d2=>(perDogConfig[d2]||{}).room).filter(Boolean);
+                  const segments=cfg.roomSegments||[];
+                  return (
+                    <div key={did} style={{padding:"16px 20px",borderRadius:12,border:`1.5px solid ${C.border}`,background:C.bg}}>
+                      <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:10}}>{dog.fields.name}</div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                        <div>
+                          <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,textTransform:"uppercase"}}>Room Type</div>
+                          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                            {ROOM_TYPES.map(rt=>(
+                              <button key={rt} onClick={()=>setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomType:rt,room:""}}))}
+                                style={{padding:"6px 12px",borderRadius:8,border:`1.5px solid ${dogRT===rt?C.pri:C.border}`,background:dogRT===rt?C.priLt:C.surface,color:dogRT===rt?C.pri:C.textSec,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{rt}</button>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,textTransform:"uppercase"}}>Check-Out</div>
+                          <input type="date" value={dogCO} onChange={e=>setPerDogConfig(prev=>({...prev,[did]:{...prev[did],checkOut:e.target.value}}))}
+                            style={{padding:"8px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,background:C.surface,fontSize:12,fontFamily:"inherit",color:C.text,width:"100%"}}/>
+                        </div>
+                      </div>
+                      {segments.length===0&&(
+                        <div style={{marginTop:10}}>
+                          <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,textTransform:"uppercase"}}>Room</div>
+                          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                            {dogRoomsForType.map(rm=>{
+                              const sel=cfg.room===rm;
+                              const taken=otherSelectedRooms.includes(rm);
+                              return <button key={rm} onClick={()=>!taken&&setPerDogConfig(prev=>({...prev,[did]:{...prev[did],room:sel?"":rm}}))} disabled={taken}
+                                style={{padding:"6px 12px",borderRadius:8,border:`1.5px solid ${sel?C.pri:taken?C.borderLight:C.border}`,background:sel?C.priLt:C.surface,color:sel?C.pri:taken?C.textMut:C.text,fontSize:11,fontWeight:600,cursor:taken?"not-allowed":"pointer",fontFamily:"inherit",opacity:taken?0.5:1}}>{rm}</button>;
+                            })}
+                          </div>
+                        </div>
+                      )}
+                      {/* Room Transfer Segments */}
+                      {segments.length>0&&(
+                        <div style={{marginTop:10}}>
+                          <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:6,textTransform:"uppercase"}}>Room Segments</div>
+                          {segments.map((seg,si)=>(
+                            <div key={si} style={{display:"grid",gridTemplateColumns:"1fr 1fr auto auto auto",gap:6,alignItems:"end",marginBottom:6}}>
+                              <div>
+                                <div style={{fontSize:10,color:C.textMut}}>Room Type</div>
+                                <select value={seg.roomType} onChange={e=>{const ns=[...segments];ns[si]={...ns[si],roomType:e.target.value,room:""};setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:ns}}));}}
+                                  style={{width:"100%",padding:"6px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11,fontFamily:"inherit"}}>
+                                  {ROOM_TYPES.map(rt=><option key={rt} value={rt}>{rt}</option>)}
+                                </select>
+                              </div>
+                              <div>
+                                <div style={{fontSize:10,color:C.textMut}}>Room</div>
+                                <select value={seg.room||""} onChange={e=>{const ns=[...segments];ns[si]={...ns[si],room:e.target.value};setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:ns}}));}}
+                                  style={{width:"100%",padding:"6px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11,fontFamily:"inherit"}}>
+                                  <option value="">Select</option>
+                                  {((data.rooms||{})[seg.roomType]||[]).map(rm=><option key={rm} value={rm}>{rm}</option>)}
+                                </select>
+                              </div>
+                              <div>
+                                <div style={{fontSize:10,color:C.textMut}}>From</div>
+                                <input type="date" value={seg.startDate} onChange={e=>{const ns=[...segments];ns[si]={...ns[si],startDate:e.target.value};setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:ns}}));}}
+                                  style={{padding:"5px 6px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11,fontFamily:"inherit"}}/>
+                              </div>
+                              <div>
+                                <div style={{fontSize:10,color:C.textMut}}>To</div>
+                                <input type="date" value={seg.endDate} onChange={e=>{const ns=[...segments];ns[si]={...ns[si],endDate:e.target.value};setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:ns}}));}}
+                                  style={{padding:"5px 6px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11,fontFamily:"inherit"}}/>
+                              </div>
+                              <button onClick={()=>{const ns=segments.filter((_,i)=>i!==si);setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:ns}}));}}
+                                style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${C.dan}40`,background:C.dan+"12",color:C.dan,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>✗</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <button onClick={()=>{
+                        const existing=cfg.roomSegments||[];
+                        if(existing.length===0){
+                          const mid=addDays(checkIn,Math.ceil(countNights(checkIn,dogCO)/2));
+                          setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:[
+                            {roomType:dogRT,room:cfg.room||"",startDate:checkIn,endDate:mid},
+                            {roomType:dogRT,room:"",startDate:mid,endDate:dogCO},
+                          ]}}));
+                        } else {
+                          const lastEnd=existing[existing.length-1].endDate;
+                          setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:[...existing,{roomType:dogRT,room:"",startDate:lastEnd,endDate:dogCO}]}}));
+                        }
+                      }} style={{marginTop:8,display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.pri,fontSize:12,fontWeight:600,padding:0,fontFamily:"inherit"}}>
+                        <I.Plus/> {segments.length>0?"Add Segment":"Add Room Transfer"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Room Transfer for single-dog boarding */}
+        {type==="boarding"&&selectedDogs.length===1&&(()=>{
+          const did=selectedDogs[0];
+          const cfg=perDogConfig[did]||{};
+          const segments=cfg.roomSegments||[];
+          const dogCO=checkOut;
+          return (
+            <div style={{marginTop:12}}>
+              {segments.length>0&&(
+                <div style={{marginTop:8}}>
+                  <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:6,textTransform:"uppercase"}}>Room Segments</div>
+                  {segments.map((seg,si)=>(
+                    <div key={si} style={{display:"grid",gridTemplateColumns:"1fr 1fr auto auto auto",gap:6,alignItems:"end",marginBottom:6}}>
+                      <div>
+                        <div style={{fontSize:10,color:C.textMut}}>Room Type</div>
+                        <select value={seg.roomType} onChange={e=>{const ns=[...segments];ns[si]={...ns[si],roomType:e.target.value,room:""};setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:ns}}));}}
+                          style={{width:"100%",padding:"6px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11,fontFamily:"inherit"}}>
+                          {ROOM_TYPES.map(rt=><option key={rt} value={rt}>{rt}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <div style={{fontSize:10,color:C.textMut}}>Room</div>
+                        <select value={seg.room||""} onChange={e=>{const ns=[...segments];ns[si]={...ns[si],room:e.target.value};setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:ns}}));}}
+                          style={{width:"100%",padding:"6px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11,fontFamily:"inherit"}}>
+                          <option value="">Select</option>
+                          {((data.rooms||{})[seg.roomType]||[]).map(rm=><option key={rm} value={rm}>{rm}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <div style={{fontSize:10,color:C.textMut}}>From</div>
+                        <input type="date" value={seg.startDate} onChange={e=>{const ns=[...segments];ns[si]={...ns[si],startDate:e.target.value};setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:ns}}));}}
+                          style={{padding:"5px 6px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11,fontFamily:"inherit"}}/>
+                      </div>
+                      <div>
+                        <div style={{fontSize:10,color:C.textMut}}>To</div>
+                        <input type="date" value={seg.endDate} onChange={e=>{const ns=[...segments];ns[si]={...ns[si],endDate:e.target.value};setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:ns}}));}}
+                          style={{padding:"5px 6px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11,fontFamily:"inherit"}}/>
+                      </div>
+                      <button onClick={()=>{const ns=segments.filter((_,i)=>i!==si);setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:ns}}));}}
+                        style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${C.dan}40`,background:C.dan+"12",color:C.dan,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>✗</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <button onClick={()=>{
+                const existing=cfg.roomSegments||[];
+                if(existing.length===0){
+                  const mid=addDays(checkIn,Math.ceil(countNights(checkIn,dogCO)/2));
+                  setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:[
+                    {roomType:roomType,room:selectedRoom||"",startDate:checkIn,endDate:mid},
+                    {roomType:roomType,room:"",startDate:mid,endDate:dogCO},
+                  ]}}));
+                } else {
+                  const lastEnd=existing[existing.length-1].endDate;
+                  setPerDogConfig(prev=>({...prev,[did]:{...prev[did],roomSegments:[...existing,{roomType:roomType,room:"",startDate:lastEnd,endDate:dogCO}]}}));
+                }
+              }} style={{marginTop:4,display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.pri,fontSize:12,fontWeight:600,padding:0,fontFamily:"inherit"}}>
+                <I.Plus/> {segments.length>0?"Add Segment":"Add Room Transfer"}
+              </button>
+            </div>
+          );
+        })()}
+
         {/* Daycare size is auto-derived from the dog's weight/override classification */}
 
         {/* Dog Selection */}
@@ -5341,6 +5577,98 @@ function NewReservationPage({ data, save, preClientId, nav }) {
           </div>
         )}
 
+        {/* Reservation Compliance Check */}
+        {selectedDogs.length > 0 && (() => {
+          const client = data.clients.find(c=>c.id===clientId);
+          if(!client)return null;
+          const dogs = selectedDogs.map(did=>data.dogs.find(d=>d.id===did)).filter(Boolean);
+          // Vaccine check — aggregate across all dogs
+          const vaxResults = dogs.map(dog=>({dog,status:getVaxStatus(dog,data.requiredVaccines,data.resortPolicies)}));
+          const allVaxOk = vaxResults.every(v=>v.status.ok);
+          // Emergency contact
+          const hasEmergency = !!(client.fields?.emergency_contact && client.fields?.emergency_phone);
+          // Agreements
+          const agreements = data.agreements || DEF_AGREEMENTS;
+          const reqAgrs = agreements.filter(a=>a.required!==false);
+          const allAgrSigned = reqAgrs.every(a=>agrSigned(client,a.id));
+          // Age compliance
+          const ageResults = dogs.map(dog=>({dog,status:getDogAgeCompliance(dog,data.resortPolicies,data.reservations)}));
+          const allAgeOk = ageResults.every(a=>a.status.ok);
+          const CheckItem = ({ok,warn,label,detail,expandKey,children})=>(
+            <div style={{flex:1,minWidth:140}}>
+              <button onClick={()=>children&&setComplianceExpand(prev=>prev===expandKey?null:expandKey)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${ok?C.suc+"60":warn?C.acc+"60":C.dan+"60"}`,background:ok?C.suc+"12":warn?C.acc+"12":C.dan+"12",cursor:children?"pointer":"default",fontFamily:"inherit",textAlign:"left"}}>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{fontSize:14}}>{ok?"✓":warn?"⚠":"✗"}</span>
+                  <span style={{fontSize:12,fontWeight:700,color:ok?C.suc:warn?C.acc:C.dan}}>{label}</span>
+                </div>
+                <div style={{fontSize:10,color:C.textSec,marginTop:2}}>{detail}</div>
+              </button>
+              {complianceExpand===expandKey&&children&&<div style={{marginTop:6,padding:"10px 12px",borderRadius:8,border:`1px solid ${C.border}`,background:C.surface}}>{children}</div>}
+            </div>
+          );
+          return (
+            <div style={{marginTop:20}}>
+              <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Reservation Compliance</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <CheckItem ok={allVaxOk} label="Vaccines" expandKey="vax"
+                  detail={allVaxOk?"All up to date":vaxResults.filter(v=>!v.status.ok).map(v=>`${v.dog.fields.name}: ${[...v.status.expired,...v.status.missing].length} issue${[...v.status.expired,...v.status.missing].length>1?"s":""}`).join(", ")}>
+                  {!allVaxOk&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {vaxResults.filter(v=>!v.status.ok).map(v=>(
+                      <div key={v.dog.id} style={{fontSize:12}}>
+                        <div style={{fontWeight:700,color:C.text,marginBottom:4}}>{v.dog.fields.name}</div>
+                        {v.status.expired.map(vId=><div key={vId} style={{color:C.dan,fontSize:11}}>• {vId.replace(/_/g," ")} — Expired</div>)}
+                        {v.status.missing.map(vId=><div key={vId} style={{color:C.dan,fontSize:11}}>• {vId.replace(/_/g," ")} — Missing</div>)}
+                        {v.status.expired.concat(v.status.missing).map(vId=>(
+                          <div key={vId+"fix"} style={{marginTop:4,display:"flex",alignItems:"center",gap:6}}>
+                            <span style={{fontSize:11,color:C.textSec,minWidth:100}}>{vId.replace(/_/g," ")}</span>
+                            <input type="date" style={{fontSize:11,padding:"4px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontFamily:"inherit"}}
+                              onChange={async(e)=>{
+                                const newDogs=data.dogs.map(d=>d.id===v.dog.id?{...d,fields:{...d.fields,[vId]:e.target.value}}:d);
+                                await save({...data,dogs:newDogs});
+                              }}/>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>}
+                </CheckItem>
+                <CheckItem ok={hasEmergency} label="Emergency Contact" expandKey="ec"
+                  detail={hasEmergency?`${client.fields.emergency_contact}`:"Not on file"}>
+                  {!hasEmergency&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    <Inp label="Emergency Contact Name" type="text" value={client.fields?.emergency_contact||""} onChange={async(v)=>{
+                      const updated={...client,fields:{...client.fields,emergency_contact:v}};
+                      await save({...data,clients:data.clients.map(c=>c.id===clientId?updated:c)});
+                    }}/>
+                    <Inp label="Emergency Phone" type="tel" value={client.fields?.emergency_phone||""} onChange={async(v)=>{
+                      const updated={...client,fields:{...client.fields,emergency_phone:v}};
+                      await save({...data,clients:data.clients.map(c=>c.id===clientId?updated:c)});
+                    }}/>
+                  </div>}
+                </CheckItem>
+                <CheckItem ok={allAgrSigned} label="Agreement" expandKey="agr"
+                  detail={allAgrSigned?"Signed":reqAgrs.filter(a=>!agrSigned(client,a.id)).map(a=>a.name).join(", ")+" unsigned"}>
+                  {!allAgrSigned&&<div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {reqAgrs.filter(a=>!agrSigned(client,a.id)).map(agr=>(
+                      <div key={agr.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                        <span style={{fontSize:12,color:C.text}}>{agr.name}</span>
+                        <Btn size="sm" onClick={async()=>{
+                          const agrs={...(client.agreements||{}),[agr.id]:{signed:true,date:todayStr()}};
+                          await save({...data,clients:data.clients.map(c=>c.id===clientId?{...c,agreements:agrs}:c)});
+                        }}>Sign Now</Btn>
+                      </div>
+                    ))}
+                  </div>}
+                </CheckItem>
+                <CheckItem ok={allAgeOk} warn={ageResults.some(a=>a.status.grandfathered)} label="Dog Age" expandKey="age"
+                  detail={ageResults.every(a=>!a.status.age||a.status.ok)
+                    ?ageResults.map(a=>a.status.age?`${a.dog.fields.name}: ${a.status.age}yr${a.status.grandfathered?" (Grandfathered)":""}`:null).filter(Boolean).join(", ")||"N/A"
+                    :ageResults.filter(a=>!a.status.ok).map(a=>`${a.dog.fields.name}: ${a.status.age}yr — ${a.status.reason}`).join(", ")}>
+                </CheckItem>
+              </div>
+            </div>
+          );
+        })()}
+
         {/* Per-Dog Care Fields */}
         {selectedDogs.length > 0 && (
           <div style={{marginTop:24}}>
@@ -5365,10 +5693,33 @@ function NewReservationPage({ data, save, preClientId, nav }) {
                       {anyChanged && <Badge color="warning" size="sm">Modified from profile</Badge>}
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                      <div style={{gridColumn:"1 / -1"}}><Inp label="Feeding Instructions" type="textarea" value={care.feeding ?? ""} onChange={v=>updateCare(did,"feeding",v)} rows={2} placeholder="e.g. 2 cups AM/PM Blue Buffalo"/></div>
-                      <div><Inp label="Medications" type="textarea" value={care.medications ?? ""} onChange={v=>updateCare(did,"medications",v)} rows={2} placeholder="e.g. Glucosamine daily"/></div>
-                      <div><Inp label="Preferred Bath Type" type="select" value={care.bath_type ?? ""} onChange={v=>updateCare(did,"bath_type",v)} options={BATH_OPTS}/></div>
+                      <div style={{gridColumn:"1 / -1"}}><Inp label="Feeding Schedule" type="textarea" value={care.feeding ?? ""} onChange={v=>updateCare(did,"feeding",v)} rows={2} placeholder="e.g. 2 cups AM/PM Blue Buffalo"/></div>
+                      <div><Inp label="Medication Schedule" type="textarea" value={care.medications ?? ""} onChange={v=>updateCare(did,"medications",v)} rows={2} placeholder="e.g. Glucosamine daily"/></div>
+                      {type==="boarding"&&countNights(checkIn,checkOut)>=2&&<div><Inp label="Bathing Type" type="select" value={care.bath_type ?? ""} onChange={v=>updateCare(did,"bath_type",v)} options={BATH_OPTS}/></div>}
+                      {type!=="boarding"&&<div><Inp label="Bathing Type" type="select" value={care.bath_type ?? ""} onChange={v=>updateCare(did,"bath_type",v)} options={BATH_OPTS}/></div>}
                     </div>
+                    {/* Add-Ons */}
+                    {type==="boarding"&&(
+                      <div style={{marginTop:10}}>
+                        <button onClick={()=>setExpandedAddOns(prev=>({...prev,[did]:!prev[did]}))} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.pri,fontSize:12,fontWeight:600,padding:0,fontFamily:"inherit"}}>
+                          <I.Plus/> {expandedAddOns[did]?"Hide Add-Ons":"Add Add-Ons"}
+                        </button>
+                        {expandedAddOns[did]&&(
+                          <div style={{marginTop:8,padding:"12px 16px",borderRadius:8,border:`1px solid ${C.borderLight}`,background:C.surface}}>
+                            <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:8}}>Bathing</div>
+                            <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:8,alignItems:"center"}}>
+                              {(BATH_OPTS).map(bt=>{
+                                const price=(data.pricing||DEF_PRICING).bathPrices?.[bt]||0;
+                                const selected=(dogAddOns[did]?.bath_type)===bt;
+                                return <button key={bt} onClick={()=>setDogAddOns(prev=>({...prev,[did]:{...prev[did],bath_type:selected?"":bt}}))} style={{padding:"8px 12px",borderRadius:8,border:`1.5px solid ${selected?C.pri:C.border}`,background:selected?C.priLt:C.bg,color:selected?C.pri:C.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
+                                  <span>{bt}</span><span style={{color:C.textSec,fontWeight:400}}>{fmtMoney(price)}</span>
+                                </button>;
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -8178,6 +8529,21 @@ function PricingTab({ data, save }) {
         {sectionTitle("Add-On Fees", "Additional charges for special services during a stay.")}
         {rateRow("Medication Administration (per dose/day)", "medicationAdminFee", p.medicationAdminFee, "5")}
         {rateRow("Special Feeding / Resort Food (per day)", "specialFeedingFee", p.specialFeedingFee, "8")}
+      </Card>
+
+      {/* Boarding Add-Ons */}
+      <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
+        {sectionTitle("Boarding Add-Ons", "Optional services offered during boarding stays. Select which add-ons to offer during reservation booking.")}
+        <div style={{padding:"12px 16px",borderRadius:10,background:C.bg,border:`1px solid ${C.borderLight}`,marginBottom:8}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:C.text}}>Bathing</div>
+              <div style={{fontSize:11,color:C.textSec,marginTop:2}}>Offer bath add-ons during boarding reservations. Prices are configured in the Bath Pricing section above.</div>
+            </div>
+            <Badge color="success" size="sm">Active</Badge>
+          </div>
+        </div>
+        <div style={{fontSize:11,color:C.textMut,fontStyle:"italic",marginTop:8}}>More add-on categories coming soon. Contact support to request custom add-ons.</div>
       </Card>
 
       {/* Discount Rules */}
@@ -11709,7 +12075,7 @@ export default function App() {
       case "dog-detail": return hp("view_dog_detail") ? <DogDetailPage data={data} save={save} clientId={params.clientId} dogId={params.dogId} nav={nav} profile={profile}/> : denied;
       case "new-dog": return hp("create_dog") ? <NewDogPage data={data} save={save} clientId={params.clientId} nav={nav}/> : denied;
       case "reservations": return hp("view_calendar") ? <LodgingCalendarPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/> : denied;
-      case "new-reservation": return hp("create_reservation") ? <NewReservationPage data={data} save={save} preClientId={params.clientId} nav={nav}/> : denied;
+      case "new-reservation": return hp("create_reservation") ? <NewReservationPage data={data} save={save} preClientId={params.clientId} nav={nav} profile={profile}/> : denied;
       case "unified-new": return <UnifiedNewPage data={data} save={save} nav={nav} prefill={params.prefill}/>;
       case "evaluation-form": return hp("edit_evaluations") ? <EvaluationFormPage data={data} save={save} reservationId={params.reservationId} nav={nav} profile={profile}/> : denied;
       case "eod": return hp("view_eod") ? <EODPage data={data} save={save} nav={nav} profile={profile}/> : denied;
