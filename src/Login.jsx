@@ -53,12 +53,11 @@ export default function Login() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: `linear-gradient(135deg, ${C.pri} 0%, #001a33 100%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Inter', -apple-system, sans-serif", padding: 20 }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&display=swap');`}</style>
+    <div style={{ minHeight: '100vh', background: `linear-gradient(135deg, ${C.pri} 0%, #001a33 100%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'GT Eesti', -apple-system, sans-serif", padding: 20 }}>
       <div style={{ width: '100%', maxWidth: 420, background: C.surface, borderRadius: 20, padding: '40px 36px', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, fontFamily: "'Playfair Display', Georgia, serif", letterSpacing: '0.02em' }}>K9 Operations</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, fontFamily: "'Canela', Georgia, serif", letterSpacing: '0.02em' }}>K9 Operations</div>
           <div style={{ fontSize: 11, color: C.acc, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 4 }}>Luxury Pet Hotel Management</div>
         </div>
 
