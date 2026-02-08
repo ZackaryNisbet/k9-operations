@@ -29,12 +29,39 @@ export function AuthProvider({ children }) {
   }, []);
 
   const fetchProfile = async (userId) => {
-    const { data } = await supabase
+    const { data: existing } = await supabase
       .from('profiles')
       .select('*')
       .eq('id', userId)
       .single();
-    setProfile(data);
+
+    if (existing) {
+      setProfile(existing);
+      setLoading(false);
+      return;
+    }
+
+    // No profile yet — auto-create one (for new sign-ups)
+    const { data: authData } = await supabase.auth.getUser();
+    const authUser = authData?.user;
+    const newProfile = {
+      id: userId,
+      email: authUser?.email || '',
+      full_name: authUser?.user_metadata?.full_name || '',
+    };
+    const { data: created, error: insertErr } = await supabase
+      .from('profiles')
+      .insert(newProfile)
+      .select()
+      .single();
+
+    if (created) {
+      setProfile(created);
+    } else {
+      // If insert fails (e.g. RLS policy not set up), use a minimal profile
+      console.warn('Could not auto-create profile:', insertErr);
+      setProfile({ id: userId, email: authUser?.email || '', full_name: authUser?.user_metadata?.full_name || '', role: 'staff', location_id: null });
+    }
     setLoading(false);
   };
 
