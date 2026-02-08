@@ -4848,8 +4848,11 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
   const [selectedRoom, setSelectedRoom] = useState("");
   const [showBookedRooms, setShowBookedRooms] = useState(false);
 
-  // Per-dog care overrides: { [dogId]: { feeding, medications, bath_type } }
+  // Per-dog care overrides: { [dogId]: { feedingSchedules, medicationSchedules, bath_type } }
   const [careFields, setCareFields] = useState({});
+  // Emergency contact override (local state — not saved until reservation created)
+  const [ecOverride, setEcOverride] = useState({ name: "", phone: "" });
+  const [ecInitialized, setEcInitialized] = useState(false);
   // Per-dog add-ons: { [dogId]: { bath_type, ... } }
   const [dogAddOns, setDogAddOns] = useState({});
   const [expandedAddOns, setExpandedAddOns] = useState({});
@@ -4942,8 +4945,9 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
 
   // "Update profile?" modal state
   const [showUpdateModal, setShowUpdateModal] = useState(false);
-  const [pendingChanges, setPendingChanges] = useState([]); // [{ dogId, field, oldVal, newVal }]
+  const [pendingChanges, setPendingChanges] = useState([]); // [{ dogId, field, oldVal, newVal, target }]
   const [pendingReservations, setPendingReservations] = useState([]);
+  const [changeToggles, setChangeToggles] = useState({}); // { [index]: bool } — which changes to apply to profile
 
   const cDogs = data.dogs.filter(d=>d.clientId===clientId);
 
@@ -5000,6 +5004,15 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
     if(cDogs.length===1){ setSelectedDogs([cDogs[0].id]); }
     else { setSelectedDogs([]); }
     setCareFields({});
+    // Initialize EC from client profile
+    const cl = data.clients.find(c=>c.id===clientId);
+    if(cl) {
+      setEcOverride({ name: cl.fields?.emergency_contact || "", phone: cl.fields?.emergency_phone || "" });
+      setEcInitialized(true);
+    } else {
+      setEcOverride({ name: "", phone: "" });
+      setEcInitialized(false);
+    }
   },[clientId]);
 
   // When selected dogs change, initialize care fields from profiles (structured schedules)
@@ -5090,6 +5103,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
         checkIn,checkOut:type==="boarding"?dogCheckOut:checkIn,
         checkInTime,checkOutTime,status:"upcoming",notes,
         ...(type==="boarding"&&parentDestination?{parentDestination}:{}),
+        ...(ecOverride.name || ecOverride.phone ? { emergencyContactOverride: { name: ecOverride.name, phone: ecOverride.phone } } : {}),
         careOverrides: {
           feedingSchedules: (careFields[did] || {}).feedingSchedules || [],
           medicationSchedules: (careFields[did] || {}).medicationSchedules || [],
@@ -5117,20 +5131,36 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
       const resBath = care.bath_type || "";
       if(JSON.stringify(resFeedSch) !== JSON.stringify(profileFeedSch) && resFeedSch.length > 0) {
         changes.push({ dogId: did, dogName: dog.fields.name, field: "feedingSchedules", oldVal: profileFeedSch, newVal: resFeedSch,
-          oldLabel: summarizeFeeding(profileFeedSch) || "None", newLabel: summarizeFeeding(resFeedSch) || "None" });
+          oldLabel: summarizeFeeding(profileFeedSch) || "None", newLabel: summarizeFeeding(resFeedSch) || "None", target: "dog" });
       }
       if(JSON.stringify(resMedSch) !== JSON.stringify(profileMedSch) && resMedSch.length > 0) {
         changes.push({ dogId: did, dogName: dog.fields.name, field: "medicationSchedules", oldVal: profileMedSch, newVal: resMedSch,
-          oldLabel: summarizeMeds(profileMedSch) || "None", newLabel: summarizeMeds(resMedSch) || "None" });
+          oldLabel: summarizeMeds(profileMedSch) || "None", newLabel: summarizeMeds(resMedSch) || "None", target: "dog" });
       }
       if(resBath !== profileBath && resBath !== "") {
-        changes.push({ dogId: did, dogName: dog.fields.name, field: "bath_type", oldVal: profileBath, newVal: resBath });
+        changes.push({ dogId: did, dogName: dog.fields.name, field: "bath_type", oldVal: profileBath, newVal: resBath, target: "dog" });
       }
     });
+    // Check emergency contact changes
+    const cl = data.clients.find(c=>c.id===clientId);
+    if(cl) {
+      const profileEcName = cl.fields?.emergency_contact || "";
+      const profileEcPhone = cl.fields?.emergency_phone || "";
+      if(ecOverride.name !== profileEcName && ecOverride.name !== "") {
+        changes.push({ clientId, dogName: cl.fields.first_name + " " + cl.fields.last_name + " (Client)", field: "emergency_contact", oldVal: profileEcName, newVal: ecOverride.name, target: "client" });
+      }
+      if(ecOverride.phone !== profileEcPhone && ecOverride.phone !== "") {
+        changes.push({ clientId, dogName: cl.fields.first_name + " " + cl.fields.last_name + " (Client)", field: "emergency_phone", oldVal: profileEcPhone, newVal: ecOverride.phone, target: "client" });
+      }
+    }
 
     if(changes.length > 0) {
       setPendingChanges(changes);
       setPendingReservations(newRes);
+      // Initialize all toggles to OFF (reservation-only by default)
+      const toggles = {};
+      changes.forEach((_,i) => { toggles[i] = false; });
+      setChangeToggles(toggles);
       setShowUpdateModal(true);
     } else {
       // No changes, just save reservations
@@ -5156,14 +5186,18 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
     }
   };
 
-  const confirmSave = async (updateProfile) => {
+  const confirmSave = async () => {
     let newDogs = [...data.dogs];
-    if(updateProfile) {
-      // Update dog profiles with changed care fields
-      pendingChanges.forEach(ch => {
+    let newClients = [...data.clients];
+    // Apply only toggled-on changes
+    pendingChanges.forEach((ch, i) => {
+      if (!changeToggles[i]) return; // skip unchecked changes
+      if (ch.target === "dog") {
         newDogs = newDogs.map(d => d.id === ch.dogId ? { ...d, fields: { ...d.fields, [ch.field]: ch.newVal } } : d);
-      });
-    }
+      } else if (ch.target === "client") {
+        newClients = newClients.map(c => c.id === ch.clientId ? { ...c, fields: { ...c.fields, [ch.field]: ch.newVal } } : c);
+      }
+    });
     let saveDogTags = data.dogTags;
     let saveRes = [...pendingReservations];
     if (type === "evaluation") {
@@ -5180,12 +5214,12 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
         }
       });
     }
-    await save({...data, dogs: newDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...saveRes]});
+    await save({...data, clients: newClients, dogs: newDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...saveRes]});
     setShowUpdateModal(false);
     nav("client-detail",{clientId});
   };
 
-  const fieldLabel = (f) => f === "feedingSchedules" ? "Feeding Schedule" : f === "medicationSchedules" ? "Medication Schedule" : f === "bath_type" ? "Preferred Bath Type" : f === "feeding" ? "Feeding Instructions" : "Medications";
+  const fieldLabel = (f) => ({ feedingSchedules: "Feeding Schedule", medicationSchedules: "Medication Schedule", bath_type: "Preferred Bath Type", emergency_contact: "Emergency Contact Name", emergency_phone: "Emergency Phone", feeding: "Feeding Instructions", medications: "Medications" })[f] || f;
 
   // Live pricing calculation
   const livePricing = useMemo(() => {
@@ -5732,7 +5766,12 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
           const dogs = selectedDogs.map(did=>data.dogs.find(d=>d.id===did)).filter(Boolean);
           const vaxResults = dogs.map(dog=>({dog,status:getVaxStatus(dog,data.requiredVaccines,data.resortPolicies)}));
           const allVaxOk = vaxResults.every(v=>v.status.ok);
-          const hasEmergency = !!(client.fields?.emergency_contact && client.fields?.emergency_phone);
+          const profileEcName = client.fields?.emergency_contact || "";
+          const profileEcPhone = client.fields?.emergency_phone || "";
+          const hasEmergency = !!(profileEcName && profileEcPhone);
+          const ecNameChanged = ecOverride.name !== profileEcName;
+          const ecPhoneChanged = ecOverride.phone !== profileEcPhone;
+          const ecModified = ecNameChanged || ecPhoneChanged;
           const agreements = data.agreements || DEF_AGREEMENTS;
           const reqAgrs = agreements.filter(a=>a.required!==false);
           const allAgrSigned = reqAgrs.every(a=>agrSigned(client,a.id));
@@ -5788,18 +5827,13 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
                     ))}
                   </div>
                 </CheckItem>
-                <CheckItem ok={hasEmergency} label="Emergency Contact" expandKey="ec"
-                  detail={hasEmergency?`${client.fields.emergency_contact}`:"Not on file"}>
+                <CheckItem ok={!!(ecOverride.name&&ecOverride.phone)} warn={ecModified} label="Emergency Contact" expandKey="ec"
+                  detail={ecOverride.name ? `${ecOverride.name}${ecModified?" (Modified)":""}` : "Not on file"}>
                   <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                    <Inp label="Emergency Contact Name" type="text" value={client.fields?.emergency_contact||""} onChange={async(v)=>{
-                      const updated={...client,fields:{...client.fields,emergency_contact:v}};
-                      await save({...data,clients:data.clients.map(c=>c.id===clientId?updated:c)});
-                    }}/>
-                    <Inp label="Emergency Phone" type="tel" value={client.fields?.emergency_phone||""} onChange={async(v)=>{
-                      const updated={...client,fields:{...client.fields,emergency_phone:v}};
-                      await save({...data,clients:data.clients.map(c=>c.id===clientId?updated:c)});
-                    }}/>
-                    {hasEmergency && <div style={{fontSize:11,color:C.suc,fontWeight:600}}>Contact on file — update above if needed</div>}
+                    {ecModified && <div style={{fontSize:11,color:C.acc,fontWeight:600}}>Modified from profile</div>}
+                    <Inp label="Emergency Contact Name" type="text" value={ecOverride.name} onChange={v=>setEcOverride(prev=>({...prev,name:v}))}/>
+                    <Inp label="Emergency Phone" type="tel" value={ecOverride.phone} onChange={v=>setEcOverride(prev=>({...prev,phone:v}))}/>
+                    {hasEmergency && !ecModified && <div style={{fontSize:11,color:C.suc,fontWeight:600}}>Contact on file — update above if needed</div>}
                   </div>
                 </CheckItem>
                 <CheckItem ok={allAgrSigned} label="Agreement" expandKey="agr"
@@ -5878,11 +5912,23 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
                       {anyChanged && <Badge color="warning" size="sm">Modified from profile</Badge>}
                     </div>
                     <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                      <FeedingScheduleEditor schedules={care.feedingSchedules || []} onChange={v=>updateCare(did,"feedingSchedules",v)} data={data}/>
-                      <MedicationScheduleEditor schedules={care.medicationSchedules || []} onChange={v=>updateCare(did,"medicationSchedules",v)} data={data}/>
+                      <div>
+                        {feedingChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
+                        <FeedingScheduleEditor schedules={care.feedingSchedules || []} onChange={v=>updateCare(did,"feedingSchedules",v)} data={data}/>
+                      </div>
+                      <div>
+                        {medsChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
+                        <MedicationScheduleEditor schedules={care.medicationSchedules || []} onChange={v=>updateCare(did,"medicationSchedules",v)} data={data}/>
+                      </div>
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                        {type==="boarding"&&countNights(checkIn,checkOut)>=2&&<div><Inp label="Bathing Type" type="select" value={care.bath_type ?? ""} onChange={v=>updateCare(did,"bath_type",v)} options={BATH_OPTS}/></div>}
-                        {type!=="boarding"&&<div><Inp label="Bathing Type" type="select" value={care.bath_type ?? ""} onChange={v=>updateCare(did,"bath_type",v)} options={BATH_OPTS}/></div>}
+                        {type==="boarding"&&countNights(checkIn,checkOut)>=2&&<div>
+                          {bathChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
+                          <Inp label="Bathing Type" type="select" value={care.bath_type ?? ""} onChange={v=>updateCare(did,"bath_type",v)} options={BATH_OPTS}/>
+                        </div>}
+                        {type!=="boarding"&&<div>
+                          {bathChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
+                          <Inp label="Bathing Type" type="select" value={care.bath_type ?? ""} onChange={v=>updateCare(did,"bath_type",v)} options={BATH_OPTS}/>
+                        </div>}
                       </div>
                     </div>
                     {/* Add-Ons */}
@@ -5933,20 +5979,42 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
       </Card>
 
       {/* Update Profile Modal */}
-      {showUpdateModal && (
-        <Modal title="Update Dog Profile?" onClose={()=>setShowUpdateModal(false)} wide>
+      {showUpdateModal && (() => {
+        const allOn = pendingChanges.every((_,i) => changeToggles[i]);
+        const anyOn = pendingChanges.some((_,i) => changeToggles[i]);
+        const toggleAll = () => {
+          const next = {};
+          const setTo = !allOn;
+          pendingChanges.forEach((_,i) => { next[i] = setTo; });
+          setChangeToggles(next);
+        };
+        return (
+        <Modal title="Update Profile?" onClose={()=>setShowUpdateModal(false)} wide>
           <div style={{marginBottom:16}}>
             <p style={{fontSize:14,color:C.text,lineHeight:1.6,margin:"0 0 16px"}}>
-              You changed care instructions for the following. Would you like to update the dog's profile for all future reservations, or keep these changes just for this reservation?
+              You modified {pendingChanges.length} field{pendingChanges.length!==1?"s":""}. Toggle which changes should also update the profile for all future reservations.
             </p>
+            {/* Select All toggle */}
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"8px 12px",borderRadius:8,background:C.surface,border:`1px solid ${C.borderLight}`,cursor:"pointer"}} onClick={toggleAll}>
+              <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${allOn?C.pri:C.border}`,background:allOn?C.pri:"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s",flexShrink:0}}>
+                {allOn && <I.Check style={{width:12,height:12,color:"#fff"}}/>}
+              </div>
+              <span style={{fontSize:13,fontWeight:600,color:C.text}}>Update all fields on profile</span>
+            </div>
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
-              {pendingChanges.map((ch,i) => (
-                <div key={i} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.border}`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+              {pendingChanges.map((ch,i) => {
+                const isOn = !!changeToggles[i];
+                return (
+                <div key={i} style={{padding:"10px 14px",borderRadius:10,background:isOn?C.priLt+"20":C.bg,border:`1px solid ${isOn?C.pri:C.border}`,cursor:"pointer",transition:"all 0.15s"}} onClick={()=>setChangeToggles(prev=>({...prev,[i]:!prev[i]}))}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                    <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${isOn?C.pri:C.border}`,background:isOn?C.pri:"transparent",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s",flexShrink:0}}>
+                      {isOn && <I.Check style={{width:12,height:12,color:"#fff"}}/>}
+                    </div>
                     <span style={{fontSize:13,fontWeight:700,color:C.text}}>{ch.dogName}</span>
-                    <Badge color="accent" size="sm">{fieldLabel(ch.field)}</Badge>
+                    <Badge color={isOn?"primary":"accent"} size="sm">{fieldLabel(ch.field)}</Badge>
+                    {isOn && <span style={{fontSize:10,color:C.pri,fontWeight:600,marginLeft:"auto"}}>Will update profile</span>}
                   </div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 24px 1fr",gap:8,alignItems:"start"}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 24px 1fr",gap:8,alignItems:"start",marginLeft:26}}>
                     <div style={{padding:"6px 10px",borderRadius:8,background:C.danLt,fontSize:12,color:C.dan}}>
                       <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",marginBottom:2}}>Profile (current)</div>
                       {ch.oldLabel || (typeof ch.oldVal === "string" ? ch.oldVal : null) || <span style={{fontStyle:"italic",opacity:0.6}}>Empty</span>}
@@ -5958,16 +6026,16 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
                     </div>
                   </div>
                 </div>
-              ))}
+              );})}
             </div>
           </div>
-          <div style={{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}}>
+          <div style={{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap",alignItems:"center"}}>
+            {anyOn && <span style={{fontSize:11,color:C.textSec,marginRight:"auto"}}>{pendingChanges.filter((_,i)=>changeToggles[i]).length} of {pendingChanges.length} will update profile</span>}
             <Btn variant="secondary" onClick={()=>setShowUpdateModal(false)}>Cancel</Btn>
-            <Btn variant="accent" onClick={()=>confirmSave(false)}>This Reservation Only</Btn>
-            <Btn onClick={()=>confirmSave(true)}>Update Profile for All Future</Btn>
+            <Btn onClick={confirmSave}>{anyOn ? "Save & Update Selected" : "Save Reservation Only"}</Btn>
           </div>
         </Modal>
-      )}
+      );})()}
     </div>
   );
 }
