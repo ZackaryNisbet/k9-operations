@@ -31,8 +31,8 @@ const I = {
   SortAsc: () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14"/><path d="M5 12l7-7 7 7"/></svg>,
   SortDesc: () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>,
   SortNone: () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity="0.4"><path d="M12 5v14"/><path d="M8 9l4-4 4 4"/><path d="M8 15l4 4 4-4"/></svg>,
-  VaxOk: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11.5 14.5 15.5 10"/></svg>,
-  VaxBad: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>,
+  VaxOk: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19.5 4.5l-1 1"/><path d="M17.1 6.9l-4.2 4.2"/><path d="M10.8 13.2l-2.1 2.1c-.6.6-1.5.6-2.1 0l-1.9-1.9c-.6-.6-.6-1.5 0-2.1l2.1-2.1"/><path d="M14.5 9.5l-4 4"/><path d="M2 22l3-3"/><path d="M7.5 7.5L5 10"/><path d="M14 17l2.5-2.5"/><path d="M22 2l-3 3"/><path d="M15 5l4 4"/></svg>,
+  VaxBad: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19.5 4.5l-1 1"/><path d="M17.1 6.9l-4.2 4.2"/><path d="M10.8 13.2l-2.1 2.1c-.6.6-1.5.6-2.1 0l-1.9-1.9c-.6-.6-.6-1.5 0-2.1l2.1-2.1"/><path d="M14.5 9.5l-4 4"/><path d="M2 22l3-3"/><path d="M7.5 7.5L5 10"/><path d="M14 17l2.5-2.5"/><path d="M22 2l-3 3"/><path d="M15 5l4 4"/></svg>,
   Clipboard: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/></svg>,
   MessageSquare: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
   DollarSign: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
@@ -10366,7 +10366,7 @@ function SettingsPage({ data, save, profile }) {
         <div>
           <Card style={{ padding: "20px 24px" }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>Required Vaccines</div>
-            <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 16px" }}>Select which vaccines are required for all dogs at your resort. Dogs missing required vaccines or with expired records will show a red shield icon.</p>
+            <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 16px" }}>Select which vaccines are required for all dogs at your resort. Dogs missing required vaccines or with expired records will show a red syringe icon.</p>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {VACCINES.map(vax => {
                 const isRequired = (data.requiredVaccines || DEF_REQUIRED_VACCINES).includes(vax.id);
