@@ -1,0 +1,9813 @@
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useData } from "./useData";
+import { useAuth } from "./AuthProvider";
+
+// ─── Icons ──────────────────────────────────────────────────────────────────
+const I = {
+  Dashboard: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>,
+  Users: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
+  Calendar: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+  Settings: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>,
+  FileText: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>,
+  Plus: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>,
+  Search: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+  ChevronRight: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>,
+  Back: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>,
+  X: () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+  Edit: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,
+  Trash: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+  Check: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>,
+  CheckCircle: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+  XCircle: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>,
+  Sparkle: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3z"/></svg>,
+  Phone: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>,
+  Menu: () => <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
+  Tag: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>,
+  BarChart: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+  LogIn: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>,
+  LogOut: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>,
+  Clock: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
+  SortAsc: () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14"/><path d="M5 12l7-7 7 7"/></svg>,
+  SortDesc: () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>,
+  SortNone: () => <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" opacity="0.4"><path d="M12 5v14"/><path d="M8 9l4-4 4 4"/><path d="M8 15l4 4 4-4"/></svg>,
+  VaxOk: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11.5 14.5 15.5 10"/></svg>,
+  VaxBad: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>,
+  Clipboard: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="15" y2="16"/></svg>,
+  MessageSquare: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>,
+  DollarSign: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
+  Send: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
+  CreditCard: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>,
+  RefreshCw: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
+};
+
+// K9 Resorts Official Dog Logo (PNG from brand assets)
+const K9_LOGO_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAAB0CAYAAABzNJfPAAAlgElEQVR42u19e5hdVXn++6219z6XuWVymdyJIHhJ1JZSsfJrncGiImBotWd+1mIpCKFgkSJGhQJnjqCFAgIiaFCxFFCZo20RLwkUmdECUYhQSIZAAskkk7nfz21f1lpf/9jnTCbJTC4zZ8IUWM+TZ57MnLP3Wutd3+1d3/oW8GZ7s73Z3mxvtjfb66g1NyckJ5PizZmYBY0Z9EYevzWbOpNMQhDB3PHlj55lRZzsxamHWpJJiFQK5uj2IymAFtEwwd9aAAANJpVKmdf1ykgmk4KZKfnZU5b8562NfP9X/+KXAPB4sv5oLRpqbk5IZqbDleTm5oQEyivRs0ZCGtAiiEh9P7X6jtrqKEaz+SoAaGhq0UjNrBZrTiRkYzqtGxvTGiDctvbMEyor5MmOJVYKmKWWTVIrZsWiKzD6xUy28Fui/3oRSOvx3y/LqngtDHYikTZE4L3SUW+lUq3qris/+qkVS2oeUNpwPu/vWb9h6IR7W1vdYj95pvrT2JjW9fUrop8+9Q8+XRWV5wopTq6I27YUInxt8c1EBG0Y2byntebfZfP+9++7d/N9re3tbuk5/9cAOWBik0mIpibmr15++qK3LanYHI1Yc5RmEQTK3dFROOHLd6zvmCE7QpxMEqVS5o6rP3rW4pqKGyornFXGGLi+AhvWTMQHfomJBMmoY0GQwGjWbesZyl156Q0bfsrJpKBUiqezeMTRBuMbX/7o///GFR86tgRGA+oFEfEx8yLframMzPV9zczMti2j8SqzBABWtSVopsC45yurbzy2rurhWNRalS34Ku8GhhkMIkmABbAgMBEgCUwMEDM47wYm6/qqIu6sPHZxzUPfTZ5xM6VShpnB01joRwWQZDJ8T/LvP1R37OLqH8WrYqsB4C041zk11aq+dfWZl9XNqzwjUwgUCZIAm6hjIWZHlgEAEmU33oJSKXPvdavvW76w6ot+oHXBCwwBFhGJkuZgZhN1LBGN2JIIFHUsGYvYgsFMRIIAq+AFxlesVyyuveLe685OE5FINyfEVLXPUQGkAfUCAC9d6Hxqbk3EWIKjAHBe6l73pitOf++i2vhNrhdoMCQAMIiFIBjWKwBgwZZeKqPNEI2Naf2da8+8c2ld9TmjGS8wIFkEYpwXxSYWtcVozm9r7xr+u227ej/w6u6h80cy7u/jISimaFeEAcvRrBssrav8q3tSZ93T2JjWzSEos9LLohY0mHPPRbQy6nw2UCy0MfOZmT5/wUdqly+I/9BxhF3wlCGisYknIjiWOG4mDPhdV5/+yWULqy4ZzbkBCPb+aHMooZTJBVuf2NLxgTvve3qg+KffrFiBH15/4dm/mD8nfmre9XVRtQFE9kjWC5bVVf/tt6458+nGxvQ3p2LoZ1xCHk/Wy1QqZd5/TNUlc6qixxc8Bce2QUR84rHR+2prom8tuErvs0KZiZlhSbECAPpW1U3bw2IGJRJpk7zs7Dm1lbHbtDbGMMuJjR3BMKhzKHvpnfc9PXD7padHksmkaE4mnPZ2uDtfHT0v5/o5IYUITcbYOyzXU3pedfTGm644Y0UikTYldT0rAEkmIVrQYJKX1C+aV+Vc7SulLEnIFrzB7167+rKlC6rOyOT9ot3Yd0a0YQjCcgBIJNLT9rBamuolEXj5HP6HeTWxha5vDIEOGH9ROsRoztv8+Rs2PJZMJsVld6z3UqmUaUyl/ceT9dY19zzePpL10vGoTSDovVIN8pTm2spIvK7GuYYIvGrVkTkkYqZtRyqVMscumvON6sporVKG865C1LE/WV1l35zJ+2YitUkAtDYQQi4655z3VBRjlunYEWpIteo1Z50Uj0fERV6gmYgnGTsZ2xJQSv8KADegZZ/P9a2qY2ZQwVXpwNcQ2DeyJ5DMugHHo+JT11384eWNjWmdPAKiVMygqrJOTbWqO68845y6ufFEtuBpIrIDZTC/JvYeS5KlNAuaUL0QacMg8Ny3VsQWFKWNpmE7BAH87j9c8sHqqugyL1CMCaRjbDEYRt4P/mcvd7W3lYLaHR0jz4zk3KyQUo5XWxRKt66ujMYW10UTJRbiNQWkOZGQp6Za1Vc+d9oJdfPidymtDHM4AUSAr5QxHDr3E04KgYxhjjiWM7cmvgQA2qYRi5S8tGqHzrItwQAdTAUKP9BQineFMdC+9osIzMx0y/1P9RrGK7YlQuuxX/BomDkSkatDQBrMawZIiddZvfrtVScsrvpxRdSq8gIDovErnAQdSgUxm4hjIerEjwGAlSun7vo2NLVqACQE3q+0IYAnHTcRYLSBVoXcZJ9JpxsFALDhnVIQaL/InEHCDzRJ4hO//On3zqNUyhxusCjKraYa02mdqF9Z2fj+lQ/X1kTfk3d9LYiO+D1MxFIICMlvCVfZ1L0rIvCVn/lgnWXL44JAY3LZPDKJU0p3EBH2p1hCtWVMLGpVL1pS804ASCcOLy4pCyDMoJLN+KeL/2z5Jz769v9aUBOrz+YDRSTkdMgWx7KOnU7fmpqSBAAL5mKpLUWlNsz7SusErxUA2I4cetGg5yBzYmKOjVg0/jYAWHCYEj4tQBghEETgU1Ot6s6rzvrYH761bmNNVfR9mbyniKYeeFIxFgFC17ehqWFKru+qtjYCAJuseY5dJAIOuriYbSkRse0FALDlIBOpmAd4ki1OLgIroJbNeKSeTCZFA1oEpVoVUq0q+dnTlhy/tKqpJm5fCAJyBV8TkTVdsMNYhJeH+n9qO3SlCQ20qhFEIPBBd4kZxJYl4djW8pKqTO0f0xR/em6QN4YPseLN3BkBpLSt2YQGQ6mUSQHmyvP+dME7T5h/QcyWl1dXRhZkC74xhkkQyTJoQtLaQFpy4d+cfnLVA+t/N8qhzZ1S1C7GBXCH1pQM28bKQz6TRT4UYp7YR2FAKdSUDRBmUEtTvWxoatVEKQPApNCK2644813z5zp/G3HEp6srI4tcTyGTczWRkILKxQOGm0GSqPbtK6ILAYw2JUFIHRkgJbeVSAwqY8A4VAdZBNpASnlKiYcDWvfxIregFwBQUSFzfLDuEECSTNkACSPkVoUUcMvlHz6+dk7sw/GI/LhlifqqCsfyPIVMztMAiWkZ78ljERON2Na8ufElALaF+yLpI1RZKxkAXF93+74ylmUJcxClRSDh+tpUV0beedva0z74j6nUY7fffnpk8X9XKSSAxsa0Ln2ZlRGHWlSCMDJtQIquIm65/MwldfPtSy0h6qWkE6srnQgzUPACZPK+AkNSedTTZOMxjiWEEFh2KAM7WUuFO3h4prOwa+mimu5YRCzxlTKTRepFPguCiBfNr/rmpef96Qcuu2x9XxiAAHd86eyGDGVfuOqGxwayBV2ziAggmkRQGMbQ4LQBaWmql0CrmldLqeOW1nxmcNSFUga5QqDATChuzsz0BjAzIATBIjpuMgN7OI8p0uCFM969+mnbFqs9RYYO4mGGUqJMVUXkHae8ff6Tq64586a8b7bXVNqnLZ1XceXuTvMJAP9OFldiEr+NAIR0hNk9EQUzJZUVaLMrk/eV52sNghOCcJS34YlgR6y3TOcRW4qBnFdQP2bG2RQuqkO8lkTBDUxlPHJ8TWVsXaA0LBnSJEr7ywEg6ti1QogJmU8iCNdTyOXd7RNRMEcUh7QUuZfhoeDfs/lAihCMo56hQsxkDEOQOGY6sUgq1aoZoFd6hh8aHCl0O46k0o7foUDxAmUKrq+VNsb1lGcMIIXIF/8+byJcmcFSCFHwVGbHwPDLobpNTx2QVCplOJkUa7/x6OZcwX8yFrXAzPpoA8IEMsbAklgajj9lpkjDc7o5IW6658lMLqeuj9iWIKbDGg+BBEI7KUCwfV9R1qg2AJBCLJlYXbGxLQGtue2O7z/Xx8x0uFkzk+rR9Kowwh0teNcZAxKCjn7qJIOUYRCJujWJk6oPGWYfpDU2pnVzIiHXfPVn3+7qz/ymqsKxmTk4AoOmI46k0bz78sj2PU8DgGNbSw0b0H7ZjkzEUgp4SreGNrnhsB0fcagBXPq1DRu6BjPfr6mM2AD7zDOTsDaZzjCaQeDat9TFFgJAUzI5ZdW5ZWWamWFe6uj766HRQntl/PBAYWYmQcYWgkZG3WQq3ebXr1gRBfMyrRm8HzdGBFHwAmQL7sMA0Nd2+FvQB/WjE+m0YU6KHz/10sUdPZmHayojjhAAM2vGzANDAAyziUUdUTunYsl4bmpqtgSmqSlJX1u3cc8r3YOnjWT9rTWVUbvo0CkGG2ZmZoT/wv8rKQRVxSP2zq7hOy79l0d/BAANH1lWJwQtVdrswx4z2ERsKTI5/5UnHu78HTOoMZ0uz34IAQxK8YYN271zr/np2bt6MjeA2VTFHSmJiAEFZs3MMwmOcSwJAVox1Vhkf/uYSCTkVbe2bn/k6T3/r6M3+32w4aqYbcUcW9iWJEsS2ZagmGOL6oqIxcYUXtkz/E8XXf/Lz61bt8YGgHlzK99WEXMi2rDZb6/H2JaE66v7021tfhhCoDwSUgKFGcQMnH/tw1e+0j78/t6B7E8CFfiVMduKxxzp2FaYwUMw5ZYcBiAkYFn2saVYZLotnQ73ub+X3jh43rUPnf/yrqGTO3qG7xgcyb5QcP1h11eu6wUDozl3U09/9sbN2wdP/Pvrfv41TiYFNm0CAMSj1kmRiARjr7FmgKUgOZIpFDqGhu8Z77GWm1xkorG8pqcB/NXVF7/vncvm1ayOO85pUoh3WZZYFIlYAkRQptynbgi2FdLw5Wqp4i5eOkyc2wRgEwAk15w035LxmAXOXvmt/x4a47CaE5IaU7q5OUG4exNsId43wckFXRG1rd0j7gOpbzyxK5yvlJ4JQMYMfTKZFE1NAFHqRQAvArjxb04/vvrdb52/wrLsJQvr5lw/t7rijwt+MGGazVRjEdZmxVgskmotl41iFMfUgBbxwVSrSt29qX+cccavrq23WtBgihNLjY1pfe659VHLlicHSoPAAiAwgy2LxEjGLQxmstczg5qaVvIU+jS1VkqUbijS8aXff/faM75zzOI5F4zmfUVlyIws5UkNZ9yt51z10MqiFpux4wnhRIKamsDjj0wAQCKRkOl0Wt/65Q+9b0XdnI1F21nMA4aqrnCsnZ3D16257hfXTvV4gjV1kYdJodUArWCA0smEjTbojMiNlteIEGnNEER1F3/q3XO+9YMXhqabpHVohhucmoA0u2RlL6UB1MRiH6qI2cjkfU2AZZhNPGJbfYP5l17cOvjPnEwKapzahpool+gvQK9pTKe1MTxcbt83pE9Qs3jB/LrpxiLTaaXsFcvCX2ptitvMYNuSxlfK9A4Vzrs1vbGQDl1zfs0A2S+IyqCMXjABpI3R1RVRuSAePQYAVq1qO/onvxIJSQR8fe1HTqyIOicWPMVMJImgYhHL6hoofPHymzc8lSxm3kz1PWUDpEQvSykyhsunUtiwjkdtOZwtdA3nzTZm0JYtaT7q4hGeUeG5VZGLKuMOMaCJOaipiNi7e0e/d8n1P7/l8eLRvOm8puzHEXKuH278l8HsGmZVGbOtkYLb/VJ774dT335qpztn+oOeigOTSKTNjZ89bUk8an0q7/pMYFNdFXU6+3I/viD5swubmxPy1DKcMSybhKwqHhlQAWWNMaBpJKMxg8EcVMcj1mjWe+XF7f1/nvr2U5tLK7C5OSGbmxOymOo/4+orPHYHXrAgvra6MlKpDfzqiqjT3Z978G+v/s9PcjJJxQz9aUtu+SSkuNUdETprmMHENJXuMbMWQoiqmGP3DuZ+1drWcc7dD2zqWrdujX3qRXcHX7ygflljY7pjv+9QOt0o9j9p1VJaKOnS3noKTSnwkWSuJJNJcWoqpf7l0tPfWlVpX+gHBrGIFdnTm7nt76796eXhuXYCUXnc8LKrLJ/J1Zr5SPJ1mJlBpIkhK+OOzBV8tatn5IbPNP08CcA8s26N/ccX3R18N3nW1fPnxNb+23Wr7895+uf9g/kt9z7yeDcRecDhpfmkiiL1YHNClgDsa6vjRPO+R7VLrQkAEiudJYui31w0v6Kiqzc7PDDqXn7x9b/4V04mBYiYyhgTlQ2QsewO1+RBRCEjzJjwUEy4rAyHgxGOLUXEkVa+EKB/KLe+t2/kms/f1vrMunVr7Isuutv88UV3B9+/7mNfX1RbcbmnDOrmVVwSKHNJbZXjXn/BX3QbRp8xpk8zD7HBMEgMK6UHifWQr3hYSAwalsP9+dHBHdv18D0/fTJzQNAWknbU0tQg+9rquDGdNsniSd3kmtMWCYH6XZ1D//Fie++Xrl/3220lKmUmGO6yPYsZaLropNhxxyx78piF1X+QyXtQmsHMhkKvnQgkpCTYUkBKAc9XyBf8rkCZXwyNePd+7qYNvwGAX9x+euSMy9Z7Xzi3ftEfvaP2e/PmxM/IFnzFhiWINIGFEEJYUkAKghCEcUcUwRyyotowjDYIlIHS2mWmEQb3Km3aGbRdBbzV02Zz+2B+6w13PjYwfkCPJ0PaJJVKmbXnn7Lkpnue7CzxWuUoEjDTgIxlmifPeX/dscfP/adIxDpbSrEi6kgQEYwB/EAj0HrAGGzzff+prBs8tmlr3xP3PvQ/wwBQUk8A8K2rzvzLBbXR2ysrnOXZgq8I+6anMoOJQhegGNTzgYNjKoYzQgiCFAQpBKQMAWQGXE/BC9SANmaLUtwyWtCP/sNXu34LbArGA8DJpGgqEpMz5UDQDD2TAeBPli2Lffzjbzkh4tiLjNFRkiIXGO7Zuquv83vptn3ylTY3J5x3NaZ9APja5//8bcfMr0nVVNifBDE8X+ty5H+Fu50MhBUAuKgyAUBaUpBjCQgpUHADeIHZGgTmJ90Dufu/8PVHtoYGvt5KpVo1ZnBzbsZcxl/cfnrkzH/c4E22d/XMujV2r7tLnHnZeq/0iRvXnnnC0jn2JdGIvLAq7lRkC74xDBI087lHzGACl+yajNiSHFtgJBt4vtLN3b3uTVfc+ssXSp7XTElJ2QeaTCYc9PXOTd3V2n04n197/ilVJyyfVx+LynMiljy7pjISzbsBtDZ6RrMiD4NlBsgIIqsiaiFXUN5IwbvjB607mx599PncTNkRKt8Awsz0L605reZdKyqelVKsHx71HxrJu9tGBkZHUBkx2jOxeCxWuaA6tjwWpXc7Fp1iS3lKRdxZ6lgSeS8EIswVnh2V5TjExgghZGXcweCI+8KOnpFzr/z6Y8+WDinNakDWnn9K1Xvfvmjn/NrY3Gw+QMELAgayIS2FqCBE4lFbFg/PhEZeaVOs2TJrgJhIpTFYV0Qdq+AFufauzN98/uYND5UbFFHOpQQA+cHAUcbQaD5QgVLacSw7FrFrYxF7bjxixSO2JQNlTLYQqGze14HSJgSC5GwFAwiz8QWRlXd9bUlRcezS6n+/7Qun/+WpRSpn9gFSbI6d4+KDLQYJrZkDZThQhpUOU1QAiGLlHYkybPMeXWBIBkobQUTHLK764U1XfOh9pRy22QVIcW1bVXMCQQjC/xModPf3/sP//aqjRCQCpU3EkZHlCyofTF5WPyexciWXo6Jq2VdnZ2cvaS4d8WK8XhsRybwXqHlzYiuOmVt9C6VSJp1OiFkDSGlpvDLsBjDsvxGK7woiK5MP9Lzq6Pm3X3X6n5RDdZVdQjZu7HAJyBXrsvHrHRRjDKKOhbmxyFdCYnglzxZAiiQu2ABZQQTi1z8gRdVlKuLOaV9f+5E/olTKTEdKyiwhTaUcpWGiN07FcMMwlXGLaqsinwEOv2rDjAPS0hSWIfK16hN0IPv6upUSsPACg4gtP3buufXRYqA4e4pgGs1doDdSTX0SvtImHrWWn1QXfS8ANCem5nHNCCBEcjeY8UZqzDCxqIXKuF0/HbVVXpVV/OkrtVtpAwK/YcSkmMUIadHJwNQLd5YVkLbi0a1C3m/3/LBm2BtGQgikFMOW4h0ApkzNl3XCVhaP/naPuB2urwpSFjdY3xiIkDIGJGjJVWv+rK6oxug1BSRVLAxz0z1P9ho2nZYUIHpjGBMikNaGbcuqWFQbqwOAxsYjN+zlVilcvDtKMVO7FAJ4o0hIcfy2JRARmAtMrWR92XV8S7EkaqD4JSHoDROLlNajlAQ/CAGZygHVGTO6gfK28hvM9QURCyJYEUSn+oiyp5KW3L28573kBxp0dO8o2X/FGuyT7hNmgHPJUQ0XtUDpDPG0X1f8odmaNYBs2RKynVrJHa4baMu2pGHmo7YxxeHNOARIx7ZEWOg4zGQ0xoANg4QoZjqGp7M8X0MzF+t/Tb+fLKaupssOSKlg2G83dXUuPr2qPyrFwkCpYg7ETGEQJmsLghWN2FIKgWzeQybr7gqUfiFfcNuI5KssMJjPuFxVFSWlscCSWBmLOCc7jvyjOVUxq+ApqOmkH5V2TRlq1gBSnB8iouzZHz5hlyVpYRBgRq6LZLAhBju2lBHbskZzLoZG8xtdV/1sOOM++vivX9z8s01d+UM954bPfuDdCxdW/V1lNLKmqiJSmSuE94JMkUKBp7SeTYCUSnHrQOmdQtB7x6VsllU1RRxLWpIwmvE7B0fzP+wf9n/4hVse2bSfHy5amlpEC8KzIlu29NL4E1hEhC/f+esXAFxx4+dO+/byxVW3za2JnpEvKG3A8kj6TUxk2MCRYZ3FVVOgT2YEkNK5C838ykzsizDYVEQdOZp3t41m/Vt/v33kR9/6QVh1oXSkoJi1zqVqqkApBTStb/7S6hOXzLP/Opsz69ek/qMVgC7mFm8DcOZ3mj5207L5FV8o+EoxH8EcEZPWQE7rQrgyZ4mEtBR/aqN2GmMOVXW/mCN7eLwXM5t41BYDI4Wf/OrnL553z5MvZYC9RweIyABQ40u7jrNwAAB3yOu25zlrl9VF1zbf+InnBke9G97VmH6wuXiI59Smh9d+55qP8vLFc9bmCoE63HliBmlmECKZKeIxMy5pSVR9V+8MlMFkBQ6ZGbYlhWNb4vBiFjYRx6KRrNf+nUeePeeeJ1/KrFtzkg2ATk21qkMlQKdSMMxJcfXdG7oKvvdTATaxqPzDFYsrf/SvX1n93cbGNDWgwTyzbo194XW//GJ3f/bhyphtHU41PQaYiEhpY4xW2ZDbO/L99RkBJF1cGgVjujxfAzThe0zUsTCcKbw4PFrYEnEsHIqIZJBxLEnZXPDt1tZ2d926k+yL7t4U4AjyjYq7muT5ugVEwgu0n/eUWraw6jP/dv3ZP6GWlNhUtD1be7rPGxl1uyOOdegajcUKqlqz2zNcyAJAU1NqdgDS3BwW7BruHRgIgqAg6EDWlwETi1jIuf59/aP5a6OOBRyiHLggyEzeM8P5zM8AUGfnWUfszdwVbhFwLmf+O18IQEQ2A9ZI1vWXLKhcfc8HP3bXRRfdHfzyG7+1b7jz6YGekdwVUpA4VMIGEbMgAoMzO18ZHi0SjrNDZZU68vyW3iHDNBSeVuIDTjcpzZBMu0xgOrxAQRxkCAw2ji3J9YMdP2ppfQkAT+WMRrpY3e2ZHt1W8FSPbYmwPj/IGcl6wZL5lReuu/rMT55x2XqvOZlwLv3nR37QP5x/Kh5zJA6iuhihhLAxI+nWtvy+sftrz2UxAfjZpq48gwfERMdbCcLzFXIevzrqux25QsAgyMkKoBHI2FJCKX5u0yYE00hwZuakuP/+R3OBUs/blgQVvTAGy0BrM6cycnvyMx+ei1WhxA5l/SalNXAQl5EYLARgGAMADB/BRWBHhVw0xQ4RqE+IfXO0mMGCSORdP+jLBLt2bt4zqLUZtiRhsr14HiMt9bPjXespeYHF7BjNeGY8Ix1WtDamtiZa95YVkcsbG9N63bo19mU3rH90aMT9fSxiicmkJMwgJ2ile4G9VV1nDSAlGl4p070/DU/EbEsBpbljwzO/6r23td012uyRQkya7SjAFCgNX+nnxpOY03HLla+eLVX1Ga9uTTi/CwDA6fQkAM65wbepVOd9EiMSHmzlruksmBlnYpXRXRMZBGkJaGW2bdqEAACUNjulFBNmOzKDSQiZzXt6IFt4eTyJObUW1kHM5by2bME3JITYV/0waWVeBAB/SUQDwMvdQz8ZzhSGLCmsg3mDRGLPdOZrxgExhjv3jzG4uG+g2Gwe+5zmV2mS5DoiZksKaIPux/6nffd4EnM6BOhTz/a0B4HpsyRRqbIqgUlpRqCwCwBqa4dMc3NC3vq9jYOeZ34ZjUzsDYbF9w185e8ZL4WzSGWFzQ9Mlzb7XqNSujkgMHsB8QLv1UmDQwZLSdDGvNra2u4WDeZ0dr+YmSnd2pY1MO2WFGOGHSDh+QpZz+0oxVTFYv406no/UerA2z1LpHsQGPiadgOHX3z/qFAn4zvk6aBbKb0/+LLgBfBdvWVsZUi5Q4/lctEBEiWFgNJm6zj7NL1jyUUC1BjeJiWdzOEdICwlkecpz8373WMxFQEpgDs7Blvn18RGKqJOTaDM+NvemEiIghdwJhd0AntLjcwaCSl1yBjd5/umVPOEmcGWFOS6KrNtR++O0uczebW74ClggjsPqfjFIFAvlk2CS1dYuMG2cf4fLCmg2fQ//+yO/pKRp2Lyxg33PT2gfLMxYstxHFzYNykISpvRzuFMz1Sj9BkFpNShrBsMKmPyoljGAmC2LAHNZucd6ef6Sxf3DoxwZ6B0VgoxUS6XCAKNoGhoy3Gdd0mlFrxgu9JcmngjBcEYdKU3dhRKxyvGe42uUo8RYV9vi0KVCkLPnfc9PTTVKH1GASl1qG3TriFjeFiWrhAkMlIQmLEV425jfuS5kUFt0GcJGtvuHkfaiYIb6NGMfnX6Hta+KpUsZ2dYfxeCiVgIAaPDW3FKV6wCewvqF1w8kXcVCJDjg0JLCBiNPUBIYGK2FMHcV/UD6Y0dBTbcL2hvjEFECAI1ZtCTyaTYtGlTYIzec4DrywxbEgLNPc/2vjRtD2t/lZor+F2urxQRCeKwzpdm7Nw/lkgUKZftz/dvzrlBv22JMc+MiZgEoLTeMT7wnHVurzGhOtJG9QlBQFhPhJTScH29uaQ6SlJCQLvY725ZAoxlSShjtqbTHYUyeFj7uL6b+9r72fCQLF5dxOGdCDsnsGPMyaS4Y/3vRg1zm22N98zCHinN26fbrxkFpLRSlOIeQWPRrMy7ivO+eXl8kBa6vthJB4oZh7S23jRel5dDggHggQe2Zwxzf0gSELQ2cH1/10S2qvRurcyzch/KhUlpAy/wt00nBjkqgSEAGHBnWHgjDPCUMgO7ukd2lVZqaQBaB6/q/TKUS5RJwTVPlsugjyFSlDalTI8QAhAg19PwlNp1MFvlev5zWo/vJwnX1/BVaOOABjOrAZFSdhWthwkjbrPzjgd+N1ryYsZiFsW7/GBvzMIMFkLIbC7wegdGfx9OUvlq9o6teOZuEfpTMlAmPzLgFisZpSbaS8FIxt1a8BQASA4XGfm+yuzpKnRM9L1ZERiOF13X1d3amCI4BF+rULTDu5lUycAOj2a7FtbG2R7b0mW2bYuy+WBr6u4ndhcr1pW9TpUg0R32TZDrBf0P/Lp3IJTefW1Vc1goEwWNnb6vc9GYXaGV1lKSNMwdt9z/VH/xe7NTQkor3/Xd7kBpCBFG4axp60QxS6GQ6zWMTNEtZhAZSxKCQD8BgIu31ZS9BUb3sgGscIOpa/v27d74GGR/Vz51V2ufYe60JIEBY0mBQOtXAZjpFqKZUUDG6AONHs/XAAuplEHeVy+Pl6DSQJ989bkhZtMfpnkyl4i+fKB+PV1jeVAa3nCvYRPuiRt0jKNWDuTAQrujtTG7ZUgSm2I9ya3Tod2Pkg0JdWl/3+igUiYnJcmCF8D1g1f2I+CYk0nR2gqltemWUozZj0zO8wdHsr+brrGcUIJL2TGe1690CIgX6J3jqZXJ7I6vzM5ifjCzMVA6ZBGmu2hm1IaUdPCvXukZXrly6ZBtyYps3st39uU6ASBRJO6AvTtsBtQhQhpDO5aU2Zz/8jXf/E17aD/KXOewmB2jDQ8qZeDYgFF6x2H6aDtD6RbC9RSy+WDrdFjeo+VlMRGwcWNHgUj025YAGN0bnhnt25/vGct2DMxuCoNDY1sEo/VvAZiZsB8llTqSzY34gWZtDFyl2g+20lvGRFrvMdoAYLvgqXz/6OCrY4tsNschDz4YGjltdK9jCRhwZ1tbmz+R0QQAw6a9VHhKG6Dg6ydmWqW6eXfUsAn8wKBQCHmsydRjSc25nun0lYZtSdLMu75296aeMPbFrJaQsZWvAr1HSjJ+oHeNc3kPWHmaRPGMO9nZvMejGa8YoTeU3d1tagonb2igkBUg1/dVYSCTPSh9XkoCdH3d4/mKHUsiCPTLAMyDZSj1d9RON2lDvfGoLQBMUj42nPBMNre74CrYtpB+oDuf7np5W7kIxckY6Zde8LIMxLUx6uZ7nx44GH1eOvqdyWWHtOaClASl9fPl8LCOCiAl2jpfCFo6ekZfKbj6sfG/31999Ax5XYEymagjESizOZ3uKEyHzj6UjWMGtba3uwPDhbUDw/m1AILJ1Ol4qerYkRk1xmSNYR1o9Xy53HJrpgEp3cd02c2PrAfwDiA8XbT/PU0lj+znG4f733Pc/B5LynigioRiUxm2bCeXEgaAS//lkdv2/o74UFL1VEdb9lR+KwyzzI/4L+yV8tbZDcjepQgigioV7J8s6KJUymc+rr8iZh/v++VbeYdqpQj7MEpicHEM/kgmuGBkdKjuC99sfYkBojKUHz9qgBRBoIN5IaVYxA3MD3Z0DOrejPlN+JfWGb/L/Uhqk5TG8Nkb1z889ju82V7z1pxIyGSy3nrdDzSZTArmpOA34ML7X/7TP8SjhND3AAAAAElFTkSuQmCC";
+
+const K9Logo = ({size=38}) => <img src={K9_LOGO_PNG} alt="K9 Resorts" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
+const K9LogoMini = ({size=28}) => <img src={K9_LOGO_PNG} alt="K9 Resorts" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
+
+// K9 Resorts Locations
+const K9_LOCATIONS = [
+  { id: "enterprise", name: "Enterprise", region: "All Locations", isEnterprise: true },
+  { id: "deerfield", name: "Remy Calloway", region: "Illinois" },
+  { id: "cherry-hill", name: "Adair Forsythe", region: "New Jersey" },
+  { id: "clifton", name: "Clifton", region: "New Jersey" },
+  { id: "stamford", name: "Ellis Vance", region: "Connecticut" },
+  { id: "fanwood", name: "Fanwood-Scotch Plains", region: "New Jersey" },
+  { id: "fort-lauderdale", name: "Fort Lauderdale", region: "Florida" },
+  { id: "horsham", name: "Horsham", region: "Pennsylvania" },
+  { id: "jersey-city", name: "Jersey City", region: "New Jersey" },
+  { id: "madison", name: "Casey Beckett", region: "New Jersey" },
+  { id: "montville", name: "Montville", region: "New Jersey" },
+  { id: "north-brunswick", name: "North Brunswick", region: "New Jersey" },
+  { id: "norwood", name: "Norwood", region: "New Jersey" },
+  { id: "peoria", name: "Peoria", region: "Arizona" },
+  { id: "radisson", name: "Radisson", region: "New York" },
+  { id: "riverdale", name: "Riverdale", region: "New Jersey" },
+  { id: "rochelle-park", name: "Rochelle Park", region: "New Jersey" },
+  { id: "toms-river", name: "Toms River", region: "New Jersey" },
+  { id: "totowa", name: "Totowa", region: "New Jersey" },
+  { id: "vineland", name: "Vineland", region: "New Jersey" },
+  { id: "wayne", name: "Wayne", region: "New Jersey" },
+  { id: "west-windsor", name: "West Windsor", region: "New Jersey" },
+  { id: "woodbridge", name: "Woodbridge", region: "New Jersey" },
+  { id: "houston-cy", name: "Houston - Cypress", region: "Texas" },
+  { id: "houston-katy", name: "Houston - Katy", region: "Texas" },
+  { id: "san-antonio", name: "San Antonio", region: "Texas" },
+  { id: "frisco", name: "Frisco", region: "Texas" },
+  { id: "allen", name: "Allen", region: "Texas" },
+  { id: "plano", name: "Plano", region: "Texas" },
+  { id: "mckinney", name: "McKinney", region: "Texas" },
+  { id: "lewisville", name: "Lewisville", region: "Texas" },
+  { id: "southlake", name: "Southlake", region: "Texas" },
+  { id: "grapevine", name: "Grapevine", region: "Texas" },
+  { id: "charlotte", name: "Charlotte", region: "North Carolina" },
+  { id: "raleigh", name: "Raleigh", region: "North Carolina" },
+  { id: "nashville", name: "Nashville", region: "Tennessee" },
+  { id: "atlanta-buckhead", name: "Atlanta - Buckhead", region: "Georgia" },
+  { id: "atlanta-midtown", name: "Atlanta - Midtown", region: "Georgia" },
+  { id: "denver", name: "Denver", region: "Colorado" },
+  { id: "phoenix", name: "Phoenix", region: "Arizona" },
+  { id: "scottsdale", name: "Ellisonsdale", region: "Arizona" },
+  { id: "las-vegas", name: "Las Vegas", region: "Nevada" },
+  { id: "orlando", name: "Orlando", region: "Florida" },
+  { id: "tampa", name: "Tampa", region: "Florida" },
+  { id: "boca-raton", name: "Boca Raton", region: "Florida" },
+];
+
+const K9_LOCATIONS_BY_REGION = K9_LOCATIONS.reduce((acc, loc) => {
+  if (loc.isEnterprise) return acc;
+  if (!acc[loc.region]) acc[loc.region] = [];
+  acc[loc.region].push(loc);
+  return acc;
+}, {});
+
+function LocationSelector({ currentLocation, onLocationChange, collapsed }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
+  const dropRef = useRef(null);
+  const btnRef = useRef(null);
+  const searchRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (dropRef.current && !dropRef.current.contains(e.target) && btnRef.current && !btnRef.current.contains(e.target)) { setOpen(false); setSearch(""); } };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  useEffect(() => { if (open && searchRef.current) searchRef.current.focus(); }, [open]);
+
+  useEffect(() => {
+    if (open && btnRef.current) {
+      const r = btnRef.current.getBoundingClientRect();
+      setDropPos({ top: r.bottom + 4, left: r.left, width: r.width });
+    }
+  }, [open]);
+
+  const current = K9_LOCATIONS.find(l => l.id === currentLocation) || K9_LOCATIONS[1];
+  const isEnterprise = current.isEnterprise;
+
+  const filteredRegions = useMemo(() => {
+    const q = search.toLowerCase();
+    if (!q) return K9_LOCATIONS_BY_REGION;
+    const result = {};
+    Object.entries(K9_LOCATIONS_BY_REGION).forEach(([region, locs]) => {
+      const fl = locs.filter(l => l.name.toLowerCase().includes(q) || region.toLowerCase().includes(q));
+      if (fl.length > 0) result[region] = fl;
+    });
+    return result;
+  }, [search]);
+
+  const enterpriseMatch = !search || "enterprise".includes(search.toLowerCase()) || "all locations".includes(search.toLowerCase());
+
+  if (collapsed) {
+    return (
+      <div style={{ padding: "0 8px", marginBottom: 14 }}>
+        <button onClick={() => setOpen(!open)} title={current.name}
+          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "6px 0", borderRadius: 8, border: "1.5px solid rgba(175,141,84,0.2)", background: isEnterprise ? "rgba(175,141,84,0.15)" : "rgba(255,255,255,0.06)", cursor: "pointer", color: C.acc, fontSize: 11, fontWeight: 700, fontFamily: "inherit" }}>
+          {isEnterprise ? "\u2605" : current.name.slice(0, 2).toUpperCase()}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "0 14px", marginBottom: 14, position: "relative" }}>
+      <button ref={btnRef} onClick={() => setOpen(!open)}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, border: "1.5px solid rgba(175,141,84,0.2)", background: isEnterprise ? "rgba(175,141,84,0.12)" : "rgba(255,255,255,0.06)", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
+        <div style={{ width: 24, height: 24, borderRadius: 6, background: isEnterprise ? "rgba(175,141,84,0.25)" : "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: C.acc, flexShrink: 0 }}>
+          {isEnterprise ? "\u2605" : current.name.slice(0, 1)}
+        </div>
+        <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{current.name}</div>
+          <div style={{ fontSize: 9, color: "rgba(175,141,84,0.6)", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>{isEnterprise ? "All Locations" : current.region}</div>
+        </div>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(175,141,84,0.5)" strokeWidth="2.5" strokeLinecap="round"
+          style={{ transition: "transform 0.2s", transform: open ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0 }}>
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+
+      {open && (
+        <div ref={dropRef} style={{ position: "fixed", top: dropPos.top, left: dropPos.left, width: dropPos.width || 212, zIndex: 9999, background: "#1a2940", border: "1.5px solid rgba(175,141,84,0.25)", borderRadius: 12, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", maxHeight: 360, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: "10px 10px 6px" }}>
+            <div style={{ position: "relative" }}>
+              <div style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "rgba(175,141,84,0.4)" }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="15.8" y2="15.8"/></svg>
+              </div>
+              <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search locations..."
+                style={{ width: "100%", padding: "7px 10px 7px 28px", borderRadius: 8, border: "1px solid rgba(175,141,84,0.15)", background: "rgba(0,0,0,0.2)", fontSize: 12, fontFamily: "inherit", color: "#fff", outline: "none", boxSizing: "border-box" }}
+              />
+            </div>
+          </div>
+
+          <div style={{ overflow: "auto", flex: 1, padding: "0 6px 6px" }}>
+            {enterpriseMatch && (
+              <button onClick={() => { onLocationChange("enterprise"); setOpen(false); setSearch(""); }}
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: "none", background: currentLocation === "enterprise" ? "rgba(175,141,84,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginBottom: 4 }}
+                onMouseEnter={e => { if (currentLocation !== "enterprise") e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+                onMouseLeave={e => { if (currentLocation !== "enterprise") e.currentTarget.style.background = "transparent"; }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 800, color: C.acc }}>{"\u2605"}</span>
+                <div style={{ textAlign: "left" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.acc }}>Enterprise</div>
+                  <div style={{ fontSize: 9, color: "rgba(175,141,84,0.5)", textTransform: "uppercase" }}>Aggregated &middot; All Locations</div>
+                </div>
+                {currentLocation === "enterprise" && <span style={{ marginLeft: "auto", color: C.acc }}><I.Check/></span>}
+              </button>
+            )}
+
+            {Object.entries(filteredRegions).sort(([a],[b])=>a.localeCompare(b)).map(([region, locs]) => (
+              <div key={region}>
+                <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(175,141,84,0.4)", textTransform: "uppercase", letterSpacing: "0.08em", padding: "8px 10px 4px" }}>{region}</div>
+                {locs.map(loc => (
+                  <button key={loc.id} onClick={() => { onLocationChange(loc.id); setOpen(false); setSearch(""); }}
+                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, border: "none", background: currentLocation === loc.id ? "rgba(175,141,84,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s" }}
+                    onMouseEnter={e => { if (currentLocation !== loc.id) e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+                    onMouseLeave={e => { if (currentLocation !== loc.id) e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <span style={{ fontSize: 12, fontWeight: 600, color: currentLocation === loc.id ? "#fff" : "rgba(255,255,255,0.7)" }}>{loc.name}</span>
+                    {currentLocation === loc.id && <span style={{ marginLeft: "auto", color: C.acc }}><I.Check/></span>}
+                  </button>
+                ))}
+              </div>
+            ))}
+
+            {!enterpriseMatch && Object.keys(filteredRegions).length === 0 && (
+              <div style={{ padding: "16px 10px", textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>No locations found</div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ─── Utilities ──────────────────────────────────────────────────────────────
+const gid = () => Math.random().toString(36).substr(2, 9);
+const titleCase = (s) => (s || "").replace(/\b\w/g, c => c.toUpperCase());
+const fmtPhone = (p) => { const d = (p||"").replace(/\D/g,""); return d.length===10?`(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`:p||""; };
+const fmtDate = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00"); return dt.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}); };
+const fmtDateFull = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00"); return `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${dt.getFullYear()}`; };
+const fmtTime = (t) => { if(!t) return ""; const [h,m] = t.split(":").map(Number); const ampm = h >= 12 ? "PM" : "AM"; const h12 = h % 12 || 12; return `${h12}:${String(m).padStart(2,"0")} ${ampm}`; };
+const summarizeFeeding = (schedules) => { if(!schedules||!schedules.length) return ""; return schedules.map(s => { const t = (s.times||[]).join("/"); return `${s.amount||""} ${s.unit||""} ${t} ${s.foodType||""}`.trim(); }).join("; "); };
+const summarizeMeds = (schedules) => { if(!schedules||!schedules.length) return "None"; return schedules.map(s => `${s.name||""} ${s.amount||""} ${s.unit||""} @ ${s.time||""}`.trim()).join("; "); };
+
+// Vaccine status: returns {ok:bool, expired:[], missing:[], expiringSoon:[], graceperiod:[]}
+const getVaxStatus = (dog, requiredVaccines, policies) => {
+  const rv = requiredVaccines || DEF_REQUIRED_VACCINES;
+  const pol = policies || {};
+  const graceDays = pol.vaccineGraceDays ?? 7;
+  const warningDays = pol.vaccineWarningDays ?? 30;
+  const now = new Date();
+  const expired = [], missing = [], expiringSoon = [], graceperiod = [];
+  for (const vId of rv) {
+    const val = dog.fields[vId];
+    if (!val) { missing.push(vId); continue; }
+    const d = new Date(val + "T00:00:00");
+    const diffMs = d - now;
+    const diffDays = diffMs / 86400000;
+    if (diffDays < 0) {
+      // Expired — check if within grace period
+      if (graceDays > 0 && Math.abs(diffDays) <= graceDays) graceperiod.push(vId);
+      else expired.push(vId);
+    } else if (diffDays < warningDays) {
+      expiringSoon.push(vId);
+    }
+  }
+  return { ok: expired.length === 0 && missing.length === 0, expired, missing, expiringSoon, graceperiod };
+};
+
+// Dog age compliance check
+const getDogAgeCompliance = (dog, policies, reservations) => {
+  const pol = policies || {};
+  if (pol.ageCheckEnabled === false) return { ok: true };
+  const dob = dog.fields?.dob;
+  if (!dob) return { ok: true };
+  const b = new Date(dob + "T00:00:00"), now = new Date();
+  let ageYears = now.getFullYear() - b.getFullYear();
+  if (now.getMonth() < b.getMonth() || (now.getMonth() === b.getMonth() && now.getDate() < b.getDate())) ageYears--;
+  const maxAge = pol.maxDogAge ?? 13;
+  if (ageYears <= maxAge) return { ok: true, age: ageYears };
+  // Over age limit — check grandfathering
+  if (pol.grandfatherEnabled !== false) {
+    const threshold = pol.grandfatherVisitThreshold ?? 10;
+    const completedVisits = (reservations || []).filter(r => r.dogId === dog.id && (r.status === "checked-out" || r.status === "checked-in")).length;
+    if (completedVisits >= threshold) return { ok: true, age: ageYears, grandfathered: true, visits: completedVisits };
+  }
+  return { ok: false, age: ageYears, reason: `Dog is ${ageYears} years old (max: ${maxAge})` };
+};
+
+// Dog age from dob
+const calcAge = (dob) => {
+  if (!dob) return null;
+  const b = new Date(dob + "T00:00:00"), now = new Date();
+  let y = now.getFullYear() - b.getFullYear();
+  let m = now.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) { y--; m += 12; }
+  if (now.getDate() < b.getDate()) m--;
+  if (m < 0) m += 12;
+  if (y >= 1) return `${y}y${m > 0 ? ` ${m}m` : ""}`;
+  return `${m}m`;
+};
+
+// Spay/neuter label
+const fixedLabel = (dog) => {
+  if (!dog.fields.sex) return "";
+  const sn = dog.fields.spayed_neutered;
+  if (typeof sn === "string" && sn) return sn;
+  // Legacy boolean support
+  if (dog.fields.sex === "Female") return sn ? "Spayed" : "Intact";
+  return sn ? "Neutered" : "Intact";
+};
+// Dog daycare size: override > weight-based auto-classification (35 lb threshold)
+const getDogDaycareSize = (dog) => {
+  if (dog.daycareGroupOverride) return dog.daycareGroupOverride;
+  const w = parseInt(dog.fields.weight);
+  if (!w || isNaN(w)) return "large"; // default if no weight
+  return w < 35 ? "small" : "large";
+};
+
+const todayStr = () => new Date().toISOString().split("T")[0];
+const addDays = (d, n) => { const dt = new Date(d + "T12:00:00"); dt.setDate(dt.getDate() + n); return dt.toISOString().split("T")[0]; };
+const getMonday = (d) => { const dt = new Date(d + "T12:00:00"); const day = dt.getDay(); const diff = day === 0 ? -6 : 1 - day; dt.setDate(dt.getDate() + diff); return dt.toISOString().split("T")[0]; };
+const getWeekDays = (monday) => Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+const shortDay = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
+const dayNum = (d) => new Date(d + "T12:00:00").getDate();
+
+// ─── Pricing Engine ──────────────────────────────────────────────────────────
+const countNights = (ci, co) => {
+  const a = new Date(ci + "T12:00:00"), b = new Date(co + "T12:00:00");
+  return Math.max(0, Math.round((b - a) / 86400000));
+};
+const countHours = (tIn, tOut) => {
+  if (!tIn || !tOut) return 8;
+  const [h1,m1] = tIn.split(":").map(Number);
+  const [h2,m2] = tOut.split(":").map(Number);
+  return Math.max(0, (h2 * 60 + m2 - h1 * 60 - m1) / 60);
+};
+
+function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, dogs, dogProfiles, pricing, isSecondDogSameRoom }) {
+  const p = pricing || DEF_PRICING;
+  const lines = [];
+  let subtotal = 0;
+  let discountTotal = 0;
+
+  if (type === "boarding") {
+    const nights = countNights(checkIn, checkOut);
+    const rate = (p.boardingRates || {})[roomType] || 0;
+    const lineTotal = nights * rate;
+    lines.push({ label: `${roomType} × ${nights} night${nights !== 1 ? "s" : ""}`, rate, qty: nights, total: lineTotal });
+    subtotal += lineTotal;
+    if (isSecondDogSameRoom && p.multiDogDiscount > 0) {
+      const disc = Math.round(lineTotal * (p.multiDogDiscount / 100) * 100) / 100;
+      discountTotal += disc;
+      lines.push({ label: `Multi-dog discount (${p.multiDogDiscount}% off)`, total: -disc, isDiscount: true });
+    }
+  } else if (type === "daycare") {
+    const hrs = countHours(checkInTime, checkOutTime);
+    const threshold = p.halfDayThreshold || 5;
+    const isHalf = hrs < threshold;
+    const rate = isHalf ? (p.daycareRates || {}).halfDay || 0 : (p.daycareRates || {}).fullDay || 0;
+    lines.push({ label: `Daycare — ${isHalf ? "Half" : "Full"} Day`, rate, qty: 1, total: rate });
+    subtotal += rate;
+  } else if (type === "evaluation") {
+    const fee = p.evaluationFee || 0;
+    lines.push({ label: "Evaluation", rate: fee, qty: 1, total: fee });
+    subtotal += fee;
+  } else if (type === "tour") {
+    const fee = p.tourFee || 0;
+    lines.push({ label: "Facility Tour", rate: fee, qty: 1, total: fee });
+    subtotal += fee;
+  }
+
+  // Add-ons per dog
+  if (dogs && dogs.length > 0) {
+    const stayDays = type === "boarding" ? Math.max(1, countNights(checkIn, checkOut)) : 1;
+    dogs.forEach(dog => {
+      const profile = dogProfiles ? dogProfiles.find(d => d.id === dog.id) : null;
+      const fields = profile ? profile.fields : (dog.fields || {});
+      // Bath
+      if (fields.bath_type && fields.bath_type !== "None") {
+        const bathRate = (p.bathPrices || {})[fields.bath_type] || 0;
+        if (bathRate > 0) {
+          lines.push({ label: `${fields.bath_type} Bath — ${fields.name || "Dog"}`, rate: bathRate, qty: 1, total: bathRate, isAddon: true });
+          subtotal += bathRate;
+        }
+      }
+      // Medication admin
+      const meds = fields.medicationSchedules || [];
+      if (meds.length > 0) {
+        const medFee = (p.medicationAdminFee || 0) * meds.length * stayDays;
+        if (medFee > 0) {
+          lines.push({ label: `Med admin (${meds.length} med${meds.length > 1 ? "s" : ""} × ${stayDays}d) — ${fields.name || "Dog"}`, rate: p.medicationAdminFee, qty: meds.length * stayDays, total: medFee, isAddon: true });
+          subtotal += medFee;
+        }
+      }
+      // Special feeding (resort-provided food)
+      const feeds = fields.feedingSchedules || [];
+      const resortFood = feeds.some(f => f.foodSource === "Resort Provided");
+      if (resortFood) {
+        const feedFee = (p.specialFeedingFee || 0) * stayDays;
+        if (feedFee > 0) {
+          lines.push({ label: `Resort food (${stayDays}d) — ${fields.name || "Dog"}`, rate: p.specialFeedingFee, qty: stayDays, total: feedFee, isAddon: true });
+          subtotal += feedFee;
+        }
+      }
+    });
+  }
+
+  const total = Math.max(0, subtotal - discountTotal);
+  const rule = (p.paymentRules || {})[type] || {};
+  const depositPercent = rule.depositPercent || 0;
+  const deposit = Math.round(total * (depositPercent / 100) * 100) / 100;
+  const balance = Math.round((total - deposit) * 100) / 100;
+
+  return {
+    lineItems: lines,
+    subtotal: Math.round(subtotal * 100) / 100,
+    discountTotal: Math.round(discountTotal * 100) / 100,
+    total: Math.round(total * 100) / 100,
+    deposit,
+    balance,
+    payAt: rule.payAt || "booking",
+    depositRefundable: rule.depositRefundable || false,
+    depositPercent,
+  };
+}
+
+// ─── K9 Resorts Brand Colors ─────────────────────────────────────────────────
+const C = {
+  bg:"#F5F6F8", surface:"#FFFFFF", surfaceHover:"#EEF0F4", border:"#DFE2E8", borderLight:"#ECEEF2",
+  text:"#1A1D23", textSec:"#5A6170", textMut:"#959BA8",
+  pri:"#003462", priL:"#0A4D8A", priLt:"#E6EEF6",
+  acc:"#AF8D54", accLt:"#F5EDD8", accDk:"#8B6F3C",
+  bronze:"#59504B", bronzeLt:"#F0EDEB",
+  suc:"#0D7A56", sucLt:"#ECFDF5", warn:"#C4720C", warnLt:"#FFFBEB",
+  dan:"#C42B2B", danLt:"#FEF2F2", info:"#1A5EC4", infoLt:"#EFF6FF",
+};
+
+// Tag color palette for dog tags
+const TAG_COLORS = [
+  { bg: "#DBEAFE", text: "#1E40AF", name: "Blue" },
+  { bg: "#D1FAE5", text: "#065F46", name: "Green" },
+  { bg: "#FEF3C7", text: "#92400E", name: "Amber" },
+  { bg: "#FCE7F3", text: "#9D174D", name: "Pink" },
+  { bg: "#E0E7FF", text: "#3730A3", name: "Indigo" },
+  { bg: "#FED7AA", text: "#9A3412", name: "Orange" },
+  { bg: "#CCFBF1", text: "#115E59", name: "Teal" },
+  { bg: "#F3E8FF", text: "#6B21A8", name: "Purple" },
+  { bg: "#FEE2E2", text: "#991B1B", name: "Red" },
+  { bg: "#E5E7EB", text: "#374151", name: "Gray" },
+];
+
+// ─── EOD Template ─────────────────────────────────────────────────────────────
+const DEF_EOD_TEMPLATE = [
+  { id:"sales", title:"Sales", emoji:"💵", type:"text", defaultContent:"Today's Goal:\nWTD:\nMTD:\nYTD:" },
+  { id:"csr_checklist", title:"CSR Checklist", emoji:"📋", type:"checklist", defaultContent:"Turn on Luxury TV's\nTurn on music\nCreate Private Play log\nVacuum and Cherry front lobby before 7:00 am\nUnlock latches on front door\nCheck incoming Tours\nDo body checks on dogs leaving today and fill out form" },
+  { id:"alerts", title:"Alerts", emoji:"📢", type:"text", defaultContent:"- Goal for Each CSR to book at least 1 Eval/Tour and Sell 1 Package/book reservation w/paid deposit daily" },
+  { id:"team_notes", title:"Team Notes / Communications", emoji:"💬", type:"text", defaultContent:"" },
+  { id:"leads", title:"Leads to Target Today", emoji:"🎯", type:"text", defaultContent:"" },
+  { id:"tours", title:"Tours", emoji:"🏠", type:"text", defaultContent:"" },
+  { id:"meds", title:"Meds", emoji:"💊", type:"text", defaultContent:"Boarding:\nAM:\n-\nNOON:\n-\nPM:\n-\n\nDaycare:\n-" },
+  { id:"birthdays", title:"Birthdays", emoji:"🎉", type:"text", defaultContent:"" },
+  { id:"ice_cream", title:"Doggie Ice Cream", emoji:"🍦", type:"text", defaultContent:"" },
+  { id:"extra_play", title:"Extra Play Sessions", emoji:"⚽", type:"text", defaultContent:"" },
+  { id:"baths", title:"Baths", emoji:"🛁", type:"checklist", defaultContent:"" },
+  { id:"day_boarders", title:"Day Boarders / PP", emoji:"🚩", type:"text", defaultContent:"" },
+  { id:"evaluations", title:"Evaluations", emoji:"📊", type:"text", defaultContent:"Name, L/S daycare, Room # - Pass/fail, if parents have been contacted\n-" },
+  { id:"small_daycare_notes", title:"Small Daycare Notes", emoji:"🐕", type:"text", defaultContent:"(Dogs name, last initial, date/time and details of incident)\n-" },
+  { id:"large_daycare_notes", title:"Large Daycare Notes", emoji:"🐕", type:"text", defaultContent:"(Dogs name, last initial, date/time and details of incident)\n-" },
+  { id:"boarding_notes", title:"Boarding Notes", emoji:"🏨", type:"text", defaultContent:"" },
+  { id:"social_media", title:"Social Media Photos", emoji:"📸", type:"checklist", defaultContent:"Instagram Stories\nInstagram Post" },
+  { id:"picture_requests", title:"Picture Requests", emoji:"📷", type:"checklist", defaultContent:"" },
+  { id:"building_supplies", title:"Building / Supplies", emoji:"🔧", type:"text", defaultContent:"" },
+  { id:"other", title:"Other", emoji:"📝", type:"text", defaultContent:"" },
+];
+
+// ─── Daily Operations Default Templates ──────────────────────────────────────
+const DEF_OPENING_TEMPLATE = [
+  {id:"ot1",label:"Disarm alarm system (during business hours only) & make sure door is locked behind you"},
+  {id:"ot2",label:"Turn on all inside lights"},
+  {id:"ot3",label:"Raise or lower the thermostat"},
+  {id:"ot4",label:"Check rooms closest to lobby for accidents and smells"},
+  {id:"ot5",label:"Open POS system and log in"},
+  {id:"ot6",label:"Confirm all staff radios are on"},
+  {id:"ot7",label:"Unlock Private Play yard"},
+  {id:"ot8",label:"Follow POD procedure or ensure it is being done"},
+  {id:"ot9",label:"Check fax, emails & voicemails"},
+  {id:"ot10",label:"Confirm staff has begun doing baths if necessary"},
+  {id:"ot11",label:"Make sure all dogs not receiving a bath are scheduled for Fresh n Clean"},
+  {id:"ot12",label:"Make sure all Bodycheck forms & nametags are prepared for the day"},
+];
+
+const DEF_FE_TEMPLATE = [
+  {id:"fe1",time:"6:15",label:"AM feeding and medication"},
+  {id:"fe2",time:"6:45",label:"Check voicemails, document on Voicemail Log"},
+  {id:"fe3",time:"7:00",label:"Confirm everyone has a radio and name tag"},
+  {id:"fe4",time:"7:15",label:"Review & Start EOD"},
+  {id:"fe5",time:"8:00",label:"Check tour book / evals, document on Tour Log & Eval Log"},
+  {id:"fe6",time:"8:15",label:"Confirm transport of boarding dogs to daycare"},
+  {id:"fe7",time:"8:45",label:"After baths check dogs leaving that day, compare w/ check-in sheet"},
+  {id:"fe8",time:"9:00",label:"Check belongings for dogs leaving"},
+  {id:"fe9",time:"9:15",label:"Return calls from voicemail log"},
+  {id:"fe10",time:"9:30",label:"Check & return emails"},
+  {id:"fe11",time:"9:45",label:"Notate any Day Boarders"},
+  {id:"fe12",time:"10:00",label:"Evaluations - 10am to noon, document on Eval Log"},
+  {id:"fe13",time:"10:15",label:"Clean counters"},
+  {id:"fe14",time:"10:30",label:"Clean tour area with rescue wipes as needed"},
+  {id:"fe15",time:"10:45",label:"Dust Lobby"},
+  {id:"fe16",time:"11:00",label:"AM playtime and let outs begin (initial only when completed)"},
+  {id:"fe17",time:"11:15",label:"Recheck EOD"},
+  {id:"fe18",time:"11:30",label:"Check & return emails"},
+  {id:"fe19",time:"11:45",label:"Open invoice check - Reports > Revenue > Open Invoices"},
+  {id:"fe20",time:"12:00",label:"Noon feeding and medication (if needed), Noon feeding/med log"},
+  {id:"fe21",time:"12:30",label:"Afternoon walkthrough - Compliance check"},
+  {id:"fe22",time:"12:45",label:"Double check dogs that have not left yet, perform Fresh & Clean when needed"},
+  {id:"fe23",time:"13:00",label:"Baths for daycare dogs"},
+  {id:"fe24",time:"13:15",label:"Run day charge for any boarding dogs that have not been picked up"},
+  {id:"fe25",time:"13:30",label:"Check daycare board - daycare list"},
+  {id:"fe26",time:"13:45",label:"Make booklet list - 3 or less - daycare list"},
+  {id:"fe27",time:"14:00",label:"Vaccinations check"},
+  {id:"fe28",time:"14:15",label:"Front Lobby/Tour Area swept & mopped"},
+  {id:"fe29",time:"14:30",label:"PM playtime and let outs begin"},
+  {id:"fe30",time:"14:45",label:"Exterior walkthrough / perimeter inspections"},
+  {id:"fe31",time:"15:00",label:"Paperwork for next day"},
+  {id:"fe32",time:"15:15",label:"Check belongings for next day departures"},
+  {id:"fe33",time:"15:30",label:"Check & return emails"},
+  {id:"fe34",time:"16:00",label:"Scan, name & store new customer policy sheets"},
+  {id:"fe35",time:"17:30",label:"PM feeding and medication - replace all food bowls (start earlier if busy)"},
+  {id:"fe36",time:"18:00",label:"Clean and set food cart"},
+  {id:"fe37",time:"18:30",label:"Double check / update paperwork"},
+  {id:"fe38",time:"18:45",label:"Review, close & save EOD"},
+  {id:"fe39",time:"19:00",label:"Closing Instructions Checklist"},
+  {id:"fe40",time:"19:30",label:"Evening walkthrough / lock up"},
+  // Admin Day - Wednesday
+  {id:"fe_ad1",time:"",label:"Follow up on tour forms",dayOfWeek:3},
+  {id:"fe_ad2",time:"",label:"Client follow up for minor and major issues (handle within 24hrs)",dayOfWeek:3},
+  {id:"fe_ad3",time:"",label:"Send out thank you cards",dayOfWeek:3},
+  {id:"fe_ad4",time:"",label:"Print any needed forms",dayOfWeek:3},
+  {id:"fe_ad5",time:"",label:"Take inventory for front and back end",dayOfWeek:3},
+  {id:"fe_ad6",time:"",label:"Sign check - Upcoming holidays and scheduling",dayOfWeek:3},
+];
+
+const DEF_BE_TEMPLATE = [
+  {id:"be1",time:"6:00",label:"(2) People - Prepare mops for spot cleaning, each daycare, disinfecting and lobby"},
+  {id:"be2",time:"6:00",label:"Prepare janitor cart with cleaning supplies, trash bag, gloves and safety materials"},
+  {id:"be3",time:"6:10",label:"(2) People - Perform spot cleaning of all accommodation prior to feeding - follow the standard path"},
+  {id:"be4",time:"6:10",label:"(1) Person - Mop front lobby and luxury hallway with OdorPet Cherry"},
+  {id:"be5",time:"6:45",label:"Clean windows in all customer facing areas"},
+  {id:"be6",time:"7:00",label:"Large & Small Daycare will go into daycare to allow for transportation of boarding dogs"},
+  {id:"be7",time:"7:00",label:"Daily Room Cleaning of all overnight dogs (follow standard path) - transport daycare dogs to daycare, red collar dogs 1 by 1 for elimination breaks"},
+  {id:"be8",time:"7:00",label:"Bring fresh water to each daycare. Note: Mop hallways of each section as you exit"},
+  {id:"be9",time:"7:30",label:"Replace water in all boarding rooms"},
+  {id:"be10",time:"7:45",label:"Perform all baths (standard and waterless) - check bath list"},
+  {id:"be11",time:"8:30",label:"Ensure all drying units are set to 85 or less & never leave a dog unattended"},
+  {id:"be12",time:"8:45",label:"Clean bathing area once complete"},
+  {id:"be13",time:"9:00",label:"Disinfect rooms - check disinfecting list"},
+  {id:"be14",time:"10:00",label:"Shift Change"},
+  {id:"be15",time:"10:15",label:"Disinfect bowls, dry and place in storage area"},
+  {id:"be16",time:"10:30",label:"Refill water in all boarding rooms and spot clean as needed - Check happiness and health"},
+  {id:"be17",time:"11:00",label:"Remove daycare water bowls & clean - leave a new one with water in it behind"},
+  {id:"be18",time:"11:15",label:"Clean Kitchen/break area"},
+  {id:"be19",time:"11:30",label:"Rake hair and wysiwash outdoor areas - fence/grass of Pens (after personal playtimes)"},
+  {id:"be20",time:"12:00",label:"Lunch Change"},
+  {id:"be21",time:"12:30",label:"Lunch Change"},
+  {id:"be22",time:"13:00",label:"Lunch Change"},
+  {id:"be23",time:"13:30",label:"Daycare/additional baths - check bath list"},
+  {id:"be24",time:"14:15",label:"Weekly Task - See Weekly Task List"},
+  {id:"be25",time:"15:00",label:"Restock any supplies needed from storage"},
+  {id:"be26",time:"15:15",label:"Mop with Rescue the front lobby, tour area, and bathrooms; daily clean bathrooms"},
+  {id:"be27",time:"16:00",label:"Shift Change"},
+  {id:"be28",time:"16:15",label:"Rake hair and wysiwash outdoor areas - fence/grass of Large daycare"},
+  {id:"be29",time:"16:45",label:"Rake hair and wysiwash outdoor areas - fence/grass of Small daycare"},
+  {id:"be30",time:"17:00",label:"Disinfect outgoing red collar rooms"},
+  {id:"be31",time:"17:30",label:"Replace all water bowls with similar size and fill all water bowls"},
+  {id:"be32",time:"17:45",label:"Remove daycare water bowls & clean"},
+  {id:"be33",time:"18:00",label:"Evening let outs for red collars"},
+  {id:"be34",time:"18:30",label:"Bring boarding dogs from small and large daycare back to their rooms"},
+  {id:"be35",time:"19:00",label:"Mop small daycare"},
+  {id:"be36",time:"19:00",label:"Mop large daycare"},
+  {id:"be37",time:"19:00",label:"Change garbages"},
+  {id:"be38",time:"19:00",label:"Clean out all mop buckets"},
+  {id:"be39",time:"19:15",label:"End of Day"},
+  // Weekly tasks
+  {id:"be_w1",time:"",label:"Disinfect leads, boots, and aprons",dayOfWeek:1},
+  {id:"be_w2",time:"",label:"Take inventory and report to front end",dayOfWeek:1},
+  {id:"be_w3",time:"",label:"Disinfect outdoor pen area w/ Rescue",dayOfWeek:2},
+  {id:"be_w4",time:"",label:"Disinfect small outdoor area w/ Rescue",dayOfWeek:3},
+  {id:"be_w5",time:"",label:"Disinfect large outdoor area w/ Rescue",dayOfWeek:4},
+  {id:"be_w6",time:"",label:"Disinfect bathrooms",dayOfWeek:5},
+  {id:"be_w7",time:"",label:"Disinfect bathing area",dayOfWeek:6},
+  {id:"be_w8",time:"",label:"Vacuum and clean vents",dayOfWeek:0},
+];
+
+const DEF_CLOSING_TEMPLATE = [
+  {id:"ct1",label:"Make sure all dogs have checked out for daycare"},
+  {id:"ct2",label:"Make sure body check forms are completed, bath list is made, disinfecting list is made, vaccines are checked for all check-ins, and name tags are made"},
+  {id:"ct3",label:"Charge all radios for the night"},
+  {id:"ct4",label:"Make sure all dogs have been fed & medicated"},
+  {id:"ct5",label:"Make sure no dogs were left outside"},
+  {id:"ct6",label:"Check all Playtime pens and yards in both daycare areas"},
+  {id:"ct7",label:"Make sure all dogs have full bowls of water"},
+  {id:"ct8",label:"Make sure no dogs have gone to the bathroom in their accommodation"},
+  {id:"ct9",label:"Make sure all dogs have proper collars on & belongings are stored properly"},
+  {id:"ct10",label:"Logout and close POS on all computers"},
+  {id:"ct11",label:"Make sure all lights are off indoors"},
+  {id:"ct12",label:"Lock appropriate exterior doors that might be unlocked"},
+  {id:"ct13",label:"Set your alarm & lock front doors"},
+];
+
+const OPS_TYPES = {opening:{key:"openingTemplate",def:DEF_OPENING_TEMPLATE,title:"Opening Checklist"},fe:{key:"feTemplate",def:DEF_FE_TEMPLATE,title:"FE Checklist",showTime:true},be:{key:"beTemplate",def:DEF_BE_TEMPLATE,title:"BE Checklist",showTime:true},closing:{key:"closingTemplate",def:DEF_CLOSING_TEMPLATE,title:"Closing Checklist"},room_cleaning:{title:"Room Cleaning"},pictures:{title:"Picture Checklist"},pp:{title:"PP Checklist"}};
+const DAY_NAMES_SHORT=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+// ─── Default Field Configs ──────────────────────────────────────────────────
+const DEF_CLIENT_FIELDS = [
+  { id:"phone",name:"Phone Number",type:"tel",required:true,isKey:true,locked:true,order:0 },
+  { id:"first_name",name:"First Name",type:"text",required:true,locked:false,order:1 },
+  { id:"last_name",name:"Last Name",type:"text",required:true,locked:false,order:2 },
+  { id:"email",name:"Email",type:"email",required:false,locked:false,order:3 },
+  { id:"address",name:"Address",type:"text",required:false,locked:false,order:4 },
+  { id:"emergency_contact",name:"Emergency Contact",type:"text",required:false,locked:false,order:5 },
+  { id:"emergency_phone",name:"Emergency Phone",type:"tel",required:false,locked:false,order:6 },
+  { id:"vet_name",name:"Veterinarian Name",type:"text",required:false,locked:false,order:7 },
+  { id:"vet_phone",name:"Veterinarian Phone",type:"tel",required:false,locked:false,order:8 },
+  { id:"notes",name:"Notes",type:"textarea",required:false,locked:false,order:9 },
+];
+
+const DEF_DOG_FIELDS = [
+  { id:"name",name:"Dog Name",type:"text",required:true,locked:true,order:0 },
+  { id:"breed",name:"Breed",type:"text",required:true,locked:true,order:1 },
+  { id:"weight",name:"Weight (lbs)",type:"number",required:false,locked:false,order:2 },
+  { id:"dob",name:"Date of Birth",type:"date",required:false,locked:false,order:3 },
+  { id:"sex",name:"Sex",type:"select",options:["Male","Female"],required:false,locked:true,order:4 },
+  { id:"spayed_neutered",name:"Spayed/Neutered",type:"select",options:["Neutered","Spayed","Intact"],required:false,locked:true,order:5 },
+  { id:"color",name:"Color/Markings",type:"text",required:false,locked:false,order:6 },
+  { id:"bath_type",name:"Preferred Bath Type",type:"select",options:["Standard","Hypo","Medicated","Whitening"],required:false,locked:true,order:7 },
+  { id:"temperament",name:"Temperament Notes",type:"textarea",required:false,locked:false,order:8 },
+  { id:"rabies_exp",name:"Rabies Expiration",type:"date",required:false,locked:false,order:9 },
+  { id:"bordetella_exp",name:"Bordetella Expiration",type:"date",required:false,locked:false,order:10 },
+  { id:"dhpp_exp",name:"DHPP Expiration",type:"date",required:false,locked:false,order:11 },
+  { id:"canine_flu_exp",name:"Canine Influenza Exp.",type:"date",required:false,locked:false,order:12 },
+];
+
+// Default agreements
+const DEF_AGREEMENTS = [
+  { id: "agr1", name: "Customer Agreement", required: true, order: 0, body: "CUSTOMER AGREEMENT — K9 RESORTS\n\nBy signing this agreement, the pet owner (\"Owner\") acknowledges and agrees to the following terms and conditions for all services provided by K9 Resorts (\"Facility\"):\n\n1. SERVICES\nThe Facility agrees to provide boarding, daycare, and/or ancillary services for the pet(s) identified in the Owner's registration. Services include supervised group or individual play, feeding per Owner instructions, overnight accommodations (boarding only), and basic daily care.\n\n2. HEALTH & VACCINATION REQUIREMENTS\nOwner certifies that pet(s) are current on all required vaccinations including Rabies, DHPP, Bordetella, and Canine Influenza. Owner agrees to provide proof of vaccination prior to the first visit. Pets not current on vaccinations will not be admitted.\n\n3. TEMPERAMENT & BEHAVIOR\nOwner certifies that pet(s) have not harmed or shown aggressive behavior toward any person or other animal. The Facility reserves the right to refuse service or terminate care at any time if a pet exhibits aggressive or dangerous behavior.\n\n4. ASSUMPTION OF RISK\nOwner understands that during group play and socialization, minor scrapes, nicks, or injuries may occur. Owner accepts these inherent risks associated with group play environments.\n\n5. EMERGENCY CARE\nIn the event of illness or injury, the Facility will attempt to contact the Owner immediately. If the Owner cannot be reached, the Facility is authorized to seek veterinary care at the Owner's expense.\n\n6. RELEASE OF LIABILITY\nOwner releases K9 Resorts, its owners, employees, and agents from any and all liability, claims, demands, or causes of action arising from or related to any injury, illness, or death of pet(s) while in the care of the Facility, except in cases of gross negligence. Owner agrees to indemnify and hold harmless the Facility from any claims, damages, or expenses arising from pet's behavior.\n\n7. PERSONAL PROPERTY\nThe Facility is not responsible for loss or damage to any personal items (collars, leashes, toys, bedding) left with pet(s).\n\n8. PHOTO/VIDEO CONSENT\nOwner grants the Facility permission to photograph or video pet(s) for use on social media, marketing materials, or internal records.\n\n9. PAYMENT\nOwner agrees to pay all fees for services rendered. Payment is due at the time of checkout. A deposit may be required for boarding reservations.\n\n10. ACKNOWLEDGMENT\nI have read this agreement in its entirety, understand its terms, and agree to be bound by it.\n\nOwner Signature: ___________________________  Date: __________\nPrinted Name: ___________________________", updatedAt: null },
+];
+
+// Default dog tag definitions
+const DEF_DOG_TAGS = [
+  { id: "tag_pp", name: "Private Play", colorIdx: 3 },
+  { id: "tag_eval", name: "Evaluation", colorIdx: 2 },
+];
+
+// Room types for boarding
+const ROOM_TYPES = ["Luxury Suite","Executive Room","Double Compartment","Single Compartment"];
+
+// Evaluation outcomes
+const EVAL_RESULTS = ["pending","passed_group","passed_private"];
+
+// ─── Default Pricing ─────────────────────────────────────────────────────────
+const DEF_PRICING = {
+  // Boarding per night by room type
+  boardingRates: {
+    "Luxury Suite": 95,
+    "Executive Room": 75,
+    "Double Compartment": 65,
+    "Single Compartment": 55,
+  },
+  // Daycare per day
+  daycareRates: { fullDay: 45, halfDay: 30 },
+  // Evaluation & Tour
+  evaluationFee: 25,
+  tourFee: 0,
+  // Add-on pricing
+  bathPrices: { "Standard": 25, "Hypo": 35, "Medicated": 45, "Whitening": 40 },
+  medicationAdminFee: 5, // per dose per day
+  specialFeedingFee: 8, // per day (resort-provided food)
+  // Discount rules
+  multiDogDiscount: 20, // % off 2nd dog same room same owner
+  // Payment rules
+  paymentRules: {
+    boarding: { depositPercent: 50, depositRefundable: false, payAt: "booking" },
+    daycare: { depositPercent: 0, depositRefundable: false, payAt: "checkout" },
+    evaluation: { depositPercent: 100, depositRefundable: false, payAt: "booking" },
+    tour: { depositPercent: 0, depositRefundable: false, payAt: "free" },
+  },
+  // Half-day threshold (hours)
+  halfDayThreshold: 5,
+};
+
+// ─── Configurable Dropdown Defaults ─────────────────────────────────────────
+const DEF_BREED_OPTIONS = [
+  "Unknown / Not Sure","Mixed Breed","Affenpinscher","Afghan Hound","Airedale Terrier","Akita","Alaskan Malamute",
+  "American Bulldog","American Cocker Spaniel","American Eskimo Dog","American Foxhound","American Pit Bull Terrier",
+  "American Staffordshire Terrier","American Water Spaniel","Anatolian Shepherd","Australian Cattle Dog",
+  "Australian Shepherd","Australian Terrier","Basenji","Basset Hound","Beagle","Bearded Collie",
+  "Bedlington Terrier","Belgian Malinois","Belgian Sheepdog","Belgian Tervuren","Bernedoodle",
+  "Bernese Mountain Dog","Bichon Frise","Black and Tan Coonhound","Black Russian Terrier","Bloodhound",
+  "Bluetick Coonhound","Border Collie","Border Terrier","Borzoi","Boston Terrier","Bouvier des Flandres",
+  "Boxer","Boykin Spaniel","Briard","Brittany","Brussels Griffon","Bull Terrier","Bulldog","Bullmastiff",
+  "Cairn Terrier","Canaan Dog","Cane Corso","Cardigan Welsh Corgi","Cavalier King Charles Spaniel",
+  "Chesapeake Bay Retriever","Chihuahua","Chinese Crested","Chinese Shar-Pei","Chow Chow",
+  "Clumber Spaniel","Cockapoo","Cocker Spaniel","Collie","Coonhound","Coton de Tulear",
+  "Curly-Coated Retriever","Dachshund","Dalmatian","Dandie Dinmont Terrier","Doberman Pinscher",
+  "Dogo Argentino","Dogue de Bordeaux","Dutch Shepherd","English Bulldog","English Cocker Spaniel",
+  "English Foxhound","English Setter","English Springer Spaniel","English Toy Spaniel",
+  "Entlebucher Mountain Dog","Field Spaniel","Finnish Lapphund","Finnish Spitz","Flat-Coated Retriever",
+  "Fox Terrier","French Bulldog","German Pinscher","German Shepherd","German Shorthaired Pointer",
+  "German Wirehaired Pointer","Giant Schnauzer","Glen of Imaal Terrier","Golden Retriever","Goldendoodle",
+  "Gordon Setter","Great Dane","Great Pyrenees","Greater Swiss Mountain Dog","Greyhound","Harrier",
+  "Havanese","Hovawart","Ibizan Hound","Icelandic Sheepdog","Irish Red and White Setter","Irish Setter",
+  "Irish Terrier","Irish Water Spaniel","Irish Wolfhound","Italian Greyhound","Jack Ashford Terrier",
+  "Japanese Chin","Japanese Spitz","Keeshond","Kerry Blue Terrier","Komondor","Kuvasz","Labradoodle",
+  "Labrador Retriever","Lagotto Romagnolo","Lakeland Terrier","Leonberger","Lhasa Apso","Maltese",
+  "Maltipoo","Manchester Terrier","Mastiff","Miniature Australian Shepherd","Miniature Bull Terrier",
+  "Miniature Pinscher","Miniature Poodle","Miniature Schnauzer","Morkie","Neapolitan Mastiff",
+  "Newfoundland","Norfolk Terrier","Norwegian Buhund","Norwegian Elkhound","Norwegian Lundehund",
+  "Norwich Terrier","Nova Scotia Duck Tolling Retriever","Old English Sheepdog","Otterhound","Papillon",
+  "Parson Ashford Terrier","Peekapoo","Pekingese","Pembroke Welsh Corgi","Pharaoh Hound","Plott Hound",
+  "Pointer","Polish Lowland Sheepdog","Pomeranian","Pomsky","Poodle","Portuguese Water Dog","Pug",
+  "Puggle","Puli","Pumi","Rat Terrier","Redbone Coonhound","Rhodesian Ridgeback","Rottweiler",
+  "Ashford Terrier","Saint Bernard","Saluki","Samoyed","Schipperke","Schnoodle","Ellisonish Deerhound",
+  "Ellisonish Terrier","Sealyham Terrier","Shetland Sheepdog","Shiba Inu","Shih Tzu","Shih-Poo",
+  "Siberian Husky","Silky Terrier","Skye Terrier","Sloughi","Smooth Fox Terrier",
+  "Soft Coated Wheaten Terrier","Spanish Water Dog","Spinone Italiano","Staffordshire Bull Terrier",
+  "Standard Poodle","Standard Schnauzer","Sussex Spaniel","Swedish Vallhund","Tibetan Mastiff",
+  "Tibetan Spaniel","Tibetan Terrier","Toy Fox Terrier","Toy Poodle","Treeing Walker Coonhound",
+  "Vizsla","Weimaraner","Welsh Springer Spaniel","Welsh Terrier","West Highland White Terrier",
+  "Whippet","Wire Fox Terrier","Wirehaired Pointing Griffon","Xoloitzcuintli","Yorkipoo",
+  "Yorkshire Terrier","Other"
+];
+
+const DEF_FEEDING_TIME_OPTIONS = ["AM (6:00 am)","Noon (12:00 pm)","PM (6:00 pm)"];
+const DEF_FEEDING_UNIT_OPTIONS = ["Cup","1/2 Cup","1/4 Cup","Scoop","Tablespoon","Can","Piece"];
+const DEF_FOOD_TYPE_OPTIONS = ["Food From Home - Bagged","Food From Home - Unbagged","Blue Buffalo Chicken","Blue Buffalo Salmon"];
+const DEF_FOOD_SOURCE_OPTIONS = ["From Home","Resort Provided","Prescription"];
+const DEF_FEEDING_INSTRUCTION_OPTIONS = ["Regular","Slow Feeder","Hand Fed","Elevated Bowl","Separate from Others"];
+const DEF_MEDICATION_UNIT_OPTIONS = ["Tablet","Capsule","mL","Pump","Drop","Scoop"];
+const DEF_BATH_TYPE_OPTIONS = ["Standard","Hypo","Medicated","Whitening"];
+
+// Vaccine configuration
+const VACCINES = [
+  { id: "rabies_exp", name: "Rabies", requiredByDefault: true },
+  { id: "dhpp_exp", name: "Distemper (DHPP)", requiredByDefault: true },
+  { id: "bordetella_exp", name: "Bordetella", requiredByDefault: true },
+  { id: "canine_flu_exp", name: "Canine Influenza", requiredByDefault: false },
+];
+const DEF_REQUIRED_VACCINES = VACCINES.filter(v => v.requiredByDefault).map(v => v.id);
+
+// ─── Demo Data Generator ─────────────────────────────────────────────────────
+function generateDemoData() {
+  const today = todayStr();
+  const addD = (base, n) => { const d = new Date(base + "T12:00:00"); d.setDate(d.getDate() + n); return d.toISOString().split("T")[0]; };
+  const FN=["Casey","James","Emily","Michael","Jessica","David","Jennifer","Robert","Ashley","Christopher","Amanda","Reese","Stephanie","Andrew","Nicole","Joshua","Samantha","Daniel","Lauren","William","Megan","Ryan","Rachel","Quinn","Brittany","Justin","Harper","Brandon","Heather","Taylor","Melissa","Jacob","Katherine","Nathan","Amber","Jonathan","Rebecca","Aaron","Christine","Joseph","Maria","Thomas","Angela","Brian","Tiffany","Eric","Lisa","Patrick","Michelle","Sawyer","Courtney","Gregory","Laura","Jeffrey","Danielle","Mark","Kimberly","Adam","Allison","Jeremy","Devon","Steven","Hannah","Timothy","Victoria","Ellison","Anna","Benjamin","Christina","Peter","Olivia","Zachary","Alex","John","Kim","Derek","Sophie","Marcus","Natalie","Travis","Emma","Finley","Sophia","Carlos","Isabella","Tony","Grace","Luis","Ava","Henry","Diana","Paul","Chloe","Ashford","Lily","Albert","Zoe","Richard","Mia","Charles","Audrey","George","Ella","Frank","Maya","Luke","Nora","Blakelip","Riley","Ethan","Aria","Noah","Ellie","Owen","Hazel","Jake","Violet","Cole","Quinn","Chase","Stella","Blake","Claire","Dylan","Jasmine","Ian","Emerson","Simon","Ivy","Grant","Autumn","Dean","Skylar","Reed","Brooke","Clark","June","Maxwell","Faith","Leo","Hope","Axel","Jade","Hugo","Iris","Felix","Fiona","Oscar","Lydia","Miles","Clara","Adrian"];
+  const LN=["Mitchell","Chen","Rodriguez","Thompson","Ramsey","Johnson","Brown","Davis","Miller","Wilson","Anderson","Taylor","Thomas","Moore","Jackson","Martin","Lee","White","Harris","Clark","Lewis","Robinson","Walker","Young","Allen","King","Wright","Ellison","Green","Baker","Adams","Nelson","Hill","Ramirez","Campbell","Roberts","Carter","Blakelips","Evans","Turner","Torres","Parker","Collins","Edwards","Stewart","Flores","Morris","Nguyen","Murphy","Rivera","Cook","Rogers","Morgan","Bennett","Cooper","Reed","Bailey","Bell","Gomez","Devon","Howard","Ward","Cox","Diaz","Richardson","Wood","Watson","Brooks","Bennett","Gray","James","Reyes","Cruz","Hughes","Price","Myers","Long","Foster","Sanders","Ross","Morales","Lambert","Sullivan","Ashford","Ortiz","Jenkins","Gutierrez","Perry","Butler","Barnes","Fisher","Henderson","Coleman","Simmons","Patterson","Jordan","Reynolds","Mercer","Graham","Kim","Gonzalez","Alexander","Ramos","Wallace","Griffin","West","Cole","Hayes","Chavez","Gibson","Bryant","Ellis","Stevens","Murray","Ford","Marshall","Owens","Mcdonald","Harrison","Ruiz","Kennedy","Wells","Alvarez","Woods","Mendoza","Castillo","Olson","Webb","Washington","Tucker","Freeman","Burns","Henry","Crawford","Boyd","Mason","Moreno","Hunt","Hicks","Palmer","Wagner","Lynch","Dixon","Shaw","Harvey","Hudson","Dunn"];
+  const DN=["Baxter","Luna","Cooper","Bella","Max","Charlie","Buddy","Daisy","Rocky","Sadie","Bear","Molly","Duke","Lucy","Tucker","Maggie","Zeus","Zoey","Jack","Chloe","Toby","Penny","Murphy","Rosie","Oscar","Emerson","Bentley","Lola","Leo","Sophie","Harley","Gracie","Finn","Millie","Milo","Nala","Jasper","Stella","Ollie","Roxy","Bruno","Willow","Winston","Zoe","Louie","Coco","Dexter","Lily","Henry","Hazel","Thor","Ellie","Shadow","Winnie","Sam","Piper","Bailey","Olive","Gus","Beau","Belle","Scout","Layla","Teddy","Annie","Rex","Dixie","Blue","Pearl","Hank","Pepper","Atlas","Sasha","Diesel","Honey","Ace","Ginger","Bandit","Emma","Tank","Lulu","Archie","Riley","Maverick","Izzy","Cash","Lexi","Odin","Ivy","Ranger","Gigi","Apollo","Maya","Simba","Holly","Koda","Phoebe","Jax","Callie","Moose","Mia","Biscuit","Clementine","Waffles","Maple","Nugget","Theo","Oakley","Frida","Basil","Sage","Truffle","Pickles","Barkley","Chester","Rufus","Otis","Sparky","Prince","King","Cody","Sandy","Trixie","Misty","Lady","Princess","Angel","Shelby","Dakota","Sierra","Cassie","Sable","Abby","Peaches","Cookie","Chai","Felix","Boomer","Athena","Josie","Ziggy"];
+  const BR=["Golden Retriever","Labrador Retriever","French Bulldog","Poodle","German Shepherd","Bulldog","Beagle","Rottweiler","Dachshund","Pembroke Welsh Corgi","Australian Shepherd","Yorkshire Terrier","Boxer","Cavalier King Charles Spaniel","Doberman Pinscher","Miniature Schnauzer","Shih Tzu","Boston Terrier","Bernese Mountain Dog","Pomeranian","Havanese","Shetland Sheepdog","Brittany","Cocker Spaniel","Miniature Poodle","Siberian Husky","Great Dane","Maltese","Chihuahua","Vizsla","Bichon Frise","Border Collie","Weimaraner","Goldendoodle","Labradoodle","Cockapoo","Bernedoodle","Maltipoo","Mixed Breed","Standard Poodle","Cane Corso","Akita","Samoyed","Shiba Inu","Jack Ashford Terrier","West Highland White Terrier","Irish Setter","Rhodesian Ridgeback","Newfoundland","Basset Hound","Great Pyrenees","Belgian Malinois","Whippet","Italian Greyhound","Bull Terrier"];
+  const COL=["Black","Brown","Golden","White","Cream","Brindle","Red","Tan","Black and Tan","Tri-color","Merle","Sable","Fawn","Gray","White/Cream","Black and White","Chocolate","Apricot","Silver","Spotted"];
+  const STR=["Elm St","Oak Ave","Maple Dr","Pine Ln","Cedar Ct","Birch Way","Walnut Blvd","Cherry Rd","Willow Pl","Ash St","Spruce Ave","Hickory Dr","Poplar Ln","Chestnut Ct","Magnolia Way","Sycamore Blvd","Juniper Rd","Linden St","Cypress Ave","Ridge Rd","Valley Dr","Lake Shore Blvd","Park Ave","Main St","Church Rd","School Ln","Mill Rd","Forest Ave","River Rd","Hill St","Meadow Ln","Brook Dr","Creek Way","Sunset Blvd","Highland Ave"];
+  const CTY=["Remy Calloway, IL","Highland Park, IL","Northbrook, IL","Lake Forest, IL","Libertyville, IL","Vernon Hills, IL","Buffalo Grove, IL","Lincolnshire, IL","Glenview, IL","Wilmette, IL","Winnetka, IL","Glencoe, IL","Bannockburn, IL","Mundelein, IL","Riverwoods, IL"];
+  const VET=["Dr. Patel","Dr. Kim","Dr. Johnson","Dr. Vance","Dr. Lee","Dr. Garcia","Banfield Pet Hospital","VCA Animal Hospital","North Shore Animal Hospital","Lake County Veterinary","Remy Calloway Veterinary","Northbrook Animal Clinic","Village Animal Clinic","Companion Animal Hospital"];
+  const TMP=["Friendly, loves other dogs","High energy, loves fetch","Gentle, calm demeanor","Shy at first, warms up quickly","Playful, very social","Well-trained, obedient","Anxious during storms","Selective with other dogs","Very friendly, loves people","Calm and relaxed","Energetic, needs lots of exercise","Good with all dogs","Timid, needs gentle handling","Confident and outgoing","Loves water","Good off-leash","Food motivated","Loves belly rubs","Prefers smaller play groups","Independent but affectionate"];
+  const SMBREED=new Set(["French Bulldog","Yorkshire Terrier","Shih Tzu","Pomeranian","Havanese","Maltese","Chihuahua","Bichon Frise","Maltipoo","Cockapoo","Jack Ashford Terrier","Cavalier King Charles Spaniel","Miniature Schnauzer","Miniature Poodle","West Highland White Terrier","Italian Greyhound","Dachshund","Boston Terrier","Whippet"]);
+  const LGBREED=new Set(["Golden Retriever","Labrador Retriever","German Shepherd","Rottweiler","Bernese Mountain Dog","Great Dane","Siberian Husky","Goldendoodle","Labradoodle","Bernedoodle","Standard Poodle","Cane Corso","Akita","Samoyed","Newfoundland","Great Pyrenees","Rhodesian Ridgeback","Belgian Malinois","Irish Setter"]);
+
+  // Seeded random for consistency within a day
+  let _s = 42;
+  const srand = () => { _s = (_s * 16807 + 0) % 2147483647; return (_s - 1) / 2147483646; };
+  const ri = (a, b) => Math.floor(srand() * (b - a + 1)) + a;
+  const rp = (arr) => arr[Math.floor(srand() * arr.length)];
+
+  const clients = [];
+  const usedPh = new Set();
+  for (let i = 1; i <= 150; i++) {
+    let ph; do { ph = "847555" + String(ri(1000,9999)); } while(usedPh.has(ph));
+    usedPh.add(ph);
+    const fn = rp(FN), ln = rp(LN);
+    clients.push({
+      id: "c"+i,
+      fields: {
+        phone: ph, first_name: fn, last_name: ln,
+        email: fn.toLowerCase()+"."+ln.toLowerCase()+"@email.com",
+        address: ri(1,999)+" "+rp(STR)+", "+rp(CTY),
+        emergency_contact: rp(FN)+" "+rp(LN),
+        emergency_phone: "847555"+String(ri(1000,9999)),
+        vet_name: rp(VET), vet_phone: "847555"+String(ri(1000,9999)),
+        notes: srand()>0.7 ? rp(["Prefers text communication","Travels frequently, regular boarder","Also has cat at home","First-time pet owner","Referred by friend","VIP client","Works from home","Prefers morning drop-off","Wants daily photo updates",""]) : ""
+      },
+      createdAt: addD(today, -ri(1,365)),
+      agreements: srand() > 0.15 ? { agr1: { signed: true, date: addD(today, -ri(1, 180)) } } : {}
+    });
+  }
+
+  const dogs = [];
+  let di = 1;
+  const ownedNames = {};
+  for (const cl of clients) {
+    const nd = srand()<0.5 ? 1 : srand()<0.7 ? 2 : 3;
+    for (let j = 0; j < nd; j++) {
+      let nm; do { nm = rp(DN); } while(ownedNames[cl.id]?.includes(nm));
+      if (!ownedNames[cl.id]) ownedNames[cl.id]=[];
+      ownedNames[cl.id].push(nm);
+      const breed = rp(BR);
+      const w = SMBREED.has(breed) ? ri(8,30) : LGBREED.has(breed) ? ri(55,110) : ri(25,70);
+      const sex = srand()>0.5 ? "Male" : "Female";
+      const fixed = sex==="Male" ? (srand()>0.2?"Neutered":"Intact") : (srand()>0.2?"Spayed":"Intact");
+      const by=ri(2018,2025),bm=ri(1,12),bd=ri(1,28);
+      const dob = by+"-"+String(bm).padStart(2,"0")+"-"+String(bd).padStart(2,"0");
+      const vc = srand()>0.2;
+      const rabies = vc ? addD(today,ri(30,365)) : addD(today,ri(-180,-1));
+      const bord = vc ? addD(today,ri(30,240)) : addD(today,ri(-120,-1));
+      const dhpp = vc ? addD(today,ri(30,365)) : addD(today,ri(-180,-1));
+      const flu = srand()>0.3 ? (vc ? addD(today,ri(30,300)) : addD(today,ri(-90,-1))) : "";
+      const tags = [];
+      if (srand()>0.8) tags.push("tag_pp");
+      if (srand()>0.85) tags.push("tag_eval");
+      const meds = [];
+      if (srand()>0.8) meds.push({
+        time: rp(["8:00 AM","Morning","Morning & Evening","With meals"]),
+        amount:"1", unit: rp(["Tablet","Capsule","mL","Pump"]),
+        name: rp(["Glucosamine","Apoquel","Trazodone","Thyroid medication","Heart medication","Joint supplement","Fish oil","Probiotic"]),
+        notes: rp(["Daily","As needed","Monitor for lethargy","Give with food","",""])
+      });
+      dogs.push({
+        id:"d"+di, clientId:cl.id,
+        fields:{
+          name:nm, breed, weight:String(w), dob, sex, spayed_neutered:fixed,
+          color:rp(COL), bath_type:rp(["Standard","Standard","Standard","Hypo","Medicated","Whitening"]),
+          temperament:rp(TMP),
+          rabies_exp:rabies, bordetella_exp:bord, dhpp_exp:dhpp, canine_flu_exp:flu,
+          feedingSchedules:[{
+            times: srand()>0.3 ? ["AM (6:00 am)","PM (6:00 pm)"] : ["AM (6:00 am)","Noon (12:00 pm)","PM (6:00 pm)"],
+            amount: w<35 ? rp(["1","0.5","0.75"]) : rp(["2","2.5","3","1.5"]),
+            unit:"Cup",
+            foodType: rp(["Food From Home - Bagged","Food From Home - Unbagged","Blue Buffalo Chicken","Blue Buffalo Salmon"]),
+            foodSource: srand()>0.2 ? "From Home" : "Resort Provided",
+            instruction: rp(["Regular","Regular","Regular","Slow Feeder","Elevated Bowl","Separate from Others"]),
+            notes: srand()>0.85 ? rp(["Eats too fast","Picky eater","No chicken","Grain-free only",""]) : ""
+          }],
+          medicationSchedules: meds
+        },
+        tags
+      });
+      di++;
+    }
+  }
+
+  const reservations = [];
+  let rIdx = 1;
+  const occ = {};
+  const isFree = (rm, ci, co) => { let d=ci; while(d<co){ if(occ[d]?.has(rm)) return false; d=addD(d,1); } return true; };
+  const markRm = (rm, ci, co) => { let d=ci; while(d<co){ if(!occ[d]) occ[d]=new Set(); occ[d].add(rm); d=addD(d,1); } };
+
+  const ROOMS = {
+    "Luxury Suite":["101","102","103","104","105","106"],
+    "Executive Room":["201","202","203","204","205","206","207","208","209","210","211","212","213","214","215"],
+    "Double Compartment":["DC1","DC2","DC3","DC4","DC5","DC6","DC7","DC8","DC9"],
+    "Single Compartment":["SC1","SC2","SC3","SC4","SC5","SC6","SC7","SC8","SC9","SC10","SC11","SC12","SC13","SC14","SC15","SC16","SC17","SC18"],
+  };
+  const allRms = [];
+  for (const [t,rs] of Object.entries(ROOMS)) for (const r of rs) allRms.push({type:t,room:r});
+  for (let i=allRms.length-1;i>0;i--){ const j=Math.floor(srand()*(i+1));[allRms[i],allRms[j]]=[allRms[j],allRms[i]]; }
+
+  const usedDogs = new Set();
+  let occToday = 0;
+
+  // Active boarding (~50% of 48 = 24 rooms)
+  for (const {type,room} of allRms) {
+    if (occToday >= 24) break;
+    const avail = dogs.filter(d => !usedDogs.has(d.id));
+    if (!avail.length) break;
+    const dog = rp(avail);
+    usedDogs.add(dog.id);
+    const da = ri(1,5), dh = ri(1,5);
+    const ci = addD(today,-da), co = addD(today,dh);
+    if (!isFree(room,ci,co)) continue;
+    markRm(room,ci,co);
+    reservations.push({
+      id:"r"+(rIdx++), clientId:dog.clientId, dogId:dog.id, type:"boarding",
+      roomType:type, room, checkIn:ci, checkOut:co,
+      checkInTime:rp(["07:00","08:00","09:00","10:00"]),
+      checkOutTime:rp(["10:00","11:00","12:00","14:00"]),
+      status:"checked-in",
+      notes:rp(["","","","Bring own bed","Extra play time","Needs quiet room","Daily photos requested","Regular boarder",""])
+    });
+    occToday++;
+  }
+
+  // Upcoming boarding (next 1-14 days)
+  for (let i=0;i<30;i++){
+    const avail=dogs.filter(d=>!usedDogs.has(d.id));
+    if(!avail.length) break;
+    const dog=rp(avail);
+    const sd=ri(1,14),sl=ri(1,7);
+    const ci=addD(today,sd),co=addD(today,sd+sl);
+    const rt=rp(Object.keys(ROOMS)),rm=rp(ROOMS[rt]);
+    if(!isFree(rm,ci,co)) continue;
+    markRm(rm,ci,co); usedDogs.add(dog.id);
+    reservations.push({
+      id:"r"+(rIdx++), clientId:dog.clientId, dogId:dog.id, type:"boarding",
+      roomType:rt, room:rm, checkIn:ci, checkOut:co,
+      checkInTime:rp(["07:00","08:00","09:00","10:00"]),
+      checkOutTime:rp(["10:00","11:00","12:00","14:00"]),
+      status:"upcoming", notes:rp(["","","","First stay","Regular client","Bring own food",""])
+    });
+  }
+
+  // Past boarding (checked out last 30 days)
+  for (let i=0;i<40;i++){
+    const avail=dogs.filter(d=>!usedDogs.has(d.id));
+    if(!avail.length) break;
+    const dog=rp(avail);
+    const ed=ri(1,30),sl=ri(1,7);
+    const co=addD(today,-ed),ci=addD(co,-sl);
+    const rt=rp(Object.keys(ROOMS)),rm=rp(ROOMS[rt]);
+    if(!isFree(rm,ci,co)) continue;
+    markRm(rm,ci,co); usedDogs.add(dog.id);
+    reservations.push({
+      id:"r"+(rIdx++), clientId:dog.clientId, dogId:dog.id, type:"boarding",
+      roomType:rt, room:rm, checkIn:ci, checkOut:co,
+      checkInTime:rp(["07:00","08:00","09:00","10:00"]),
+      checkOutTime:rp(["10:00","11:00","12:00"]),
+      status:"checked-out", notes:""
+    });
+  }
+
+  // Today's daycare (~18 dogs)
+  const dcDogs = dogs.filter(d => !usedDogs.has(d.id)).slice(0,18);
+  for (const dog of dcDogs) {
+    usedDogs.add(dog.id);
+    const sm = parseInt(dog.fields.weight)<35;
+    const full = srand()>0.3;
+    reservations.push({
+      id:"r"+(rIdx++), clientId:dog.clientId, dogId:dog.id, type:"daycare",
+      daycareSize:sm?"small":"large", checkIn:today, checkOut:today,
+      checkInTime:rp(["06:30","07:00","07:30","08:00","08:30","09:00"]),
+      checkOutTime:full?rp(["17:00","17:30","18:00"]):rp(["12:00","12:30","13:00"]),
+      status:srand()>0.3?"checked-in":"upcoming",
+      notes:""
+    });
+  }
+
+  // Past daycare (last 30 days)
+  for (let i=0;i<60;i++){
+    const dog=rp(dogs);
+    const da=ri(1,30);
+    const dt=addD(today,-da);
+    const sm=parseInt(dog.fields.weight)<35;
+    reservations.push({
+      id:"r"+(rIdx++), clientId:dog.clientId, dogId:dog.id, type:"daycare",
+      daycareSize:sm?"small":"large", checkIn:dt, checkOut:dt,
+      checkInTime:rp(["06:30","07:00","07:30","08:00"]),
+      checkOutTime:rp(["17:00","17:30","18:00"]),
+      status:"checked-out", notes:""
+    });
+  }
+
+  // Tours & Evaluations
+  for (let i=0;i<5;i++){
+    const dog=rp(dogs);
+    const dt = i<2 ? today : addD(today,ri(1,7));
+    reservations.push({
+      id:"r"+(rIdx++), clientId:dog.clientId, dogId:dog.id, type:"tour",
+      checkIn:dt, checkOut:dt,
+      checkInTime:rp(["10:00","11:00","14:00","15:00"]),
+      checkOutTime:rp(["10:30","11:30","14:30","15:30"]),
+      status:"upcoming",
+      notes:""
+    });
+  }
+  for (let i=0;i<5;i++){
+    const dog=rp(dogs);
+    const dt = i<2 ? today : addD(today,ri(1,5));
+    reservations.push({
+      id:"r"+(rIdx++), clientId:dog.clientId, dogId:dog.id, type:"evaluation",
+      evalResult:rp(["pending","passed_group","passed_private","pending"]),
+      checkIn:dt, checkOut:dt,
+      checkInTime:rp(["09:00","10:00","11:00"]),
+      checkOutTime:rp(["10:00","11:00","12:00"]),
+      status:"upcoming",
+      notes:""
+    });
+  }
+
+  // EOD Entries (30 days of history)
+  const eodEntries = [];
+  const SECS=["sales","csr_checklist","alerts","team_notes","leads","tours","meds","birthdays","ice_cream","extra_play","baths","day_boarders","evaluations","small_daycare_notes","large_daycare_notes","boarding_notes","social_media","picture_requests","building_supplies","other"];
+
+  for (let off = -30; off <= -1; off++) {
+    const dt = addD(today, off);
+    const dayDogs = [];
+    reservations.forEach(r => {
+      if (r.checkIn <= dt && r.checkOut >= dt) {
+        const dg = dogs.find(d => d.id === r.dogId);
+        if (dg && !dayDogs.find(dd => dd.id === dg.id)) dayDogs.push(dg);
+      }
+    });
+
+    const pickDog = () => { const d = dayDogs.length > 0 ? rp(dayDogs) : rp(dogs); const c = clients.find(cl => cl.id === d.clientId); return {d,c}; };
+
+    const genSec = (sid) => {
+      switch(sid) {
+        case "sales": return "Today's Goal: $"+ri(800,2500)+"\nWTD: $"+ri(3000,15000)+"\nMTD: $"+ri(8000,45000)+"\nYTD: $"+ri(30000,200000);
+        case "csr_checklist": return ["Turn on Luxury TV's","Turn on music","Create Private Play log","Vacuum and Cherry front lobby before 7:00 am","Unlock latches on front door","Check incoming Tours","Do body checks on dogs leaving today and fill out form"].map(x=>"["+(srand()>0.2?"x":" ")+"] "+x).join("\n");
+        case "alerts": return rp(["- Goal for Each CSR to book at least 1 Eval/Tour","- Reminder: Valentine's Day packages available\n- Push puppy love photo package","- New pricing effective next week\n- All staff meeting Thursday","- Weekend fully booked for boarding\n- Waitlist available"]);
+        case "team_notes": { const {d,c}=pickDog(); return "@"+d.fields.name+" "+c.fields.last_name+" had a great day in playgroup\n"+rp(["Great teamwork today everyone!","Remember to check water bowls every hour","Updated cleaning schedule posted","Reminder: staff photos needed for website"]); }
+        case "leads": { const lines=[]; for(let i=0;i<ri(1,3);i++) lines.push("- "+rp(FN)+" "+rp(LN)+" - "+rp(["called about boarding","interested in daycare","website inquiry","referral from client"])); return lines.join("\n"); }
+        case "tours": { const n=ri(0,3); if(!n) return "No tours today"; const lines=[]; for(let i=0;i<n;i++) lines.push("- "+rp(FN)+" "+rp(LN)+" - "+rp(["booked boarding","scheduled evaluation","interested in daycare packages","signed up!"])); return lines.join("\n"); }
+        case "meds": { const md=dayDogs.filter(d=>d.fields.medicationSchedules.length>0); if(!md.length) return "Boarding:\nAM:\n- None\nPM:\n- None"; const lines=["Boarding:","AM:"]; md.forEach(d=>{ const c=clients.find(cl=>cl.id===d.clientId); d.fields.medicationSchedules.forEach(m=>lines.push("- @"+d.fields.name+" "+c.fields.last_name+" - "+m.amount+" "+m.unit+" "+m.name)); }); lines.push("PM:","- None"); return lines.join("\n"); }
+        case "birthdays": { const mo=parseInt(dt.split("-")[1]),dy=parseInt(dt.split("-")[2]); const bd=dogs.filter(d=>{if(!d.fields.dob)return false; const m=parseInt(d.fields.dob.split("-")[1]),dd=parseInt(d.fields.dob.split("-")[2]); return m===mo&&Math.abs(dd-dy)<=2;}); if(!bd.length) return "No birthdays today"; return bd.slice(0,3).map(d=>{const c=clients.find(cl=>cl.id===d.clientId);return "- @"+d.fields.name+" "+c.fields.last_name+" turns "+(2026-parseInt(d.fields.dob.split("-")[0]))+"!";}).join("\n"); }
+        case "ice_cream": { if(srand()>0.5) return "None today"; const lines=[]; for(let i=0;i<ri(1,3);i++){const {d,c}=pickDog();lines.push("- @"+d.fields.name+" "+c.fields.last_name);} return lines.join("\n"); }
+        case "extra_play": { if(srand()>0.6) return "None today"; const lines=[]; for(let i=0;i<ri(1,3);i++){const {d,c}=pickDog();lines.push("- @"+d.fields.name+" "+c.fields.last_name+" - "+rp(["30 min private play","1 hour play session","Extra yard time"]));} return lines.join("\n"); }
+        case "baths": { const n=ri(0,4); if(!n) return ""; const lines=[]; for(let i=0;i<n;i++){const {d,c}=pickDog();lines.push("["+(srand()>0.3?"x":" ")+"] @"+d.fields.name+" "+c.fields.last_name+" - "+rp(["Standard","Hypo","Medicated","Whitening"])+" bath");} return lines.join("\n"); }
+        case "day_boarders": { if(srand()>0.5) return "None today"; const lines=[]; for(let i=0;i<ri(1,3);i++){const {d,c}=pickDog();lines.push("- @"+d.fields.name+" "+c.fields.last_name+" - "+rp(["Day board, pickup by 6pm","Day board + bath","Private play only"]));} return lines.join("\n"); }
+        case "evaluations": { if(srand()>0.6) return "Name, L/S daycare, Room # - Pass/fail\n- None today"; const lines=["Name, L/S daycare, Room # - Pass/fail"]; for(let i=0;i<ri(1,2);i++){const {d,c}=pickDog();const sm=parseInt(d.fields.weight)<35;lines.push("- @"+d.fields.name+" "+c.fields.last_name+", "+(sm?"S":"L")+" daycare - "+rp(["Passed, parents contacted","Private play recommended","Pending evaluation"]));} return lines.join("\n"); }
+        case "small_daycare_notes":
+        case "large_daycare_notes": { if(srand()>0.5) return "(Dogs name, last initial, date/time and details of incident)\n- Nothing to report"; const lines=["(Dogs name, last initial, date/time and details of incident)"]; for(let i=0;i<ri(1,3);i++){const {d,c}=pickDog();lines.push("- @"+d.fields.name+" "+c.fields.last_name+" "+ri(8,16)+":"+rp(["00","15","30","45"])+" - "+rp(["played well in group","needed a break from play","was a bit mouthy, redirected","had loose stool","napped most of the afternoon","was very energetic today","did great with new dogs"]));} return lines.join("\n"); }
+        case "boarding_notes": { if(srand()>0.4) return "All boarders doing well"; const lines=[]; for(let i=0;i<ri(1,3);i++){const {d,c}=pickDog();lines.push("- @"+d.fields.name+" "+c.fields.last_name+" - "+rp(["eating well, happy in room","seemed anxious at first, settled in","loved playtime","refused dinner, will monitor","checkout tomorrow, bath scheduled","sleeping soundly"]));} return lines.join("\n"); }
+        case "social_media": return ["["+(srand()>0.3?"x":" ")+"] Instagram Stories","["+(srand()>0.4?"x":" ")+"] Instagram Post"].join("\n");
+        case "picture_requests": { if(srand()>0.5) return ""; const lines=[]; for(let i=0;i<ri(1,3);i++){const {d,c}=pickDog();lines.push("["+(srand()>0.4?"x":" ")+"] @"+d.fields.name+" "+c.fields.last_name+" - "+rp(["owner requested photo","send to owner","daily update photo"]));} return lines.join("\n"); }
+        case "building_supplies": return rp(["All good","- Need more paper towels\n- Bleach running low","- Light out in hallway B","Everything stocked"]);
+        case "other": return rp(["","Quiet day overall","Busy morning, slower afternoon","Full house! Great energy today",""]);
+        default: return "";
+      }
+    };
+
+    const sections = SECS.map(sid => ({id:sid, content:genSec(sid)}));
+
+    // Extract mentions from @ references in content
+    // Build a lookup of all known "DogName LastName" strings for fast matching
+    const knownNames = dogs.map(dg => {
+      const cl = clients.find(c => c.id === dg.clientId);
+      return { name: (dg.fields.name + " " + (cl ? cl.fields.last_name : "")).trim(), dog: dg, client: cl };
+    });
+    const mentions = [];
+    let mIdx = 1;
+    sections.forEach(sec => {
+      knownNames.forEach(({ name, dog: dg, client: cl }) => {
+        if (sec.content.includes("@" + name)) {
+          mentions.push({
+            id: "em" + dt.replace(/-/g,"") + "_" + (mIdx++),
+            entityType: "dog",
+            entityId: dg.id,
+            entityName: name,
+            sectionId: sec.id,
+            createdAt: dt + "T" + String(ri(7,18)).padStart(2,"0") + ":" + String(ri(0,59)).padStart(2,"0") + ":00"
+          });
+        }
+      });
+    });
+
+    const locked = off < -1;
+    const history = [{ ts: dt+"T07:00:00", action: "Created from template" }];
+    if (locked) history.push({ ts: dt+"T18:30:00", action: "Locked by Manager" });
+    if (srand()>0.6) history.push({ ts: dt+"T"+String(ri(10,16)).padStart(2,"0")+":"+String(ri(0,59)).padStart(2,"0")+":00", action: "Edited by Staff" });
+
+    eodEntries.push({ date:dt, locked, sections, mentions, history });
+  }
+
+  // Generate daily ops entries for last 3 days
+  const dailyOps = [];
+  for (let d = -3; d < 0; d++) {
+    const dd = new Date(today); dd.setDate(dd.getDate() + d); const ddt = dd.toISOString().slice(0,10);
+    const dayOfWk = dd.getDay();
+    ["opening","closing"].forEach(type => {
+      const tmpl = type === "opening" ? DEF_OPENING_TEMPLATE : DEF_CLOSING_TEMPLATE;
+      const its = {}; tmpl.forEach(t => { its[t.id] = { checked: srand() > 0.15, initials: ["ZN","JD","KM"][Math.floor(srand()*3)] }; });
+      dailyOps.push({ id:`ops_${type}_${ddt}`, type, date:ddt, locked:true, items:its, completedBy:["Skyler","Jackie","Kim"][Math.floor(srand()*3)] });
+    });
+    ["fe","be"].forEach(type => {
+      const tmpl = type === "fe" ? DEF_FE_TEMPLATE : DEF_BE_TEMPLATE;
+      const todayTmpl = tmpl.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayOfWk);
+      const its = {}; todayTmpl.forEach(t => { its[t.id] = { checked: srand() > 0.2, initials: ["ZN","JD","KM"][Math.floor(srand()*3)] }; });
+      dailyOps.push({ id:`ops_${type}_${ddt}`, type, date:ddt, locked:true, items:its, completedBy:["Skyler","Jackie","Kim"][Math.floor(srand()*3)] });
+    });
+  }
+
+  // Generate demo messages
+  function generateDemoMessages(cls, dgs, ress) {
+    const msgs = [];
+    const now = new Date();
+    const phrases = ["Hi! I wanted to confirm our reservation for next week.","Can we add an extra night to our booking?","What time should we arrive for check-in?","Thank you so much! The dogs loved it!","Do you have availability this weekend?","Can you send me an updated invoice?"];
+    const outPhrases = ["Of course! We'd be happy to help with that.","Your reservation has been confirmed. See you soon!","Check-in is between 7-10 AM. Looking forward to seeing you!","We're so glad to hear that! We loved having them.","Let me check availability and get back to you shortly.","Invoice has been sent to your email. Let us know if you have questions!"];
+    const recent = cls.slice(0, 8);
+    recent.forEach((c, ci) => {
+      const numMsgs = 2 + Math.floor(srand() * 4);
+      for (let i = 0; i < numMsgs; i++) {
+        const isInbound = i % 2 === 0;
+        const minsAgo = Math.floor(srand() * 10080) + (ci * 1440);
+        const ts = new Date(now.getTime() - minsAgo * 60000);
+        msgs.push({ id: gid(), clientId: c.id, direction: isInbound ? "inbound" : "outbound", channel: "sms", body: isInbound ? phrases[Math.floor(srand() * phrases.length)] : outPhrases[Math.floor(srand() * outPhrases.length)], timestamp: ts.toISOString(), status: isInbound ? "received" : "sent", twilioSid: null, templateId: null, readAt: (isInbound && srand() > 0.3) ? ts.toISOString() : null });
+      }
+    });
+    return msgs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  }
+
+  // Generate demo payments
+  function generateDemoPayments(cls, ress) {
+    const pmts = []; const staff = ["Skyler", "Jackie", "Kim"];
+    ress.forEach(r => {
+      if (srand() > 0.4) {
+        const client = cls.find(c => c.id === r.clientId);
+        if (!client) return;
+        const checkIn = new Date(r.checkIn);
+        if (srand() > 0.3) {
+          const depDate = new Date(checkIn.getTime() - 86400000 * Math.floor(srand() * 7 + 1));
+          const depAmt = Math.round((r.totalPrice || 150) * 0.5 * 100) / 100;
+          pmts.push({ id: gid(), reservationId: r.id, clientId: r.clientId, amount: depAmt, type: "deposit", method: srand() > 0.3 ? "card" : "cash", cardLast4: srand() > 0.3 ? String(1000 + Math.floor(srand() * 9000)) : null, status: "completed", note: "Deposit for reservation", timestamp: depDate.toISOString(), stripePaymentIntentId: null, stripeRefundId: null, processedBy: staff[Math.floor(srand() * staff.length)] });
+          if (srand() > 0.4) {
+            const balAmt = Math.round(((r.totalPrice || 150) - depAmt) * 100) / 100;
+            const tip = srand() > 0.6 ? Math.round(srand() * 20 * 100) / 100 : 0;
+            pmts.push({ id: gid(), reservationId: r.id, clientId: r.clientId, amount: balAmt + tip, type: "payment", method: srand() > 0.5 ? "card" : "cash", cardLast4: srand() > 0.5 ? String(1000 + Math.floor(srand() * 9000)) : null, status: "completed", note: tip > 0 ? `Balance + $${tip.toFixed(2)} tip` : "Balance payment", timestamp: checkIn.toISOString(), stripePaymentIntentId: null, stripeRefundId: null, processedBy: staff[Math.floor(srand() * staff.length)] });
+          }
+        } else {
+          const tip = srand() > 0.5 ? Math.round(srand() * 25 * 100) / 100 : 0;
+          pmts.push({ id: gid(), reservationId: r.id, clientId: r.clientId, amount: (r.totalPrice || 150) + tip, type: "payment", method: srand() > 0.4 ? "card" : (srand() > 0.5 ? "cash" : "check"), cardLast4: srand() > 0.4 ? String(1000 + Math.floor(srand() * 9000)) : null, status: "completed", note: tip > 0 ? `Full payment + $${tip.toFixed(2)} tip` : "Full payment", timestamp: checkIn.toISOString(), stripePaymentIntentId: null, stripeRefundId: null, processedBy: staff[Math.floor(srand() * staff.length)] });
+        }
+      }
+    });
+    return pmts.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  }
+
+  return {
+    clients, dogs, reservations,
+    clientFields: DEF_CLIENT_FIELDS,
+    dogFields: DEF_DOG_FIELDS,
+    agreements: DEF_AGREEMENTS,
+    dogTags: DEF_DOG_TAGS,
+    requiredVaccines: DEF_REQUIRED_VACCINES,
+    facilitySettings: { largeDogDaycareSF: 3600, smallDogDaycareSF: 2400 },
+    hotkeySettings: { enabled: true, showHints: true },
+    rooms: ROOMS,
+    crmEntries: [],
+    eodEntries,
+    eodTemplate: DEF_EOD_TEMPLATE,
+    dailyOps,
+    pricing: { ...DEF_PRICING },
+    breedOptions: DEF_BREED_OPTIONS,
+    feedingTimeOptions: DEF_FEEDING_TIME_OPTIONS,
+    feedingUnitOptions: DEF_FEEDING_UNIT_OPTIONS,
+    foodTypeOptions: DEF_FOOD_TYPE_OPTIONS,
+    foodSourceOptions: DEF_FOOD_SOURCE_OPTIONS,
+    feedingInstructionOptions: DEF_FEEDING_INSTRUCTION_OPTIONS,
+    medicationUnitOptions: DEF_MEDICATION_UNIT_OPTIONS,
+    bathTypeOptions: DEF_BATH_TYPE_OPTIONS,
+    messages: generateDemoMessages(clients, dogs, reservations),
+    messageTemplates: [
+      { id: gid(), name: "Booking Confirmation", body: "Hi {clientName}! Your reservation for {dogName} has been confirmed. Check-in: {checkInDate}, Check-out: {checkOutDate}. Room: {roomType}. Total: ${totalPrice}. See you soon!", active: true },
+      { id: gid(), name: "Check-in Reminder", body: "Hi {clientName}! Just a reminder that {dogName} is scheduled for check-in tomorrow ({checkInDate}). Please arrive between 7-10 AM. Don't forget vaccination records!", active: true },
+      { id: gid(), name: "Ready for Pickup", body: "Hi {clientName}! {dogName} is all ready for pickup! We had a great time with them. You can pick up anytime before 6 PM today.", active: true },
+      { id: gid(), name: "Thank You", body: "Thank you for choosing K9 Resorts, {clientName}! We loved having {dogName} stay with us. We'd appreciate a review if you have a moment. See you next time!", active: true },
+    ],
+    payments: generateDemoPayments(clients, reservations),
+  };
+}
+
+const DEMO = generateDemoData();
+
+// ─── Reusable Components ────────────────────────────────────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  render() {
+    if (this.state.hasError) {
+      return React.createElement("div", { style: { padding: 40, fontFamily: "monospace", color: "red", whiteSpace: "pre-wrap" } },
+        "RENDER ERROR: " + (this.state.error?.message || "Unknown") + "\n\n" + (this.state.error?.stack || "")
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ─── Custom Tooltip ──────────────────────────────────────────────────────────
+// Subtle underline on hover for interactive text
+function Hl({ children, style = {} }) {
+  const [h, setH] = useState(false);
+  return <span onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)} style={{ textDecoration: h ? "underline" : "none", textDecorationColor: "rgba(0,0,0,0.15)", textUnderlineOffset: 2, cursor: "pointer", ...style }}>{children}</span>;
+}
+
+function Tip({ text, children }) {
+  const [show, setShow] = useState(false);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const ref = useRef(null);
+  if (!text) return children;
+  const handleEnter = () => {
+    if (ref.current) {
+      const r = ref.current.getBoundingClientRect();
+      setPos({ x: r.left + r.width / 2, y: r.top });
+    }
+    setShow(true);
+  };
+  return (
+    <span ref={ref} onMouseEnter={handleEnter} onMouseLeave={() => setShow(false)} style={{ display: "inline-flex", cursor: "default" }}>
+      {children}
+      {show && <div style={{ position: "fixed", left: pos.x, top: pos.y - 6, transform: "translate(-50%, -100%)", padding: "6px 12px", borderRadius: 8, background: "#1a1a2e", color: "#fff", fontSize: 11, fontWeight: 600, lineHeight: 1.5, whiteSpace: "pre-line", maxWidth: 340, zIndex: 9999, pointerEvents: "none", boxShadow: "0 4px 16px rgba(0,0,0,0.25)", letterSpacing: "0.01em" }}>
+        {text}
+        <div style={{ position: "absolute", left: "50%", bottom: -4, transform: "translateX(-50%)", width: 0, height: 0, borderLeft: "5px solid transparent", borderRight: "5px solid transparent", borderTop: "5px solid #1a1a2e" }} />
+      </div>}
+    </span>
+  );
+}
+
+function Badge({children,color="default",size="sm",tip}) {
+  const cm={default:{bg:C.surfaceHover,text:C.textSec},primary:{bg:C.priLt,text:C.pri},success:{bg:C.sucLt,text:C.suc},warning:{bg:C.warnLt,text:C.warn},danger:{bg:C.danLt,text:C.dan},info:{bg:C.infoLt,text:C.info},accent:{bg:C.accLt,text:C.accDk}};
+  const s=cm[color]||cm.default;
+  const el = <span style={{display:"inline-flex",alignItems:"center",padding:size==="sm"?"2px 10px":"4px 14px",borderRadius:20,fontSize:size==="sm"?11:13,fontWeight:600,background:s.bg,color:s.text,letterSpacing:"0.01em",whiteSpace:"nowrap"}}>{children}</span>;
+  return tip ? <Tip text={tip}>{el}</Tip> : el;
+}
+
+function Btn({children,variant="primary",size="md",onClick,disabled,style={},icon}) {
+  const base={display:"inline-flex",alignItems:"center",gap:6,border:"none",cursor:disabled?"not-allowed":"pointer",fontWeight:600,fontFamily:"inherit",borderRadius:10,transition:"all 0.15s",opacity:disabled?0.5:1,letterSpacing:"0.01em"};
+  const sz={sm:{padding:"6px 14px",fontSize:13},md:{padding:"10px 20px",fontSize:14},lg:{padding:"12px 24px",fontSize:15}};
+  const vr={primary:{background:C.pri,color:"#fff"},accent:{background:C.acc,color:"#fff"},secondary:{background:C.surfaceHover,color:C.text,border:`1px solid ${C.border}`},ghost:{background:"transparent",color:C.textSec},danger:{background:C.danLt,color:C.dan},success:{background:C.suc,color:"#fff"}};
+  return <button onClick={onClick} disabled={disabled} style={{...base,...sz[size],...vr[variant],...style}}>{icon&&icon}{children}</button>;
+}
+
+function Inp({label,value,onChange,type="text",placeholder,required,style={},options,rows,autoFocus}) {
+  const ls={display:"block",fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"};
+  const is={width:"100%",padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:14,fontFamily:"inherit",color:C.text,background:C.surface,outline:"none",transition:"border 0.15s",boxSizing:"border-box",...style};
+  if(type==="select") {
+    const opts = (options||[]).map(o => typeof o === "string" ? { value: o, label: o } : o);
+    return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<select value={value||""} onChange={e=>onChange(e.target.value)} style={{...is,appearance:"none",backgroundImage:`url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236B7280' fill='none' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")`,backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center"}}><option value="">Select...</option>{opts.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select></label>;
+  }
+  if(type==="checkbox") return <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}><div onClick={()=>onChange(!value)} style={{width:22,height:22,borderRadius:6,border:`2px solid ${value?C.pri:C.border}`,background:value?C.pri:"#fff",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s",cursor:"pointer",flexShrink:0,color:"#fff"}}>{value&&<I.Check/>}</div><span style={{fontSize:14,color:C.text}}>{label}</span></label>;
+  if(type==="textarea") return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<textarea value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows||3} style={{...is,resize:"vertical",minHeight:70}} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/></label>;
+  return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<input type={type} value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={is} autoFocus={autoFocus} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/></label>;
+}
+
+function Card({children,style={},onClick,hoverable}) {
+  const [h,setH]=useState(false);
+  return <div onClick={onClick} onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)} style={{background:C.surface,borderRadius:14,border:`1px solid ${h&&hoverable?C.priL:C.border}`,padding:20,transition:"all 0.2s",cursor:onClick?"pointer":"default",transform:h&&hoverable?"translateY(-1px)":"none",boxShadow:h&&hoverable?"0 4px 12px rgba(0,0,0,0.06)":"0 1px 3px rgba(0,0,0,0.02)",...style}}>{children}</div>;
+}
+
+function Modal({title,onClose,children,wide}) {
+  useEffect(() => { const h = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }; document.addEventListener("keydown", h); return () => document.removeEventListener("keydown", h); }, [onClose]);
+  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:20}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:18,width:"100%",maxWidth:wide?720:520,maxHeight:"90vh",overflow:"auto",boxShadow:"0 24px 48px rgba(0,0,0,0.15)"}}><div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"20px 24px",borderBottom:`1px solid ${C.borderLight}`}}><h3 style={{margin:0,fontSize:18,fontWeight:700,color:C.text}}>{title}</h3><button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,display:"flex",padding:4,borderRadius:8}}><I.X/></button></div><div style={{padding:24}}>{children}</div></div></div>;
+}
+
+// ─── Itemized Receipt ───────────────────────────────────────────────────────
+function ItemizedReceipt({ pricingResult }) {
+  if (!pricingResult || pricingResult.lineItems.length === 0) return null;
+  const pr = pricingResult;
+  const fmt = (v) => `$${Math.abs(v).toFixed(2)}`;
+  return (
+    <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+      <div style={{ padding: "14px 20px", background: `linear-gradient(135deg, ${C.priLt}, ${C.surface})`, borderBottom: `1px solid ${C.borderLight}` }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: C.pri, display: "flex", alignItems: "center", gap: 8 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Pricing Breakdown
+        </div>
+      </div>
+      <div style={{ padding: "12px 20px" }}>
+        {pr.lineItems.map((line, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: i < pr.lineItems.length - 1 ? `1px solid ${C.borderLight}` : "none" }}>
+            <span style={{ fontSize: 13, color: line.isDiscount ? C.suc : line.isAddon ? C.textSec : C.text, fontWeight: line.isDiscount ? 600 : 500, fontStyle: line.isAddon ? "italic" : "normal" }}>
+              {line.isDiscount && "↓ "}{line.label}
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: line.isDiscount ? C.suc : C.text, whiteSpace: "nowrap" }}>
+              {line.total < 0 ? `−${fmt(line.total)}` : fmt(line.total)}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div style={{ padding: "14px 20px", background: C.bg, borderTop: `1.5px solid ${C.border}` }}>
+        {pr.discountTotal > 0 && (
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+            <span style={{ fontSize: 12, color: C.suc, fontWeight: 600 }}>Discount</span>
+            <span style={{ fontSize: 12, color: C.suc, fontWeight: 700 }}>−{fmt(pr.discountTotal)}</span>
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: pr.deposit > 0 ? 8 : 0 }}>
+          <span style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Total</span>
+          <span style={{ fontSize: 15, fontWeight: 800, color: C.text }}>{fmt(pr.total)}</span>
+        </div>
+        {pr.deposit > 0 && (
+          <div style={{ padding: "10px 14px", borderRadius: 10, background: C.accLt, border: `1px solid ${C.acc}30` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.acc }}>Deposit Due ({pr.depositPercent}%{!pr.depositRefundable ? " non-refundable" : ""})</span>
+              <span style={{ fontSize: 13, fontWeight: 800, color: C.acc }}>{fmt(pr.deposit)}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Balance due at {pr.payAt === "checkout" ? "checkout" : "check-in"}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.textSec }}>{fmt(pr.balance)}</span>
+            </div>
+          </div>
+        )}
+        {pr.deposit === 0 && pr.total > 0 && (
+          <div style={{ fontSize: 12, color: C.textSec, fontWeight: 600, marginTop: 4 }}>
+            {pr.payAt === "checkout" ? "Payment due at checkout" : pr.payAt === "free" ? "No charge" : "Payment due at booking"}
+          </div>
+        )}
+        {pr.total === 0 && (
+          <div style={{ fontSize: 12, color: C.suc, fontWeight: 600, marginTop: 4 }}>No charge</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Agreement Status Icons (for client rows) ──────────────────────────────
+const agrSigned = (client, agrId) => {
+  const v = client.agreements && client.agreements[agrId];
+  if (!v) return null;
+  // Support both old boolean format and new { signed, date } format
+  if (v === true) return { signed: true, date: null };
+  if (v && v.signed) return v;
+  return null;
+};
+
+function AgreementIcons({ client, agreements }) {
+  if (!agreements || agreements.length === 0) return null;
+  return (
+    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+      {agreements.map(agr => {
+        const info = agrSigned(client, agr.id);
+        const done = !!info;
+        const dateFmt = info && info.date ? new Date(info.date + "T00:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }) : null;
+        const tipText = done
+          ? `${agr.name} — Signed${dateFmt ? ` ${dateFmt}` : ""}`
+          : `${agr.name} — Not signed`;
+        return (
+          <Tip key={agr.id} text={tipText}>
+            <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: 10, background: done ? C.sucLt : C.danLt, color: done ? C.suc : C.dan, cursor: "default", flexShrink: 0 }}>
+              {done ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>}
+            </div>
+          </Tip>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Dog Tag Chips ──────────────────────────────────────────────────────────
+function DogTagChips({ dog, dogTags, size = "sm" }) {
+  if (!dog.tags || dog.tags.length === 0) return null;
+  if (size === "sm") {
+    return (
+      <div style={{ display: "inline-flex", gap: 3, flexWrap: "wrap" }}>
+        {dog.tags.map(tagId => {
+          const tag = dogTags.find(t => t.id === tagId);
+          if (!tag) return null;
+          const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
+          const abbr = tag.name.split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
+          return (
+            <Tip key={tagId} text={tag.name}>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, borderRadius: 4, fontSize: 10, fontWeight: 800, background: tc.text, color: "#fff", cursor: "default", flexShrink: 0, padding: "0 3px", letterSpacing: 0 }}>{abbr}</span>
+            </Tip>
+          );
+        })}
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+      {dog.tags.map(tagId => {
+        const tag = dogTags.find(t => t.id === tagId);
+        if (!tag) return null;
+        const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
+        return (
+          <Tip key={tagId} text={tag.name}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "3px 10px", borderRadius: 6, fontSize: 12, fontWeight: 700, background: tc.bg, color: tc.text, whiteSpace: "nowrap", cursor: "default" }}>
+              <I.Tag />{tag.name}
+            </span>
+          </Tip>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── Vaccine Status Icon (always visible) ──────────────────────────────────
+function VaxIcon({ dog, requiredVaccines, policies, size = 16 }) {
+  const vs = getVaxStatus(dog, requiredVaccines, policies);
+  const rv = requiredVaccines || DEF_REQUIRED_VACCINES;
+  const pol = policies || {};
+  const graceDays = pol.vaccineGraceDays ?? 7;
+  const warningDays = pol.vaccineWarningDays ?? 30;
+  const ok = vs.ok && vs.graceperiod.length === 0;
+  const now = new Date();
+  const lines = rv.map(vId => {
+    const vax = VACCINES.find(v => v.id === vId);
+    const name = vax ? vax.name : vId;
+    const val = dog.fields[vId];
+    if (!val) return `${name}: Never input`;
+    const d = new Date(val + "T00:00:00");
+    const diffDays = (d - now) / 86400000;
+    const dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    if (diffDays < 0 && graceDays > 0 && Math.abs(diffDays) <= graceDays) return `${name}: Grace period — expired ${dateStr}`;
+    if (diffDays < 0) return `${name}: Expired ${dateStr}`;
+    if (diffDays < warningDays) return `${name}: Expiring soon — ${dateStr}`;
+    return `${name}: Valid until ${dateStr}`;
+  });
+  const statusLabel = ok ? "✓ All vaccines current" : vs.graceperiod.length > 0 && vs.expired.length === 0 && vs.missing.length === 0 ? "⚡ Grace period" : "⚠ Vaccines need attention";
+  const title = statusLabel + "\n" + lines.join("\n");
+  // Color logic: green=ok, amber=grace-period-only, yellow=expiring-soon-only, red=expired/missing
+  const color = ok ? C.suc : vs.expired.length > 0 || vs.missing.length > 0 ? C.dan : vs.graceperiod.length > 0 ? C.acc : C.warn;
+  return (
+    <Tip text={title}>
+      <span style={{ display: "inline-flex", color, flexShrink: 0, cursor: "default" }}>
+        {ok ? <I.VaxOk /> : <I.VaxBad />}
+      </span>
+    </Tip>
+  );
+}
+
+// ─── Dog Avatar ─────────────────────────────────────────────────────────────
+const DOG_AVATAR_COLORS = [
+  ["#FF6B6B","#C0392B"],["#F39C12","#D68910"],["#2ECC71","#27AE60"],["#3498DB","#2980B9"],
+  ["#9B59B6","#8E44AD"],["#1ABC9C","#16A085"],["#E74C3C","#CB4335"],["#F1C40F","#D4AC0D"],
+  ["#E67E22","#CA6F1E"],["#2980B9","#1F618D"],["#8E44AD","#6C3483"],["#27AE60","#1E8449"],
+];
+const dogAvatarColor = (name) => {
+  let h = 0;
+  for (let i = 0; i < (name||"").length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+  return DOG_AVATAR_COLORS[Math.abs(h) % DOG_AVATAR_COLORS.length];
+};
+
+function DogAvatar({ dog, size = 32 }) {
+  const name = dog?.fields?.name || "?";
+  const pic = dog?.profilePic;
+  if (pic) return <img src={pic} alt={name} style={{ width: size, height: size, borderRadius: size * 0.3, objectFit: "cover", flexShrink: 0 }} />;
+  const iconSz = Math.round(size * 0.45);
+  return (
+    <div style={{ width: size, height: size, borderRadius: size * 0.3, background: "#E5E7EB", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+      <svg width={iconSz} height={iconSz} viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+    </div>
+  );
+}
+
+function DogPicHover({ dog, size = 20 }) {
+  const [show, setShow] = useState(false);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const ref = useRef(null);
+  const name = dog?.fields?.name || "?";
+  const breed = dog?.fields?.breed || "";
+  const pic = dog?.profilePic;
+  const handleEnter = () => {
+    if (ref.current) { const r = ref.current.getBoundingClientRect(); setPos({ x: r.left + r.width / 2, y: r.top }); }
+    setShow(true);
+  };
+  const smallIcon = Math.round(size * 0.55);
+  return (
+    <span ref={ref} onMouseEnter={handleEnter} onMouseLeave={() => setShow(false)} style={{ display: "inline-flex", cursor: "pointer", flexShrink: 0 }}>
+      {pic
+        ? <img src={pic} alt={name} style={{ width: size, height: size, borderRadius: size * 0.3, objectFit: "cover" }} />
+        : <div style={{ width: size, height: size, borderRadius: size * 0.3, background: "#E5E7EB", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width={smallIcon} height={smallIcon} viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </div>
+      }
+      {show && <div style={{ position: "fixed", left: pos.x, top: pos.y - 8, transform: "translate(-50%, -100%)", zIndex: 9999, pointerEvents: "none" }}>
+        <div style={{ background: "#1a1a2e", borderRadius: 14, padding: 8, boxShadow: "0 8px 32px rgba(0,0,0,0.35)", display: "flex", flexDirection: "column", alignItems: "center" }}>
+          {pic
+            ? <img src={pic} alt={name} style={{ width: 120, height: 120, borderRadius: 12, objectFit: "cover" }} />
+            : <div style={{ width: 120, height: 120, borderRadius: 12, background: "#E5E7EB", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+              </div>
+          }
+          <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: "#fff" }}>{name}</div>
+          {breed && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", marginTop: 1 }}>{breed}</div>}
+        </div>
+        <div style={{ width: 0, height: 0, borderLeft: "6px solid transparent", borderRight: "6px solid transparent", borderTop: "6px solid #1a1a2e", margin: "0 auto" }} />
+      </div>}
+    </span>
+  );
+}
+
+// ─── Data Hook ──────────────────────────────────────────────────────────────
+// useData is now imported from ./useData.js (Supabase-powered)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BOARDING PREVIEW / CHECK-IN MODAL
+// ═══════════════════════════════════════════════════════════════════════════
+function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose, onSave, data, save }) {
+  // Profile defaults
+  const profileFeeding = summarizeFeeding(dog.fields.feedingSchedules) || "";
+  const profileMeds = summarizeMeds(dog.fields.medicationSchedules) || "";
+  const profileBath = dog.fields.bath_type || "";
+  const clientEcName = client.fields.emergency_contact || "";
+  const clientEcPhone = client.fields.emergency_phone || "";
+
+  // Local state — initialized from careOverrides (if set) else profile
+  const [parentDest, setParentDest] = useState(reservation.parentDestination || "");
+  const [belongings, setBelongings] = useState(reservation.belongings || "");
+  const [checkIn, setCheckIn] = useState(reservation.checkIn);
+  const [checkOut, setCheckOut] = useState(reservation.checkOut);
+  const [checkInTime, setCheckInTime] = useState(reservation.checkInTime);
+  const [checkOutTime, setCheckOutTime] = useState(reservation.checkOutTime);
+  const [feeding, setFeeding] = useState(reservation.careOverrides?.feeding ?? profileFeeding);
+  const [medications, setMedications] = useState(reservation.careOverrides?.medications ?? profileMeds);
+  const [bathType, setBathType] = useState(reservation.careOverrides?.bath_type ?? profileBath);
+  const [ecName, setEcName] = useState(reservation.emergencyContactOverride?.name ?? clientEcName);
+  const [ecPhone, setEcPhone] = useState(reservation.emergencyContactOverride?.phone ?? clientEcPhone);
+  const [notes, setNotes] = useState(reservation.notes || "");
+  const [errors, setErrors] = useState({});
+  const [showConflict, setShowConflict] = useState(false);
+  const [pendingChanges, setPendingChanges] = useState([]);
+  const [pendingAction, setPendingAction] = useState(null); // "save" or "checkin"
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [showPayForm, setShowPayForm] = useState(false);
+
+  const BATH_OPTS = data.bathTypeOptions || ["Standard","Hypo","Medicated","Whitening"];
+  const feedingChanged = feeding !== profileFeeding;
+  const medsChanged = medications !== profileMeds;
+  const bathChanged = bathType !== profileBath;
+  const ecNameChanged = ecName !== clientEcName;
+  const ecPhoneChanged = ecPhone !== clientEcPhone;
+
+  // Build updated reservation object
+  const buildUpdatedRes = () => ({
+    ...reservation,
+    parentDestination: parentDest,
+    belongings,
+    checkIn, checkOut, checkInTime, checkOutTime,
+    notes,
+    careOverrides: { feeding, medications, bath_type: bathType },
+    emergencyContactOverride: (ecNameChanged || ecPhoneChanged) ? { name: ecName, phone: ecPhone } : reservation.emergencyContactOverride || null,
+  });
+
+  // Detect profile changes
+  const detectChanges = () => {
+    const changes = [];
+    if (feedingChanged && feeding !== "") changes.push({ type:"dog", field:"feeding", label:"Feeding Instructions", oldVal:profileFeeding, newVal:feeding });
+    if (medsChanged && medications !== "" && medications !== "None") changes.push({ type:"dog", field:"medications", label:"Medications", oldVal:profileMeds, newVal:medications });
+    if (bathChanged && bathType !== "") changes.push({ type:"dog", field:"bath_type", label:"Bathing Preference", oldVal:profileBath, newVal:bathType });
+    if (ecNameChanged && ecName !== "") changes.push({ type:"client", field:"emergency_contact", label:"Emergency Contact Name", oldVal:clientEcName, newVal:ecName });
+    if (ecPhoneChanged && ecPhone !== "") changes.push({ type:"client", field:"emergency_phone", label:"Emergency Contact Phone", oldVal:clientEcPhone, newVal:ecPhone });
+    return changes;
+  };
+
+  const isBoarding = reservation.type === "boarding";
+  const handleSave = (doCheckIn) => {
+    if (doCheckIn && isBoarding) {
+      const errs = {};
+      if (!parentDest.trim()) errs.parentDestination = "Required — ask where the parent is going";
+      if (!belongings.trim()) errs.belongings = "Required — list items brought from home";
+      if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+    }
+    setErrors({});
+    const changes = detectChanges();
+    if (changes.length > 0) {
+      setPendingChanges(changes);
+      setPendingAction(doCheckIn ? "checkin" : "save");
+      setShowConflict(true);
+    } else {
+      onSave(buildUpdatedRes(), doCheckIn);
+    }
+  };
+
+  const confirmConflict = async (updateProfiles) => {
+    let newData = { ...data };
+    if (updateProfiles) {
+      const dogChanges = pendingChanges.filter(c => c.type === "dog");
+      if (dogChanges.length) {
+        newData.dogs = data.dogs.map(d => {
+          if (d.id !== dog.id) return d;
+          const fields = { ...d.fields };
+          dogChanges.forEach(c => { fields[c.field] = c.newVal; });
+          return { ...d, fields };
+        });
+      }
+      const clientChanges = pendingChanges.filter(c => c.type === "client");
+      if (clientChanges.length) {
+        newData.clients = data.clients.map(cl => {
+          if (cl.id !== client.id) return cl;
+          const fields = { ...cl.fields };
+          clientChanges.forEach(ch => { fields[ch.field] = ch.newVal; });
+          return { ...cl, fields };
+        });
+      }
+    }
+    const updatedRes = buildUpdatedRes();
+    const doCheckIn = pendingAction === "checkin";
+    const merged = doCheckIn ? { ...updatedRes, status: "checked-in" } : updatedRes;
+    newData.reservations = newData.reservations.map(r => r.id === reservation.id ? merged : r);
+    // CRM auto-creation for boarding check-in
+    if (doCheckIn) {
+      const crm = newData.crmEntries || [];
+      const alreadyExists = crm.some(e => e.reservationId === reservation.id);
+      if (!alreadyExists) {
+        const cn = `${client.fields.first_name || ""} ${client.fields.last_name || ""}`.trim();
+        const hasPriorBoarding = data.reservations.some(r => r.id !== reservation.id && r.type === "boarding" && r.clientId === reservation.clientId && r.dogId === reservation.dogId && (r.status === "checked-out" || r.status === "checked-in"));
+        if (!hasPriorBoarding) {
+          newData.crmEntries = [...crm, { id: "crm_" + gid(), reservationId: reservation.id, tab: "first_time_boarder", clientName: cn, dogName: dog.fields.name, phone: client.fields.phone || "", resStart: reservation.checkIn, resEnd: reservation.checkOut, textBefore: false, initialBefore: "", duringStay: "", initialDuring: "", atCheckout: "", toolBox: "", outcome: "", initialCheckout: "", followUp1: "", outcomeFU1: "", initialFU1: "", sendCard: false, giftInCard: "", results: "", comments: "", createdAt: todayStr() }];
+        }
+      }
+    }
+    await save(newData);
+    setShowConflict(false);
+    onClose();
+  };
+
+  const secHeader = (label) => <div style={{fontSize:11,fontWeight:700,color:C.textMut,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10,marginTop:20}}>{label}</div>;
+  const profileHint = (label, changed) => (
+    <div style={{fontSize:11,color:changed?C.acc:C.textMut,fontStyle:"italic",marginTop:2}}>
+      {changed ? <><Badge color="warning" size="sm">Modified</Badge> <span style={{marginLeft:4}}>Profile: {label || "(empty)"}</span></> : `Profile: ${label || "(empty)"}`}
+    </div>
+  );
+  const errMsg = (field) => errors[field] ? <div style={{color:C.dan,fontSize:12,fontWeight:600,marginTop:4}}>{errors[field]}</div> : null;
+
+  return (
+    <Modal title={isCheckInMode ? `Check In: ${dog.fields.name}` : `${isBoarding ? "Boarding" : "Daycare"} Reservation: ${dog.fields.name}`} onClose={onClose} wide>
+      {/* Header info bar */}
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+        <span style={{fontSize:16,fontWeight:800,color:C.text}}>{dog.fields.name}</span>
+        <Badge color="default" size="sm">{dog.fields.breed}</Badge>
+        <span style={{fontSize:13,color:C.textSec}}>owned by <strong>{client.fields.first_name} {client.fields.last_name}</strong></span>
+        <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+          <Badge color={reservation.status==="checked-in"?"success":reservation.status==="upcoming"?"info":"default"}>{reservation.status==="checked-in"?"Checked In":reservation.status==="upcoming"?"Upcoming":"Checked Out"}</Badge>
+          {reservation.roomType && <Badge color="primary">{reservation.roomType} · Room {reservation.room}</Badge>}
+        </div>
+      </div>
+
+      {/* Section: Dates */}
+      {secHeader("Reservation Dates")}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12}}>
+        <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn}/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
+        <Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime}/>
+        <div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut}/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
+        <Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/>
+      </div>
+
+      {/* Section: Check-In Requirements (boarding only shows required fields) */}
+      {isBoarding && <>
+        {secHeader(isCheckInMode ? "Check-In Requirements" : "Stay Details")}
+        <div style={{padding:"16px 18px",borderRadius:12,border:`1.5px solid ${isCheckInMode?C.acc:C.border}`,background:isCheckInMode?C.accLt+"20":C.bg}}>
+          <Inp label={<>Parent Destination {isCheckInMode && <span style={{color:C.dan}}>*</span>}</>} value={parentDest} onChange={v=>{setParentDest(v);setErrors({...errors,parentDestination:undefined});}} placeholder="Where is the parent going during this stay?"/>
+          {errMsg("parentDestination")}
+          <div style={{marginTop:12}}>
+            <Inp label={<>Belongings from Home {isCheckInMode && <span style={{color:C.dan}}>*</span>}</>} type="textarea" rows={2} value={belongings} onChange={v=>{setBelongings(v);setErrors({...errors,belongings:undefined});}} placeholder="List items brought from home (bed, toys, food, etc.)"/>
+            {errMsg("belongings")}
+          </div>
+        </div>
+      </>}
+
+      {/* Section: Care Instructions */}
+      {secHeader("Care Instructions")}
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        <div>
+          <Inp label="Feeding Instructions" type="textarea" rows={2} value={feeding} onChange={setFeeding} placeholder="e.g. 2 cups AM/PM Blue Buffalo"/>
+          {profileHint(profileFeeding, feedingChanged)}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <div>
+            <Inp label="Medication Instructions" type="textarea" rows={2} value={medications} onChange={setMedications} placeholder="e.g. Glucosamine 1 tablet daily"/>
+            {profileHint(profileMeds, medsChanged)}
+          </div>
+          <div>
+            <Inp label="Bathing Preference" type="select" value={bathType} onChange={setBathType} options={BATH_OPTS}/>
+            {profileHint(profileBath, bathChanged)}
+          </div>
+        </div>
+      </div>
+
+      {/* Section: Emergency Contact */}
+      {secHeader("Emergency Contact")}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <div>
+          <Inp label="Contact Name" value={ecName} onChange={setEcName} placeholder="Emergency contact name"/>
+          {profileHint(clientEcName, ecNameChanged)}
+        </div>
+        <div>
+          <Inp label="Contact Phone" type="tel" value={ecPhone} onChange={setEcPhone} placeholder="Emergency contact phone"/>
+          {profileHint(clientEcPhone, ecPhoneChanged)}
+        </div>
+      </div>
+
+      {/* Section: Notes */}
+      {secHeader("Notes")}
+      <Inp type="textarea" rows={2} value={notes} onChange={setNotes} placeholder="Special instructions for this stay..."/>
+
+      {/* Section: Pricing Estimate */}
+      {secHeader("Pricing Estimate")}
+      {(() => {
+        const pr = calcReservationPricing({
+          type: reservation.type || "boarding",
+          roomType: reservation.roomType,
+          checkIn, checkOut, checkInTime, checkOutTime,
+          dogs: [dog], dogProfiles: data.dogs,
+          pricing: data.pricing,
+          isSecondDogSameRoom: false,
+        });
+        const collected = reservation.amountCollected || 0;
+        const outstanding = Math.max(0, pr.total - collected);
+        return pr.total > 0 ? (
+          <div>
+            <ItemizedReceipt pricingResult={pr} />
+            <div style={{display:"flex",gap:12,marginTop:10}}>
+              <div style={{flex:1,padding:"10px 14px",borderRadius:10,background:C.sucLt,border:`1px solid ${C.suc}25`}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.suc,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>Collected</div>
+                <div style={{fontSize:18,fontWeight:800,color:C.suc}}>${collected.toFixed(2)}</div>
+              </div>
+              <div style={{flex:1,padding:"10px 14px",borderRadius:10,background:outstanding>0?C.accLt:`${C.suc}10`,border:`1px solid ${outstanding>0?C.acc:C.suc}25`}}>
+                <div style={{fontSize:10,fontWeight:700,color:outstanding>0?C.acc:C.suc,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{outstanding>0?"Outstanding":"Paid in Full"}</div>
+                <div style={{fontSize:18,fontWeight:800,color:outstanding>0?C.acc:C.suc}}>${outstanding.toFixed(2)}</div>
+              </div>
+            </div>
+          </div>
+        ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No charge for this reservation.</div>;
+      })()}
+
+      {/* Section: Payment History */}
+      {secHeader("Payment History")}
+      {(() => {
+        const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        const totalPaid = resPmts.filter(p => p.status === "completed" && p.type !== "refund").reduce((s, p) => s + p.amount, 0);
+        const totalRefunded = resPmts.filter(p => p.type === "refund" || p.status === "refunded").reduce((s, p) => s + p.amount, 0);
+        const statusClr = { completed: C.suc, pending: "#f59e0b", refunded: C.dan, failed: C.dan };
+        const typeClr = { payment: C.pri, deposit: "#0ea5e9", tip: "#ec4899", refund: C.dan };
+        return (
+          <div>
+            {resPmts.length > 0 ? (
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {resPmts.map(p => (
+                  <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:C.bg,border:`1px solid ${C.border}`}}>
+                    <span style={{padding:"2px 6px",borderRadius:4,fontSize:11,fontWeight:600,background:typeClr[p.type]+"18",color:typeClr[p.type]}}>{p.type}</span>
+                    <span style={{fontSize:14,fontWeight:700,color:C.text}}>${p.amount.toFixed(2)}</span>
+                    <span style={{fontSize:12,color:C.textMut}}>{p.method === "card" ? `Card ····${p.cardLast4||""}` : p.method}</span>
+                    <span style={{fontSize:12,color:C.textMut,marginLeft:"auto"}}>{new Date(p.timestamp).toLocaleDateString()}</span>
+                    <span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:600,background:statusClr[p.status]+"18",color:statusClr[p.status]}}>{p.status}</span>
+                  </div>
+                ))}
+                {totalRefunded > 0 && <div style={{fontSize:12,color:C.dan,marginTop:4}}>Refunded: ${totalRefunded.toFixed(2)}</div>}
+              </div>
+            ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No payments recorded</div>}
+            <div style={{display:"flex",gap:8,marginTop:10}}>
+              <button onClick={()=>setShowPayForm(true)} style={{padding:"7px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><I.DollarSign/> Collect Payment</button>
+              {totalPaid > 0 && <button onClick={()=>{setShowPayForm(true);}} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${C.dan}30`,background:"transparent",color:C.dan,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><I.RefreshCw/> Issue Refund</button>}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Payment Form Modal */}
+      {showPayForm && (
+        <PaymentFormModal
+          onClose={()=>setShowPayForm(false)}
+          client={client}
+          reservation={reservation}
+          onSave={async (pmt) => {
+            const payments = [...(data.payments||[]), pmt];
+            const resPmts = payments.filter(p => p.reservationId === reservation.id && p.status === "completed" && p.type !== "refund");
+            const resRefunds = payments.filter(p => p.reservationId === reservation.id && (p.type === "refund" || p.status === "refunded"));
+            const newCollected = resPmts.reduce((s, p) => s + p.amount, 0) - resRefunds.reduce((s, p) => s + p.amount, 0);
+            await save({...data, payments, reservations: data.reservations.map(r => r.id === reservation.id ? {...r, amountCollected: newCollected} : r)});
+            setShowPayForm(false);
+          }}
+        />
+      )}
+
+      {/* Footer */}
+      <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:24,alignItems:"center"}}>
+        {reservation.status !== "checked-out" && reservation.status !== "cancelled" && (
+          <button onClick={()=>setShowCancelConfirm(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"7px 14px",borderRadius:8,border:`1px solid ${C.danLt}`,background:"transparent",color:C.dan,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginRight:"auto"}}><I.Trash/> Cancel Reservation</button>
+        )}
+        <Btn variant="secondary" onClick={onClose}>Close</Btn>
+        {isCheckInMode ? (
+          <Btn variant="success" onClick={()=>handleSave(true)} icon={<I.LogIn/>}>Check In</Btn>
+        ) : (
+          <Btn onClick={()=>handleSave(false)}>Save Changes</Btn>
+        )}
+      </div>
+
+      {/* Cancel Reservation Confirmation */}
+      {showCancelConfirm && (
+        <Modal title="Cancel Reservation?" onClose={()=>setShowCancelConfirm(false)}>
+          <p style={{fontSize:14,color:C.text,lineHeight:1.6,margin:"0 0 8px"}}>
+            Are you sure you want to cancel the reservation for <strong>{dog.fields.name}</strong>?
+          </p>
+          <div style={{padding:"12px 16px",borderRadius:10,background:C.bg,border:`1px solid ${C.border}`,marginBottom:20}}>
+            <div style={{fontSize:13,color:C.textSec}}>{reservation.roomType ? `${reservation.roomType} · ` : ""}{fmtDate(reservation.checkIn)} — {fmtDate(reservation.checkOut)}</div>
+          </div>
+          <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+            <Btn variant="secondary" onClick={()=>setShowCancelConfirm(false)}>Keep Reservation</Btn>
+            <Btn variant="danger" onClick={async ()=>{
+              await save({...data, reservations: data.reservations.map(r => r.id === reservation.id ? {...r, status:"cancelled"} : r)});
+              setShowCancelConfirm(false);
+              onClose();
+            }} icon={<I.Trash/>}>Cancel Reservation</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Conflict Resolution Modal */}
+      {showConflict && (
+        <Modal title="Update Profile?" onClose={()=>setShowConflict(false)} wide>
+          <div style={{marginBottom:16}}>
+            <p style={{fontSize:14,color:C.text,lineHeight:1.6,margin:"0 0 16px"}}>
+              You changed care instructions or emergency contact for this reservation. Would you like to update the profile for all future reservations, or keep these changes just for this reservation?
+            </p>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {pendingChanges.map((ch,i) => (
+                <div key={i} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.border}`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                    <span style={{fontSize:13,fontWeight:700,color:C.text}}>{ch.type==="dog"?dog.fields.name:`${client.fields.first_name} ${client.fields.last_name}`}</span>
+                    <Badge color="accent" size="sm">{ch.label}</Badge>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 24px 1fr",gap:8,alignItems:"start"}}>
+                    <div style={{padding:"6px 10px",borderRadius:8,background:C.danLt,fontSize:12,color:C.dan}}>
+                      <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",marginBottom:2}}>Profile (current)</div>
+                      {ch.oldVal || <span style={{fontStyle:"italic",opacity:0.6}}>Empty</span>}
+                    </div>
+                    <div style={{textAlign:"center",color:C.textMut,paddingTop:6}}>→</div>
+                    <div style={{padding:"6px 10px",borderRadius:8,background:C.sucLt,fontSize:12,color:C.suc}}>
+                      <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",marginBottom:2}}>New value</div>
+                      {ch.newVal}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}}>
+            <Btn variant="secondary" onClick={()=>setShowConflict(false)}>Cancel</Btn>
+            <Btn variant="accent" onClick={()=>confirmConflict(false)}>This Reservation Only</Btn>
+            <Btn onClick={()=>confirmConflict(true)}>Update Profile(s)</Btn>
+          </div>
+        </Modal>
+      )}
+    </Modal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DASHBOARD - Tabbed layout with check-in/out times
+// ═══════════════════════════════════════════════════════════════════════════
+function DashboardPage({ data, save, nav, onNew }) {
+  const td = todayStr();
+  const [viewDate, setViewDate] = useState(td);
+  const [activeTab, setActiveTab] = useState("expected");
+  const [sortCol, setSortCol] = useState(null);
+  const [sortDir, setSortDir] = useState("asc");
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [showSummaryDetail, setShowSummaryDetail] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilters, setTypeFilters] = useState(new Set());
+  const toggleTypeFilter = (type) => setTypeFilters(prev => {
+    const next = new Set(prev);
+    if (next.has(type)) next.delete(type); else next.add(type);
+    return next;
+  });
+  const typeFilterActive = typeFilters.size > 0;
+  const typeMatch = (r) => !typeFilterActive || typeFilters.has(r.type);
+
+  const shiftDate = (days) => {
+    const d = new Date(viewDate + "T12:00:00");
+    d.setDate(d.getDate() + days);
+    setViewDate(d.toISOString().split("T")[0]);
+  };
+  const isToday = viewDate === td;
+  const viewDateObj = new Date(viewDate + "T12:00:00");
+  const viewDateLabel = viewDateObj.toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"});
+
+  const cn = (cid) => { const c=data.clients.find(x=>x.id===cid); return c?`${c.fields.first_name||""} ${c.fields.last_name||""}`.trim():"Unknown"; };
+  const dn = (did) => { const d=data.dogs.find(x=>x.id===did); return d?d.fields.name||"Unknown":"Unknown"; };
+  const db = (did) => { const d=data.dogs.find(x=>x.id===did); return d?d.fields.breed||"":""; };
+  const getDog = (did) => data.dogs.find(x=>x.id===did);
+
+  // Reservations for viewed date (any status, touching that date)
+  const vd = viewDate;
+  const todayAll = data.reservations.filter(r => r.status !== "cancelled" && (r.checkIn === vd || r.checkOut === vd || (r.checkIn <= vd && r.checkOut >= vd)));
+
+  const expected = data.reservations.filter(r=>r.checkIn===vd&&r.status==="upcoming");
+  const inHouse = data.reservations.filter(r=>r.status==="checked-in"&&r.checkIn<=vd&&r.checkOut>=vd);
+  const goingHome = data.reservations.filter(r=>r.status==="checked-in"&&r.checkOut===vd);
+  const checkedOut = data.reservations.filter(r=>r.status==="checked-out"&&r.checkOut===vd);
+
+  // Facility capacity calculations
+  const fs = data.facilitySettings || { largeDogDaycareSF: 0, smallDogDaycareSF: 0 };
+  const lgDaycareCap = Math.floor((fs.largeDogDaycareSF || 0) / 18);
+  const smDaycareCap = Math.floor((fs.smallDogDaycareSF || 0) / 12);
+  const allRooms = data.rooms || {};
+  const totalRoomCount = Object.values(allRooms).reduce((sum, arr) => sum + arr.length, 0);
+
+  // Count dogs in large daycare (checked-in daycare or boarding dogs classified as large)
+  const lgDaycareCount = inHouse.filter(r => {
+    if (r.type === "daycare" && r.daycareSize === "large") return true;
+    if (r.type === "boarding") { const dog = data.dogs.find(d => d.id === r.dogId); return dog && getDogDaycareSize(dog) === "large"; }
+    return false;
+  }).length;
+  // Count dogs in small daycare
+  const smDaycareCount = inHouse.filter(r => {
+    if (r.type === "daycare" && r.daycareSize === "small") return true;
+    if (r.type === "boarding") { const dog = data.dogs.find(d => d.id === r.dogId); return dog && getDogDaycareSize(dog) === "small"; }
+    return false;
+  }).length;
+  // Count boarding rooms occupied tonight (exclude dogs checking out today — their room frees up tonight)
+  const boardingInHouse = inHouse.filter(r => r.type === "boarding");
+  const boardingOcc = boardingInHouse.filter(r => r.checkOut !== vd).length;
+
+  const [boardingPreviewId, setBoardingPreviewId] = useState(null);
+
+  // Quick Daycare Check-in
+  const [showQuickDC, setShowQuickDC] = useState(false);
+  const [dcSearch, setDcSearch] = useState("");
+  const dcSearchRef = useRef(null);
+  useEffect(() => { if (showQuickDC && dcSearchRef.current) dcSearchRef.current.focus(); }, [showQuickDC]);
+
+  const quickDCCheckIn = async (clientId, dogId) => {
+    const dog = data.dogs.find(d => d.id === dogId);
+    const daycareSize = dog ? getDogDaycareSize(dog) : "large";
+    const newRes = {
+      id: gid(), clientId, dogId, type: "daycare", daycareSize,
+      checkIn: vd, checkOut: vd,
+      checkInTime: new Date().toTimeString().slice(0, 5),
+      checkOutTime: "", status: "checked-in", notes: "",
+      careOverrides: {},
+      pricing: calcReservationPricing({
+        type: "daycare", checkIn: vd, checkOut: vd,
+        checkInTime: new Date().toTimeString().slice(0, 5),
+        checkOutTime: "", daycareSize,
+        dogs: dog ? [dog] : [], dogProfiles: data.dogs,
+        pricing: data.pricing, isSecondDogSameRoom: false,
+      }),
+    };
+    await save({ ...data, reservations: [...data.reservations, newRes] });
+    setShowQuickDC(false);
+    setDcSearch("");
+    addDashToast({ dogName: dog?.fields?.name || "?", action: "daycare checked in", oldVal: "Walk-in", newVal: "Checked In", undoRes: newRes });
+  };
+
+  // Toast notifications
+  const [dashToasts, setDashToasts] = useState([]);
+  const dashToastId = useRef(0);
+  const addDashToast = (t) => {
+    const id = ++dashToastId.current;
+    const toast = { id, ...t };
+    setDashToasts(prev => [...prev, toast]);
+    setTimeout(() => setDashToasts(prev => prev.filter(x => x.id !== id)), 10000);
+  };
+  const dismissDashToast = (id) => setDashToasts(prev => prev.filter(x => x.id !== id));
+  const undoDashToast = async (toast) => {
+    await save({ ...data, reservations: data.reservations.map(r => r.id === toast.undoRes.id ? toast.undoRes : r) });
+    dismissDashToast(toast.id);
+  };
+
+  // Direct check-in for non-boarding (evals, tours, daycare) with CRM auto-creation
+  const directCheckIn = async (rid) => {
+    const res = data.reservations.find(r => r.id === rid);
+    const newData = { ...data, reservations: data.reservations.map(r => r.id === rid ? { ...r, status: "checked-in" } : r) };
+    if (res) {
+      const client = data.clients.find(c => c.id === res.clientId);
+      const dog = data.dogs.find(d => d.id === res.dogId);
+      const cn = client ? `${client.fields.first_name || ""} ${client.fields.last_name || ""}`.trim() : "Unknown";
+      const cp = client ? (client.fields.phone || "") : "";
+      const ce = client ? (client.fields.email || "") : "";
+      const dogName = dog ? dog.fields.name : "?";
+      const crm = newData.crmEntries || [];
+      const alreadyExists = crm.some(e => e.reservationId === rid);
+      if (!alreadyExists) {
+        let entry = null;
+        if (res.type === "evaluation") {
+          entry = { id: "crm_" + gid(), reservationId: rid, tab: "evaluations", clientName: cn, dogName, phone: cp, email: ce, date: res.checkIn, passOrFail: "", feedback: "", textDuringEval: false, initialEval: "", atCheckout: "", toolBox: "", outcome: "", initialCheckout: "", followUp1: "", initialFU1: "", outcomeFU1: "", sendCard: false, giftInCard: "", results: "", comments: "", createdAt: todayStr() };
+        } else if (res.type === "tour") {
+          entry = { id: "crm_" + gid(), reservationId: rid, tab: "tours", clientName: cn, dogName, phone: cp, tourDate: res.checkIn, walkInOrScheduled: "", interestedIn: "", atCheckout: "", toolBox: "", outcome: "", credit48: false, initialCredit: "", followUp1: "", outcomeFU1: "", usedOrRemoved: "", initialFU1: "", sendCard: false, giftInCard: "", results: "", comments: "", createdAt: todayStr() };
+        }
+        if (entry) newData.crmEntries = [...crm, entry];
+      }
+    }
+    await save(newData);
+    if (res) {
+      const dog = data.dogs.find(d => d.id === res.dogId);
+      addDashToast({ dogName: dog ? dog.fields.name : "?", action: "checked in", oldVal: "Upcoming", newVal: "Checked In", undoRes: { ...res } });
+    }
+  };
+
+  const handleCheckIn = (rid) => {
+    const res = data.reservations.find(r => r.id === rid);
+    if (res && res.type === "boarding") {
+      setBoardingPreviewId(rid);
+      return;
+    }
+    directCheckIn(rid);
+  };
+  const handleCheckOut = async (rid) => {
+    const res = data.reservations.find(r=>r.id===rid);
+    if (res && res.type === "evaluation") {
+      setEvalModalRes(rid);
+      return;
+    }
+    const origRes = res ? { ...res } : null;
+    await save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out"}:r)});
+    if (origRes) {
+      const dog = data.dogs.find(d => d.id === origRes.dogId);
+      addDashToast({ dogName: dog ? dog.fields.name : "?", action: "checked out", oldVal: "Checked In", newVal: "Checked Out", undoRes: origRes });
+    }
+  };
+  const [evalModalRes, setEvalModalRes] = useState(null);
+  const handleEvalResult = async (result) => {
+    const origRes = data.reservations.find(r => r.id === evalModalRes);
+    const origCopy = origRes ? { ...origRes } : null;
+    await save({...data,reservations:data.reservations.map(r=>r.id===evalModalRes?{...r,status:"checked-out",evalResult:result}:r)});
+    if (origCopy) {
+      const dog = data.dogs.find(d => d.id === origCopy.dogId);
+      const resultLabel = result === "passed_group" ? "Passed Group" : "Passed Private";
+      addDashToast({ dogName: dog ? dog.fields.name : "?", action: "eval completed", oldVal: "Pending", newVal: resultLabel, undoRes: origCopy });
+    }
+    setEvalModalRes(null);
+  };
+
+  const typeLabel=(t)=>t==="boarding"?"Boarding":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
+  const typeColor=(t)=>t==="boarding"?"primary":t==="daycare"?"success":t==="evaluation"?"warning":"accent";
+
+  // ═══ Summary Stats ═══
+  const todayByType = (type, extra) => todayAll.filter(r => r.type === type && (!extra || extra(r)));
+  const countByStatus = (arr, st) => arr.filter(r => r.status === st).length;
+
+  // Tours
+  const tours = todayByType("tour");
+  const toursScheduled = tours.length;
+  const toursCompleted = countByStatus(tours, "checked-out");
+
+  // Evaluations
+  const evals = todayByType("evaluation");
+  const evalsScheduled = evals.length;
+  const evalsRemaining = evals.filter(r => r.status === "upcoming").length;
+  const evalsPassedGroup = evals.filter(r => r.evalResult === "passed_group").length;
+  const evalsPassedPrivate = evals.filter(r => r.evalResult === "passed_private").length;
+
+  // Daycare - Large
+  const dcLarge = todayByType("daycare", r => r.daycareSize === "large");
+  const dcLargeScheduled = dcLarge.length;
+  const dcLargeIn = countByStatus(dcLarge, "checked-in");
+  const dcLargeOut = countByStatus(dcLarge, "checked-out");
+
+  // Daycare - Small
+  const dcSmall = todayByType("daycare", r => r.daycareSize === "small");
+  const dcSmallScheduled = dcSmall.length;
+  const dcSmallIn = countByStatus(dcSmall, "checked-in");
+  const dcSmallOut = countByStatus(dcSmall, "checked-out");
+
+  // Boarding by room type
+  const boardingToday = todayAll.filter(r => r.type === "boarding");
+  const boardingByRoom = ROOM_TYPES.map(rt => {
+    const rooms = boardingToday.filter(r => r.roomType === rt);
+    return { name: rt, scheduled: rooms.length, checkedIn: countByStatus(rooms, "checked-in"), checkedOut: countByStatus(rooms, "checked-out") };
+  });
+
+  // Search filter: match reservation against query by client name, dog name, phone, email
+  const searchMatch = useCallback((res, q) => {
+    if (!q) return true;
+    const lower = q.toLowerCase();
+    const client = data.clients.find(x => x.id === res.clientId);
+    const dog = data.dogs.find(x => x.id === res.dogId);
+    const cName = client ? `${client.fields.first_name || ""} ${client.fields.last_name || ""}`.toLowerCase() : "";
+    const cPhone = (client?.fields.phone || "").replace(/\D/g, "");
+    const cEmail = (client?.fields.email || "").toLowerCase();
+    const dName = (dog?.fields.name || "").toLowerCase();
+    const qDigits = lower.replace(/\D/g, "");
+    return cName.includes(lower) || dName.includes(lower) || cEmail.includes(lower) || (qDigits.length >= 3 && cPhone.includes(qDigits));
+  }, [data.clients, data.dogs]);
+
+  const sq = searchQuery.trim();
+  const fExpected = useMemo(() => expected.filter(r => searchMatch(r, sq) && typeMatch(r)), [expected, sq, searchMatch, typeFilterActive, typeFilters]);
+  const fInHouse = useMemo(() => inHouse.filter(r => searchMatch(r, sq) && typeMatch(r)), [inHouse, sq, searchMatch, typeFilterActive, typeFilters]);
+  const fGoingHome = useMemo(() => goingHome.filter(r => searchMatch(r, sq) && typeMatch(r)), [goingHome, sq, searchMatch, typeFilterActive, typeFilters]);
+  const fCheckedOut = useMemo(() => checkedOut.filter(r => searchMatch(r, sq) && typeMatch(r)), [checkedOut, sq, searchMatch, typeFilterActive, typeFilters]);
+
+  const isFiltering = !!sq || typeFilterActive;
+
+  // Auto-switch to first tab with results when filtering
+  useEffect(() => {
+    if (!isFiltering) return;
+    const current = activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : fCheckedOut;
+    if (current.length > 0) return;
+    if (fExpected.length > 0) setActiveTab("expected");
+    else if (fInHouse.length > 0) setActiveTab("inhouse");
+    else if (fGoingHome.length > 0) setActiveTab("goinghome");
+    else if (fCheckedOut.length > 0) setActiveTab("checkedout");
+  }, [isFiltering, fExpected.length, fInHouse.length, fGoingHome.length, fCheckedOut.length]);
+  const tabs = [
+    { id: "expected", label: "Expected", count: isFiltering ? fExpected.length : expected.length, total: expected.length, color: C.info },
+    { id: "inhouse", label: "In-House", count: isFiltering ? fInHouse.length : inHouse.length, total: inHouse.length, color: C.suc },
+    { id: "goinghome", label: "Going Home", count: isFiltering ? fGoingHome.length : goingHome.length, total: goingHome.length, color: C.acc },
+    { id: "checkedout", label: "Checked Out", count: isFiltering ? fCheckedOut.length : checkedOut.length, total: checkedOut.length, color: C.textSec },
+  ];
+
+  const rawItems = activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : fCheckedOut;
+
+  const handleSort = (col) => {
+    if (sortCol === col) { setSortDir(d => d === "asc" ? "desc" : "asc"); }
+    else { setSortCol(col); setSortDir("asc"); }
+  };
+
+  const activeItems = useMemo(() => {
+    const items = [...rawItems];
+    if (!sortCol) return items;
+    return items.sort((a, b) => {
+      let va, vb;
+      if (sortCol === "inTime") { va = a.checkInTime || ""; vb = b.checkInTime || ""; }
+      else if (sortCol === "outTime") { va = a.checkOutTime || ""; vb = b.checkOutTime || ""; }
+      else if (sortCol === "dog") { va = dn(a.dogId).toLowerCase(); vb = dn(b.dogId).toLowerCase(); }
+      else if (sortCol === "client") { va = cn(a.clientId).toLowerCase(); vb = cn(b.clientId).toLowerCase(); }
+      else if (sortCol === "service") { va = a.type || ""; vb = b.type || ""; }
+      else if (sortCol === "lodging") { va = a.type === "boarding" ? `${a.roomType || ""} ${a.room || ""}` : ""; vb = b.type === "boarding" ? `${b.roomType || ""} ${b.room || ""}` : ""; }
+      else if (sortCol === "dates") { va = a.checkIn || ""; vb = b.checkIn || ""; }
+      else { va = ""; vb = ""; }
+      if (va < vb) return sortDir === "asc" ? -1 : 1;
+      if (va > vb) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [rawItems, sortCol, sortDir]);
+
+  const SortIcon = ({ col }) => {
+    if (sortCol !== col) return <I.SortNone />;
+    return sortDir === "asc" ? <I.SortAsc /> : <I.SortDesc />;
+  };
+
+  const colHeaderStyle = (col) => ({
+    display: "flex", alignItems: "center", gap: 4, cursor: "pointer", userSelect: "none",
+    color: sortCol === col ? C.pri : C.textMut,
+    fontWeight: sortCol === col ? 800 : 700,
+  });
+
+  // Calendar helpers
+  const [calMonth, setCalMonth] = useState(() => { const d = new Date(viewDate+"T12:00:00"); return d.getMonth(); });
+  const [calYear, setCalYear] = useState(() => { const d = new Date(viewDate+"T12:00:00"); return d.getFullYear(); });
+  useEffect(() => { const d = new Date(viewDate+"T12:00:00"); setCalMonth(d.getMonth()); setCalYear(d.getFullYear()); }, [showCalendar]);
+  const calDays = useMemo(() => {
+    const first = new Date(calYear, calMonth, 1);
+    const startDay = first.getDay(); // 0=Sun
+    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < startDay; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+    return cells;
+  }, [calMonth, calYear]);
+  const calMonthLabel = new Date(calYear, calMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const calPrev = () => { if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); };
+  const calNext = () => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); };
+  const calSelect = (day) => {
+    const m = String(calMonth + 1).padStart(2, "0");
+    const d = String(day).padStart(2, "0");
+    setViewDate(`${calYear}-${m}-${d}`);
+    setShowCalendar(false);
+  };
+  const calRef = useRef(null);
+  useEffect(() => {
+    if (!showCalendar) return;
+    const handler = (e) => { if (calRef.current && !calRef.current.contains(e.target)) setShowCalendar(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showCalendar]);
+
+  // Summary grid data
+  // Daycare totals (large + small + evals)
+  const dcTotalScheduled = dcLargeScheduled + dcSmallScheduled + evalsScheduled;
+  const dcTotalIn = dcLargeIn + dcSmallIn + evals.filter(r => r.status === "checked-in").length;
+  const dcTotalOut = dcLargeOut + dcSmallOut + evals.filter(r => r.status === "checked-out").length;
+
+  // Boarding totals
+  const boardTotalScheduled = boardingByRoom.reduce((s, r) => s + r.scheduled, 0);
+  const boardTotalIn = boardingByRoom.reduce((s, r) => s + r.checkedIn, 0);
+  const boardTotalOut = boardingByRoom.reduce((s, r) => s + r.checkedOut, 0);
+
+  // Grand total
+  const grandScheduled = dcTotalScheduled + boardTotalScheduled + toursScheduled;
+  const grandIn = dcTotalIn + boardTotalIn + tours.filter(r => r.status === "checked-in").length;
+  const grandOut = dcTotalOut + boardTotalOut + toursCompleted;
+
+  const summaryRows = [
+    { label: "Tours", cols: [
+      { label: "Scheduled", value: toursScheduled },
+      { label: "Completed", value: toursCompleted, color: C.suc },
+    ]},
+    { section: "daycare" },
+    { label: "Evaluations", cols: [
+      { label: "Scheduled", value: evalsScheduled },
+      { label: "Remaining", value: evalsRemaining, color: C.warn },
+      { label: "Passed Group", value: evalsPassedGroup, color: C.suc },
+      { label: "Passed Private", value: evalsPassedPrivate, color: C.info },
+    ]},
+    { label: "Large Daycare", cols: [
+      { label: "Scheduled", value: dcLargeScheduled },
+      { label: "Checked In", value: dcLargeIn, color: C.suc },
+      { label: "Checked Out", value: dcLargeOut, color: C.textSec },
+    ]},
+    { label: "Small Daycare", cols: [
+      { label: "Scheduled", value: dcSmallScheduled },
+      { label: "Checked In", value: dcSmallIn, color: C.suc },
+      { label: "Checked Out", value: dcSmallOut, color: C.textSec },
+    ]},
+    { label: "Total Daycare", isTotal: true, cols: [
+      { label: "Scheduled", value: dcTotalScheduled },
+      { label: "Checked In", value: dcTotalIn, color: C.suc },
+      { label: "Checked Out", value: dcTotalOut, color: C.textSec },
+    ]},
+    { section: "boarding" },
+    ...boardingByRoom.map(rm => ({
+      label: rm.name, cols: [
+        { label: "Booked", value: rm.scheduled },
+        { label: "Checked In", value: rm.checkedIn, color: C.suc },
+        { label: "Checked Out", value: rm.checkedOut, color: C.textSec },
+      ]
+    })),
+    { label: "Total Boarding", isTotal: true, cols: [
+      { label: "Booked", value: boardTotalScheduled },
+      { label: "Checked In", value: boardTotalIn, color: C.suc },
+      { label: "Checked Out", value: boardTotalOut, color: C.textSec },
+    ]},
+    { label: "Grand Total", isGrand: true, cols: [
+      { label: "Scheduled", value: grandScheduled },
+      { label: "Checked In", value: grandIn, color: C.suc },
+      { label: "Checked Out", value: grandOut, color: C.textSec },
+    ]},
+  ];
+
+  const grid = "160px 280px 82px minmax(0,1fr) 80px 80px 100px 70px";
+  const summaryGrid = "160px repeat(4, 1fr)";
+
+  // Group active items by clientId for merged rows
+  const groupedItems = useMemo(() => {
+    const groups = [];
+    const map = {};
+    for (const res of activeItems) {
+      if (!map[res.clientId]) {
+        map[res.clientId] = { clientId: res.clientId, reservations: [] };
+        groups.push(map[res.clientId]);
+      }
+      map[res.clientId].reservations.push(res);
+    }
+    return groups;
+  }, [activeItems]);
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>Dashboard</h1>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 6, position: "relative" }}>
+            <button onClick={() => shiftDate(-1)} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", color: C.textSec, fontSize: 14, fontFamily: "inherit", padding: 0 }} title="Previous day">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <span style={{ fontSize: 14, fontWeight: 600, color: C.text, textAlign: "center", padding: "4px 2px", whiteSpace: "nowrap" }}>
+              {viewDateLabel}
+            </span>
+            <button onClick={() => shiftDate(1)} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", color: C.textSec, fontSize: 14, fontFamily: "inherit", padding: 0 }} title="Next day">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+            <button onClick={() => setShowCalendar(v => !v)} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${showCalendar ? C.pri : C.border}`, background: showCalendar ? C.priLt : C.surface, cursor: "pointer", color: showCalendar ? C.pri : C.textSec, fontSize: 14, fontFamily: "inherit", padding: 0, transition: "all 0.15s" }} title="Open calendar">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </button>
+            {!isToday && (
+              <button onClick={() => setViewDate(td)} style={{ padding: "4px 12px", borderRadius: 8, border: `1.5px solid ${C.pri}`, background: C.priLt, color: C.pri, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Today</button>
+            )}
+
+            {/* Calendar Popup */}
+            {showCalendar && (
+              <div ref={calRef} style={{ position: "absolute", top: "100%", left: 28, marginTop: 6, zIndex: 100, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.15)", padding: 16, width: 280 }}>
+                {/* Month nav */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <button onClick={calPrev} style={{ width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, fontFamily: "inherit", padding: 0 }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                  </button>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{calMonthLabel}</span>
+                  <button onClick={calNext} style={{ width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, fontFamily: "inherit", padding: 0 }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                  </button>
+                </div>
+                {/* Day-of-week headers */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", marginBottom: 4 }}>
+                  {["Su","Mo","Tu","We","Th","Fr","Sa"].map(d => (
+                    <span key={d} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, padding: "4px 0", textTransform: "uppercase" }}>{d}</span>
+                  ))}
+                </div>
+                {/* Day cells */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", gap: 2 }}>
+                  {calDays.map((day, i) => {
+                    if (day === null) return <div key={`e${i}`} />;
+                    const m = String(calMonth + 1).padStart(2, "0");
+                    const d = String(day).padStart(2, "0");
+                    const dateStr = `${calYear}-${m}-${d}`;
+                    const isSelected = dateStr === viewDate;
+                    const isTodayCell = dateStr === td;
+                    // count reservations for this date
+                    const hasRes = data.reservations.some(r => r.checkIn === dateStr || r.checkOut === dateStr || (r.checkIn <= dateStr && r.checkOut >= dateStr));
+                    return (
+                      <button key={i} onClick={() => calSelect(day)}
+                        style={{
+                          width: 34, height: 34, borderRadius: 10, border: isSelected ? `2px solid ${C.pri}` : isTodayCell ? `2px solid ${C.acc}` : "2px solid transparent",
+                          background: isSelected ? C.pri : "transparent",
+                          color: isSelected ? "#fff" : isTodayCell ? C.acc : C.text,
+                          fontSize: 13, fontWeight: isSelected || isTodayCell ? 700 : 500,
+                          cursor: "pointer", fontFamily: "inherit", padding: 0,
+                          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", margin: "0 auto",
+                          transition: "all 0.1s",
+                        }}
+                        onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = C.surfaceHover; }}
+                        onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
+                      >
+                        {day}
+                        {hasRes && !isSelected && <div style={{ width: 4, height: 4, borderRadius: 2, background: C.pri, marginTop: 1 }} />}
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* Today shortcut in calendar */}
+                {!isToday && (
+                  <div style={{ textAlign: "center", marginTop: 10, borderTop: `1px solid ${C.borderLight}`, paddingTop: 10 }}>
+                    <button onClick={() => { setViewDate(td); setShowCalendar(false); }} style={{ fontSize: 12, fontWeight: 700, color: C.pri, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>Go to Today</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <span data-shortcut-quickdc="1" onClick={()=>setShowQuickDC(true)} style={{display:"inline-flex"}}><Btn variant="success" onClick={()=>setShowQuickDC(true)} icon={<I.Plus/>}>Quick Daycare{(data.hotkeySettings||{}).showHints!==false&&<kbd style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.6)",background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'Inter',monospace",lineHeight:1.4}}>Q</kbd>}</Btn></span>
+          <Btn onClick={onNew} icon={<I.Plus/>}>New {(data.hotkeySettings||{}).showHints!==false&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'Inter',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
+        </div>
+      </div>
+
+      {/* ═══ Daily Summary + Occupancy (combined) ═══ */}
+      {(() => {
+        const totalDaycareCount = lgDaycareCount + smDaycareCount;
+        const totalDaycareCap = lgDaycareCap + smDaycareCap;
+        const overallCount = totalDaycareCount + boardingOcc;
+        const overallCap = totalDaycareCap + totalRoomCount;
+        const overallPct = overallCap > 0 ? Math.round((overallCount / overallCap) * 100) : 0;
+        const boardingPct = totalRoomCount > 0 ? Math.round((boardingOcc / totalRoomCount) * 100) : 0;
+        const daycarePct = totalDaycareCap > 0 ? Math.round((totalDaycareCount / totalDaycareCap) * 100) : 0;
+        const pctColor = (p) => p > 85 ? C.dan : p > 60 ? C.acc : C.suc;
+        return (
+      <Card style={{ marginBottom: 20, padding: 0, overflow: "hidden" }}>
+        {/* Grand Total Row - always visible, clickable to expand */}
+        <button onClick={() => setShowSummaryDetail(v => !v)}
+          style={{ width: "100%", display: "flex", alignItems: "center", padding: "12px 20px", background: C.priLt, border: "none", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", gap: 0 }}
+          onMouseEnter={e => e.currentTarget.style.background = "#dbeafe"}
+          onMouseLeave={e => e.currentTarget.style.background = C.priLt}
+        >
+          <div style={{ textAlign: "left", flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.pri, textTransform: "uppercase", letterSpacing: "0.05em", opacity: 0.7 }}>{isToday ? "Today's Total" : viewDateObj.toLocaleDateString("en-US",{month:"short",day:"numeric"}) + " Total"}</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: C.pri }}>{grandScheduled} Scheduled</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ textAlign: "center", minWidth: 60 }}>
+              <span style={{ fontSize: 18, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>{grandScheduled}</span>
+              <div style={{ fontSize: 9, fontWeight: 600, color: C.pri, textTransform: "uppercase", opacity: 0.6 }}>Sched</div>
+            </div>
+            <div style={{ textAlign: "center", minWidth: 60 }}>
+              <span style={{ fontSize: 18, fontWeight: 800, color: C.suc, fontVariantNumeric: "tabular-nums" }}>{grandIn}</span>
+              <div style={{ fontSize: 9, fontWeight: 600, color: C.suc, textTransform: "uppercase", opacity: 0.7 }}>In</div>
+            </div>
+            <div style={{ textAlign: "center", minWidth: 60 }}>
+              <span style={{ fontSize: 18, fontWeight: 800, color: C.textSec, fontVariantNumeric: "tabular-nums" }}>{grandOut}</span>
+              <div style={{ fontSize: 9, fontWeight: 600, color: C.textMut, textTransform: "uppercase" }}>Out</div>
+            </div>
+            <div style={{ width: 1, height: 28, background: `${C.pri}25`, margin: "0 4px" }} />
+            <div style={{ textAlign: "center", minWidth: 60 }}>
+              <span style={{ fontSize: 18, fontWeight: 800, color: pctColor(boardingPct), fontVariantNumeric: "tabular-nums" }}>{boardingPct}%</span>
+              <div style={{ fontSize: 9, fontWeight: 600, color: C.pri, textTransform: "uppercase", opacity: 0.6 }}>Board</div>
+            </div>
+            <div style={{ textAlign: "center", minWidth: 60 }}>
+              <span style={{ fontSize: 18, fontWeight: 800, color: pctColor(overallPct), fontVariantNumeric: "tabular-nums" }}>{overallPct}%</span>
+              <div style={{ fontSize: 9, fontWeight: 600, color: C.pri, textTransform: "uppercase", opacity: 0.6 }}>Facility</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", marginLeft: 8 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+              style={{ transition: "transform 0.2s", transform: showSummaryDetail ? "rotate(180deg)" : "rotate(0deg)" }}>
+              <polyline points="6 9 12 15 18 9"/>
+            </svg>
+          </div>
+        </button>
+
+        {/* Expandable Detail */}
+        {showSummaryDetail && (
+          <div style={{ borderTop: `1px solid ${C.border}` }}>
+            {/* Summary breakdown table */}
+            <div style={{ padding: "0 20px 12px" }}>
+              <div style={{ display: "grid", gridTemplateColumns: summaryGrid, gap: 0, marginTop: 8 }}>
+                {summaryRows.filter(r => !r.isGrand).map((row, ri, arr) => {
+                  if (row.section) {
+                    return (
+                      <React.Fragment key={`sec-${ri}`}>
+                        <div style={{ gridColumn: "1 / -1", height: 0, borderBottom: `2px solid ${C.border}`, margin: "4px 0" }} />
+                      </React.Fragment>
+                    );
+                  }
+                  const padded = [...row.cols];
+                  while (padded.length < 4) padded.push(null);
+                  const nextRow = arr[ri + 1];
+                  const isLast = ri === arr.length - 1;
+                  const isBeforeSection = nextRow && nextRow.section;
+                  const bb = isLast || isBeforeSection ? "none" : row.isTotal ? "none" : `1px solid ${C.borderLight}`;
+                  const bg = row.isTotal ? C.bg : "transparent";
+                  const labelWeight = row.isTotal ? 700 : 600;
+                  const numSize = row.isTotal ? 15 : 14;
+                  const bt = row.isTotal ? `2px solid ${C.border}` : "none";
+                  return (
+                    <React.Fragment key={ri}>
+                      <div style={{ padding: "7px 0", borderBottom: bb, borderTop: bt, fontSize: 12, fontWeight: labelWeight, color: C.text, display: "flex", alignItems: "center", background: bg, paddingLeft: row.isTotal ? 6 : 0, borderRadius: row.isTotal ? "6px 0 0 6px" : 0 }}>{row.label}</div>
+                      {padded.map((c, ci) => (
+                        <div key={ci} style={{ padding: "7px 4px", borderBottom: bb, borderTop: bt, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: bg, borderRadius: row.isTotal && ci === padded.length - 1 ? "0 6px 6px 0" : 0 }}>
+                          {c ? (<>
+                            <span style={{ fontSize: numSize, fontWeight: 800, color: c.color || C.text, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{c.value}</span>
+                            <span style={{ fontSize: 8, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 1 }}>{c.label}</span>
+                          </>) : null}
+                        </div>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Occupancy breakdown */}
+            <div style={{ padding: "0 20px 16px" }}>
+              <div style={{ borderTop: `2px solid ${C.border}`, paddingTop: 12 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>Occupancy</div>
+                {/* 3-column breakdown */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+                  {[
+                    { label: "Large Daycare", count: lgDaycareCount, cap: lgDaycareCap, color: C.pri, ltColor: C.priLt },
+                    { label: "Small Daycare", count: smDaycareCount, cap: smDaycareCap, color: C.acc, ltColor: "#FFF7ED" },
+                    { label: "Boarding", count: boardingOcc, cap: totalRoomCount, color: C.suc, ltColor: C.sucLt },
+                  ].map(s => {
+                    const p = s.cap > 0 ? Math.round((s.count / s.cap) * 100) : 0;
+                    const bc = p > 85 ? C.dan : p > 60 ? C.acc : s.color;
+                    return (
+                      <div key={s.label} style={{ padding: "10px 12px", borderRadius: 10, background: s.ltColor, border: `1px solid ${s.color}20` }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: s.color, textTransform: "uppercase", letterSpacing: "0.04em" }}>{s.label}</span>
+                          <span style={{ fontSize: 12, fontWeight: 800, color: C.text }}>{s.count}<span style={{ fontWeight: 500, color: C.textSec }}>/{s.cap}</span></span>
+                        </div>
+                        <div style={{ width: "100%", height: 5, borderRadius: 3, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
+                          <div style={{ width: `${Math.min(p, 100)}%`, height: "100%", borderRadius: 3, background: bc, transition: "width 0.5s ease" }} />
+                        </div>
+                        <div style={{ fontSize: 10, color: C.textMut, marginTop: 3, textAlign: "right" }}>{p}%</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Summary row: Total Daycare + Overall Facility */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div style={{ padding: "8px 12px", borderRadius: 8, background: C.bg, border: `1px solid ${C.border}` }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.04em" }}>Total Daycare</span>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: C.text }}>{totalDaycareCount}<span style={{ fontWeight: 500, color: C.textSec }}>/{totalDaycareCap}</span> <span style={{ fontSize: 11, fontWeight: 700, color: pctColor(daycarePct), marginLeft: 2 }}>{daycarePct}%</span></span>
+                    </div>
+                    <div style={{ width: "100%", height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(daycarePct, 100)}%`, height: "100%", borderRadius: 2, background: pctColor(daycarePct), transition: "width 0.5s ease" }} />
+                    </div>
+                  </div>
+                  <div style={{ padding: "8px 12px", borderRadius: 8, background: C.priLt, border: `1px solid ${C.pri}20` }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: C.pri, textTransform: "uppercase", letterSpacing: "0.04em" }}>Overall Facility</span>
+                      <span style={{ fontSize: 12, fontWeight: 800, color: C.text }}>{overallCount}<span style={{ fontWeight: 500, color: C.textSec }}>/{overallCap}</span> <span style={{ fontSize: 11, fontWeight: 700, color: pctColor(overallPct), marginLeft: 2 }}>{overallPct}%</span></span>
+                    </div>
+                    <div style={{ width: "100%", height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(overallPct, 100)}%`, height: "100%", borderRadius: 2, background: pctColor(overallPct), transition: "width 0.5s ease" }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
+        );
+      })()}
+
+      {/* ═══ Tabbed Dashboard Table ═══ */}
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        {/* Search bar */}
+        <div style={{ display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={sq ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input data-shortcut-search value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search by client name, dog name, phone, or email…" style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }} />
+          {!sq && (data.hotkeySettings||{}).showHints!==false && <kbd style={{fontSize:11,fontWeight:600,color:C.textMut,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:5,padding:"2px 7px",fontFamily:"'Inter',monospace",flexShrink:0,lineHeight:1.4}}>/</kbd>}
+          {sq && <button onClick={() => setSearchQuery("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex", fontFamily: "inherit" }} title="Clear search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+          {/* Type filter pills */}
+          <div style={{ display: "flex", gap: 4, marginLeft: 8, flexShrink: 0 }}>
+            {[
+              { type: "evaluation", label: "Evals", color: C.acc },
+              { type: "tour", label: "Tours", color: C.info },
+              { type: "boarding", label: "Board", color: C.pri },
+              { type: "daycare", label: "Daycare", color: C.suc },
+            ].map(f => {
+              const on = typeFilters.has(f.type);
+              return (
+                <button key={f.type} onClick={() => toggleTypeFilter(f.type)}
+                  style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? f.color : C.border}`, background: on ? f.color : "transparent", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", whiteSpace: "nowrap", letterSpacing: "0.01em" }}>
+                  {f.label}
+                </button>
+              );
+            })}
+            {typeFilterActive && <button onClick={() => setTypeFilters(new Set())} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: "0 2px", display: "flex", alignItems: "center", fontFamily: "inherit" }} title="Clear filters"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+          </div>
+        </div>
+        {/* Tab Bar */}
+        <div style={{ display: "flex", borderBottom: `2px solid ${C.borderLight}`, background: C.bg }}>
+          {tabs.map(tab => {
+            const active = activeTab === tab.id;
+            return (
+              <button key={tab.id} onClick={() => { setActiveTab(tab.id); setSortCol(null); }}
+                style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 16px", border: "none", borderBottom: `3px solid ${active ? tab.color : "transparent"}`, background: active ? C.surface : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", marginBottom: -2 }}>
+                <span style={{ fontSize: 14, fontWeight: active ? 700 : 600, color: active ? C.text : C.textSec }}>{tab.label}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 24, height: 24, padding: "0 8px", borderRadius: 12, fontSize: 13, fontWeight: 800, background: active ? tab.color : C.surfaceHover, color: active ? "#fff" : C.textSec, transition: "all 0.15s" }}>{tab.count}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Table Header */}
+        <div style={{ display: "grid", gridTemplateColumns: grid, padding: "10px 20px", background: C.bg, borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", alignItems: "center" }}>
+          <div style={colHeaderStyle("client")} onClick={() => handleSort("client")}>Client <SortIcon col="client" /></div>
+          <div style={colHeaderStyle("dog")} onClick={() => handleSort("dog")}>Dog <SortIcon col="dog" /></div>
+          <div style={colHeaderStyle("service")} onClick={() => handleSort("service")}>Service <SortIcon col="service" /></div>
+          <div style={colHeaderStyle("lodging")} onClick={() => handleSort("lodging")}>Lodging <SortIcon col="lodging" /></div>
+          <div style={colHeaderStyle("inTime")} onClick={() => handleSort("inTime")}>In <SortIcon col="inTime" /></div>
+          <div style={colHeaderStyle("outTime")} onClick={() => handleSort("outTime")}>Out <SortIcon col="outTime" /></div>
+          <div style={colHeaderStyle("dates")} onClick={() => handleSort("dates")}>Dates <SortIcon col="dates" /></div>
+          <div style={{ textAlign: "right" }}>Action</div>
+        </div>
+
+        {/* Rows */}
+        <div style={{ minHeight: 200 }}>
+          {groupedItems.length === 0 ? (
+            <div style={{ padding: "48px 20px", textAlign: "center" }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: C.textSec }}>
+                {activeTab === "expected" ? "No arrivals expected today" : activeTab === "inhouse" ? "No dogs currently in-house" : activeTab === "goinghome" ? "No departures today" : "No check-outs yet today"}
+              </div>
+            </div>
+          ) : (
+            groupedItems.map(group => {
+              const client = data.clients.find(x => x.id === group.clientId);
+              const resCount = group.reservations.length;
+              return (
+                <div key={group.clientId} data-row style={{ display: "grid", gridTemplateColumns: grid, padding: "12px 20px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "start", transition: "background 0.1s" }}
+                  onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                >
+                  {/* Col 1: Client (spans all dog rows) */}
+                  <div style={{ minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center", minHeight: resCount > 1 ? resCount * 52 : "auto" }}>
+                    <div onClick={(e) => { e.stopPropagation(); nav("client-detail", { clientId: group.clientId }); }} style={{ cursor: "pointer" }}
+                      onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
+                      onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                        <Hl><span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{cn(group.clientId)}</span></Hl>
+                        {client && <AgreementIcons client={client} agreements={data.agreements} />}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.textSec, fontVariantNumeric: "tabular-nums" }}>{fmtPhone(client?.fields.phone)}</div>
+                    </div>
+                  </div>
+
+                  {/* Col 2-6: Dogs (each dog is a sub-row) */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: resCount > 1 ? 8 : 0, gridColumn: "2 / -1" }}>
+                    {group.reservations.map(res => {
+                      const dog = getDog(res.dogId);
+                      const showCheckIn = activeTab === "expected";
+                      const showCheckOut = activeTab === "inhouse" || activeTab === "goinghome";
+                      const age = dog ? calcAge(dog.fields.dob) : null;
+                      const weight = dog?.fields.weight;
+                      const snLabel = dog ? fixedLabel(dog) : "";
+                      const dogDetails = [age, weight ? `${weight}lbs` : null, snLabel].filter(Boolean).join(" · ");
+                      return (
+                        <div key={res.id} onClick={() => setBoardingPreviewId(res.id)} style={{ display: "grid", gridTemplateColumns: "280px 82px minmax(0,1fr) 80px 80px 100px 70px", alignItems: "center", minHeight: 40, cursor: "pointer" }}>
+                          {/* Dog info */}
+                          <div style={{ minWidth: 0 }} onClick={(e) => { e.stopPropagation(); if (dog) nav("dog-detail", { clientId: res.clientId, dogId: res.dogId }); }}
+                            onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
+                            onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }} >
+                            <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", cursor: "pointer" }}>
+                              <Hl><span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{dn(res.dogId)}</span></Hl>
+                              {dog && <DogPicHover dog={dog} size={20} />}
+                              {dog && <VaxIcon dog={dog} requiredVaccines={data.requiredVaccines} policies={data.resortPolicies} />}
+                              {dog && (() => { const isLg = getDogDaycareSize(dog) === "large"; return (
+                                <Tip text={`${isLg ? "Large" : "Small"} dog group${dog.daycareGroupOverride ? " (override)" : ` (${dog.fields.weight || "?"}lbs)`}`}>
+                                  <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 4, fontSize: 10, fontWeight: 800, background: isLg ? "#3B82F6" : "#22C55E", color: "#fff", cursor: "default", flexShrink: 0, letterSpacing: 0 }}>{isLg ? "L" : "S"}</span>
+                                </Tip>); })()}
+                              {dog && <DogTagChips dog={dog} dogTags={data.dogTags} size="sm" />}
+                            </div>
+                            <div style={{ fontSize: 11, color: C.textSec, marginTop: 1 }}>{dog?.fields?.breed ? `${dog.fields.breed} · ` : ""}{dogDetails}</div>
+                            {res.notes && <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic", marginTop: 2 }}>{res.notes}</div>}
+                          </div>
+                          {/* Service */}
+                          <div>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{typeLabel(res.type)}</span>
+                          </div>
+                          {/* Lodging */}
+                          <div>
+                            {res.type === "boarding" && res.roomType && <><div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{res.roomType}</div>{res.room && <div style={{ fontSize: 11, color: C.textSec }}>{res.room}</div>}</>}
+                          </div>
+                          {/* In Time */}
+                          <div style={{ fontVariantNumeric: "tabular-nums" }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkInTime)}</span>
+                          </div>
+                          {/* Out Time */}
+                          <div style={{ fontVariantNumeric: "tabular-nums" }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkOutTime)}</span>
+                          </div>
+                          {/* Dates */}
+                          <div>
+                            <span style={{ fontSize: 11, color: C.textSec }}>{fmtDate(res.checkIn)}{res.checkIn !== res.checkOut ? ` → ${fmtDate(res.checkOut)}` : ""}</span>
+                          </div>
+                          {/* Action */}
+                          <div style={{ textAlign: "right" }} onClick={e => e.stopPropagation()}
+                            onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
+                            onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}>
+                            {showCheckIn && <Btn size="sm" variant="success" onClick={() => handleCheckIn(res.id)} icon={<I.LogIn/>}>In</Btn>}
+                            {showCheckOut && <Btn size="sm" variant="accent" onClick={() => handleCheckOut(res.id)} icon={<I.LogOut/>}>Out</Btn>}
+                            {activeTab === "checkedout" && <Badge color="default" size="sm">Done</Badge>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </Card>
+
+
+
+      {/* Evaluation Result Modal */}
+      {evalModalRes && (
+        <Modal title="Evaluation Result" onClose={() => setEvalModalRes(null)}>
+          <p style={{ fontSize: 14, color: C.text, lineHeight: 1.6, margin: "0 0 20px" }}>
+            How did <strong>{dn(data.reservations.find(r=>r.id===evalModalRes)?.dogId)}</strong> do in their evaluation?
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <Btn variant="success" onClick={() => handleEvalResult("passed_group")} style={{ justifyContent: "center" }}>Passed for Group Play</Btn>
+            <Btn variant="primary" onClick={() => handleEvalResult("passed_private")} style={{ justifyContent: "center" }}>Passed for Private Play</Btn>
+            <Btn variant="secondary" onClick={() => setEvalModalRes(null)} style={{ justifyContent: "center" }}>Cancel</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Quick Daycare Check-in Modal */}
+      {showQuickDC && (
+        <Modal title="Quick Daycare Check-in" onClose={()=>{setShowQuickDC(false);setDcSearch("");}}>
+          <div style={{marginBottom:16}}>
+            <input ref={dcSearchRef} value={dcSearch} onChange={e=>setDcSearch(e.target.value)} placeholder="Search client or dog name..." style={{width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${C.border}`,fontSize:14,fontWeight:500,fontFamily:"inherit",outline:"none",background:C.bg}} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/>
+          </div>
+          <div style={{maxHeight:350,overflowY:"auto"}}>
+            {(() => {
+              const q = dcSearch.trim().toLowerCase();
+              if (!q) return <div style={{padding:20,textAlign:"center",color:C.textMut,fontSize:13}}>Type a client or dog name to search</div>;
+              const results = [];
+              data.clients.forEach(cl => {
+                const cName = `${cl.fields?.first_name||""} ${cl.fields?.last_name||""}`.trim();
+                const dogs = data.dogs.filter(d => d.fields?.owner_id === cl.id || data.reservations.some(r => r.clientId === cl.id && r.dogId === d.id));
+                const uniqueDogs = [...new Map(dogs.map(d => [d.id, d])).values()];
+                const cMatch = cName.toLowerCase().includes(q);
+                uniqueDogs.forEach(dog => {
+                  const dName = (dog.fields?.name || "").toLowerCase();
+                  if (cMatch || dName.includes(q)) {
+                    // Check if already checked in for daycare today
+                    const alreadyIn = data.reservations.some(r => r.dogId === dog.id && r.type === "daycare" && r.checkIn === vd && r.status === "checked-in");
+                    results.push({ clientId: cl.id, clientName: cName, dogId: dog.id, dogName: dog.fields?.name, breed: dog.fields?.breed, size: getDogDaycareSize(dog), alreadyIn });
+                  }
+                });
+              });
+              if (results.length === 0) return <div style={{padding:20,textAlign:"center",color:C.textMut,fontSize:13}}>No dogs found matching "{dcSearch}"</div>;
+              return results.slice(0, 10).map((r, i) => (
+                <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderRadius:10,border:`1px solid ${C.border}`,marginBottom:6,background:r.alreadyIn?C.sucLt:C.surface}}>
+                  <div>
+                    <div style={{fontWeight:700,fontSize:14,color:C.text}}>{r.dogName} <span style={{fontWeight:400,color:C.textSec,fontSize:12}}>({r.breed})</span></div>
+                    <div style={{fontSize:12,color:C.textSec}}>{r.clientName} {"\u2022"} {r.size === "small" ? "Small" : "Large"} daycare</div>
+                  </div>
+                  {r.alreadyIn ? (
+                    <Badge color="success" size="sm">Already In</Badge>
+                  ) : (
+                    <Btn size="sm" variant="success" onClick={()=>quickDCCheckIn(r.clientId, r.dogId)} icon={<I.LogIn/>}>Check In</Btn>
+                  )}
+                </div>
+              ));
+            })()}
+          </div>
+        </Modal>
+      )}
+
+      {boardingPreviewId && (() => {
+        const bRes = data.reservations.find(r => r.id === boardingPreviewId);
+        const bDog = bRes ? data.dogs.find(d => d.id === bRes.dogId) : null;
+        const bClient = bRes ? data.clients.find(c => c.id === bRes.clientId) : null;
+        if (!bRes || !bDog || !bClient) return null;
+        return <BoardingPreviewModal
+          reservation={bRes} dog={bDog} client={bClient}
+          isCheckInMode={bRes.status === "upcoming"}
+          onClose={() => setBoardingPreviewId(null)}
+          onSave={async (updatedRes, doCheckIn) => {
+            const origCopy = { ...bRes };
+            const merged = { ...bRes, ...updatedRes };
+            if (doCheckIn) merged.status = "checked-in";
+            await save({ ...data, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
+            addDashToast({ dogName: bDog.fields.name, action: doCheckIn ? "checked in" : "updated", oldVal: doCheckIn ? "Upcoming" : "Previous", newVal: doCheckIn ? "Checked In" : "Saved", undoRes: origCopy });
+            setBoardingPreviewId(null);
+          }}
+          data={data} save={save}
+        />;
+      })()}
+
+      {/* Dashboard Toast notifications */}
+      {dashToasts.length > 0 && (
+        <div style={{ position: "fixed", top: 16, right: 16, zIndex: 99999, display: "flex", flexDirection: "column", gap: 8, pointerEvents: "none" }}>
+          {dashToasts.map(t => (
+            <div key={t.id} style={{
+              pointerEvents: "auto",
+              background: "rgba(255,255,255,0.97)", backdropFilter: "blur(8px)",
+              border: `1.5px solid ${C.border}`, borderRadius: 12,
+              padding: "12px 16px", maxWidth: 380, minWidth: 260,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+              display: "flex", alignItems: "center", gap: 12, fontSize: 13,
+              animation: "k9toast 0.3s ease-out",
+            }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>
+                  {t.dogName}<span style={{ fontWeight: 500, color: C.textSec }}> {t.action}</span>
+                </div>
+                <div style={{ fontSize: 12, color: C.textMut }}>
+                  <span style={{ textDecoration: "line-through", color: C.dan }}>{t.oldVal}</span>
+                  <span style={{ margin: "0 5px", color: C.textMut }}>&rarr;</span>
+                  <span style={{ fontWeight: 600, color: C.suc }}>{t.newVal}</span>
+                </div>
+              </div>
+              <button onClick={() => undoDashToast(t)} style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: C.pri, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>Undo</button>
+              <button onClick={() => dismissDashToast(t.id)} style={{ width: 22, height: 22, borderRadius: 11, border: "none", background: "transparent", cursor: "pointer", color: C.textMut, fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit" }}>&times;</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLIENTS PAGE
+// ═══════════════════════════════════════════════════════════════════════════
+function ClientsPage({ data, nav }) {
+  const [search, setSearch] = useState("");
+  const [sortCol, setSortCol] = useState("last_name");
+  const [sortDir, setSortDir] = useState("asc");
+
+  // Pre-compute client stats
+  const clientStats = useMemo(() => {
+    const map = {};
+    data.clients.forEach(c => {
+      const cRes = data.reservations.filter(r => r.clientId === c.id);
+      const dogs = data.dogs.filter(d => d.clientId === c.id);
+      const daycareCount = cRes.filter(r => r.type === "daycare").length;
+      const boardingCount = cRes.filter(r => r.type === "boarding").length;
+      const evalCount = cRes.filter(r => r.type === "evaluation").length;
+      const tourCount = cRes.filter(r => r.type === "tour").length;
+      const sorted = [...cRes].sort((a, b) => b.checkIn.localeCompare(a.checkIn));
+      const lastRes = sorted.find(r => r.checkIn <= todayStr());
+      const nextRes = sorted.filter(r => r.checkIn >= todayStr() && r.status === "upcoming").sort((a, b) => a.checkIn.localeCompare(b.checkIn))[0];
+      const totalSpent = cRes.reduce((s, r) => s + ((r.pricing && r.pricing.total) || 0), 0);
+      map[c.id] = { dogCount: dogs.length, daycareCount, boardingCount, evalCount, tourCount, lastRes, nextRes, totalSpent, totalRes: cRes.length };
+    });
+    return map;
+  }, [data.clients, data.reservations, data.dogs]);
+
+  const filtered = useMemo(() => {
+    let list = data.clients;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      const sq = q.replace(/\D/g, "");
+      list = list.filter(c => {
+        const fn = `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.toLowerCase();
+        const ph = (c.fields.phone || "").replace(/\D/g, "");
+        return fn.includes(q) || (c.fields.email || "").toLowerCase().includes(q) || (sq && ph.includes(sq));
+      });
+    }
+    // Sort
+    list = [...list].sort((a, b) => {
+      let va, vb;
+      const sa = clientStats[a.id] || {}, sb = clientStats[b.id] || {};
+      switch (sortCol) {
+        case "first_name": va = (a.fields.first_name || "").toLowerCase(); vb = (b.fields.first_name || "").toLowerCase(); break;
+        case "last_name": va = (a.fields.last_name || "").toLowerCase(); vb = (b.fields.last_name || "").toLowerCase(); break;
+        case "phone": va = a.fields.phone || ""; vb = b.fields.phone || ""; break;
+        case "email": va = (a.fields.email || "").toLowerCase(); vb = (b.fields.email || "").toLowerCase(); break;
+        case "dogs": va = sa.dogCount || 0; vb = sb.dogCount || 0; break;
+        case "daycare": va = sa.daycareCount || 0; vb = sb.daycareCount || 0; break;
+        case "boarding": va = sa.boardingCount || 0; vb = sb.boardingCount || 0; break;
+        case "evals": va = sa.evalCount || 0; vb = sb.evalCount || 0; break;
+        case "tours": va = sa.tourCount || 0; vb = sb.tourCount || 0; break;
+        case "totalSpent": va = sa.totalSpent || 0; vb = sb.totalSpent || 0; break;
+        case "lastRes": va = sa.lastRes ? sa.lastRes.checkIn : ""; vb = sb.lastRes ? sb.lastRes.checkIn : ""; break;
+        case "nextRes": va = sa.nextRes ? sa.nextRes.checkIn : "zzzz"; vb = sb.nextRes ? sb.nextRes.checkIn : "zzzz"; break;
+        default: va = (a.fields.last_name || "").toLowerCase(); vb = (b.fields.last_name || "").toLowerCase();
+      }
+      if (va < vb) return sortDir === "asc" ? -1 : 1;
+      if (va > vb) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+    return list;
+  }, [data.clients, search, sortCol, sortDir, clientStats]);
+
+  const toggleSort = (col) => {
+    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortCol(col); setSortDir("asc"); }
+  };
+  const sortIcon = (col) => sortCol === col ? (sortDir === "asc" ? " ↑" : " ↓") : "";
+  const thStyle = (col) => ({
+    fontSize: 10, fontWeight: 700, color: sortCol === col ? C.pri : C.textMut, textTransform: "uppercase",
+    letterSpacing: "0.05em", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", padding: "10px 8px",
+    background: sortCol === col ? C.priLt : "transparent", borderRadius: 6, transition: "all 0.1s",
+  });
+  const tdStyle = { fontSize: 13, color: C.text, padding: "10px 8px", whiteSpace: "nowrap" };
+  const typeLabel = (t) => t === "boarding" ? "Board" : t === "daycare" ? "Daycare" : t === "evaluation" ? "Eval" : "Tour";
+  const typeColor = (t) => t === "boarding" ? C.pri : t === "daycare" ? C.suc : t === "evaluation" ? C.warn : C.acc;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text }}>Clients</h1>
+          <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>{data.clients.length} total client{data.clients.length !== 1 ? "s" : ""}</div>
+        </div>
+        <Btn onClick={() => nav("new-client")} icon={<I.Plus />}>New Client</Btn>
+      </div>
+      <div style={{ position: "relative", marginBottom: 16 }}>
+        <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.textMut }}><I.Search /></div>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name, phone, or email..."
+          style={{ width: "100%", padding: "12px 14px 12px 42px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" }}
+          onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
+      </div>
+      {filtered.length === 0 ? (
+        <Card style={{ textAlign: "center", padding: 48 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>{search ? "No clients found" : "No clients yet"}</div>
+          <div style={{ fontSize: 14, color: C.textSec, marginBottom: 16 }}>{search ? "Try a different search" : "Add your first client"}</div>
+          {!search && <Btn onClick={() => nav("new-client")} icon={<I.Plus />}>Add Client</Btn>}
+        </Card>
+      ) : (
+        <Card style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1100 }}>
+              <thead>
+                <tr style={{ borderBottom: `1.5px solid ${C.border}`, background: C.bg }}>
+                  <th style={{ ...thStyle("last_name"), textAlign: "left", paddingLeft: 20 }} onClick={() => toggleSort("last_name")}>Last Name{sortIcon("last_name")}</th>
+                  <th style={{ ...thStyle("first_name"), textAlign: "left" }} onClick={() => toggleSort("first_name")}>First Name{sortIcon("first_name")}</th>
+                  <th style={{ ...thStyle("phone"), textAlign: "left" }} onClick={() => toggleSort("phone")}>Phone{sortIcon("phone")}</th>
+                  <th style={{ ...thStyle("email"), textAlign: "left" }} onClick={() => toggleSort("email")}>Email{sortIcon("email")}</th>
+                  <th style={{ ...thStyle("dogs"), textAlign: "center" }} onClick={() => toggleSort("dogs")}>Dogs{sortIcon("dogs")}</th>
+                  <th style={{ ...thStyle("lastRes"), textAlign: "left" }} onClick={() => toggleSort("lastRes")}>Last Res{sortIcon("lastRes")}</th>
+                  <th style={{ ...thStyle("daycare"), textAlign: "center" }} onClick={() => toggleSort("daycare")}>Daycare{sortIcon("daycare")}</th>
+                  <th style={{ ...thStyle("boarding"), textAlign: "center" }} onClick={() => toggleSort("boarding")}>Board{sortIcon("boarding")}</th>
+                  <th style={{ ...thStyle("evals"), textAlign: "center" }} onClick={() => toggleSort("evals")}>Eval{sortIcon("evals")}</th>
+                  <th style={{ ...thStyle("tours"), textAlign: "center" }} onClick={() => toggleSort("tours")}>Tour{sortIcon("tours")}</th>
+                  <th style={{ ...thStyle("totalSpent"), textAlign: "right" }} onClick={() => toggleSort("totalSpent")}>Total Spent{sortIcon("totalSpent")}</th>
+                  <th style={{ ...thStyle("nextRes"), textAlign: "left" }} onClick={() => toggleSort("nextRes")}>Next Res{sortIcon("nextRes")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(client => {
+                  const s = clientStats[client.id] || {};
+                  return (
+                    <tr key={client.id} onClick={() => nav("client-detail", { clientId: client.id })}
+                      style={{ borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer", transition: "background 0.1s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <td style={{ ...tdStyle, fontWeight: 700, paddingLeft: 20 }}>{client.fields.last_name || "—"}</td>
+                      <td style={tdStyle}>{client.fields.first_name || "—"}</td>
+                      <td style={{ ...tdStyle, fontSize: 12 }}>{fmtPhone(client.fields.phone)}</td>
+                      <td style={{ ...tdStyle, fontSize: 12, color: C.textSec, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{client.fields.email || "—"}</td>
+                      <td style={{ ...tdStyle, textAlign: "center" }}><Badge>{s.dogCount || 0}</Badge></td>
+                      <td style={tdStyle}>
+                        {s.lastRes ? (
+                          <div>
+                            <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDate(s.lastRes.checkIn)}</span>
+                            <span style={{ display: "inline-block", marginLeft: 6, padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: typeColor(s.lastRes.type) + "18", color: typeColor(s.lastRes.type) }}>{typeLabel(s.lastRes.type)}</span>
+                          </div>
+                        ) : <span style={{ color: C.textMut, fontSize: 12 }}>—</span>}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.daycareCount ? C.suc : C.textMut }}>{s.daycareCount || 0}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.boardingCount ? C.pri : C.textMut }}>{s.boardingCount || 0}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.evalCount ? C.warn : C.textMut }}>{s.evalCount || 0}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.tourCount ? C.acc : C.textMut }}>{s.tourCount || 0}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: s.totalSpent > 0 ? C.text : C.textMut }}>{s.totalSpent > 0 ? `$${s.totalSpent.toFixed(2)}` : "—"}</td>
+                      <td style={tdStyle}>
+                        {s.nextRes ? (
+                          <div>
+                            <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDate(s.nextRes.checkIn)}</span>
+                            <span style={{ display: "inline-block", marginLeft: 6, padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: typeColor(s.nextRes.type) + "18", color: typeColor(s.nextRes.type) }}>{typeLabel(s.nextRes.type)}</span>
+                          </div>
+                        ) : <span style={{ color: C.textMut, fontSize: 12 }}>—</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLIENT DETAIL
+// ═══════════════════════════════════════════════════════════════════════════
+function ClientDetailPage({ data, save, clientId, nav }) {
+  const client = data.clients.find(c=>c.id===clientId);
+  const dogs = data.dogs.filter(d=>d.clientId===clientId);
+  const reservations = data.reservations.filter(r=>r.clientId===clientId).sort((a,b)=>b.checkIn.localeCompare(a.checkIn));
+  const [editing, setEditing] = useState(false);
+  const [editFields, setEditFields] = useState({});
+
+  if (!client) return <div style={{padding:40,textAlign:"center",color:C.textSec}}>Client not found</div>;
+
+  const startEdit = () => { setEditFields({...client.fields}); setEditing(true); };
+  const saveEdit = async () => { await save({...data,clients:data.clients.map(c=>c.id===clientId?{...c,fields:editFields}:c)}); setEditing(false); };
+
+  const toggleAgreement = async (agrId) => {
+    const agrs = { ...(client.agreements || {}) };
+    const current = agrSigned(client, agrId);
+    agrs[agrId] = current ? false : { signed: true, date: todayStr() };
+    await save({...data, clients: data.clients.map(c => c.id === clientId ? { ...c, agreements: agrs } : c)});
+  };
+
+  const [boardingPreviewId, setBoardingPreviewId] = useState(null);
+  const handleCheckIn = (rid) => {
+    const res = data.reservations.find(r => r.id === rid);
+    if (res && res.type === "boarding") { setBoardingPreviewId(rid); return; }
+    save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-in"}:r)});
+  };
+  const handleCheckOut = async (rid) => { await save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out"}:r)}); };
+
+  const dn=(did)=>{const d=data.dogs.find(x=>x.id===did);return d?d.fields.name:"Unknown";};
+  const tl=(t)=>t==="boarding"?"Boarding":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
+  const sc=(s)=>s==="checked-in"?"success":s==="upcoming"?"info":"default";
+
+  return (
+    <div>
+      <button onClick={()=>nav("clients")} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.textSec,fontSize:14,fontWeight:600,padding:0,marginBottom:20,fontFamily:"inherit"}}><I.Back/> Back to Clients</button>
+
+      {/* Header */}
+      <Card style={{marginBottom:20,padding:"24px 28px"}}>
+        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:16}}>
+          <div style={{display:"flex",alignItems:"center",gap:16}}>
+            <div style={{width:56,height:56,borderRadius:16,background:`linear-gradient(135deg, ${C.pri}, ${C.priL})`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:20,color:"#fff"}}>{(client.fields.first_name||"?")[0]}{(client.fields.last_name||"?")[0]}</div>
+            <div>
+              <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.text}}>{client.fields.first_name} {client.fields.last_name}</h2>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4,fontSize:14,color:C.textSec}}><I.Phone/><span>{fmtPhone(client.fields.phone)}</span>{client.fields.email&&<span>· {client.fields.email}</span>}</div>
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8}}>
+            <Btn variant="ghost" onClick={()=>nav("messages")} icon={<I.MessageSquare/>} size="sm">Message</Btn>
+            <Btn variant="secondary" onClick={startEdit} icon={<I.Edit/>} size="sm">Edit</Btn>
+          </div>
+        </div>
+
+        {/* Agreement Status Section */}
+        <div style={{ marginBottom: 16, padding: "14px 18px", background: C.bg, borderRadius: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Agreement Status</div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {data.agreements.map(agr => {
+              const info = agrSigned(client, agr.id);
+              const done = !!info;
+              const dateFmt = info && info.date ? new Date(info.date + "T00:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }) : null;
+              return (
+                <div key={agr.id} onClick={() => toggleAgreement(agr.id)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: done ? C.sucLt : C.danLt, border: `1.5px solid ${done ? "#A7F3D0" : "#FECACA"}`, cursor: "pointer", transition: "all 0.15s" }}>
+                  {done ? <span style={{ color: C.suc }}><I.CheckCircle /></span> : <span style={{ color: C.dan }}><I.XCircle /></span>}
+                  <span style={{ fontSize: 13, fontWeight: 600, color: done ? C.suc : C.dan }}>{agr.name}</span>
+                  {done && dateFmt && <span style={{ fontSize: 11, color: C.textMut }}>Signed {dateFmt}</span>}
+                  {!done && <span style={{ fontSize: 10, fontWeight: 500, color: C.textMut }}>(click to mark signed)</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Other fields */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(200px, 1fr))",gap:"12px 20px"}}>
+          {data.clientFields.filter(f=>!["phone","first_name","last_name","email","notes"].includes(f.id)&&client.fields[f.id]).map(f=>(<div key={f.id}><div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{f.name}</div><div style={{fontSize:14,color:C.text}}>{f.type==="tel"?fmtPhone(client.fields[f.id]):client.fields[f.id]}</div></div>))}
+        </div>
+        {client.fields.notes && <div style={{marginTop:12,padding:"10px 14px",background:C.bg,borderRadius:10}}><div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:4}}>Notes</div><div style={{fontSize:14,color:C.text,lineHeight:1.5}}>{client.fields.notes}</div></div>}
+      </Card>
+
+      {/* Dogs */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+        <h3 style={{margin:0,fontSize:17,fontWeight:700,color:C.text}}>Dogs ({dogs.length})</h3>
+        <Btn variant="secondary" size="sm" onClick={()=>nav("new-dog",{clientId})} icon={<I.Plus/>}>Add Dog</Btn>
+      </div>
+      <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:20}}>
+        {dogs.length === 0 ? (
+          <Card style={{flex:1,textAlign:"center",padding:32}}><div style={{fontSize:14,fontWeight:600,color:C.textSec,marginBottom:12}}>No dogs yet</div><Btn size="sm" onClick={()=>nav("new-dog",{clientId})} icon={<I.Plus/>}>Add Dog</Btn></Card>
+        ) : dogs.map(dog => {
+          const vs = getVaxStatus(dog, data.requiredVaccines, data.resortPolicies);
+          return (
+            <Card key={dog.id} hoverable onClick={()=>nav("dog-detail",{clientId,dogId:dog.id})} style={{flex:"1 1 280px",maxWidth:400,padding:"14px 18px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
+                <div style={{width:40,height:40,borderRadius:12,background:`linear-gradient(135deg, ${C.accLt}, ${C.priLt})`,display:"flex",alignItems:"center",justifyContent:"center"}}><svg width="20" height="20" viewBox="0 0 24 24" fill={C.acc} opacity="0.85"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zm-2 15c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm4 0c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm-6-6c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm8 0c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg></div>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:15,fontWeight:700,color:C.pri}}>{dog.fields.name}</span>
+                    <VaxIcon dog={dog} requiredVaccines={data.requiredVaccines} policies={data.resortPolicies} />
+                  </div>
+                  <div style={{fontSize:12,color:C.textSec}}>{dog.fields.breed}{dog.fields.weight?` · ${dog.fields.weight} lbs`:""}{dog.fields.dob ? ` · ${calcAge(dog.fields.dob)}` : ""}{` · ${fixedLabel(dog)}`}</div>
+                </div>
+                <span style={{color:C.textMut}}><I.ChevronRight/></span>
+              </div>
+              <DogTagChips dog={dog} dogTags={data.dogTags} size="md" />
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Reservations */}
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+        <h3 style={{margin:0,fontSize:17,fontWeight:700,color:C.text}}>Reservations</h3>
+        <Btn variant="secondary" size="sm" onClick={()=>nav("new-reservation",{clientId})} icon={<I.Plus/>}>New Reservation</Btn>
+      </div>
+      {reservations.length===0?(
+        <Card style={{textAlign:"center",padding:32}}><div style={{fontSize:14,color:C.textSec}}>No reservations yet</div></Card>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          {reservations.map(res=>(
+            <Card key={res.id} style={{padding:"12px 18px",cursor:res.type==="boarding"?"pointer":"default"}} onClick={()=>{if(res.type==="boarding")setBoardingPreviewId(res.id);}}>
+              <div style={{display:"flex",alignItems:"center",gap:14}}>
+                <div style={{flex:1}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                    <span style={{fontSize:14,fontWeight:700,color:C.pri}}>{dn(res.dogId)}</span>
+                    <Badge color={tl(res.type)==="Tour"?"accent":tl(res.type)==="Daycare"?"success":tl(res.type)==="Evaluation"?"warning":"primary"} size="sm">{tl(res.type)}</Badge>
+                    {res.roomType && <Badge color="default" size="sm">{res.roomType}</Badge>}
+                    {res.type==="evaluation" && res.evalResult && res.evalResult !== "pending" && <Badge color={res.evalResult==="passed_group"?"success":"info"} size="sm">{res.evalResult==="passed_group"?"Passed Group":"Passed Private"}</Badge>}
+                    <Badge color={sc(res.status)} size="sm">{res.status==="checked-in"?"Checked In":res.status==="upcoming"?"Upcoming":"Checked Out"}</Badge>
+                  </div>
+                  <div style={{fontSize:13,color:C.textSec,marginTop:4}}>{fmtDate(res.checkIn)}{res.type!=="tour"&&res.type!=="evaluation"&&res.checkIn!==res.checkOut?` → ${fmtDate(res.checkOut)}`:""}{res.notes?` · ${res.notes}`:""}</div>
+                </div>
+                {/* Times */}
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0,minWidth:90}}>
+                  <div style={{display:"flex",alignItems:"center",gap:3}}><I.Clock/><span style={{fontSize:10,fontWeight:600,color:C.textMut}}>IN</span><span style={{fontSize:12,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmtTime(res.checkInTime)}</span></div>
+                  <div style={{display:"flex",alignItems:"center",gap:3}}><I.Clock/><span style={{fontSize:10,fontWeight:600,color:C.textMut}}>OUT</span><span style={{fontSize:12,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmtTime(res.checkOutTime)}</span></div>
+                </div>
+                <div style={{display:"flex",gap:6}}>
+                  {res.status==="upcoming"&&<Btn size="sm" variant="success" onClick={e=>{e.stopPropagation();handleCheckIn(res.id);}} icon={<I.LogIn/>}>Check In</Btn>}
+                  {res.status==="checked-in"&&<Btn size="sm" variant="accent" onClick={e=>{e.stopPropagation();handleCheckOut(res.id);}} icon={<I.LogOut/>}>Check Out</Btn>}
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* EOD Mentions */}
+      {(() => {
+        const dogIds = dogs.map(d => d.id);
+        const mentions = (data.eodEntries || []).flatMap(e => (e.mentions || []).filter(m => (m.entityType === "client" && m.entityId === clientId) || (m.entityType === "dog" && dogIds.includes(m.entityId))).map(m => ({ ...m, date: e.date, eodId: e.id, sections: e.sections })));
+        if (!mentions.length) return null;
+        const sorted = mentions.sort((a, b) => b.date.localeCompare(a.date));
+        return (
+          <div style={{marginTop:24}}>
+            <h3 style={{margin:"0 0 12px",fontSize:17,fontWeight:700,color:C.text}}>EOD Mentions</h3>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {sorted.slice(0, 20).map((m, i) => {
+                const sec = (m.sections || []).find(s => s.id === m.sectionId);
+                const sectionLabel = (data.eodTemplate || DEF_EOD_TEMPLATE).find(t => t.id === m.sectionId);
+                return (
+                  <Card key={m.id || i} style={{padding:"12px 18px",cursor:"pointer"}} onClick={() => nav("eod")}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                          <span style={{fontSize:13,fontWeight:700,color:C.pri}}>{fmtDate(m.date)}</span>
+                          {sectionLabel && <Badge color="default" size="sm">{sectionLabel.emoji} {sectionLabel.label}</Badge>}
+                          <span style={{fontSize:12,fontWeight:600,color:C.suc}}>@{m.entityName}</span>
+                        </div>
+                        {sec && sec.content && <div style={{fontSize:12,color:C.textSec,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:500}}>{sec.content.slice(0, 150)}</div>}
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+              {sorted.length > 20 && <div style={{fontSize:12,color:C.textMut,textAlign:"center",padding:8}}>+ {sorted.length - 20} more mentions</div>}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Payment History */}
+      {(() => {
+        const pmts = (data.payments || []).filter(p => p.clientId === clientId).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        if (!pmts.length) return null;
+        const totalPaid = pmts.filter(p => p.status === "completed" && p.type !== "refund").reduce((s, p) => s + p.amount, 0);
+        const statusClr = { completed: C.suc, pending: "#f59e0b", refunded: C.dan, failed: C.dan };
+        const typeClr = { payment: C.pri, deposit: "#0ea5e9", tip: "#ec4899", refund: C.dan };
+        return (
+          <div style={{marginTop:24}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+              <h3 style={{margin:0,fontSize:17,fontWeight:700,color:C.text}}>Payment History ({pmts.length})</h3>
+              <span style={{fontSize:14,fontWeight:700,color:C.pri}}>Total: ${totalPaid.toFixed(2)}</span>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              {pmts.slice(0, 10).map(p => {
+                const r = data.reservations.find(res => res.id === p.reservationId);
+                return (
+                  <Card key={p.id} style={{padding:"10px 16px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10}}>
+                      <span style={{padding:"2px 7px",borderRadius:4,fontSize:11,fontWeight:600,background:typeClr[p.type]+"18",color:typeClr[p.type]}}>{p.type}</span>
+                      <span style={{fontSize:15,fontWeight:700,color:C.text}}>${p.amount.toFixed(2)}</span>
+                      <span style={{fontSize:12,color:C.textMut}}>{p.method === "card" ? `Card ····${p.cardLast4||""}` : p.method}</span>
+                      {r && <span style={{fontSize:12,color:C.textMut}}>· {r.roomType}</span>}
+                      <span style={{fontSize:12,color:C.textMut,marginLeft:"auto"}}>{new Date(p.timestamp).toLocaleDateString()}</span>
+                      <span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:600,background:statusClr[p.status]+"18",color:statusClr[p.status]}}>{p.status}</span>
+                    </div>
+                    {p.note && <div style={{fontSize:12,color:C.textMut,marginTop:4}}>{p.note}</div>}
+                  </Card>
+                );
+              })}
+              {pmts.length > 10 && <div style={{fontSize:12,color:C.textMut,textAlign:"center",padding:8}}>+ {pmts.length - 10} more payments · <span style={{color:C.pri,cursor:"pointer",fontWeight:600}} onClick={()=>nav("payments")}>View All</span></div>}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Edit Modal */}
+      {editing&&<Modal title="Edit Client" onClose={()=>setEditing(false)} wide>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          {data.clientFields.filter(f=>f.type!=="textarea").map(f=>(<div key={f.id} style={f.type==="checkbox"?{display:"flex",alignItems:"end"}:{}}><Inp label={f.name} type={f.type} value={editFields[f.id]||""} onChange={v=>setEditFields({...editFields,[f.id]:v})} required={f.required} options={f.options}/></div>))}
+        </div>
+        {data.clientFields.filter(f=>f.type==="textarea").map(f=>(<div key={f.id} style={{marginTop:16}}><Inp label={f.name} type="textarea" value={editFields[f.id]||""} onChange={v=>setEditFields({...editFields,[f.id]:v})}/></div>))}
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:24}}><Btn variant="secondary" onClick={()=>setEditing(false)}>Cancel</Btn><Btn onClick={saveEdit}>Save</Btn></div>
+      </Modal>}
+
+      {boardingPreviewId && (() => {
+        const bRes = data.reservations.find(r => r.id === boardingPreviewId);
+        const bDog = bRes ? data.dogs.find(d => d.id === bRes.dogId) : null;
+        const bClient = bRes ? data.clients.find(c => c.id === bRes.clientId) : null;
+        if (!bRes || !bDog || !bClient) return null;
+        return <BoardingPreviewModal
+          reservation={bRes} dog={bDog} client={bClient}
+          isCheckInMode={bRes.status === "upcoming"}
+          onClose={() => setBoardingPreviewId(null)}
+          onSave={async (updatedRes, doCheckIn) => {
+            const merged = { ...bRes, ...updatedRes };
+            if (doCheckIn) merged.status = "checked-in";
+            await save({ ...data, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
+            setBoardingPreviewId(null);
+          }}
+          data={data} save={save}
+        />;
+      })()}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DOG DETAIL
+// ═══════════════════════════════════════════════════════════════════════════
+function DogDetailPage({ data, save, clientId, dogId, nav }) {
+  const client = data.clients.find(c=>c.id===clientId);
+  const dog = data.dogs.find(d=>d.id===dogId);
+  const [editing, setEditing] = useState(false);
+  const [editFields, setEditFields] = useState({});
+  const [editTags, setEditTags] = useState([]);
+  const [editGroupOverride, setEditGroupOverride] = useState(null);
+  const [editProfilePic, setEditProfilePic] = useState("");
+  const [editFeedingSchedules, setEditFeedingSchedules] = useState([]);
+  const [editMedSchedules, setEditMedSchedules] = useState([]);
+
+  if (!dog||!client) return <div style={{padding:40,textAlign:"center",color:C.textSec}}>Dog not found</div>;
+
+  const startEdit = () => { setEditFields({...dog.fields}); setEditTags([...(dog.tags||[])]); setEditGroupOverride(dog.daycareGroupOverride || null); setEditProfilePic(dog.profilePic || ""); setEditFeedingSchedules([...(dog.fields.feedingSchedules||[])]); setEditMedSchedules([...(dog.fields.medicationSchedules||[])]); setEditing(true); };
+  const saveEdit = async () => { await save({...data,dogs:data.dogs.map(d=>d.id===dogId?{...d,fields:{...editFields,feedingSchedules:editFeedingSchedules,medicationSchedules:editMedSchedules},tags:editTags,daycareGroupOverride:editGroupOverride||null,profilePic:editProfilePic||""}:d)}); setEditing(false); };
+
+  const toggleTag = (tagId) => {
+    setEditTags(prev => prev.includes(tagId) ? prev.filter(t=>t!==tagId) : [...prev, tagId]);
+  };
+
+  const vaxFields = data.dogFields.filter(f=>f.id.endsWith("_exp"));
+  const infoFields = data.dogFields.filter(f=>!f.id.endsWith("_exp"));
+
+  return (
+    <div>
+      <button onClick={()=>nav("client-detail",{clientId})} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.textSec,fontSize:14,fontWeight:600,padding:0,marginBottom:20,fontFamily:"inherit"}}><I.Back/> Back to {client.fields.first_name} {client.fields.last_name}</button>
+
+      <Card style={{marginBottom:20,padding:"24px 28px"}}>
+        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:16}}>
+          <div style={{display:"flex",alignItems:"center",gap:16}}>
+            <DogAvatar dog={dog} size={56} />
+            <div>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.text}}>{dog.fields.name}</h2>
+                <VaxIcon dog={dog} requiredVaccines={data.requiredVaccines} policies={data.resortPolicies} />
+              </div>
+              <div style={{fontSize:14,color:C.textSec,marginTop:2}}>{dog.fields.breed}{dog.fields.weight?` · ${dog.fields.weight} lbs`:""}{dog.fields.sex?` · ${dog.fields.sex}`:""}{dog.fields.dob ? ` · ${calcAge(dog.fields.dob)}` : ""}{` · ${fixedLabel(dog)}`}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                <Tip text={dog.daycareGroupOverride ? `Daycare group manually set to ${dog.daycareGroupOverride}` : `Auto-classified by weight (${dog.fields.weight || "?"} lbs, threshold: 35 lbs)`}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: getDogDaycareSize(dog) === "large" ? C.priLt : C.sucLt, color: getDogDaycareSize(dog) === "large" ? C.pri : C.suc, cursor: "default" }}>
+                    {getDogDaycareSize(dog) === "large" ? "Large" : "Small"} Dog{dog.daycareGroupOverride ? " ✎" : ""}
+                  </span>
+                </Tip>
+                <DogTagChips dog={dog} dogTags={data.dogTags} size="md" />
+              </div>
+            </div>
+          </div>
+          <Btn variant="secondary" onClick={startEdit} icon={<I.Edit/>} size="sm">Edit</Btn>
+        </div>
+        {/* Age compliance banner */}
+        {(() => {
+          const ac = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
+          if (ac.ok && ac.grandfathered) return (
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderRadius:10,background:C.accLt,border:`1px solid ${C.acc}30`,marginBottom:16}}>
+              <span style={{fontSize:16}}>🛡️</span>
+              <div style={{fontSize:13,color:C.text}}><strong>Grandfathered Senior</strong> — {dog.fields.name} is {ac.age} years old but has {ac.visits} completed visits. Service is allowed.</div>
+            </div>
+          );
+          if (!ac.ok) return (
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderRadius:10,background:C.danLt,border:`1px solid ${C.dan}30`,marginBottom:16}}>
+              <span style={{fontSize:16}}>⚠️</span>
+              <div style={{fontSize:13,color:C.dan,fontWeight:600}}>{ac.reason}. This dog may not be serviced under current resort policy.</div>
+            </div>
+          );
+          return null;
+        })()}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(200px, 1fr))",gap:"12px 20px"}}>
+          {infoFields.filter(f=>!["name","breed","weight","sex"].includes(f.id)&&dog.fields[f.id]&&f.type!=="textarea"&&f.type!=="checkbox").map(f=>(<div key={f.id}><div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{f.name}</div><div style={{fontSize:14,color:C.text}}>{f.type==="date"?fmtDate(dog.fields[f.id]):dog.fields[f.id]}</div></div>))}
+          {infoFields.filter(f=>f.type==="checkbox"&&dog.fields[f.id]).map(f=>(<div key={f.id}><div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{f.name}</div><div style={{fontSize:14,color:C.suc,fontWeight:600}}>Yes</div></div>))}
+        </div>
+        {infoFields.filter(f=>f.type==="textarea"&&dog.fields[f.id]).map(f=>(<div key={f.id} style={{marginTop:12,padding:"10px 14px",background:C.bg,borderRadius:10}}><div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:4}}>{f.name}</div><div style={{fontSize:14,color:C.text,lineHeight:1.5}}>{dog.fields[f.id]}</div></div>))}
+
+        {/* Feeding Schedules */}
+        {(dog.fields.feedingSchedules||[]).length > 0 && (
+          <div style={{marginTop:16}}>
+            <div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:8}}>Feeding Schedule</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {dog.fields.feedingSchedules.map((s,i) => (
+                <div key={i} style={{padding:"10px 14px",background:C.bg,borderRadius:10,border:`1px solid ${C.borderLight}`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                    {(s.times||[]).map(t => <span key={t} style={{display:"inline-block",padding:"2px 8px",borderRadius:6,background:C.priLt,color:C.pri,fontSize:11,fontWeight:700}}>{t}</span>)}
+                    <span style={{fontSize:13,fontWeight:600,color:C.text}}>{s.amount} {s.unit}</span>
+                    {s.foodType && <span style={{fontSize:12,color:C.textSec}}>· {s.foodType}</span>}
+                    {s.foodSource && <span style={{fontSize:12,color:C.textMut}}>({s.foodSource})</span>}
+                  </div>
+                  {(s.instruction && s.instruction !== "Regular") && <div style={{fontSize:12,color:C.acc,fontWeight:600,marginTop:4}}>{s.instruction}</div>}
+                  {s.notes && <div style={{fontSize:12,color:C.textSec,marginTop:2,fontStyle:"italic"}}>{s.notes}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Medication Schedules */}
+        {(dog.fields.medicationSchedules||[]).length > 0 && (
+          <div style={{marginTop:16}}>
+            <div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:8}}>Medications</div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {dog.fields.medicationSchedules.map((s,i) => (
+                <div key={i} style={{padding:"10px 14px",background:C.bg,borderRadius:10,border:`1px solid ${C.borderLight}`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:13,fontWeight:700,color:C.text}}>{s.name}</span>
+                    <span style={{fontSize:12,color:C.textSec}}>{s.amount} {s.unit}</span>
+                    {s.time && <span style={{display:"inline-block",padding:"2px 8px",borderRadius:6,background:C.accLt,color:C.acc,fontSize:11,fontWeight:700}}>{s.time}</span>}
+                  </div>
+                  {s.notes && <div style={{fontSize:12,color:C.textSec,marginTop:4,fontStyle:"italic"}}>{s.notes}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* Vaccines */}
+      <h3 style={{margin:"0 0 12px",fontSize:17,fontWeight:700,color:C.text}}>Vaccine Records</h3>
+      <Card style={{padding:0,overflow:"hidden",marginBottom:20}}>
+        {/* Table header */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 140px 140px",padding:"10px 20px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.05em"}}>
+          <div>Vaccine</div><div>Expiration</div><div>Updated By</div>
+        </div>
+        {/* Rows - only required vaccines */}
+        {(data.requiredVaccines || DEF_REQUIRED_VACCINES).map(vId => {
+          const vaxDef = VACCINES.find(v => v.id === vId);
+          if (!vaxDef) return null;
+          const val = dog.fields[vId];
+          const exp = val && new Date(val + "T00:00:00") < new Date();
+          const soon = val && !exp && (new Date(val + "T00:00:00") - new Date()) < 30 * 86400000;
+          const ok = val && !exp;
+          return (
+            <div key={vId} style={{display:"grid",gridTemplateColumns:"1fr 140px 140px",padding:"12px 20px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{color:exp||!val?C.dan:soon?C.warn:C.suc,display:"inline-flex"}}>{ok?<I.VaxOk/>:<I.VaxBad/>}</span>
+                <span style={{fontSize:14,fontWeight:600,color:C.text}}>{vaxDef.name}</span>
+                {exp && <Badge color="danger" size="sm">Expired</Badge>}
+                {soon && <Badge color="warning" size="sm">Expiring Soon</Badge>}
+                {!val && <Badge color="danger" size="sm">Not on File</Badge>}
+              </div>
+              <div style={{fontSize:13,fontWeight:600,color:exp||!val?C.dan:soon?C.warn:C.text}}>{val?fmtDate(val):"—"}</div>
+              <div style={{fontSize:12,color:C.textMut,fontStyle:"italic"}}>—</div>
+            </div>
+          );
+        })}
+        <div style={{padding:"10px 20px",background:C.bg,borderTop:`1px solid ${C.border}`}}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}><I.Sparkle/><span style={{fontSize:12,color:C.pri,fontWeight:500}}>Edit tracking & AI auto-parse coming with user accounts.</span></div>
+        </div>
+      </Card>
+
+      {/* EOD Mentions for this Dog */}
+      {(() => {
+        const mentions = (data.eodEntries || []).flatMap(e => (e.mentions || []).filter(m => m.entityType === "dog" && m.entityId === dogId).map(m => ({ ...m, date: e.date, eodId: e.id, sections: e.sections })));
+        if (!mentions.length) return null;
+        const sorted = mentions.sort((a, b) => b.date.localeCompare(a.date));
+        return (
+          <div style={{marginTop:24}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+              <h3 style={{margin:0,fontSize:17,fontWeight:700,color:C.text}}>EOD Mentions</h3>
+              <span style={{fontSize:12,color:C.textMut}}>{sorted.length} mention{sorted.length !== 1 ? "s" : ""}</span>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {sorted.slice(0, 15).map((m, i) => {
+                const sec = (m.sections || []).find(s => s.id === m.sectionId);
+                const sectionLabel = (data.eodTemplate || DEF_EOD_TEMPLATE).find(t => t.id === m.sectionId);
+                return (
+                  <Card key={m.id || i} style={{padding:"12px 18px",cursor:"pointer"}} onClick={() => nav("eod")}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                      <span style={{fontSize:13,fontWeight:700,color:C.pri}}>{fmtDate(m.date)}</span>
+                      {sectionLabel && <Badge color="default" size="sm">{sectionLabel.emoji} {sectionLabel.label}</Badge>}
+                    </div>
+                    {sec && sec.content && <div style={{fontSize:12,color:C.textSec,marginTop:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:500}}>{sec.content.slice(0, 150)}</div>}
+                  </Card>
+                );
+              })}
+              {sorted.length > 15 && <div style={{fontSize:12,color:C.textMut,textAlign:"center",padding:8}}>+ {sorted.length - 15} more mentions</div>}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Edit Modal with Tag Selection */}
+      {editing&&<Modal title={`Edit ${dog.fields.name}`} onClose={()=>setEditing(false)} wide>
+        {/* Dog Tags */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 8 }}>Dog Tags</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {data.dogTags.map(tag => {
+              const sel = editTags.includes(tag.id);
+              const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
+              return (
+                <button key={tag.id} onClick={() => toggleTag(tag.id)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, border: `2px solid ${sel ? tc.text : C.border}`, background: sel ? tc.bg : C.surface, color: sel ? tc.text : C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
+                  {sel && <I.Check />}
+                  <I.Tag />{tag.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {/* Profile Picture */}
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 8 }}>Profile Picture</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <DogAvatar dog={{ ...dog, profilePic: editProfilePic, fields: editFields }} size={48} />
+            <div style={{ flex: 1 }}>
+              <input value={editProfilePic} onChange={e => setEditProfilePic(e.target.value)} placeholder="Paste image URL…" style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }} />
+              <div style={{ fontSize: 10, color: C.textMut, marginTop: 3 }}>Enter a direct image URL (jpg, png, etc.)</div>
+            </div>
+            {editProfilePic && <button onClick={() => setEditProfilePic("")} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, fontSize: 12, fontFamily: "inherit" }}>Clear</button>}
+          </div>
+        </div>
+        {/* Daycare Group Override */}
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 8 }}>Daycare Group</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {[
+              { v: null, l: `Auto (${parseInt(editFields.weight) >= 35 || !editFields.weight ? "Large" : "Small"} — based on weight)` },
+              { v: "large", l: "Large (Override)" },
+              { v: "small", l: "Small (Override)" },
+            ].map(opt => (
+              <button key={String(opt.v)} onClick={() => setEditGroupOverride(opt.v)}
+                style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: `2px solid ${editGroupOverride === opt.v ? C.pri : C.border}`, background: editGroupOverride === opt.v ? C.priLt : C.surface, color: editGroupOverride === opt.v ? C.pri : C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", textAlign: "center" }}>
+                {opt.l}
+              </button>
+            ))}
+          </div>
+        </div>
+        <DogFormFields fields={editFields} dogFields={data.dogFields} data={data} errors={{}} onChange={(id,v)=>setEditFields({...editFields,[id]:v})} feedingSchedules={editFeedingSchedules} onFeedingChange={setEditFeedingSchedules} medSchedules={editMedSchedules} onMedChange={setEditMedSchedules} />
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:24}}><Btn variant="secondary" onClick={()=>setEditing(false)}>Cancel</Btn><Btn onClick={saveEdit}>Save</Btn></div>
+      </Modal>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NEW CLIENT
+// ═══════════════════════════════════════════════════════════════════════════
+function NewClientPage({ data, save, nav, prefill, addGlobalToast }) {
+  const [fields, setFields] = useState(() => {
+    if (!prefill) return {};
+    const v = prefill.trim();
+    // Detect type: email, phone, or name
+    if (v.includes("@")) return { email: v };
+    const digits = v.replace(/\D/g, "");
+    if (digits.length >= 7) return { phone: digits };
+    // Looks like a name — title-case each word
+    const parts = v.split(/\s+/);
+    if (parts.length >= 2) return { first_name: titleCase(parts[0]), last_name: titleCase(parts.slice(1).join(" ")) };
+    return { first_name: titleCase(v) };
+  });
+  const [errors, setErrors] = useState({});
+  const handleSave = async () => {
+    const errs={};
+    data.clientFields.forEach(f=>{if(f.required&&!fields[f.id])errs[f.id]="Required";});
+    if(fields.phone){const ex=data.clients.find(c=>c.fields.phone===(fields.phone||"").replace(/\D/g,""));if(ex)errs.phone="Phone already exists";}
+    if(Object.keys(errs).length>0){setErrors(errs);return;}
+    const nc={id:gid(),fields:{...fields,phone:(fields.phone||"").replace(/\D/g,"")},createdAt:todayStr(),agreements:{}};
+    await save({...data,clients:[...data.clients,nc]});
+    const name = `${nc.fields.first_name||""} ${nc.fields.last_name||""}`.trim();
+    if (addGlobalToast) addGlobalToast({ message: `Client "${name}" created`, actionLabel: "Book Reservation", onAction: () => nav("new-reservation", { clientId: nc.id }) });
+    nav("client-detail",{clientId:nc.id});
+  };
+  return (
+    <div>
+      <button onClick={()=>nav("clients")} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.textSec,fontSize:14,fontWeight:600,padding:0,marginBottom:20,fontFamily:"inherit"}}><I.Back/> Back</button>
+      <h1 style={{margin:"0 0 24px",fontSize:26,fontWeight:800,color:C.text}}>New Client</h1>
+      <Card style={{padding:28}}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          {data.clientFields.filter(f=>f.type!=="textarea").map(f=>(<div key={f.id}><Inp label={f.name} type={f.type} value={fields[f.id]||""} onChange={v=>{setFields({...fields,[f.id]:v});setErrors({...errors,[f.id]:undefined});}} required={f.required} placeholder={f.isKey?"Primary key - must be unique":""} options={f.options}/>{errors[f.id]&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors[f.id]}</div>}</div>))}
+        </div>
+        {data.clientFields.filter(f=>f.type==="textarea").map(f=>(<div key={f.id} style={{marginTop:16}}><Inp label={f.name} type="textarea" value={fields[f.id]||""} onChange={v=>setFields({...fields,[f.id]:v})}/></div>))}
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:28}}><Btn variant="secondary" onClick={()=>nav("clients")}>Cancel</Btn><Btn onClick={handleSave}>Create Client</Btn></div>
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BREED SEARCH DROPDOWN
+// ═══════════════════════════════════════════════════════════════════════════
+function BreedSearch({ value, onChange, breeds, autoFocus }) {
+  const [q, setQ] = useState(value || "");
+  const [open, setOpen] = useState(false);
+  const [hlIdx, setHlIdx] = useState(0);
+  const ref = useRef(null);
+  const inputRef = useRef(null);
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return breeds.slice(0, 20);
+    return breeds.filter(b => b.toLowerCase().includes(s)).slice(0, 20);
+  }, [q, breeds]);
+
+  useEffect(() => { setHlIdx(0); }, [q]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const select = (b) => { setQ(b); onChange(b); setOpen(false); };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setHlIdx(i => Math.min(i + 1, filtered.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHlIdx(i => Math.max(i - 1, 0)); }
+    else if (e.key === "Enter" && open && filtered.length > 0) { e.preventDefault(); select(filtered[hlIdx]); }
+    else if (e.key === "Escape") { setOpen(false); }
+  };
+
+  const ls = { display: "block", fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, letterSpacing: "0.03em", textTransform: "uppercase" };
+  const is = { width: "100%", padding: "10px 14px", border: `1.5px solid ${open ? C.pri : C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none", transition: "border 0.15s", boxSizing: "border-box" };
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <span style={ls}>Breed <span style={{ color: C.dan }}>*</span></span>
+      <input ref={inputRef} autoFocus={autoFocus} value={q} onChange={e => { setQ(e.target.value); onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)} onKeyDown={handleKeyDown} placeholder="Search breeds…" style={is} />
+      {open && filtered.length > 0 && (
+        <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.12)", zIndex: 50, maxHeight: 220, overflow: "auto" }}>
+          {filtered.map((b, i) => (
+            <button key={b} onClick={() => select(b)} onMouseEnter={() => setHlIdx(i)}
+              style={{ display: "block", width: "100%", padding: "8px 14px", border: "none", background: hlIdx === i ? C.priLt : "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left", fontSize: 13, fontWeight: b === "Unknown / Not Sure" || b === "Mixed Breed" ? 700 : 500, color: hlIdx === i ? C.pri : C.text, transition: "background 0.1s" }}>
+              {b === "Unknown / Not Sure" && <span style={{ color: C.textMut, fontSize: 11 }}>⚡ </span>}{b}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FEEDING SCHEDULE EDITOR
+// ═══════════════════════════════════════════════════════════════════════════
+function FeedingScheduleEditor({ schedules, onChange, data }) {
+  const [showModal, setShowModal] = useState(false);
+  const [editIdx, setEditIdx] = useState(-1);
+  const timeOpts = data.feedingTimeOptions || DEF_FEEDING_TIME_OPTIONS;
+  const unitOpts = data.feedingUnitOptions || DEF_FEEDING_UNIT_OPTIONS;
+  const foodTypeOpts = data.foodTypeOptions || DEF_FOOD_TYPE_OPTIONS;
+  const foodSrcOpts = data.foodSourceOptions || DEF_FOOD_SOURCE_OPTIONS;
+  const instrOpts = data.feedingInstructionOptions || DEF_FEEDING_INSTRUCTION_OPTIONS;
+
+  const blank = { id: gid(), times: [], amount: "", unit: "", foodType: "", foodSource: "", instruction: "", notes: "" };
+  const [draft, setDraft] = useState(blank);
+
+  const openAdd = () => { setDraft({ ...blank, id: gid() }); setEditIdx(-1); setShowModal(true); };
+  const openEdit = (idx) => { setDraft({ ...schedules[idx] }); setEditIdx(idx); setShowModal(true); };
+  const saveDraft = () => {
+    if (draft.times.length === 0) return;
+    const updated = editIdx >= 0 ? schedules.map((s, i) => i === editIdx ? draft : s) : [...schedules, draft];
+    onChange(updated);
+    setShowModal(false);
+  };
+  const remove = (idx) => onChange(schedules.filter((_, i) => i !== idx));
+
+  const toggleTime = (t) => setDraft(d => ({ ...d, times: d.times.includes(t) ? d.times.filter(x => x !== t) : [...d.times, t] }));
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8, letterSpacing: "0.03em", textTransform: "uppercase" }}>Feeding Schedules</div>
+      {schedules.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+          {schedules.map((s, i) => (
+            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{s.times.join(", ") || "No time set"}</div>
+                <div style={{ fontSize: 12, color: C.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {[s.amount && s.unit ? `${s.amount} ${s.unit}` : s.amount, s.foodType, s.foodSource].filter(Boolean).join(" · ") || "No details"}
+                </div>
+              </div>
+              <button onClick={() => openEdit(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 4 }}><I.Edit /></button>
+              <button onClick={() => remove(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Trash /></button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, border: `2px dashed ${C.border}`, background: "transparent", cursor: "pointer", color: C.pri, fontWeight: 600, fontSize: 12, fontFamily: "inherit", width: "100%", justifyContent: "center" }}>
+        <I.Plus /> Add Feeding Schedule
+      </button>
+
+      {/* Modal */}
+      {showModal && (
+        <Modal title={editIdx >= 0 ? "Edit Feeding Schedule" : "Add Feeding Schedule"} onClose={() => setShowModal(false)}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Time multi-select */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.03em" }}>Time <span style={{ color: C.dan }}>*</span></div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {timeOpts.map(t => {
+                  const sel = draft.times.includes(t);
+                  return (
+                    <button key={t} onClick={() => toggleTime(t)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, border: `2px solid ${sel ? C.pri : C.border}`, background: sel ? C.priLt : C.surface, color: sel ? C.pri : C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                      {sel && <I.X />}{t}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <Inp label="Amount" value={draft.amount} onChange={v => setDraft({ ...draft, amount: v })} placeholder="e.g. 1/2" />
+              <Inp label="Unit" type="select" value={draft.unit} onChange={v => setDraft({ ...draft, unit: v })} options={["", ...unitOpts]} />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <Inp label="Food Type" type="select" value={draft.foodType} onChange={v => setDraft({ ...draft, foodType: v })} options={["", ...foodTypeOpts]} />
+              <Inp label="Food Source" type="select" value={draft.foodSource} onChange={v => setDraft({ ...draft, foodSource: v })} options={["", ...foodSrcOpts]} />
+            </div>
+            <Inp label="Feeding Instruction" type="select" value={draft.instruction} onChange={v => setDraft({ ...draft, instruction: v })} options={["", ...instrOpts]} />
+            <Inp label="Feeding Notes" value={draft.notes} onChange={v => setDraft({ ...draft, notes: v })} placeholder="Any special notes…" />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 4 }}>
+              <Btn variant="secondary" onClick={() => setShowModal(false)}>Cancel</Btn>
+              <Btn onClick={saveDraft}>Save</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MEDICATION SCHEDULE EDITOR
+// ═══════════════════════════════════════════════════════════════════════════
+function MedicationScheduleEditor({ schedules, onChange, data }) {
+  const [showModal, setShowModal] = useState(false);
+  const [editIdx, setEditIdx] = useState(-1);
+  const unitOpts = data.medicationUnitOptions || DEF_MEDICATION_UNIT_OPTIONS;
+
+  const blank = { id: gid(), time: "", amount: "", unit: "", name: "", notes: "" };
+  const [draft, setDraft] = useState(blank);
+
+  const openAdd = () => { setDraft({ ...blank, id: gid() }); setEditIdx(-1); setShowModal(true); };
+  const openEdit = (idx) => { setDraft({ ...schedules[idx] }); setEditIdx(idx); setShowModal(true); };
+  const saveDraft = () => {
+    if (!draft.name.trim()) return;
+    const updated = editIdx >= 0 ? schedules.map((s, i) => i === editIdx ? draft : s) : [...schedules, draft];
+    onChange(updated);
+    setShowModal(false);
+  };
+  const remove = (idx) => onChange(schedules.filter((_, i) => i !== idx));
+
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8, letterSpacing: "0.03em", textTransform: "uppercase" }}>Medication Schedules</div>
+      {schedules.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+          {schedules.map((s, i) => (
+            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{s.name || "Unnamed"}</div>
+                <div style={{ fontSize: 12, color: C.textSec }}>
+                  {[s.time, s.amount && s.unit ? `${s.amount} ${s.unit}` : s.amount].filter(Boolean).join(" · ") || "No details"}
+                </div>
+              </div>
+              <button onClick={() => openEdit(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 4 }}><I.Edit /></button>
+              <button onClick={() => remove(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Trash /></button>
+            </div>
+          ))}
+        </div>
+      )}
+      <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, border: `2px dashed ${C.border}`, background: "transparent", cursor: "pointer", color: C.pri, fontWeight: 600, fontSize: 12, fontFamily: "inherit", width: "100%", justifyContent: "center" }}>
+        <I.Plus /> Add Medication Schedule
+      </button>
+
+      {showModal && (
+        <Modal title={editIdx >= 0 ? "Edit Medication Schedule" : "Add Medication Schedule"} onClose={() => setShowModal(false)}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <Inp label="Time" value={draft.time} onChange={v => setDraft({ ...draft, time: v })} placeholder="e.g. 8:00 AM, Every 12 hours, With meals…" />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <Inp label="Amount" value={draft.amount} onChange={v => setDraft({ ...draft, amount: v })} placeholder="e.g. 1" />
+              <Inp label="Unit" type="select" value={draft.unit} onChange={v => setDraft({ ...draft, unit: v })} options={["", ...unitOpts]} />
+            </div>
+            <Inp label="Medication Name" value={draft.name} onChange={v => setDraft({ ...draft, name: v })} placeholder="e.g. Glucosamine" />
+            <Inp label="Medication Notes" type="textarea" value={draft.notes} onChange={v => setDraft({ ...draft, notes: v })} placeholder="Special instructions…" rows={2} />
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 4 }}>
+              <Btn variant="secondary" onClick={() => setShowModal(false)}>Cancel</Btn>
+              <Btn onClick={saveDraft}>Save</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// Helper: renders dog form fields with special handling for breed, sex, spay/neuter, bath, feeding, meds
+function DogFormFields({ fields, dogFields, data, errors, onChange, feedingSchedules, onFeedingChange, medSchedules, onMedChange, autoFocusBreed }) {
+  const sex = fields.sex || "";
+  const spayLabel = sex === "Female" ? "Spayed / Intact" : sex === "Male" ? "Neutered / Intact" : "Spayed/Neutered";
+  const spayOpts = sex === "Female" ? ["Spayed", "Intact"] : sex === "Male" ? ["Neutered", "Intact"] : ["Neutered", "Spayed", "Intact"];
+  const breeds = data.breedOptions || DEF_BREED_OPTIONS;
+  const bathOpts = data.bathTypeOptions || DEF_BATH_TYPE_OPTIONS;
+  const SPECIAL = new Set(["breed", "spayed_neutered", "bath_type"]);
+
+  return (
+    <>
+      {/* Generic fields in grid — skip special ones & textareas */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        {dogFields.filter(f => f.type !== "textarea" && !SPECIAL.has(f.id)).map(f => (
+          <div key={f.id} style={f.type === "checkbox" ? { display: "flex", alignItems: "end" } : {}}>
+            {f.id === "breed" ? null : (
+              <Inp label={f.name} type={f.type} value={fields[f.id] || ""} onChange={v => onChange(f.id, v)} required={f.required} options={f.options} />
+            )}
+            {errors[f.id] && <div style={{ color: C.dan, fontSize: 12, marginTop: 4, fontWeight: 600 }}>{errors[f.id]}</div>}
+          </div>
+        ))}
+        {/* Breed — searchable dropdown */}
+        <div>
+          <BreedSearch value={fields.breed || ""} onChange={v => onChange("breed", v)} breeds={breeds} autoFocus={autoFocusBreed} />
+          {errors.breed && <div style={{ color: C.dan, fontSize: 12, marginTop: 4, fontWeight: 600 }}>{errors.breed}</div>}
+        </div>
+        {/* Spayed/Neutered — dynamic based on sex */}
+        <div>
+          <Inp label={spayLabel} type="select" value={fields.spayed_neutered || ""} onChange={v => onChange("spayed_neutered", v)} options={["", ...spayOpts]} />
+        </div>
+        {/* Bath type */}
+        <div>
+          <Inp label="Preferred Bath Type" type="select" value={fields.bath_type || ""} onChange={v => onChange("bath_type", v)} options={["", ...bathOpts]} />
+        </div>
+      </div>
+      {/* Textareas */}
+      {dogFields.filter(f => f.type === "textarea").map(f => (
+        <div key={f.id} style={{ marginTop: 12 }}>
+          <Inp label={f.name} type="textarea" value={fields[f.id] || ""} onChange={v => onChange(f.id, v)} />
+        </div>
+      ))}
+      {/* Feeding schedules */}
+      <div style={{ marginTop: 16 }}>
+        <FeedingScheduleEditor schedules={feedingSchedules} onChange={onFeedingChange} data={data} />
+      </div>
+      {/* Medication schedules */}
+      <div style={{ marginTop: 16 }}>
+        <MedicationScheduleEditor schedules={medSchedules} onChange={onMedChange} data={data} />
+      </div>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NEW DOG (with tag selection)
+// ═══════════════════════════════════════════════════════════════════════════
+function NewDogPage({ data, save, clientId, nav }) {
+  const client = data.clients.find(c=>c.id===clientId);
+  const [fields, setFields] = useState({});
+  const [tags, setTags] = useState([]);
+  const [errors, setErrors] = useState({});
+  const [feedingSchedules, setFeedingSchedules] = useState([]);
+  const [medSchedules, setMedSchedules] = useState([]);
+  if(!client)return null;
+
+  const toggleTag = (tagId) => setTags(prev => prev.includes(tagId) ? prev.filter(t=>t!==tagId) : [...prev, tagId]);
+  const updateField = (fid, v) => { setFields(prev => ({ ...prev, [fid]: v })); setErrors(prev => ({ ...prev, [fid]: undefined })); };
+
+  const handleSave = async () => {
+    const errs={};
+    data.dogFields.forEach(f=>{if(f.required&&!fields[f.id])errs[f.id]="Required";});
+    if(Object.keys(errs).length>0){setErrors(errs);return;}
+    const nd={id:gid(),clientId,fields:{...fields, feedingSchedules, medicationSchedules: medSchedules},tags};
+    await save({...data,dogs:[...data.dogs,nd]});
+    nav("client-detail",{clientId});
+  };
+  return (
+    <div>
+      <button onClick={()=>nav("client-detail",{clientId})} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.textSec,fontSize:14,fontWeight:600,padding:0,marginBottom:20,fontFamily:"inherit"}}><I.Back/> Back to {client.fields.first_name}</button>
+      <h1 style={{margin:"0 0 24px",fontSize:26,fontWeight:800,color:C.text}}>Add Dog</h1>
+      <Card style={{padding:28}}>
+        {/* Tag Selection */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 8 }}>Dog Tags</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {data.dogTags.map(tag => {
+              const sel = tags.includes(tag.id);
+              const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
+              return (
+                <button key={tag.id} onClick={() => toggleTag(tag.id)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, border: `2px solid ${sel ? tc.text : C.border}`, background: sel ? tc.bg : C.surface, color: sel ? tc.text : C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
+                  {sel && <I.Check />}<I.Tag />{tag.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <DogFormFields fields={fields} dogFields={data.dogFields} data={data} errors={errors} onChange={updateField}
+          feedingSchedules={feedingSchedules} onFeedingChange={setFeedingSchedules}
+          medSchedules={medSchedules} onMedChange={setMedSchedules} />
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:28}}><Btn variant="secondary" onClick={()=>nav("client-detail",{clientId})}>Cancel</Btn><Btn onClick={handleSave}>Add Dog</Btn></div>
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NEW RESERVATION
+// ═══════════════════════════════════════════════════════════════════════════
+function NewReservationPage({ data, save, preClientId, nav }) {
+  const [clientId, setClientId] = useState(preClientId||"");
+  const [selectedDogs, setSelectedDogs] = useState([]); // array of dogIds
+  const [type, setType] = useState("boarding");
+  const [roomType, setRoomType] = useState("Luxury Suite");
+  const [daycareSize, setDaycareSize] = useState("large");
+  const [checkIn, setCheckIn] = useState(todayStr());
+  const [checkOut, setCheckOut] = useState(todayStr());
+  const [checkInTime, setCheckInTime] = useState("09:00");
+  const [checkOutTime, setCheckOutTime] = useState("11:00");
+  const [notes, setNotes] = useState("");
+  const [errors, setErrors] = useState({});
+  const [selectedRoom, setSelectedRoom] = useState("");
+  const [showBookedRooms, setShowBookedRooms] = useState(false);
+
+  // Per-dog care overrides: { [dogId]: { feeding, medications, bath_type } }
+  const [careFields, setCareFields] = useState({});
+
+  // Auto-set daycare size from first selected dog
+  useEffect(() => {
+    if (selectedDogs.length > 0 && (type === "daycare" || type === "evaluation")) {
+      const dog = data.dogs.find(d => d.id === selectedDogs[0]);
+      if (dog) setDaycareSize(getDogDaycareSize(dog));
+    }
+  }, [selectedDogs, type]);
+
+  // Room availability
+  const allRooms = data.rooms || {};
+  const roomsForType = allRooms[roomType] || [];
+  const bookedRoomNames = useMemo(() => {
+    if (type !== "boarding" || !checkIn) return new Set();
+    const ci = checkIn; const co = checkOut || checkIn;
+    return new Set(
+      data.reservations.filter(r =>
+        r.type === "boarding" && r.roomType === roomType && r.room &&
+        r.status !== "checked-out" && r.checkIn <= co && r.checkOut >= ci
+      ).map(r => r.room)
+    );
+  }, [type, roomType, checkIn, checkOut, data.reservations]);
+  const availableRooms = roomsForType.filter(r => !bookedRoomNames.has(r));
+  const bookedRooms = roomsForType.filter(r => bookedRoomNames.has(r));
+
+  // Room scoring: for each room compute gap before/after and a smart score
+  const roomScored = useMemo(() => {
+    const ci = checkIn; const co = checkOut || checkIn;
+    const allBoardingRes = data.reservations.filter(r => r.type === "boarding" && r.roomType === roomType && r.room && r.status !== "checked-out");
+    const totalRooms = roomsForType.length;
+    const occupancy = totalRooms > 0 ? (totalRooms - availableRooms.length) / totalRooms : 0;
+
+    const scored = roomsForType.map(room => {
+      const booked = bookedRoomNames.has(room);
+      const roomRes = allBoardingRes.filter(r => r.room === room);
+
+      // Find the reservation that ends most recently BEFORE our check-in
+      const before = roomRes.filter(r => r.checkOut <= ci).sort((a, b) => b.checkOut.localeCompare(a.checkOut));
+      const lastOut = before.length > 0 ? before[0].checkOut : null;
+
+      // Find the reservation that starts soonest AFTER our check-out
+      const after = roomRes.filter(r => r.checkIn >= co).sort((a, b) => a.checkIn.localeCompare(b.checkIn));
+      const nextIn = after.length > 0 ? after[0].checkIn : null;
+
+      // Gap in days
+      const daysBetween = (a, b) => Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 86400000);
+      const gapBefore = lastOut ? daysBetween(lastOut, ci) : 999;
+      const gapAfter = nextIn ? daysBetween(co, nextIn) : 999;
+
+      // Hybrid score: at low occupancy prefer big gaps (staff comfort), at high occupancy prefer tight fit (maximize inventory)
+      // Low occ (< 50%): score = gapBefore + gapAfter (bigger is better)
+      // High occ (> 75%): score = -(gapBefore + gapAfter) (tighter is better, but still must be >= 0 gap)
+      // Blend between 50-75%
+      const comfortScore = Math.min(gapBefore, 30) + Math.min(gapAfter, 30);
+      const packScore = 60 - comfortScore; // inverse: tighter = higher
+      const blend = occupancy < 0.5 ? 0 : occupancy > 0.75 ? 1 : (occupancy - 0.5) / 0.25;
+      const score = booked ? -9999 : (1 - blend) * comfortScore + blend * packScore;
+
+      return { room, booked, lastOut, nextIn, gapBefore, gapAfter, score, occupancy };
+    });
+
+    // Sort: available first (by score desc), then booked
+    scored.sort((a, b) => {
+      if (a.booked !== b.booked) return a.booked ? 1 : -1;
+      return b.score - a.score;
+    });
+
+    // Mark the top-scoring available room as recommended
+    const topAvail = scored.find(r => !r.booked);
+    if (topAvail) topAvail.recommended = true;
+
+    return scored;
+  }, [roomsForType, bookedRoomNames, checkIn, checkOut, roomType, data.reservations, availableRooms.length]);
+
+  // Auto-select recommended room when room type or dates change
+  useEffect(() => {
+    const rec = roomScored.find(r => r.recommended);
+    if (rec && !selectedRoom) setSelectedRoom(rec.room);
+  }, [roomScored]);
+
+  const [showRoomGuide, setShowRoomGuide] = useState(false);
+
+  // "Update profile?" modal state
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [pendingChanges, setPendingChanges] = useState([]); // [{ dogId, field, oldVal, newVal }]
+  const [pendingReservations, setPendingReservations] = useState([]);
+
+  const cDogs = data.dogs.filter(d=>d.clientId===clientId);
+
+  // Client search
+  const [clientSearch, setClientSearch] = useState(() => {
+    if (preClientId) { const c = data.clients.find(x => x.id === preClientId); return c ? `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.trim() : ""; }
+    return "";
+  });
+  const [clientDropOpen, setClientDropOpen] = useState(false);
+  const clientSearchRef = useRef(null);
+  const clientDropRef = useRef(null);
+
+  const clientResults = useMemo(() => {
+    const q = clientSearch.trim().toLowerCase();
+    if (!q) return data.clients.slice(0, 8);
+    const qDigits = q.replace(/\D/g, "");
+    return data.clients.filter(c => {
+      const name = `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.toLowerCase();
+      const phone = (c.fields.phone || "").replace(/\D/g, "");
+      const email = (c.fields.email || "").toLowerCase();
+      const dogNames = data.dogs.filter(d => d.clientId === c.id).map(d => (d.fields.name || "").toLowerCase()).join(" ");
+      return name.includes(q) || email.includes(q) || dogNames.includes(q) || (qDigits.length >= 3 && phone.includes(qDigits));
+    }).slice(0, 8);
+  }, [clientSearch, data.clients, data.dogs]);
+
+  const selectClient = (c) => {
+    setClientId(c.id);
+    setClientSearch(`${c.fields.first_name || ""} ${c.fields.last_name || ""}`.trim());
+    setClientDropOpen(false);
+    setErrors({ ...errors, clientId: undefined });
+  };
+
+  const clearClient = () => {
+    setClientId("");
+    setClientSearch("");
+    setClientDropOpen(false);
+  };
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!clientDropOpen) return;
+    const handler = (e) => { if (clientDropRef.current && !clientDropRef.current.contains(e.target)) setClientDropOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [clientDropOpen]);
+
+  // Auto-focus search on mount
+  useEffect(() => { if (!preClientId && clientSearchRef.current) clientSearchRef.current.focus(); }, []);
+
+  const BATH_OPTS = data.bathTypeOptions || DEF_BATH_TYPE_OPTIONS;
+
+  // When client changes, reset dog selection and pre-select all if only one dog
+  useEffect(()=>{
+    if(cDogs.length===1){ setSelectedDogs([cDogs[0].id]); }
+    else { setSelectedDogs([]); }
+    setCareFields({});
+  },[clientId]);
+
+  // When selected dogs change, initialize care fields from profiles
+  useEffect(()=>{
+    const cf = {};
+    selectedDogs.forEach(did => {
+      const dog = data.dogs.find(d=>d.id===did);
+      if(dog) {
+        cf[did] = {
+          feeding: careFields[did]?.feeding ?? (summarizeFeeding(dog.fields.feedingSchedules) || dog.fields.feeding || ""),
+          medications: careFields[did]?.medications ?? (summarizeMeds(dog.fields.medicationSchedules) || dog.fields.medications || ""),
+          bath_type: careFields[did]?.bath_type ?? dog.fields.bath_type ?? "",
+        };
+      }
+    });
+    setCareFields(cf);
+  },[selectedDogs.join(",")]);
+
+  useEffect(()=>{if(type==="daycare"||type==="tour"||type==="evaluation")setCheckOut(checkIn);},[type,checkIn]);
+  useEffect(()=>{if(type==="daycare"){setCheckInTime("07:00");setCheckOutTime("18:00");}else if(type==="tour"){setCheckInTime("14:00");setCheckOutTime("14:30");}else if(type==="evaluation"){setCheckInTime("09:00");setCheckOutTime("10:00");}else{setCheckInTime("09:00");setCheckOutTime("11:00");}},[type]);
+  useEffect(()=>{setSelectedRoom("");},[roomType]);
+
+  const toggleDog = (did) => {
+    setSelectedDogs(prev => prev.includes(did) ? prev.filter(d=>d!==did) : [...prev, did]);
+  };
+
+  const updateCare = (dogId, field, val) => {
+    setCareFields(prev => ({ ...prev, [dogId]: { ...prev[dogId], [field]: val } }));
+  };
+
+  const handleSave = async () => {
+    const errs={};
+    if(!clientId)errs.clientId="Required";
+    if(selectedDogs.length===0)errs.dogs="Select at least one dog";
+    if(!checkIn)errs.checkIn="Required";
+    if(type==="boarding"&&checkOut<checkIn)errs.checkOut="Must be after check-in";
+    if(Object.keys(errs).length>0){setErrors(errs);return;}
+
+    // Build reservations with pricing snapshot
+    const newRes = selectedDogs.map((did, idx) => {
+      const dog = data.dogs.find(d => d.id === did);
+      const autoDaycareSize = dog ? getDogDaycareSize(dog) : "large";
+      const resPricing = calcReservationPricing({
+        type, roomType, checkIn, checkOut: type === "boarding" ? checkOut : checkIn,
+        checkInTime, checkOutTime, daycareSize: autoDaycareSize,
+        dogs: dog ? [dog] : [], dogProfiles: data.dogs, pricing: data.pricing,
+        isSecondDogSameRoom: type === "boarding" && idx > 0,
+      });
+      return {
+        id:gid(),clientId,dogId:did,type,
+        ...(type==="boarding" ? {roomType, ...(selectedRoom ? {room: selectedRoom} : {})} : {}),
+        ...(type==="daycare" ? {daycareSize: autoDaycareSize} : {}),
+        ...(type==="evaluation" ? {evalResult:"pending"} : {}),
+        checkIn,checkOut:type==="boarding"?checkOut:checkIn,
+        checkInTime,checkOutTime,status:"upcoming",notes,
+        careOverrides: careFields[did] || {},
+        pricing: resPricing,
+      };
+    });
+
+    // Check if any care fields differ from dog profile
+    const changes = [];
+    selectedDogs.forEach(did => {
+      const dog = data.dogs.find(d=>d.id===did);
+      if(!dog) return;
+      const care = careFields[did] || {};
+      const profileFeeding = summarizeFeeding(dog.fields.feedingSchedules) || dog.fields.feeding || "";
+      const profileMeds = summarizeMeds(dog.fields.medicationSchedules) || dog.fields.medications || "";
+      const profileBath = dog.fields.bath_type || "";
+      [["feeding", profileFeeding],["medications", profileMeds],["bath_type", profileBath]].forEach(([f, profileVal]) => {
+        const resVal = care[f] || "";
+        if(resVal !== profileVal && resVal !== "") {
+          changes.push({ dogId: did, dogName: dog.fields.name, field: f, oldVal: profileVal, newVal: resVal });
+        }
+      });
+    });
+
+    if(changes.length > 0) {
+      setPendingChanges(changes);
+      setPendingReservations(newRes);
+      setShowUpdateModal(true);
+    } else {
+      // No changes, just save reservations
+      await save({...data, reservations:[...data.reservations, ...newRes]});
+      nav("client-detail",{clientId});
+    }
+  };
+
+  const confirmSave = async (updateProfile) => {
+    let newDogs = [...data.dogs];
+    if(updateProfile) {
+      // Update dog profiles with changed care fields
+      pendingChanges.forEach(ch => {
+        newDogs = newDogs.map(d => d.id === ch.dogId ? { ...d, fields: { ...d.fields, [ch.field]: ch.newVal } } : d);
+      });
+    }
+    await save({...data, dogs: newDogs, reservations:[...data.reservations, ...pendingReservations]});
+    setShowUpdateModal(false);
+    nav("client-detail",{clientId});
+  };
+
+  const fieldLabel = (f) => f === "feeding" ? "Feeding Instructions" : f === "medications" ? "Medications" : "Preferred Bath Type";
+
+  // Live pricing calculation
+  const livePricing = useMemo(() => {
+    if (!type || selectedDogs.length === 0) return null;
+    // For multi-dog same room boarding, compute per-dog then combine
+    if (type === "boarding" && selectedDogs.length > 1) {
+      let combined = { lineItems: [], subtotal: 0, discountTotal: 0, total: 0, deposit: 0, balance: 0, payAt: "booking", depositRefundable: false, depositPercent: 0 };
+      selectedDogs.forEach((did, idx) => {
+        const dog = data.dogs.find(d => d.id === did);
+        const pr = calcReservationPricing({
+          type, roomType, checkIn, checkOut, checkInTime, checkOutTime,
+          dogs: dog ? [dog] : [], dogProfiles: data.dogs, pricing: data.pricing,
+          isSecondDogSameRoom: idx > 0,
+        });
+        combined.lineItems.push(...pr.lineItems);
+        combined.subtotal += pr.subtotal;
+        combined.discountTotal += pr.discountTotal;
+        combined.total += pr.total;
+        combined.deposit += pr.deposit;
+        combined.balance += pr.balance;
+        combined.payAt = pr.payAt;
+        combined.depositRefundable = pr.depositRefundable;
+        combined.depositPercent = pr.depositPercent;
+      });
+      combined.subtotal = Math.round(combined.subtotal * 100) / 100;
+      combined.discountTotal = Math.round(combined.discountTotal * 100) / 100;
+      combined.total = Math.round(combined.total * 100) / 100;
+      combined.deposit = Math.round(combined.deposit * 100) / 100;
+      combined.balance = Math.round(combined.balance * 100) / 100;
+      return combined;
+    }
+    const dog = data.dogs.find(d => d.id === selectedDogs[0]);
+    return calcReservationPricing({
+      type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize,
+      dogs: dog ? [dog] : [], dogProfiles: data.dogs, pricing: data.pricing,
+      isSecondDogSameRoom: false,
+    });
+  }, [type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, selectedDogs.join(","), data.pricing]);
+
+  return (
+    <div>
+      <button onClick={()=>nav(preClientId?"client-detail":"dashboard",preClientId?{clientId:preClientId}:{})} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.textSec,fontSize:14,fontWeight:600,padding:0,marginBottom:20,fontFamily:"inherit"}}><I.Back/> Back</button>
+      <h1 style={{margin:"0 0 24px",fontSize:26,fontWeight:800,color:C.text}}>Book Reservation</h1>
+      <Card style={{padding:28}}>
+        {/* Client & Type */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+          <div ref={clientDropRef} style={{ position: "relative" }}>
+            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"}}>Client <span style={{color:C.dan}}>*</span></div>
+            <div style={{ display: "flex", alignItems: "center", border: `1.5px solid ${errors.clientId ? C.dan : clientDropOpen ? C.pri : C.border}`, borderRadius: 10, background: C.surface, overflow: "hidden", transition: "border-color 0.15s" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, marginLeft: 12 }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input ref={clientSearchRef} value={clientSearch} onChange={e => { setClientSearch(e.target.value); setClientDropOpen(true); if (clientId) { setClientId(""); } }}
+                onFocus={() => setClientDropOpen(true)}
+                onKeyDown={e => {
+                  if (e.key === "Enter" && clientDropOpen && !clientId) {
+                    e.preventDefault();
+                    if (clientResults.length > 0) { selectClient(clientResults[0]); }
+                    else if (clientSearch.trim()) { nav("new-client", { prefill: clientSearch.trim() }); }
+                  }
+                }}
+                placeholder="Search client name, dog, phone, email…"
+                style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "10px 10px", width: "100%", fontFamily: "inherit" }} />
+              {clientId && (
+                <button onClick={clearClient} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: "0 10px", display: "flex", flexShrink: 0 }} title="Clear">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              )}
+            </div>
+            {/* Dropdown results */}
+            {clientDropOpen && !clientId && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 12px 40px rgba(0,0,0,0.12)", zIndex: 50, maxHeight: 280, overflow: "auto" }}>
+                {clientResults.map(c => {
+                  const dogs = data.dogs.filter(d => d.clientId === c.id);
+                  return (
+                    <button key={c.id} onClick={() => selectClient(c)}
+                      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 14px", border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.1s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <div style={{ width: 32, height: 32, borderRadius: 10, background: `linear-gradient(135deg, ${C.pri}, ${C.priL})`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 11, color: "#fff", flexShrink: 0 }}>{(c.fields.first_name || "?")[0]}{(c.fields.last_name || "?")[0]}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{c.fields.first_name} {c.fields.last_name}</div>
+                        <div style={{ fontSize: 11, color: C.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {fmtPhone(c.fields.phone)}{c.fields.email ? ` · ${c.fields.email}` : ""}
+                          {dogs.length > 0 && ` · ${dogs.map(d => d.fields.name).join(", ")}`}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+                {/* Create new client option */}
+                {clientSearch.trim() && (
+                  <button onClick={() => nav("new-client", { prefill: clientSearch.trim() })}
+                    style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "12px 14px", border: "none", borderTop: clientResults.length > 0 ? `1px solid ${C.borderLight}` : "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.1s" }}
+                    onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <div style={{ width: 32, height: 32, borderRadius: 10, border: `2px dashed ${C.pri}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: C.pri }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>Create New Client</div>
+                      <div style={{ fontSize: 11, color: C.textMut }}>No match for "{clientSearch.trim()}" — press <kbd style={{ padding: "1px 5px", borderRadius: 4, border: `1px solid ${C.border}`, background: C.bg, fontSize: 10, fontWeight: 700 }}>Enter</kbd> or click here</div>
+                    </div>
+                  </button>
+                )}
+                {!clientSearch.trim() && clientResults.length === 0 && (
+                  <div style={{ padding: "16px 14px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No clients yet</div>
+                )}
+              </div>
+            )}
+            {errors.clientId&&<div style={{color:C.dan,fontSize:12,fontWeight:600,marginTop:4}}>{errors.clientId}</div>}
+          </div>
+          <div>
+            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"}}>Type</div>
+            <div style={{display:"flex",gap:8}}>
+              {[{v:"boarding",l:"Boarding"},{v:"daycare",l:"Daycare"},{v:"evaluation",l:"Evaluation"},{v:"tour",l:"Tour"}].map(t=>(
+                <button key={t.v} onClick={()=>setType(t.v)} style={{flex:1,padding:"10px 0",borderRadius:10,border:`2px solid ${type===t.v?C.pri:C.border}`,background:type===t.v?C.priLt:C.surface,color:type===t.v?C.pri:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{t.l}</button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Dates & Times — before room selection so availability is based on chosen dates */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginTop:20}}>
+          <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn} required/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{errors.checkIn&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkIn}</div>}</div>
+          <div><Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime}/></div>
+          {type==="boarding"&&<div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} required/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{errors.checkOut&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkOut}</div>}</div>}
+          {type==="boarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
+          {type!=="boarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
+        </div>
+
+        {/* Sub-type selectors */}
+        {type === "boarding" && (
+          <div style={{marginTop:20}}>
+            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Room Type <span style={{color:C.dan}}>*</span></div>
+            <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              {ROOM_TYPES.map(rt => (
+                <button key={rt} onClick={()=>setRoomType(rt)}
+                  style={{padding:"10px 18px",borderRadius:10,border:`2px solid ${roomType===rt?C.pri:C.border}`,background:roomType===rt?C.priLt:C.surface,color:roomType===rt?C.pri:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>{rt}</button>
+              ))}
+            </div>
+            {/* Smart Room Selection */}
+            {roomsForType.length > 0 && (
+              <div style={{marginTop:14}}>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:11,fontWeight:600,color:C.textSec,letterSpacing:"0.03em",textTransform:"uppercase"}}>Select Room <span style={{fontWeight:500,textTransform:"none",color:C.textMut}}>— {availableRooms.length}/{roomsForType.length} available</span></span>
+                    <button onClick={() => setShowRoomGuide(v => !v)} style={{ width: 18, height: 18, borderRadius: 9, border: `1.5px solid ${showRoomGuide ? C.pri : C.border}`, background: showRoomGuide ? C.priLt : "transparent", color: showRoomGuide ? C.pri : C.textMut, fontSize: 11, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit", lineHeight: 1 }} title="How room recommendations work">?</button>
+                  </div>
+                  <label style={{display:"flex",alignItems:"center",gap:5,fontSize:11,color:C.textMut,cursor:"pointer"}}>
+                    <input type="checkbox" checked={showBookedRooms} onChange={e=>setShowBookedRooms(e.target.checked)} style={{accentColor:C.pri}} />
+                    Show booked
+                  </label>
+                </div>
+                {/* Room Assignment Guide */}
+                {showRoomGuide && (
+                  <div style={{ marginBottom: 12, padding: "16px 18px", borderRadius: 10, border: `1.5px solid ${C.priLt}`, background: `linear-gradient(135deg, ${C.priLt}40, ${C.surface})`, fontSize: 12, lineHeight: 1.7, color: C.textSec }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: C.pri, marginBottom: 8 }}>How Room Recommendations Work</div>
+                    <div style={{ marginBottom: 8 }}>
+                      The system automatically recommends the <span style={{ fontWeight: 700, color: C.text }}>best room</span> (marked with a green "Best" badge) using a <span style={{ fontWeight: 700, color: C.text }}>hybrid scoring algorithm</span> that adapts based on how full the resort is.
+                    </div>
+                    <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>For each available room, the system checks:</div>
+                    <div style={{ paddingLeft: 12, marginBottom: 8 }}>
+                      <div><span style={{ fontWeight: 700 }}>Last Out</span> — when the previous guest checked out of this room, and how many days of buffer exist before this reservation's check-in.</div>
+                      <div><span style={{ fontWeight: 700 }}>Next In</span> — when the next guest is booked to check into this room, and how many days of buffer exist after this reservation's check-out.</div>
+                    </div>
+                    <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>The strategy shifts with occupancy:</div>
+                    <div style={{ paddingLeft: 12, marginBottom: 8 }}>
+                      <div><span style={{ fontWeight: 700, color: C.suc }}>Below 50% occupancy (Comfort Mode)</span> — Picks the room with the <span style={{ fontWeight: 700 }}>biggest gaps</span> before and after. This gives staff the most time for turnarounds, cleaning, and prep. No rush.</div>
+                      <div><span style={{ fontWeight: 700, color: C.acc }}>50–75% occupancy (Blended)</span> — Smoothly transitions between comfort and capacity optimization.</div>
+                      <div><span style={{ fontWeight: 700, color: C.dan }}>Above 75% occupancy (Capacity Mode)</span> — Picks the room with the <span style={{ fontWeight: 700 }}>tightest fit</span>. This packs reservations snugly to preserve larger open windows for future bookings — critical during peak periods like holidays when every room counts.</div>
+                    </div>
+                    <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>Reading the room cards:</div>
+                    <div style={{ paddingLeft: 12, marginBottom: 8 }}>
+                      <div>Each card shows the room number, last checkout date, and next check-in date with the gap in days. <span style={{ fontWeight: 700, color: C.dan }}>Red</span> = same-day turnaround (tight!). <span style={{ fontWeight: 700, color: C.acc }}>Amber</span> = 1 day buffer. Normal = comfortable gap.</div>
+                    </div>
+                    <div style={{ fontSize: 11, color: C.textMut, fontStyle: "italic" }}>You can always override the recommendation by clicking any available room. The "Best" badge is a suggestion, not a requirement.</div>
+                  </div>
+                )}
+
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
+                  {roomScored.map(rs => {
+                    const sel = selectedRoom === rs.room;
+                    const booked = rs.booked;
+                    if (booked && !showBookedRooms) return null;
+                    return (
+                      <button key={rs.room} onClick={() => !booked && setSelectedRoom(sel ? "" : rs.room)} disabled={booked}
+                        style={{ padding: "10px 12px", borderRadius: 10, border: `2px solid ${booked ? C.borderLight : sel ? C.pri : rs.recommended ? C.suc : C.border}`, background: booked ? C.bg : sel ? C.priLt : C.surface, cursor: booked ? "not-allowed" : "pointer", fontFamily: "inherit", textAlign: "left", transition: "all 0.12s", opacity: booked ? 0.5 : 1, position: "relative" }}>
+                        {rs.recommended && !booked && <div style={{ position: "absolute", top: -8, right: 8, fontSize: 9, fontWeight: 700, color: "#fff", background: C.suc, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Best</div>}
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span style={{ fontSize: 14, fontWeight: 800, color: booked ? C.textMut : sel ? C.pri : C.text, textDecoration: booked ? "line-through" : "none" }}>{rs.room}</span>
+                        </div>
+                        {!booked && (
+                          <div style={{ fontSize: 10, color: C.textMut, lineHeight: 1.5 }}>
+                            <div>Last out: <span style={{ fontWeight: 600, color: rs.gapBefore <= 0 ? C.dan : rs.gapBefore <= 1 ? C.acc : C.textSec }}>{rs.lastOut ? `${fmtDate(rs.lastOut)}${rs.gapBefore >= 0 ? ` (${rs.gapBefore}d)` : ""}` : "None"}</span></div>
+                            <div>Next in: <span style={{ fontWeight: 600, color: rs.gapAfter <= 0 ? C.dan : rs.gapAfter <= 1 ? C.acc : C.textSec }}>{rs.nextIn ? `${fmtDate(rs.nextIn)}${rs.gapAfter >= 0 ? ` (${rs.gapAfter}d)` : ""}` : "None"}</span></div>
+                          </div>
+                        )}
+                        {booked && <div style={{ fontSize: 10, color: C.textMut }}>Booked for these dates</div>}
+                      </button>
+                    );
+                  })}
+                </div>
+                {availableRooms.length === 0 && <div style={{fontSize:12,color:C.dan,fontWeight:600,marginTop:6}}>No rooms available for these dates</div>}
+              </div>
+            )}
+          </div>
+        )}
+        {/* Daycare size is auto-derived from the dog's weight/override classification */}
+
+        {/* Dog Selection */}
+        {clientId && (
+          <div style={{marginTop:20}}>
+            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>
+              Select Dog{cDogs.length>1?"s":""} <span style={{color:C.dan}}>*</span>
+            </div>
+            {cDogs.length === 0 ? (
+              <div style={{padding:"16px 0",color:C.textMut,fontSize:13}}>No dogs on file for this client. <span style={{color:C.pri,cursor:"pointer",fontWeight:600}} onClick={()=>nav("new-dog",{clientId})}>Add a dog first.</span></div>
+            ) : (
+              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                {cDogs.map(dog => {
+                  const sel = selectedDogs.includes(dog.id);
+                  return (
+                    <button key={dog.id} onClick={()=>{toggleDog(dog.id);setErrors({...errors,dogs:undefined});}}
+                      style={{display:"flex",alignItems:"center",gap:10,padding:"10px 16px",borderRadius:12,border:`2px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:C.surface,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
+                      <div style={{width:20,height:20,borderRadius:6,border:`2px solid ${sel?C.pri:C.border}`,background:sel?C.pri:"#fff",display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",flexShrink:0}}>
+                        {sel&&<I.Check/>}
+                      </div>
+                      <div style={{textAlign:"left"}}>
+                        <div style={{fontSize:14,fontWeight:700,color:sel?C.pri:C.text}}>{dog.fields.name}</div>
+                        <div style={{fontSize:11,color:C.textSec}}>{dog.fields.breed}{dog.fields.weight?` · ${dog.fields.weight} lbs`:""}</div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {errors.dogs&&<div style={{color:C.dan,fontSize:12,fontWeight:600,marginTop:6}}>{errors.dogs}</div>}
+          </div>
+        )}
+
+        {/* Per-Dog Care Fields */}
+        {selectedDogs.length > 0 && (
+          <div style={{marginTop:24}}>
+            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:12,letterSpacing:"0.03em",textTransform:"uppercase"}}>Care Instructions per Dog</div>
+            <div style={{display:"flex",flexDirection:"column",gap:16}}>
+              {selectedDogs.map(did => {
+                const dog = data.dogs.find(d=>d.id===did);
+                if(!dog)return null;
+                const care = careFields[did] || {};
+                const profileFeeding = summarizeFeeding(dog.fields.feedingSchedules) || dog.fields.feeding || "";
+                const profileMeds = summarizeMeds(dog.fields.medicationSchedules) || dog.fields.medications || "";
+                const profileBath = dog.fields.bath_type || "";
+                const feedingChanged = care.feeding !== undefined && care.feeding !== profileFeeding;
+                const medsChanged = care.medications !== undefined && care.medications !== profileMeds;
+                const bathChanged = care.bath_type !== undefined && care.bath_type !== profileBath;
+                const anyChanged = feedingChanged || medsChanged || bathChanged;
+                return (
+                  <div key={did} style={{padding:"16px 20px",borderRadius:12,border:`1.5px solid ${anyChanged?C.acc:C.border}`,background:anyChanged?C.accLt+"30":C.bg}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+                      <span style={{fontSize:15,fontWeight:700,color:C.text}}>{dog.fields.name}</span>
+                      <span style={{fontSize:12,color:C.textSec}}>{dog.fields.breed}</span>
+                      {anyChanged && <Badge color="warning" size="sm">Modified from profile</Badge>}
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+                      <div style={{gridColumn:"1 / -1"}}><Inp label="Feeding Instructions" type="textarea" value={care.feeding ?? ""} onChange={v=>updateCare(did,"feeding",v)} rows={2} placeholder="e.g. 2 cups AM/PM Blue Buffalo"/></div>
+                      <div><Inp label="Medications" type="textarea" value={care.medications ?? ""} onChange={v=>updateCare(did,"medications",v)} rows={2} placeholder="e.g. Glucosamine daily"/></div>
+                      <div><Inp label="Preferred Bath Type" type="select" value={care.bath_type ?? ""} onChange={v=>updateCare(did,"bath_type",v)} options={BATH_OPTS}/></div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div style={{marginTop:16}}><Inp label="General Notes" type="textarea" value={notes} onChange={setNotes} placeholder="Special instructions for this stay..."/></div>
+
+        {/* Itemized Receipt */}
+        {livePricing && livePricing.lineItems.length > 0 && (
+          <div style={{ marginTop: 20 }}>
+            <ItemizedReceipt pricingResult={livePricing} />
+          </div>
+        )}
+
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:28}}>
+          <Btn variant="secondary" onClick={()=>nav(preClientId?"client-detail":"dashboard",preClientId?{clientId:preClientId}:{})}>Cancel</Btn>
+          <Btn onClick={handleSave}>Create Reservation{selectedDogs.length>1?"s":""}</Btn>
+        </div>
+      </Card>
+
+      {/* Update Profile Modal */}
+      {showUpdateModal && (
+        <Modal title="Update Dog Profile?" onClose={()=>setShowUpdateModal(false)} wide>
+          <div style={{marginBottom:16}}>
+            <p style={{fontSize:14,color:C.text,lineHeight:1.6,margin:"0 0 16px"}}>
+              You changed care instructions for the following. Would you like to update the dog's profile for all future reservations, or keep these changes just for this reservation?
+            </p>
+            <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {pendingChanges.map((ch,i) => (
+                <div key={i} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.border}`}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+                    <span style={{fontSize:13,fontWeight:700,color:C.text}}>{ch.dogName}</span>
+                    <Badge color="accent" size="sm">{fieldLabel(ch.field)}</Badge>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 24px 1fr",gap:8,alignItems:"start"}}>
+                    <div style={{padding:"6px 10px",borderRadius:8,background:C.danLt,fontSize:12,color:C.dan}}>
+                      <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",marginBottom:2}}>Profile (current)</div>
+                      {ch.oldVal || <span style={{fontStyle:"italic",opacity:0.6}}>Empty</span>}
+                    </div>
+                    <div style={{textAlign:"center",color:C.textMut,paddingTop:6}}>→</div>
+                    <div style={{padding:"6px 10px",borderRadius:8,background:C.sucLt,fontSize:12,color:C.suc}}>
+                      <div style={{fontSize:9,fontWeight:700,textTransform:"uppercase",marginBottom:2}}>New value</div>
+                      {ch.newVal}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:10,justifyContent:"flex-end",flexWrap:"wrap"}}>
+            <Btn variant="secondary" onClick={()=>setShowUpdateModal(false)}>Cancel</Btn>
+            <Btn variant="accent" onClick={()=>confirmSave(false)}>This Reservation Only</Btn>
+            <Btn onClick={()=>confirmSave(true)}>Update Profile for All Future</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LODGING CALENDAR
+// ═══════════════════════════════════════════════════════════════════════════
+function LodgingCalendarPage({ data, save, nav, onNew }) {
+  const td = todayStr();
+  const [weekStart, setWeekStart] = useState(() => getMonday(td));
+  const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart]);
+  const weekEnd = weekDays[6];
+
+  const prevWeek = () => setWeekStart(addDays(weekStart, -7));
+  const nextWeek = () => setWeekStart(addDays(weekStart, 7));
+  const goToday = () => setWeekStart(getMonday(td));
+  const isCurrentWeek = weekStart === getMonday(td);
+
+  // Calendar popup
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [calMonth, setCalMonth] = useState(() => { const d = new Date(weekStart+"T12:00:00"); return d.getMonth(); });
+  const [calYear, setCalYear] = useState(() => { const d = new Date(weekStart+"T12:00:00"); return d.getFullYear(); });
+  useEffect(() => { const d = new Date(weekStart+"T12:00:00"); setCalMonth(d.getMonth()); setCalYear(d.getFullYear()); }, [showCalendar]);
+  const calDays = useMemo(() => {
+    const first = new Date(calYear, calMonth, 1);
+    const startDay = first.getDay();
+    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < startDay; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+    return cells;
+  }, [calMonth, calYear]);
+  const calMonthLabel = new Date(calYear, calMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const calPrev = () => { if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); };
+  const calNext = () => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); };
+  const calSelect = (day) => {
+    const m = String(calMonth + 1).padStart(2, "0");
+    const d = String(day).padStart(2, "0");
+    const picked = `${calYear}-${m}-${d}`;
+    setWeekStart(getMonday(picked));
+    setShowCalendar(false);
+  };
+  const calRef = useRef(null);
+  useEffect(() => {
+    if (!showCalendar) return;
+    const handler = (e) => { if (calRef.current && !calRef.current.contains(e.target)) setShowCalendar(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showCalendar]);
+
+  const dn = (did) => { const d = data.dogs.find(x => x.id === did); return d ? d.fields.name : "?"; };
+  const [collapsed, setCollapsed] = useState({});
+  const toggleCollapse = (rt) => setCollapsed(prev => ({ ...prev, [rt]: !prev[rt] }));
+
+  // All rooms grouped by type (must be before drag/optimize which reference it)
+  const allRooms = data.rooms || {};
+
+  // Interaction state: custom mouse system for drag/resize
+  const [interaction, setInteraction] = useState(null);
+  const interRef = useRef(null);
+  const justDraggedRef = useRef(false);
+  const [boardingPreviewId, setBoardingPreviewId] = useState(null);
+
+  // Toast notifications
+  const [toasts, setToasts] = useState([]);
+  const toastIdRef = useRef(0);
+
+  // Edge detection: returns "left" | "right" | null
+  const getEdge = (e, el) => {
+    const r = el.getBoundingClientRect();
+    if (e.clientX - r.left < 8) return "left";
+    if (r.right - e.clientX < 8) return "right";
+    return null;
+  };
+
+  // Column pixel width from the day-grid container
+  const getColWidth = () => {
+    const el = document.querySelector("[data-day-grid]");
+    return el ? el.getBoundingClientRect().width / 7 : 100;
+  };
+
+  // Conflict check
+  const hasConflict = (resId, room, ci, co) =>
+    data.reservations.some(r =>
+      r.id !== resId && r.room === room && r.type === "boarding" &&
+      r.status !== "checked-out" && r.checkIn < co && r.checkOut > ci
+    );
+
+  // Toast helpers
+  const addToast = (t) => {
+    const id = ++toastIdRef.current;
+    const toast = { id, ...t };
+    setToasts(prev => [...prev, toast]);
+    setTimeout(() => setToasts(prev => prev.filter(x => x.id !== id)), 10000);
+  };
+  const dismissToast = (id) => setToasts(prev => prev.filter(x => x.id !== id));
+  const handleUndo = async (toast) => {
+    if (toast.undoRes.id === "__optimize__") {
+      // Undo full optimize: restore all reservations
+      await save({ ...data, reservations: toast.undoRes._prevReservations });
+    } else {
+      await save({ ...data, reservations: data.reservations.map(r => r.id === toast.undoRes.id ? toast.undoRes : r) });
+    }
+    dismissToast(toast.id);
+  };
+
+  // Find roomType for a given room string
+  const roomTypeOf = (room) => ROOM_TYPES.find(rt => (allRooms[rt] || []).includes(room)) || null;
+
+  // Start an interaction (mousedown on a block)
+  const startInteraction = (e, res, type) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const colW = getColWidth();
+    const state = { type, resId: res.id, origRes: { ...res }, startX: e.clientX, startY: e.clientY, colW, origCI: res.checkIn, origCO: res.checkOut, origRoom: res.room, dayDelta: 0, targetRoom: res.room, moved: false };
+    interRef.current = state;
+    setInteraction(state);
+
+    const onMove = (me) => {
+      const s = interRef.current;
+      if (!s) return;
+      const dx = me.clientX - s.startX;
+      const dy = me.clientY - s.startY;
+      if (!s.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return; // deadzone
+      s.moved = true;
+      s.dayDelta = Math.round(dx / s.colW);
+      // Detect target room via elementFromPoint
+      if (s.type === "move") {
+        const el = document.elementFromPoint(me.clientX, me.clientY);
+        const rowEl = el && el.closest ? el.closest("[data-room-row]") : null;
+        if (rowEl) {
+          const tRoom = rowEl.dataset.roomRow;
+          const tType = roomTypeOf(tRoom);
+          const origType = roomTypeOf(s.origRoom);
+          s.targetRoom = (tType && tType === origType) ? tRoom : s.origRoom;
+        }
+      }
+      interRef.current = { ...s };
+      setInteraction({ ...s });
+    };
+
+    const onUp = async () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      const s = interRef.current;
+      interRef.current = null;
+      setInteraction(null);
+      if (!s || !s.moved) return;
+      justDraggedRef.current = true;
+      setTimeout(() => { justDraggedRef.current = false; }, 0);
+
+      // Compute final dates
+      let ci, co;
+      if (s.type === "move") { ci = addDays(s.origCI, s.dayDelta); co = addDays(s.origCO, s.dayDelta); }
+      else if (s.type === "resize-left") { ci = addDays(s.origCI, s.dayDelta); co = s.origCO; }
+      else { ci = s.origCI; co = addDays(s.origCO, s.dayDelta); }
+
+      // Validate
+      if (ci >= co) return;
+      const tRoom = s.type === "move" ? s.targetRoom : s.origRoom;
+      if (ci === s.origCI && co === s.origCO && tRoom === s.origRoom) return;
+      if (hasConflict(s.resId, tRoom, ci, co)) return;
+
+      // Save
+      await save({ ...data, reservations: data.reservations.map(r => r.id === s.resId ? { ...r, checkIn: ci, checkOut: co, room: tRoom } : r) });
+
+      // Toast
+      const dogName = dn(s.origRes.dogId);
+      let action, oldVal, newVal;
+      if (s.type === "move" && tRoom !== s.origRoom && s.dayDelta === 0) {
+        action = "moved"; oldVal = s.origRoom; newVal = tRoom;
+      } else if (s.type === "move" && tRoom !== s.origRoom) {
+        action = "moved & shifted"; oldVal = `${s.origRoom}, ${fmtDate(s.origCI)} – ${fmtDate(s.origCO)}`; newVal = `${tRoom}, ${fmtDate(ci)} – ${fmtDate(co)}`;
+      } else if (s.type === "resize-left") {
+        action = "check-in changed"; oldVal = fmtDate(s.origCI); newVal = fmtDate(ci);
+      } else if (s.type === "resize-right") {
+        action = "check-out changed"; oldVal = fmtDate(s.origCO); newVal = fmtDate(co);
+      } else {
+        action = "shifted"; oldVal = `${fmtDate(s.origCI)} – ${fmtDate(s.origCO)}`; newVal = `${fmtDate(ci)} – ${fmtDate(co)}`;
+      }
+      addToast({ dogName, action, oldVal, newVal, undoRes: s.origRes });
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  // Optimize state & logic
+  const [showOptimizeConfirm, setShowOptimizeConfirm] = useState(false);
+  const [showOptGuide, setShowOptGuide] = useState(false);
+
+  const computeOptimized = useCallback(() => {
+    const newRoomMap = {}; // resId -> newRoom
+    for (const rt of ROOM_TYPES) {
+      const rooms = allRooms[rt] || [];
+      if (rooms.length === 0) continue;
+      const resOfType = data.reservations.filter(r => r.type === "boarding" && r.roomType === rt && r.status !== "checked-out");
+      const sorted = [...resOfType].sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.checkOut.localeCompare(b.checkOut));
+      const latestCO = {};
+      rooms.forEach(rm => { latestCO[rm] = "1900-01-01"; });
+      for (const res of sorted) {
+        let bestRoom = null, bestCO = null;
+        for (const rm of rooms) {
+          if (latestCO[rm] <= res.checkIn) {
+            if (bestCO === null || latestCO[rm] > bestCO) { bestRoom = rm; bestCO = latestCO[rm]; }
+          }
+        }
+        if (!bestRoom) { bestRoom = rooms.reduce((b, rm) => latestCO[rm] < latestCO[b] ? rm : b); }
+        latestCO[bestRoom] = res.checkOut;
+        if (bestRoom !== res.room) newRoomMap[res.id] = bestRoom;
+      }
+    }
+    return newRoomMap;
+  }, [allRooms, data.reservations]);
+
+  const optimizeMoveCount = useMemo(() => Object.keys(computeOptimized()).length, [computeOptimized]);
+
+  const runOptimize = async () => {
+    const moves = computeOptimized();
+    const count = Object.keys(moves).length;
+    if (count === 0) { setShowOptimizeConfirm(false); return; }
+    const prevReservations = [...data.reservations];
+    await save({ ...data, reservations: data.reservations.map(r => moves[r.id] ? { ...r, room: moves[r.id] } : r) });
+    setShowOptimizeConfirm(false);
+    addToast({ dogName: `${count} reservation${count > 1 ? "s" : ""}`, action: "optimized", oldVal: "fragmented", newVal: "packed tight", undoRes: { id: "__optimize__", _prevReservations: prevReservations } });
+  };
+
+  const activeTypes = useMemo(() => ROOM_TYPES.filter(rt => (allRooms[rt] || []).length > 0), [allRooms]);
+  const allCollapsed = activeTypes.length > 0 && activeTypes.every(rt => collapsed[rt]);
+  const toggleAll = () => {
+    const next = {};
+    activeTypes.forEach(rt => { next[rt] = !allCollapsed; });
+    setCollapsed(next);
+  };
+  const roomRows = useMemo(() => {
+    const rows = [];
+    ROOM_TYPES.forEach(rt => {
+      const list = allRooms[rt] || [];
+      if (list.length > 0) {
+        rows.push({ type: "header", roomType: rt, count: list.length });
+        list.forEach(r => rows.push({ type: "room", roomType: rt, room: r }));
+      }
+    });
+    return rows;
+  }, [allRooms]);
+
+  // Boarding reservations that overlap this week
+  const weekRes = useMemo(() =>
+    data.reservations.filter(r =>
+      r.type === "boarding" && r.room && r.status !== "checked-out" &&
+      r.checkIn <= weekEnd && r.checkOut >= weekStart
+    ), [data.reservations, weekStart, weekEnd]);
+
+  // Map: room -> [reservations]
+  const resByRoom = useMemo(() => {
+    const m = {};
+    weekRes.forEach(r => { if (!m[r.room]) m[r.room] = []; m[r.room].push(r); });
+    return m;
+  }, [weekRes]);
+
+  // Per room-type, per day: how many rooms are booked
+  const dailyOccByType = useMemo(() => {
+    const m = {};
+    ROOM_TYPES.forEach(rt => {
+      const rooms = allRooms[rt] || [];
+      m[rt] = weekDays.map(d =>
+        rooms.filter(room => (resByRoom[room] || []).some(r => r.checkIn <= d && r.checkOut > d)).length
+      );
+    });
+    return m;
+  }, [allRooms, weekDays, resByRoom]);
+
+  // Overall nightly occupancy: rooms booked / total rooms
+  const totalRoomCount = useMemo(() => activeTypes.reduce((s, rt) => s + (allRooms[rt] || []).length, 0), [activeTypes, allRooms]);
+  const dailyOccOverall = useMemo(() =>
+    weekDays.map((_, di) => activeTypes.reduce((s, rt) => s + (dailyOccByType[rt] || [])[di], 0)),
+    [weekDays, activeTypes, dailyOccByType]
+  );
+
+  // Week label
+  const weekLabel = (() => {
+    const ms = new Date(weekStart + "T12:00:00");
+    const me = new Date(weekEnd + "T12:00:00");
+    const sameMonth = ms.getMonth() === me.getMonth();
+    if (sameMonth) return `${ms.toLocaleDateString("en-US",{month:"long"})} ${ms.getDate()} – ${me.getDate()}, ${ms.getFullYear()}`;
+    return `${fmtDate(weekStart)} – ${fmtDate(weekEnd)}, ${me.getFullYear()}`;
+  })();
+
+  const COL_W = "1fr";
+  const LABEL_W = 120;
+  const ROW_H = 48;
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>Lodging Calendar</h1>
+        <Btn onClick={onNew} icon={<I.Plus />}>New {(data.hotkeySettings||{}).showHints!==false&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'Inter',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
+      </div>
+
+      {/* Week navigation */}
+      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 16, position: "relative" }}>
+        <button onClick={prevWeek} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", color: C.textSec, fontFamily: "inherit", padding: 0 }} title="Previous week">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <span style={{ fontSize: 14, fontWeight: 600, color: C.text, textAlign: "center", padding: "4px 2px", whiteSpace: "nowrap" }}>{weekLabel}</span>
+        <button onClick={nextWeek} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", color: C.textSec, fontFamily: "inherit", padding: 0 }} title="Next week">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        <button onClick={() => setShowCalendar(v => !v)} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${showCalendar ? C.pri : C.border}`, background: showCalendar ? C.priLt : C.surface, cursor: "pointer", color: showCalendar ? C.pri : C.textSec, fontSize: 14, fontFamily: "inherit", padding: 0, transition: "all 0.15s" }} title="Open calendar">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        </button>
+        {!isCurrentWeek && (
+          <button onClick={goToday} style={{ padding: "4px 12px", borderRadius: 8, border: `1.5px solid ${C.pri}`, background: C.priLt, color: C.pri, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Today</button>
+        )}
+
+        {/* Calendar Popup */}
+        {showCalendar && (
+          <div ref={calRef} style={{ position: "absolute", top: "100%", left: 28, marginTop: 6, zIndex: 100, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.15)", padding: 16, width: 280 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <button onClick={calPrev} style={{ width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, fontFamily: "inherit", padding: 0 }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{calMonthLabel}</span>
+              <button onClick={calNext} style={{ width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, fontFamily: "inherit", padding: 0 }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", marginBottom: 4 }}>
+              {["Su","Mo","Tu","We","Th","Fr","Sa"].map(d => (
+                <span key={d} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, padding: "4px 0", textTransform: "uppercase" }}>{d}</span>
+              ))}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", gap: 2 }}>
+              {calDays.map((day, i) => {
+                if (day === null) return <div key={`e${i}`} />;
+                const m = String(calMonth + 1).padStart(2, "0");
+                const d = String(day).padStart(2, "0");
+                const dateStr = `${calYear}-${m}-${d}`;
+                const isInWeek = dateStr >= weekStart && dateStr <= weekEnd;
+                const isTodayCell = dateStr === td;
+                const hasRes = data.reservations.some(r => r.type === "boarding" && r.status !== "checked-out" && r.checkIn <= dateStr && r.checkOut >= dateStr);
+                return (
+                  <button key={i} onClick={() => calSelect(day)}
+                    style={{
+                      width: 34, height: 34, borderRadius: 10, border: isInWeek ? `2px solid ${C.pri}` : isTodayCell ? `2px solid ${C.acc}` : "2px solid transparent",
+                      background: isInWeek ? C.priLt : "transparent",
+                      color: isInWeek ? C.pri : isTodayCell ? C.acc : C.text,
+                      fontSize: 13, fontWeight: isInWeek || isTodayCell ? 700 : 500,
+                      cursor: "pointer", fontFamily: "inherit", padding: 0,
+                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", margin: "0 auto",
+                      transition: "all 0.1s",
+                    }}
+                    onMouseEnter={e => { if (!isInWeek) e.currentTarget.style.background = C.surfaceHover; }}
+                    onMouseLeave={e => { if (!isInWeek) e.currentTarget.style.background = "transparent"; }}
+                  >
+                    {day}
+                    {hasRes && !isInWeek && <div style={{ width: 4, height: 4, borderRadius: 2, background: C.pri, marginTop: 1 }} />}
+                  </button>
+                );
+              })}
+            </div>
+            {!isCurrentWeek && (
+              <div style={{ textAlign: "center", marginTop: 10, borderTop: `1px solid ${C.borderLight}`, paddingTop: 10 }}>
+                <button onClick={() => { goToday(); setShowCalendar(false); }} style={{ fontSize: 12, fontWeight: 700, color: C.pri, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>Go to This Week</button>
+              </div>
+            )}
+          </div>
+        )}
+        <div style={{ flex: 1 }} />
+        <button onClick={() => setShowOptimizeConfirm(true)} style={{ padding: "4px 12px", borderRadius: 8, border: `1.5px solid ${C.acc}`, background: `${C.acc}18`, color: C.acc, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 5 }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8L12 14.6l-4.9 3.6 1.9-5.8L4 8.8h6.1z"/></svg>
+          Optimize
+        </button>
+        <button onClick={() => setShowOptGuide(v => !v)} style={{ width: 22, height: 22, borderRadius: 11, border: `1.5px solid ${showOptGuide ? C.pri : C.border}`, background: showOptGuide ? C.priLt : "transparent", color: showOptGuide ? C.pri : C.textMut, fontSize: 12, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit", lineHeight: 1 }} title="How drag & drop and optimization work">?</button>
+        {activeTypes.length > 0 && (
+          <button onClick={toggleAll} style={{ padding: "4px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points={allCollapsed ? "6 9 12 15 18 9" : "18 15 12 9 6 15"}/></svg>
+            {allCollapsed ? "Expand All" : "Collapse All"}
+          </button>
+        )}
+      </div>
+
+      {/* Drag & Optimize guide */}
+      {showOptGuide && (
+        <div style={{ marginBottom: 12, padding: "16px 18px", borderRadius: 10, border: `1.5px solid ${C.priLt}`, background: `linear-gradient(135deg, ${C.priLt}40, ${C.surface})`, fontSize: 12, lineHeight: 1.7, color: C.textSec }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.pri, marginBottom: 8 }}>How Drag & Drop and Optimize Work</div>
+          <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>Drag to Move & Shift Dates</div>
+          <div style={{ paddingLeft: 12, marginBottom: 10 }}>
+            <div>Grab the <span style={{ fontWeight: 700, color: C.text }}>body</span> of a reservation block and drag it <span style={{ fontWeight: 700, color: C.text }}>left or right</span> to shift the check-in and check-out dates. Drag it <span style={{ fontWeight: 700, color: C.text }}>up or down</span> to move it to a different room within the same room type.</div>
+            <div style={{ marginTop: 4 }}>A <span style={{ fontWeight: 700, color: C.pri }}>dashed blue ghost</span> shows the projected position. If the target has a conflict, the move is silently rejected.</div>
+            <div style={{ marginTop: 4 }}>Click a reservation normally (without dragging) to view the client's details.</div>
+          </div>
+          <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>Edge Resize</div>
+          <div style={{ paddingLeft: 12, marginBottom: 10 }}>
+            <div>Hover over the <span style={{ fontWeight: 700, color: C.text }}>left or right edge</span> of a block — the cursor changes to a resize arrow. Drag the edge to <span style={{ fontWeight: 700, color: C.text }}>extend or shorten</span> the reservation. Left edge changes check-in, right edge changes check-out.</div>
+          </div>
+          <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>Optimize Button</div>
+          <div style={{ paddingLeft: 12, marginBottom: 10 }}>
+            <div>The <span style={{ fontWeight: 700, color: C.acc }}>Optimize</span> button automatically rearranges reservations to <span style={{ fontWeight: 700, color: C.text }}>minimize room fragmentation</span> and free up as many rooms as possible for new bookings.</div>
+            <div style={{ marginTop: 4 }}>It uses a <span style={{ fontWeight: 700, color: C.text }}>best-fit packing algorithm</span> per room type: reservations are sorted by check-in date and each one is assigned to the room whose last checkout is closest to (but not after) the check-in — packing them tightly together.</div>
+            <div style={{ marginTop: 4 }}>Dogs <span style={{ fontWeight: 700, color: C.text }}>never move between room types</span> — a Luxury Suite dog stays in a Luxury Suite. Before applying changes, a confirmation dialog shows exactly how many reservations will be moved.</div>
+          </div>
+          <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>When to use each</div>
+          <div style={{ paddingLeft: 12, marginBottom: 4 }}>
+            <div><span style={{ fontWeight: 700, color: C.pri }}>Drag & Drop</span> — Use when you need to move a specific dog for operational reasons (cleaning schedule, behavioral separation, client preference).</div>
+            <div style={{ marginTop: 4 }}><span style={{ fontWeight: 700, color: C.acc }}>Optimize</span> — Use when you want to maximize availability across the board, especially before a busy weekend or holiday. Run it periodically to keep things tidy.</div>
+          </div>
+          <div style={{ fontSize: 11, color: C.textMut, fontStyle: "italic", marginTop: 6 }}>All changes are saved instantly. You can always manually drag reservations after optimizing to fine-tune the layout.</div>
+        </div>
+      )}
+
+      {/* Calendar grid */}
+      <Card style={{ padding: 0, overflow: "auto" }}>
+        {/* Column headers */}
+        <div style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px repeat(7, ${COL_W})`, borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, zIndex: 10, background: C.bg }}>
+          <div style={{ padding: "10px 12px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", borderRight: `1px solid ${C.border}` }}>Room</div>
+          {weekDays.map(d => {
+            const isToday = d === td;
+            return (
+              <div key={d} style={{ padding: "8px 0", textAlign: "center", borderRight: `1px solid ${C.borderLight}`, background: isToday ? C.priLt : "transparent" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: isToday ? C.pri : C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>{shortDay(d)}</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: isToday ? C.pri : C.text, lineHeight: 1.2 }}>{dayNum(d)}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Overall occupancy row */}
+        {totalRoomCount > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px repeat(7, ${COL_W})`, borderBottom: `2px solid ${C.border}`, background: C.surface, minHeight: 38 }}>
+            <div style={{ padding: "0 12px", display: "flex", alignItems: "center", fontSize: 11, fontWeight: 700, color: C.text, borderRight: `1px solid ${C.border}`, textTransform: "uppercase", letterSpacing: "0.03em" }}>Occupancy</div>
+            {dailyOccOverall.map((booked, di) => {
+              const pct = totalRoomCount > 0 ? Math.round((booked / totalRoomCount) * 100) : 0;
+              return (
+                <div key={di} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", borderRight: `1px solid ${C.borderLight}`, background: weekDays[di] === td ? `${C.priLt}40` : "transparent" }}>
+                  <span style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{pct}%</span>
+                  <span style={{ fontSize: 10, fontWeight: 500, color: C.textMut }}>{booked}/{totalRoomCount}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Room rows */}
+        {roomRows.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: C.textMut, fontSize: 14 }}>No rooms configured. Go to Settings → Rooms to add rooms.</div>
+        ) : (
+          roomRows.map((row, ri) => {
+            if (row.type === "header") {
+              const isCol = !!collapsed[row.roomType];
+              const occ = dailyOccByType[row.roomType] || [];
+              return (
+                <React.Fragment key={`h-${row.roomType}`}>
+                  {/* Clickable section header */}
+                  <div onClick={() => toggleCollapse(row.roomType)} style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px 1fr`, borderBottom: `1px solid ${C.border}`, background: C.priLt, cursor: "pointer", userSelect: "none" }}>
+                    <div style={{ gridColumn: "1 / -1", padding: "8px 14px", display: "flex", alignItems: "center", gap: 6 }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round" style={{ transition: "transform 0.15s", transform: isCol ? "rotate(-90deg)" : "rotate(0deg)", flexShrink: 0 }}><polyline points="6 9 12 15 18 9"/></svg>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.pri, textTransform: "uppercase", letterSpacing: "0.04em" }}>{row.roomType}</span>
+                      <span style={{ fontWeight: 500, color: C.textSec, fontSize: 12 }}>({row.count})</span>
+                    </div>
+                  </div>
+                  {/* Collapsed summary row: per-day occupancy */}
+                  {isCol && (
+                    <div style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px repeat(7, ${COL_W})`, borderBottom: `1px solid ${C.border}`, minHeight: 36, background: C.surface }}>
+                      <div style={{ padding: "0 12px", display: "flex", alignItems: "center", fontSize: 11, fontWeight: 600, color: C.textMut, borderRight: `1px solid ${C.border}` }}>Booked</div>
+                      {occ.map((count, di) => {
+                        const total = row.count;
+                        return (
+                          <div key={di} style={{ display: "flex", alignItems: "center", justifyContent: "center", borderRight: `1px solid ${C.borderLight}`, background: weekDays[di] === td ? `${C.priLt}40` : "transparent" }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{count}<span style={{ fontWeight: 500, color: C.textMut }}>/{total}</span></span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </React.Fragment>
+              );
+            }
+            // Skip room rows if this type is collapsed
+            if (collapsed[row.roomType]) return null;
+            const roomReservations = resByRoom[row.room] || [];
+            const isDropTarget = interaction && interaction.type === "move" && interaction.targetRoom === row.room && interaction.moved;
+            return (
+              <div key={`r-${row.room}`} data-room-row={row.room}
+                style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px repeat(7, ${COL_W})`, borderBottom: `1px solid ${C.borderLight}`, minHeight: ROW_H, background: isDropTarget ? `${C.priLt}60` : "transparent", transition: "background 0.15s" }}>
+                {/* Room label */}
+                <div style={{ padding: "0 12px", display: "flex", alignItems: "center", fontSize: 13, fontWeight: 700, color: C.text, borderRight: `1px solid ${C.border}`, background: C.surface }}>
+                  {row.room}
+                </div>
+                {/* 7 day cells with reservation overlays */}
+                <div data-day-grid style={{ gridColumn: "2 / -1", position: "relative", display: "grid", gridTemplateColumns: `repeat(7, ${COL_W})`, minHeight: ROW_H }}>
+                  {/* Background cells */}
+                  {weekDays.map(d => (
+                    <div key={d} style={{ borderRight: `1px solid ${C.borderLight}`, background: d === td ? `${C.priLt}40` : "transparent", minHeight: ROW_H }} />
+                  ))}
+                  {/* Reservation blocks */}
+                  {roomReservations.map(res => {
+                    const inter = interaction && interaction.resId === res.id && interaction.moved ? interaction : null;
+                    const ciDate = res.checkIn < weekStart ? weekStart : res.checkIn;
+                    const coDate = res.checkOut > weekEnd ? weekEnd : res.checkOut;
+                    const startIdx = weekDays.indexOf(ciDate);
+                    const endIdx = weekDays.indexOf(coDate);
+                    if (startIdx < 0 || endIdx < 0) return null;
+                    // Half-day positioning
+                    const startOff = res.checkIn >= weekStart ? 0.5 : 0;
+                    const endOff = res.checkOut <= weekEnd ? 0.5 : 1;
+                    const leftPct = ((startIdx + startOff) / 7) * 100;
+                    const widthPct = ((endIdx + endOff - startIdx - startOff) / 7) * 100;
+                    const span = endIdx - startIdx + 1;
+                    const showGreenEdge = res.checkIn >= weekStart;
+                    const showRedEdge = res.checkOut <= weekEnd;
+                    const isCheckedIn = res.status === "checked-in";
+                    const isUpcoming = res.status === "upcoming";
+                    const bg = isCheckedIn ? C.pri : isUpcoming ? C.priLt : C.bg;
+                    const fg = isCheckedIn ? "#fff" : isUpcoming ? C.pri : C.textMut;
+
+                    // Ghost preview: compute projected position during drag/resize
+                    let ghostEl = null;
+                    if (inter) {
+                      let gCI, gCO;
+                      if (inter.type === "move") { gCI = addDays(inter.origCI, inter.dayDelta); gCO = addDays(inter.origCO, inter.dayDelta); }
+                      else if (inter.type === "resize-left") { gCI = addDays(inter.origCI, inter.dayDelta); gCO = inter.origCO; }
+                      else { gCI = inter.origCI; gCO = addDays(inter.origCO, inter.dayDelta); }
+                      if (gCI < gCO) {
+                        const gCiV = gCI < weekStart ? weekStart : gCI;
+                        const gCoV = gCO > weekEnd ? weekEnd : gCO;
+                        const gSi = weekDays.indexOf(gCiV);
+                        const gEi = weekDays.indexOf(gCoV);
+                        if (gSi >= 0 && gEi >= 0) {
+                          const gSOff = gCI >= weekStart ? 0.5 : 0;
+                          const gEOff = gCO <= weekEnd ? 0.5 : 1;
+                          const gLeft = ((gSi + gSOff) / 7) * 100;
+                          const gWidth = ((gEi + gEOff - gSi - gSOff) / 7) * 100;
+                          ghostEl = (
+                            <div key={`ghost-${res.id}`} style={{
+                              position: "absolute", top: 4, bottom: 4,
+                              left: `calc(${gLeft}% + 2px)`, width: `calc(${gWidth}% - 4px)`,
+                              background: `${C.pri}30`, borderRadius: 6, border: `2px dashed ${C.pri}`,
+                              pointerEvents: "none", zIndex: 5,
+                              display: "flex", alignItems: "center", justifyContent: "center",
+                            }}>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: C.pri, opacity: 0.8 }}>{dn(res.dogId)}</span>
+                            </div>
+                          );
+                        }
+                      }
+                    }
+
+                    return (
+                      <React.Fragment key={res.id}>
+                        {/* Ghost preview (if dragging/resizing this block) */}
+                        {inter && inter.type === "move" && inter.targetRoom !== row.room ? null : ghostEl}
+                        {/* Actual block */}
+                        <div
+                          onMouseDown={(e) => { if (e.button !== 0) return; const edge = getEdge(e, e.currentTarget); startInteraction(e, res, edge === "left" ? "resize-left" : edge === "right" ? "resize-right" : "move"); }}
+                          onMouseMove={(e) => { if (interaction) return; const edge = getEdge(e, e.currentTarget); e.currentTarget.style.cursor = edge ? "col-resize" : "grab"; }}
+                          onClick={() => { if (!justDraggedRef.current) setBoardingPreviewId(res.id); }}
+                          title={`${dn(res.dogId)} · ${fmtDate(res.checkIn)} → ${fmtDate(res.checkOut)} · ${res.status} · Drag to shift dates or move rooms · Drag edges to resize`}
+                          style={{
+                            position: "absolute", top: 6, bottom: 6,
+                            left: `calc(${leftPct}% + 3px)`, width: `calc(${widthPct}% - 6px)`,
+                            background: bg, borderRadius: 6, cursor: inter ? "grabbing" : "grab",
+                            display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+                            overflow: "hidden", whiteSpace: "nowrap",
+                            borderLeft: showGreenEdge ? `4px solid ${C.suc}` : "none",
+                            borderRight: showRedEdge ? `4px solid ${C.dan}` : "none",
+                            borderTop: `1px solid ${isCheckedIn ? "rgba(255,255,255,0.15)" : C.border}`,
+                            borderBottom: `1px solid ${isCheckedIn ? "rgba(0,0,0,0.1)" : C.border}`,
+                            boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+                            transition: inter ? "none" : "opacity 0.15s",
+                            zIndex: inter ? 10 : 2,
+                            opacity: inter ? 0.35 : (interaction && interaction.resId !== res.id) ? 0.5 : 1,
+                          }}
+                          onMouseEnter={e => { if (!interaction) e.currentTarget.style.opacity = "0.85"; }}
+                          onMouseLeave={e => { if (!interaction) e.currentTarget.style.opacity = "1"; }}
+                        >
+                          <span style={{ fontSize: 11, fontWeight: 700, color: fg, overflow: "hidden", textOverflow: "ellipsis", padding: "0 4px" }}>
+                            {dn(res.dogId)}
+                          </span>
+                          {showGreenEdge && span > 1 && <span style={{ fontSize: 9, color: isCheckedIn ? "rgba(255,255,255,0.6)" : C.textMut, flexShrink: 0 }}>in {fmtTime(res.checkInTime)}</span>}
+                          {showRedEdge && span > 2 && <span style={{ fontSize: 9, color: isCheckedIn ? "rgba(255,255,255,0.6)" : C.textMut, flexShrink: 0 }}>out {fmtTime(res.checkOutTime)}</span>}
+                        </div>
+                      </React.Fragment>
+                    );
+                  })}
+                  {/* Ghost block for move-to-different-room: render in target room */}
+                  {interaction && interaction.moved && interaction.type === "move" && interaction.targetRoom === row.room && interaction.targetRoom !== interaction.origRoom && (() => {
+                    const s = interaction;
+                    const gCI = addDays(s.origCI, s.dayDelta);
+                    const gCO = addDays(s.origCO, s.dayDelta);
+                    if (gCI >= gCO) return null;
+                    const gCiV = gCI < weekStart ? weekStart : gCI;
+                    const gCoV = gCO > weekEnd ? weekEnd : gCO;
+                    const gSi = weekDays.indexOf(gCiV);
+                    const gEi = weekDays.indexOf(gCoV);
+                    if (gSi < 0 || gEi < 0) return null;
+                    const gSOff = gCI >= weekStart ? 0.5 : 0;
+                    const gEOff = gCO <= weekEnd ? 0.5 : 1;
+                    const gLeft = ((gSi + gSOff) / 7) * 100;
+                    const gWidth = ((gEi + gEOff - gSi - gSOff) / 7) * 100;
+                    return (
+                      <div style={{
+                        position: "absolute", top: 4, bottom: 4,
+                        left: `calc(${gLeft}% + 2px)`, width: `calc(${gWidth}% - 4px)`,
+                        background: `${C.pri}30`, borderRadius: 6, border: `2px dashed ${C.pri}`,
+                        pointerEvents: "none", zIndex: 5,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: C.pri, opacity: 0.8 }}>{dn(s.origRes.dogId)}</span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </Card>
+
+      {/* Optimize confirmation modal */}
+      {showOptimizeConfirm && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowOptimizeConfirm(false)}>
+          <Card style={{ maxWidth: 420, width: "90%", padding: 28 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", background: `${C.acc}20`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8L12 14.6l-4.9 3.6 1.9-5.8L4 8.8h6.1z"/></svg>
+              </div>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: C.text }}>Optimize Room Assignments</h3>
+            </div>
+            <p style={{ fontSize: 14, color: C.textSec, lineHeight: 1.6, margin: "0 0 8px" }}>
+              Rearranges reservations within each room type to minimize fragmentation and maximize available rooms. Dogs never move between room types.
+            </p>
+            <div style={{ padding: "12px 16px", borderRadius: 10, background: optimizeMoveCount > 0 ? `${C.pri}10` : `${C.suc}10`, border: `1px solid ${optimizeMoveCount > 0 ? `${C.pri}30` : `${C.suc}30`}`, marginBottom: 20 }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: optimizeMoveCount > 0 ? C.pri : C.suc }}>
+                {optimizeMoveCount > 0 ? `${optimizeMoveCount} reservation${optimizeMoveCount > 1 ? "s" : ""} will be moved` : "Already optimized! No moves needed."}
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button onClick={() => setShowOptimizeConfirm(false)} style={{ padding: "8px 20px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              {optimizeMoveCount > 0 && (
+                <button onClick={async () => { await runOptimize(); setShowOptimizeConfirm(false); }} style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: C.acc, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Optimize</button>
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Toast notifications */}
+      {toasts.length > 0 && (
+        <div style={{ position: "fixed", top: 16, right: 16, zIndex: 99999, display: "flex", flexDirection: "column", gap: 8, pointerEvents: "none" }}>
+          {toasts.map(t => (
+            <div key={t.id} style={{
+              pointerEvents: "auto",
+              background: "rgba(255,255,255,0.97)", backdropFilter: "blur(8px)",
+              border: `1.5px solid ${C.border}`, borderRadius: 12,
+              padding: "12px 16px", maxWidth: 380, minWidth: 260,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+              display: "flex", alignItems: "center", gap: 12, fontSize: 13,
+              animation: "k9toast 0.3s ease-out",
+            }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>
+                  {t.dogName}<span style={{ fontWeight: 500, color: C.textSec }}>&rsquo;s reservation {t.action}</span>
+                </div>
+                <div style={{ fontSize: 12, color: C.textMut }}>
+                  <span style={{ textDecoration: "line-through", color: C.dan }}>{t.oldVal}</span>
+                  <span style={{ margin: "0 5px", color: C.textMut }}>&rarr;</span>
+                  <span style={{ fontWeight: 600, color: C.suc }}>{t.newVal}</span>
+                </div>
+              </div>
+              <button onClick={() => handleUndo(t)} style={{ padding: "5px 12px", borderRadius: 6, border: "none", background: C.pri, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>Undo</button>
+              <button onClick={() => dismissToast(t.id)} style={{ width: 22, height: 22, borderRadius: 11, border: "none", background: "transparent", cursor: "pointer", color: C.textMut, fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit" }}>&times;</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {boardingPreviewId && (() => {
+        const bRes = data.reservations.find(r => r.id === boardingPreviewId);
+        const bDog = bRes ? data.dogs.find(d => d.id === bRes.dogId) : null;
+        const bClient = bRes ? data.clients.find(c => c.id === bRes.clientId) : null;
+        if (!bRes || !bDog || !bClient) return null;
+        return <BoardingPreviewModal
+          reservation={bRes} dog={bDog} client={bClient}
+          isCheckInMode={bRes.status === "upcoming"}
+          onClose={() => setBoardingPreviewId(null)}
+          onSave={async (updatedRes, doCheckIn) => {
+            const merged = { ...bRes, ...updatedRes };
+            if (doCheckIn) merged.status = "checked-in";
+            await save({ ...data, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
+            setBoardingPreviewId(null);
+          }}
+          data={data} save={save}
+        />;
+      })()}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DAILY OPERATIONS PAGE
+// ═══════════════════════════════════════════════════════════════════════════
+function DailyOpsPage({ data, save, sub, nav }) {
+  const td = todayStr();
+  const [viewDate, setViewDate] = useState(td);
+  const dayIdx = new Date(viewDate + "T12:00:00").getDay();
+  const meta = OPS_TYPES[sub] || OPS_TYPES.opening;
+  const isTemplate = !!meta.key;
+
+  // Date nav helpers
+  const shiftDate = (d) => { const dt = new Date(viewDate + "T12:00:00"); dt.setDate(dt.getDate() + d); setViewDate(dt.toISOString().slice(0,10)); };
+  const isToday = viewDate === td;
+  const isPast = viewDate < td;
+  const dateLbl = (() => { const d = new Date(viewDate + "T12:00:00"); return d.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" }); })();
+
+  // Get or create entry
+  const allOps = data.dailyOps || [];
+  const entryId = `ops_${sub}_${viewDate}`;
+  const existing = allOps.find(e => e.id === entryId);
+  const isLocked = existing ? existing.locked : isPast;
+
+  // Template-based items for today
+  const template = isTemplate ? (data[meta.key] || meta.def) : [];
+  const todayItems = template.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
+
+  // Local state for editable items
+  const [items, setItems] = useState({});
+  const [completedBy, setCompletedBy] = useState("");
+  const [dirty, setDirty] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+
+  useEffect(() => {
+    if (existing) {
+      setItems(existing.items || {});
+      setCompletedBy(existing.completedBy || "");
+    } else if (isTemplate) {
+      const init = {};
+      todayItems.forEach(t => { init[t.id] = { checked: false, initials: "" }; });
+      setItems(init);
+      setCompletedBy("");
+    } else {
+      setItems(existing ? existing.items || {} : {});
+      setCompletedBy("");
+    }
+    setDirty(false);
+  }, [viewDate, sub, data.dailyOps]);
+
+  const toggleItem = (key, field, val) => {
+    if (isLocked) return;
+    setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val } }));
+    setDirty(true);
+  };
+
+  const saveEntry = async () => {
+    const entries = [...allOps];
+    const idx = entries.findIndex(e => e.id === entryId);
+    const isFirstSave = idx < 0;
+    const prevHistory = isFirstSave ? [] : (entries[idx].history || []);
+    const newHistory = [...prevHistory, { ts: new Date().toISOString(), action: isFirstSave ? "created" : "saved" }];
+    const entry = { id: entryId, type: sub, date: viewDate, locked: false, items, completedBy, history: newHistory };
+    if (idx >= 0) entries[idx] = entry; else entries.push(entry);
+    await save({ ...data, dailyOps: entries });
+    setDirty(false);
+  };
+
+  const toggleLock = async () => {
+    const entries = [...allOps];
+    const idx = entries.findIndex(e => e.id === entryId);
+    if (idx >= 0) {
+      const newLocked = !entries[idx].locked;
+      entries[idx] = { ...entries[idx], locked: newLocked, history: [...(entries[idx].history || []), { ts: new Date().toISOString(), action: newLocked ? "locked" : "unlocked" }] };
+    } else {
+      entries.push({ id: entryId, type: sub, date: viewDate, locked: true, items, completedBy, history: [{ ts: new Date().toISOString(), action: "locked" }] });
+    }
+    await save({ ...data, dailyOps: entries });
+  };
+
+  // Progress for template checklists
+  const checkedCount = isTemplate ? todayItems.filter(t => items[t.id]?.checked).length : 0;
+  const totalCount = isTemplate ? todayItems.length : 0;
+  const pctDone = totalCount ? Math.round((checkedCount / totalCount) * 100) : 0;
+
+  // ─── Dynamic data queries ───
+  const allRooms = data.rooms || {};
+  const boardingToday = data.reservations.filter(r => r.type === "boarding" && r.checkIn <= viewDate && r.checkOut >= viewDate && (r.status === "checked-in" || r.status === "upcoming"));
+  const boardingCheckedOut = data.reservations.filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-out");
+
+  // Picture checklist: boarding, not first day, not last day
+  const pictureDogs = data.reservations.filter(r => r.type === "boarding" && r.status === "checked-in" && r.checkIn < viewDate && r.checkOut > viewDate);
+
+  // PP checklist: checked-in dogs (boarding or daycare) that have tag_pp or passed_private eval
+  const ppDogIds = new Set();
+  data.reservations.forEach(r => { if (r.type === "evaluation" && r.evalResult === "passed_private") ppDogIds.add(r.dogId); });
+  data.dogs.forEach(d => { if ((d.tags || []).includes("tag_pp")) ppDogIds.add(d.id); });
+  const ppReservations = data.reservations.filter(r => (r.type === "boarding" || r.type === "daycare") && r.status === "checked-in" && r.checkIn <= viewDate && r.checkOut >= viewDate && ppDogIds.has(r.dogId));
+
+  const getDog = (did) => data.dogs.find(d => d.id === did);
+  const getClient = (cid) => data.clients.find(c => c.id === cid);
+  const dogName = (did) => { const d = getDog(did); return d ? d.fields.name : "?"; };
+  const ownerName = (cid) => { const c = getClient(cid); return c ? `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.trim() : "?"; };
+
+  // ─── Render helpers ───
+  const hdrStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 12 };
+  const dateNavStyle = { display: "flex", alignItems: "center", gap: 8 };
+  const nbtn = { border: "none", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", fontWeight: 600, fontSize: 12 };
+
+  const renderDateNav = () => (
+    <div style={hdrStyle}>
+      <div>
+        <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{meta.title}</h2>
+        {isTemplate && meta.showTime && todayItems.some(t => t.dayOfWeek != null) && <div style={{ fontSize: 11, color: C.acc, marginTop: 2 }}>+ {DAY_NAMES_SHORT[dayIdx]} tasks</div>}
+      </div>
+      <div style={dateNavStyle}>
+        <button onClick={() => shiftDate(-1)} style={{ ...nbtn, background: C.surfaceHover, color: C.text }}>‹</button>
+        <span style={{ fontSize: 14, fontWeight: 600, color: C.text, minWidth: 200, textAlign: "center" }}>{dateLbl}</span>
+        <button onClick={() => shiftDate(1)} style={{ ...nbtn, background: C.surfaceHover, color: C.text }}>›</button>
+        {!isToday && <button onClick={() => setViewDate(td)} style={{ ...nbtn, background: C.pri, color: "#fff" }}>Today</button>}
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        {dirty && !isLocked && <Btn onClick={saveEntry}>Save</Btn>}
+        {existing && <Btn variant={isLocked ? "secondary" : "accent"} onClick={toggleLock} size="sm">{isLocked ? "🔒 Locked" : "🔓 Lock"}</Btn>}
+        {existing && <button onClick={() => setShowHistory(v => !v)} style={{ padding: "4px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{showHistory ? "Hide History" : "History"}</button>}
+        {isLocked && <Badge color="default">Read Only</Badge>}
+      </div>
+    </div>
+  );
+
+  // ─── Template-based Checklist ───
+  const renderTemplateChecklist = () => (
+    <div>
+      {/* Progress */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <div style={{ flex: 1, height: 8, background: C.surfaceHover, borderRadius: 4, overflow: "hidden" }}>
+          <div style={{ width: `${pctDone}%`, height: "100%", background: pctDone === 100 ? C.suc : C.pri, borderRadius: 4, transition: "width 0.3s" }} />
+        </div>
+        <span style={{ fontSize: 13, fontWeight: 600, color: pctDone === 100 ? C.suc : C.text }}>{checkedCount}/{totalCount}</span>
+      </div>
+      {/* Items */}
+      <Card>
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {meta.showTime && <div style={{ display: "flex", padding: "8px 14px", borderBottom: `2px solid ${C.border}`, background: C.surfaceHover }}>
+            <div style={{ width: 36 }} />
+            <div style={{ width: 60, fontSize: 11, fontWeight: 700, color: C.textMut }}>TIME</div>
+            <div style={{ flex: 1, fontSize: 11, fontWeight: 700, color: C.textMut }}>TASK</div>
+            <div style={{ width: 70, fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>INITIALS</div>
+          </div>}
+          {todayItems.map((t, i) => {
+            const it = items[t.id] || {};
+            const isWeekly = t.dayOfWeek != null;
+            return (
+              <div key={t.id} style={{ display: "flex", alignItems: "center", padding: "8px 14px", borderBottom: i < todayItems.length - 1 ? `1px solid ${C.border}` : "none", background: isWeekly ? "rgba(175,141,84,0.04)" : it.checked ? "rgba(34,139,34,0.03)" : "transparent", opacity: isLocked ? 0.7 : 1 }}>
+                <div style={{ width: 36 }}>
+                  <input type="checkbox" checked={!!it.checked} disabled={isLocked} onChange={e => toggleItem(t.id, "checked", e.target.checked)} style={{ width: 18, height: 18, cursor: isLocked ? "default" : "pointer", accentColor: C.pri }} />
+                </div>
+                {meta.showTime && <div style={{ width: 60, fontSize: 12, fontWeight: 600, color: t.time ? C.pri : C.textMut, fontVariantNumeric: "tabular-nums" }}>{t.time || (isWeekly ? DAY_NAMES_SHORT[t.dayOfWeek] : "")}</div>}
+                <div style={{ flex: 1, fontSize: 13, color: it.checked ? C.textMut : C.text, textDecoration: it.checked ? "line-through" : "none", lineHeight: 1.4 }}>
+                  {t.label}
+                  {isWeekly && <Badge color="accent" size="sm" style={{ marginLeft: 6 }}>{DAY_NAMES_SHORT[t.dayOfWeek]}</Badge>}
+                </div>
+                <div style={{ width: 70 }}>
+                  <input type="text" value={it.initials || ""} disabled={isLocked} onChange={e => toggleItem(t.id, "initials", e.target.value)} placeholder="—" maxLength={5} style={{ width: "100%", textAlign: "center", border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 0", fontSize: 12, fontWeight: 600, fontFamily: "inherit", background: isLocked ? C.surfaceHover : "#fff", color: C.text }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+      {/* Completed by */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 16 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>Completed by:</span>
+        <input type="text" value={completedBy} disabled={isLocked} onChange={e => { setCompletedBy(e.target.value); setDirty(true); }} placeholder="Employee name / initials" style={{ flex: 1, maxWidth: 300, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", fontSize: 13, fontFamily: "inherit", background: isLocked ? C.surfaceHover : "#fff" }} />
+      </div>
+    </div>
+  );
+
+  // ─── Room Cleaning ───
+  const renderRoomCleaning = () => {
+    const roomItems = items;
+    return (
+      <div>
+        {ROOM_TYPES.map(rt => {
+          const rooms = allRooms[rt] || [];
+          if (!rooms.length) return null;
+          return (
+            <div key={rt} style={{ marginBottom: 20 }}>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>{rt} <Badge color="default" size="sm">{rooms.length}</Badge></h3>
+              <Card>
+                <div style={{ display: "grid", gridTemplateColumns: "100px 1fr 1fr 1fr", borderBottom: `2px solid ${C.border}`, padding: "8px 12px", background: C.surfaceHover }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>ROOM</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>ROOM REFRESH</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>FULL DISINFECT</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>AS NEEDED</div>
+                </div>
+                {rooms.map((rm, i) => {
+                  const ri = roomItems[rm] || {};
+                  const activeRes = boardingToday.find(r => r.room === rm);
+                  const coRes = boardingCheckedOut.find(r => r.room === rm);
+                  const notFirst = activeRes && activeRes.checkIn < viewDate;
+                  const notLast = activeRes && activeRes.checkOut > viewDate;
+                  const needsRefresh = !!(activeRes && notFirst && notLast);
+                  const needsDisinfect = !!(activeRes && activeRes.checkOut === viewDate) || !!coRes;
+                  const canDisinfect = !!coRes;
+                  const aDog = activeRes ? dogName(activeRes.dogId) : coRes ? dogName(coRes.dogId) : null;
+                  return (
+                    <div key={rm} style={{ display: "grid", gridTemplateColumns: "100px 1fr 1fr 1fr", padding: "8px 12px", borderBottom: i < rooms.length - 1 ? `1px solid ${C.border}` : "none", alignItems: "center" }}>
+                      <div>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{rm}</span>
+                        {aDog && <div style={{ fontSize: 10, color: C.textMut }}>{aDog}</div>}
+                      </div>
+                      <div style={{ textAlign: "center" }}>
+                        {needsRefresh ? <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                          <input type="checkbox" checked={!!ri.refresh} disabled={isLocked} onChange={e => toggleItem(rm, "refresh", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.suc }} />
+                          <span style={{ fontSize: 11, fontWeight: 700, color: C.pri }}>Required</span>
+                        </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
+                      </div>
+                      <div style={{ textAlign: "center" }}>
+                        {needsDisinfect ? (canDisinfect ? <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                          <input type="checkbox" checked={!!ri.disinfect} disabled={isLocked} onChange={e => toggleItem(rm, "disinfect", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.dan }} />
+                          <span style={{ fontSize: 11, fontWeight: 700, color: C.dan }}>Required</span>
+                        </div> : <span style={{ fontSize: 11, fontWeight: 600, color: C.textMut, fontStyle: "italic" }}>Awaiting checkout</span>) : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
+                      </div>
+                      <div style={{ textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                        <input type="checkbox" checked={!!ri.asNeeded} disabled={isLocked} onChange={e => toggleItem(rm, "asNeeded", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.acc }} />
+                        {ri.asNeeded && <input type="checkbox" checked={!!ri.asNeededDone} disabled={isLocked} onChange={e => toggleItem(rm, "asNeededDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.suc }} title="Mark done" />}
+                      </div>
+                    </div>
+                  );
+                })}
+              </Card>
+            </div>
+          );
+        })}
+        {!Object.values(allRooms).some(r => r.length > 0) && <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No rooms configured. Add rooms in Settings → Rooms.</div></Card>}
+      </div>
+    );
+  };
+
+  // ─── Picture Checklist ───
+  const renderPictures = () => {
+    const dogs = pictureDogs;
+    const picItems = items;
+    const done = dogs.filter(r => picItems[r.dogId]).length;
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          <div style={{ flex: 1, height: 8, background: C.surfaceHover, borderRadius: 4, overflow: "hidden" }}>
+            <div style={{ width: dogs.length ? `${(done / dogs.length) * 100}%` : "0%", height: "100%", background: done === dogs.length && dogs.length ? C.suc : C.pri, borderRadius: 4, transition: "width 0.3s" }} />
+          </div>
+          <span style={{ fontSize: 13, fontWeight: 600, color: done === dogs.length && dogs.length ? C.suc : C.text }}>{done}/{dogs.length} photos</span>
+        </div>
+        {dogs.length === 0 ? <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No dogs qualify for pictures today.</div><div style={{ color: C.textMut, fontSize: 12, marginTop: 4 }}>Boarding dogs on their first or last day are excluded.</div></Card> : (
+          <Card>
+            {dogs.map((r, i) => {
+              const d = getDog(r.dogId);
+              const c = getClient(r.clientId);
+              return (
+                <div key={r.id} style={{ display: "flex", alignItems: "center", padding: "10px 14px", borderBottom: i < dogs.length - 1 ? `1px solid ${C.border}` : "none", gap: 12 }}>
+                  <input type="checkbox" checked={!!picItems[r.dogId]} disabled={isLocked} onChange={e => toggleItem(r.dogId, null, e.target.checked)} style={{ width: 20, height: 20, accentColor: C.suc }} />
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: picItems[r.dogId] ? C.textMut : C.text, textDecoration: picItems[r.dogId] ? "line-through" : "none" }}>{d ? d.fields.name : "?"}</span>
+                    <span style={{ fontSize: 12, color: C.textMut, marginLeft: 8 }}>{c ? `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.trim() : ""}</span>
+                  </div>
+                  <Badge color="primary" size="sm">{r.roomType} · {r.room}</Badge>
+                  {d && d.fields.breed && <Badge color="default" size="sm">{d.fields.breed}</Badge>}
+                </div>
+              );
+            })}
+          </Card>
+        )}
+      </div>
+    );
+  };
+
+  // Override toggleItem for pictures (flat boolean instead of object)
+  const togglePicture = (dogId, val) => {
+    if (isLocked) return;
+    setItems(prev => ({ ...prev, [dogId]: val }));
+    setDirty(true);
+  };
+
+  // ─── Private Play ───
+  const renderPP = () => {
+    const dogs = ppReservations;
+    const ppItems = items;
+    const sesLabels = ["Session 1", "Session 2", "Session 3", "Session 4", "Session 5"];
+    return (
+      <div>
+        {dogs.length === 0 ? <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No private play dogs checked in today.</div></Card> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, background: C.surface, borderRadius: 12, overflow: "hidden" }}>
+              <thead>
+                <tr style={{ background: C.surfaceHover }}>
+                  <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.textMut, fontSize: 11, borderBottom: `2px solid ${C.border}` }}>DOG</th>
+                  <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.textMut, fontSize: 11, borderBottom: `2px solid ${C.border}` }}>OWNER</th>
+                  {sesLabels.map((s, si) => (
+                    <th key={si} colSpan={3} style={{ padding: "10px 6px", textAlign: "center", fontWeight: 700, color: C.pri, fontSize: 11, borderBottom: `2px solid ${C.border}`, borderLeft: `1px solid ${C.border}` }}>{s}</th>
+                  ))}
+                </tr>
+                <tr style={{ background: C.surfaceHover }}>
+                  <th /><th />
+                  {sesLabels.map((_, si) => (
+                    <React.Fragment key={si}>
+                      <th style={{ padding: "4px 4px", fontSize: 10, color: C.textMut, fontWeight: 600, textAlign: "center", borderLeft: `1px solid ${C.border}` }}>Time</th>
+                      <th style={{ padding: "4px 4px", fontSize: 10, color: C.textMut, fontWeight: 600, textAlign: "center" }}>U</th>
+                      <th style={{ padding: "4px 4px", fontSize: 10, color: C.textMut, fontWeight: 600, textAlign: "center" }}>D</th>
+                    </React.Fragment>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {dogs.map((r, ri) => {
+                  const d = getDog(r.dogId);
+                  const dogData = ppItems[r.dogId] || { sessions: Array.from({ length: 5 }, () => ({ time: "", urinate: false, defecate: false })) };
+                  const ses = dogData.sessions || Array.from({ length: 5 }, () => ({ time: "", urinate: false, defecate: false }));
+                  return (
+                    <tr key={r.id} style={{ borderBottom: ri < dogs.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                      <td style={{ padding: "8px 12px", fontWeight: 700, color: C.text }}>{d ? d.fields.name : "?"}</td>
+                      <td style={{ padding: "8px 12px", color: C.textSec, fontSize: 11 }}>{ownerName(r.clientId)}</td>
+                      {ses.map((s, si) => (
+                        <React.Fragment key={si}>
+                          <td style={{ padding: "4px 2px", borderLeft: `1px solid ${C.border}` }}>
+                            <input type="text" value={s.time} disabled={isLocked} onChange={e => { const nSes = [...ses]; nSes[si] = { ...nSes[si], time: e.target.value }; setItems(prev => ({ ...prev, [r.dogId]: { sessions: nSes } })); setDirty(true); }} placeholder="—" style={{ width: 52, textAlign: "center", border: `1px solid ${C.border}`, borderRadius: 4, padding: "3px 0", fontSize: 11, fontFamily: "inherit", background: isLocked ? C.surfaceHover : "#fff" }} />
+                          </td>
+                          <td style={{ padding: "4px 2px", textAlign: "center" }}>
+                            <input type="checkbox" checked={!!s.urinate} disabled={isLocked} onChange={e => { const nSes = [...ses]; nSes[si] = { ...nSes[si], urinate: e.target.checked }; setItems(prev => ({ ...prev, [r.dogId]: { sessions: nSes } })); setDirty(true); }} style={{ width: 16, height: 16, accentColor: C.pri }} />
+                          </td>
+                          <td style={{ padding: "4px 2px", textAlign: "center" }}>
+                            <input type="checkbox" checked={!!s.defecate} disabled={isLocked} onChange={e => { const nSes = [...ses]; nSes[si] = { ...nSes[si], defecate: e.target.checked }; setItems(prev => ({ ...prev, [r.dogId]: { sessions: nSes } })); setDirty(true); }} style={{ width: 16, height: 16, accentColor: C.acc }} />
+                          </td>
+                        </React.Fragment>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Fix pictures toggle to use flat boolean
+  const renderPicturesFixed = () => {
+    const dogs = pictureDogs;
+    const picItems = items;
+    const done = dogs.filter(r => picItems[r.dogId]).length;
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+          <div style={{ flex: 1, height: 8, background: C.surfaceHover, borderRadius: 4, overflow: "hidden" }}>
+            <div style={{ width: dogs.length ? `${(done / dogs.length) * 100}%` : "0%", height: "100%", background: done === dogs.length && dogs.length ? C.suc : C.pri, borderRadius: 4, transition: "width 0.3s" }} />
+          </div>
+          <span style={{ fontSize: 13, fontWeight: 600, color: done === dogs.length && dogs.length ? C.suc : C.text }}>{done}/{dogs.length} photos</span>
+        </div>
+        {dogs.length === 0 ? <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No dogs qualify for pictures today.</div><div style={{ color: C.textMut, fontSize: 12, marginTop: 4 }}>Boarding dogs on their first or last day are excluded.</div></Card> : (
+          <Card>
+            {dogs.map((r, i) => {
+              const d = getDog(r.dogId);
+              const c = getClient(r.clientId);
+              return (
+                <div key={r.id} style={{ display: "flex", alignItems: "center", padding: "10px 14px", borderBottom: i < dogs.length - 1 ? `1px solid ${C.border}` : "none", gap: 12 }}>
+                  <input type="checkbox" checked={!!picItems[r.dogId]} disabled={isLocked} onChange={e => togglePicture(r.dogId, e.target.checked)} style={{ width: 20, height: 20, accentColor: C.suc }} />
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: picItems[r.dogId] ? C.textMut : C.text, textDecoration: picItems[r.dogId] ? "line-through" : "none" }}>{d ? d.fields.name : "?"}</span>
+                    <span style={{ fontSize: 12, color: C.textMut, marginLeft: 8 }}>{c ? `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.trim() : ""}</span>
+                  </div>
+                  <Badge color="primary" size="sm">{r.roomType} · {r.room}</Badge>
+                  {d && d.fields.breed && <Badge color="default" size="sm">{d.fields.breed}</Badge>}
+                </div>
+              );
+            })}
+          </Card>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+      {renderDateNav()}
+      {showHistory && existing && (
+        <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>Edit History</div>
+          {(existing.history || []).length === 0
+            ? <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No history recorded yet</div>
+            : <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {(existing.history || []).map((h, i) => (
+                  <div key={i} style={{ fontSize: 12, color: C.textSec }}>
+                    <span style={{ fontWeight: 600, color: C.textMut }}>{new Date(h.ts).toLocaleDateString("en-US", { month: "short", day: "numeric" })} {new Date(h.ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>
+                    {" — "}{h.action.charAt(0).toUpperCase() + h.action.slice(1)}
+                  </div>
+                ))}
+              </div>}
+        </Card>
+      )}
+      {isTemplate ? renderTemplateChecklist()
+        : sub === "room_cleaning" ? renderRoomCleaning()
+        : sub === "pictures" ? renderPicturesFixed()
+        : sub === "pp" ? renderPP()
+        : <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec }}>Unknown checklist type</div></Card>}
+      {dirty && !isLocked && <div style={{ position: "sticky", bottom: 16, display: "flex", justifyContent: "center", marginTop: 20 }}>
+        <Btn onClick={saveEntry} style={{ padding: "10px 40px", fontSize: 14 }}>Save Changes</Btn>
+      </div>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CRM PAGE
+// ═══════════════════════════════════════════════════════════════════════════
+function CRMPage({ data, save, nav }) {
+  const [activeTab, setActiveTab] = useState("evaluations");
+  const crm = data.crmEntries || [];
+
+  const tabs = [
+    { id: "digital", label: "Digital" },
+    { id: "at_risk", label: "At Risk" },
+    { id: "evaluations", label: "Evaluations" },
+    { id: "first_time_boarder", label: "1st Time Boarder" },
+    { id: "tours", label: "Tours" },
+  ];
+
+  const updateEntry = async (entryId, field, value) => {
+    const updated = crm.map(e => e.id === entryId ? { ...e, [field]: value } : e);
+    await save({ ...data, crmEntries: updated });
+  };
+
+  const deleteEntry = async (entryId) => {
+    await save({ ...data, crmEntries: crm.filter(e => e.id !== entryId) });
+  };
+
+  // Editable cell helper
+  const ECell = ({ entry, field, width, type, options }) => {
+    if (type === "checkbox") {
+      return (
+        <div style={{ width, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <input type="checkbox" checked={!!entry[field]} onChange={e => updateEntry(entry.id, field, e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
+        </div>
+      );
+    }
+    if (type === "select") {
+      return (
+        <div style={{ width }}>
+          <select value={entry[field] || ""} onChange={e => updateEntry(entry.id, field, e.target.value)} style={{ width: "100%", border: "none", background: "transparent", fontSize: 12, fontFamily: "inherit", color: C.text, padding: "2px 0", cursor: "pointer", outline: "none" }}>
+            <option value="">—</option>
+            {options.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
+      );
+    }
+    return (
+      <div style={{ width }}>
+        <input value={entry[field] || ""} onChange={e => updateEntry(entry.id, field, e.target.value)} style={{ width: "100%", border: "none", background: "transparent", fontSize: 12, fontFamily: "inherit", color: C.text, padding: "2px 0", outline: "none" }} placeholder="—" />
+      </div>
+    );
+  };
+
+  // Column header
+  const ColH = ({ children, width, sub }) => (
+    <div style={{ width, flexShrink: 0, padding: "8px 6px", fontSize: 10, fontWeight: 700, color: C.pri, textTransform: "uppercase", letterSpacing: "0.04em", borderRight: `1px solid ${C.borderLight}`, background: C.priLt, lineHeight: 1.3 }}>
+      {children}
+      {sub && <div style={{ fontSize: 9, fontWeight: 500, color: C.textMut, textTransform: "none", letterSpacing: 0, marginTop: 1 }}>{sub}</div>}
+    </div>
+  );
+
+  // Row cell wrapper
+  const RCell = ({ children, width }) => (
+    <div style={{ width, flexShrink: 0, padding: "6px 6px", fontSize: 12, color: C.text, borderRight: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", overflow: "hidden" }}>
+      {children}
+    </div>
+  );
+
+  const entries = crm.filter(e => e.tab === activeTab);
+  const OUTCOME_OPTS = ["Converted", "Did not convert", "Left Voicemail", "Other - see notes"];
+  const PASS_OPTS = ["Pass - Sm", "Pass - Lg", "Fail - Sm", "Fail - Lg"];
+  const FEEDBACK_OPTS = ["Passed with flying colors", "Successful with staff support", "Nervous at first - came around", "Struggled", "Failed"];
+  const CHECKOUT_OPTS = ["Purchased Package", "Made Daycare Reservation", "Made Boarding Reservation", "Scheduled Eval", "Did Not Convert"];
+  const INTERESTED_OPTS = ["Daycare", "Boarding", "Both", "General Info"];
+  const TOUR_CHECKOUT_OPTS = ["Scheduled Eval", "Did not convert", "Purchased Package"];
+  const RESULTS_OPTS = ["Converted", "Did not convert", "Did not convert yet", "Pending"];
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>CRM</h1>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: `2px solid ${C.border}` }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
+            padding: "10px 18px", fontSize: 13, fontWeight: activeTab === t.id ? 700 : 500,
+            color: activeTab === t.id ? C.pri : C.textSec, background: "transparent", border: "none",
+            borderBottom: activeTab === t.id ? `2.5px solid ${C.pri}` : "2.5px solid transparent",
+            cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", marginBottom: -2,
+          }}>
+            {t.label}
+            {(t.id === "evaluations" || t.id === "first_time_boarder" || t.id === "tours") && (
+              <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: activeTab === t.id ? C.pri : C.textMut, background: activeTab === t.id ? C.priLt : C.surfaceHover, padding: "1px 6px", borderRadius: 8 }}>
+                {crm.filter(e => e.tab === t.id).length}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* Digital Tab */}
+      {activeTab === "digital" && (
+        <Card style={{ padding: 0 }}>
+          <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>Digital Leads</div>
+            <div style={{ fontSize: 12, color: C.textMut }}>Scorpion / Website / Calls</div>
+          </div>
+          {/* Column headers preview */}
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ display: "flex", minWidth: 1800 }}>
+              <ColH width={130}>Client Name</ColH>
+              <ColH width={100}>Dog Name/Type</ColH>
+              <ColH width={120}>Phone Number</ColH>
+              <ColH width={140}>Email</ColH>
+              <ColH width={100}>Interested In</ColH>
+              <ColH width={80}>Contact Time</ColH>
+              <ColH width={90}>Date</ColH>
+              <ColH width={200}>Notes</ColH>
+              <ColH width={100} sub="Follow-up 1">Day 1</ColH>
+              <ColH width={110}>Outcome</ColH>
+              <ColH width={120}>Account + Credit</ColH>
+              <ColH width={80}>Initial/Date</ColH>
+              <ColH width={100} sub="Follow-up 2">Day 3</ColH>
+              <ColH width={90}>Outcome</ColH>
+              <ColH width={80}>Initial/Date</ColH>
+              <ColH width={100}>No Answer Email</ColH>
+              <ColH width={80}>Initial/Date</ColH>
+              <ColH width={110}>Results</ColH>
+              <ColH width={140}>Comments</ColH>
+            </div>
+          </div>
+          <div style={{ padding: "40px 24px", textAlign: "center" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "16px 28px", borderRadius: 12, background: `linear-gradient(135deg, ${C.priLt}, ${C.surface})`, border: `1.5px solid ${C.pri}30` }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8L12 14.6l-4.9 3.6 1.9-5.8L4 8.8h6.1z"/></svg>
+              <div style={{ textAlign: "left" }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.pri }}>AI Features Coming Soon</div>
+                <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>Automated import from Ignite coming soon.</div>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* At Risk Tab */}
+      {activeTab === "at_risk" && (
+        <Card style={{ padding: 0 }}>
+          <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>At Risk Clients</div>
+            <div style={{ fontSize: 12, color: C.textMut }}>Clients who haven't booked recently and may need follow-up</div>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ display: "flex", minWidth: 1600 }}>
+              <ColH width={130}>Client Name</ColH>
+              <ColH width={100}>Dog(s) Name</ColH>
+              <ColH width={100}>Last Res. Date</ColH>
+              <ColH width={100}>Last Res. Type</ColH>
+              <ColH width={70}>Severity</ColH>
+              <ColH width={120} sub="Follow-up 1">Text</ColH>
+              <ColH width={80}>Offer</ColH>
+              <ColH width={90}>Outcome</ColH>
+              <ColH width={80}>Initial/Date</ColH>
+              <ColH width={120} sub="Follow-up 2">Send Card</ColH>
+              <ColH width={80}>Gift in Card</ColH>
+              <ColH width={80}>Initial/Date</ColH>
+              <ColH width={90}>Outcome</ColH>
+              <ColH width={90}>Next Res.</ColH>
+              <ColH width={200}>Notes</ColH>
+            </div>
+          </div>
+          <div style={{ padding: "40px 24px", textAlign: "center" }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "16px 28px", borderRadius: 12, background: `linear-gradient(135deg, ${C.acc}10, ${C.surface})`, border: `1.5px solid ${C.acc}30` }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <div style={{ textAlign: "left" }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.acc }}>Not Yet Configured</div>
+                <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>At-risk detection rules have not been set up yet. This tab will auto-populate once configured.</div>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Evaluations Tab */}
+      {activeTab === "evaluations" && (
+        <Card style={{ padding: 0 }}>
+          <div style={{ padding: "14px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Evaluations</div>
+              <div style={{ fontSize: 12, color: C.textMut }}>Auto-populated when a dog is checked in for an evaluation</div>
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{entries.length} total</span>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: 2200 }}>
+              {/* Header */}
+              <div style={{ display: "flex", position: "sticky", top: 0, zIndex: 2 }}>
+                <ColH width={130}>Client Name</ColH>
+                <ColH width={90}>Dog Name</ColH>
+                <ColH width={110}>Phone</ColH>
+                <ColH width={90}>Pass/Fail</ColH>
+                <ColH width={160}>Feedback @ Pick-up</ColH>
+                <ColH width={90}>Date</ColH>
+                <ColH width={90} sub="During Eval">Text</ColH>
+                <ColH width={80}>Initial/Date</ColH>
+                <ColH width={140}>At Checkout</ColH>
+                <ColH width={80}>Tool Box</ColH>
+                <ColH width={100}>Outcome</ColH>
+                <ColH width={80}>Initial/Date</ColH>
+                <ColH width={140} sub="Follow-up 1">Next Day</ColH>
+                <ColH width={80}>Initial/Date</ColH>
+                <ColH width={100}>Outcome</ColH>
+                <ColH width={100} sub="Follow-up 2">Send Card</ColH>
+                <ColH width={80}>Gift in Card</ColH>
+                <ColH width={110}>Results</ColH>
+                <ColH width={150}>Comments</ColH>
+                <ColH width={40}></ColH>
+              </div>
+              {/* Rows */}
+              {entries.length === 0 ? (
+                <div style={{ padding: "30px 24px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No evaluations yet. When you check in a dog for an evaluation on the Dashboard, it will appear here automatically.</div>
+              ) : entries.map(e => (
+                <div key={e.id} style={{ display: "flex", borderBottom: `1px solid ${C.borderLight}`, minHeight: 38, alignItems: "stretch" }}>
+                  <RCell width={130}><span style={{ fontWeight: 600, cursor: "pointer", color: C.pri }} onClick={() => { const c = data.clients.find(cl => `${cl.fields.first_name} ${cl.fields.last_name}`.trim() === e.clientName); if (c) nav("client-detail", { clientId: c.id }); }}>{e.clientName}</span></RCell>
+                  <RCell width={90}>{e.dogName}</RCell>
+                  <RCell width={110}>{e.phone}</RCell>
+                  <RCell width={90}><ECell entry={e} field="passOrFail" width={80} type="select" options={PASS_OPTS} /></RCell>
+                  <RCell width={160}><ECell entry={e} field="feedback" width={150} type="select" options={FEEDBACK_OPTS} /></RCell>
+                  <RCell width={90}>{e.date ? fmtDate(e.date) : "—"}</RCell>
+                  <RCell width={90}><ECell entry={e} field="textDuringEval" width={30} type="checkbox" /></RCell>
+                  <RCell width={80}><ECell entry={e} field="initialEval" width={70} /></RCell>
+                  <RCell width={140}><ECell entry={e} field="atCheckout" width={130} type="select" options={CHECKOUT_OPTS} /></RCell>
+                  <RCell width={80}><ECell entry={e} field="toolBox" width={70} /></RCell>
+                  <RCell width={100}><ECell entry={e} field="outcome" width={90} type="select" options={OUTCOME_OPTS} /></RCell>
+                  <RCell width={80}><ECell entry={e} field="initialCheckout" width={70} /></RCell>
+                  <RCell width={140}><ECell entry={e} field="followUp1" width={130} /></RCell>
+                  <RCell width={80}><ECell entry={e} field="initialFU1" width={70} /></RCell>
+                  <RCell width={100}><ECell entry={e} field="outcomeFU1" width={90} type="select" options={OUTCOME_OPTS} /></RCell>
+                  <RCell width={100}><ECell entry={e} field="sendCard" width={30} type="checkbox" /></RCell>
+                  <RCell width={80}><ECell entry={e} field="giftInCard" width={70} /></RCell>
+                  <RCell width={110}><ECell entry={e} field="results" width={100} type="select" options={RESULTS_OPTS} /></RCell>
+                  <RCell width={150}><ECell entry={e} field="comments" width={140} /></RCell>
+                  <RCell width={40}><button onClick={() => deleteEntry(e.id)} style={{ border: "none", background: "transparent", color: C.textMut, cursor: "pointer", fontSize: 14, fontFamily: "inherit", padding: 2 }} title="Delete">×</button></RCell>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* 1st Time Boarder Tab */}
+      {activeTab === "first_time_boarder" && (
+        <Card style={{ padding: 0 }}>
+          <div style={{ padding: "14px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>1st Time Boarders</div>
+              <div style={{ fontSize: 12, color: C.textMut }}>Auto-populated when a dog is checked in for their first boarding stay</div>
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{entries.length} total</span>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: 2200 }}>
+              <div style={{ display: "flex", position: "sticky", top: 0, zIndex: 2 }}>
+                <ColH width={130}>Client Name</ColH>
+                <ColH width={90}>Dog Name</ColH>
+                <ColH width={110}>Phone</ColH>
+                <ColH width={90}>Res. Start</ColH>
+                <ColH width={90}>Res. End</ColH>
+                <ColH width={90} sub="B4 Stay">Text</ColH>
+                <ColH width={80}>Initial/Date</ColH>
+                <ColH width={140}>During Stay/Text</ColH>
+                <ColH width={80}>Initial/Date</ColH>
+                <ColH width={130}>At Checkout</ColH>
+                <ColH width={80}>Tool Box</ColH>
+                <ColH width={100}>Outcome</ColH>
+                <ColH width={80}>Initial/Date</ColH>
+                <ColH width={130} sub="Follow-up 1">Day 3</ColH>
+                <ColH width={90}>Outcome</ColH>
+                <ColH width={80}>Initial/Date</ColH>
+                <ColH width={100} sub="Follow-up 2">Send Card</ColH>
+                <ColH width={80}>Gift in Card</ColH>
+                <ColH width={100}>Results</ColH>
+                <ColH width={150}>Comments</ColH>
+                <ColH width={40}></ColH>
+              </div>
+              {entries.length === 0 ? (
+                <div style={{ padding: "30px 24px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No first-time boarders yet. When a dog is checked in for their very first boarding stay, it will appear here automatically.</div>
+              ) : entries.map(e => (
+                <div key={e.id} style={{ display: "flex", borderBottom: `1px solid ${C.borderLight}`, minHeight: 38, alignItems: "stretch" }}>
+                  <RCell width={130}><span style={{ fontWeight: 600, cursor: "pointer", color: C.pri }} onClick={() => { const c = data.clients.find(cl => `${cl.fields.first_name} ${cl.fields.last_name}`.trim() === e.clientName); if (c) nav("client-detail", { clientId: c.id }); }}>{e.clientName}</span></RCell>
+                  <RCell width={90}>{e.dogName}</RCell>
+                  <RCell width={110}>{e.phone}</RCell>
+                  <RCell width={90}>{e.resStart ? fmtDate(e.resStart) : "—"}</RCell>
+                  <RCell width={90}>{e.resEnd ? fmtDate(e.resEnd) : "—"}</RCell>
+                  <RCell width={90}><ECell entry={e} field="textBefore" width={30} type="checkbox" /></RCell>
+                  <RCell width={80}><ECell entry={e} field="initialBefore" width={70} /></RCell>
+                  <RCell width={140}><ECell entry={e} field="duringStay" width={130} /></RCell>
+                  <RCell width={80}><ECell entry={e} field="initialDuring" width={70} /></RCell>
+                  <RCell width={130}><ECell entry={e} field="atCheckout" width={120} /></RCell>
+                  <RCell width={80}><ECell entry={e} field="toolBox" width={70} /></RCell>
+                  <RCell width={100}><ECell entry={e} field="outcome" width={90} type="select" options={OUTCOME_OPTS} /></RCell>
+                  <RCell width={80}><ECell entry={e} field="initialCheckout" width={70} /></RCell>
+                  <RCell width={130}><ECell entry={e} field="followUp1" width={120} /></RCell>
+                  <RCell width={90}><ECell entry={e} field="outcomeFU1" width={80} type="select" options={OUTCOME_OPTS} /></RCell>
+                  <RCell width={80}><ECell entry={e} field="initialFU1" width={70} /></RCell>
+                  <RCell width={100}><ECell entry={e} field="sendCard" width={30} type="checkbox" /></RCell>
+                  <RCell width={80}><ECell entry={e} field="giftInCard" width={70} /></RCell>
+                  <RCell width={100}><ECell entry={e} field="results" width={90} type="select" options={RESULTS_OPTS} /></RCell>
+                  <RCell width={150}><ECell entry={e} field="comments" width={140} /></RCell>
+                  <RCell width={40}><button onClick={() => deleteEntry(e.id)} style={{ border: "none", background: "transparent", color: C.textMut, cursor: "pointer", fontSize: 14, fontFamily: "inherit", padding: 2 }} title="Delete">×</button></RCell>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Tours Tab */}
+      {activeTab === "tours" && (
+        <Card style={{ padding: 0 }}>
+          <div style={{ padding: "14px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Tours</div>
+              <div style={{ fontSize: 12, color: C.textMut }}>Auto-populated when a client is checked in for a tour</div>
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{entries.length} total</span>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <div style={{ minWidth: 2200 }}>
+              <div style={{ display: "flex", position: "sticky", top: 0, zIndex: 2 }}>
+                <ColH width={130}>Client Name</ColH>
+                <ColH width={90}>Dog Name</ColH>
+                <ColH width={110}>Phone</ColH>
+                <ColH width={90}>Tour Date</ColH>
+                <ColH width={110}>Walk-In/Sched.</ColH>
+                <ColH width={100}>Interested In</ColH>
+                <ColH width={130}>At Checkout</ColH>
+                <ColH width={80}>Tool Box</ColH>
+                <ColH width={100}>Outcome</ColH>
+                <ColH width={100}>$50 Credit 48hrs</ColH>
+                <ColH width={80}>Initial/Date</ColH>
+                <ColH width={130} sub="Follow-up 1">Day 2 Text</ColH>
+                <ColH width={90}>Outcome</ColH>
+                <ColH width={100}>Used/Removed</ColH>
+                <ColH width={80}>Initial/Date</ColH>
+                <ColH width={100} sub="Follow-up 2">Send Card</ColH>
+                <ColH width={80}>Gift in Card</ColH>
+                <ColH width={100}>Results</ColH>
+                <ColH width={150}>Comments</ColH>
+                <ColH width={40}></ColH>
+              </div>
+              {entries.length === 0 ? (
+                <div style={{ padding: "30px 24px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No tours yet. When a client is checked in for a tour on the Dashboard, it will appear here automatically.</div>
+              ) : entries.map(e => (
+                <div key={e.id} style={{ display: "flex", borderBottom: `1px solid ${C.borderLight}`, minHeight: 38, alignItems: "stretch" }}>
+                  <RCell width={130}><span style={{ fontWeight: 600, cursor: "pointer", color: C.pri }} onClick={() => { const c = data.clients.find(cl => `${cl.fields.first_name} ${cl.fields.last_name}`.trim() === e.clientName); if (c) nav("client-detail", { clientId: c.id }); }}>{e.clientName}</span></RCell>
+                  <RCell width={90}>{e.dogName}</RCell>
+                  <RCell width={110}>{e.phone}</RCell>
+                  <RCell width={90}>{e.tourDate ? fmtDate(e.tourDate) : "—"}</RCell>
+                  <RCell width={110}><ECell entry={e} field="walkInOrScheduled" width={100} type="select" options={["Walk-In", "Scheduled"]} /></RCell>
+                  <RCell width={100}><ECell entry={e} field="interestedIn" width={90} type="select" options={INTERESTED_OPTS} /></RCell>
+                  <RCell width={130}><ECell entry={e} field="atCheckout" width={120} type="select" options={TOUR_CHECKOUT_OPTS} /></RCell>
+                  <RCell width={80}><ECell entry={e} field="toolBox" width={70} /></RCell>
+                  <RCell width={100}><ECell entry={e} field="outcome" width={90} type="select" options={OUTCOME_OPTS} /></RCell>
+                  <RCell width={100}><ECell entry={e} field="credit48" width={30} type="checkbox" /></RCell>
+                  <RCell width={80}><ECell entry={e} field="initialCredit" width={70} /></RCell>
+                  <RCell width={130}><ECell entry={e} field="followUp1" width={120} /></RCell>
+                  <RCell width={90}><ECell entry={e} field="outcomeFU1" width={80} type="select" options={OUTCOME_OPTS} /></RCell>
+                  <RCell width={100}><ECell entry={e} field="usedOrRemoved" width={90} /></RCell>
+                  <RCell width={80}><ECell entry={e} field="initialFU1" width={70} /></RCell>
+                  <RCell width={100}><ECell entry={e} field="sendCard" width={30} type="checkbox" /></RCell>
+                  <RCell width={80}><ECell entry={e} field="giftInCard" width={70} /></RCell>
+                  <RCell width={100}><ECell entry={e} field="results" width={90} type="select" options={RESULTS_OPTS} /></RCell>
+                  <RCell width={150}><ECell entry={e} field="comments" width={140} /></RCell>
+                  <RCell width={40}><button onClick={() => deleteEntry(e.id)} style={{ border: "none", background: "transparent", color: C.textMut, cursor: "pointer", fontSize: 14, fontFamily: "inherit", padding: 2 }} title="Delete">×</button></RCell>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AGREEMENTS PAGE (standalone management)
+// ═══════════════════════════════════════════════════════════════════════════
+function AgreementsPage({ data, save }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newReq, setNewReq] = useState(true);
+  const [newBody, setNewBody] = useState("");
+  const [viewId, setViewId] = useState(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editBody, setEditBody] = useState("");
+  const [editReq, setEditReq] = useState(true);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const handleAdd = async () => {
+    if (!newName.trim()) return;
+    const agr = { id: "agr_" + gid(), name: newName.trim(), required: newReq, order: data.agreements.length, body: newBody, updatedAt: todayStr() };
+    await save({ ...data, agreements: [...data.agreements, agr] });
+    setNewName(""); setNewReq(true); setNewBody(""); setShowAdd(false);
+  };
+
+  const handleRemove = async (agrId) => {
+    const newAgrs = data.agreements.filter(a => a.id !== agrId);
+    const newClients = data.clients.map(c => {
+      const agrs = { ...(c.agreements || {}) };
+      delete agrs[agrId];
+      return { ...c, agreements: agrs };
+    });
+    await save({ ...data, agreements: newAgrs, clients: newClients });
+    setConfirmDelete(null);
+    if (viewId === agrId) setViewId(null);
+  };
+
+  const toggleReq = async (agrId) => {
+    await save({ ...data, agreements: data.agreements.map(a => a.id === agrId ? { ...a, required: !a.required } : a) });
+  };
+
+  const startEditView = (agr) => {
+    setEditName(agr.name); setEditBody(agr.body || ""); setEditReq(agr.required); setEditMode(true);
+  };
+
+  const saveEditView = async () => {
+    await save({ ...data, agreements: data.agreements.map(a => a.id === viewId ? { ...a, name: editName.trim() || a.name, body: editBody, required: editReq, updatedAt: todayStr() } : a) });
+    setEditMode(false);
+  };
+
+  const getStats = (agrId) => {
+    const completed = data.clients.filter(c => !!agrSigned(c, agrId)).length;
+    return { completed, total: data.clients.length };
+  };
+
+  const viewAgr = viewId ? data.agreements.find(a => a.id === viewId) : null;
+
+  // ── Detail View ──
+  if (viewAgr) {
+    const stats = getStats(viewAgr.id);
+    const pct = stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0;
+    const bodyLines = (viewAgr.body || "").split("\n");
+    const wordCount = (viewAgr.body || "").split(/\s+/).filter(Boolean).length;
+    return (
+      <div>
+        <button onClick={() => { setViewId(null); setEditMode(false); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: C.textSec, fontSize: 14, fontWeight: 600, padding: 0, marginBottom: 20, fontFamily: "inherit" }}><I.Back /> Back to Agreements</button>
+
+        <Card style={{ marginBottom: 20, padding: "24px 28px" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              <div style={{ width: 52, height: 52, borderRadius: 14, background: C.priLt, display: "flex", alignItems: "center", justifyContent: "center", color: C.pri, flexShrink: 0 }}><I.FileText /></div>
+              <div>
+                {editMode
+                  ? <input value={editName} onChange={e => setEditName(e.target.value)} style={{ fontSize: 22, fontWeight: 800, color: C.text, border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "4px 10px", fontFamily: "inherit", outline: "none", background: C.surface, width: 350 }} />
+                  : <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: C.text }}>{viewAgr.name}</h2>
+                }
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+                  {viewAgr.required ? <Badge color="danger" size="sm">Required</Badge> : <Badge color="default" size="sm">Optional</Badge>}
+                  <span style={{ fontSize: 12, color: C.textMut }}>{wordCount} words</span>
+                  {viewAgr.updatedAt && <span style={{ fontSize: 12, color: C.textMut }}>· Last updated {fmtDate(viewAgr.updatedAt)}</span>}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {editMode ? (
+                <>
+                  <Btn variant="secondary" size="sm" onClick={() => setEditMode(false)}>Cancel</Btn>
+                  <Btn size="sm" onClick={saveEditView} icon={<I.Check />}>Save Changes</Btn>
+                </>
+              ) : (
+                <>
+                  <Btn variant="secondary" size="sm" onClick={() => startEditView(viewAgr)} icon={<I.Edit />}>Edit</Btn>
+                  <Btn variant="ghost" size="sm" onClick={() => toggleReq(viewAgr.id)}>{viewAgr.required ? "Make Optional" : "Make Required"}</Btn>
+                  <Btn variant="danger" size="sm" onClick={() => setConfirmDelete(viewAgr.id)} icon={<I.Trash />}>Delete</Btn>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Completion stats bar */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, padding: "12px 16px", background: C.bg, borderRadius: 10 }}>
+            <div style={{ flex: 1, maxWidth: 300, height: 8, borderRadius: 4, background: C.surfaceHover, overflow: "hidden" }}>
+              <div style={{ width: `${pct}%`, height: "100%", borderRadius: 4, background: pct === 100 ? C.suc : C.acc, transition: "width 0.3s" }} />
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: pct === 100 ? C.suc : C.textSec }}>{stats.completed}/{stats.total} clients signed ({pct}%)</span>
+          </div>
+
+          {/* Agreement body */}
+          {editMode ? (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em" }}>Agreement Text</span>
+                <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <div onClick={() => setEditReq(!editReq)} style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${editReq ? C.pri : C.border}`, background: editReq ? C.pri : "#fff", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.15s", cursor: "pointer", flexShrink: 0, color: "#fff" }}>{editReq && <I.Check />}</div>
+                  <span style={{ fontSize: 12, color: C.textSec }}>Required for all clients</span>
+                </label>
+              </div>
+              <textarea value={editBody} onChange={e => setEditBody(e.target.value)} placeholder="Paste or type the full agreement text here..." rows={20} style={{ width: "100%", padding: "16px 18px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 13, fontFamily: "'Inter', -apple-system, sans-serif", color: C.text, background: C.surface, outline: "none", resize: "vertical", minHeight: 300, lineHeight: 1.7, boxSizing: "border-box", whiteSpace: "pre-wrap" }} onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
+            </div>
+          ) : (
+            <div style={{ background: C.bg, borderRadius: 12, border: `1px solid ${C.borderLight}`, padding: "24px 28px", maxHeight: 600, overflow: "auto" }}>
+              {(viewAgr.body || "").trim() ? (
+                <div style={{ fontSize: 13, color: C.text, lineHeight: 1.8, whiteSpace: "pre-wrap", fontFamily: "'Inter', -apple-system, sans-serif" }}>{viewAgr.body}</div>
+              ) : (
+                <div style={{ textAlign: "center", padding: "40px 20px" }}>
+                  <div style={{ fontSize: 14, color: C.textMut, marginBottom: 12 }}>No agreement text yet</div>
+                  <Btn size="sm" onClick={() => startEditView(viewAgr)} icon={<I.Edit />}>Add Agreement Text</Btn>
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* Confirm delete modal */}
+        {confirmDelete && (
+          <Modal title="Delete Agreement" onClose={() => setConfirmDelete(null)}>
+            <p style={{ fontSize: 14, color: C.text, lineHeight: 1.6, margin: "0 0 8px" }}>Are you sure you want to delete <strong>{viewAgr.name}</strong>?</p>
+            <p style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5, margin: "0 0 20px" }}>This will remove the agreement and clear all client signature records for it. This cannot be undone.</p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn variant="secondary" onClick={() => setConfirmDelete(null)}>Cancel</Btn>
+              <Btn variant="danger" onClick={() => handleRemove(confirmDelete)} icon={<I.Trash />}>Delete Agreement</Btn>
+            </div>
+          </Modal>
+        )}
+      </div>
+    );
+  }
+
+  // ── List View ──
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text }}>Agreements & Forms</h1>
+        <Btn onClick={() => setShowAdd(true)} icon={<I.Plus />}>Add Agreement</Btn>
+      </div>
+      <p style={{ margin: "0 0 24px", fontSize: 14, color: C.textSec }}>Create and manage customer agreements. Each agreement shows as a status icon on client records and the dashboard. Eventually these will be textable for e-signatures.</p>
+
+      {data.agreements.length === 0 ? (
+        <Card style={{ textAlign: "center", padding: 48 }}>
+          <div style={{ display: "inline-flex", width: 56, height: 56, borderRadius: 16, background: C.priLt, alignItems: "center", justifyContent: "center", color: C.pri, marginBottom: 16 }}><I.FileText /></div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>No agreements configured</div>
+          <div style={{ fontSize: 14, color: C.textSec, marginBottom: 16 }}>Add agreements that customers need to sign</div>
+          <Btn onClick={() => setShowAdd(true)} icon={<I.Plus />}>Add Agreement</Btn>
+        </Card>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {data.agreements.map(agr => {
+            const stats = getStats(agr.id);
+            const pct = stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0;
+            const preview = (agr.body || "").trim();
+            const previewTrunc = preview.length > 120 ? preview.slice(0, 120).replace(/\s+\S*$/, "") + "…" : preview;
+            const wordCount = preview.split(/\s+/).filter(Boolean).length;
+            return (
+              <Card key={agr.id} style={{ padding: "18px 24px", cursor: "pointer" }} hoverable onClick={() => setViewId(agr.id)}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 16 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 12, background: C.priLt, display: "flex", alignItems: "center", justifyContent: "center", color: C.pri, flexShrink: 0, marginTop: 2 }}><I.FileText /></div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <span style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{agr.name}</span>
+                      {agr.required ? <Badge color="danger" size="sm">Required</Badge> : <Badge color="default" size="sm">Optional</Badge>}
+                    </div>
+                    {previewTrunc ? (
+                      <div style={{ fontSize: 12, color: C.textMut, lineHeight: 1.5, marginBottom: 6 }}>{previewTrunc}</div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: C.dan, fontStyle: "italic", marginBottom: 6 }}>No agreement text — click to add content</div>
+                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ flex: 1, maxWidth: 160, height: 6, borderRadius: 3, background: C.surfaceHover, overflow: "hidden" }}>
+                        <div style={{ width: `${pct}%`, height: "100%", borderRadius: 3, background: pct === 100 ? C.suc : C.acc, transition: "width 0.3s" }} />
+                      </div>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: pct === 100 ? C.suc : C.textSec }}>{stats.completed}/{stats.total} signed</span>
+                      {wordCount > 0 && <span style={{ fontSize: 11, color: C.textMut }}>{wordCount} words</span>}
+                      {agr.updatedAt && <span style={{ fontSize: 11, color: C.textMut }}>Updated {fmtDate(agr.updatedAt)}</span>}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", color: C.textMut, flexShrink: 0, marginTop: 10 }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Clients missing agreements */}
+      {data.agreements.length > 0 && (
+        <div style={{ marginTop: 28 }}>
+          <h3 style={{ margin: "0 0 12px", fontSize: 17, fontWeight: 700, color: C.text }}>Clients with Incomplete Agreements</h3>
+          {(() => {
+            const incomplete = data.clients.filter(c => data.agreements.some(a => a.required && !agrSigned(c, a.id)));
+            if (incomplete.length === 0) return <Card style={{ textAlign: "center", padding: 24 }}><div style={{ color: C.suc, fontWeight: 600, fontSize: 14 }}>All clients have completed required agreements</div></Card>;
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {incomplete.slice(0, 20).map(c => (
+                  <Card key={c.id} style={{ padding: "12px 18px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 10, background: C.danLt, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14, color: C.dan }}>{(c.fields.first_name||"?")[0]}{(c.fields.last_name||"?")[0]}</div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{c.fields.first_name} {c.fields.last_name}</div>
+                        <AgreementIcons client={c} agreements={data.agreements} />
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+                {incomplete.length > 20 && <div style={{ fontSize: 13, color: C.textMut, textAlign: "center", padding: 8 }}>+ {incomplete.length - 20} more clients</div>}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* Add Agreement Modal */}
+      {showAdd && (
+        <Modal title="New Agreement" onClose={() => { setShowAdd(false); setNewName(""); setNewBody(""); setNewReq(true); }} wide>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <Inp label="Agreement Name" value={newName} onChange={setNewName} placeholder="e.g. Boarding & Daycare Agreement" required autoFocus />
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Agreement Text</div>
+              <textarea value={newBody} onChange={e => setNewBody(e.target.value)} placeholder="Paste or type the full agreement text here...&#10;&#10;You can include sections, numbered clauses, signature lines — anything you need customers to agree to." rows={14} style={{ width: "100%", padding: "14px 16px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "'Inter', -apple-system, sans-serif", color: C.text, background: C.surface, outline: "none", resize: "vertical", minHeight: 200, lineHeight: 1.7, boxSizing: "border-box", whiteSpace: "pre-wrap" }} onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
+              <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Tip: You can always edit this later. Paste an existing agreement or start from scratch.</div>
+            </div>
+            <Inp type="checkbox" label="Required for all clients" value={newReq} onChange={setNewReq} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 24 }}>
+            <Btn variant="secondary" onClick={() => { setShowAdd(false); setNewName(""); setNewBody(""); setNewReq(true); }}>Cancel</Btn>
+            <Btn onClick={handleAdd} icon={<I.Plus />}>Create Agreement</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {/* Confirm delete modal */}
+      {confirmDelete && (() => {
+        const delAgr = data.agreements.find(a => a.id === confirmDelete);
+        return (
+          <Modal title="Delete Agreement" onClose={() => setConfirmDelete(null)}>
+            <p style={{ fontSize: 14, color: C.text, lineHeight: 1.6, margin: "0 0 8px" }}>Are you sure you want to delete <strong>{delAgr?.name}</strong>?</p>
+            <p style={{ fontSize: 13, color: C.textSec, lineHeight: 1.5, margin: "0 0 20px" }}>This will remove the agreement and clear all client signature records for it. This cannot be undone.</p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <Btn variant="secondary" onClick={() => setConfirmDelete(null)}>Cancel</Btn>
+              <Btn variant="danger" onClick={() => handleRemove(confirmDelete)} icon={<I.Trash />}>Delete Agreement</Btn>
+            </div>
+          </Modal>
+        );
+      })()}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EOD (END OF DAY) PAGE
+// ═══════════════════════════════════════════════════════════════════════════
+// EOD SEARCH OVERLAY
+// ═══════════════════════════════════════════════════════════════════════════
+function EODSearchOverlay({ data, onClose, onSelectDate }) {
+  const [q, setQ] = useState("");
+  const inputRef = useRef(null);
+  const [hlIdx, setHlIdx] = useState(0);
+
+  useEffect(() => { if (inputRef.current) inputRef.current.focus(); }, []);
+  useEffect(() => {
+    const handler = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const template = data.eodTemplate || DEF_EOD_TEMPLATE;
+
+  const results = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return [];
+    const entries = data.eodEntries || [];
+    const matches = [];
+    entries.forEach(entry => {
+      (entry.sections || []).forEach(sec => {
+        if (!sec.content) return;
+        const lower = sec.content.toLowerCase();
+        let searchFrom = 0;
+        while (searchFrom < lower.length) {
+          const idx = lower.indexOf(s, searchFrom);
+          if (idx === -1) break;
+          // Extract contextual snippet — find surrounding sentence boundaries
+          const snippetStart = Math.max(0, sec.content.lastIndexOf("\n", idx - 1) + 1);
+          const nextNewline = sec.content.indexOf("\n", idx + s.length);
+          const snippetEnd = nextNewline === -1 ? sec.content.length : nextNewline;
+          const snippet = sec.content.slice(snippetStart, snippetEnd).trim();
+          // Highlight match within snippet
+          const matchStart = idx - snippetStart;
+          const before = snippet.slice(0, matchStart);
+          const match = snippet.slice(matchStart, matchStart + s.length);
+          const after = snippet.slice(matchStart + s.length);
+          const sectionDef = template.find(t => t.id === sec.id);
+          matches.push({
+            date: entry.date,
+            sectionId: sec.id,
+            sectionTitle: sectionDef ? `${sectionDef.emoji} ${sectionDef.title || sectionDef.label}` : sec.id,
+            snippet, before, match, after,
+          });
+          searchFrom = idx + s.length;
+        }
+      });
+    });
+    // Sort newest first, limit results
+    matches.sort((a, b) => b.date.localeCompare(a.date));
+    return matches.slice(0, 30);
+  }, [q, data.eodEntries, template]);
+
+  useEffect(() => { setHlIdx(0); }, [results.length, q]);
+
+  const select = (r) => { onClose(); onSelectDate(r.date); };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); setHlIdx(i => Math.min(i + 1, results.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHlIdx(i => Math.max(i - 1, 0)); }
+    else if (e.key === "Enter" && results.length > 0) { e.preventDefault(); select(results[hlIdx]); }
+  };
+
+  const fmtFullDate = (d) => { if (!d) return ""; return new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }); };
+
+  // Group results by date
+  const grouped = useMemo(() => {
+    const map = new Map();
+    results.forEach((r, i) => {
+      if (!map.has(r.date)) map.set(r.date, []);
+      map.get(r.date).push({ ...r, globalIdx: i });
+    });
+    return [...map.entries()];
+  }, [results]);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: "12vh" }}>
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,20,40,0.55)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }} />
+      <div style={{ position: "relative", width: "100%", maxWidth: 620, borderRadius: 20, background: C.surface, boxShadow: "0 32px 80px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,52,98,0.08)", overflow: "hidden", animation: "k9overlay 0.2s ease-out" }}>
+        {/* Search bar */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "20px 24px", borderBottom: `1.5px solid ${C.borderLight}` }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={handleKeyDown}
+            placeholder="Search all EOD reports…"
+            style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 17, fontWeight: 500, color: C.text, fontFamily: "'Inter', sans-serif", letterSpacing: "-0.01em" }} />
+          <kbd style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'Inter', monospace", whiteSpace: "nowrap" }}>Esc</kbd>
+        </div>
+        {/* Results */}
+        <div style={{ maxHeight: 440, overflow: "auto", padding: "8px 0" }}>
+          {!q.trim() && (
+            <div style={{ padding: "32px 24px", textAlign: "center", color: C.textMut, fontSize: 14 }}>
+              <div style={{ fontSize: 28, marginBottom: 8 }}>🔍</div>
+              Search across all EOD reports by keyword, dog name, client name, notes, or anything else
+            </div>
+          )}
+          {q.trim() && results.length === 0 && (
+            <div style={{ padding: "32px 24px", textAlign: "center" }}>
+              <div style={{ fontSize: 28, marginBottom: 8 }}>📋</div>
+              <div style={{ fontSize: 14, color: C.textMut }}>No results for "<span style={{ fontWeight: 700, color: C.text }}>{q.trim()}</span>" in any EOD report</div>
+            </div>
+          )}
+          {grouped.map(([date, items]) => (
+            <div key={date}>
+              <div style={{ padding: "10px 24px 4px", fontSize: 12, fontWeight: 700, color: C.pri, textTransform: "uppercase", letterSpacing: "0.04em" }}>{fmtFullDate(date)}</div>
+              {items.map((r) => {
+                const active = hlIdx === r.globalIdx;
+                return (
+                  <button key={r.globalIdx} onClick={() => select(r)} onMouseEnter={() => setHlIdx(r.globalIdx)}
+                    style={{ display: "flex", alignItems: "flex-start", gap: 14, width: "100%", padding: "10px 24px", border: "none", background: active ? C.priLt : "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.1s" }}>
+                    <div style={{ width: 36, height: 36, borderRadius: 10, background: active ? `${C.pri}18` : C.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 16 }}>
+                      <I.Clipboard />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 3 }}>{r.sectionTitle}</div>
+                      <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                        <span>{r.before}</span>
+                        <span style={{ background: `${C.acc}30`, color: C.text, fontWeight: 700, borderRadius: 3, padding: "0 2px" }}>{r.match}</span>
+                        <span>{r.after}</span>
+                      </div>
+                    </div>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={active ? C.pri : C.textMut} strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, opacity: 0.5, marginTop: 10 }}><polyline points="9 18 15 12 9 6"/></svg>
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+          {q.trim() && results.length > 0 && (
+            <div style={{ padding: "8px 24px 12px", textAlign: "center", fontSize: 11, color: C.textMut, borderTop: `1px solid ${C.borderLight}`, marginTop: 4 }}>
+              {results.length >= 30 ? "Showing first 30 results" : `${results.length} result${results.length !== 1 ? "s" : ""} found`} · ↑↓ navigate · Enter to open
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+function EODPage({ data, save, nav }) {
+  const td = todayStr();
+  const [viewDate, setViewDate] = useState(td);
+  const isToday = viewDate === td;
+  const shiftDate = (days) => { const d = new Date(viewDate + "T12:00:00"); d.setDate(d.getDate() + days); setViewDate(d.toISOString().split("T")[0]); };
+
+  // Search overlay
+  const [showEODSearch, setShowEODSearch] = useState(false);
+
+  // Calendar popup
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [calMonth, setCalMonth] = useState(() => new Date(viewDate + "T12:00:00").getMonth());
+  const [calYear, setCalYear] = useState(() => new Date(viewDate + "T12:00:00").getFullYear());
+  useEffect(() => { const d = new Date(viewDate + "T12:00:00"); setCalMonth(d.getMonth()); setCalYear(d.getFullYear()); }, [showCalendar]);
+  const calDays = useMemo(() => { const first = new Date(calYear, calMonth, 1); const startDay = first.getDay(); const dim = new Date(calYear, calMonth + 1, 0).getDate(); const cells = []; for (let i = 0; i < startDay; i++) cells.push(null); for (let d = 1; d <= dim; d++) cells.push(d); return cells; }, [calMonth, calYear]);
+  const calMonthLabel = new Date(calYear, calMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const calPrev = () => { if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); };
+  const calNext = () => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); };
+  const calSelect = (day) => { const m = String(calMonth + 1).padStart(2, "0"); const d = String(day).padStart(2, "0"); setViewDate(`${calYear}-${m}-${d}`); setShowCalendar(false); };
+  const calRef = useRef(null);
+  useEffect(() => { if (!showCalendar) return; const handler = (e) => { if (calRef.current && !calRef.current.contains(e.target)) setShowCalendar(false); }; document.addEventListener("mousedown", handler); return () => document.removeEventListener("mousedown", handler); }, [showCalendar]);
+
+  const viewDateLabel = new Date(viewDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
+  // Get or create EOD entry for this date
+  const template = data.eodTemplate || DEF_EOD_TEMPLATE;
+  const existing = (data.eodEntries || []).find(e => e.date === viewDate);
+  const entry = existing || {
+    id: "eod_" + viewDate, date: viewDate, locked: false,
+    sections: template.map(t => ({ id: t.id, content: t.defaultContent })),
+    mentions: [], history: [{ ts: new Date().toISOString(), action: "created" }],
+  };
+  const isPastDay = viewDate < td;
+  const isLocked = isPastDay || (existing ? existing.locked : false);
+
+  // Section content management
+  const [editSections, setEditSections] = useState({});
+  useEffect(() => {
+    const obj = {};
+    entry.sections.forEach(s => { obj[s.id] = s.content; });
+    setEditSections(obj);
+  }, [viewDate]);
+
+  const updateSection = (secId, content) => { setEditSections(prev => ({ ...prev, [secId]: content })); };
+
+  // Track which text section is being actively edited (click-to-edit)
+  const [editingSecId, setEditingSecId] = useState(null);
+
+  // @ Mention system
+  const [mentionState, setMentionState] = useState(null); // { sectionId, query, cursorPos, inputEl }
+  const [mentionResults, setMentionResults] = useState([]);
+  const [mentionIdx, setMentionIdx] = useState(0);
+  const mentionRef = useRef(null);
+
+  const allEntities = useMemo(() => {
+    const arr = [];
+    data.dogs.forEach(d => { const c = data.clients.find(cl => cl.id === d.clientId); const ownerLast = c ? c.fields.last_name : ""; arr.push({ type: "dog", id: d.id, name: `${d.fields.name} ${ownerLast}`.trim(), sub: c ? `${c.fields.first_name} ${c.fields.last_name}'s dog` : "Dog", clientId: d.clientId }); });
+    data.clients.forEach(c => { arr.push({ type: "client", id: c.id, name: `${c.fields.first_name} ${c.fields.last_name}`, sub: fmtPhone(c.fields.phone) }); });
+    return arr;
+  }, [data.dogs, data.clients]);
+
+  const handleTextChange = (secId, e) => {
+    const val = e.target.value;
+    const pos = e.target.selectionStart;
+    const el = e.target;
+    updateSection(secId, val);
+    // Detect @ trigger
+    const before = val.slice(0, pos);
+    const atMatch = before.match(/@([A-Za-z0-9_ ]*)$/);
+    if (atMatch) {
+      const query = atMatch[1].trim().toLowerCase();
+      const results = query.length === 0 ? allEntities.slice(0, 8) : allEntities.filter(ent => ent.name.toLowerCase().includes(query)).slice(0, 8);
+      setMentionState({ sectionId: secId, query, cursorPos: pos, atStart: pos - atMatch[0].length, inputEl: el });
+      setMentionResults(results);
+      setMentionIdx(0);
+    } else {
+      setMentionState(null);
+    }
+  };
+
+  const selectMention = (entity) => {
+    if (!mentionState) return;
+    const tag = `@${entity.name}`;
+    if (mentionState.checklistIdx != null && mentionState.checklistIdx >= 0) {
+      // Checklist item mention - insert into that item's label
+      const secId = mentionState.sectionId;
+      const content = editSections[secId] || "";
+      const items = content.split("\n").filter(l => l.trim()).map(line => {
+        const checked = line.startsWith("[x] ");
+        const label = line.replace(/^\[[ x]\] /, "");
+        return { checked, label };
+      });
+      const item = items[mentionState.checklistIdx];
+      if (item) {
+        const before = item.label.slice(0, mentionState.atStart);
+        const after = item.label.slice(mentionState.cursorPos);
+        item.label = before + tag + " " + after;
+        const newContent = items.map(it => `${it.checked ? "[x] " : "[ ] "}${it.label}`).join("\n");
+        updateSection(secId, newContent);
+        setTimeout(() => { if (mentionState.inputEl) { mentionState.inputEl.focus(); const newPos = before.length + tag.length + 1; mentionState.inputEl.setSelectionRange(newPos, newPos); } }, 10);
+      }
+    } else if (mentionState.isAddInput && mentionState.inputEl) {
+      // "Add item" input mention - insert @Name into the uncontrolled input
+      const inp = mentionState.inputEl;
+      const before = inp.value.slice(0, mentionState.atStart);
+      const after = inp.value.slice(mentionState.cursorPos);
+      inp.value = before + tag + " " + after;
+      setTimeout(() => { inp.focus(); const newPos = before.length + tag.length + 1; inp.setSelectionRange(newPos, newPos); }, 10);
+    } else {
+      // Textarea mention
+      const sec = editSections[mentionState.sectionId] || "";
+      const before = sec.slice(0, mentionState.atStart);
+      const after = sec.slice(mentionState.cursorPos);
+      const newContent = before + tag + " " + after;
+      updateSection(mentionState.sectionId, newContent);
+      setTimeout(() => { if (mentionState.inputEl) { mentionState.inputEl.focus(); const newPos = before.length + tag.length + 1; mentionState.inputEl.setSelectionRange(newPos, newPos); } }, 10);
+    }
+    // Record mention
+    const mention = { id: gid(), entityType: entity.type, entityId: entity.id, entityName: entity.name, sectionId: mentionState.sectionId, createdAt: new Date().toISOString() };
+    const existingMentions = [...(entry.mentions || [])];
+    existingMentions.push(mention);
+    entry.mentions = existingMentions;
+    setMentionState(null);
+  };
+
+  const handleKeyDown = (secId, e) => {
+    if (!mentionState || mentionState.sectionId !== secId) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setMentionIdx(i => Math.min(i + 1, mentionResults.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setMentionIdx(i => Math.max(i - 1, 0)); }
+    else if ((e.key === "Tab" || e.key === "Enter") && mentionResults.length > 0) { e.preventDefault(); selectMention(mentionResults[mentionIdx]); }
+    else if (e.key === "Escape") { setMentionState(null); }
+  };
+
+  // Close mention dropdown on outside click
+  useEffect(() => {
+    if (!mentionState) return;
+    const handler = (e) => { if (mentionRef.current && !mentionRef.current.contains(e.target)) setMentionState(null); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [mentionState]);
+
+  // Save EOD
+  const saveEOD = async () => {
+    const sections = template.map(t => ({ id: t.id, content: editSections[t.id] || "" }));
+    const newEntry = { ...entry, sections, history: [...(entry.history || []), { ts: new Date().toISOString(), action: "saved" }] };
+    const entries = [...(data.eodEntries || [])];
+    const idx = entries.findIndex(e => e.date === viewDate);
+    if (idx >= 0) entries[idx] = newEntry; else entries.push(newEntry);
+    await save({ ...data, eodEntries: entries });
+  };
+
+  // Lock/unlock
+  const toggleLock = async () => {
+    const entries = [...(data.eodEntries || [])];
+    const idx = entries.findIndex(e => e.date === viewDate);
+    if (idx >= 0) {
+      entries[idx] = { ...entries[idx], locked: !entries[idx].locked, history: [...(entries[idx].history || []), { ts: new Date().toISOString(), action: entries[idx].locked ? "unlocked" : "locked" }] };
+      await save({ ...data, eodEntries: entries });
+    } else {
+      // Save first then lock
+      const sections = template.map(t => ({ id: t.id, content: editSections[t.id] || "" }));
+      entries.push({ ...entry, sections, locked: true, history: [...(entry.history || []), { ts: new Date().toISOString(), action: "locked" }] });
+      await save({ ...data, eodEntries: entries });
+    }
+  };
+
+  // History panel
+  const [showHistory, setShowHistory] = useState(false);
+  // New hire guide
+  const [showEODGuide, setShowEODGuide] = useState(false);
+
+  // Render mention-highlighted text
+  const renderContent = (text, mentions, secId) => {
+    if (!text) return <span style={{ color: C.textMut, fontStyle: "italic" }}>Empty</span>;
+    const secMentions = (mentions || []).filter(m => m.sectionId === secId);
+    if (secMentions.length === 0) return <span style={{ whiteSpace: "pre-wrap" }}>{text}</span>;
+    // Build a sorted list of all mention occurrences by position in text
+    const hits = [];
+    secMentions.forEach(m => {
+      const tag = `@${m.entityName}`;
+      let startIdx = 0;
+      let idx;
+      while ((idx = text.indexOf(tag, startIdx)) >= 0) {
+        hits.push({ idx, len: tag.length, tag, m });
+        startIdx = idx + tag.length;
+      }
+    });
+    hits.sort((a, b) => a.idx - b.idx);
+    // Deduplicate overlapping hits (keep first at each position)
+    const deduped = [];
+    let lastEnd = 0;
+    hits.forEach(h => { if (h.idx >= lastEnd) { deduped.push(h); lastEnd = h.idx + h.len; } });
+    if (deduped.length === 0) return <span style={{ whiteSpace: "pre-wrap" }}>{text}</span>;
+    const parts = [];
+    let key = 0;
+    let cursor = 0;
+    deduped.forEach(h => {
+      if (h.idx > cursor) parts.push(<span key={key++} style={{ whiteSpace: "pre-wrap" }}>{text.slice(cursor, h.idx)}</span>);
+      parts.push(
+        <span key={key++} onClick={(e) => { e.stopPropagation(); nav(h.m.entityType === "dog" ? "dog-detail" : "client-detail", h.m.entityType === "dog" ? { clientId: h.m.clientId || data.dogs.find(d => d.id === h.m.entityId)?.clientId, dogId: h.m.entityId } : { clientId: h.m.entityId }); }}
+          onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; e.currentTarget.style.textDecorationColor = C.pri + "60"; }}
+          onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
+          style={{ display: "inline", padding: "1px 8px", borderRadius: 6, background: C.priLt, color: C.pri, fontWeight: 700, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap", textUnderlineOffset: 2 }}>{h.tag}</span>
+      );
+      cursor = h.idx + h.len;
+    });
+    if (cursor < text.length) parts.push(<span key={key++} style={{ whiteSpace: "pre-wrap" }}>{text.slice(cursor)}</span>);
+    return <>{parts}</>;
+  };
+
+  // Check if any EOD exists for dates (for calendar dots)
+  const eodDates = useMemo(() => new Set((data.eodEntries || []).map(e => e.date)), [data.eodEntries]);
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>End of Day Report</h1>
+          <button onClick={() => setShowEODGuide(v => !v)} style={{ width: 22, height: 22, borderRadius: 11, border: `1.5px solid ${showEODGuide ? C.pri : C.border}`, background: showEODGuide ? C.priLt : "transparent", color: showEODGuide ? C.pri : C.textMut, fontSize: 12, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit", lineHeight: 1, transition: "all 0.15s" }} title="How EOD Reports work">?</button>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="secondary" size="sm" onClick={() => setShowEODSearch(true)} icon={<I.Search />}>Search</Btn>
+          {!isLocked && <Btn onClick={saveEOD} icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>}>Save</Btn>}
+          <Btn variant={isLocked ? "secondary" : "secondary"} onClick={toggleLock} size="sm">
+            {isLocked ? "🔒 Locked" : "🔓 Lock Day"}
+          </Btn>
+        </div>
+      </div>
+
+      {/* New Hire Guide */}
+      {showEODGuide && (
+        <div style={{ marginBottom: 16, padding: "20px 22px", borderRadius: 12, border: `1.5px solid ${C.priLt}`, background: `linear-gradient(135deg, ${C.priLt}40, ${C.surface})`, fontSize: 12, lineHeight: 1.7, color: C.textSec }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.pri, marginBottom: 10 }}>How EOD Reports Work</div>
+          <div style={{ marginBottom: 10 }}>
+            The End of Day (EOD) Report is a <span style={{ fontWeight: 700, color: C.text }}>daily log</span> completed at the end of each shift. It's how the team communicates what happened during the day — from sales and alerts to individual dog notes and building issues.
+          </div>
+          <div style={{ fontWeight: 700, color: C.text, marginBottom: 4 }}>Daily workflow:</div>
+          <div style={{ paddingLeft: 14, marginBottom: 10 }}>
+            <div><span style={{ fontWeight: 700 }}>1. A new EOD auto-creates each day</span> — pre-filled with all the template sections. Just fill in the blanks as the day goes on.</div>
+            <div><span style={{ fontWeight: 700 }}>2. Add notes to each section</span> — Sales totals, meds administered, daycare notes, incidents, leads, tours, etc. Fill in what applies, leave the rest blank.</div>
+            <div><span style={{ fontWeight: 700 }}>3. Save frequently</span> — Hit the Save button to persist your notes. Multiple people can add to it throughout the day.</div>
+            <div><span style={{ fontWeight: 700 }}>4. Lock at end of day</span> — When the EOD is complete, lock it so it can't be accidentally edited. Locked days can be unlocked by a manager if needed.</div>
+          </div>
+          <div style={{ fontWeight: 700, color: C.text, marginBottom: 4 }}>@ Mentions — linking notes to dogs & clients:</div>
+          <div style={{ paddingLeft: 14, marginBottom: 10 }}>
+            <div>Type <span style={{ fontWeight: 700, color: C.pri, background: C.priLt, padding: "1px 6px", borderRadius: 4 }}>@</span> in any section to search for a dog or client name. Use <span style={{ fontWeight: 700 }}>↓ ↑</span> arrows to navigate and <span style={{ fontWeight: 700 }}>Tab</span> or <span style={{ fontWeight: 700 }}>Enter</span> to select.</div>
+            <div style={{ marginTop: 4 }}>When you mention a dog or client, it creates a <span style={{ fontWeight: 700, color: C.text }}>linked reference</span> — that note will automatically appear on the dog's or client's profile under "EOD Mentions". This means you only have to write it once.</div>
+            <div style={{ marginTop: 4 }}>Example: In the Meds section, type <span style={{ fontWeight: 700, color: C.pri }}>"@Baxter given Trazodone at 2pm per owner"</span> and it'll show up both here and on Baxter's profile page.</div>
+          </div>
+          <div style={{ fontWeight: 700, color: C.text, marginBottom: 4 }}>Other features:</div>
+          <div style={{ paddingLeft: 14, marginBottom: 8 }}>
+            <div><span style={{ fontWeight: 700 }}>History</span> — Click "History" to see when the EOD was saved and locked/unlocked, with timestamps.</div>
+            <div><span style={{ fontWeight: 700 }}>Calendar</span> — Use the calendar icon to jump to any past EOD. Gold dots indicate days that have saved reports.</div>
+            <div><span style={{ fontWeight: 700 }}>Template</span> — The sections are fully customizable in Settings → EOD Template. You can add, remove, reorder, and edit section names and default content.</div>
+          </div>
+          <div style={{ fontSize: 11, color: C.textMut, fontStyle: "italic", borderTop: `1px solid ${C.borderLight}`, paddingTop: 8, marginTop: 4 }}>Tip: Get in the habit of adding notes throughout the day instead of trying to remember everything at close. Future you (and the morning shift) will thank you.</div>
+        </div>
+      )}
+
+      {/* Date Navigation */}
+      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 20, position: "relative" }}>
+        <button onClick={() => shiftDate(-1)} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", color: C.textSec, fontSize: 14, fontFamily: "inherit", padding: 0 }} title="Previous day">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <span style={{ fontSize: 14, fontWeight: 600, color: C.text, padding: "4px 2px", whiteSpace: "nowrap" }}>{viewDateLabel}</span>
+        <button onClick={() => shiftDate(1)} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", color: C.textSec, fontFamily: "inherit", padding: 0 }} title="Next day">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        <button onClick={() => setShowCalendar(v => !v)} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${showCalendar ? C.pri : C.border}`, background: showCalendar ? C.priLt : C.surface, cursor: "pointer", color: showCalendar ? C.pri : C.textSec, fontFamily: "inherit", padding: 0, transition: "all 0.15s" }} title="Open calendar">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        </button>
+        {!isToday && <button onClick={() => setViewDate(td)} style={{ padding: "4px 12px", borderRadius: 8, border: `1.5px solid ${C.pri}`, background: C.priLt, color: C.pri, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Today</button>}
+        {existing && <button onClick={() => setShowHistory(v => !v)} style={{ padding: "4px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{showHistory ? "Hide History" : "History"}</button>}
+        {isLocked && <Badge color="warning" size="sm">Read-only</Badge>}
+
+        {/* Calendar Popup */}
+        {showCalendar && (
+          <div ref={calRef} style={{ position: "absolute", top: "100%", left: 28, marginTop: 6, zIndex: 100, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.15)", padding: 16, width: 280 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+              <button onClick={calPrev} style={{ width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, fontFamily: "inherit", padding: 0 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{calMonthLabel}</span>
+              <button onClick={calNext} style={{ width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, fontFamily: "inherit", padding: 0 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", marginBottom: 4 }}>
+              {["Su","Mo","Tu","We","Th","Fr","Sa"].map(d => <span key={d} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, padding: "4px 0", textTransform: "uppercase" }}>{d}</span>)}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", gap: 2 }}>
+              {calDays.map((day, i) => {
+                if (day === null) return <div key={`e${i}`} />;
+                const m = String(calMonth + 1).padStart(2, "0"); const d = String(day).padStart(2, "0");
+                const dateStr = `${calYear}-${m}-${d}`; const isSelected = dateStr === viewDate; const isTodayCell = dateStr === td;
+                const hasEOD = eodDates.has(dateStr);
+                return (
+                  <button key={i} onClick={() => calSelect(day)} style={{ width: 34, height: 34, borderRadius: 10, border: isSelected ? `2px solid ${C.pri}` : isTodayCell ? `2px solid ${C.acc}` : "2px solid transparent", background: isSelected ? C.pri : "transparent", color: isSelected ? "#fff" : isTodayCell ? C.acc : C.text, fontSize: 13, fontWeight: isSelected || isTodayCell ? 700 : 500, cursor: "pointer", fontFamily: "inherit", padding: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", margin: "0 auto", transition: "all 0.1s" }}
+                    onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = C.surfaceHover; }} onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}>
+                    {day}
+                    {hasEOD && !isSelected && <div style={{ width: 4, height: 4, borderRadius: 2, background: C.acc, marginTop: 1 }} />}
+                  </button>
+                );
+              })}
+            </div>
+            {!isToday && <div style={{ textAlign: "center", marginTop: 10, borderTop: `1px solid ${C.borderLight}`, paddingTop: 10 }}><button onClick={() => { setViewDate(td); setShowCalendar(false); }} style={{ fontSize: 12, fontWeight: 700, color: C.pri, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>Go to Today</button></div>}
+          </div>
+        )}
+      </div>
+
+      {/* Edit History */}
+      {showHistory && existing && (
+        <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>Edit History</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {(existing.history || []).map((h, i) => (
+              <div key={i} style={{ fontSize: 12, color: C.textSec }}>
+                <span style={{ fontWeight: 600, color: C.textMut }}>{new Date(h.ts).toLocaleDateString("en-US", { month: "short", day: "numeric" })} {new Date(h.ts).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</span>
+                {" — "}{h.action.charAt(0).toUpperCase() + h.action.slice(1)}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Sections */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {template.map(sec => {
+          const content = editSections[sec.id] ?? "";
+          const secMentions = (entry.mentions || []).filter(m => m.sectionId === sec.id);
+          const isChecklist = (sec.type || "text") === "checklist";
+
+          // Checklist helpers
+          const parseChecklistItems = (text) => {
+            if (!text) return [];
+            return text.split("\n").filter(l => l.trim()).map(line => {
+              const checked = line.startsWith("[x] ");
+              const label = line.replace(/^\[[ x]\] /, "");
+              return { checked, label };
+            });
+          };
+          const toggleCheckItem = (idx) => {
+            const items = parseChecklistItems(content);
+            items[idx] = { ...items[idx], checked: !items[idx].checked };
+            const newContent = items.map(it => `${it.checked ? "[x] " : "[ ] "}${it.label}`).join("\n");
+            updateSection(sec.id, newContent);
+          };
+          const removeCheckItem = (idx) => {
+            const items = parseChecklistItems(content);
+            items.splice(idx, 1);
+            const newContent = items.map(it => `${it.checked ? "[x] " : "[ ] "}${it.label}`).join("\n");
+            updateSection(sec.id, newContent);
+          };
+          const editCheckItem = (idx, newLabel) => {
+            const items = parseChecklistItems(content);
+            items[idx] = { ...items[idx], label: newLabel };
+            const newContent = items.map(it => `${it.checked ? "[x] " : "[ ] "}${it.label}`).join("\n");
+            updateSection(sec.id, newContent);
+          };
+          const addCheckItem = (label) => {
+            if (!label.trim()) return;
+            const items = parseChecklistItems(content);
+            items.push({ checked: false, label: label.trim() });
+            const newContent = items.map(it => `${it.checked ? "[x] " : "[ ] "}${it.label}`).join("\n");
+            updateSection(sec.id, newContent);
+          };
+          const checklistItems = isChecklist ? parseChecklistItems(content) : [];
+          const checkedCount = checklistItems.filter(it => it.checked).length;
+
+          return (
+            <Card key={sec.id} style={{ padding: 0, overflow: "visible" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: C.bg, borderBottom: `1px solid ${C.borderLight}`, borderRadius: "14px 14px 0 0" }}>
+                <span style={{ fontSize: 16 }}>{sec.emoji}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{sec.title || sec.label}</span>
+                {isChecklist && checklistItems.length > 0 && <Badge color={checkedCount === checklistItems.length ? "success" : "default"} size="sm">{checkedCount}/{checklistItems.length}</Badge>}
+                {secMentions.length > 0 && <Badge color="primary" size="sm">{secMentions.length} mention{secMentions.length > 1 ? "s" : ""}</Badge>}
+              </div>
+              <div style={{ padding: "12px 16px", position: "relative" }}>
+                {isChecklist ? (
+                  /* ── CHECKLIST MODE ── */
+                  <div>
+                    {checklistItems.length > 0 && (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                        {checklistItems.map((item, idx) => (
+                          <div key={idx} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 4px", borderRadius: 8, transition: "background 0.1s" }}
+                            onMouseEnter={e => { e.currentTarget.style.background = C.surfaceHover; }} onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                            <button onClick={() => !isLocked && toggleCheckItem(idx)} style={{ width: 20, height: 20, borderRadius: 6, border: `2px solid ${item.checked ? C.suc : C.border}`, background: item.checked ? C.suc : "transparent", cursor: isLocked ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, flexShrink: 0, transition: "all 0.15s" }}>
+                              {item.checked && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                            </button>
+                            {!isLocked ? (
+                              <input value={item.label} onChange={e => {
+                                  const pos = e.target.selectionStart;
+                                  const el = e.target;
+                                  editCheckItem(idx, e.target.value);
+                                  const before = e.target.value.slice(0, pos);
+                                  const atMatch = before.match(/@([A-Za-z0-9_ ]*)$/);
+                                  if (atMatch) {
+                                    const query = atMatch[1].trim().toLowerCase();
+                                    const results = query.length === 0 ? allEntities.slice(0, 8) : allEntities.filter(ent => ent.name.toLowerCase().includes(query)).slice(0, 8);
+                                    setMentionState({ sectionId: sec.id, checklistIdx: idx, query, cursorPos: pos, atStart: pos - atMatch[0].length, inputEl: el });
+                                    setMentionResults(results);
+                                    setMentionIdx(0);
+                                  } else if (mentionState && mentionState.sectionId === sec.id) { setMentionState(null); }
+                                }}
+                                onKeyDown={e => handleKeyDown(sec.id, e)}
+                                style={{ flex: 1, border: "none", outline: "none", fontSize: 13, fontFamily: "inherit", color: item.checked ? C.textMut : C.text, textDecoration: item.checked ? "line-through" : "none", background: "transparent", padding: 0 }} />
+                            ) : (
+                              <span style={{ flex: 1, fontSize: 13, color: item.checked ? C.textMut : C.text, textDecoration: item.checked ? "line-through" : "none" }}>{renderContent(item.label, entry.mentions, sec.id)}</span>
+                            )}
+                            {!isLocked && (
+                              <button onClick={() => removeCheckItem(idx)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, padding: "2px 4px", fontSize: 14, lineHeight: 1, opacity: 0.5, transition: "opacity 0.1s" }}
+                                onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.color = C.dan; }} onMouseLeave={e => { e.currentTarget.style.opacity = 0.5; e.currentTarget.style.color = C.textMut; }}>×</button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {!isLocked && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: checklistItems.length > 0 ? 6 : 0, padding: "4px 4px" }}>
+                        <div style={{ width: 20, height: 20, borderRadius: 6, border: `2px dashed ${C.border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, opacity: 0.5 }}>
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        </div>
+                        <input placeholder="Add item... (use @ to mention)" onChange={e => {
+                            const pos = e.target.selectionStart;
+                            const before = e.target.value.slice(0, pos);
+                            const atMatch = before.match(/@([A-Za-z0-9_ ]*)$/);
+                            if (atMatch) {
+                              const query = atMatch[1].trim().toLowerCase();
+                              const results = query.length === 0 ? allEntities.slice(0, 8) : allEntities.filter(ent => ent.name.toLowerCase().includes(query)).slice(0, 8);
+                              setMentionState({ sectionId: sec.id, checklistIdx: -1, query, cursorPos: pos, atStart: pos - atMatch[0].length, inputEl: e.target, isAddInput: true });
+                              setMentionResults(results);
+                              setMentionIdx(0);
+                            } else if (mentionState && mentionState.sectionId === sec.id) { setMentionState(null); }
+                          }}
+                          onKeyDown={e => {
+                            if (mentionState && mentionState.sectionId === sec.id && mentionResults.length > 0) {
+                              handleKeyDown(sec.id, e);
+                            } else if (e.key === "Enter" && e.target.value.trim()) {
+                              addCheckItem(e.target.value); e.target.value = "";
+                            }
+                          }}
+                          style={{ flex: 1, border: "none", outline: "none", fontSize: 13, fontFamily: "inherit", color: C.text, background: "transparent", padding: 0 }} />
+                      </div>
+                    )}
+                    {isLocked && checklistItems.length === 0 && <span style={{ fontSize: 13, color: C.textMut, fontStyle: "italic" }}>No items</span>}
+                    {/* Mention Dropdown for Checklist */}
+                    {mentionState && mentionState.sectionId === sec.id && mentionResults.length > 0 && (
+                      <div ref={mentionRef} style={{ position: "absolute", left: 16, bottom: -4, transform: "translateY(100%)", zIndex: 200, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.12)", maxHeight: 240, overflow: "auto", width: 280 }}>
+                        {mentionResults.map((ent, i) => (
+                          <button key={ent.id} onClick={() => selectMention(ent)}
+                            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 14px", border: "none", background: i === mentionIdx ? C.priLt : "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                            <div style={{ width: 28, height: 28, borderRadius: 8, background: ent.type === "dog" ? `linear-gradient(135deg, ${C.accLt}, ${C.priLt})` : `linear-gradient(135deg, ${C.priLt}, ${C.accLt})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: C.pri, flexShrink: 0 }}>
+                              {ent.type === "dog" ? "🐕" : ent.name.split(" ").map(w => w[0]).join("").slice(0, 2)}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{ent.name}</div>
+                              <div style={{ fontSize: 11, color: C.textSec }}>{ent.sub}</div>
+                            </div>
+                            <Badge size="sm" color={ent.type === "dog" ? "primary" : "default"}>{ent.type}</Badge>
+                          </button>
+                        ))}
+                        <div style={{ padding: "6px 14px", borderTop: `1px solid ${C.borderLight}`, fontSize: 11, color: C.textMut }}>↑↓ navigate · Tab or Enter to select · Esc to dismiss</div>
+                      </div>
+                    )}
+                  </div>
+                ) : isLocked ? (
+                  /* ── TEXT MODE: LOCKED ── */
+                  <div style={{ fontSize: 13, color: C.text, lineHeight: 1.6, minHeight: 24 }}>
+                    {renderContent(content, entry.mentions, sec.id)}
+                  </div>
+                ) : editingSecId === sec.id ? (
+                  /* ── TEXT MODE: ACTIVELY EDITING ── */
+                  <>
+                    <textarea autoFocus value={content} onChange={(e) => handleTextChange(sec.id, e)} onKeyDown={(e) => handleKeyDown(sec.id, e)}
+                      onBlur={() => { if (!mentionState || mentionState.sectionId !== sec.id) setEditingSecId(null); }}
+                      placeholder={sec.defaultContent || "Type here... Use @ to mention a dog or client"}
+                      style={{ width: "100%", minHeight: 60, padding: 0, border: "none", outline: "none", fontSize: 13, color: C.text, fontFamily: "inherit", lineHeight: 1.6, resize: "vertical", background: "transparent", boxSizing: "border-box" }} />
+                    {/* Mention Dropdown */}
+                    {mentionState && mentionState.sectionId === sec.id && mentionResults.length > 0 && (
+                      <div ref={mentionRef} style={{ position: "absolute", left: 16, bottom: -4, transform: "translateY(100%)", zIndex: 200, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.12)", maxHeight: 240, overflow: "auto", width: 280 }}>
+                        {mentionResults.map((ent, i) => (
+                          <button key={ent.id} onClick={() => selectMention(ent)}
+                            style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 14px", border: "none", background: i === mentionIdx ? C.priLt : "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                            <div style={{ width: 28, height: 28, borderRadius: 8, background: ent.type === "dog" ? `linear-gradient(135deg, ${C.accLt}, ${C.priLt})` : `linear-gradient(135deg, ${C.priLt}, ${C.accLt})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: C.pri, flexShrink: 0 }}>
+                              {ent.type === "dog" ? "🐕" : ent.name.split(" ").map(w => w[0]).join("").slice(0, 2)}
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{ent.name}</div>
+                              <div style={{ fontSize: 11, color: C.textSec }}>{ent.sub}</div>
+                            </div>
+                            <Badge size="sm" color={ent.type === "dog" ? "primary" : "default"}>{ent.type}</Badge>
+                          </button>
+                        ))}
+                        <div style={{ padding: "6px 14px", borderTop: `1px solid ${C.borderLight}`, fontSize: 11, color: C.textMut }}>↑↓ navigate · Tab or Enter to select · Esc to dismiss</div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  /* ── TEXT MODE: UNLOCKED PREVIEW (click to edit) ── */
+                  <div onClick={() => setEditingSecId(sec.id)} style={{ fontSize: 13, color: C.text, lineHeight: 1.6, minHeight: 24, cursor: "text", borderRadius: 6 }}>
+                    {content ? renderContent(content, entry.mentions, sec.id) : <span style={{ color: C.textMut, fontStyle: "italic" }}>{sec.defaultContent || "Click to edit…"}</span>}
+                  </div>
+                )}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Bottom save bar */}
+      {!isLocked && (
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20, padding: "16px 0", borderTop: `1px solid ${C.borderLight}` }}>
+          <Btn variant="secondary" onClick={toggleLock}>Lock Day</Btn>
+          <Btn onClick={saveEOD}>Save EOD</Btn>
+        </div>
+      )}
+
+      {/* Search Overlay */}
+      {showEODSearch && <EODSearchOverlay data={data} onClose={() => setShowEODSearch(false)} onSelectDate={(date) => setViewDate(date)} />}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DROPDOWN LISTS SETTINGS TAB
+// ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// PRICING TAB
+// ═══════════════════════════════════════════════════════════════════════════
+function PricingTab({ data, save }) {
+  const p = data.pricing || DEF_PRICING;
+  const update = async (path, val) => {
+    const next = JSON.parse(JSON.stringify(p));
+    const keys = path.split(".");
+    let obj = next;
+    for (let i = 0; i < keys.length - 1; i++) obj = obj[keys[i]];
+    obj[keys[keys.length - 1]] = val;
+    await save({ ...data, pricing: next });
+  };
+  const fmtCurrency = (v) => `$${Number(v || 0).toFixed(2)}`;
+
+  const sectionStyle = { marginBottom: 28 };
+  const sectionTitle = (t, sub) => (
+    <div style={{ marginBottom: 12 }}>
+      <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{t}</div>
+      {sub && <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{sub}</div>}
+    </div>
+  );
+  const rateRow = (label, path, val, placeholder) => (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}`, marginBottom: 6 }}>
+      <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{label}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: C.textSec }}>$</span>
+        <input type="number" value={val ?? ""} onChange={e => update(path, e.target.value === "" ? 0 : Number(e.target.value))}
+          style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", textAlign: "right" }}
+          placeholder={placeholder || "0"} />
+      </div>
+    </div>
+  );
+
+  const bathTypes = data.bathTypeOptions || DEF_BATH_TYPE_OPTIONS;
+  const bPrices = p.bathPrices || {};
+
+  return (
+    <div>
+      {/* Boarding Rates */}
+      <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
+        {sectionTitle("Boarding Rates", "Per-night rate for each room type.")}
+        {ROOM_TYPES.map(rt => rateRow(rt, `boardingRates.${rt}`, (p.boardingRates || {})[rt], "0"))}
+      </Card>
+
+      {/* Daycare Rates */}
+      <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
+        {sectionTitle("Daycare Rates", `Full day and half day rates. Half day = under ${p.halfDayThreshold || 5} hours.`)}
+        {rateRow("Full Day", "daycareRates.fullDay", (p.daycareRates || {}).fullDay, "45")}
+        {rateRow("Half Day", "daycareRates.halfDay", (p.daycareRates || {}).halfDay, "30")}
+        <div style={{ marginTop: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}` }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Half-Day Threshold (hours)</span>
+            <input type="number" value={p.halfDayThreshold ?? 5} onChange={e => update("halfDayThreshold", Number(e.target.value) || 5)}
+              style={{ width: 60, padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", textAlign: "right" }} />
+          </div>
+        </div>
+      </Card>
+
+      {/* Service Fees */}
+      <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
+        {sectionTitle("Service Fees", "Evaluations, tours, and other services.")}
+        {rateRow("Evaluation", "evaluationFee", p.evaluationFee, "25")}
+        {rateRow("Tour", "tourFee", p.tourFee, "0")}
+      </Card>
+
+      {/* Bath Pricing */}
+      <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
+        {sectionTitle("Bath Pricing", "Price per bath by type. Bath types can be managed in the Dropdown Lists tab.")}
+        {bathTypes.map(bt => rateRow(bt, `bathPrices.${bt}`, bPrices[bt], "0"))}
+      </Card>
+
+      {/* Add-on Fees */}
+      <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
+        {sectionTitle("Add-On Fees", "Additional charges for special services during a stay.")}
+        {rateRow("Medication Administration (per dose/day)", "medicationAdminFee", p.medicationAdminFee, "5")}
+        {rateRow("Special Feeding / Resort Food (per day)", "specialFeedingFee", p.specialFeedingFee, "8")}
+      </Card>
+
+      {/* Discount Rules */}
+      <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
+        {sectionTitle("Discount Rules", "Automatic discounts applied during booking.")}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}` }}>
+          <div>
+            <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Multi-Dog Same Room Discount</span>
+            <div style={{ fontSize: 11, color: C.textSec, marginTop: 2 }}>Applied to 2nd dog when same owner boards 2 dogs in the same room.</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <input type="number" value={p.multiDogDiscount ?? 20} onChange={e => update("multiDogDiscount", Number(e.target.value) || 0)}
+              style={{ width: 60, padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", textAlign: "right" }} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.textSec }}>%</span>
+          </div>
+        </div>
+      </Card>
+
+      {/* Payment Rules */}
+      <Card style={{ padding: "24px 28px" }}>
+        {sectionTitle("Payment Rules", "Deposit requirements and when payment is due for each reservation type.")}
+        {["boarding", "daycare", "evaluation", "tour"].map(type => {
+          const rule = (p.paymentRules || {})[type] || {};
+          const label = type.charAt(0).toUpperCase() + type.slice(1);
+          return (
+            <div key={type} style={{ padding: "14px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}`, marginBottom: 8 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 8 }}>{label}</div>
+              <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Deposit:</span>
+                  <input type="number" value={rule.depositPercent ?? 0} onChange={e => update(`paymentRules.${type}.depositPercent`, Number(e.target.value) || 0)}
+                    style={{ width: 60, padding: "5px 8px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 12, fontWeight: 600, color: C.text, fontFamily: "inherit", textAlign: "right" }} />
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>%</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Pay at:</span>
+                  <select value={rule.payAt || "booking"} onChange={e => update(`paymentRules.${type}.payAt`, e.target.value)}
+                    style={{ padding: "5px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 12, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>
+                    <option value="booking">Booking</option>
+                    <option value="checkout">Checkout</option>
+                    <option value="free">Free</option>
+                  </select>
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: C.textSec, cursor: "pointer" }}>
+                  <input type="checkbox" checked={rule.depositRefundable || false} onChange={e => update(`paymentRules.${type}.depositRefundable`, e.target.checked)}
+                    style={{ accentColor: C.pri }} />
+                  Refundable deposit
+                </label>
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+    </div>
+  );
+}
+
+function DropdownListsTab({ data, save }) {
+  const [addInputs, setAddInputs] = useState({});
+
+  const lists = [
+    { key: "breedOptions", label: "Dog Breeds", def: DEF_BREED_OPTIONS, desc: "Breeds shown in the searchable breed dropdown on dog profiles." },
+    { key: "feedingTimeOptions", label: "Feeding Times", def: DEF_FEEDING_TIME_OPTIONS, desc: "Time slots for feeding schedules." },
+    { key: "feedingUnitOptions", label: "Feeding Units", def: DEF_FEEDING_UNIT_OPTIONS, desc: "Units of measurement for food amounts." },
+    { key: "foodTypeOptions", label: "Food Types", def: DEF_FOOD_TYPE_OPTIONS, desc: "Types of food available for dogs." },
+    { key: "foodSourceOptions", label: "Food Sources", def: DEF_FOOD_SOURCE_OPTIONS, desc: "Where the food comes from." },
+    { key: "feedingInstructionOptions", label: "Feeding Instructions", def: DEF_FEEDING_INSTRUCTION_OPTIONS, desc: "Special feeding instructions." },
+    { key: "medicationUnitOptions", label: "Medication Units", def: DEF_MEDICATION_UNIT_OPTIONS, desc: "Units for medication dosages." },
+    { key: "bathTypeOptions", label: "Bath Types", def: DEF_BATH_TYPE_OPTIONS, desc: "Bath service options offered." },
+  ];
+
+  const addItem = async (key, def) => {
+    const val = (addInputs[key] || "").trim();
+    if (!val) return;
+    const current = data[key] || def;
+    if (current.includes(val)) return;
+    await save({ ...data, [key]: [...current, val] });
+    setAddInputs(prev => ({ ...prev, [key]: "" }));
+  };
+
+  const removeItem = async (key, def, item) => {
+    const current = data[key] || def;
+    await save({ ...data, [key]: current.filter(x => x !== item) });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {lists.map(list => {
+        const items = data[list.key] || list.def;
+        const isBreed = list.key === "breedOptions";
+        return (
+          <Card key={list.key} style={{ padding: "20px 24px" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{list.label}</div>
+              <Badge>{items.length}</Badge>
+            </div>
+            <p style={{ fontSize: 12, color: C.textSec, margin: "0 0 12px" }}>{list.desc}</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 12, maxHeight: isBreed ? 160 : "none", overflow: isBreed ? "auto" : "visible" }}>
+              {items.map(item => (
+                <span key={item} style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "3px 10px", borderRadius: 6, background: C.bg, border: `1px solid ${C.borderLight}`, fontSize: 12, fontWeight: 500, color: C.text }}>
+                  {item}
+                  <button onClick={() => removeItem(list.key, list.def, item)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, padding: 0, display: "inline-flex", marginLeft: 2 }} title="Remove"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                </span>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+              <div style={{ flex: 1 }}>
+                <Inp label={`Add to ${list.label}`} value={addInputs[list.key] || ""} onChange={v => setAddInputs(prev => ({ ...prev, [list.key]: v }))} placeholder={`New ${list.label.toLowerCase().replace(/s$/, "")}…`} />
+              </div>
+              <Btn size="sm" onClick={() => addItem(list.key, list.def)}>Add</Btn>
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EOD TEMPLATE SETTINGS TAB
+// ═══════════════════════════════════════════════════════════════════════════
+function EODTemplateTab({ data, save }) {
+  const template = data.eodTemplate || DEF_EOD_TEMPLATE;
+  const [sections, setSections] = useState(() => template.map(s => ({ ...s })));
+  const [editIdx, setEditIdx] = useState(-1);
+  const [draft, setDraft] = useState({ label: "", emoji: "", defaultContent: "", type: "text" });
+  const [showAdd, setShowAdd] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  const startEdit = (idx) => { const s = sections[idx]; setDraft({ ...s, label: s.title || s.label || "" }); setEditIdx(idx); };
+  const cancelEdit = () => { setEditIdx(-1); setDraft({ label: "", emoji: "", defaultContent: "", type: "text" }); };
+  const saveEdit = () => {
+    const updated = sections.map((s, i) => i === editIdx ? { ...s, title: draft.label, label: draft.label, emoji: draft.emoji, defaultContent: draft.defaultContent, type: draft.type || "text" } : s);
+    setSections(updated); setEditIdx(-1); setDirty(true);
+  };
+  const removeSection = (idx) => { setSections(sections.filter((_, i) => i !== idx)); setDirty(true); };
+  const moveSection = (idx, dir) => {
+    const arr = [...sections]; const swp = idx + dir;
+    if (swp < 0 || swp >= arr.length) return;
+    [arr[idx], arr[swp]] = [arr[swp], arr[idx]]; setSections(arr); setDirty(true);
+  };
+  const addSection = () => {
+    const id = "custom_" + gid().slice(0, 8);
+    setSections([...sections, { id, title: draft.label || "New Section", label: draft.label || "New Section", emoji: draft.emoji || "", defaultContent: draft.defaultContent || "", type: draft.type || "text" }]);
+    setShowAdd(false); setDraft({ label: "", emoji: "", defaultContent: "", type: "text" }); setDirty(true);
+  };
+  const saveTemplate = async () => {
+    await save({ ...data, eodTemplate: sections });
+    setDirty(false);
+  };
+
+  return (
+    <div>
+      <Card style={{ padding: "24px 28px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>EOD Template Sections</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn variant="secondary" size="sm" icon={<I.Plus />} onClick={() => { setDraft({ label: "", emoji: "", defaultContent: "", type: "text" }); setShowAdd(true); }}>Add Section</Btn>
+            {dirty && <Btn size="sm" onClick={saveTemplate}>Save Template</Btn>}
+          </div>
+        </div>
+        <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>Define the sections that appear in each daily EOD report. Drag to reorder, edit labels and default content, or add custom sections.</p>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {sections.map((s, i) => (
+            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderRadius: 10, border: `1.5px solid ${editIdx === i ? C.pri : C.border}`, background: editIdx === i ? C.priLt : C.surface, transition: "all 0.15s" }}>
+              {editIdx === i ? (
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <div style={{ width: 60 }}><Inp label="Emoji" value={draft.emoji} onChange={v => setDraft({ ...draft, emoji: v })} placeholder="" /></div>
+                    <div style={{ flex: 1 }}><Inp label="Section Label" value={draft.label} onChange={v => setDraft({ ...draft, label: v })} /></div>
+                  </div>
+                  <div style={{ marginBottom: 4 }}>
+                    <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 6, letterSpacing: "0.03em", textTransform: "uppercase" }}>Section Type</span>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {[{ v: "text", l: "Free Text" }, { v: "checklist", l: "Checklist" }].map(opt => (
+                        <button key={opt.v} onClick={() => setDraft({ ...draft, type: opt.v })} style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${(draft.type || "text") === opt.v ? C.pri : C.border}`, background: (draft.type || "text") === opt.v ? C.priLt : C.surface, color: (draft.type || "text") === opt.v ? C.pri : C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>{opt.v === "checklist" ? "☑ " : "📝 "}{opt.l}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <Inp label={(draft.type || "text") === "checklist" ? "Default Items (one per line)" : "Default Content"} type="textarea" value={draft.defaultContent} onChange={v => setDraft({ ...draft, defaultContent: v })} placeholder={(draft.type || "text") === "checklist" ? "One checklist item per line..." : "Pre-filled text for new EOD entries..."} />
+                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                    <Btn variant="secondary" size="sm" onClick={cancelEdit}>Cancel</Btn>
+                    <Btn size="sm" onClick={saveEdit}>Apply</Btn>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: "flex", gap: 4, flexDirection: "column" }}>
+                    <button onClick={() => moveSection(i, -1)} disabled={i === 0} style={{ background: "none", border: "none", cursor: i === 0 ? "default" : "pointer", opacity: i === 0 ? 0.3 : 1, fontSize: 11, color: C.textMut, padding: 0, lineHeight: 1 }}>▲</button>
+                    <button onClick={() => moveSection(i, 1)} disabled={i === sections.length - 1} style={{ background: "none", border: "none", cursor: i === sections.length - 1 ? "default" : "pointer", opacity: i === sections.length - 1 ? 0.3 : 1, fontSize: 11, color: C.textMut, padding: 0, lineHeight: 1 }}>▼</button>
+                  </div>
+                  <span style={{ fontSize: 16 }}>{s.emoji}</span>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{s.title || s.label}</span>
+                  {(s.type || "text") === "checklist" && <Badge color="primary" size="sm">☑ Checklist</Badge>}
+                  <span style={{ flex: 1 }} />
+                  {s.defaultContent && <span style={{ fontSize: 12, color: C.textMut, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.defaultContent}</span>}
+                  <button onClick={() => startEdit(i)} style={{ background: "none", border: "none", cursor: "pointer", color: C.pri, fontSize: 12, fontWeight: 600, fontFamily: "inherit", padding: "4px 8px" }}>Edit</button>
+                  <button onClick={() => removeSection(i)} style={{ background: "none", border: "none", cursor: "pointer", color: C.dan, fontSize: 12, fontWeight: 600, fontFamily: "inherit", padding: "4px 8px" }}>Remove</button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {/* Add Section Modal */}
+      {showAdd && <Modal title="Add EOD Section" onClose={() => setShowAdd(false)}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+          <div style={{ width: 80 }}><Inp label="Emoji" value={draft.emoji} onChange={v => setDraft({ ...draft, emoji: v })} placeholder="" /></div>
+          <div style={{ flex: 1 }}><Inp label="Section Label" value={draft.label} onChange={v => setDraft({ ...draft, label: v })} placeholder="e.g. Grooming Notes" /></div>
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 6, letterSpacing: "0.03em", textTransform: "uppercase" }}>Section Type</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[{ v: "text", l: "Free Text" }, { v: "checklist", l: "Checklist" }].map(opt => (
+              <button key={opt.v} onClick={() => setDraft({ ...draft, type: opt.v })} style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${(draft.type || "text") === opt.v ? C.pri : C.border}`, background: (draft.type || "text") === opt.v ? C.priLt : C.surface, color: (draft.type || "text") === opt.v ? C.pri : C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>{opt.v === "checklist" ? "☑ " : "📝 "}{opt.l}</button>
+            ))}
+          </div>
+        </div>
+        <Inp label={(draft.type || "text") === "checklist" ? "Default Items (one per line)" : "Default Content (optional)"} type="textarea" value={draft.defaultContent} onChange={v => setDraft({ ...draft, defaultContent: v })} placeholder={(draft.type || "text") === "checklist" ? "One checklist item per line..." : "Pre-filled text for new entries..."} />
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+          <Btn variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Btn>
+          <Btn onClick={addSection} disabled={!draft.label.trim()}>Add Section</Btn>
+        </div>
+      </Modal>}
+    </div>
+  );
+}
+
+// ─── Daily Ops Template Editor ───────────────────────────────────────────────
+function DailyOpsTemplateTab({ data, save }) {
+  const types = [
+    { key: "openingTemplate", def: DEF_OPENING_TEMPLATE, label: "Opening", hasTime: false },
+    { key: "feTemplate", def: DEF_FE_TEMPLATE, label: "FE Checklist", hasTime: true },
+    { key: "beTemplate", def: DEF_BE_TEMPLATE, label: "BE Checklist", hasTime: true },
+    { key: "closingTemplate", def: DEF_CLOSING_TEMPLATE, label: "Closing", hasTime: false },
+  ];
+  const [selType, setSelType] = useState(0);
+  const t = types[selType];
+  const [items, setItems] = useState(() => (data[t.key] || t.def).map(x => ({ ...x })));
+  const [editIdx, setEditIdx] = useState(-1);
+  const [draft, setDraft] = useState({ label: "", time: "", dayOfWeek: null });
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    setItems((data[t.key] || t.def).map(x => ({ ...x })));
+    setEditIdx(-1);
+    setDirty(false);
+  }, [selType, data]);
+
+  const saveTemplate = async () => {
+    await save({ ...data, [t.key]: items });
+    setDirty(false);
+  };
+
+  const startEdit = (i) => { setEditIdx(i); setDraft({ label: items[i].label, time: items[i].time || "", dayOfWeek: items[i].dayOfWeek ?? null }); };
+  const cancelEdit = () => setEditIdx(-1);
+  const confirmEdit = () => { const nItems = [...items]; nItems[editIdx] = { ...nItems[editIdx], label: draft.label, time: draft.time || undefined, dayOfWeek: draft.dayOfWeek }; setItems(nItems); setEditIdx(-1); setDirty(true); };
+  const moveItem = (i, dir) => { const nItems = [...items]; const [moved] = nItems.splice(i, 1); nItems.splice(i + dir, 0, moved); setItems(nItems); setDirty(true); };
+  const deleteItem = (i) => { setItems(items.filter((_, j) => j !== i)); setDirty(true); };
+  const addItem = () => { setItems([...items, { id: "custom_" + gid(), label: "New item", time: t.hasTime ? "" : undefined, dayOfWeek: null }]); setDirty(true); };
+
+  return (
+    <div>
+      {/* Type selector */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 16, background: C.surfaceHover, padding: 4, borderRadius: 10, width: "fit-content" }}>
+        {types.map((tp, i) => (<button key={i} onClick={() => setSelType(i)} style={{ padding: "6px 16px", borderRadius: 8, border: "none", background: selType === i ? C.surface : "transparent", color: selType === i ? C.text : C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", boxShadow: selType === i ? "0 1px 3px rgba(0,0,0,0.08)" : "none" }}>{tp.label}</button>))}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{items.length} items</span>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn size="sm" onClick={addItem} icon={<I.Plus />}>Add Item</Btn>
+          {dirty && <Btn size="sm" onClick={saveTemplate}>Save Template</Btn>}
+        </div>
+      </div>
+      <Card>
+        {items.map((item, i) => (
+          <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: i < items.length - 1 ? `1px solid ${C.border}` : "none" }}>
+            {editIdx === i ? (
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {t.hasTime && <input type="text" value={draft.time} onChange={e => setDraft({ ...draft, time: e.target.value })} placeholder="HH:MM" style={{ width: 70, border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 12, fontFamily: "inherit" }} />}
+                  <input type="text" value={draft.label} onChange={e => setDraft({ ...draft, label: e.target.value })} style={{ flex: 1, border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 12, fontFamily: "inherit" }} />
+                  {t.hasTime && <select value={draft.dayOfWeek ?? ""} onChange={e => setDraft({ ...draft, dayOfWeek: e.target.value === "" ? null : Number(e.target.value) })} style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 4px", fontSize: 11, fontFamily: "inherit" }}>
+                    <option value="">Daily</option>
+                    {DAY_NAMES_SHORT.map((d, di) => <option key={di} value={di}>{d}</option>)}
+                  </select>}
+                </div>
+                <div style={{ display: "flex", gap: 6 }}><Btn size="sm" onClick={confirmEdit}>Save</Btn><Btn size="sm" variant="secondary" onClick={cancelEdit}>Cancel</Btn></div>
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+                  <button onClick={() => i > 0 && moveItem(i, -1)} disabled={i === 0} style={{ border: "none", background: "none", cursor: i > 0 ? "pointer" : "default", padding: 0, color: i > 0 ? C.textMut : C.surfaceHover, fontSize: 10 }}>▲</button>
+                  <button onClick={() => i < items.length - 1 && moveItem(i, 1)} disabled={i === items.length - 1} style={{ border: "none", background: "none", cursor: i < items.length - 1 ? "pointer" : "default", padding: 0, color: i < items.length - 1 ? C.textMut : C.surfaceHover, fontSize: 10 }}>▼</button>
+                </div>
+                {t.hasTime && <span style={{ width: 50, fontSize: 11, fontWeight: 600, color: item.time ? C.pri : C.textMut, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{item.time || "—"}</span>}
+                <span style={{ flex: 1, fontSize: 12, color: C.text }}>{item.label}</span>
+                {item.dayOfWeek != null && <Badge color="accent" size="sm">{DAY_NAMES_SHORT[item.dayOfWeek]}</Badge>}
+                <button onClick={() => startEdit(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2 }}><I.Edit /></button>
+                <button onClick={() => deleteItem(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.dan, padding: 2 }}><I.Trash /></button>
+              </>
+            )}
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SETTINGS (Fields + Dog Tags)
+// ═══════════════════════════════════════════════════════════════════════════
+function SettingsPage({ data, save }) {
+  const [tab, setTab] = useState(null);
+  const [settingsSearch, setSettingsSearch] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [newField, setNewField] = useState({ name: "", type: "text", required: false, options: "" });
+  const [showAddTag, setShowAddTag] = useState(false);
+  const [newTag, setNewTag] = useState({ name: "", colorIdx: 0 });
+  const [resetConfirm, setResetConfirm] = useState(false);
+
+  // Facility settings
+  const fs = data.facilitySettings || { largeDogDaycareSF: 0, smallDogDaycareSF: 0 };
+  const updateFS = async (key, val) => {
+    const n = Math.max(0, parseInt(val) || 0);
+    await save({ ...data, facilitySettings: { ...fs, [key]: n } });
+  };
+  const lgCap = Math.floor((fs.largeDogDaycareSF || 0) / 18);
+  const smCap = Math.floor((fs.smallDogDaycareSF || 0) / 12);
+
+  // Room management
+  const rooms = data.rooms || {};
+  const [roomBulk, setRoomBulk] = useState({});
+  const addRoomsBulk = async (rt) => {
+    const input = (roomBulk[rt] || "").trim();
+    if (!input) return;
+    const newRooms = input.split(",").map(s => s.trim()).filter(Boolean);
+    const existing = rooms[rt] || [];
+    const merged = [...existing, ...newRooms.filter(r => !existing.includes(r))];
+    await save({ ...data, rooms: { ...rooms, [rt]: merged } });
+    setRoomBulk({ ...roomBulk, [rt]: "" });
+  };
+  const removeRoom = async (rt, roomName) => {
+    const updated = (rooms[rt] || []).filter(r => r !== roomName);
+    await save({ ...data, rooms: { ...rooms, [rt]: updated } });
+  };
+
+  const fields = tab === "client" ? data.clientFields : tab === "dog" ? data.dogFields : [];
+  const fieldKey = tab === "client" ? "clientFields" : "dogFields";
+
+  const handleAddField = async () => {
+    if (!newField.name.trim()) return;
+    const id = newField.name.toLowerCase().replace(/[^a-z0-9]/g,"_")+"_"+gid().slice(0,4);
+    const f = { id, name:newField.name.trim(), type:newField.type, required:newField.required, locked:false, order:fields.length, ...(newField.type==="select"?{options:newField.options.split(",").map(o=>o.trim()).filter(Boolean)}:{}) };
+    await save({...data,[fieldKey]:[...fields,f]});
+    setNewField({name:"",type:"text",required:false,options:""});setShowAdd(false);
+  };
+  const toggleReq = async (fid) => { await save({...data,[fieldKey]:fields.map(f=>f.id===fid?{...f,required:!f.required}:f)}); };
+  const removeField = async (fid) => { await save({...data,[fieldKey]:fields.filter(f=>f.id!==fid)}); };
+
+  const handleAddTag = async () => {
+    if (!newTag.name.trim()) return;
+    const t = { id: "tag_" + gid(), name: newTag.name.trim(), colorIdx: newTag.colorIdx };
+    await save({ ...data, dogTags: [...data.dogTags, t] });
+    setNewTag({ name: "", colorIdx: 0 }); setShowAddTag(false);
+  };
+  const removeTag = async (tid) => {
+    const newTags = data.dogTags.filter(t => t.id !== tid);
+    const newDogs = data.dogs.map(d => ({ ...d, tags: (d.tags || []).filter(t => t !== tid) }));
+    await save({ ...data, dogTags: newTags, dogs: newDogs });
+  };
+
+  const handleReset = async () => { await save(DEMO); setResetConfirm(false); };
+
+  // Settings sections for grouped list view
+  const settingsSections = [
+    { label: "Sales", items: [
+      { id: "client", label: "Client Fields", desc: "Manage client profile fields and requirements", keywords: "client fields phone email name required" },
+      { id: "dog", label: "Dog Fields", desc: "Manage dog profile fields like breed, weight, vaccines", keywords: "dog fields breed weight name required" },
+      { id: "tags", label: "Dog Tags", desc: "Create color-coded tags for daycare, private play, etc.", keywords: "tags labels categories private play daycare" },
+      { id: "vaccines", label: "Vaccines", desc: "Configure required vaccinations and expiration tracking", keywords: "vaccines rabies bordetella dhpp flu required" },
+      { id: "agreements", label: "Agreements", desc: "Manage boarding and daycare agreement documents", keywords: "agreements contracts waivers liability boarding" },
+      { id: "pricing", label: "Pricing", desc: "Room rates, daycare fees, add-ons, and payment rules", keywords: "pricing rates fees cost money payment deposit" },
+      { id: "dropdowns", label: "Dropdown Lists", desc: "Customize dropdown options for breeds, food types, etc.", keywords: "dropdowns lists options breeds food bath medication" },
+    ]},
+    { label: "Operations", items: [
+      { id: "eod", label: "EOD Template", desc: "End-of-day report sections and template setup", keywords: "eod end of day template report sections" },
+      { id: "daily-ops", label: "Daily Ops Templates", desc: "Opening, FE, BE, and closing checklist templates", keywords: "daily ops operations checklists opening closing front back" },
+    ]},
+    { label: "Resort Configuration", items: [
+      { id: "facility", label: "Facility", desc: "Daycare square footage and capacity calculations", keywords: "facility square footage capacity daycare large small" },
+      { id: "rooms", label: "Rooms", desc: "Configure room numbers for each boarding room type", keywords: "rooms boarding luxury executive double single compartment" },
+      { id: "policies", label: "Resort Policies", desc: "Vaccine grace periods, age limits, grandfathering rules", keywords: "policies compliance vaccines grace period age limit grandfather senior" },
+    ]},
+    { label: null, items: [
+      { id: "hotkeys", label: "Hotkeys", desc: "Enable or disable keyboard shortcuts and shortcut hints", keywords: "hotkeys keyboard shortcuts keys bindings hints" },
+      { id: "reset", label: "Demo Data", desc: "Reset all data back to the demo dataset", keywords: "reset demo data restore" },
+    ]},
+  ];
+  const settingsCategories = settingsSections.flatMap(s => s.items);
+  const sq = settingsSearch.trim().toLowerCase();
+  const filteredSections = sq
+    ? [{ label: null, items: settingsCategories.filter(c => c.label.toLowerCase().includes(sq) || c.desc.toLowerCase().includes(sq) || c.keywords.includes(sq)) }]
+    : settingsSections;
+
+  // If a tab is selected, show the content; otherwise show the list
+  if (tab) {
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+          <button onClick={() => setTab(null)} style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.pri, padding: "6px 0" }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            Settings
+          </button>
+          <span style={{ color: C.textMut, fontSize: 13 }}>/</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{(settingsCategories.find(c => c.id === tab) || {}).label}</span>
+        </div>
+
+        {tab === "hotkeys" ? (() => {
+          const hk = data.hotkeySettings || { enabled: true, showHints: true };
+          const toggle = async (key) => await save({ ...data, hotkeySettings: { ...hk, [key]: !hk[key] } });
+          return (
+            <Card style={{ padding: "24px 28px" }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Keyboard Shortcuts</div>
+              <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 24px" }}>Control how keyboard shortcuts behave throughout the app.</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                {[
+                  { key: "enabled", label: "Enable Hotkeys", desc: "Use single-key shortcuts to navigate (D for Dashboard, L for Lodging Calendar, N for New, etc.)" },
+                  { key: "showHints", label: "Show Hotkey Hints", desc: "Display shortcut badges on sidebar items, buttons, and the search bar" },
+                ].map(opt => (
+                  <div key={opt.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderRadius: 12, background: hk[opt.key] ? C.sucLt : C.bg, border: `1.5px solid ${hk[opt.key] ? "#A7F3D0" : C.border}`, transition: "all 0.15s" }}>
+                    <div style={{ flex: 1, marginRight: 16 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{opt.label}</div>
+                      <div style={{ fontSize: 12, color: C.textSec, marginTop: 2, lineHeight: 1.4 }}>{opt.desc}</div>
+                    </div>
+                    <button onClick={() => toggle(opt.key)} style={{ width: 48, height: 28, borderRadius: 14, border: "none", background: hk[opt.key] ? C.suc : C.border, cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+                      <div style={{ width: 22, height: 22, borderRadius: 11, background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", position: "absolute", top: 3, left: hk[opt.key] ? 23 : 3, transition: "left 0.2s" }} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 20, padding: "14px 18px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.04em" }}>Available Shortcuts</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 6 }}>
+                  {[["D","Dashboard"],["L","Lodging Calendar"],["C","Clients"],["R","CRM"],["S","Settings"],["N","New Reservation"],["/","Search"],["Esc","Close / Blur"]].map(([key,label]) => (
+                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: C.textSec }}>
+                      <kbd style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 24, padding: "2px 6px", borderRadius: 5, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 11, fontWeight: 700, color: C.text, fontFamily: "'Inter', monospace" }}>{key}</kbd>
+                      {label}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Card>
+          );
+        })() : tab === "reset" ? (
+          <Card style={{ padding: "20px 24px" }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: C.text }}>Demo Data</h3>
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: C.textSec }}>Reset all data back to the demo dataset.</p>
+            {resetConfirm ? (<div style={{ display: "flex", gap: 10, alignItems: "center" }}><span style={{ fontSize: 13, color: C.dan, fontWeight: 600 }}>Are you sure?</span><Btn size="sm" variant="danger" onClick={handleReset}>Yes, Reset</Btn><Btn size="sm" variant="ghost" onClick={() => setResetConfirm(false)}>Cancel</Btn></div>) : (<Btn variant="secondary" size="sm" onClick={() => setResetConfirm(true)}>Reset to Demo Data</Btn>)}
+          </Card>
+        ) : tab === "agreements" ? (
+          <AgreementsPage data={data} save={save} />
+        ) : tab === "pricing" ? (
+        <PricingTab data={data} save={save} />
+
+      ) : tab === "eod" ? (
+        <EODTemplateTab data={data} save={save} />
+
+      ) : tab === "daily-ops" ? (
+        <DailyOpsTemplateTab data={data} save={save} />
+
+      ) : tab === "dropdowns" ? (
+        <DropdownListsTab data={data} save={save} />
+
+      ) : tab === "facility" ? (
+        <div>
+          <Card style={{ padding: "24px 28px" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Daycare Square Footage</div>
+            <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>Enter the interior square footage for each daycare area. Capacity is automatically calculated based on industry-standard spacing (large dogs: 18 SF per dog, small dogs: 12 SF per dog).</p>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+              <div>
+                <div style={{ marginBottom: 16 }}>
+                  <Inp label="Large Dog Daycare Interior SF" type="number" value={fs.largeDogDaycareSF || ""} onChange={v => updateFS("largeDogDaycareSF", v)} placeholder="e.g. 3600" />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 10, background: C.priLt, border: `1.5px solid ${C.pri}20` }}>
+                  <I.Users />
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.04em" }}>Large Dog Capacity</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: C.pri }}>{lgCap} <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>dogs</span></div>
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div style={{ marginBottom: 16 }}>
+                  <Inp label="Small Dog Daycare Interior SF" type="number" value={fs.smallDogDaycareSF || ""} onChange={v => updateFS("smallDogDaycareSF", v)} placeholder="e.g. 2400" />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 10, background: C.sucLt, border: `1.5px solid ${C.suc}20` }}>
+                  <I.Users />
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.04em" }}>Small Dog Capacity</div>
+                    <div style={{ fontSize: 22, fontWeight: 800, color: C.suc }}>{smCap} <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>dogs</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
+
+      ) : tab === "rooms" ? (
+        <div>
+          <Card style={{ padding: "24px 28px" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Room Management</div>
+            <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>Define specific rooms for each room type. Paste a comma-separated list to add in bulk, or manage rooms individually. These rooms will be available for selection when booking boarding reservations.</p>
+            {ROOM_TYPES.map(rt => {
+              const rList = rooms[rt] || [];
+              return (
+                <div key={rt} style={{ marginBottom: 24, padding: "16px 20px", borderRadius: 12, border: `1.5px solid ${C.border}`, background: C.bg }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{rt}</div>
+                      <div style={{ fontSize: 12, color: C.textSec }}>{rList.length} room{rList.length !== 1 ? "s" : ""} configured</div>
+                    </div>
+                  </div>
+                  {rList.length > 0 && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
+                      {rList.map(r => (
+                        <span key={r} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 8, background: C.surface, border: `1px solid ${C.border}`, fontSize: 13, fontWeight: 600, color: C.text }}>
+                          {r}
+                          <button onClick={() => removeRoom(rt, r)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, padding: 0, display: "inline-flex", marginLeft: 2 }} title="Remove room"><I.X /></button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
+                    <div style={{ flex: 1 }}>
+                      <Inp label="Add rooms (comma-separated)" value={roomBulk[rt] || ""} onChange={v => setRoomBulk({ ...roomBulk, [rt]: v })} placeholder="e.g. 101, 102, 103" />
+                    </div>
+                    <Btn size="sm" onClick={() => addRoomsBulk(rt)}>Add</Btn>
+                  </div>
+                </div>
+              );
+            })}
+          </Card>
+        </div>
+
+      ) : tab === "policies" ? (() => {
+        const pol = data.resortPolicies || {};
+        const updatePol = async (key, val) => await save({ ...data, resortPolicies: { ...pol, [key]: val } });
+        const graceDays = pol.vaccineGraceDays ?? 7;
+        const warningDays = pol.vaccineWarningDays ?? 30;
+        const maxAge = pol.maxDogAge ?? 13;
+        const ageEnabled = pol.ageCheckEnabled !== false;
+        const grandfatherVisits = pol.grandfatherVisitThreshold ?? 10;
+        const grandfatherEnabled = pol.grandfatherEnabled !== false;
+        return (
+          <div style={{display:"flex",flexDirection:"column",gap:16}}>
+            {/* Vaccine Grace Period */}
+            <Card style={{ padding: "24px 28px" }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Vaccine Compliance</div>
+              <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>Configure how expired and expiring vaccines are handled. Dogs within the grace period show an amber warning instead of red.</p>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20}}>
+                <div>
+                  <Inp label="Grace Period (days)" type="number" value={graceDays} onChange={v => updatePol("vaccineGraceDays", parseInt(v) || 0)} />
+                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Dogs with vaccines expired within this many days show an amber warning instead of being blocked. Set to 0 to disable.</div>
+                </div>
+                <div>
+                  <Inp label="Expiring Soon Warning (days)" type="number" value={warningDays} onChange={v => updatePol("vaccineWarningDays", parseInt(v) || 30)} />
+                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Show a yellow warning badge when vaccines expire within this many days.</div>
+                </div>
+              </div>
+              <div style={{marginTop:16,padding:"12px 16px",borderRadius:10,background:C.bg,border:`1px solid ${C.border}`}}>
+                <div style={{fontSize:12,fontWeight:700,color:C.textSec,marginBottom:8}}>Legend</div>
+                <div style={{display:"flex",gap:16,flexWrap:"wrap",fontSize:12}}>
+                  <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:5,background:C.suc}}/> Current</span>
+                  <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:5,background:C.warn}}/> Expiring Soon ({warningDays} days)</span>
+                  <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:5,background:C.acc}}/> Grace Period ({graceDays} days past)</span>
+                  <span style={{display:"flex",alignItems:"center",gap:4}}><span style={{width:10,height:10,borderRadius:5,background:C.dan}}/> Expired (past grace)</span>
+                </div>
+              </div>
+            </Card>
+
+            {/* Dog Age Policy */}
+            <Card style={{ padding: "24px 28px" }}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Senior Dog Age Policy</div>
+                <button onClick={()=>updatePol("ageCheckEnabled", !ageEnabled)} style={{padding:"6px 16px",borderRadius:8,border:`1.5px solid ${ageEnabled?C.suc:C.border}`,background:ageEnabled?C.suc:C.surface,color:ageEnabled?"#fff":C.textSec,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{ageEnabled?"Enabled":"Disabled"}</button>
+              </div>
+              <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>Dogs above a certain age cannot be serviced unless they meet the grandfathering criteria.</p>
+              {ageEnabled && (
+                <div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginBottom:20}}>
+                    <div>
+                      <Inp label="Maximum Age (years)" type="number" value={maxAge} onChange={v => updatePol("maxDogAge", parseInt(v) || 13)} />
+                      <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Dogs older than this age will be flagged unless grandfathered.</div>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",padding:"12px 16px",borderRadius:10,background:C.accLt,border:`1px solid ${C.acc}30`}}>
+                      <div style={{fontSize:13,color:C.text}}>Dogs over <strong>{maxAge} years old</strong> will show a compliance warning.</div>
+                    </div>
+                  </div>
+
+                  {/* Grandfathering */}
+                  <div style={{padding:"16px 20px",borderRadius:12,border:`1.5px solid ${C.border}`,background:C.bg}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                      <div style={{fontSize:14,fontWeight:700,color:C.text}}>Grandfathering Exception</div>
+                      <button onClick={()=>updatePol("grandfatherEnabled", !grandfatherEnabled)} style={{padding:"5px 14px",borderRadius:8,border:`1.5px solid ${grandfatherEnabled?C.suc:C.border}`,background:grandfatherEnabled?C.sucLt:C.surface,color:grandfatherEnabled?C.suc:C.textSec,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{grandfatherEnabled?"Active":"Inactive"}</button>
+                    </div>
+                    <p style={{fontSize:12,color:C.textSec,margin:"0 0 12px"}}>Existing clients whose dog has visited your resort enough times before reaching the age limit may continue receiving service.</p>
+                    {grandfatherEnabled && (
+                      <div style={{maxWidth:300}}>
+                        <Inp label="Minimum Past Visits" type="number" value={grandfatherVisits} onChange={v => updatePol("grandfatherVisitThreshold", parseInt(v) || 1)} />
+                        <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Dogs with at least this many past completed visits are grandfathered in.</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </Card>
+          </div>
+        );
+      })() : tab === "vaccines" ? (
+        <div>
+          <Card style={{ padding: "20px 24px" }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>Required Vaccines</div>
+            <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 16px" }}>Select which vaccines are required for all dogs at your resort. Dogs missing required vaccines or with expired records will show a red shield icon.</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {VACCINES.map(vax => {
+                const isRequired = (data.requiredVaccines || DEF_REQUIRED_VACCINES).includes(vax.id);
+                const isAlwaysRequired = vax.requiredByDefault;
+                return (
+                  <div key={vax.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", borderRadius: 10, background: isRequired ? C.sucLt : C.bg, border: `1.5px solid ${isRequired ? "#A7F3D0" : C.border}`, transition: "all 0.15s" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ color: isRequired ? C.suc : C.textMut, display: "inline-flex" }}><I.VaxOk /></span>
+                      <div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{vax.name}</div>
+                        {isAlwaysRequired && <div style={{ fontSize: 11, color: C.textMut }}>Core vaccine — always recommended</div>}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {isAlwaysRequired && <Badge color="primary" size="sm">Required</Badge>}
+                      {!isAlwaysRequired && (
+                        <button onClick={async () => {
+                          const rv = [...(data.requiredVaccines || DEF_REQUIRED_VACCINES)];
+                          const newRv = isRequired ? rv.filter(id => id !== vax.id) : [...rv, vax.id];
+                          await save({ ...data, requiredVaccines: newRv });
+                        }} style={{ padding: "6px 16px", borderRadius: 8, border: `1.5px solid ${isRequired ? C.suc : C.border}`, background: isRequired ? C.suc : C.surface, color: isRequired ? "#fff" : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
+                          {isRequired ? "✓ Required" : "Optional"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </div>
+      ) : tab === "tags" ? (
+        <div>
+          <Card style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 48px", padding: "12px 20px", background: C.bg, borderBottom: `1px solid ${C.border}`, fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              <div>Tag Name</div><div>Color</div><div/>
+            </div>
+            {data.dogTags.map(tag => {
+              const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
+              return (
+                <div key={tag.id} style={{ display: "grid", gridTemplateColumns: "1fr 120px 48px", padding: "12px 20px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 12px", borderRadius: 6, fontSize: 13, fontWeight: 700, background: tc.bg, color: tc.text }}><I.Tag />{tag.name}</span>
+                  </div>
+                  <div><span style={{ width: 20, height: 20, borderRadius: 6, background: tc.bg, border: `2px solid ${tc.text}`, display: "inline-block" }} /></div>
+                  <div style={{ textAlign: "center" }}><button onClick={() => removeTag(tag.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, padding: 4, borderRadius: 6 }}><I.Trash /></button></div>
+                </div>
+              );
+            })}
+            <div style={{ padding: "14px 20px" }}>
+              {showAddTag ? (
+                <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 160 }}><Inp label="Tag Name" value={newTag.name} onChange={v => setNewTag({...newTag,name:v})} placeholder="e.g. Private Play" /></div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, textTransform: "uppercase" }}>Color</div>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      {TAG_COLORS.map((tc, i) => (
+                        <button key={i} onClick={() => setNewTag({...newTag, colorIdx: i})} style={{ width: 24, height: 24, borderRadius: 6, background: tc.bg, border: `2px solid ${newTag.colorIdx === i ? tc.text : "transparent"}`, cursor: "pointer" }} title={tc.name} />
+                      ))}
+                    </div>
+                  </div>
+                  <Btn size="sm" onClick={handleAddTag}>Add</Btn>
+                  <Btn size="sm" variant="ghost" onClick={() => setShowAddTag(false)}>Cancel</Btn>
+                </div>
+              ) : (
+                <Btn variant="ghost" size="sm" onClick={() => setShowAddTag(true)} icon={<I.Plus />}>Add Dog Tag</Btn>
+              )}
+            </div>
+          </Card>
+        </div>
+      ) : (
+        /* Fields Tab */
+        <Card style={{padding:0,overflow:"hidden"}}>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 100px 80px 60px 48px",padding:"12px 20px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.05em"}}><div>Field</div><div>Type</div><div style={{textAlign:"center"}}>Req</div><div style={{textAlign:"center"}}>Key</div><div/></div>
+          {fields.map(f=>(<div key={f.id} style={{display:"grid",gridTemplateColumns:"1fr 100px 80px 60px 48px",padding:"12px 20px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center"}}><div style={{fontSize:14,fontWeight:600,color:C.text}}>{f.name}</div><div><Badge>{f.type}</Badge></div><div style={{textAlign:"center"}}><button onClick={()=>!f.locked&&toggleReq(f.id)} style={{width:20,height:20,borderRadius:5,border:`2px solid ${f.required?C.pri:C.border}`,background:f.required?C.pri:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:f.locked?"not-allowed":"pointer",opacity:f.locked?0.5:1,color:"#fff"}}>{f.required&&<I.Check/>}</button></div><div style={{textAlign:"center"}}>{f.isKey&&<Badge color="accent">KEY</Badge>}</div><div style={{textAlign:"center"}}>{!f.locked&&<button onClick={()=>removeField(f.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,padding:4,borderRadius:6}}><I.Trash/></button>}</div></div>))}
+          <div style={{padding:"14px 20px"}}>
+            {showAdd?(<div style={{display:"flex",gap:10,alignItems:"flex-end",flexWrap:"wrap"}}><div style={{flex:1,minWidth:160}}><Inp label="Field Name" value={newField.name} onChange={v=>setNewField({...newField,name:v})} placeholder="e.g. Middle Name"/></div><div style={{width:130}}><Inp label="Type" type="select" value={newField.type} onChange={v=>setNewField({...newField,type:v})} options={["text","number","email","tel","date","select","checkbox","textarea"]}/></div>{newField.type==="select"&&<div style={{flex:1,minWidth:160}}><Inp label="Options (comma sep)" value={newField.options} onChange={v=>setNewField({...newField,options:v})} placeholder="A, B, C"/></div>}<div style={{display:"flex",alignItems:"center",gap:8,paddingBottom:2}}><Inp type="checkbox" label="Required" value={newField.required} onChange={v=>setNewField({...newField,required:v})}/></div><Btn size="sm" onClick={handleAddField}>Add</Btn><Btn size="sm" variant="ghost" onClick={()=>setShowAdd(false)}>Cancel</Btn></div>):(<Btn variant="ghost" size="sm" onClick={()=>setShowAdd(true)} icon={<I.Plus/>}>Add Custom Field</Btn>)}
+          </div>
+        </Card>
+      )}
+
+    </div>
+  );
+  }
+
+  /* ── List view (no tab selected) ── */
+  return (
+    <div>
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: "0 0 4px", fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>Settings</h2>
+        <p style={{ margin: 0, fontSize: 14, color: C.textSec }}>Manage your resort configuration and preferences</p>
+      </div>
+
+      {/* Search */}
+      <div style={{ position: "relative", marginBottom: 24 }}>
+        <div style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", color: C.textMut, display: "flex" }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </div>
+        <input value={settingsSearch} onChange={e => setSettingsSearch(e.target.value)} placeholder="Search settings…"
+          style={{ width: "100%", padding: "14px 16px 14px 46px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 15, fontWeight: 500, color: C.text, fontFamily: "'Inter', sans-serif", outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" }}
+          onFocus={e => { e.target.style.borderColor = C.pri; }} onBlur={e => { e.target.style.borderColor = C.border; }} />
+        {settingsSearch && <button onClick={() => setSettingsSearch("")} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", color: C.textMut, display: "flex", padding: 4 }}><I.X /></button>}
+      </div>
+
+      {/* Sectioned category grid */}
+      {filteredSections.map((sec, si) => {
+        if (sec.items.length === 0) return null;
+        return (
+          <div key={sec.label || si} style={{ marginBottom: sec.label ? 28 : 16 }}>
+            {sec.label && <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, paddingLeft: 4 }}>{sec.label}</div>}
+            {!sec.label && si > 0 && <div style={{ borderTop: `1.5px solid ${C.border}`, marginBottom: 16, marginTop: 4 }} />}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+              {sec.items.map(cat => (
+                <button key={cat.id} onClick={() => { setTab(cat.id); setSettingsSearch(""); }}
+                  style={{ display: "flex", alignItems: "center", gap: 16, padding: "18px 20px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "all 0.15s", width: "100%" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = C.priLt; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.surface; }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 2 }}>{cat.label}</div>
+                    <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.4 }}>{cat.desc}</div>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, opacity: 0.4 }}><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      {settingsCategories.length > 0 && filteredSections.every(s => s.items.length === 0) && (
+        <div style={{ textAlign: "center", padding: "48px 24px", color: C.textMut }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🔍</div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>No settings found</div>
+          <div style={{ fontSize: 13, marginTop: 4 }}>Try a different search term</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SUPERHUMAN-STYLE "NEW" OVERLAY
+// ═══════════════════════════════════════════════════════════════════════════
+function NewOverlay({ data, nav, onClose }) {
+  const [q, setQ] = useState("");
+  const inputRef = useRef(null);
+  const [hlIdx, setHlIdx] = useState(0);
+
+  useEffect(() => { if (inputRef.current) inputRef.current.focus(); }, []);
+
+  // Escape to close
+  useEffect(() => {
+    const handler = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  const results = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return data.clients.slice(0, 6);
+    const sDigits = s.replace(/\D/g, "");
+    return data.clients.filter(c => {
+      const name = `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.toLowerCase();
+      const phone = (c.fields.phone || "").replace(/\D/g, "");
+      const email = (c.fields.email || "").toLowerCase();
+      const dogNames = data.dogs.filter(d => d.clientId === c.id).map(d => (d.fields.name || "").toLowerCase()).join(" ");
+      return name.includes(s) || email.includes(s) || dogNames.includes(s) || (sDigits.length >= 3 && phone.includes(sDigits));
+    }).slice(0, 6);
+  }, [q, data.clients, data.dogs]);
+
+  // Reset highlight when results change
+  useEffect(() => { setHlIdx(0); }, [results.length, q]);
+
+  const selectClient = (c) => {
+    onClose();
+    nav("new-reservation", { clientId: c.id });
+  };
+
+  const createNew = () => {
+    onClose();
+    nav("unified-new", { prefill: q.trim() });
+  };
+
+  const handleKeyDown = (e) => {
+    const totalItems = results.length + (q.trim() ? 1 : 0); // +1 for "create new"
+    if (e.key === "ArrowDown") { e.preventDefault(); setHlIdx(i => (i + 1) % Math.max(totalItems, 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHlIdx(i => (i - 1 + Math.max(totalItems, 1)) % Math.max(totalItems, 1)); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      if (hlIdx < results.length) { selectClient(results[hlIdx]); }
+      else if (q.trim()) { createNew(); }
+    }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: "15vh" }}>
+      {/* Backdrop */}
+      <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,20,40,0.55)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }} />
+      {/* Panel */}
+      <div style={{ position: "relative", width: "100%", maxWidth: 560, borderRadius: 20, background: C.surface, boxShadow: "0 32px 80px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,52,98,0.08)", overflow: "hidden", animation: "k9overlay 0.2s ease-out" }}>
+        {/* Search bar */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "20px 24px", borderBottom: `1.5px solid ${C.borderLight}` }}>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={handleKeyDown}
+            placeholder="Search clients by name, phone, email, or dog…"
+            style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 17, fontWeight: 500, color: C.text, fontFamily: "'Inter', sans-serif", letterSpacing: "-0.01em" }} />
+          <kbd style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'Inter', monospace", whiteSpace: "nowrap" }}>Esc</kbd>
+        </div>
+        {/* Results */}
+        <div style={{ maxHeight: 380, overflow: "auto", padding: "8px 0" }}>
+          {results.length === 0 && !q.trim() && (
+            <div style={{ padding: "24px 24px", textAlign: "center", color: C.textMut, fontSize: 14 }}>
+              <div style={{ fontSize: 28, marginBottom: 8 }}>🐾</div>
+              Start typing to search existing clients — or create a new one
+            </div>
+          )}
+          {results.map((c, i) => {
+            const dogs = data.dogs.filter(d => d.clientId === c.id);
+            const active = hlIdx === i;
+            return (
+              <button key={c.id} onClick={() => selectClient(c)} onMouseEnter={() => setHlIdx(i)}
+                style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "12px 24px", border: "none", background: active ? C.priLt : "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.1s" }}>
+                <div style={{ width: 40, height: 40, borderRadius: 12, background: `linear-gradient(135deg, ${C.pri}, ${C.priL})`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13, color: "#fff", flexShrink: 0, letterSpacing: "-0.02em" }}>
+                  {(c.fields.first_name || "?")[0]}{(c.fields.last_name || "?")[0]}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: active ? C.pri : C.text }}>{c.fields.first_name} {c.fields.last_name}</div>
+                  <div style={{ fontSize: 12, color: C.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {fmtPhone(c.fields.phone)}{c.fields.email ? ` · ${c.fields.email}` : ""}
+                    {dogs.length > 0 && <span style={{ color: C.textMut }}> · {dogs.map(d => d.fields.name).join(", ")}</span>}
+                  </div>
+                </div>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={active ? C.pri : C.textMut} strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, opacity: 0.5 }}><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+            );
+          })}
+          {/* Create new option */}
+          {q.trim() && (() => {
+            const createIdx = results.length;
+            const active = hlIdx === createIdx;
+            return (
+              <button onClick={createNew} onMouseEnter={() => setHlIdx(createIdx)}
+                style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "14px 24px", border: "none", borderTop: results.length > 0 ? `1px solid ${C.borderLight}` : "none", background: active ? `${C.suc}12` : "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.1s" }}>
+                <div style={{ width: 40, height: 40, borderRadius: 12, border: `2.5px dashed ${active ? C.suc : C.pri}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: active ? C.suc : C.pri, transition: "all 0.15s" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: active ? C.suc : C.pri }}>Create New Client</div>
+                  <div style={{ fontSize: 12, color: C.textMut }}>Set up "{q.trim()}" with their dogs & first reservation</div>
+                </div>
+                <kbd style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 10, fontWeight: 700, color: C.textMut, fontFamily: "'Inter', monospace" }}>↵</kbd>
+              </button>
+            );
+          })()}
+          {q.trim() && results.length === 0 && (
+            <div style={{ padding: "0 24px 16px", textAlign: "center" }}>
+              <div style={{ fontSize: 12, color: C.textMut }}>No existing clients match "<span style={{ fontWeight: 600 }}>{q.trim()}</span>"</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UNIFIED NEW PAGE (Client + Dog + Reservation — all in one)
+// ═══════════════════════════════════════════════════════════════════════════
+function UnifiedNewPage({ data, save, nav, prefill }) {
+  // Phase tracking: "client" → "dog" → "reservation"
+  const [phase, setPhase] = useState("client");
+
+  // Client fields (pre-filled from search)
+  const [clientFields, setClientFields] = useState(() => {
+    if (!prefill) return {};
+    const v = prefill.trim();
+    if (v.includes("@")) return { email: v };
+    const digits = v.replace(/\D/g, "");
+    if (digits.length >= 7) return { phone: digits };
+    const parts = v.split(/\s+/);
+    if (parts.length >= 2) return { first_name: titleCase(parts[0]), last_name: titleCase(parts.slice(1).join(" ")) };
+    return { first_name: titleCase(v) };
+  });
+  const [clientErrors, setClientErrors] = useState({});
+
+  // Auto-focus: jump cursor to the next empty required field
+  const autoFocusId = useMemo(() => {
+    if (clientFields.first_name && clientFields.last_name) return "phone";
+    if (clientFields.phone) return "first_name";
+    if (clientFields.email) return "first_name";
+    return "phone"; // default — phone is the first required field
+  }, []);
+
+  // Dog fields — support multiple dogs
+  const [dogs, setDogs] = useState([{ id: gid(), fields: {}, tags: [] }]);
+  const [dogErrors, setDogErrors] = useState({});
+
+  // Reservation fields
+  const [type, setType] = useState("boarding");
+  const [roomType, setRoomType] = useState("Luxury Suite");
+  const [daycareSize, setDaycareSize] = useState("large");
+  const [checkIn, setCheckIn] = useState(todayStr());
+  const [checkOut, setCheckOut] = useState(todayStr());
+  const [checkInTime, setCheckInTime] = useState("09:00");
+  const [checkOutTime, setCheckOutTime] = useState("11:00");
+  const [notes, setNotes] = useState("");
+
+  // Auto-set daycare size from first dog's weight
+  useEffect(() => {
+    if (dogs.length > 0 && (type === "daycare" || type === "evaluation")) {
+      const w = parseInt(dogs[0].fields.weight);
+      if (w && !isNaN(w)) setDaycareSize(w < 35 ? "small" : "large");
+    }
+  }, [dogs[0]?.fields?.weight, type]);
+  const [resErrors, setResErrors] = useState({});
+  const [selectedRoom, setSelectedRoom] = useState("");
+  const [showBookedRooms, setShowBookedRooms] = useState(false);
+
+  const BATH_OPTS = data.bathTypeOptions || DEF_BATH_TYPE_OPTIONS;
+
+  // Room availability
+  const allRooms = data.rooms || {};
+  const roomsForType = allRooms[roomType] || [];
+  const bookedRoomNames = useMemo(() => {
+    if (type !== "boarding" || !checkIn) return new Set();
+    const ci = checkIn; const co = checkOut || checkIn;
+    return new Set(data.reservations.filter(r => r.type === "boarding" && r.roomType === roomType && r.room && r.status !== "checked-out" && r.checkIn <= co && r.checkOut >= ci).map(r => r.room));
+  }, [type, roomType, checkIn, checkOut, data.reservations]);
+  const availableRooms = roomsForType.filter(r => !bookedRoomNames.has(r));
+  const bookedRoomsArr = roomsForType.filter(r => bookedRoomNames.has(r));
+
+  const roomScored = useMemo(() => {
+    const ci = checkIn; const co = checkOut || checkIn;
+    const allBoardingRes = data.reservations.filter(r => r.type === "boarding" && r.roomType === roomType && r.room && r.status !== "checked-out");
+    const totalRooms = roomsForType.length;
+    const occupancy = totalRooms > 0 ? (totalRooms - availableRooms.length) / totalRooms : 0;
+    const scored = roomsForType.map(room => {
+      const booked = bookedRoomNames.has(room);
+      const roomRes = allBoardingRes.filter(r => r.room === room);
+      const before = roomRes.filter(r => r.checkOut <= ci).sort((a, b) => b.checkOut.localeCompare(a.checkOut));
+      const lastOut = before.length > 0 ? before[0].checkOut : null;
+      const after = roomRes.filter(r => r.checkIn >= co).sort((a, b) => a.checkIn.localeCompare(b.checkIn));
+      const nextIn = after.length > 0 ? after[0].checkIn : null;
+      const daysBetween = (a, b) => Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 86400000);
+      const gapBefore = lastOut ? daysBetween(lastOut, ci) : 999;
+      const gapAfter = nextIn ? daysBetween(co, nextIn) : 999;
+      const comfortScore = Math.min(gapBefore, 30) + Math.min(gapAfter, 30);
+      const packScore = 60 - comfortScore;
+      const blend = occupancy < 0.5 ? 0 : occupancy > 0.75 ? 1 : (occupancy - 0.5) / 0.25;
+      const score = booked ? -9999 : (1 - blend) * comfortScore + blend * packScore;
+      return { room, booked, lastOut, nextIn, gapBefore, gapAfter, score, occupancy };
+    });
+    scored.sort((a, b) => { if (a.booked !== b.booked) return a.booked ? 1 : -1; return b.score - a.score; });
+    const topAvail = scored.find(r => !r.booked);
+    if (topAvail) topAvail.recommended = true;
+    return scored;
+  }, [roomsForType, bookedRoomNames, checkIn, checkOut, roomType, data.reservations, availableRooms.length]);
+
+  useEffect(() => { const rec = roomScored.find(r => r.recommended); if (rec && !selectedRoom) setSelectedRoom(rec.room); }, [roomScored]);
+  useEffect(() => { if (type === "daycare" || type === "tour" || type === "evaluation") setCheckOut(checkIn); }, [type, checkIn]);
+  useEffect(() => { if (type === "daycare") { setCheckInTime("07:00"); setCheckOutTime("18:00"); } else if (type === "tour") { setCheckInTime("14:00"); setCheckOutTime("14:30"); } else if (type === "evaluation") { setCheckInTime("09:00"); setCheckOutTime("10:00"); } else { setCheckInTime("09:00"); setCheckOutTime("11:00"); } }, [type]);
+  useEffect(() => { setSelectedRoom(""); }, [roomType]);
+
+  const updateDogField = (dogIdx, field, val) => {
+    setDogs(prev => prev.map((d, i) => i === dogIdx ? { ...d, fields: { ...d.fields, [field]: val } } : d));
+    setDogErrors(prev => ({ ...prev, [`${dogIdx}_${field}`]: undefined }));
+  };
+
+  const toggleDogTag = (dogIdx, tagId) => {
+    setDogs(prev => prev.map((d, i) => i === dogIdx ? { ...d, tags: d.tags.includes(tagId) ? d.tags.filter(t => t !== tagId) : [...d.tags, tagId] } : d));
+  };
+
+  const addDog = () => setDogs(prev => [...prev, { id: gid(), fields: {}, tags: [] }]);
+  const removeDog = (idx) => { if (dogs.length > 1) setDogs(prev => prev.filter((_, i) => i !== idx)); };
+
+  // Continue from client to dog+reservation
+  const continueFromClient = () => {
+    const errs = {};
+    data.clientFields.forEach(f => { if (f.required && !clientFields[f.id]) errs[f.id] = "Required"; });
+    if (clientFields.phone) {
+      const ex = data.clients.find(c => c.fields.phone === (clientFields.phone || "").replace(/\D/g, ""));
+      if (ex) errs.phone = "Phone already exists — use search to find this client";
+    }
+    if (Object.keys(errs).length > 0) { setClientErrors(errs); return; }
+    setPhase("reservation");
+  };
+
+  // Live pricing for unified page
+  const livePricing = useMemo(() => {
+    if (!type || phase !== "reservation" || dogs.length === 0) return null;
+    if (type === "boarding" && dogs.length > 1) {
+      let combined = { lineItems: [], subtotal: 0, discountTotal: 0, total: 0, deposit: 0, balance: 0, payAt: "booking", depositRefundable: false, depositPercent: 0 };
+      dogs.forEach((dog, idx) => {
+        const pr = calcReservationPricing({
+          type, roomType, checkIn, checkOut, checkInTime, checkOutTime,
+          dogs: [dog], dogProfiles: dogs, pricing: data.pricing,
+          isSecondDogSameRoom: idx > 0,
+        });
+        combined.lineItems.push(...pr.lineItems);
+        combined.subtotal += pr.subtotal;
+        combined.discountTotal += pr.discountTotal;
+        combined.total += pr.total;
+        combined.deposit += pr.deposit;
+        combined.balance += pr.balance;
+        combined.payAt = pr.payAt;
+        combined.depositRefundable = pr.depositRefundable;
+        combined.depositPercent = pr.depositPercent;
+      });
+      combined.subtotal = Math.round(combined.subtotal * 100) / 100;
+      combined.discountTotal = Math.round(combined.discountTotal * 100) / 100;
+      combined.total = Math.round(combined.total * 100) / 100;
+      combined.deposit = Math.round(combined.deposit * 100) / 100;
+      combined.balance = Math.round(combined.balance * 100) / 100;
+      return combined;
+    }
+    return calcReservationPricing({
+      type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize,
+      dogs: [dogs[0]], dogProfiles: dogs, pricing: data.pricing,
+      isSecondDogSameRoom: false,
+    });
+  }, [type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, phase, JSON.stringify(dogs.map(d => d.id))]);
+
+  // Final save — create everything
+  const handleCreateAll = async () => {
+    // Validate dogs
+    const dErrs = {};
+    dogs.forEach((dog, i) => {
+      data.dogFields.forEach(f => { if (f.required && !dog.fields[f.id]) dErrs[`${i}_${f.id}`] = "Required"; });
+    });
+    if (Object.keys(dErrs).length > 0) { setDogErrors(dErrs); return; }
+
+    // Validate reservation
+    const rErrs = {};
+    if (!checkIn) rErrs.checkIn = "Required";
+    if (type === "boarding" && checkOut < checkIn) rErrs.checkOut = "Must be after check-in";
+    if (Object.keys(rErrs).length > 0) { setResErrors(rErrs); return; }
+
+    // Create client
+    const newClient = { id: gid(), fields: { ...clientFields, phone: (clientFields.phone || "").replace(/\D/g, "") }, createdAt: todayStr(), agreements: {} };
+
+    // Create dogs
+    const newDogs = dogs.map(d => ({ id: d.id, clientId: newClient.id, fields: { ...d.fields }, tags: d.tags }));
+
+    // Create reservations (one per dog) with pricing snapshot
+    const dogIds = dogs.length > 0 ? dogs.map(d => d.id) : [newDogs[0].id];
+    const newReservations = dogIds.map((did, idx) => {
+      const dog = newDogs.find(d => d.id === did);
+      const autoDaycareSize = dog ? getDogDaycareSize(dog) : "large";
+      const resPricing = calcReservationPricing({
+        type, roomType, checkIn, checkOut: type === "boarding" ? checkOut : checkIn,
+        checkInTime, checkOutTime, daycareSize: autoDaycareSize,
+        dogs: dog ? [dog] : [], dogProfiles: newDogs, pricing: data.pricing,
+        isSecondDogSameRoom: type === "boarding" && idx > 0,
+      });
+      return {
+        id: gid(), clientId: newClient.id, dogId: did, type,
+        ...(type === "boarding" ? { roomType, ...(selectedRoom ? { room: selectedRoom } : {}) } : {}),
+        ...(type === "daycare" ? { daycareSize: autoDaycareSize } : {}),
+        ...(type === "evaluation" ? { evalResult: "pending" } : {}),
+        checkIn, checkOut: type === "boarding" ? checkOut : checkIn,
+        checkInTime, checkOutTime, status: "upcoming", notes,
+        careOverrides: {},
+        pricing: resPricing,
+      };
+    });
+
+    await save({
+      ...data,
+      clients: [...data.clients, newClient],
+      dogs: [...data.dogs, ...newDogs],
+      reservations: [...data.reservations, ...newReservations],
+    });
+    nav("client-detail", { clientId: newClient.id });
+  };
+
+  const sectionStyle = (num, title, active) => ({
+    padding: "24px 28px",
+    borderRadius: 16,
+    border: `1.5px solid ${active ? C.pri : C.border}`,
+    background: active ? C.surface : C.bg,
+    opacity: active ? 1 : 0.6,
+    transition: "all 0.2s",
+    marginBottom: 16,
+  });
+
+  const stepBadge = (num, label, done, active) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+      <div style={{ width: 28, height: 28, borderRadius: 14, background: done ? C.suc : active ? C.pri : C.border, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 12, flexShrink: 0, transition: "all 0.2s" }}>
+        {done ? <I.Check /> : num}
+      </div>
+      <span style={{ fontSize: 15, fontWeight: 700, color: done ? C.suc : active ? C.pri : C.textMut, transition: "all 0.2s" }}>{label}</span>
+    </div>
+  );
+
+  return (
+    <div>
+      <button onClick={() => nav("dashboard")} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: C.textSec, fontSize: 14, fontWeight: 600, padding: 0, marginBottom: 20, fontFamily: "inherit" }}><I.Back /> Back</button>
+      <h1 style={{ margin: "0 0 6px", fontSize: 28, fontWeight: 800, color: C.text }}>New Client & Reservation</h1>
+      <p style={{ margin: "0 0 28px", fontSize: 14, color: C.textSec, lineHeight: 1.5 }}>Set up a new client, add their dog(s), and book their first reservation — all in one go.</p>
+
+      {/* STEP 1: Client Info */}
+      <div style={sectionStyle(1, "Client Info", phase === "client" || phase === "reservation")}>
+        {stepBadge(1, "Client Information", phase === "reservation", phase === "client")}
+        {phase === "client" ? (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+              {data.clientFields.filter(f => f.type !== "textarea").map(f => (
+                <div key={f.id}>
+                  <Inp label={f.name} type={f.type} value={clientFields[f.id] || ""} onChange={v => { setClientFields({ ...clientFields, [f.id]: v }); setClientErrors({ ...clientErrors, [f.id]: undefined }); }} required={f.required} options={f.options} autoFocus={f.id === autoFocusId} />
+                  {clientErrors[f.id] && <div style={{ color: C.dan, fontSize: 12, marginTop: 4, fontWeight: 600 }}>{clientErrors[f.id]}</div>}
+                </div>
+              ))}
+            </div>
+            {data.clientFields.filter(f => f.type === "textarea").map(f => (
+              <div key={f.id} style={{ marginTop: 16 }}>
+                <Inp label={f.name} type="textarea" value={clientFields[f.id] || ""} onChange={v => setClientFields({ ...clientFields, [f.id]: v })} />
+              </div>
+            ))}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
+              <Btn onClick={continueFromClient}>Continue to Dogs & Reservation →</Btn>
+            </div>
+          </>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: `linear-gradient(135deg, ${C.pri}, ${C.priL})`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13, color: "#fff", flexShrink: 0 }}>
+              {(clientFields.first_name || "?")[0]}{(clientFields.last_name || "?")[0]}
+            </div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{clientFields.first_name} {clientFields.last_name}</div>
+              <div style={{ fontSize: 12, color: C.textSec }}>{fmtPhone(clientFields.phone)}{clientFields.email ? ` · ${clientFields.email}` : ""}</div>
+            </div>
+            <button onClick={() => setPhase("client")} style={{ marginLeft: "auto", border: "none", background: "none", cursor: "pointer", color: C.pri, fontSize: 12, fontWeight: 700, fontFamily: "inherit" }}>Edit</button>
+          </div>
+        )}
+      </div>
+
+      {/* STEP 2 & 3: Dogs + Reservation (shown when phase === "reservation") */}
+      {phase === "reservation" && (
+        <>
+          {/* Dogs */}
+          <div style={sectionStyle(2, "Dogs", true)}>
+            {stepBadge(2, `Dog${dogs.length > 1 ? "s" : ""} Information`, false, true)}
+            {dogs.map((dog, idx) => (
+              <div key={dog.id} style={{ padding: 20, borderRadius: 12, border: `1.5px solid ${C.border}`, background: C.surface, marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Dog {dogs.length > 1 ? `#${idx + 1}` : ""} {dog.fields.name ? `— ${dog.fields.name}` : ""}</span>
+                  {dogs.length > 1 && <button onClick={() => removeDog(idx)} style={{ border: "none", background: "none", cursor: "pointer", color: C.dan, fontSize: 12, fontWeight: 600, fontFamily: "inherit" }}>Remove</button>}
+                </div>
+                {/* Tags */}
+                {data.dogTags.length > 0 && (
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 6 }}>Tags</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {data.dogTags.map(tag => {
+                        const sel = dog.tags.includes(tag.id);
+                        const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
+                        return (
+                          <button key={tag.id} onClick={() => toggleDogTag(idx, tag.id)} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 6, border: `1.5px solid ${sel ? tc.text : C.border}`, background: sel ? tc.bg : C.surface, color: sel ? tc.text : C.textMut, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                            {sel && <I.Check />}{tag.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                <DogFormFields fields={dog.fields} dogFields={data.dogFields} data={data}
+                  errors={Object.fromEntries(Object.entries(dogErrors).filter(([k]) => k.startsWith(`${idx}_`)).map(([k, v]) => [k.replace(`${idx}_`, ""), v]))}
+                  onChange={(fid, v) => updateDogField(idx, fid, v)}
+                  feedingSchedules={dog.fields.feedingSchedules || []}
+                  onFeedingChange={fs => updateDogField(idx, "feedingSchedules", fs)}
+                  medSchedules={dog.fields.medicationSchedules || []}
+                  onMedChange={ms => updateDogField(idx, "medicationSchedules", ms)} />
+              </div>
+            ))}
+            <button onClick={addDog} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderRadius: 10, border: `2px dashed ${C.border}`, background: "transparent", cursor: "pointer", color: C.pri, fontWeight: 600, fontSize: 13, fontFamily: "inherit", width: "100%", justifyContent: "center", transition: "all 0.15s" }}>
+              <I.Plus /> Add Another Dog
+            </button>
+          </div>
+
+          {/* Reservation */}
+          <div style={sectionStyle(3, "Reservation", true)}>
+            {stepBadge(3, "Reservation Details", false, true)}
+            {/* Type */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 6, letterSpacing: "0.03em", textTransform: "uppercase" }}>Type</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {[{ v: "boarding", l: "Boarding" }, { v: "daycare", l: "Daycare" }, { v: "evaluation", l: "Evaluation" }, { v: "tour", l: "Tour" }].map(t => (
+                  <button key={t.v} onClick={() => setType(t.v)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: `2px solid ${type === t.v ? C.pri : C.border}`, background: type === t.v ? C.priLt : C.surface, color: type === t.v ? C.pri : C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{t.l}</button>
+                ))}
+              </div>
+            </div>
+            {/* Dates */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+              <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn} required />{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{resErrors.checkIn && <div style={{ color: C.dan, fontSize: 12, marginTop: 4, fontWeight: 600 }}>{resErrors.checkIn}</div>}</div>
+              <div><Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime} /></div>
+              {type === "boarding" && <div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} required />{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{resErrors.checkOut && <div style={{ color: C.dan, fontSize: 12, marginTop: 4, fontWeight: 600 }}>{resErrors.checkOut}</div>}</div>}
+              {type === "boarding" && <div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime} /></div>}
+              {type !== "boarding" && <div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime} /></div>}
+            </div>
+            {/* Room Type (boarding only) */}
+            {type === "boarding" && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8, letterSpacing: "0.03em", textTransform: "uppercase" }}>Room Type</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {ROOM_TYPES.map(rt => (
+                    <button key={rt} onClick={() => setRoomType(rt)} style={{ padding: "10px 18px", borderRadius: 10, border: `2px solid ${roomType === rt ? C.pri : C.border}`, background: roomType === rt ? C.priLt : C.surface, color: roomType === rt ? C.pri : C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{rt}</button>
+                  ))}
+                </div>
+                {roomsForType.length > 0 && (
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: C.textSec, letterSpacing: "0.03em", textTransform: "uppercase" }}>Select Room <span style={{ fontWeight: 500, textTransform: "none", color: C.textMut }}>— {availableRooms.length}/{roomsForType.length} available</span></span>
+                      <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.textMut, cursor: "pointer" }}>
+                        <input type="checkbox" checked={showBookedRooms} onChange={e => setShowBookedRooms(e.target.checked)} style={{ accentColor: C.pri }} />Show booked
+                      </label>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 8 }}>
+                      {roomScored.map(rs => {
+                        const sel = selectedRoom === rs.room;
+                        const booked = rs.booked;
+                        if (booked && !showBookedRooms) return null;
+                        return (
+                          <button key={rs.room} onClick={() => !booked && setSelectedRoom(sel ? "" : rs.room)} disabled={booked}
+                            style={{ padding: "10px 12px", borderRadius: 10, border: `2px solid ${booked ? C.borderLight : sel ? C.pri : rs.recommended ? C.suc : C.border}`, background: booked ? C.bg : sel ? C.priLt : C.surface, cursor: booked ? "not-allowed" : "pointer", fontFamily: "inherit", textAlign: "left", transition: "all 0.12s", opacity: booked ? 0.5 : 1, position: "relative" }}>
+                            {rs.recommended && !booked && <div style={{ position: "absolute", top: -8, right: 8, fontSize: 9, fontWeight: 700, color: "#fff", background: C.suc, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Best</div>}
+                            <div style={{ fontSize: 14, fontWeight: 800, color: booked ? C.textMut : sel ? C.pri : C.text, textDecoration: booked ? "line-through" : "none" }}>{rs.room}</div>
+                            {!booked && <div style={{ fontSize: 10, color: C.textMut, lineHeight: 1.5 }}>
+                              <div>Last out: <span style={{ fontWeight: 600, color: rs.gapBefore <= 0 ? C.dan : rs.gapBefore <= 1 ? C.acc : C.textSec }}>{rs.lastOut ? `${fmtDate(rs.lastOut)}${rs.gapBefore >= 0 ? ` (${rs.gapBefore}d)` : ""}` : "None"}</span></div>
+                              <div>Next in: <span style={{ fontWeight: 600, color: rs.gapAfter <= 0 ? C.dan : rs.gapAfter <= 1 ? C.acc : C.textSec }}>{rs.nextIn ? `${fmtDate(rs.nextIn)}${rs.gapAfter >= 0 ? ` (${rs.gapAfter}d)` : ""}` : "None"}</span></div>
+                            </div>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {/* Daycare size is auto-derived from the dog's weight/override classification */}
+            <div style={{ marginBottom: 16 }}><Inp label="General Notes" type="textarea" value={notes} onChange={setNotes} placeholder="Special instructions for this stay..." /></div>
+
+            {/* Itemized Receipt */}
+            {livePricing && livePricing.lineItems.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <ItemizedReceipt pricingResult={livePricing} />
+              </div>
+            )}
+
+            {/* Submit */}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 8 }}>
+              <Btn variant="secondary" onClick={() => nav("dashboard")}>Cancel</Btn>
+              <Btn onClick={handleCreateAll}>Create Client, Dog{dogs.length > 1 ? "s" : ""} & Reservation</Btn>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI COMMAND PAGE
+// ═══════════════════════════════════════════════════════════════════════════
+
+function DogSelectButtons({ dogs, onSelect }) {
+  const [selected, setSelected] = useState(dogs.map(d => d.id));
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+        {dogs.map(d => {
+          const isSel = selected.includes(d.id);
+          return (
+            <button key={d.id} onClick={() => setSelected(prev => isSel ? prev.filter(x => x !== d.id) : [...prev, d.id])}
+              style={{ padding: "8px 16px", borderRadius: 10, border: `1.5px solid ${isSel ? C.pri : C.border}`, background: isSel ? C.priLt : C.surface, cursor: "pointer", fontSize: 13, fontWeight: 500, color: isSel ? C.pri : C.text, transition: "all 0.15s", fontFamily: "inherit" }}>
+              {isSel && <span style={{ marginRight: 6 }}>&#10003;</span>}{d.name}
+            </button>
+          );
+        })}
+      </div>
+      {selected.length > 0 && <Btn size="sm" onClick={() => onSelect(selected)}>Select {selected.length} Dog{selected.length > 1 ? "s" : ""}</Btn>}
+    </div>
+  );
+}
+
+const OPS_MANUAL_KB = [
+  // ── Section 5: Resort Basics ──────────────────────────────────────
+  { keywords:["hours","operating hours","open","close","business hours","schedule","what time"],
+    title:"Hours of Operation",
+    answer:"Daycare Check-In: 7:00 AM \u2013 9:00 AM (drop-offs only).\nBoarding Check-In/Out + Daycare: 9:00 AM \u2013 5:30 PM.\nDaycare Check-Out: 5:30 PM \u2013 7:00 PM (busiest exit window).\n7 PM Rule: Facility closes to public at 7 PM. GM or AM waits for all dogs in accommodations and completes final walkthrough (~15 min).\nWeekends: 9:00 AM \u2013 5:30 PM. Staff arrives no later than 7 AM.\nPre-opening: At least one team member must arrive before 6:30 AM.\nNo drop-off or pick-up outside normal hours by anyone below Supervisor rank without Owner approval." },
+  { keywords:["holiday","holidays","closed","closure","new year","christmas","thanksgiving","memorial","labor","easter","july 4"],
+    title:"Holiday Hours & Closures",
+    answer:"Mandatory Closures (MUST close to public): New Year's Day, Easter Sunday, Memorial Day, Independence Day, Labor Day, Thanksgiving Day, Christmas Day.\nAllowable Closures: MLK Day, President's Day, Columbus Day, Christmas Eve, New Year's Eve.\nStaff on-site 365 days/year including July 4th to care for boarded pets.\nHoliday signage: Computer-printed sign on countertop at least 5 days prior. Email blast to daycare clients for weekday closures. Standing floor sign holder at front door (never tape sign to door)." },
+  { keywords:["late","pickup","late pickup","after hours","not picked up","overtime"],
+    title:"Late Pickup & After-Hours Protocol",
+    answer:"1. Grace period: 15 minutes past scheduled pickup.\n2. Contact owner immediately about late fees.\n3. Contact chain: Primary \u2192 Emergency contact \u2192 Secondary contact.\n4. If no response by closing: Dog boards overnight, converted to boarding reservation at daycare-to-boarding rate.\n5. Ensure dog is comfortable: bedding, water, last feeding.\n6. Leave a note for morning staff with details.\n7. Bill late fees plus overnight boarding at checkout.\n8. Dogs on medication: Guest assumes risk of missing medication.\nStrongly recommended NOT to grant special after-hours requests." },
+  { keywords:["dress","uniform","appearance","clothing","dress code","name badge","shoes"],
+    title:"Dress Code Requirements",
+    answer:"Front End: K9 Resorts button-down or polo + navy zip-up jacket. Men's shirts tucked in. Non-K9 branded outerwear prohibited. K9 uniform shall not be worn on personal time.\nBack End: Same shirt + navy fleece. K9 hat/beanie in outdoor areas only.\nBathers: K9 performance tee for baths only.\nPants: Black 5-pocket, cargo, or chino with belt. No denim, leggings, sweatpants, or yoga pants.\nShoes: Solid black, closed-toe, rubber soles. No visible logos.\nName Badge: Required for front-end and management. Gold = management, Silver = staff.\nNo strong perfume. All employees must wear charged radio and headset." },
+  { keywords:["greet","greeting","hello","welcome","guest service","language","professional","communication","beat the greet"],
+    title:"Professional Language & Beat the Greet",
+    answer:"Beat the Greet: Be first to start conversation. Always greet with \"Good morning/afternoon\" \u2014 never \"hey\" or \"what's up.\"\nPersonalize: \"Good morning Mrs. Jones, how are you and Coco today?\"\nWhen guest says \"thank you,\" always respond \"You're welcome\" (never \"no problem\").\nUse upscale words: \"My pleasure\" should be standard.\nEvery employee: smile, make eye contact with every guest.\nEarn Your Stars Every Day: Begin each day at zero stars. Ask yourself what you did today to provide Five-Star service." },
+  { keywords:["belongings","items","allowed","prohibited","toys","blanket","bed","bring","accept"],
+    title:"Guest Belongings Policy",
+    answer:"ACCEPTED: Food from home, bones (avoid rawhide \u2014 choking hazard), treats, any leashes, removable collars, hard and soft non-porous toys.\nNOT ALLOWED: Blankets, beds, pillows, stuffed animals, shirts, ropes, fabric/cloth toys.\nReason: Absorbent items breed bacteria from bodily fluids. Tearable items pose choking hazards. Blankets/pillows may cause air restriction overnight.\nOVERNIGHT: Bones and toys must be removed at night \u2014 they pose choking hazards while unsupervised." },
+  { keywords:["collar","collar system","blue collar","green collar","red collar","yellow collar","pink collar","orange collar","identification","id"],
+    title:"Collar Color System & Dog Identification",
+    answer:"Blue: Small dog daycare approved (5\u201330 lbs, rare exceptions 31\u201335 lbs).\nGreen: Large dog daycare approved (30+ lbs).\nYellow: Not yet evaluated for daycare. Use caution \u2014 may or may not be dog-friendly.\nRed: People-friendly but NOT dog-friendly. MUST avoid all interactions with other dogs.\nPink: Daily daycare dogs (not boarding). Label with guest and dog name.\nOrange: Passed evaluation but rambunctious \u2014 needs extra supervision.\nCollars are lightweight waterproof plastic bands. Write name with permanent marker. Remove only inside accommodation or daycare using safety scissors." },
+  { keywords:["walk","walking","transport","leash","carry","carrying","picking up","lifting"],
+    title:"Walking & Transporting Dogs",
+    answer:"1. Walk at slow to medium pace \u2014 never run.\n2. Never cross a red-collared dog with another dog.\n3. Be careful at doorways \u2014 don't let dogs barge through.\n4. Never pull/force a dog to move (pressure on neck).\n5. Only transport 1 large dog at a time (unless same family).\n6. Maximum 3 small daycare dogs at a time.\n7. ALL dogs must be leashed, even small dogs being carried.\n8. Never try to pick up a dog unless 100% comfortable with their weight.\n9. Fully support middle torso and rear with both hands when lifting.\n10. Walk dogs in center of hallways to prevent wall damage." },
+  { keywords:["turn away","refuse","reject","deny","age limit","temperament","health","H.A.T","hat"],
+    title:"When to Turn a Dog Away (H.A.T.)",
+    answer:"H = Health: Condition requiring injections we can't perform, contagious illness, or needs special care beyond our ability.\nA = Age: Under 10 months may do daycare; after 10 months, unspayed/unneutered transition to personal playtimes. No NEW guests 13 years or older (existing guests grandfathered at GM discretion if in good health).\nT = Temperament: Dogs MUST be 100% people-friendly. They do NOT have to be dog-friendly. Turn away if dog: lunges/bites employees, growls at staff, won't allow leashing, won't allow room entry." },
+  { keywords:["room","suite","accommodation","luxury","executive","compartment","room type","lodging"],
+    title:"Room Types & Accommodations",
+    answer:"All rooms are ALL-INCLUSIVE: Kuranda bed, Blue Buffalo food, and group play or personal playtimes included.\nLuxury Suite: 8'x8'+ cage-free, 4 dog max (250 lb total), privacy doors, soundproofing, in-suite TV (DogTV), Kuranda bed.\nExecutive Room: 5'x7' cage-free, 3 dog max (225 lb total), Snyder enclosure, privacy doors, Kuranda bed.\nDouble Compartment: Up to 100 lbs or 2 dogs up to 35 lbs each. Primo Pad bedding.\nSingle Compartment: Up to 35 lbs. Primo Pad bedding. Ideal for puppies and small dogs.\nMulti-Dog Discount: 2nd dog and each additional \u2014 50% off room rate when sharing." },
+  { keywords:["daycare","daycare program","group play","half day","full day","cage free"],
+    title:"Daycare Program Overview",
+    answer:"Cage-free environment separated by size: Small (<30 lbs), Large (30+ lbs), Private Play (not dog-friendly).\nAll participants must pass daycare evaluation first (charge = full day rate).\nBooklets available: 10, 20, and 45 day packages at reduced rates.\nHalf-Day Sessions: AM 7 AM\u20131 PM, PM 1 PM\u20137 PM.\nDaycare is slower on weekends vs. weekdays.\nAdvantages: socialization, exercise, change of scenery, multiple bathroom opportunities." },
+  { keywords:["day boarding","day board","not social","personal playtime","private play"],
+    title:"Day Boarding Program",
+    answer:"For dogs that are people-friendly but don't enjoy group play. Dog comes during daycare hours, checks into executive room, gets 1-on-1 playtimes with staff.\nPricing: $4 above standard daily daycare rate. 20-day pack at normal daily rate.\nNo evaluation needed if 100% people-friendly.\nOffer day boarding whenever a dog fails daycare evaluation \u2014 provide the Day Boarding flyer.\nBlackout dates may be implemented during busy periods." },
+  { keywords:["one dog","lobby","lobby rule","one dog in lobby"],
+    title:"One Dog in Lobby Rule",
+    answer:"For safety, maintain ONE dog in the lobby at a time.\nReason: Minimizes leash aggression incidents in confined space.\nTips: Bring dogs to back immediately after guest arrives. Don't let owners linger during goodbye. Have staff wait behind closed glass doors until lobby clears before bringing dog to waiting guest." },
+  { keywords:["food policy","food in daycare","drinks","eating","break room","beverage"],
+    title:"Food & Drink Policy",
+    answer:"Front Desk: No eating (lunches, snacks, gum, candy). Drinks allowed but must be capped/spill-proof.\nDaycare: ABSOLUTELY no food. Dogs are responsive to food; some are food-aggressive. All food consumed in breakroom only.\nDaycare Drinks: Only shatter-resistant, spill-proof, capped containers. No ceramic mugs, cans, or uncovered cups.\nReason: Fallen food is a massive safety issue \u2014 dogs may attack over food." },
+  { keywords:["cell phone","phone policy","cellphone","mobile","personal phone"],
+    title:"Cell Phone Policy",
+    answer:"Employees cannot have cellphones while clocked in. Phones must be secured in lockers or left in cars.\nPhones cannot be kept in pockets or front desk drawers.\nReason: Affects productivity, distracts from guest service, hinders safe dog supervision.\nEmergency calls: Notify supervisor for permission; have contact call main phone line.\nPhone use only during designated breaks with supervisor permission." },
+  { keywords:["intact","unaltered","unneutered","male","genital","irritation"],
+    title:"Intact Male Dogs Care Protocol",
+    answer:"1. Immediately use rubber mats in accommodation (protective barrier from cleaning solutions).\n2. Mark dog as \"unaltered\" in system.\n3. Pet care techs must check genital area during scheduled playtimes.\n4. After mopping with Rescue, rinse floor with plain water to flush cleaning residue before returning mats and dog.\n5. May use medicated bathing shampoo once or twice during stay if irritation noticed.\n6. Manager should monitor these rooms routinely. If irritation found, contact owner immediately and offer vet visit at resort's expense." },
+  { keywords:["door","fence","security","lock","gate","exterior","keypad","push bar"],
+    title:"Door & Fence Safety Protocol",
+    answer:"1. Never prop open any doors at any time.\n2. Opening shift: Check all fence doors are locked securely. Unlock doors to exterior play yards.\n3. Night closure: Verify all gates locked. Secure all exterior doors.\n4. Luxury Suites: Doors closed and locked when occupied. Never lock with key.\n5. Executive/Compartments: Always remain latched.\n6. Keypad doors: Replace batteries as needed. Keep codes private. Change if compromised.\n7. Fences: Never unlock fences leading outside (except fire). Only Owner/Manager may access keys.\n8. Emergency exits: Always closed and secure. Test alarmed push bars regularly." },
+  { keywords:["manager on duty","mod","on call","after hours management"],
+    title:"Manager on Duty (MOD) Protocol",
+    answer:"During business hours: Highest-ranking person in building (or GM-designated MOD).\nAfter hours: All management and owners must be reachable via phone.\nCall list ranked by position \u2014 provide to police and security monitoring service.\nIf highest-ranking person doesn't respond, next on list is contacted.\nPerson on call responds by going to building. If too far, may call another employee.\nAll after-hours calls must be communicated to management staff." },
+  { keywords:["safety","osha","accident prevention","hazard","injury report","employee injury"],
+    title:"Workplace Safety & OSHA Compliance",
+    answer:"Four elements of accident prevention: 1) Management leads by example. 2) Facility analyzed weekly for hazards. 3) Prevention methods maintained. 4) All employees trained on hazards.\nChecklist items: Clear walkways, dryer lint cleaned, exit lights working, electrical panels clear, no overloaded plugs, gates/fencing latches working, outside doors not propped, alarm working, fire extinguishers current.\nEmployee Injury Form: Required for any injury seen or reported to manager.\nMSDS binders: Keep copies with Operations Manual and Red Binder." },
+  // ── Section 6: Front End Operations ────────────────────────────────
+  { keywords:["checkin","check in","check-in","arrival","intake","drop off","dropoff","boarding check"],
+    title:"Boarding Check-In Procedure",
+    answer:"1. Verify reservation: dates, room type, services.\n2. Check vaccines: All required vaccines must be current. Turn away if expired.\n3. Belongings inventory: List all items (food, medication, toys). Take a photo.\n4. Body check: Visual assessment head-to-tail. Note any pre-existing conditions (limping, discharge, skin issues, lumps). Document with photos.\n5. Ask about behavior changes, anxiety triggers, new medications.\n6. Confirm feeding instructions and medication schedules.\n7. Get emergency contact and parent destination.\n8. Walk dog to room/play group \u2014 don't rush the transition.\n9. Update system: Mark checked in with timestamp." },
+  { keywords:["checkout","check out","check-out","departure","going home","pick up","pickup","boarding checkout"],
+    title:"Boarding Check-Out Procedure",
+    answer:"1. Pre-checkout: Final bathroom break, brush if needed.\n2. Gather belongings: Cross-reference against check-in inventory.\n3. Body check: Inspect dog head-to-tail, compare to check-in notes.\n4. Generate invoice: Review all charges (boarding, baths, medications, add-ons, late fees).\n5. Collect payment: Subtract any deposits already paid.\n6. Provide stay summary: Brief update on how the dog's stay went.\n7. Note any concerns: Behavior changes, eating issues, health observations.\n8. Update system: Mark checked out with timestamp.\n9. Ask for feedback. Encourage a review." },
+  { keywords:["daycare check","daycare drop","daycare pickup","daycare pick up"],
+    title:"Daycare Check-In & Pick-Up",
+    answer:"Drop-Off (7\u20139 AM): Greet guest by name. Verify reservation. Check collar. Quick body scan. Walk dog to appropriate daycare room.\nTarget: Less than 30 seconds for daycare drop-off.\nPick-Up (5:30\u20137 PM): Radio specific daycare with dog and family name. Example: \"John to Large Daycare, may I have Sparky Jones please.\"\nDaycare tech: Locate dog, check collar to confirm name, escort to fenced area, confirm pickup person.\nTarget: Less than 1 minute for daycare pick-up." },
+  { keywords:["evaluation","eval","daycare eval","temperament","new dog","screen","compatibility"],
+    title:"Daycare Evaluation Procedure",
+    answer:"Phase 1 \u2014 Introduction:\n1. Place dog in cage-free room for 20 min to calm down.\n2. Clear indoor daycare of all dogs (send outside).\n3. Bring eval dog to gate area, allow 2 min to acclimate.\n4. Bring into daycare room. Radio for ONE calm, non-dominant dog.\n5. Monitor interaction for negative signs (growling, teeth, stiff posture, tucked tail).\n6. If positive, add 1\u20132 more dogs at a time until all introduced.\n\nPhase 2 \u2014 Observation: PCT monitors behavior over several hours. Manager visits hourly. Note: comfort level, barking, energy, play style, cue pickup.\n\nManager formally approves or denies. If failed: offer Day Boarding as alternative." },
+  { keywords:["cancel","cancellation","refund","deposit","no show","booking cancel"],
+    title:"Cancellation & Deposit Policy",
+    answer:"Boarding: 50% deposit at booking (non-refundable). Balance due at checkout.\nDaycare: No deposit. Payment at checkout.\nEvaluation: 100% fee at booking (non-refundable).\nTour: Free, no deposit.\nGuests should be informed of cancellation policies at time of booking and reminded at drop-off." },
+  { keywords:["vaccine","vaccination","shot","immunization","rabies","dhpp","bordetella","canine flu","requirement"],
+    title:"Vaccination Requirements",
+    answer:"Required vaccines: Rabies, Distemper (DHPP), Bordetella. Canine Influenza may also be required.\nAll vaccines must be current at check-in. Turn away if expired.\nTrack expiration dates in the dog's profile.\nUpdate records when owners provide new vaccine documentation.\nRemind owners of upcoming expirations at check-in/checkout." },
+  { keywords:["body check","health check","inspection","pre-existing","condition","wellness"],
+    title:"Body Check Procedure",
+    answer:"Perform at check-in AND check-out. Compare results.\nCheck: Eyes (discharge, redness), ears (odor, debris), nose (discharge), mouth/teeth, skin/coat (hot spots, lumps, parasites), legs/paws (limping, cracked pads, torn nails), belly, tail, genital area.\nDocument all findings in the system with photos.\nNote any pre-existing conditions BEFORE the dog enters care.\nReport any new findings to manager and owner at checkout." },
+  { keywords:["feed","feeding","food","meal","eat","diet","picky","allergy","allergies","special diet"],
+    title:"Feeding & Diet Protocol",
+    answer:"1. Feed per owner instructions \u2014 verify schedule, portions, food type.\n2. Label all food containers: dog name, feeding times, portions.\n3. Monitor eating: If dog doesn't eat within 20 min, remove food.\n4. Check allergy fields before any treats or supplements.\n5. Resort-provided food: Blue Buffalo GI formula (included in rate).\n6. Multiple dogs same owner: Verify which food goes to which dog.\n7. Missed meals: Contact owner if dog refuses 2 consecutive meals.\n8. No sharing: Dogs eat in their own space to prevent resource guarding.\n9. Picky eaters: Try warming food, adding water, hand feeding. Document." },
+  { keywords:["medication","medicine","med","pill","dose","dosage","administer","prescription","pharmacology"],
+    title:"Medication Administration Protocol",
+    answer:"1. Verify medication against owner instructions and dog's profile.\n2. Check dosage, timing, and method (with food, oral, topical, eye, ear).\n3. Administer at scheduled time \u2014 log immediately.\n4. Watch for side effects 30 min after first dose.\n5. Never skip a dose without contacting owner first.\n6. Store medications in locked cabinet with dog's name label.\n7. Two-person verification for controlled substances.\n8. If dog refuses: try with treat/cheese wrap. Document refusal.\n9. Categories: Pain/anti-inflammatory, antibiotics, anti-anxiety, antihistamines, heart, thyroid, seizure, eye/ear drops, topical." },
+  { keywords:["tour","facility tour","new client","prospect","showing"],
+    title:"Tour Procedure",
+    answer:"1. Greet warmly and introduce yourself.\n2. Walk the predetermined tour path through the facility.\n3. Highlight accommodations, daycare areas, bathing stations.\n4. Explain services, pricing, and all-inclusive model.\n5. Point out safety features (collar system, double gates, sanitation).\n6. Answer all questions thoroughly.\n7. End in lobby \u2014 offer to book an evaluation or reservation.\n8. Provide tour packet with pricing and information.\n9. Log tour in the system for follow-up." },
+  { keywords:["eod","end of day","daily report","shift report","handoff","shift change"],
+    title:"End of Day (EOD) & Shift Change",
+    answer:"EOD Report covers: Dogs that may not have eaten/had accidents, dogs to watch in daycare, timeout details and if client was notified, new dogs and evaluation status, outstanding client issues, shots/booklets needing updates, daily baths and pickup times, unusual medications, payments to collect, boarding stay extensions/shortenings.\nShift Change: Quick review of EOD items. Elaborate on details not listed. Discuss health-related items for dogs currently in care." },
+  // ── Section 7: Sanitation ─────────────────────────────────────────
+  { keywords:["chemical","rescue","odor pet","dilution","disinfect","mix","solution","cleaning product"],
+    title:"Cleaning Chemicals & Dilution Standards",
+    answer:"Rescue Disinfectant: 1:64 (2oz/gal) cold water for daily disinfecting. 1:32 (4oz/gal) for confirmed disease/outbreak. 10-minute contact time required.\nOdor Pet Cherry: 1:4 (32oz/gal) warm water \u2014 odor counteractant.\nSpot cleaning: Windex Multi-Surface (glass), Microban 24-Hour (common areas, doors, handles), Rescue Wipes (smaller messes, beds).\nNever directly mix chemicals together.\nUse separate dedicated mops for each chemical (color-coded).\nMSDS binders must be kept in manager's office." },
+  { keywords:["clean","cleaning","sanitize","disinfect","room cleaning","daily clean","mop","mopping","spot clean"],
+    title:"Daily Room Cleaning Protocol",
+    answer:"Setup: Stock janitor cart (Rescue wipes, window cleaner, paper towels, bags, gloves, watering can, broom, dustpan, leads).\n1. Empty water bowl into blue bucket.\n2. Place food/water bowls in hallway.\n3. Wipe entire bed surface with Rescue Wipes; let dry.\n4. Place bed in hallway over bowls.\n5. Spot clean with Rescue (orange mop handle).\n6. Sweep hair with rubber broom; pick up with paper towel.\n7. Clean glass doors with Windex.\n8. Mop entire floor with Rescue (yellow mop handle).\n9. Return bed, bowls; fill water.\n10. Mop hallways. Place wet floor sign." },
+  { keywords:["room disinfect","deep clean","full disinfect","between stays","disinfection"],
+    title:"Room Disinfection (Full \u2014 Between Stays)",
+    answer:"Cage-Free Rooms:\n1. Remove all items. Dump bowls. Sweep hair.\n2. Wipe all interior walls, bed (all sides), door exterior with Rescue solution.\n3. Mop floor leaving wet surface.\n4. Rescue MUST sit on all surfaces for minimum 10 minutes.\n5. After 10 min, squeegee walls downward. Mop up leftover solution.\n6. Leave room unoccupied until completely dry.\n7. Clean glass with Windex.\n\nCompartments:\n1. Remove grating and bedding to bathing area.\n2. Spray all interior with Rescue foam.\n3. 10-minute contact time.\n4. Wipe dry. Hose down grating. Blow-dry grating.\n5. Reassemble." },
+  { keywords:["k9 grass","turf","outdoor","play yard","artificial grass"],
+    title:"K9 Grass Cleaning & Disinfecting",
+    answer:"Morning (daily): Undiluted Odor Pet in foamer. Spray fences bottom-to-top. Spray K9 Grass in tic-tac-toe pattern. Post \"cleaned\" sign. Ready when foam no longer visible.\nEvening (daily): Undiluted Rescue in foamer. Same spray pattern. 10-minute contact time. Rinse with fresh water after. NO DOG may contact solution without it being dry or diluted.\nWeekly: Use rubber broom to spread foamed solution. Use turf sweeper (Roll and Comb 502) to remove fur/debris buildup.\nCRITICAL: Use SEPARATE foamers for Rescue and Odor Pet." },
+  { keywords:["daycare room","daycare clean","play area clean","daycare disinfect"],
+    title:"Daycare Room Cleaning Protocol",
+    answer:"Done at end of each night after all daycare dogs leave.\nDaily:\n1. Dump water jugs for disinfecting.\n2. Remove debris/equipment.\n3. Sweep hair with rubber broom.\n4. Mop with Rescue (10-minute contact time).\n5. Mop up excess or squeegee to yard.\n6. Clean glass with Windex.\n7. Restock supplies. Replace trash bags.\n\nWeekly: Same steps PLUS wipe all interior walls, fencing, and doors with Rescue solution using sponge and 5-gallon bucket before mopping." },
+  // ── Section 8: Daycare ────────────────────────────────────────────
+  { keywords:["daycare rule","behavior","energy","supervision","daycare tech","play style","monitor"],
+    title:"Daycare Rules & Behavior Management",
+    answer:"Daycare Tech Role: Manage energy like a lifeguard \u2014 constantly scan, forecast negative play, keep environment safe.\nProhibited: No food/drinks/phones, no yelling/whistles, no chasing dogs, no laying down, no over-attention to one dog, no grabbing collars.\nRequired: Enter with confidence, stay active, scan side-to-side, issue timeouts, use body blocks, always have a lead.\nBehaviors requiring timeout: Mounting, charging, pinning, excessive barking, guarding, herding, nipping staff.\nHealth observations (notify manager): Vomit, diarrhea, cuts, limping, broken nails, swelling." },
+  { keywords:["timeout","time out","time-out","removed from group","daycare removal","three strike"],
+    title:"Timeout Procedure (Daycare)",
+    answer:"Daycare Tech:\n1. Separate dog to fenced area.\n2. Fill out 2 Timeout Cards (dog name, breed, action, start time, employee).\n3. One card to front desk, one on accommodation.\n4. Short timeout: fenced area. 5+ minutes: cage-free room.\n5. After timeout, return dog and hand card to supervisor.\n\nFront End:\n1. Receive card, note timeout number.\n2. MOD documents on dog's account and EOD.\n3. Contact owner with factual details.\n4. Three-Strike Policy: After 3 removals, dog requires Day Boarding program.\n5. Manager discretion on strike count based on circumstances." },
+  { keywords:["temperature","heat","cold","weather","outdoor","hot","heat stroke","freeze","snow"],
+    title:"Temperature & Weather Policy",
+    answer:"Above 85\u00b0F: Dogs cannot be outside longer than 5 minutes. Must be monitored entire time. Keep daycare EXTRA cool (65\u00b0F). Doors closed AT ALL TIMES. No outdoor pens for playtimes. Add extra water bowls. Turf heats up \u2014 can burn paws.\nBelow 40\u00b0F: Same 5-minute limit. Monitored entire time. Keep daycare warm (68\u00b0F). Snow/frost irritates paws.\nInterior Standards: Summer max 72\u00b0F, Winter min 65\u00b0F.\nFor elimination walks: Max 3 minutes outside. One attendant outside, one transporting. Check pens every minute.\nNever pile snow against fence (creates escape ramp)." },
+  { keywords:["gate","garage door","overhead door","barrier","safety edge"],
+    title:"Gates & Garage Doors Safety",
+    answer:"Each daycare has gates spanning doorway length (one inside, one outside).\n1. Both gates must be secured in wall-mounted brackets before operating overhead door.\n2. Daycare tech monitors dogs while lowering/raising door.\n3. Once door fully closed, gates can be removed.\nNo overhead door operates without barrier preventing dogs from passing under.\nAll motorized doors must have: Reflective photo eye system, 2-wire safety edges (reverse on touch), take-up reels, gate system on both sides." },
+  // ── Section 9: Bathing ────────────────────────────────────────────
+  { keywords:["bath","bathing","shampoo","wash","mandatory bath","waterless bath","fresh n clean"],
+    title:"Bathing Protocol & Mandatory Bath Policy",
+    answer:"2+ Night Stay: Mandatory bath on departure day. Charge applies. Inform at booking AND drop-off.\n1 Night Stay: Complimentary waterless bath.\nProcedure: Place dog in shower using lead. Quick-release knot on shower bar. Wet thoroughly with lukewarm water. Apply Les Pooch shampoo, lather, massage. Rinse until coat is clean and suds-free.\nWaterless Bath: For agitated dogs or as last resort. Spray generously (avoid eyes/ears), massage into coat.\nTowel Dry: Squeeze and press \u2014 never rub vigorously (causes mats).\nApply Les Pooches perfume on departure (check allergies first)." },
+  { keywords:["dryer","drying","cage dryer","blow dry","drying machine","85 degree"],
+    title:"Drying Machine Rules",
+    answer:"1. Preheat cage dryer 20\u201330 minutes.\n2. Set timer: 30 MINUTES MAXIMUM.\n3. Temperature: NEVER exceed 85\u00b0F.\n4. Check progress every 5 minutes.\n5. Remove when 85% dry (not completely dry).\n6. NEVER leave a dog unattended in the dryer.\n7. If dog appears panicked or dehydrated, remove immediately.\n\nBreeds NEVER allowed in drying cage: Bulldogs (American/English), French Bulldogs, Pugs, Pugglies, Boston Terriers, Pekinese, Japanese Chin.\nReason: Brachycephalic breeds have breathing difficulties \u2014 heat in enclosed space is dangerous." },
+  // ── Section 10: Red Binder / Emergencies ──────────────────────────
+  { keywords:["emergency","vet","veterinary","urgent","emergency protocol","communication"],
+    title:"Emergency Communication Protocol",
+    answer:"1. Alert Manager on Duty IMMEDIATELY (seconds count!).\n2. MOD calls Emergency Vet with condition details.\n3. GM/Owner calls pet owner with situation and vet info.\n4. MOD transports dog to vet (assistance for large dogs).\n5. Contact K9 Resorts Operations Manager.\n6. Fill out Accident/Incident Report and Vet Visit Form within 24 hours.\n\nEmergencies requiring this protocol: Scuffle needing immediate care, dog escape, evacuation, power loss, HVAC loss, fire, human medical emergency, workplace violence, eye trauma, dog poisoning, heat stroke, unresponsive dog." },
+  { keywords:["fight","dog fight","altercation","scuffle","break up","separate","attack"],
+    title:"Breaking Up a Dog Fight",
+    answer:"No-Contact Method (preferred):\n1. REMAIN CALM.\n2. Call for assistance via radio.\n3. Use air horn (repeated short/long blasts).\n4. Spray water on dogs' heads.\n5. Dump bucket of water on heads.\n6. Use Pet Shield as barrier to block vision/redirect.\nDO NOT grab collars. DO NOT get between dogs. NEVER hit a dog.\n\nContact Method (last resort):\n1. Approach aggressor from behind.\n2. Grab top of hind legs.\n3. Lift back paws (wheelbarrow position).\n4. Walk backwards in circle so dog can't turn to bite.\n5. Keep separated dogs out of each other's sight." },
+  { keywords:["escape","escaped","missing","lost","ran away","loose dog"],
+    title:"Dog Escape Response Protocol",
+    answer:"1. All staff must have radios.\n2. Alert management immediately.\n3. Call \"time check\" to suspected escape area.\n4. All available employees head in direction dog ran.\n5. MOD stays at front desk, calls police for backup.\n6. MOD calls K9 corporate operations team.\n7. Corporate contacts PR team.\n8. Updates to corporate every 30 minutes.\n9. If no recovery after 30 min, owner must be contacted.\n\nIf dog found: Post social media update, pay all medical/grooming expenses, send gift basket, refund all stay payments, allow open communication with owner.\nIf missing >24 hours: Corporate takes lead on all communications, social media, PR." },
+  { keywords:["fire","smoke","alarm","extinguisher","evacuation","evacuate"],
+    title:"Fire & Evacuation Protocol",
+    answer:"Fire:\n1. Pull alarm (any employee \u2014 don't wait for MOD).\n2. Announce emergency over radio.\n3. Dogs shelter in place in accommodations.\n4. Begin evacuation: Crawl low if smoke. Test doors for heat.\n5. Call 911.\n6. Small fire: Use extinguisher if comfortable.\n7. Assemble at Designated Meeting Location (DML).\n8. Remain until further instructions. Inform operations manager.\n\nEvacuation:\n1. MOD sounds alarm. Call 911.\n2. Employees move to DML via nearest exit.\n3. Dogs left in daycare or placed in nearest vacant accommodation.\n4. Remain at DML." },
+  { keywords:["bloat","distended","stomach","vomiting","restless","emergency bloat"],
+    title:"Bloat Emergency Protocol",
+    answer:"Signs: Vomiting/trying with nothing coming up, drooling, distended stomach (hard), restlessness/pacing, depressed attitude.\nEven if you SUSPECT but aren't sure \u2014 treat as emergency.\n1. Alert MOD IMMEDIATELY (seconds count!).\n2. MOD calls pre-approved Emergency Vet for bloat.\n3. 2nd MOD transports dog to vet (use backboard if needed).\n4. Resort Owner calls pet owner.\n5. Follow full Incident Communication Protocol.\nBloat is life-threatening. Speed is critical." },
+  { keywords:["bite","dog bite","bitten","puncture","wound","laceration"],
+    title:"Bite & Wound Response",
+    answer:"Dog Bite (on human):\n1. Report to MOD. Place all dogs in secured areas.\n2. Direct person to medical attention. Call 911 if major.\n3. Victims cannot drive themselves to urgent care.\n4. Apply pressure to stop bleeding.\n5. Complete incident report.\n\nAbrasions/Scrapes (on dog):\n1. Flush with warm water/hydrogen peroxide.\n2. Apply OTC antibacterial cream 3x daily.\n3. For clean spray: Vetericyn Wound Spray.\n4. Apply Neosporin. If spreads or produces pus, seek vet.\n\nLacerations/Bite Wounds (on dog):\n1. Apply warm compress. Mild pressure for bleeding.\n2. Wrap in gauze. Usually requires vet for antibiotics." },
+  { keywords:["nail","cracked nail","torn nail","broken nail","bleeding nail"],
+    title:"Cracked/Torn Nail Response",
+    answer:"Cracked: Flush with warm water, clean with hydrogen peroxide, use styptic powder (Kwik Stop) if bleeding \u2014 pour nickel-sized amount on paper towel and press nail on it for 2 minutes.\nTorn (hole where nail was): Flush, clean, wrap in gauze. Torn nails often require vet treatment.\nIf bleeding persists after 10 minutes of Kwik Stop, contact owner for veterinary attention. Nail may need to be cut or removed by vet.\nFollow Incident Communication Protocol." },
+  { keywords:["power","power outage","power loss","electricity","generator","blackout"],
+    title:"Extended Power Loss Response",
+    answer:"1. Have water jugs on-site (water supply may be non-functional).\n2. Contact electric company for restoration estimate.\n3. Unplug unnecessary equipment.\n4. Call corporate for action plan.\n5. Prepare water gallons for all dogs.\n6. Maintain written records if computers down.\n7. Run facility as normal if conditions permit.\n8. Contact clients to arrange alternatives.\n9. Use ice/coolers for perishable dog food.\n10. Freezing temps: Turn off drain lines, provide blankets.\n11. Management team member MUST remain onsite overnight if loss continues." },
+  { keywords:["active shooter","shooter","hostage","weapon","threat","suspicious","workplace violence"],
+    title:"Active Shooter / Threat Response",
+    answer:"RUN: If escape path exists, evacuate. Leave belongings. Help others. Keep hands visible.\nHIDE: If can't evacuate, find concealment. Lock door. Silence phone. Turn off lights. Hide behind large objects.\nFIGHT: Last resort only. Act aggressively. Improvise weapons. Commit fully.\n\nSuspicious Person Signs: Nervousness, repeated entrances/exits, inappropriate clothing, keeping hands in pockets, carrying packages.\nAction: Proceed normally while casually alerting another employee. Trust your gut. Call 911.\n\nLaw Enforcement Arrival: Remain calm, follow directions, raise hands, spread fingers, avoid sudden movements." },
+  { keywords:["severe weather","tornado","hurricane","earthquake","flood","blizzard","storm"],
+    title:"Severe Weather Protocols",
+    answer:"Tornado: Seek interior rooms on lowest floor, no windows. Use arms to protect head/neck.\nEarthquake: Stay clear of windows and tall furniture. If outside, move from buildings/power lines. After shaking: evacuate/call 911.\nHurricane: Secure building, move loose items inside, board windows, stay indoors.\nFlood: Be ready to evacuate. Move to high ground. Don't walk/drive through floodwater.\nBlizzard: Stay indoors. Close off unneeded rooms. Stuff towels in door cracks.\nInclement Weather: GM communicates with staff in advance. Management may stay overnight to care for boarding dogs." },
+  // ── Section 4: HR / Company ───────────────────────────────────────
+  { keywords:["value","mission","core value","company value","five star","5 star","wow"],
+    title:"K9 Resorts Core Values & Mission",
+    answer:"Mission: Provide a home away from home where dogs love to stay and play, and guests know their dogs are cared for at a 5-star level.\nCore Values:\n1. Committed to health, happiness, and comfort of our guests.\n2. Make every experience a WOW experience.\n3. Transparent \u2014 communicate honestly, directly, respectfully.\n4. Work as a team to grow together.\n5. Accountable, teachable, and excuse-free.\nGuest Promises: Daycare drop-offs < 30 sec, pickups < 1 min. Boarding drop-offs < 5 min, pickups < 2:30. Facility so clean you'd kiss any paw that touched down." },
+  { keywords:["position","role","hierarchy","chain of command","organizational","reporting","staff structure"],
+    title:"Organizational Structure",
+    answer:"General Manager: Oversees day-to-day operations, HR, marketing, financials. Reports to Owner.\nAssistant Manager: Reports to GM. Focused on operations, training, guest service. Bridge between front desk and pet care.\nSupervisors: Report to MOD. Use daily checklists. One front-end, one back-end supervisor when mature.\nCSR (Customer Service Rep): Guest experience \u2014 phones, reservations, check-in/out, dog transport.\nPCT (Pet Care Technician): Deliver on cleanliness and care promises. Certified in bathing, daycare, and sanitation." },
+  { keywords:["shift change","handoff","overlap","knowledge transfer","entering daycare"],
+    title:"Shift Change Procedure",
+    answer:"Daycare: Enter as if you own the room. Walk with head up, no greeting dogs. Allow 5-minute overlap. Departing tech stays until group energy drops. Transfer knowledge: special circumstances, behavior, timeouts, weather, last outdoor access. NEVER leave daycare unattended.\n\nCleaning: Transfer what's completed, current stage, recent requests, important remaining items.\n\nFront End: Quick EOD review. Cover: dogs not eating, accidents, daycare concerns, timeouts, new dogs/evals, outstanding client issues, shots to update, baths/pickup times, unusual meds, payments to collect, stay changes." },
+];
+
+// ─── Messages Page ────────────────────────────────────────────────────────
+function MessagesPage({ data, save, nav }) {
+  const [selClient, setSelClient] = useState(null);
+  const [search, setSearch] = useState("");
+  const [compose, setCompose] = useState("");
+  const [showTpl, setShowTpl] = useState(false);
+  const [showNewMsg, setShowNewMsg] = useState(false);
+  const [clientSearch, setClientSearch] = useState("");
+  const threadRef = useRef(null);
+  const msgs = data.messages || [];
+  const templates = data.messageTemplates || [];
+  const clients = data.clients || [];
+  const dogs = data.dogs || [];
+
+  const clientName = (c) => c ? `${c.fields?.first_name || ""} ${c.fields?.last_name || ""}`.trim() || "Client" : "";
+  const clientPhone = (c) => c?.fields?.phone || "";
+
+  // Group messages by client, sorted by most recent
+  const convos = useMemo(() => {
+    const map = {};
+    msgs.forEach(m => {
+      if (!map[m.clientId]) map[m.clientId] = [];
+      map[m.clientId].push(m);
+    });
+    return Object.entries(map).map(([cid, cmsgs]) => {
+      const sorted = [...cmsgs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+      const client = clients.find(c => c.id === cid);
+      const unread = cmsgs.filter(m => m.direction === "inbound" && !m.readAt).length;
+      return { clientId: cid, client, messages: sorted, last: sorted[0], unread };
+    }).sort((a, b) => new Date(b.last.timestamp) - new Date(a.last.timestamp));
+  }, [msgs, clients]);
+
+  const filteredConvos = search ? convos.filter(c => clientName(c.client).toLowerCase().includes(search.toLowerCase())) : convos;
+
+  // Selected conversation messages chronological
+  const thread = useMemo(() => {
+    if (!selClient) return [];
+    return msgs.filter(m => m.clientId === selClient).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+  }, [selClient, msgs]);
+
+  const selClientObj = clients.find(c => c.id === selClient);
+
+  // Auto-scroll thread
+  useEffect(() => { if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight; }, [thread]);
+
+  // Mark as read when selecting conversation
+  useEffect(() => {
+    if (!selClient) return;
+    const unread = msgs.filter(m => m.clientId === selClient && m.direction === "inbound" && !m.readAt);
+    if (unread.length > 0) {
+      const now = new Date().toISOString();
+      const updated = msgs.map(m => (m.clientId === selClient && m.direction === "inbound" && !m.readAt) ? { ...m, readAt: now } : m);
+      save({ ...data, messages: updated });
+    }
+  }, [selClient]);
+
+  const sendMessage = async () => {
+    if (!compose.trim() || !selClient) return;
+    const msg = { id: gid(), clientId: selClient, direction: "outbound", channel: "sms", body: compose.trim(), timestamp: new Date().toISOString(), status: "sent", twilioSid: null, templateId: null, readAt: null };
+    await save({ ...data, messages: [...msgs, msg] });
+    setCompose("");
+  };
+
+  const insertTemplate = (tpl) => {
+    const c = selClientObj;
+    const cDogs = dogs.filter(d => d.clientId === selClient);
+    let body = tpl.body;
+    body = body.replace(/\{clientName\}/g, clientName(c));
+    body = body.replace(/\{dogName\}/g, cDogs.length > 0 ? (cDogs[0].fields?.name || "your dog") : "your dog");
+    body = body.replace(/\{checkInDate\}/g, "TBD");
+    body = body.replace(/\{checkOutDate\}/g, "TBD");
+    body = body.replace(/\{roomType\}/g, "TBD");
+    body = body.replace(/\{totalPrice\}/g, "TBD");
+    setCompose(body);
+    setShowTpl(false);
+  };
+
+  const selectNewClient = (cid) => { setSelClient(cid); setShowNewMsg(false); setClientSearch(""); };
+
+  const fmtTime = (ts) => {
+    const d = new Date(ts); const now = new Date();
+    const diffD = Math.floor((now - d) / 86400000);
+    if (diffD === 0) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    if (diffD === 1) return "Yesterday";
+    if (diffD < 7) return d.toLocaleDateString([], { weekday: "short" });
+    return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  };
+
+  const cardS = { background: C.card, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" };
+  const inputS = { width: "100%", padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" };
+
+  return (
+    <div style={{ display: "flex", height: "100%", gap: 0 }}>
+      {/* Left - Conversation List */}
+      <div style={{ width: 320, minWidth: 320, borderRight: `1px solid ${C.border}`, display: "flex", flexDirection: "column", background: C.card }}>
+        <div style={{ padding: "16px 16px 12px", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.text }}>Messages</h2>
+            <button onClick={() => setShowNewMsg(true)} style={{ background: C.pri, color: "#fff", border: "none", borderRadius: 8, padding: "6px 12px", fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}><I.Plus /> New</button>
+          </div>
+          <div style={{ position: "relative" }}>
+            <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4 }}><I.Search /></div>
+            <input data-shortcut-search="1" placeholder="Search conversations..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputS, paddingLeft: 34 }} />
+          </div>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {filteredConvos.length === 0 && <div style={{ padding: 24, textAlign: "center", color: C.textMut, fontSize: 14 }}>No conversations</div>}
+          {filteredConvos.map(cv => (
+            <div key={cv.clientId} onClick={() => setSelClient(cv.clientId)} style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", background: selClient === cv.clientId ? C.priLight : "transparent", transition: "background 0.15s" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                <span style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{clientName(cv.client)}</span>
+                <span style={{ fontSize: 11, color: C.textMut }}>{fmtTime(cv.last.timestamp)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 13, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+                  {cv.last.direction === "outbound" && <span style={{ color: C.textMut }}>You: </span>}
+                  {cv.last.body}
+                </span>
+                {cv.unread > 0 && <span style={{ background: C.pri, color: "#fff", borderRadius: 10, fontSize: 11, fontWeight: 700, minWidth: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 6px" }}>{cv.unread}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Right - Thread View */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", background: C.bg }}>
+        {!selClient ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, color: C.textMut }}>
+            <I.MessageSquare />
+            <span style={{ fontSize: 16 }}>Select a conversation to start messaging</span>
+          </div>
+        ) : (
+          <>
+            {/* Header */}
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.border}`, background: C.card, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", background: C.pri, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 14 }}>
+                {(selClientObj?.fields?.first_name || "?")[0]}{(selClientObj?.fields?.last_name || "")[0]}
+              </div>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 15, color: C.text }}>{clientName(selClientObj)}</div>
+                <div style={{ fontSize: 12, color: C.textMut, display: "flex", alignItems: "center", gap: 4 }}><I.Phone /> {clientPhone(selClientObj) || "No phone"}</div>
+              </div>
+              <div style={{ marginLeft: "auto" }}>
+                <button onClick={() => nav("client-detail", { clientId: selClient })} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 10px", fontSize: 12, color: C.pri, cursor: "pointer", fontWeight: 500 }}>View Profile</button>
+              </div>
+            </div>
+
+            {/* Messages Thread */}
+            <div ref={threadRef} style={{ flex: 1, overflowY: "auto", padding: "16px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
+              {thread.map(m => {
+                const isOut = m.direction === "outbound";
+                return (
+                  <div key={m.id} style={{ display: "flex", justifyContent: isOut ? "flex-end" : "flex-start" }}>
+                    <div style={{ maxWidth: "70%", padding: "10px 14px", borderRadius: 16, borderBottomRightRadius: isOut ? 4 : 16, borderBottomLeftRadius: isOut ? 16 : 4, background: isOut ? C.pri : C.card, color: isOut ? "#fff" : C.text, fontSize: 14, lineHeight: 1.5, border: isOut ? "none" : `1px solid ${C.border}` }}>
+                      <div>{m.body}</div>
+                      <div style={{ fontSize: 10, marginTop: 4, opacity: 0.6, textAlign: isOut ? "right" : "left", display: "flex", alignItems: "center", gap: 4, justifyContent: isOut ? "flex-end" : "flex-start" }}>
+                        {fmtTime(m.timestamp)}
+                        {isOut && m.status === "sent" && <I.Check />}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Compose Bar */}
+            <div style={{ padding: "12px 20px", borderTop: `1px solid ${C.border}`, background: C.card }}>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 8, position: "relative" }}>
+                <div style={{ position: "relative" }}>
+                  <button onClick={() => setShowTpl(!showTpl)} style={{ background: showTpl ? C.priLight : C.surface, border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 10px", cursor: "pointer", fontSize: 12, color: C.pri, fontWeight: 500, whiteSpace: "nowrap" }}>Templates</button>
+                  {showTpl && (
+                    <div style={{ position: "absolute", bottom: "100%", left: 0, marginBottom: 4, background: C.card, border: `1px solid ${C.border}`, borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", minWidth: 260, zIndex: 10 }}>
+                      {templates.filter(t => t.active).map(t => (
+                        <div key={t.id} onClick={() => insertTemplate(t)} style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
+                          <div style={{ fontWeight: 600, color: C.text, marginBottom: 2 }}>{t.name}</div>
+                          <div style={{ color: C.textMut, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.body.slice(0, 60)}...</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <textarea value={compose} onChange={e => setCompose(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Type a message..." rows={1} style={{ flex: 1, padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, color: C.text, background: C.surface, resize: "none", outline: "none", fontFamily: "inherit", minHeight: 40, maxHeight: 100 }} />
+                <button onClick={sendMessage} disabled={!compose.trim()} style={{ background: compose.trim() ? C.pri : C.border, color: "#fff", border: "none", borderRadius: 8, padding: "10px 14px", cursor: compose.trim() ? "pointer" : "default", display: "flex", alignItems: "center", gap: 4, fontWeight: 600, fontSize: 13 }}><I.Send /> Send</button>
+              </div>
+              <div style={{ fontSize: 10, color: C.textMut, marginTop: 6 }}>Twilio SMS integration ready — messages are simulated until connected</div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* New Message Modal */}
+      {showNewMsg && (
+        <Modal title="New Message" onClose={() => { setShowNewMsg(false); setClientSearch(""); }}>
+          <div style={{ padding: 16 }}>
+            <input placeholder="Search clients..." value={clientSearch} onChange={e => setClientSearch(e.target.value)} style={inputS} autoFocus />
+            <div style={{ maxHeight: 300, overflowY: "auto", marginTop: 12 }}>
+              {clients.filter(c => !clientSearch || clientName(c).toLowerCase().includes(clientSearch.toLowerCase())).slice(0, 20).map(c => (
+                <div key={c.id} onClick={() => selectNewClient(c.id)} style={{ padding: "10px 12px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{clientName(c)}</div>
+                    <div style={{ fontSize: 12, color: C.textMut }}>{c.fields?.phone || "No phone"}</div>
+                  </div>
+                  <I.ChevronRight />
+                </div>
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ─── Payment Form Modal ──────────────────────────────────────────────────
+function PaymentFormModal({ onClose, onSave, reservation, client, existingPayment }) {
+  const [amt, setAmt] = useState(existingPayment?.amount?.toString() || (reservation ? Math.max(0, (reservation.totalPrice || 0) - (reservation.amountCollected || 0)).toFixed(2) : ""));
+  const [type, setType] = useState(existingPayment?.type || "payment");
+  const [method, setMethod] = useState(existingPayment?.method || "card");
+  const [card4, setCard4] = useState(existingPayment?.cardLast4 || "");
+  const [tip, setTip] = useState("");
+  const [note, setNote] = useState(existingPayment?.note || "");
+  const [staff, setStaff] = useState(existingPayment?.processedBy || "");
+  const [err, setErr] = useState("");
+  const labelS = { display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: C.text };
+  const inputS = { width: "100%", padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" };
+  const handleSubmit = () => {
+    if (!amt || parseFloat(amt) <= 0) { setErr("Enter a valid amount"); return; }
+    if (!staff) { setErr("Staff initials required"); return; }
+    if (method === "card" && card4.length < 4) { setErr("Enter last 4 digits of card"); return; }
+    const payment = {
+      id: existingPayment?.id || gid(), reservationId: reservation?.id || existingPayment?.reservationId || null,
+      clientId: client?.id || existingPayment?.clientId || null, amount: parseFloat(amt) + (tip ? parseFloat(tip) : 0),
+      type, method, cardLast4: method === "card" ? card4 : null, status: type === "refund" ? "refunded" : "completed",
+      note: tip && parseFloat(tip) > 0 ? `${note}${note ? " | " : ""}Tip: $${parseFloat(tip).toFixed(2)}` : note,
+      timestamp: existingPayment?.timestamp || new Date().toISOString(),
+      stripePaymentIntentId: null, stripeRefundId: null, processedBy: staff,
+    };
+    onSave(payment);
+  };
+  const cName = client ? `${client.fields?.first_name || ""} ${client.fields?.last_name || ""}`.trim() : null;
+  return (
+    <Modal title={existingPayment ? "Edit Payment" : "Record Payment"} onClose={onClose}>
+      <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+        {err && <div style={{ color: "#dc2626", fontSize: 13, padding: "8px 12px", background: "rgba(220,38,38,0.08)", borderRadius: 6 }}>{err}</div>}
+        {cName && <div style={{ fontSize: 13, color: C.textMut }}>Client: <strong style={{ color: C.text }}>{cName}</strong></div>}
+        {reservation && <div style={{ fontSize: 13, color: C.textMut }}>Reservation: {reservation.roomType} ({new Date(reservation.checkIn).toLocaleDateString()} – {new Date(reservation.checkOut).toLocaleDateString()})</div>}
+        <div><label style={labelS}>Amount ($)</label><input type="number" step="0.01" value={amt} onChange={e => { setAmt(e.target.value); setErr(""); }} placeholder="0.00" style={inputS} /></div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div><label style={labelS}>Type</label><select value={type} onChange={e => setType(e.target.value)} style={inputS}><option value="payment">Payment</option><option value="deposit">Deposit</option><option value="tip">Tip</option><option value="refund">Refund</option></select></div>
+          <div><label style={labelS}>Method</label><select value={method} onChange={e => setMethod(e.target.value)} style={inputS}><option value="card">Card</option><option value="cash">Cash</option><option value="check">Check</option></select></div>
+        </div>
+        {method === "card" && <div><label style={labelS}>Card Last 4</label><input maxLength={4} value={card4} onChange={e => setCard4(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="0000" style={inputS} /></div>}
+        <div><label style={labelS}>Tip ($)</label><input type="number" step="0.01" value={tip} onChange={e => setTip(e.target.value)} placeholder="0.00" style={inputS} /></div>
+        <div><label style={labelS}>Note</label><textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Optional note..." rows={2} style={{ ...inputS, resize: "none", fontFamily: "inherit" }} /></div>
+        <div><label style={labelS}>Staff Initials</label><input maxLength={3} value={staff} onChange={e => setStaff(e.target.value.toUpperCase())} placeholder="e.g. ZN" style={inputS} /></div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+          <Btn onClick={onClose} variant="ghost">Cancel</Btn>
+          <Btn onClick={handleSubmit} variant="primary">{type === "refund" ? "Issue Refund" : "Save Payment"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Payments Page ────────────────────────────────────────────────────────
+function PaymentsPage({ data, save, nav }) {
+  const [search, setSearch] = useState("");
+  const [typeF, setTypeF] = useState("all");
+  const [methodF, setMethodF] = useState("all");
+  const [statusF, setStatusF] = useState("all");
+  const [sortBy, setSortBy] = useState("timestamp");
+  const [sortDir, setSortDir] = useState("desc");
+  const [showModal, setShowModal] = useState(false);
+  const [editPmt, setEditPmt] = useState(null);
+  const [showClientPicker, setShowClientPicker] = useState(false);
+  const [pickerSearch, setPickerSearch] = useState("");
+
+  const payments = data.payments || [];
+  const reservations = data.reservations || [];
+  const clients = data.clients || [];
+  const getClient = (id) => clients.find(c => c.id === id);
+  const getRes = (id) => reservations.find(r => r.id === id);
+  const cName = (c) => c ? `${c.fields?.first_name || ""} ${c.fields?.last_name || ""}`.trim() || "Client" : "N/A";
+
+  const now = new Date(); const todayStr = now.toISOString().slice(0, 10);
+  const weekStart = new Date(now); weekStart.setDate(now.getDate() - now.getDay()); const weekStr = weekStart.toISOString().slice(0, 10);
+  const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+  const completed = payments.filter(p => p.status === "completed");
+  const todayRev = completed.filter(p => p.timestamp.slice(0, 10) === todayStr).reduce((s, p) => s + p.amount, 0);
+  const weekRev = completed.filter(p => p.timestamp.slice(0, 10) >= weekStr).reduce((s, p) => s + p.amount, 0);
+  const monthRev = completed.filter(p => p.timestamp.slice(0, 7) === monthStr).reduce((s, p) => s + p.amount, 0);
+  const outstanding = reservations.reduce((s, r) => s + Math.max(0, (r.totalPrice || 0) - (r.amountCollected || 0)), 0);
+
+  let filtered = payments.filter(p => {
+    const c = getClient(p.clientId);
+    if (search && !cName(c).toLowerCase().includes(search.toLowerCase())) return false;
+    if (typeF !== "all" && p.type !== typeF) return false;
+    if (methodF !== "all" && p.method !== methodF) return false;
+    if (statusF !== "all" && p.status !== statusF) return false;
+    return true;
+  });
+  filtered = [...filtered].sort((a, b) => {
+    const av = sortBy === "timestamp" ? new Date(a.timestamp).getTime() : a.amount;
+    const bv = sortBy === "timestamp" ? new Date(b.timestamp).getTime() : b.amount;
+    return sortDir === "asc" ? av - bv : bv - av;
+  });
+
+  const toggleSort = (f) => { if (sortBy === f) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortBy(f); setSortDir("desc"); } };
+
+  const handleSave = async (pmt) => {
+    const idx = payments.findIndex(p => p.id === pmt.id);
+    const updated = idx >= 0 ? payments.map(p => p.id === pmt.id ? pmt : p) : [...payments, pmt];
+    const newData = { ...data, payments: updated };
+    // Update reservation amountCollected
+    if (pmt.reservationId) {
+      const ri = newData.reservations.findIndex(r => r.id === pmt.reservationId);
+      if (ri >= 0) {
+        const resPmts = updated.filter(p => p.reservationId === pmt.reservationId && p.status === "completed" && p.type !== "refund");
+        const resRefunds = updated.filter(p => p.reservationId === pmt.reservationId && (p.status === "refunded" || p.type === "refund"));
+        newData.reservations = [...newData.reservations];
+        newData.reservations[ri] = { ...newData.reservations[ri], amountCollected: resPmts.reduce((s, p) => s + p.amount, 0) - resRefunds.reduce((s, p) => s + p.amount, 0) };
+      }
+    }
+    await save(newData);
+    setShowModal(false); setEditPmt(null); setShowClientPicker(false);
+  };
+
+  const statusBg = { completed: "rgba(16,185,129,0.12)", pending: "rgba(245,158,11,0.12)", refunded: "rgba(239,68,68,0.12)", failed: "rgba(239,68,68,0.12)" };
+  const statusClr = { completed: "#10b981", pending: "#f59e0b", refunded: "#ef4444", failed: "#ef4444" };
+  const typeBg = { payment: `rgba(0,52,98,0.1)`, deposit: "rgba(14,165,233,0.1)", tip: "rgba(236,72,153,0.1)", refund: "rgba(239,68,68,0.1)" };
+  const typeClr = { payment: C.pri, deposit: "#0ea5e9", tip: "#ec4899", refund: "#ef4444" };
+  const thS = { padding: "10px 12px", textAlign: "left", fontSize: 12, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.03em" };
+  const tdS = { padding: "10px 12px", fontSize: 14, color: C.text };
+  const cardS = { background: C.card, borderRadius: 10, border: `1px solid ${C.border}`, padding: 16 };
+  const inputS = { width: "100%", padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" };
+  const SortIcon = ({ field }) => sortBy === field ? (sortDir === "asc" ? <I.SortAsc /> : <I.SortDesc />) : <I.SortNone />;
+
+  const openRecordPayment = () => { setEditPmt(null); setShowClientPicker(true); setPickerSearch(""); };
+
+  return (
+    <div style={{ padding: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: C.text }}>Payments</h1>
+        <Btn onClick={openRecordPayment} variant="primary" icon={<I.Plus />}>Record Payment</Btn>
+      </div>
+
+      {/* Summary Cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 24 }}>
+        {[["Today's Revenue", todayRev, C.pri], ["Outstanding", outstanding, "#ef4444"], ["This Week", weekRev, C.pri], ["This Month", monthRev, C.pri]].map(([label, val, clr]) => (
+          <div key={label} style={cardS}>
+            <div style={{ fontSize: 11, color: C.textMut, textTransform: "uppercase", fontWeight: 600, letterSpacing: "0.04em", marginBottom: 6 }}>{label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: clr }}>${val.toFixed(2)}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div style={{ ...cardS, padding: 20 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ flex: 1, minWidth: 180, position: "relative" }}>
+            <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", opacity: 0.4 }}><I.Search /></div>
+            <input data-shortcut-search="1" placeholder="Search by client..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputS, paddingLeft: 34 }} />
+          </div>
+          {[["Type", typeF, setTypeF, ["all","payment","deposit","tip","refund"]], ["Method", methodF, setMethodF, ["all","card","cash","check"]], ["Status", statusF, setStatusF, ["all","completed","pending","refunded","failed"]]].map(([lbl, val, set, opts]) => (
+            <select key={lbl} value={val} onChange={e => set(e.target.value)} style={{ padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, color: C.text, background: C.surface }}>
+              {opts.map(o => <option key={o} value={o}>{o === "all" ? `All ${lbl}s` : o.charAt(0).toUpperCase() + o.slice(1)}</option>)}
+            </select>
+          ))}
+        </div>
+
+        {/* Table */}
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: `2px solid ${C.border}` }}>
+                <th style={{ ...thS, cursor: "pointer" }} onClick={() => toggleSort("timestamp")}>Date <SortIcon field="timestamp" /></th>
+                <th style={thS}>Client</th>
+                <th style={thS}>Reservation</th>
+                <th style={{ ...thS, textAlign: "right", cursor: "pointer" }} onClick={() => toggleSort("amount")}>Amount <SortIcon field="amount" /></th>
+                <th style={thS}>Type</th>
+                <th style={thS}>Method</th>
+                <th style={thS}>Status</th>
+                <th style={thS}>Staff</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(p => {
+                const c = getClient(p.clientId); const r = getRes(p.reservationId);
+                return (
+                  <tr key={p.id} style={{ borderBottom: `1px solid ${C.border}` }} onClick={() => { setEditPmt(p); setShowModal(true); }}>
+                    <td style={tdS}>{new Date(p.timestamp).toLocaleDateString()}</td>
+                    <td style={{ ...tdS, color: C.pri, fontWeight: 500, cursor: "pointer" }} onClick={e => { e.stopPropagation(); if (c) nav("client-detail", { clientId: c.id }); }}>{cName(c)}</td>
+                    <td style={{ ...tdS, fontSize: 13, color: C.textMut }}>{r ? `${r.roomType} (${new Date(r.checkIn).toLocaleDateString()})` : "—"}</td>
+                    <td style={{ ...tdS, textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>${p.amount.toFixed(2)}</td>
+                    <td style={tdS}><span style={{ padding: "3px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600, background: typeBg[p.type], color: typeClr[p.type] }}>{p.type}</span></td>
+                    <td style={{ ...tdS, fontSize: 13 }}>{p.method === "card" ? `Card •••• ${p.cardLast4 || ""}` : p.method.charAt(0).toUpperCase() + p.method.slice(1)}</td>
+                    <td style={tdS}><span style={{ padding: "3px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600, background: statusBg[p.status], color: statusClr[p.status] }}>{p.status}</span></td>
+                    <td style={{ ...tdS, fontSize: 13, fontWeight: 500 }}>{p.processedBy}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {filtered.length === 0 && <div style={{ textAlign: "center", padding: 40, color: C.textMut }}>No payments found</div>}
+        <div style={{ marginTop: 12, fontSize: 12, color: C.textMut }}>{filtered.length} transaction{filtered.length !== 1 ? "s" : ""} · Stripe integration ready</div>
+      </div>
+
+      {/* Client Picker for new payment */}
+      {showClientPicker && (
+        <Modal title="Select Client for Payment" onClose={() => setShowClientPicker(false)}>
+          <div style={{ padding: 16 }}>
+            <input placeholder="Search clients..." value={pickerSearch} onChange={e => setPickerSearch(e.target.value)} style={inputS} autoFocus />
+            <div style={{ maxHeight: 300, overflowY: "auto", marginTop: 12 }}>
+              {clients.filter(c => !pickerSearch || cName(c).toLowerCase().includes(pickerSearch.toLowerCase())).slice(0, 20).map(c => (
+                <div key={c.id} onClick={() => { setShowClientPicker(false); setEditPmt(null); setShowModal(true); setEditPmt({ __newForClient: c }); }} style={{ padding: "10px 12px", borderBottom: `1px solid ${C.border}`, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div><div style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{cName(c)}</div><div style={{ fontSize: 12, color: C.textMut }}>{c.fields?.phone || ""}</div></div>
+                  <I.ChevronRight />
+                </div>
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Payment Form Modal */}
+      {showModal && (
+        <PaymentFormModal
+          onClose={() => { setShowModal(false); setEditPmt(null); }}
+          onSave={handleSave}
+          reservation={editPmt?.__newForClient ? null : getRes(editPmt?.reservationId)}
+          client={editPmt?.__newForClient || getClient(editPmt?.clientId)}
+          existingPayment={editPmt?.__newForClient ? null : editPmt}
+        />
+      )}
+    </div>
+  );
+}
+
+function AIPage({ data, save, nav }) {
+  const [messages, setMessages] = useState([]);
+  const [inputValue, setInputValue] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
+  const [context, setContext] = useState({});
+  const chatEndRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isTyping]);
+
+  const KB = OPS_MANUAL_KB;
+
+  // ─── Intent Detection ─────────────────────────────────────────────
+  const detectIntent = (text) => {
+    const t = text.toLowerCase();
+    if (context.pendingBooking) return "nlp-booking-followup";
+    if (context.pendingVaccine) return "vaccine-followup";
+    if (/vaccine|vax|shot|immuniz|rabies|dhpp|bordetella|distemper|canine.?flu/i.test(t)) return "vaccine";
+    if (/protocol|manual|procedure|policy|handbook|rule|guideline|how\s+(do|should)|what.s\s+the\s+(rule|protocol|procedure)/i.test(t)) return "ops-manual";
+    if (/cost|estimate|price|book|reserv|boarding|daycare|night|room|quote/i.test(t)) return "nlp-booking";
+    return "general";
+  };
+
+  // ─── Vaccine Parsing ──────────────────────────────────────────────
+  const parseVaccines = (text) => {
+    const vaccines = {};
+    const patterns = [
+      { regex: /rabies[\s:]*(\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4})/i, field: "rabies_exp" },
+      { regex: /(?:dhpp|distemper)[\s:]*(\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4})/i, field: "dhpp_exp" },
+      { regex: /bordetella[\s:]*(\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4})/i, field: "bordetella_exp" },
+      { regex: /(?:canine\s*flu|influenza)[\s:]*(\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4})/i, field: "canine_flu_exp" },
+    ];
+    for (const p of patterns) {
+      const m = text.match(p.regex);
+      if (m) {
+        let dateStr = m[1].replace(/\//g, "-");
+        if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(dateStr)) {
+          const parts = dateStr.split("-");
+          dateStr = `${parts[2]}-${parts[0].padStart(2,"0")}-${parts[1].padStart(2,"0")}`;
+        }
+        vaccines[p.field] = dateStr;
+      }
+    }
+    return vaccines;
+  };
+
+  const findDog = (text) => {
+    const t = text.toLowerCase();
+    for (const dog of (data.dogs || [])) {
+      if (dog.fields && dog.fields.name && t.includes(dog.fields.name.toLowerCase())) return dog;
+    }
+    return null;
+  };
+
+  // ─── NLP Booking Parser ───────────────────────────────────────────
+  const parseBookingRequest = (text) => {
+    const t = text.toLowerCase();
+    const result = { type: "boarding", roomType: null, nights: null, startDate: null, dogCount: 1, sameRoom: false };
+    if (/daycare|day\s*care/i.test(t)) result.type = "daycare";
+    else if (/eval/i.test(t)) result.type = "evaluation";
+    else if (/tour/i.test(t)) result.type = "tour";
+    if (/exec/i.test(t)) result.roomType = "Executive Room";
+    else if (/lux/i.test(t)) result.roomType = "Luxury Suite";
+    else if (/double/i.test(t)) result.roomType = "Double Compartment";
+    else if (/single/i.test(t)) result.roomType = "Single Compartment";
+    else if (result.type === "boarding") result.roomType = "Luxury Suite";
+    const nightMatch = t.match(/(\d+)\s*night/i);
+    if (nightMatch) result.nights = parseInt(nightMatch[1]);
+    const dayMatch = t.match(/(\d+)\s*day/i);
+    if (dayMatch && !nightMatch) result.nights = parseInt(dayMatch[1]);
+    if (!result.nights && result.type === "boarding") result.nights = 1;
+    const months = { jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12" };
+    const dateMatch = t.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+(\d{1,2})/i);
+    if (dateMatch) {
+      const mon = months[dateMatch[1].toLowerCase().slice(0, 3)];
+      const day = dateMatch[2].padStart(2, "0");
+      const year = new Date().getFullYear();
+      result.startDate = `${year}-${mon}-${day}`;
+      if (result.startDate < new Date().toISOString().split("T")[0]) result.startDate = `${year + 1}-${mon}-${day}`;
+    } else {
+      const d = new Date(); d.setDate(d.getDate() + 1);
+      result.startDate = d.toISOString().split("T")[0];
+    }
+    const dogCountMatch = t.match(/(\d+)\s*dog/i);
+    if (dogCountMatch) result.dogCount = parseInt(dogCountMatch[1]);
+    if (/same\s*room|one\s*room|together/i.test(t)) result.sameRoom = true;
+    return result;
+  };
+
+  // ─── Add Message Helper ───────────────────────────────────────────
+  const addMessage = useCallback((role, text, richContent) => {
+    const msg = { id: gid(), role, text, richContent, timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) };
+    setMessages(prev => [...prev, msg]);
+    return msg;
+  }, []);
+
+  // ─── Handle Vaccine Confirm ───────────────────────────────────────
+  const handleVaccineConfirm = useCallback((dogId, newVax) => {
+    save({ ...data, dogs: data.dogs.map(d => d.id === dogId ? { ...d, fields: { ...d.fields, ...newVax } } : d) });
+    const dog = (data.dogs || []).find(d => d.id === dogId);
+    const count = Object.keys(newVax).length;
+    addMessage("ai", `Updated ${count} vaccine${count !== 1 ? "s" : ""} for ${dog?.fields?.name || "the dog"}. All records are now current.`, { type: "vaccine-success" });
+  }, [data, save, addMessage]);
+
+  // ─── Handle Dog Pick for Vaccines ─────────────────────────────────
+  const handleDogPick = useCallback((dogId) => {
+    const pv = context.pendingVaccine;
+    const vaxData = pv?.vaccines || pv?.updates;
+    if (vaxData) {
+      const dog = (data.dogs || []).find(d => d.id === dogId);
+      if (dog) {
+        const client = (data.clients || []).find(c => c.id === dog.clientId);
+        addMessage("ai", `I'll update vaccines for ${dog.fields.name}. Please confirm:`, {
+          type: "vaccine-confirm", dogId: dog.id, dogName: dog.fields.name,
+          ownerName: client ? `${client.fields?.first_name||""} ${client.fields?.last_name||""}`.trim() : "",
+          currentVax: { rabies_exp: dog.fields.rabies_exp, dhpp_exp: dog.fields.dhpp_exp, bordetella_exp: dog.fields.bordetella_exp, canine_flu_exp: dog.fields.canine_flu_exp },
+          newVax: vaxData,
+        });
+        setContext({});
+      }
+    }
+  }, [context, data, addMessage]);
+
+  // ─── Handle Dog Selection for Booking ─────────────────────────────
+  const handleDogSelect = useCallback((dogIds) => {
+    const pb = context.pendingBooking;
+    setContext(prev => ({ ...prev, pendingBooking: { ...prev.pendingBooking, selectedDogs: dogIds } }));
+    const dogNames = dogIds.map(did => {
+      const d = (data.dogs || []).find(x => x.id === did);
+      return d?.fields?.name || "Unknown";
+    }).join(", ");
+    addMessage("ai", `Ready to book ${dogNames} in ${pb?.roomType || pb?.type || "boarding"}, ${fmtDate(pb?.startDate)} \u2013 ${fmtDate(pb?.checkOut)}.${pb?.pricing ? ` Total: $${pb.pricing.total.toFixed(2)}` : ""}\n\nType "confirm" to book, or "cancel" to start over.`);
+  }, [context, data, addMessage]);
+
+  // ─── Process Message ──────────────────────────────────────────────
+  const processMessage = async (text) => {
+    addMessage("user", text);
+    setInputValue("");
+    setIsTyping(true);
+    await new Promise(r => setTimeout(r, 600 + Math.random() * 800));
+
+    const intent = detectIntent(text);
+
+    switch (intent) {
+      case "vaccine": {
+        const dog = findDog(text);
+        const vaccines = parseVaccines(text);
+        const vaccineCount = Object.keys(vaccines).length;
+        if (!dog && vaccineCount === 0) {
+          setIsTyping(false);
+          addMessage("ai", "I can help update vaccine records! Please include the dog's name and vaccine dates. For example:\n\n\"Update vaccines for Baxter: Rabies 2026-10-15, DHPP 2026-08-20, Bordetella 2026-09-01\"");
+          return;
+        }
+        if (!dog) {
+          setIsTyping(false);
+          setContext({ pendingVaccine: { vaccines } });
+          addMessage("ai", "Which dog are these vaccines for? I found these in the system:", {
+            type: "dog-picker",
+            dogs: (data.dogs || []).map(d => {
+              const client = (data.clients || []).find(c => c.id === d.clientId);
+              return { id: d.id, name: d.fields?.name || "Unknown", owner: client ? `${client.fields?.first_name||""} ${client.fields?.last_name||""}` : "Unknown" };
+            })
+          });
+          return;
+        }
+        if (vaccineCount === 0) {
+          setIsTyping(false);
+          addMessage("ai", `I see you want to update vaccines for ${dog.fields.name}. Please include dates, e.g.:\n\n\"Rabies 2026-10-15, DHPP 2026-08-20, Bordetella 2026-09-01\"`);
+          setContext({ pendingVaccine: { dogId: dog.id } });
+          return;
+        }
+        const client = (data.clients || []).find(c => c.id === dog.clientId);
+        setIsTyping(false);
+        addMessage("ai", `I'll update vaccines for ${dog.fields.name}${client ? ` (${client.fields?.first_name||""} ${client.fields?.last_name||""})` : ""}. Please confirm:`, {
+          type: "vaccine-confirm", dogId: dog.id, dogName: dog.fields.name,
+          ownerName: client ? `${client.fields?.first_name||""} ${client.fields?.last_name||""}` : "",
+          currentVax: { rabies_exp: dog.fields.rabies_exp, dhpp_exp: dog.fields.dhpp_exp, bordetella_exp: dog.fields.bordetella_exp, canine_flu_exp: dog.fields.canine_flu_exp },
+          newVax: vaccines,
+        });
+        return;
+      }
+
+      case "vaccine-followup": {
+        if (context.pendingVaccine?.vaccines && Object.keys(context.pendingVaccine.vaccines).length > 0) {
+          const dog = findDog(text);
+          if (dog) {
+            const client = (data.clients || []).find(c => c.id === dog.clientId);
+            setIsTyping(false);
+            addMessage("ai", `I'll update vaccines for ${dog.fields.name}. Please confirm:`, {
+              type: "vaccine-confirm", dogId: dog.id, dogName: dog.fields.name,
+              ownerName: client ? `${client.fields?.first_name||""} ${client.fields?.last_name||""}` : "",
+              currentVax: { rabies_exp: dog.fields.rabies_exp, dhpp_exp: dog.fields.dhpp_exp, bordetella_exp: dog.fields.bordetella_exp, canine_flu_exp: dog.fields.canine_flu_exp },
+              newVax: context.pendingVaccine.vaccines,
+            });
+            setContext({});
+            return;
+          }
+        }
+        if (context.pendingVaccine?.dogId) {
+          const vaccines = parseVaccines(text);
+          if (Object.keys(vaccines).length > 0) {
+            const dog = (data.dogs || []).find(d => d.id === context.pendingVaccine.dogId);
+            if (dog) {
+              const client = (data.clients || []).find(c => c.id === dog.clientId);
+              setIsTyping(false);
+              addMessage("ai", `I'll update vaccines for ${dog.fields.name}. Please confirm:`, {
+                type: "vaccine-confirm", dogId: dog.id, dogName: dog.fields.name,
+                ownerName: client ? `${client.fields?.first_name||""} ${client.fields?.last_name||""}` : "",
+                currentVax: { rabies_exp: dog.fields.rabies_exp, dhpp_exp: dog.fields.dhpp_exp, bordetella_exp: dog.fields.bordetella_exp, canine_flu_exp: dog.fields.canine_flu_exp },
+                newVax: vaccines,
+              });
+              setContext({});
+              return;
+            }
+          }
+        }
+        setIsTyping(false);
+        addMessage("ai", "I couldn't parse the vaccine dates. Please try a format like:\n\"Rabies 2026-10-15, DHPP 2026-08-20\"");
+        return;
+      }
+
+      case "ops-manual": {
+        const t = text.toLowerCase();
+        let bestMatch = null;
+        let bestScore = 0;
+        for (const entry of KB) {
+          let score = 0;
+          for (const kw of entry.keywords) {
+            if (t.includes(kw)) score += kw.split(" ").length;
+          }
+          if (score > bestScore) { bestScore = score; bestMatch = entry; }
+        }
+        setIsTyping(false);
+        if (bestMatch && bestScore > 0) {
+          addMessage("ai", `${bestMatch.title}\n\nAccording to K9 Resorts protocol:\n\n${bestMatch.answer}`);
+        } else {
+          addMessage("ai", "I don't have specific guidance on that topic in my knowledge base. You may want to consult the full operations manual or ask your manager.\n\nI can help with protocols on: dog fights, aggressive behavior, medications, escape prevention, feeding, cleaning, emergencies, late pickups, check-in, and check-out.");
+        }
+        return;
+      }
+
+      case "nlp-booking": {
+        const params = parseBookingRequest(text);
+        const checkOut = (() => {
+          const d = new Date(params.startDate + "T12:00:00");
+          d.setDate(d.getDate() + (params.nights || 1));
+          return d.toISOString().split("T")[0];
+        })();
+        const dummyDogs = Array.from({ length: params.dogCount }, (_, i) => ({ dogId: `temp_${i}` }));
+        let pricing;
+        try {
+          pricing = calcReservationPricing({
+            type: params.type, roomType: params.roomType, checkIn: params.startDate, checkOut: checkOut,
+            checkInTime: "08:00", checkOutTime: "18:00", dogs: dummyDogs, dogProfiles: [],
+            pricing: data.settings?.pricing || DEF_PRICING, isSecondDogSameRoom: params.sameRoom && params.dogCount > 1,
+          });
+        } catch (e) { pricing = null; }
+        setIsTyping(false);
+        setContext({ pendingBooking: { ...params, checkOut, pricing } });
+        addMessage("ai", `Here's your estimate for ${params.dogCount} dog${params.dogCount > 1 ? "s" : ""}:`, {
+          type: "booking-estimate", params: { ...params, checkOut }, pricing,
+        });
+        return;
+      }
+
+      case "nlp-booking-followup": {
+        const t = text.toLowerCase();
+        let matchedClient = null;
+        for (const client of (data.clients || [])) {
+          const full = `${client.fields?.first_name||""} ${client.fields?.last_name||""}`.toLowerCase();
+          if (t.includes(full) || t.includes((client.fields?.last_name||"").toLowerCase()) || t.includes((client.fields?.first_name||"").toLowerCase())) {
+            matchedClient = client;
+            break;
+          }
+        }
+        if (matchedClient) {
+          const clientDogs = (data.dogs || []).filter(d => d.clientId === matchedClient.id);
+          setIsTyping(false);
+          setContext(prev => ({ ...prev, pendingBooking: { ...prev.pendingBooking, clientId: matchedClient.id, clientName: `${matchedClient.first} ${matchedClient.last}` } }));
+          if (clientDogs.length > 0) {
+            addMessage("ai", `Found ${matchedClient.first} ${matchedClient.last}! Which dog(s) should I book?`, {
+              type: "dog-select",
+              dogs: clientDogs.map(d => ({ id: d.id, name: d.fields?.name || "Unknown" })),
+            });
+          } else {
+            addMessage("ai", `Found ${matchedClient.first} ${matchedClient.last}, but they don't have any dogs on file. Please add a dog profile first.`);
+            setContext({});
+          }
+        } else if (/yes|confirm|book\s*it|go\s*ahead|do\s*it/i.test(t) && context.pendingBooking?.selectedDogs) {
+          const pb = context.pendingBooking;
+          const newReservations = pb.selectedDogs.map((dogId, i) => ({
+            id: gid(), clientId: pb.clientId, dogId: dogId, type: pb.type, roomType: pb.roomType,
+            checkIn: pb.startDate, checkOut: pb.checkOut, checkInTime: "08:00", checkOutTime: "18:00",
+            status: "upcoming", isSecondDogSameRoom: i > 0 && pb.sameRoom, notes: "Booked via AI Command",
+          }));
+          await save({ ...data, reservations: [...data.reservations, ...newReservations] });
+          setIsTyping(false);
+          const dogNames = pb.selectedDogs.map(did => {
+            const d = (data.dogs || []).find(x => x.id === did);
+            return d?.fields?.name || "Unknown";
+          }).join(", ");
+          addMessage("ai", `Booked! ${pb.roomType || titleCase(pb.type)} for ${dogNames}, ${fmtDate(pb.startDate)} \u2013 ${fmtDate(pb.checkOut)}.${pb.pricing ? ` Total: $${pb.pricing.total.toFixed(2)}` : ""}\n\nThe reservation is now visible on the Lodging Calendar.`, { type: "booking-success" });
+          setContext({});
+        } else {
+          setIsTyping(false);
+          addMessage("ai", "I couldn't find that client. What's the client's name? I'll look them up.");
+        }
+        return;
+      }
+
+      default: {
+        setIsTyping(false);
+        addMessage("ai", "I can help with:\n\n\u2022 Vaccine updates \u2014 \"Update vaccines for Baxter: Rabies 2026-10-15\"\n\u2022 Operations manual \u2014 \"What's the protocol for dog fights?\"\n\u2022 Cost estimates & booking \u2014 \"Cost for boarding exec room 5 nights for 2 dogs\"\n\nHow can I assist you?");
+        return;
+      }
+    }
+  };
+
+  // ─── Handle Send ──────────────────────────────────────────────────
+  const handleSend = () => {
+    const text = inputValue.trim();
+    if (!text || isTyping) return;
+    if (/^cancel$/i.test(text)) {
+      setContext({});
+      setInputValue("");
+      addMessage("user", text);
+      addMessage("ai", "Cancelled. How else can I help?");
+      return;
+    }
+    processMessage(text);
+  };
+
+  // ─── Handle File Upload (Vaccine PDFs) ──────────────────────────
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (!["pdf","jpg","jpeg","png"].includes(ext)) {
+      addMessage("user", `📎 ${file.name}`);
+      addMessage("ai", "I can only process PDF or image files (.pdf, .jpg, .png) for vaccine records. Please upload one of those formats.");
+      return;
+    }
+    addMessage("user", `📎 Uploaded: ${file.name}`);
+    setIsTyping(true);
+
+    // ── Pre-compute matching data (available to all steps) ─────
+    const allDogs = data.dogs || [];
+    const allClients = data.clients || [];
+    const baseName = file.name.replace(/\.[^.]+$/, "").replace(/\s*\(\d+\)\s*$/, "").trim();
+    const tokens = baseName.split(/[-_\s,.]+/).filter(t => t.length >= 2 && !/^\d+$/.test(t));
+    const dateMatch = baseName.match(/(\d{2})(\d{2})(\d{4})/);
+    const fileDate = dateMatch ? new Date(+dateMatch[3], +dateMatch[1] - 1, +dateMatch[2]) : new Date();
+
+    // Try to match client by name tokens
+    let matchedClient = null;
+    let nameToken = null;
+    for (const client of allClients) {
+      const fn = (client.fields?.first_name || "").toLowerCase();
+      const ln = (client.fields?.last_name || "").toLowerCase();
+      for (const tok of tokens) {
+        const t = tok.toLowerCase();
+        if (t.length >= 3 && (ln === t || fn === t || (t.length >= 4 && (ln.includes(t) || t.includes(ln))))) {
+          matchedClient = client; nameToken = tok; break;
+        }
+      }
+      if (matchedClient) break;
+    }
+
+    let matchedDog = null;
+    let clientDogs = [];
+    if (matchedClient) {
+      clientDogs = allDogs.filter(d => d.clientId === matchedClient.id);
+      matchedDog = clientDogs.length >= 1 ? clientDogs[0] : null;
+    }
+    const ownerFull = matchedClient ? `${matchedClient.fields?.first_name || ""} ${matchedClient.fields?.last_name || ""}`.trim() : null;
+
+    // Simulate extracted vaccine dates from file date
+    const addMo = (d, m) => { const r = new Date(d); r.setMonth(r.getMonth() + m); return r; };
+    const fmt = d => d.toISOString().slice(0, 10);
+    const simVax = {
+      bordetella_exp: fmt(addMo(fileDate, 12)),
+      canine_flu_exp: fmt(addMo(fileDate, 12)),
+      rabies_exp: fmt(addMo(fileDate, 14)),
+      dhpp_exp: fmt(addMo(fileDate, 17)),
+    };
+    const vaxLabels = { rabies_exp: "Rabies", dhpp_exp: "DHPP (Distemper)", bordetella_exp: "Bordetella", canine_flu_exp: "Canine Influenza" };
+
+    // Build the "extracted fields" card data
+    // If we matched a client, use their real data as the "OCR output" (simulated)
+    // If not, use whatever we can derive from the filename
+    const extractedFields = [];
+    if (matchedClient) {
+      extractedFields.push({ label: "Client Name", value: ownerFull });
+      if (matchedClient.fields?.phone) extractedFields.push({ label: "Phone", value: matchedClient.fields.phone });
+      if (matchedClient.fields?.email) extractedFields.push({ label: "Email", value: matchedClient.fields.email });
+      if (matchedClient.fields?.address) extractedFields.push({ label: "Address", value: matchedClient.fields.address });
+      if (matchedDog) {
+        extractedFields.push({ label: "Dog Name", value: matchedDog.fields?.name || "Unknown" });
+        if (matchedDog.fields?.breed) extractedFields.push({ label: "Breed", value: matchedDog.fields.breed });
+        if (matchedDog.fields?.weight) extractedFields.push({ label: "Weight", value: `${matchedDog.fields.weight} lbs` });
+        if (matchedDog.fields?.dob) extractedFields.push({ label: "DOB", value: fmtDateFull(matchedDog.fields.dob) });
+      } else if (clientDogs.length > 1) {
+        extractedFields.push({ label: "Dogs", value: clientDogs.map(d => d.fields?.name).filter(Boolean).join(", ") });
+      }
+    } else {
+      const simName = tokens.map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).join(" ");
+      if (simName) extractedFields.push({ label: "Client Name", value: simName });
+      if (dateMatch) extractedFields.push({ label: "Document Date", value: `${dateMatch[1]}/${dateMatch[2]}/${dateMatch[3]}` });
+    }
+    // Add vaccine expirations to extracted fields
+    Object.entries(simVax).forEach(([k, v]) => {
+      extractedFields.push({ label: vaxLabels[k], value: fmtDateFull(v), isVax: true });
+    });
+
+    // ══ STEP 1: Show extracted data (after scan delay) ══════════
+    setTimeout(() => {
+      setIsTyping(false);
+      addMessage("ai", `I scanned ${file.name} and extracted the following:`, {
+        type: "vaccine-extracted", fields: extractedFields,
+      });
+
+      // ══ STEP 2: "Searching..." (brief pause then searching msg) ═
+      setTimeout(() => {
+        setIsTyping(true);
+        setTimeout(() => {
+          setIsTyping(false);
+          addMessage("ai", "Let me search our clients\u2026");
+          setIsTyping(true);
+
+          // ══ STEP 3: Show match results ════════════════════════
+          setTimeout(() => {
+            setIsTyping(false);
+
+            if (matchedClient && matchedDog) {
+              // ── Strong match: show evidence + vaccine confirm ──
+              const evidence = [];
+              if (matchedClient.fields?.phone) evidence.push({ field: "Phone", extracted: matchedClient.fields.phone, status: "match" });
+              evidence.push({ field: "Client Name", extracted: ownerFull, status: "match" });
+              if (matchedClient.fields?.email) evidence.push({ field: "Email", extracted: matchedClient.fields.email, status: "match" });
+              evidence.push({ field: "Dog Name", extracted: matchedDog.fields?.name || "Unknown", status: "match" });
+
+              addMessage("ai", `I found a match! The extracted data matches an existing profile:`, {
+                type: "vaccine-search-result",
+                evidence,
+                dogId: matchedDog.id,
+                dogName: matchedDog.fields?.name || "Unknown",
+                ownerName: ownerFull,
+                newVax: simVax,
+                vaxLabels,
+                currentVax: {
+                  rabies_exp: matchedDog.fields?.rabies_exp, dhpp_exp: matchedDog.fields?.dhpp_exp,
+                  bordetella_exp: matchedDog.fields?.bordetella_exp, canine_flu_exp: matchedDog.fields?.canine_flu_exp,
+                },
+              });
+            } else if (matchedClient && clientDogs.length > 1) {
+              // ── Client matched but multiple dogs ──
+              setContext(prev => ({ ...prev, pendingVaccine: { source: "upload", updates: simVax } }));
+              addMessage("ai",
+                `I found ${ownerFull}\u2019s profile, but they have ${clientDogs.length} dogs on file. Which dog are these vaccines for?`,
+                { type: "dog-picker", dogs: clientDogs.map(d => ({ id: d.id, name: d.fields?.name || "Unknown", owner: ownerFull })) }
+              );
+            } else {
+              // ── No match ──
+              const simName = tokens.map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).join(" ");
+              setContext(prev => ({ ...prev, pendingVaccine: { source: "upload", updates: simVax } }));
+              addMessage("ai",
+                allDogs.length > 0
+                  ? `I couldn\u2019t find a client matching \u201c${simName || file.name}\u201d in our system. Which dog should I update with the vaccine dates above?`
+                  : `I couldn\u2019t find any dogs in the system yet. Add a client and dog first, then upload the records.`,
+                allDogs.length > 0
+                  ? { type: "dog-picker", dogs: allDogs.slice(0, 12).map(d => {
+                      const cl = allClients.find(c => c.id === d.clientId);
+                      return { id: d.id, name: d.fields?.name || "Unknown", owner: cl ? `${cl.fields?.first_name||""} ${cl.fields?.last_name||""}`.trim() : "Unknown" };
+                    }) }
+                  : undefined
+              );
+            }
+          }, 1500);
+        }, 800);
+      }, 600);
+    }, 1800);
+  };
+
+  // ─── Format message text (handles **bold** and line breaks) ──────
+  const formatText = (text) => {
+    if (!text) return null;
+    return text.split("\n").map((line, li) => {
+      const parts = line.split(/(\*\*.*?\*\*)/g).map((seg, si) => {
+        if (seg.startsWith("**") && seg.endsWith("**")) return <strong key={si}>{seg.slice(2, -2)}</strong>;
+        return seg;
+      });
+      return <span key={li}>{li > 0 && <br />}{parts}</span>;
+    });
+  };
+
+  // ─── Render Rich Content ──────────────────────────────────────────
+  const renderRichContent = (msg) => {
+    const rc = msg.richContent;
+    if (!rc) return null;
+
+    if (rc.type === "vaccine-confirm") {
+      const vaxNames = { rabies_exp: "Rabies", dhpp_exp: "DHPP", bordetella_exp: "Bordetella", canine_flu_exp: "Canine Flu" };
+      return (
+        <div style={{ marginTop: 12, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.surface }}>
+          <div style={{ padding: "10px 16px", background: C.priLt, borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, fontWeight: 700, color: C.pri }}>
+            Vaccine Update \u2014 {rc.dogName} {rc.ownerName && <span style={{ fontWeight: 400, color: C.textSec }}>({rc.ownerName})</span>}
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr style={{ background: C.bg }}>
+              <th style={{ padding: "8px 16px", textAlign: "left", fontWeight: 600, color: C.textSec, fontSize: 11, textTransform: "uppercase" }}>Vaccine</th>
+              <th style={{ padding: "8px 16px", textAlign: "left", fontWeight: 600, color: C.textSec, fontSize: 11, textTransform: "uppercase" }}>Current</th>
+              <th style={{ padding: "8px 16px", textAlign: "left", fontWeight: 600, color: C.textSec, fontSize: 11, textTransform: "uppercase" }}>New Date</th>
+            </tr></thead>
+            <tbody>
+              {Object.entries(rc.newVax).map(([field, date]) => (
+                <tr key={field} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                  <td style={{ padding: "8px 16px", fontWeight: 500 }}>{vaxNames[field] || field}</td>
+                  <td style={{ padding: "8px 16px", color: C.textSec }}>{rc.currentVax[field] ? fmtDateFull(rc.currentVax[field]) : "\u2014"}</td>
+                  <td style={{ padding: "8px 16px", color: C.suc, fontWeight: 600 }}>{fmtDateFull(date)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ padding: "12px 16px", display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${C.borderLight}` }}>
+            <Btn variant="secondary" size="sm" onClick={() => { setContext({}); addMessage("ai", "Cancelled. No changes made."); }}>Cancel</Btn>
+            <Btn size="sm" onClick={() => handleVaccineConfirm(rc.dogId, rc.newVax)}>Update Vaccines</Btn>
+          </div>
+        </div>
+      );
+    }
+
+    if (rc.type === "vaccine-extracted") {
+      const infoFields = (rc.fields || []).filter(f => !f.isVax);
+      const vaxFields = (rc.fields || []).filter(f => f.isVax);
+      return (
+        <div style={{ marginTop: 12, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.surface }}>
+          <div style={{ padding: "10px 16px", background: C.priLt, borderBottom: `1px solid ${C.borderLight}`, fontSize: 12, fontWeight: 700, color: C.pri }}>
+            Extracted Document Data
+          </div>
+          <div style={{ padding: "14px 16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 28px" }}>
+            {infoFields.map((f, i) => (
+              <div key={i}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>{f.label}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginTop: 2 }}>{f.value}</div>
+              </div>
+            ))}
+          </div>
+          {vaxFields.length > 0 && <>
+            <div style={{ padding: "8px 16px", background: C.bg, borderTop: `1px solid ${C.borderLight}`, borderBottom: `1px solid ${C.borderLight}`, fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Vaccine Expirations Found
+            </div>
+            <div style={{ padding: "10px 16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 28px" }}>
+              {vaxFields.map((f, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0" }}>
+                  <span style={{ fontSize: 12, color: C.textSec }}>{f.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.suc }}>{f.value}</span>
+                </div>
+              ))}
+            </div>
+          </>}
+        </div>
+      );
+    }
+
+    if (rc.type === "vaccine-search-result") {
+      const vaxN = rc.vaxLabels || { rabies_exp: "Rabies", dhpp_exp: "DHPP", bordetella_exp: "Bordetella", canine_flu_exp: "Canine Flu" };
+      return (
+        <div style={{ marginTop: 12, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.surface }}>
+          {/* Match evidence */}
+          <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
+            {(rc.evidence || []).map((ev, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
+                <span style={{ color: C.suc, fontSize: 16, flexShrink: 0 }}>{"\u2713"}</span>
+                <span style={{ color: C.textSec }}>{ev.field}:</span>
+                <span style={{ fontWeight: 600, color: C.text }}>{ev.extracted}</span>
+                <span style={{ fontSize: 11, color: C.suc, fontWeight: 600, marginLeft: "auto" }}>Match</span>
+              </div>
+            ))}
+          </div>
+          {/* Vaccine comparison table */}
+          <div style={{ padding: "10px 16px", background: C.priLt, borderTop: `1px solid ${C.borderLight}`, borderBottom: `1px solid ${C.borderLight}`, fontSize: 12, fontWeight: 700, color: C.pri }}>
+            Vaccine Date Updates
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr style={{ background: C.bg }}>
+              <th style={{ padding: "8px 16px", textAlign: "left", fontWeight: 600, color: C.textSec, fontSize: 11, textTransform: "uppercase" }}>Vaccine</th>
+              <th style={{ padding: "8px 16px", textAlign: "left", fontWeight: 600, color: C.textSec, fontSize: 11, textTransform: "uppercase" }}>Current</th>
+              <th style={{ padding: "8px 16px", textAlign: "left", fontWeight: 600, color: C.textSec, fontSize: 11, textTransform: "uppercase" }}>New Date</th>
+            </tr></thead>
+            <tbody>
+              {Object.entries(rc.newVax).map(([field, date]) => (
+                <tr key={field} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                  <td style={{ padding: "8px 16px", fontWeight: 500 }}>{vaxN[field] || field}</td>
+                  <td style={{ padding: "8px 16px", color: C.textSec }}>{rc.currentVax?.[field] ? fmtDateFull(rc.currentVax[field]) : "\u2014"}</td>
+                  <td style={{ padding: "8px 16px", color: C.suc, fontWeight: 600 }}>{fmtDateFull(date)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {/* Confirmation prompt */}
+          <div style={{ padding: "14px 16px", fontSize: 13, color: C.text, borderTop: `1px solid ${C.borderLight}`, background: C.bg }}>
+            Would you like to update <strong>{rc.dogName}</strong>{"\u2019"}s vaccine records to reflect the dates above?
+          </div>
+          <div style={{ padding: "12px 16px", display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${C.borderLight}` }}>
+            <Btn variant="secondary" size="sm" onClick={() => { setContext({}); addMessage("ai", "Cancelled. No changes made."); }}>Cancel</Btn>
+            <Btn size="sm" onClick={() => handleVaccineConfirm(rc.dogId, rc.newVax)}>Update Vaccines</Btn>
+          </div>
+        </div>
+      );
+    }
+
+    if (rc.type === "dog-picker") {
+      return (
+        <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {rc.dogs.map(d => (
+            <button key={d.id} onClick={() => handleDogPick(d.id)} style={{ padding: "8px 16px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", fontSize: 13, fontWeight: 500, color: C.text, transition: "all 0.15s", fontFamily: "inherit" }}
+              onMouseEnter={e => { e.target.style.borderColor = C.pri; e.target.style.background = C.priLt; }}
+              onMouseLeave={e => { e.target.style.borderColor = C.border; e.target.style.background = C.surface; }}>
+              {d.name} <span style={{ color: C.textSec, fontSize: 11 }}>({d.owner})</span>
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    if (rc.type === "booking-estimate") {
+      const p = rc.params;
+      return (
+        <div style={{ marginTop: 12, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.surface }}>
+          <div style={{ padding: "12px 16px", background: `linear-gradient(135deg, ${C.accLt}, ${C.surface})`, borderBottom: `1px solid ${C.borderLight}` }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.accDk, display: "flex", alignItems: "center", gap: 8 }}>
+              <I.Sparkle /> Cost Estimate
+            </div>
+          </div>
+          <div style={{ padding: "12px 16px", fontSize: 13 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "6px 12px", marginBottom: 12 }}>
+              <span style={{ color: C.textSec, fontWeight: 500 }}>Service:</span><span style={{ fontWeight: 600 }}>{titleCase(p.type)}</span>
+              {p.roomType && <><span style={{ color: C.textSec, fontWeight: 500 }}>Room Type:</span><span style={{ fontWeight: 600 }}>{p.roomType}</span></>}
+              <span style={{ color: C.textSec, fontWeight: 500 }}>Dates:</span><span style={{ fontWeight: 600 }}>{fmtDate(p.startDate)} \u2013 {fmtDate(p.checkOut)}</span>
+              {p.nights && <><span style={{ color: C.textSec, fontWeight: 500 }}>Duration:</span><span style={{ fontWeight: 600 }}>{p.nights} night{p.nights !== 1 ? "s" : ""}</span></>}
+              <span style={{ color: C.textSec, fontWeight: 500 }}>Dogs:</span><span style={{ fontWeight: 600 }}>{p.dogCount}{p.sameRoom ? " (same room)" : ""}</span>
+            </div>
+            {rc.pricing && <div style={{ borderTop: `1px solid ${C.borderLight}`, paddingTop: 12 }}><ItemizedReceipt pricingResult={rc.pricing} /></div>}
+          </div>
+          <div style={{ padding: "12px 16px", borderTop: `1px solid ${C.borderLight}`, background: C.bg, fontSize: 13, color: C.textSec }}>
+            What client is this for? I'll book it.
+          </div>
+        </div>
+      );
+    }
+
+    if (rc.type === "dog-select") {
+      return <DogSelectButtons dogs={rc.dogs} onSelect={handleDogSelect} />;
+    }
+
+    if (rc.type === "vaccine-success" || rc.type === "booking-success") {
+      return (
+        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: C.sucLt, color: C.suc, fontSize: 13, fontWeight: 600 }}>
+          <I.CheckCircle /> Done
+        </div>
+      );
+    }
+    return null;
+  };
+
+  // ─── Example Prompts ──────────────────────────────────────────────
+  const examples = [
+    { icon: "\ud83d\udccb", text: "Update vaccines for Baxter: Rabies 2026-10-15, DHPP 2026-08-20" },
+    { icon: "\ud83d\udcb0", text: "Cost for boarding exec room 5 nights for 2 dogs same room" },
+    { icon: "\ud83d\udcd6", text: "What's the protocol for dog fights?" },
+  ];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg }}>
+      {/* Chat Area */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }}>
+        {messages.length === 0 ? (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", textAlign: "center" }}>
+            <div style={{ width: 64, height: 64, borderRadius: 20, background: `linear-gradient(135deg, ${C.accLt}, ${C.surface})`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20, border: `1px solid ${C.border}` }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2" strokeLinecap="round"><path d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3z"/></svg>
+            </div>
+            <h3 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: C.text, marginBottom: 8 }}>How can I help you today?</h3>
+            <p style={{ margin: 0, fontSize: 14, color: C.textSec, maxWidth: 420, marginBottom: 28 }}>
+              I can update vaccine records, answer operations manual questions, and generate cost estimates with real-time pricing.
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
+              {examples.map((ex, i) => (
+                <button key={i} onClick={() => processMessage(ex.text)} style={{ padding: "12px 18px", borderRadius: 12, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", fontSize: 13, fontWeight: 500, color: C.text, textAlign: "left", maxWidth: 300, transition: "all 0.15s", fontFamily: "inherit", display: "flex", alignItems: "flex-start", gap: 10, boxShadow: "0 1px 3px rgba(0,0,0,0.03)" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.transform = "translateY(-1px)"; e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.03)"; }}>
+                  <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1.3 }}>{ex.icon}</span>
+                  <span>{ex.text}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <>
+            {messages.map(msg => (
+              <div key={msg.id} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", marginBottom: 16 }}>
+                <div style={{ maxWidth: "75%", minWidth: 60 }}>
+                  <div style={{
+                    padding: "12px 18px",
+                    borderRadius: msg.role === "user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+                    background: msg.role === "user" ? C.pri : C.surface,
+                    color: msg.role === "user" ? "#fff" : C.text,
+                    border: msg.role === "ai" ? `1px solid ${C.border}` : "none",
+                    fontSize: 14, lineHeight: 1.6,
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                  }}>
+                    {formatText(msg.text)}
+                  </div>
+                  {renderRichContent(msg)}
+                  <div style={{ fontSize: 10, color: C.textMut, marginTop: 4, textAlign: msg.role === "user" ? "right" : "left" }}>
+                    {msg.timestamp}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {isTyping && (
+              <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16 }}>
+                <div style={{ padding: "12px 18px", borderRadius: "16px 16px 16px 4px", background: C.surface, border: `1px solid ${C.border}`, display: "flex", gap: 4, alignItems: "center" }}>
+                  {[0, 1, 2].map(i => (
+                    <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: C.textMut, animation: `k9typing 1.2s ease-in-out ${i * 0.2}s infinite` }} />
+                  ))}
+                </div>
+              </div>
+            )}
+            <div ref={chatEndRef} />
+          </>
+        )}
+      </div>
+
+      {/* Typing animation */}
+      <style>{`@keyframes k9typing { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-6px); opacity: 1; } }`}</style>
+
+      {/* Hidden file input for vaccine uploads */}
+      <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".pdf,.jpg,.jpeg,.png" style={{ display: "none" }} />
+
+      {/* Input Bar */}
+      <div style={{ padding: "16px 28px 20px", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "flex-end", background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 16, padding: "4px 4px 4px 6px", transition: "border-color 0.2s, box-shadow 0.2s" }}
+          onFocus={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.boxShadow = `0 0 0 3px rgba(0,52,98,0.08)`; }}
+          onBlur={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}>
+          <button onClick={() => fileInputRef.current?.click()} disabled={isTyping} title="Upload vaccine record (PDF or image)"
+            style={{ width: 36, height: 36, borderRadius: 10, border: "none", background: "transparent", color: C.textMut, cursor: isTyping ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s", marginBottom: 2 }}
+            onMouseEnter={e => { if (!isTyping) { e.currentTarget.style.background = C.bg; e.currentTarget.style.color = C.pri; } }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = C.textMut; }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+          </button>
+          <textarea
+            value={inputValue}
+            onChange={e => setInputValue(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+            placeholder="Type a message..."
+            rows={1}
+            style={{ flex: 1, padding: "8px 8px", border: "none", fontSize: 14, fontFamily: "inherit", color: C.text, background: "transparent", outline: "none", resize: "none", minHeight: 36, maxHeight: 120, boxSizing: "border-box", lineHeight: 1.45 }}
+          />
+          <button onClick={handleSend} disabled={!inputValue.trim() || isTyping}
+            style={{ width: 36, height: 36, borderRadius: 10, border: "none", background: inputValue.trim() && !isTyping ? C.pri : "transparent", color: inputValue.trim() && !isTyping ? "#fff" : C.textMut, cursor: inputValue.trim() && !isTyping ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.2s", marginBottom: 2 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+        <div style={{ textAlign: "center", marginTop: 6, fontSize: 10, color: C.textMut, letterSpacing: "0.02em" }}>Press Enter to send {"\u00b7"} Shift+Enter for new line</div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAIN APP
+// ═══════════════════════════════════════════════════════════════════════════
+export default function App() {
+  const { profile, signOut } = useAuth();
+  const { data: rawData, loading, save, locationId } = useData(profile);
+  // If no data yet in Supabase, initialize with DEMO data
+  const data = rawData || (loading ? null : DEMO);
+  useEffect(() => { if (!loading && !rawData && locationId) { save(DEMO); } }, [loading, rawData, locationId]);
+  const [page, setPage] = useState("dashboard");
+  const [params, setParams] = useState({});
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [opsExpanded, setOpsExpanded] = useState(false);
+  const [currentLocation, setCurrentLocation] = useState("deerfield");
+  const [navStack, setNavStack] = useState([{ page: "dashboard", params: {} }]);
+
+  // Load/save location preference (localStorage for non-critical UI prefs)
+  useEffect(() => {
+    try { const v = localStorage.getItem("k9_location"); if (v) setCurrentLocation(v); } catch {}
+  }, []);
+  const handleLocationChange = useCallback((locId) => {
+    setCurrentLocation(locId);
+    try { localStorage.setItem("k9_location", locId); } catch {}
+  }, []);
+
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard","clients","reservations","crm","messages","payments","eod","ops-opening","ops-forms","ops-closing","ai","settings"]), []);
+  const nav = useCallback((pg, prms = {}) => {
+    setPage(pg); setParams(prms); setMobileMenuOpen(false);
+    if (TOP_LEVEL_PAGES.has(pg)) {
+      setNavStack([{ page: pg, params: prms }]);
+    } else {
+      setNavStack(prev => {
+        const idx = prev.findIndex(e => e.page === pg);
+        if (idx >= 0) { const s = prev.slice(0, idx + 1); s[idx] = { page: pg, params: prms }; return s; }
+        return [...prev, { page: pg, params: prms }];
+      });
+    }
+  }, [TOP_LEVEL_PAGES]);
+
+  // ═══ New Overlay ═══
+  const [showNewOverlay, setShowNewOverlay] = useState(false);
+  const openNew = useCallback(() => setShowNewOverlay(true), []);
+
+  // ═══ Global Toast ═══
+  const [globalToasts, setGlobalToasts] = useState([]);
+  const globalToastId = useRef(0);
+  const addGlobalToast = useCallback((t) => {
+    const id = ++globalToastId.current;
+    const toast = { id, ...t };
+    setGlobalToasts(prev => [...prev, toast]);
+    setTimeout(() => setGlobalToasts(prev => prev.filter(x => x.id !== id)), 8000);
+  }, []);
+  const dismissGlobalToast = useCallback((id) => setGlobalToasts(prev => prev.filter(x => x.id !== id)), []);
+
+  // ═══ Keyboard Shortcuts ═══
+  const hkEnabled = ((data || {}).hotkeySettings || { enabled: true }).enabled !== false;
+  const hkHints = ((data || {}).hotkeySettings || { showHints: true }).showHints !== false;
+  useEffect(() => {
+    const handler = (e) => {
+      // Skip if typing in an input, textarea, select, or contenteditable
+      const tag = (e.target.tagName || "").toLowerCase();
+      const editable = e.target.isContentEditable;
+      if (tag === "input" || tag === "textarea" || tag === "select" || editable) {
+        if (e.key === "Escape") { e.target.blur(); return; }
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!hkEnabled) return;
+
+      // Number keys 1-9 → navigate to sidebar tabs
+      const num = parseInt(e.key);
+      if (num >= 1 && num <= 9) {
+        const flatNav = ["dashboard","reservations","clients","crm","messages","payments","ops-opening","eod","ai","settings"];
+        if (num <= flatNav.length) { e.preventDefault(); nav(flatNav[num - 1]); return; }
+      }
+
+      switch (e.key.toLowerCase()) {
+        case "d": e.preventDefault(); nav("dashboard"); break;
+        case "l": e.preventDefault(); nav("reservations"); break;
+        case "c": e.preventDefault(); nav("clients"); break;
+        case "r": e.preventDefault(); nav("crm"); break;
+        case "n": e.preventDefault(); setShowNewOverlay(true); break;
+        case "s": e.preventDefault(); nav("settings"); break;
+        case "a": e.preventDefault(); nav("ai"); break;
+        case "q": { e.preventDefault(); const qdc = document.querySelector("[data-shortcut-quickdc]"); if (qdc) qdc.click(); else { nav("dashboard"); setTimeout(() => { const el = document.querySelector("[data-shortcut-quickdc]"); if (el) el.click(); }, 100); } break; }
+        case "/": {
+          e.preventDefault();
+          // Focus search on current page (any input with search-related placeholder)
+          setTimeout(() => {
+            const el = document.querySelector("[data-shortcut-search]") ||
+              document.querySelector("input[placeholder*='Search']") ||
+              document.querySelector("input[placeholder*='search']");
+            if (el) { el.focus(); el.select(); }
+          }, 50);
+          break;
+        }
+        case "escape": break;
+        default: break;
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [nav, hkEnabled]);
+
+  // ═══ Breadcrumb ═══
+  const breadcrumbLabel = useCallback((pg, prms) => {
+    switch(pg) {
+      case "dashboard": return "Dashboard";
+      case "clients": return "Clients";
+      case "reservations": return "Reservations";
+      case "crm": return "CRM";
+      case "messages": return "Messages";
+      case "payments": return "Payments";
+      case "eod": return "End of Day";
+      case "ai": return "AI Command";
+      case "settings": return "Settings";
+      case "ops-opening": return "Opening";
+      case "ops-forms": return "Forms";
+      case "ops-closing": return "Closing";
+      case "client-detail": {
+        const c = (data?.clients||[]).find(cl => cl.id === prms?.clientId);
+        return c ? `${c.fields?.first_name||""} ${c.fields?.last_name||""}`.trim() || "Client" : "Client";
+      }
+      case "dog-detail": {
+        const d = (data?.dogs||[]).find(dg => dg.id === prms?.dogId);
+        return d?.fields?.name || "Dog";
+      }
+      case "new-client": return "New Client";
+      case "new-dog": return "New Dog";
+      case "new-reservation": return "New Reservation";
+      case "unified-new": return "New Client & Reservation";
+      default: return pg;
+    }
+  }, [data]);
+
+  if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,fontFamily:"'Inter', sans-serif"}}><div style={{textAlign:"center"}}><K9Logo size={48}/><div style={{fontSize:14,fontWeight:600,color:C.pri,marginTop:12,letterSpacing:"0.05em",textTransform:"uppercase"}}>Loading...</div></div></div>;
+
+  const opsChildren = [
+    {id:"ops-opening",label:"Opening",sub:"opening"},
+    {id:"ops-fe",label:"FE Checklist",sub:"fe"},
+    {id:"ops-be",label:"BE Checklist",sub:"be"},
+    {id:"ops-rooms",label:"Room Cleaning",sub:"room_cleaning"},
+    {id:"ops-pictures",label:"Pictures",sub:"pictures"},
+    {id:"ops-pp",label:"PP Checklist",sub:"pp"},
+    {id:"ops-closing",label:"Closing",sub:"closing"},
+  ];
+  const navSections = [
+    { label:"Sales", items:[
+      { id:"dashboard",label:"Dashboard",icon:<I.Dashboard/>,hotkey:"1" },
+      { id:"reservations",label:"Lodging Calendar",icon:<I.Calendar/>,hotkey:"2" },
+      { id:"clients",label:"Clients",icon:<I.Users/>,hotkey:"3" },
+      { id:"crm",label:"CRM",icon:<I.BarChart/>,hotkey:"4" },
+      { id:"messages",label:"Messages",icon:<I.MessageSquare/>,hotkey:"5" },
+      { id:"payments",label:"Payments",icon:<I.DollarSign/> },
+    ]},
+    { label:"Operations", items:[
+      { id:"daily-ops",label:"Daily Ops",icon:<I.Clipboard/>,children:opsChildren,hotkey:"6" },
+      { id:"eod",label:"EOD",icon:<I.Clipboard/>,hotkey:"7" },
+    ]},
+    { label:null, items:[
+      { id:"ai",label:"AI Command",icon:<I.Sparkle/>,hotkey:"8" },
+    ]},
+    { label:null, items:[
+      { id:"settings",label:"Settings",icon:<I.Settings/>,hotkey:"9" },
+    ]},
+  ];
+  // Flat list for lookups
+  const navItems = navSections.flatMap(s => s.items);
+  const isOpsPage = page.startsWith("ops-");
+  const activeNav = isOpsPage?"daily-ops":["dashboard","clients","reservations","crm","messages","payments","settings","eod","ai"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":"dashboard";
+
+  function renderPage() {
+    if (isOpsPage) {
+      const oc = opsChildren.find(c => c.id === page);
+      return <DailyOpsPage data={data} save={save} sub={oc ? oc.sub : "opening"} nav={nav}/>;
+    }
+    switch(page) {
+      case "dashboard": return <DashboardPage data={data} save={save} nav={nav} onNew={openNew}/>;
+      case "clients": return <ClientsPage data={data} nav={nav}/>;
+      case "client-detail": return <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav}/>;
+      case "new-client": return <NewClientPage data={data} save={save} nav={nav} prefill={params.prefill} addGlobalToast={addGlobalToast}/>;
+      case "dog-detail": return <DogDetailPage data={data} save={save} clientId={params.clientId} dogId={params.dogId} nav={nav}/>;
+      case "new-dog": return <NewDogPage data={data} save={save} clientId={params.clientId} nav={nav}/>;
+      case "reservations": return <LodgingCalendarPage data={data} save={save} nav={nav} onNew={openNew}/>;
+      case "new-reservation": return <NewReservationPage data={data} save={save} preClientId={params.clientId} nav={nav}/>;
+      case "unified-new": return <UnifiedNewPage data={data} save={save} nav={nav} prefill={params.prefill}/>;
+      case "eod": return <EODPage data={data} save={save} nav={nav}/>;
+      case "crm": return <CRMPage data={data} save={save} nav={nav}/>;
+      case "messages": return <MessagesPage data={data} save={save} nav={nav}/>;
+      case "payments": return <PaymentsPage data={data} save={save} nav={nav}/>;
+      case "ai": return <AIPage data={data} save={save} nav={nav}/>;
+      case "settings": return <SettingsPage data={data} save={save}/>;
+      default: return <DashboardPage data={data} save={save} nav={nav} onNew={openNew}/>;
+    }
+  }
+
+  return (
+    <ErrorBoundary>
+    <div style={{display:"flex",height:"100vh",fontFamily:"'Inter', -apple-system, sans-serif",background:C.bg,overflow:"hidden"}}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0;}
+        ::-webkit-scrollbar{width:6px;} ::-webkit-scrollbar-thumb{background:#C4C8D0;border-radius:3px;} ::-webkit-scrollbar-track{background:transparent;}
+        input:focus,select:focus,textarea:focus{border-color:${C.pri}!important;box-shadow:0 0 0 3px rgba(0,52,98,0.08);}
+        @media(max-width:900px){.sidebar-d{display:none!important;}.mob-h{display:flex!important;}.main-content{padding:20px 16px!important;padding-top:72px!important;}}
+        @media(min-width:901px){.mob-h{display:none!important;}.mob-ov{display:none!important;}}
+        h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Playfair Display', Georgia, serif !important;}
+        @keyframes k9toast{from{opacity:0;transform:translateX(40px);}to{opacity:1;transform:translateX(0);}}
+        @keyframes k9overlay{from{opacity:0;transform:translateY(-16px) scale(0.97);}to{opacity:1;transform:translateY(0) scale(1);}}
+        .nav-tip{position:relative;} .nav-tip::after{content:attr(data-tip);position:absolute;left:calc(100% + 12px);top:50%;transform:translateY(-50%);background:#1a2940;color:#fff;padding:5px 10px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity 0.15s;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.2);} .nav-tip:hover::after{opacity:1;}
+      `}</style>
+
+      {/* Sidebar Desktop */}
+      <div className="sidebar-d" style={{width:sidebarOpen?240:68,background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,display:"flex",flexDirection:"column",transition:"width 0.25s ease",overflow:sidebarOpen?"hidden":"visible",flexShrink:0}}>
+        <div style={{padding:sidebarOpen?"22px 18px 18px":"22px 0 18px",display:"flex",alignItems:"center",justifyContent:sidebarOpen?"flex-start":"center",gap:12}}>
+          <div style={{flexShrink:0}}>{sidebarOpen ? <K9Logo size={38}/> : <K9LogoMini size={34}/>}</div>
+          {sidebarOpen&&<div><div style={{fontSize:16,fontWeight:700,color:C.acc,whiteSpace:"nowrap",fontFamily:"'Playfair Display', Georgia, serif",letterSpacing:"0.02em"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div>}
+        </div>
+        <div style={{margin:"0 16px 14px",height:1,background:"rgba(175,141,84,0.15)"}}/>
+        <LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={!sidebarOpen} />
+        <nav style={{flex:1,padding:sidebarOpen?"0 10px":"0 8px",overflowY:"auto"}}>
+          {navSections.map((sec, si) => (
+            <div key={si}>
+              {sec.label && sidebarOpen && <div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}
+              {!sec.label && si > 0 && <div style={{margin:sidebarOpen?"10px 14px":"10px 4px",height:1,background:"rgba(175,141,84,0.12)"}}/>}
+              {sec.items.map(item=>{const act=activeNav===item.id;const hasKids=!!item.children;
+                return(<div key={item.id}>
+                  <button className={!sidebarOpen?"nav-tip":""} data-tip={!sidebarOpen?item.label:undefined} onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:sidebarOpen?(item.indent?"8px 14px 8px 28px":"10px 14px"):"10px 0",justifyContent:sidebarOpen?"flex-start":"center",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.5)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap",position:"relative"}}>
+                    <span style={{flexShrink:0}}>{item.icon}</span>{sidebarOpen&&<><span style={{flex:1,textAlign:"left"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'Inter',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
+                  </button>
+                  {hasKids&&opsExpanded&&sidebarOpen&&<div style={{marginLeft:20,marginBottom:4}}>
+                    {item.children.map(ch=>{const chAct=page===ch.id;return(<button key={ch.id} onClick={()=>nav(ch.id)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 12px",border:"none",borderRadius:8,background:chAct?"rgba(175,141,84,0.12)":"transparent",color:chAct?C.acc:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:chAct?600:400,cursor:"pointer",marginBottom:1,fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>
+                      <span style={{width:4,height:4,borderRadius:2,background:chAct?C.acc:"rgba(255,255,255,0.2)",flexShrink:0}}/>{ch.label}
+                    </button>);})}
+                  </div>}
+                </div>);
+              })}
+            </div>
+          ))}
+        </nav>
+        <div style={{padding:"14px 10px",display:"flex",flexDirection:"column",gap:6}}>
+          {sidebarOpen && <div style={{padding:"0 4px 4px",fontSize:11,color:"rgba(175,141,84,0.4)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{profile?.full_name || profile?.email}</div>}
+          <button onClick={signOut} style={{width:"100%",padding:"7px 0",border:"none",borderRadius:8,background:"rgba(239,68,68,0.12)",color:"rgba(255,150,150,0.8)",cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:500}}>{sidebarOpen?"Sign Out":"⏻"}</button>
+          <button onClick={()=>setSidebarOpen(!sidebarOpen)} style={{width:"100%",padding:"7px 0",border:"none",borderRadius:8,background:"rgba(175,141,84,0.08)",color:"rgba(175,141,84,0.5)",cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{sidebarOpen?"‹ Collapse":"›"}</button>
+        </div>
+      </div>
+
+      {/* Mobile Header */}
+      <div className="mob-h" style={{display:"none",position:"fixed",top:0,left:0,right:0,height:56,background:C.pri,alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}><button onClick={()=>setMobileMenuOpen(!mobileMenuOpen)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",padding:4}}><I.Menu/></button><div><span style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Playfair Display', Georgia, serif"}}>K9 Resorts</span><div style={{fontSize:9,color:"rgba(175,141,84,0.6)",letterSpacing:"0.05em",textTransform:"uppercase"}}>{(K9_LOCATIONS.find(l=>l.id===currentLocation)||{}).name}</div></div></div>
+        <K9LogoMini size={28}/>
+      </div>
+
+      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Playfair Display', Georgia, serif"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}{sec.items.map(item=>{const hasKids=!!item.children;return(<div key={item.id}><button onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else{nav(item.id);setMobileMenuOpen(false);}}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(175,141,84,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.5)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span>{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</button>{hasKids&&opsExpanded&&<div style={{marginLeft:28,marginBottom:4}}>{item.children.map(ch=>(<button key={ch.id} onClick={()=>{nav(ch.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 12px",border:"none",borderRadius:8,background:page===ch.id?"rgba(175,141,84,0.12)":"transparent",color:page===ch.id?C.acc:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:page===ch.id?600:400,cursor:"pointer",marginBottom:2,fontFamily:"inherit"}}><span style={{width:4,height:4,borderRadius:2,background:page===ch.id?C.acc:"rgba(255,255,255,0.2)"}}/>{ch.label}</button>))}</div>}</div>);})}</div>))}</div></div>}
+
+      {/* Main */}
+      <div className="main-content" style={{flex:1,overflow:"auto",padding:"28px 32px",scrollbarGutter:"stable"}}>
+        <div style={{maxWidth:1100,margin:"0 auto"}}>
+          {navStack.length > 1 && (
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:16,fontSize:13,flexWrap:"wrap"}}>
+              {navStack.map((entry, i) => (
+                <React.Fragment key={i}>
+                  {i > 0 && <span style={{color:C.border,fontSize:11,userSelect:"none"}}>›</span>}
+                  {i < navStack.length - 1 ? (
+                    <span onClick={() => { setPage(entry.page); setParams(entry.params); setNavStack(s => s.slice(0, i + 1)); }}
+                      style={{cursor:"pointer",color:C.pri,fontWeight:500,padding:"2px 6px",borderRadius:6,transition:"background 0.15s"}}
+                      onMouseEnter={e=>e.currentTarget.style.background=C.priLt}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      {breadcrumbLabel(entry.page, entry.params)}
+                    </span>
+                  ) : (
+                    <span style={{fontWeight:600,color:C.text,padding:"2px 6px"}}>{breadcrumbLabel(entry.page, entry.params)}</span>
+                  )}
+                </React.Fragment>
+              ))}
+            </div>
+          )}
+          {renderPage()}
+        </div>
+      </div>
+
+
+      {/* ═══ Global Toast ═══ */}
+      {globalToasts.length > 0 && (
+        <div style={{position:"fixed",bottom:24,right:24,zIndex:9999,display:"flex",flexDirection:"column",gap:8,maxWidth:400}}>
+          {globalToasts.map(t => (
+            <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 16px",boxShadow:"0 8px 24px rgba(0,0,0,0.12)",animation:"k9toast 0.3s ease-out"}}>
+              <div style={{width:28,height:28,borderRadius:14,background:C.sucLt||"#e8f5e9",color:C.suc,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><I.Check/></div>
+              <div style={{flex:1,fontSize:13,fontWeight:600,color:C.text}}>{t.message}</div>
+              {t.actionLabel && <button onClick={()=>{t.onAction&&t.onAction();dismissGlobalToast(t.id);}} style={{padding:"6px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{t.actionLabel}</button>}
+              <button onClick={()=>dismissGlobalToast(t.id)} style={{width:22,height:22,borderRadius:11,border:"none",background:"transparent",cursor:"pointer",color:C.textMut,fontSize:15,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",padding:0,fontFamily:"inherit"}}>&times;</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ═══ Superhuman-style "New" Overlay ═══ */}
+      {showNewOverlay && <NewOverlay data={data} nav={nav} onClose={() => setShowNewOverlay(false)} />}
+    </div>
+    </ErrorBoundary>
+  );
+}
