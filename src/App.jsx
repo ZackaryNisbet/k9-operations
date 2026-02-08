@@ -3375,7 +3375,8 @@ function ClientsPage({ data, nav }) {
       list = list.filter(c => {
         const fn = `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.toLowerCase();
         const ph = (c.fields.phone || "").replace(/\D/g, "");
-        return fn.includes(q) || (c.fields.email || "").toLowerCase().includes(q) || (sq && ph.includes(sq));
+        const dogNames = data.dogs.filter(d => d.clientId === c.id).map(d => (d.fields.name || "").toLowerCase()).join(" ");
+        return fn.includes(q) || dogNames.includes(q) || (c.fields.email || "").toLowerCase().includes(q) || (sq && ph.includes(sq));
       });
     }
     // Sort
@@ -3429,7 +3430,7 @@ function ClientsPage({ data, nav }) {
       </div>
       <div style={{ position: "relative", marginBottom: 16 }}>
         <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.textMut }}><I.Search /></div>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name, phone, or email..."
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by client name, dog name, phone, or email..."
           style={{ width: "100%", padding: "12px 14px 12px 42px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" }}
           onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
       </div>
