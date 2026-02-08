@@ -2376,7 +2376,7 @@ function DashboardPage({ data, save, nav, onNew }) {
     return false;
   }).length;
   // Count boarding rooms occupied tonight (exclude dogs checking out today — their room frees up tonight)
-  const boardingInHouse = inHouse.filter(r => r.type === "boarding");
+  const boardingInHouse = inHouse.filter(r => r.type === "boarding" || r.type === "dayboarding");
   const boardingOcc = boardingInHouse.filter(r => r.checkOut !== vd).length;
 
   const [boardingPreviewId, setBoardingPreviewId] = useState(null);
@@ -2457,7 +2457,7 @@ function DashboardPage({ data, save, nav, onNew }) {
 
   const handleCheckIn = (rid) => {
     const res = data.reservations.find(r => r.id === rid);
-    if (res && res.type === "boarding") {
+    if (res && (res.type === "boarding" || res.type === "dayboarding")) {
       setBoardingPreviewId(rid);
       return;
     }
@@ -2490,8 +2490,8 @@ function DashboardPage({ data, save, nav, onNew }) {
   };
   // Old evalModalRes removed — now uses EvaluationFormPage
 
-  const typeLabel=(t)=>t==="boarding"?"Boarding":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
-  const typeColor=(t)=>t==="boarding"?"primary":t==="daycare"?"success":t==="evaluation"?"warning":"accent";
+  const typeLabel=(t)=>t==="boarding"?"Boarding":t==="dayboarding"?"Day Board":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
+  const typeColor=(t)=>t==="boarding"?"primary":t==="dayboarding"?"primary":t==="daycare"?"success":t==="evaluation"?"warning":"accent";
 
   // ═══ Summary Stats ═══
   const todayByType = (type, extra) => todayAll.filter(r => r.type === type && (!extra || extra(r)));
@@ -2521,8 +2521,8 @@ function DashboardPage({ data, save, nav, onNew }) {
   const dcSmallIn = countByStatus(dcSmall, "checked-in");
   const dcSmallOut = countByStatus(dcSmall, "checked-out");
 
-  // Boarding by room type
-  const boardingToday = todayAll.filter(r => r.type === "boarding");
+  // Boarding by room type (includes dayboarding)
+  const boardingToday = todayAll.filter(r => r.type === "boarding" || r.type === "dayboarding");
   const boardingByRoom = ROOM_TYPES.map(rt => {
     const rooms = boardingToday.filter(r => r.roomType === rt);
     return { name: rt, scheduled: rooms.length, checkedIn: countByStatus(rooms, "checked-in"), checkedOut: countByStatus(rooms, "checked-out") };
@@ -2966,6 +2966,7 @@ function DashboardPage({ data, save, nav, onNew }) {
               { type: "evaluation", label: "Evals", color: C.acc },
               { type: "tour", label: "Tours", color: C.info },
               { type: "boarding", label: "Board", color: C.pri },
+              { type: "dayboarding", label: "Day Board", color: C.pri },
               { type: "daycare", label: "Daycare", color: C.suc },
             ].map(f => {
               const on = typeFilters.has(f.type);
@@ -3070,7 +3071,7 @@ function DashboardPage({ data, save, nav, onNew }) {
                           </div>
                           {/* Lodging */}
                           <div>
-                            {res.type === "boarding" && res.roomType && <><div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{res.roomType}</div>{res.room && <div style={{ fontSize: 11, color: C.textSec }}>{res.room}</div>}</>}
+                            {(res.type === "boarding" || res.type === "dayboarding") && res.roomType && <><div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{res.roomType}</div>{res.room && <div style={{ fontSize: 11, color: C.textSec }}>{res.room}</div>}</>}
                           </div>
                           {/* In Time */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
@@ -3089,10 +3090,10 @@ function DashboardPage({ data, save, nav, onNew }) {
                             onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
                             onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}>
                             {showCheckIn && <Btn size="sm" variant="success" onClick={() => handleCheckIn(res.id)} icon={<I.LogIn/>}>In</Btn>}
-                            {showCheckOut && ((res.type === "evaluation" && !hasCompletedEval(data, res)) || (res.type === "boarding" && res.needsEval && !hasCompletedEval(data, res))) && (
+                            {showCheckOut && ((res.type === "evaluation" && !hasCompletedEval(data, res)) || ((res.type === "boarding" || res.type === "dayboarding") && res.needsEval && !hasCompletedEval(data, res))) && (
                               <Btn size="sm" variant="warning" onClick={() => nav("evaluation-form", { reservationId: res.id })} icon={<I.Clipboard/>}>Eval</Btn>
                             )}
-                            {showCheckOut && (res.type === "boarding" || (res.type === "evaluation" && hasCompletedEval(data, res)) || (res.type !== "evaluation" && res.type !== "boarding")) && (
+                            {showCheckOut && (res.type === "boarding" || res.type === "dayboarding" || (res.type === "evaluation" && hasCompletedEval(data, res)) || (res.type !== "evaluation" && res.type !== "boarding" && res.type !== "dayboarding")) && (
                               <Btn size="sm" variant="accent" onClick={() => handleCheckOut(res.id)} icon={<I.LogOut/>}>Out</Btn>
                             )}
                             {activeTab === "checkedout" && <Badge color="default" size="sm">Done</Badge>}
@@ -3283,8 +3284,8 @@ function ClientsPage({ data, nav }) {
     background: sortCol === col ? C.priLt : "transparent", borderRadius: 6, transition: "all 0.1s",
   });
   const tdStyle = { fontSize: 13, color: C.text, padding: "10px 8px", whiteSpace: "nowrap" };
-  const typeLabel = (t) => t === "boarding" ? "Board" : t === "daycare" ? "Daycare" : t === "evaluation" ? "Eval" : "Tour";
-  const typeColor = (t) => t === "boarding" ? C.pri : t === "daycare" ? C.suc : t === "evaluation" ? C.warn : C.acc;
+  const typeLabel = (t) => t === "boarding" ? "Board" : t === "dayboarding" ? "Day Board" : t === "daycare" ? "Daycare" : t === "evaluation" ? "Eval" : "Tour";
+  const typeColor = (t) => t === "boarding" ? C.pri : t === "dayboarding" ? C.pri : t === "daycare" ? C.suc : t === "evaluation" ? C.warn : C.acc;
 
   return (
     <div>
@@ -3402,13 +3403,13 @@ function ClientDetailPage({ data, save, clientId, nav, profile }) {
   const [boardingPreviewId, setBoardingPreviewId] = useState(null);
   const handleCheckIn = (rid) => {
     const res = data.reservations.find(r => r.id === rid);
-    if (res && res.type === "boarding") { setBoardingPreviewId(rid); return; }
+    if (res && (res.type === "boarding" || res.type === "dayboarding")) { setBoardingPreviewId(rid); return; }
     save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-in"}:r)});
   };
   const handleCheckOut = async (rid) => { await save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out"}:r)}); };
 
   const dn=(did)=>{const d=data.dogs.find(x=>x.id===did);return d?d.fields.name:"Unknown";};
-  const tl=(t)=>t==="boarding"?"Boarding":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
+  const tl=(t)=>t==="boarding"?"Boarding":t==="dayboarding"?"Day Board":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
   const sc=(s)=>s==="checked-in"?"success":s==="upcoming"?"info":"default";
 
   // Stats calculations
@@ -3467,7 +3468,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile }) {
 
   // Reservation card renderer
   const renderResCard = (res) => (
-    <Card key={res.id} style={{padding:"12px 18px",cursor:res.type==="boarding"?"pointer":"default"}} onClick={()=>{if(res.type==="boarding")setBoardingPreviewId(res.id);}}>
+    <Card key={res.id} style={{padding:"12px 18px",cursor:(res.type==="boarding"||res.type==="dayboarding")?"pointer":"default"}} onClick={()=>{if(res.type==="boarding"||res.type==="dayboarding")setBoardingPreviewId(res.id);}}>
       <div style={{display:"flex",alignItems:"center",gap:14}}>
         <div style={{flex:1}}>
           <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
@@ -5039,6 +5040,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
 
   useEffect(()=>{if(type==="daycare"||type==="dayboarding"||type==="tour"||type==="evaluation")setCheckOut(checkIn);},[type,checkIn]);
   useEffect(()=>{if(type==="daycare"||type==="dayboarding"){setCheckInTime("07:00");setCheckOutTime("18:00");}else if(type==="tour"){setCheckInTime("14:00");setCheckOutTime("14:30");}else if(type==="evaluation"){setCheckInTime("09:00");setCheckOutTime("10:00");}else{setCheckInTime("09:00");setCheckOutTime("11:00");}},[type]);
+  useEffect(()=>{if(type==="dayboarding")setRoomType("Executive Room");},[type]);
   useEffect(()=>{setSelectedRoom("");},[roomType]);
 
   // Hotkeys: T cycles type, R cycles room type (capture phase so page-level takes priority over global nav)
@@ -5081,6 +5083,10 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
     if(selectedDogs.length===0)errs.dogs="Select at least one dog";
     if(!checkIn)errs.checkIn="Required";
     if(type==="boarding"&&checkOut<checkIn)errs.checkOut="Must be after check-in";
+    // Closed dates check — block check-ins and check-outs on closed dates
+    const closedSet = new Set((data.closedDates || []).map(cd => cd.date));
+    if(closedSet.has(checkIn)){const cd=(data.closedDates||[]).find(c=>c.date===checkIn);errs.checkIn=`Resort is closed on this date${cd?.label?` (${cd.label})`:""}`;}
+    if(type==="boarding"&&closedSet.has(checkOut)){const cd=(data.closedDates||[]).find(c=>c.date===checkOut);errs.checkOut=`Resort is closed on this date${cd?.label?` (${cd.label})`:""}`;}
     if(Object.keys(errs).length>0){setErrors(errs);return;}
 
     // Daycare eval gate: auto-convert to evaluation if any dog lacks a locked eval
@@ -5382,14 +5388,13 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
 
         {/* Dates & Times — before room selection so availability is based on chosen dates */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginTop:20}}>
-          <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn} required/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{errors.checkIn&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkIn}</div>}</div>
+          <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn} required/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{checkIn&&(data.closedDates||[]).some(cd=>cd.date===checkIn)&&<div style={{fontSize:11,fontWeight:700,color:C.dan,marginTop:2}}>Resort closed: {(data.closedDates||[]).find(cd=>cd.date===checkIn)?.label||"Closed"}</div>}{errors.checkIn&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkIn}</div>}</div>
           <div><Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime}/></div>
-          {(type==="boarding"||type==="dayboarding")&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>{type==="dayboarding"?"Day boarding drop-off hours are from 7 AM – 9 AM.":"Boarding drop-off hours are from 9 AM – 5:30 PM, 7 days a week."}</div></div>}
-          {type==="boarding"&&<div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} required/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{errors.checkOut&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkOut}</div>}</div>}
+          {(type==="boarding"||type==="dayboarding")&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>{type==="dayboarding"?"Day boarding: drop-off & pick-up during regular operating hours — 7 AM – 7 PM Mon–Fri, 9 AM – 5:30 PM Sat–Sun.":"Boarding drop-off hours are from 9 AM – 5:30 PM, 7 days a week."}</div></div>}
+          {type==="boarding"&&<div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} required/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{checkOut&&(data.closedDates||[]).some(cd=>cd.date===checkOut)&&<div style={{fontSize:11,fontWeight:700,color:C.dan,marginTop:2}}>Resort closed: {(data.closedDates||[]).find(cd=>cd.date===checkOut)?.label||"Closed"}</div>}{errors.checkOut&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkOut}</div>}</div>}
           {type==="boarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
           {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Boarding pick-up hours start at 9 AM. Check-out time is 12:30 PM. Extended checkout to 5:30 PM available 7 days a week for a half-day daycare fee (${`$${((data.pricing||DEF_PRICING).daycareRates?.halfDay||30).toFixed(2)}`}).</div></div>}
           {type==="dayboarding"&&<div><Inp label="Pick-Up Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
-          {type==="dayboarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Day boarding pick-up is between 4 PM – 7 PM.</div></div>}
           {type!=="boarding"&&type!=="dayboarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
         </div>
 
@@ -6341,11 +6346,23 @@ function LodgingCalendarPage({ data, save, nav, onNew }) {
     return m;
   }, [allRooms, weekDays, resByRoom]);
 
-  // Overall nightly occupancy: rooms booked / total rooms
+  // Overall day+night occupancy (boarding + dayboarding): rooms booked / total rooms
   const totalRoomCount = useMemo(() => activeTypes.reduce((s, rt) => s + (allRooms[rt] || []).length, 0), [activeTypes, allRooms]);
   const dailyOccOverall = useMemo(() =>
     weekDays.map((_, di) => activeTypes.reduce((s, rt) => s + (dailyOccByType[rt] || [])[di], 0)),
     [weekDays, activeTypes, dailyOccByType]
+  );
+
+  // Overnight-only occupancy (boarding only, excludes dayboarding)
+  const overnightResByRoom = useMemo(() => {
+    const m = {};
+    weekRes.filter(r => r.type === "boarding").forEach(r => { if (!m[r.room]) m[r.room] = []; m[r.room].push(r); });
+    return m;
+  }, [weekRes]);
+  const dailyOccOvernight = useMemo(() =>
+    weekDays.map(d => activeTypes.reduce((s, rt) =>
+      s + (allRooms[rt] || []).filter(room => (overnightResByRoom[room] || []).some(r => r.checkIn <= d && r.checkOut > d)).length, 0)),
+    [weekDays, activeTypes, allRooms, overnightResByRoom]
   );
 
   // Week label
@@ -6497,21 +6514,33 @@ function LodgingCalendarPage({ data, save, nav, onNew }) {
           })}
         </div>
 
-        {/* Overall occupancy row */}
-        {totalRoomCount > 0 && (
-          <div style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px repeat(7, ${COL_W})`, borderBottom: `2px solid ${C.border}`, background: C.surface, minHeight: 38 }}>
-            <div style={{ padding: "0 12px", display: "flex", alignItems: "center", fontSize: 11, fontWeight: 700, color: C.text, borderRight: `1px solid ${C.border}`, textTransform: "uppercase", letterSpacing: "0.03em" }}>Occupancy</div>
+        {/* Overall occupancy rows — Day+Night and Overnight Only */}
+        {totalRoomCount > 0 && (<>
+          <div style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px repeat(7, ${COL_W})`, borderBottom: `1px solid ${C.borderLight}`, background: C.surface, minHeight: 36 }}>
+            <div style={{ padding: "0 8px", display: "flex", alignItems: "center", fontSize: 10, fontWeight: 700, color: C.text, borderRight: `1px solid ${C.border}`, textTransform: "uppercase", letterSpacing: "0.03em", lineHeight: 1.2 }}>Day + Night</div>
             {dailyOccOverall.map((booked, di) => {
               const pct = totalRoomCount > 0 ? Math.round((booked / totalRoomCount) * 100) : 0;
               return (
                 <div key={di} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", borderRight: `1px solid ${C.borderLight}`, background: weekDays[di] === td ? `${C.priLt}40` : "transparent" }}>
-                  <span style={{ fontSize: 14, fontWeight: 800, color: C.text }}>{pct}%</span>
-                  <span style={{ fontSize: 10, fontWeight: 500, color: C.textMut }}>{booked}/{totalRoomCount}</span>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: C.text }}>{pct}%</span>
+                  <span style={{ fontSize: 9, fontWeight: 500, color: C.textMut }}>{booked}/{totalRoomCount}</span>
                 </div>
               );
             })}
           </div>
-        )}
+          <div style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px repeat(7, ${COL_W})`, borderBottom: `2px solid ${C.border}`, background: C.surface, minHeight: 36 }}>
+            <div style={{ padding: "0 8px", display: "flex", alignItems: "center", fontSize: 10, fontWeight: 700, color: C.textSec, borderRight: `1px solid ${C.border}`, textTransform: "uppercase", letterSpacing: "0.03em", lineHeight: 1.2 }}>Overnight</div>
+            {dailyOccOvernight.map((booked, di) => {
+              const pct = totalRoomCount > 0 ? Math.round((booked / totalRoomCount) * 100) : 0;
+              return (
+                <div key={di} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", borderRight: `1px solid ${C.borderLight}`, background: weekDays[di] === td ? `${C.priLt}40` : "transparent" }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: pct === 0 ? C.textMut : C.text }}>{pct}%</span>
+                  <span style={{ fontSize: 9, fontWeight: 500, color: C.textMut }}>{booked}/{totalRoomCount}</span>
+                </div>
+              );
+            })}
+          </div>
+        </>)}
 
         {/* Room rows */}
         {roomRows.length === 0 ? (
@@ -9832,6 +9861,7 @@ function SettingsPage({ data, save, profile }) {
     { label: "Resort Configuration", items: [
       { id: "facility", label: "Facility", desc: "Daycare square footage and capacity calculations", keywords: "facility square footage capacity daycare large small" },
       { id: "rooms", label: "Rooms", desc: "Configure room numbers for each boarding room type", keywords: "rooms boarding luxury executive double single compartment" },
+      { id: "closed-dates", label: "Closed Dates", desc: "Holidays and dates closed to the public — no check-ins or check-outs", keywords: "closed dates holidays christmas thanksgiving new year memorial labor easter july 4 blackout" },
       { id: "policies", label: "Resort Policies", desc: "Vaccine grace periods, age limits, grandfathering rules", keywords: "policies compliance vaccines grace period age limit grandfather senior" },
     ]},
     { label: "Administration", items: [
@@ -9848,7 +9878,7 @@ function SettingsPage({ data, save, profile }) {
     client:"edit_fields",dog:"edit_fields",tags:"edit_tags_config",vaccines:"edit_vaccines_config",
     agreements:"edit_agreements",pricing:"edit_pricing",dropdowns:"edit_dropdowns",
     eod:"edit_eod_template","daily-ops":"edit_ops_template",
-    facility:"edit_facility",rooms:"edit_rooms",policies:"edit_vaccines_config",
+    facility:"edit_facility",rooms:"edit_rooms","closed-dates":"edit_facility",policies:"edit_vaccines_config",
     team:"manage_team",roles:"manage_roles",reset:"reset_data",
   };
   const hp = (k) => hasPermission(profile, data, k);
@@ -10048,7 +10078,87 @@ function SettingsPage({ data, save, profile }) {
           </Card>
         </div>
 
-      ) : tab === "policies" ? (() => {
+      ) : tab === "closed-dates" ? (() => {
+        const closedDates = data.closedDates || [];
+        const [newClosedDate, setNewClosedDate] = React.useState("");
+        const [newClosedLabel, setNewClosedLabel] = React.useState("");
+        const addClosed = async () => {
+          if (!newClosedDate) return;
+          const already = closedDates.some(cd => cd.date === newClosedDate);
+          if (already) return;
+          const updated = [...closedDates, { date: newClosedDate, label: newClosedLabel.trim() || "Closed" }].sort((a,b) => a.date.localeCompare(b.date));
+          await save({ ...data, closedDates: updated });
+          setNewClosedDate(""); setNewClosedLabel("");
+        };
+        const removeClosed = async (date) => {
+          await save({ ...data, closedDates: closedDates.filter(cd => cd.date !== date) });
+        };
+        const addDefaultHolidays = async (year) => {
+          const holidays = [
+            { date: `${year}-01-01`, label: "New Year's Day" },
+            { date: `${year}-04-20`, label: "Easter Sunday" },
+            { date: `${year}-05-25`, label: "Memorial Day" },
+            { date: `${year}-07-04`, label: "Independence Day" },
+            { date: `${year}-09-07`, label: "Labor Day" },
+            { date: `${year}-11-27`, label: "Thanksgiving Day" },
+            { date: `${year}-12-25`, label: "Christmas Day" },
+            { date: `${year}-12-31`, label: "New Year's Eve" },
+          ];
+          const existing = new Set(closedDates.map(cd => cd.date));
+          const merged = [...closedDates, ...holidays.filter(h => !existing.has(h.date))].sort((a,b) => a.date.localeCompare(b.date));
+          await save({ ...data, closedDates: merged });
+        };
+        const thisYear = new Date().getFullYear();
+        const nextYear = thisYear + 1;
+        return (
+          <div>
+            <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
+              <div style={{ marginBottom: 20 }}>
+                <h3 style={{ fontSize: 16, fontWeight: 800, color: C.text, margin: 0 }}>Dates Closed to the Public</h3>
+                <div style={{ fontSize: 12, color: C.textSec, marginTop: 4 }}>No check-ins or check-outs will be allowed on these dates for any reservation type. Existing stays that span a closed date are unaffected.</div>
+              </div>
+              {/* Quick-add default holidays */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                <button onClick={() => addDefaultHolidays(thisYear)} style={{ padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>+ Add {thisYear} Holidays</button>
+                <button onClick={() => addDefaultHolidays(nextYear)} style={{ padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>+ Add {nextYear} Holidays</button>
+              </div>
+              {/* Add custom date */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 20, alignItems: "flex-end" }}>
+                <div style={{ flex: "0 0 160px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4 }}>Date</div>
+                  <input type="date" value={newClosedDate} onChange={e => setNewClosedDate(e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }} />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4 }}>Label (optional)</div>
+                  <input type="text" value={newClosedLabel} onChange={e => setNewClosedLabel(e.target.value)} placeholder="e.g. Christmas Day" style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }} />
+                </div>
+                <Btn onClick={addClosed} disabled={!newClosedDate}>Add</Btn>
+              </div>
+              {/* List of closed dates */}
+              {closedDates.length === 0 ? (
+                <div style={{ padding: 20, textAlign: "center", color: C.textMut, fontSize: 13 }}>No closed dates configured. Use the buttons above to add major holidays or custom dates.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  {closedDates.map(cd => {
+                    const d = new Date(cd.date + "T12:00:00");
+                    const isPast = cd.date < todayStr();
+                    return (
+                      <div key={cd.date} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderRadius: 8, background: isPast ? C.bg : C.surface, border: `1px solid ${isPast ? C.borderLight : C.border}`, opacity: isPast ? 0.5 : 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: C.text, minWidth: 100 }}>{d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>{cd.label}</span>
+                          <span style={{ fontSize: 11, color: C.textMut }}>{d.toLocaleDateString("en-US", { weekday: "long" })}</span>
+                        </div>
+                        <button onClick={() => removeClosed(cd.date)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4, display: "flex" }} title="Remove"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          </div>
+        );
+      })() : tab === "policies" ? (() => {
         const pol = data.resortPolicies || {};
         const updatePol = async (key, val) => await save({ ...data, resortPolicies: { ...pol, [key]: val } });
         const graceDays = pol.vaccineGraceDays ?? 7;
@@ -10723,7 +10833,7 @@ function UnifiedNewPage({ data, save, nav, prefill }) {
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 6, letterSpacing: "0.03em", textTransform: "uppercase" }}>Type</div>
               <div style={{ display: "flex", gap: 8 }}>
-                {[{ v: "boarding", l: "Boarding" }, { v: "daycare", l: "Daycare" }, { v: "evaluation", l: "Evaluation" }, { v: "tour", l: "Tour" }].map(t => (
+                {[{ v: "boarding", l: "Boarding" }, { v: "dayboarding", l: "Day Boarding" }, { v: "daycare", l: "Daycare" }, { v: "evaluation", l: "Evaluation" }, { v: "tour", l: "Tour" }].map(t => (
                   <button key={t.v} onClick={() => setType(t.v)} style={{ flex: 1, padding: "10px 0", borderRadius: 10, border: `2px solid ${type === t.v ? C.pri : C.border}`, background: type === t.v ? C.priLt : C.surface, color: type === t.v ? C.pri : C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{t.l}</button>
                 ))}
               </div>
