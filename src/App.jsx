@@ -2838,7 +2838,7 @@ function DashboardPage({ data, save, nav, onNew }) {
     ]},
   ];
 
-  const grid = "130px minmax(160px,1.2fr) 74px minmax(120px,1fr) 68px 68px 78px 78px minmax(70px,120px) 64px";
+  const grid = "120px minmax(140px,1fr) 72px minmax(110px,0.8fr) 90px 80px 90px 80px minmax(60px,110px) 58px";
   const [addOnPopup, setAddOnPopup] = useState(null); // { resId, anchorRect }
   const addOnPopupRef = useRef(null);
   useEffect(() => {
@@ -3206,7 +3206,7 @@ function DashboardPage({ data, save, nav, onNew }) {
                       const snLabel = dog ? fixedLabel(dog) : "";
                       const dogDetails = [age, weight ? `${weight}lbs` : null, snLabel].filter(Boolean).join(" · ");
                       return (
-                        <div key={res.id} onClick={() => setBoardingPreviewId(res.id)} style={{ display: "grid", gridTemplateColumns: "minmax(160px,1.2fr) 74px minmax(120px,1fr) 68px 68px 78px 78px minmax(70px,120px) 64px", alignItems: "center", minHeight: 40, cursor: "pointer" }}>
+                        <div key={res.id} onClick={() => setBoardingPreviewId(res.id)} style={{ display: "grid", gridTemplateColumns: "minmax(140px,1fr) 72px minmax(110px,0.8fr) 90px 80px 90px 80px minmax(60px,110px) 58px", alignItems: "center", minHeight: 40, cursor: "pointer" }}>
                           {/* Dog info */}
                           <div style={{ minWidth: 0 }} onClick={(e) => { e.stopPropagation(); if (dog) nav("dog-detail", { clientId: res.clientId, dogId: res.dogId }); }}
                             onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
