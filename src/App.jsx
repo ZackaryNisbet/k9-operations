@@ -510,6 +510,10 @@ function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime
       discountTotal += disc;
       lines.push({ label: `Multi-dog discount (${p.multiDogDiscount}% off)`, total: -disc, isDiscount: true });
     }
+  } else if (type === "dayboarding") {
+    const rate = p.dayboardingRate || ((p.daycareRates || {}).fullDay || 0) + 4;
+    lines.push({ label: `Day Boarding — ${roomType}`, rate, qty: 1, total: rate });
+    subtotal += rate;
   } else if (type === "daycare") {
     const hrs = countHours(checkInTime, checkOutTime);
     const threshold = p.halfDayThreshold || 5;
@@ -1116,6 +1120,7 @@ const DEF_PRICING = {
   // Daycare per day
   daycareRates: { fullDay: 45, halfDay: 30 },
   // Evaluation & Tour
+  dayboardingRate: 49,
   evaluationFee: 25,
   tourFee: 0,
   // Add-on pricing
@@ -4873,23 +4878,24 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
   // Room availability
   const allRooms = data.rooms || {};
   const roomsForType = allRooms[roomType] || [];
+  const needsRoom = type === "boarding" || type === "dayboarding";
   const bookedRoomNames = useMemo(() => {
-    if (type !== "boarding" || !checkIn) return new Set();
+    if (!needsRoom || !checkIn) return new Set();
     const ci = checkIn; const co = checkOut || checkIn;
     return new Set(
       data.reservations.filter(r =>
-        r.type === "boarding" && r.roomType === roomType && r.room &&
+        (r.type === "boarding" || r.type === "dayboarding") && r.roomType === roomType && r.room &&
         r.status !== "checked-out" && r.checkIn <= co && r.checkOut >= ci
       ).map(r => r.room)
     );
-  }, [type, roomType, checkIn, checkOut, data.reservations]);
+  }, [needsRoom, roomType, checkIn, checkOut, data.reservations]);
   const availableRooms = roomsForType.filter(r => !bookedRoomNames.has(r));
   const bookedRooms = roomsForType.filter(r => bookedRoomNames.has(r));
 
   // Room scoring: for each room compute gap before/after and a smart score
   const roomScored = useMemo(() => {
     const ci = checkIn; const co = checkOut || checkIn;
-    const allBoardingRes = data.reservations.filter(r => r.type === "boarding" && r.roomType === roomType && r.room && r.status !== "checked-out");
+    const allBoardingRes = data.reservations.filter(r => (r.type === "boarding" || r.type === "dayboarding") && r.roomType === roomType && r.room && r.status !== "checked-out");
     const totalRooms = roomsForType.length;
     const occupancy = totalRooms > 0 ? (totalRooms - availableRooms.length) / totalRooms : 0;
 
@@ -5031,8 +5037,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
     setCareFields(cf);
   },[selectedDogs.join(",")]);
 
-  useEffect(()=>{if(type==="daycare"||type==="tour"||type==="evaluation")setCheckOut(checkIn);},[type,checkIn]);
-  useEffect(()=>{if(type==="daycare"){setCheckInTime("07:00");setCheckOutTime("18:00");}else if(type==="tour"){setCheckInTime("14:00");setCheckOutTime("14:30");}else if(type==="evaluation"){setCheckInTime("09:00");setCheckOutTime("10:00");}else{setCheckInTime("09:00");setCheckOutTime("11:00");}},[type]);
+  useEffect(()=>{if(type==="daycare"||type==="dayboarding"||type==="tour"||type==="evaluation")setCheckOut(checkIn);},[type,checkIn]);
+  useEffect(()=>{if(type==="daycare"||type==="dayboarding"){setCheckInTime("07:00");setCheckOutTime("18:00");}else if(type==="tour"){setCheckInTime("14:00");setCheckOutTime("14:30");}else if(type==="evaluation"){setCheckInTime("09:00");setCheckOutTime("10:00");}else{setCheckInTime("09:00");setCheckOutTime("11:00");}},[type]);
   useEffect(()=>{setSelectedRoom("");},[roomType]);
 
   // Hotkeys: T cycles type, R cycles room type (capture phase so page-level takes priority over global nav)
@@ -5040,7 +5046,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
   const cycleTypeKey = (hkBindings.cycleType || "t").toLowerCase();
   const cycleRoomKey = (hkBindings.cycleRoom || "r").toLowerCase();
   useEffect(() => {
-    const types = ["boarding","daycare","evaluation","tour"];
+    const types = ["boarding","dayboarding","daycare","evaluation","tour"];
     const handler = (e) => {
       const tag = e.target.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
@@ -5051,7 +5057,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
         e.stopPropagation();
         setType(prev => types[(types.indexOf(prev) + 1) % types.length]);
       }
-      if (k === cycleRoomKey && type === "boarding") {
+      if (k === cycleRoomKey && (type === "boarding" || type === "dayboarding")) {
         e.preventDefault();
         e.stopPropagation();
         setRoomType(prev => ROOM_TYPES[(ROOM_TYPES.indexOf(prev) + 1) % ROOM_TYPES.length]);
@@ -5077,16 +5083,29 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
     if(type==="boarding"&&checkOut<checkIn)errs.checkOut="Must be after check-in";
     if(Object.keys(errs).length>0){setErrors(errs);return;}
 
+    // Daycare eval gate: auto-convert to evaluation if any dog lacks a locked eval
+    if(type==="daycare") {
+      const unevaluated = selectedDogs.filter(did => !(data.evaluations || []).some(e => e.dogId === did && e.locked));
+      if(unevaluated.length > 0) {
+        const names = unevaluated.map(did => { const d = data.dogs.find(x=>x.id===did); return d ? d.fields.name : "Unknown"; }).join(", ");
+        setType("evaluation");
+        setCheckInTime("09:00");
+        setCheckOutTime("10:00");
+        setErrors({ evalGate: `No evaluation on file for ${names}. Converted to Evaluation.` });
+        return;
+      }
+    }
+
     // Build reservations with pricing snapshot
     const newRes = selectedDogs.map((did, idx) => {
       const dog = data.dogs.find(d => d.id === did);
       const autoDaycareSize = dog ? getDogDaycareSize(dog) : "large";
       // Per-dog room config
-      const cfg = (type === "boarding" && perDogMode) ? (perDogConfig[did] || {}) : {};
+      const cfg = ((type === "boarding" || type === "dayboarding") && perDogMode) ? (perDogConfig[did] || {}) : {};
       const dogRoomType = cfg.roomType || roomType;
       const dogRoom = cfg.room || selectedRoom;
       const dogCheckOut = cfg.checkOut || checkOut;
-      const dogSegments = cfg.roomSegments || ((perDogConfig[did] || {}).roomSegments || []);
+      const dogSegments = type === "boarding" ? (cfg.roomSegments || ((perDogConfig[did] || {}).roomSegments || [])) : [];
       const isSecondInRoom = !perDogMode && type === "boarding" && idx > 0;
       const resPricing = calcReservationPricing({
         type, roomType: dogRoomType, checkIn, checkOut: type === "boarding" ? dogCheckOut : checkIn,
@@ -5097,7 +5116,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
       });
       return {
         id:gid(),clientId,dogId:did,type,
-        ...(type==="boarding" ? {roomType: dogRoomType, ...(dogRoom ? {room: dogRoom} : {}), ...(dogSegments.length > 0 ? {roomSegments: dogSegments} : {})} : {}),
+        ...((type==="boarding"||type==="dayboarding") ? {roomType: dogRoomType, ...(dogRoom ? {room: dogRoom} : {}), ...(type==="boarding"&&dogSegments.length > 0 ? {roomSegments: dogSegments} : {})} : {}),
         ...(type==="daycare" ? {daycareSize: autoDaycareSize} : {}),
         ...(type==="evaluation" ? {evalResult:"pending"} : {}),
         checkIn,checkOut:type==="boarding"?dogCheckOut:checkIn,
@@ -5171,7 +5190,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
         saveDogs = saveDogs.map(d => selectedDogs.includes(d.id) && !(d.tags || []).includes("tag_eval") ? { ...d, tags: [...(d.tags || []), "tag_eval"] } : d);
       }
       let saveRes = [...newRes];
-      if (type === "boarding") {
+      if (type === "boarding" || type === "dayboarding") {
         selectedDogs.forEach(did => {
           const dogHasEval = (data.evaluations || []).some(e => e.dogId === did && e.locked);
           if (!dogHasEval) {
@@ -5204,7 +5223,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
       if (!saveDogTags.find(t => t.id === "tag_eval")) saveDogTags = [...saveDogTags, { id: "tag_eval", name: "Evaluation", colorIdx: 2 }];
       newDogs = newDogs.map(d => selectedDogs.includes(d.id) && !(d.tags || []).includes("tag_eval") ? { ...d, tags: [...(d.tags || []), "tag_eval"] } : d);
     }
-    if (type === "boarding") {
+    if (type === "boarding" || type === "dayboarding") {
       selectedDogs.forEach(did => {
         const dogHasEval = (data.evaluations || []).some(e => e.dogId === did && e.locked);
         if (!dogHasEval) {
@@ -5342,26 +5361,40 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
           <div>
             <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"}}>Type <span style={{color:C.textMut,fontWeight:400,textTransform:"none"}}>({cycleTypeKey.toUpperCase()})</span></div>
             <div style={{display:"flex",gap:8}}>
-              {[{v:"boarding",l:"Boarding"},{v:"daycare",l:"Daycare"},{v:"evaluation",l:"Evaluation"},{v:"tour",l:"Tour"}].map(t=>(
+              {[{v:"boarding",l:"Boarding"},{v:"dayboarding",l:"Day Boarding"},{v:"daycare",l:"Daycare"},{v:"evaluation",l:"Evaluation"},{v:"tour",l:"Tour"}].map(t=>(
                 <button key={t.v} onClick={()=>setType(t.v)} style={{flex:1,padding:"10px 0",borderRadius:10,border:`2px solid ${type===t.v?C.pri:C.border}`,background:type===t.v?C.priLt:C.surface,color:type===t.v?C.pri:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{t.l}</button>
               ))}
             </div>
           </div>
         </div>
 
+        {/* Eval gate banner: warn if daycare selected but dogs lack evaluation */}
+        {type==="daycare"&&selectedDogs.length>0&&(()=>{
+          const unevaled = selectedDogs.filter(did => !(data.evaluations || []).some(e => e.dogId === did && e.locked));
+          if(unevaled.length===0) return null;
+          const names = unevaled.map(did => { const d = data.dogs.find(x=>x.id===did); return d ? d.fields.name : "Unknown"; }).join(", ");
+          return <div style={{padding:"12px 16px",borderRadius:10,background:C.warnLt,border:`1.5px solid ${C.warn}40`,marginTop:8}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.warn}}>Evaluation Required</div>
+            <div style={{fontSize:12,color:C.textSec,marginTop:2}}>{names} {unevaled.length===1?"has":"have"} no evaluation on file. This booking will be automatically converted to an Evaluation when you save.</div>
+          </div>;
+        })()}
+        {errors.evalGate&&<div style={{padding:"12px 16px",borderRadius:10,background:C.sucLt,border:`1.5px solid ${C.suc}40`,marginTop:8}}><div style={{fontSize:13,fontWeight:700,color:C.suc}}>Converted to Evaluation</div><div style={{fontSize:12,color:C.textSec,marginTop:2}}>{errors.evalGate}</div></div>}
+
         {/* Dates & Times — before room selection so availability is based on chosen dates */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginTop:20}}>
           <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn} required/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{errors.checkIn&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkIn}</div>}</div>
           <div><Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime}/></div>
-          {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Boarding drop-off hours are from 9 AM – 5:30 PM, 7 days a week.</div></div>}
+          {(type==="boarding"||type==="dayboarding")&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>{type==="dayboarding"?"Day boarding drop-off hours are from 7 AM – 9 AM.":"Boarding drop-off hours are from 9 AM – 5:30 PM, 7 days a week."}</div></div>}
           {type==="boarding"&&<div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} required/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{errors.checkOut&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkOut}</div>}</div>}
           {type==="boarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
           {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Boarding pick-up hours start at 9 AM. Check-out time is 12:30 PM. Extended checkout to 5:30 PM available 7 days a week for a half-day daycare fee (${`$${((data.pricing||DEF_PRICING).daycareRates?.halfDay||30).toFixed(2)}`}).</div></div>}
-          {type!=="boarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
+          {type==="dayboarding"&&<div><Inp label="Pick-Up Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
+          {type==="dayboarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Day boarding pick-up is between 4 PM – 7 PM.</div></div>}
+          {type!=="boarding"&&type!=="dayboarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
         </div>
 
         {/* Sub-type selectors */}
-        {type === "boarding" && (
+        {(type === "boarding" || type === "dayboarding") && (
           <div style={{marginTop:20}}>
             <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Room Type <span style={{color:C.dan}}>*</span> <span style={{color:C.textMut,fontWeight:400,textTransform:"none"}}>({cycleRoomKey.toUpperCase()})</span></div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -5438,7 +5471,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
           </div>
         )}
         {/* Per-Dog Room Config (multi-dog boarding) */}
-        {type==="boarding"&&selectedDogs.length>1&&(
+        {(type==="boarding"||type==="dayboarding")&&selectedDogs.length>1&&(
           <div style={{marginTop:16}}>
             <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",padding:"12px 16px",borderRadius:10,border:`1.5px solid ${perDogMode?C.pri:C.borderLight}`,background:perDogMode?C.priLt+"30":C.bg}}>
               <input type="checkbox" checked={perDogMode} onChange={e=>setPerDogMode(e.target.checked)} style={{accentColor:C.pri,width:16,height:16}}/>
@@ -5508,7 +5541,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
                         // Helper: compute scored rooms for a segment's date range & room type
                         const pdSegRoomScored = (segRT, segCI, segCO) => {
                           const segRooms = (data.rooms||{})[segRT]||[];
-                          const allBR = data.reservations.filter(r=>r.type==="boarding"&&r.roomType===segRT&&r.room&&r.status!=="checked-out");
+                          const allBR = data.reservations.filter(r=>(r.type==="boarding"||r.type==="dayboarding")&&r.roomType===segRT&&r.room&&r.status!=="checked-out");
                           const segBooked = new Set(allBR.filter(r=>r.checkIn<=segCO&&r.checkOut>=segCI).map(r=>r.room));
                           const daysBetween=(a,b)=>Math.round((new Date(b+"T12:00:00")-new Date(a+"T12:00:00"))/86400000);
                           const totalR=segRooms.length;const occ=totalR>0?(totalR-segRooms.filter(r=>!segBooked.has(r)).length)/totalR:0;
@@ -5626,7 +5659,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
           // Helper: compute scored rooms for a segment's date range & room type
           const segRoomScored = (segRT, segCI, segCO) => {
             const segRooms = (data.rooms||{})[segRT]||[];
-            const allBR = data.reservations.filter(r=>r.type==="boarding"&&r.roomType===segRT&&r.room&&r.status!=="checked-out");
+            const allBR = data.reservations.filter(r=>(r.type==="boarding"||r.type==="dayboarding")&&r.roomType===segRT&&r.room&&r.status!=="checked-out");
             const totalR = segRooms.length;
             const segBooked = new Set(allBR.filter(r=>r.checkIn<=segCO&&r.checkOut>=segCI).map(r=>r.room));
             const occ = totalR>0?(totalR-segRooms.filter(r=>!segBooked.has(r)).length)/totalR:0;
@@ -6282,10 +6315,10 @@ function LodgingCalendarPage({ data, save, nav, onNew }) {
     return rows;
   }, [allRooms]);
 
-  // Boarding reservations that overlap this week
+  // Boarding + dayboarding reservations that overlap this week
   const weekRes = useMemo(() =>
     data.reservations.filter(r =>
-      r.type === "boarding" && r.room && r.status !== "checked-out" &&
+      (r.type === "boarding" || r.type === "dayboarding") && r.room && r.status !== "checked-out" &&
       r.checkIn <= weekEnd && r.checkOut >= weekStart
     ), [data.reservations, weekStart, weekEnd]);
 
@@ -8772,6 +8805,7 @@ function PricingTab({ data, save }) {
       {/* Service Fees */}
       <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
         {sectionTitle("Service Fees", "Evaluations, tours, and other services.")}
+        {rateRow("Day Boarding", "dayboardingRate", p.dayboardingRate, "49")}
         {rateRow("Evaluation", "evaluationFee", p.evaluationFee, "25")}
         {rateRow("Tour", "tourFee", p.tourFee, "0")}
       </Card>
@@ -8823,7 +8857,7 @@ function PricingTab({ data, save }) {
       {/* Payment Rules */}
       <Card style={{ padding: "24px 28px" }}>
         {sectionTitle("Payment Rules", "Deposit requirements and when payment is due for each reservation type.")}
-        {["boarding", "daycare", "evaluation", "tour"].map(type => {
+        {["boarding", "dayboarding", "daycare", "evaluation", "tour"].map(type => {
           const rule = (p.paymentRules || {})[type] || {};
           const label = type.charAt(0).toUpperCase() + type.slice(1);
           return (
@@ -10436,7 +10470,7 @@ function UnifiedNewPage({ data, save, nav, prefill }) {
 
   const roomScored = useMemo(() => {
     const ci = checkIn; const co = checkOut || checkIn;
-    const allBoardingRes = data.reservations.filter(r => r.type === "boarding" && r.roomType === roomType && r.room && r.status !== "checked-out");
+    const allBoardingRes = data.reservations.filter(r => (r.type === "boarding" || r.type === "dayboarding") && r.roomType === roomType && r.room && r.status !== "checked-out");
     const totalRooms = roomsForType.length;
     const occupancy = totalRooms > 0 ? (totalRooms - availableRooms.length) / totalRooms : 0;
     const scored = roomsForType.map(room => {
