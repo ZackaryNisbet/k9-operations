@@ -2847,7 +2847,7 @@ function DashboardPage({ data, save, nav, onNew }) {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [addOnPopup]);
-  const availableAddOns = Object.keys((data.pricing || {}).addOns || DEF_PRICING.addOns);
+  const availableAddOns = Object.keys({ ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) });
   const toggleResAddOn = async (resId, addon) => {
     const res = data.reservations.find(r => r.id === resId);
     if (!res) return;
@@ -3301,7 +3301,7 @@ function DashboardPage({ data, save, nav, onNew }) {
         const res = data.reservations.find(r => r.id === addOnPopup.resId);
         if (!res) return null;
         const resAddOns = res.addOns || [];
-        const addonPrices = (data.pricing || {}).addOns || DEF_PRICING.addOns;
+        const addonPrices = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
         return ReactDOM.createPortal(
           <div ref={addOnPopupRef} style={{ position: "fixed", left: Math.min(addOnPopup.x, window.innerWidth - 230), top: Math.min(addOnPopup.y, window.innerHeight - 300), zIndex: 9999, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.18)", padding: "8px 0", minWidth: 210, maxHeight: 320, overflowY: "auto" }}>
             <div style={{ padding: "6px 14px 8px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: `1px solid ${C.borderLight}` }}>Add-Ons</div>
@@ -6189,7 +6189,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
                           <div style={{marginTop:8,padding:"12px 16px",borderRadius:8,border:`1px solid ${C.borderLight}`,background:C.surface}}>
                             <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:8}}>Add-Ons</div>
                             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"stretch"}}>
-                              {Object.entries((data.pricing||DEF_PRICING).addOns||{}).map(([addon,price])=>{
+                              {Object.entries({...DEF_PRICING.addOns,...((data.pricing||{}).addOns||{})}).map(([addon,price])=>{
                                 const selected=(dogAddOns[did]?.selectedAddOns||[]).includes(addon);
                                 return <button key={addon} onClick={()=>setDogAddOns(prev=>{const curr=prev[did]?.selectedAddOns||[];const next=curr.includes(addon)?curr.filter(a=>a!==addon):[...curr,addon];return{...prev,[did]:{...prev[did],selectedAddOns:next}};})} style={{padding:"8px 12px",borderRadius:8,border:`1.5px solid ${selected?C.pri:C.border}`,background:selected?C.priLt:C.bg,color:selected?C.pri:C.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,textAlign:"left"}}>
                                   <span>{addon}</span><span style={{color:C.textSec,fontWeight:400,whiteSpace:"nowrap"}}>${Number(price).toFixed(2)}</span>
@@ -9068,8 +9068,8 @@ function PricingTab({ data, save }) {
       {/* Add-Ons */}
       <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
         {sectionTitle("Add-Ons", "All available add-ons including baths, food handling, medications, and extras. Pricing is per stay.")}
-        {Object.keys(p.addOns || DEF_PRICING.addOns).map(addon =>
-          rateRow(addon, `addOns.${addon}`, (p.addOns || {})[addon], "0")
+        {Object.keys({ ...DEF_PRICING.addOns, ...(p.addOns || {}) }).map(addon =>
+          rateRow(addon, `addOns.${addon}`, (p.addOns || {})[addon] ?? (DEF_PRICING.addOns || {})[addon] ?? 0, "0")
         )}
       </Card>
 
@@ -12798,7 +12798,7 @@ export default function App() {
 
       {/* Main */}
       <div className="main-content" style={{flex:1,overflow:"auto",padding:"28px 32px",scrollbarGutter:"stable"}}>
-        <div style={{maxWidth: page === "home" ? 1440 : 1100, margin:"0 auto", transition:"max-width 0.2s"}}>
+        <div style={{maxWidth: page === "dashboard" ? 1440 : 1100, margin:"0 auto", transition:"max-width 0.2s"}}>
           {navStack.length > 1 && (
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:16,fontSize:13,flexWrap:"wrap"}}>
               {navStack.map((entry, i) => (
