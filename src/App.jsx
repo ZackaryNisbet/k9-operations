@@ -726,20 +726,20 @@ const DAY_NAMES_SHORT=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 // ─── Operations Hub Catalog ───────────────────────────────────────────────────
 const OPERATIONS_CATALOG = [
   // Daily items (route to existing pages)
-  { id:"ops-opening", label:"Opening Checklist", subtitle:"Start-of-day prep", emoji:"🌅", frequency:"daily", dataKey:"dailyOps", typeSub:"opening", routeTo:"ops-opening", permission:"view_daily_ops" },
-  { id:"ops-fe", label:"FE Checklist", subtitle:"Front-end tasks", emoji:"🖥️", frequency:"daily", dataKey:"dailyOps", typeSub:"fe", routeTo:"ops-fe", permission:"view_daily_ops" },
-  { id:"ops-be", label:"BE Checklist", subtitle:"Back-end tasks", emoji:"🔧", frequency:"daily", dataKey:"dailyOps", typeSub:"be", routeTo:"ops-be", permission:"view_daily_ops" },
-  { id:"ops-rooms", label:"Room Cleaning", subtitle:"Room inspections", emoji:"🛏️", frequency:"daily", dataKey:"dailyOps", typeSub:"room_cleaning", routeTo:"ops-rooms", permission:"view_daily_ops" },
-  { id:"ops-pictures", label:"Pictures", subtitle:"Photo checklist", emoji:"📸", frequency:"daily", dataKey:"dailyOps", typeSub:"pictures", routeTo:"ops-pictures", permission:"view_daily_ops" },
-  { id:"ops-pp", label:"PP Checklist", subtitle:"Private play tasks", emoji:"🐾", frequency:"daily", dataKey:"dailyOps", typeSub:"pp", routeTo:"ops-pp", permission:"view_daily_ops" },
-  { id:"ops-closing", label:"Closing Checklist", subtitle:"End-of-day lockup", emoji:"🌙", frequency:"daily", dataKey:"dailyOps", typeSub:"closing", routeTo:"ops-closing", permission:"view_daily_ops" },
-  { id:"eod", label:"EOD Report", subtitle:"End of day summary", emoji:"📋", frequency:"daily", dataKey:"eodEntries", typeSub:null, routeTo:"eod", permission:"view_eod" },
+  { id:"ops-opening", label:"Opening Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"opening", routeTo:"ops-opening", permission:"view_daily_ops" },
+  { id:"ops-fe", label:"Front-End Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"fe", routeTo:"ops-fe", permission:"view_daily_ops" },
+  { id:"ops-be", label:"Back-End Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"be", routeTo:"ops-be", permission:"view_daily_ops" },
+  { id:"ops-rooms", label:"Room Cleaning", frequency:"daily", dataKey:"dailyOps", typeSub:"room_cleaning", routeTo:"ops-rooms", permission:"view_daily_ops" },
+  { id:"ops-pictures", label:"Pictures", frequency:"daily", dataKey:"dailyOps", typeSub:"pictures", routeTo:"ops-pictures", permission:"view_daily_ops" },
+  { id:"ops-pp", label:"Private Play Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"pp", routeTo:"ops-pp", permission:"view_daily_ops" },
+  { id:"ops-closing", label:"Closing Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"closing", routeTo:"ops-closing", permission:"view_daily_ops" },
+  { id:"eod", label:"EOD Report", frequency:"daily", dataKey:"eodEntries", typeSub:null, routeTo:"eod", permission:"view_eod" },
   // Weekly placeholders
-  { id:"weekly-inventory", label:"Weekly Inventory", subtitle:"Supplies & stock check", emoji:"📦", frequency:"weekly", comingSoon:true },
-  { id:"weekly-maintenance", label:"Weekly Maintenance", subtitle:"Equipment & facility", emoji:"🔩", frequency:"weekly", comingSoon:true },
+  { id:"weekly-inventory", label:"Weekly Inventory", frequency:"weekly", comingSoon:true },
+  { id:"weekly-maintenance", label:"Weekly Maintenance", frequency:"weekly", comingSoon:true },
   // Monthly placeholders
-  { id:"monthly-safety", label:"Monthly Safety Audit", subtitle:"Safety & compliance", emoji:"🛡️", frequency:"monthly", comingSoon:true },
-  { id:"monthly-deep-clean", label:"Monthly Deep Clean", subtitle:"Full facility deep clean", emoji:"✨", frequency:"monthly", comingSoon:true },
+  { id:"monthly-safety", label:"Monthly Safety Audit", frequency:"monthly", comingSoon:true },
+  { id:"monthly-deep-clean", label:"Monthly Deep Clean", frequency:"monthly", comingSoon:true },
 ];
 
 function getOpsCardStatus(data, item) {
@@ -5266,9 +5266,9 @@ function OperationsHub({ data, save, nav, profile }) {
   const hp = (k) => hasPermission(profile, data, k);
 
   const groups = [
-    { key: "daily", label: "Daily Operations", emoji: "☀️", items: OPERATIONS_CATALOG.filter(c => c.frequency === "daily") },
-    { key: "weekly", label: "Weekly Maintenance", emoji: "📅", items: OPERATIONS_CATALOG.filter(c => c.frequency === "weekly") },
-    { key: "monthly", label: "Monthly Inspections", emoji: "🗓️", items: OPERATIONS_CATALOG.filter(c => c.frequency === "monthly") },
+    { key: "daily", label: "Daily Operations", items: OPERATIONS_CATALOG.filter(c => c.frequency === "daily") },
+    { key: "weekly", label: "Weekly Maintenance", items: OPERATIONS_CATALOG.filter(c => c.frequency === "weekly") },
+    { key: "monthly", label: "Monthly Inspections", items: OPERATIONS_CATALOG.filter(c => c.frequency === "monthly") },
   ];
 
   const statusConfig = {
@@ -5310,7 +5310,7 @@ function OperationsHub({ data, save, nav, profile }) {
         return (
           <div key={group.key} style={{ marginBottom: 32 }}>
             <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
-              <span>{group.emoji}</span> {group.label}
+              {group.label}
               <span style={{ fontSize: 12, fontWeight: 500, color: C.textMut, marginLeft: 4 }}>
                 ({visibleItems.length} {visibleItems.length === 1 ? "item" : "items"})
               </span>
@@ -5335,14 +5335,8 @@ function OperationsHub({ data, save, nav, profile }) {
                     onMouseEnter={e => { if (!isComingSoon) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)"; }}}
                     onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}
                   >
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: 22 }}>{item.emoji}</span>
-                        <div>
-                          <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{item.label}</div>
-                          <div style={{ fontSize: 12, color: C.textMut, marginTop: 1 }}>{item.subtitle}</div>
-                        </div>
-                      </div>
+                    <div style={{ marginBottom: 10 }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{item.label}</div>
                     </div>
                     {/* Status badge */}
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
