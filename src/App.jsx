@@ -745,20 +745,25 @@ const OPERATIONS_CATALOG = [
 
 function getOpsCardStatus(data, item, date) {
   if (item.comingSoon) return "coming_soon";
+  if (item.dataKey === "eodEntries") return "none"; // EOD is not measured
   const td = date || todayStr();
-  if (item.dataKey === "eodEntries") {
-    const entry = (data.eodEntries || []).find(e => e.date === td);
-    if (!entry) return "not_started";
-    if (entry.locked) return "completed";
-    const hasContent = (entry.sections || []).some(s => (s.content || "").trim() !== "" || (s.items || []).some(i => i.checked));
-    return hasContent ? "in_progress" : "not_started";
-  }
   const entryId = `ops_${item.typeSub}_${td}`;
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   if (!entry) return "not_started";
   if (entry.locked) return "completed";
   const ei = entry.items;
   if (!ei) return "not_started";
+  // Template checklists: check if ALL items are done
+  const meta = OPS_TYPES[item.typeSub];
+  if (meta && meta.key) {
+    const template = data[meta.key] || meta.def;
+    const dayIdx = new Date(td + "T12:00:00").getDay();
+    const todayItems = template.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
+    const total = todayItems.length;
+    const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : Array.isArray(ei) ? ei.filter(i => i.checked).length : 0;
+    if (total > 0 && checked >= total) return "completed";
+    return checked > 0 ? "in_progress" : "not_started";
+  }
   if (Array.isArray(ei)) {
     return ei.some(i => i.checked) ? "in_progress" : "not_started";
   }
@@ -767,8 +772,8 @@ function getOpsCardStatus(data, item, date) {
 
 function getOpsProgress(data, item, date) {
   if (item.comingSoon) return 0;
+  if (item.dataKey === "eodEntries") return 0;
   const td = date || todayStr();
-  if (item.dataKey === "eodEntries") return 0; // EOD doesn't show percentage
   const entryId = `ops_${item.typeSub}_${td}`;
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   if (!entry) return 0;
@@ -782,20 +787,25 @@ function getOpsProgress(data, item, date) {
     const total = todayItems.length;
     if (total === 0) return 0;
     const ei = entry.items || {};
-    const checked = isTemplate && !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : Array.isArray(ei) ? ei.filter(i => i.checked).length : 0;
+    const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : Array.isArray(ei) ? ei.filter(i => i.checked).length : 0;
     return Math.round((checked / total) * 100);
   }
   const ei = entry.items;
   if (!ei) return 0;
-  if (Array.isArray(ei)) {
-    const total = ei.length;
-    return total === 0 ? 0 : Math.round((ei.filter(i => i.checked).length / total) * 100);
-  }
-  // Object-based: pictures={dogId:bool}, room_cleaning={room:{...}}, pp={dogId:{sessions:[...]}}
   if (item.typeSub === "pictures") {
     const vals = Object.values(ei);
     const done = vals.filter(v => v === true).length;
     return vals.length > 0 ? Math.round((done / vals.length) * 100) : 0;
+  }
+  if (item.typeSub === "room_cleaning") {
+    // Can't compute a true %, just show that work is happening
+    const rooms = Object.values(ei);
+    const anyDone = rooms.some(r => r && (r.refresh || r.disinfect || r.asNeededDone));
+    return anyDone ? 50 : 0;
+  }
+  if (Array.isArray(ei)) {
+    const total = ei.length;
+    return total === 0 ? 0 : Math.round((ei.filter(i => i.checked).length / total) * 100);
   }
   const keys = Object.keys(ei);
   return keys.length > 0 ? 50 : 0;
@@ -803,9 +813,8 @@ function getOpsProgress(data, item, date) {
 
 function getOpsCountLabel(data, item, date) {
   if (item.comingSoon) return "";
-  const td = date || todayStr();
-  // EOD — just status, no counts
   if (item.dataKey === "eodEntries") return "";
+  const td = date || todayStr();
   const entryId = `ops_${item.typeSub}_${td}`;
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   const meta = OPS_TYPES[item.typeSub];
@@ -821,7 +830,7 @@ function getOpsCountLabel(data, item, date) {
     return `${checked}/${total} tasks`;
   }
   if (item.typeSub === "room_cleaning") {
-    if (!entry || !entry.items) return "0 rooms done";
+    if (!entry || !entry.items) return "";
     const ei = entry.items;
     const rooms = Object.values(ei);
     const refreshes = rooms.filter(r => r && r.refresh).length;
@@ -829,7 +838,7 @@ function getOpsCountLabel(data, item, date) {
     const parts = [];
     if (refreshes) parts.push(`${refreshes} refresh${refreshes !== 1 ? "es" : ""}`);
     if (disinfects) parts.push(`${disinfects} disinfect${disinfects !== 1 ? "s" : ""}`);
-    return parts.length > 0 ? parts.join(", ") : "0 rooms done";
+    return parts.length > 0 ? parts.join(", ") + " done" : "";
   }
   if (item.typeSub === "pictures") {
     if (!entry || !entry.items) return "0 photos";
@@ -5323,7 +5332,7 @@ function OperationsHub({ data, save, nav, profile }) {
   // Summary analytics
   const [expandSummary, setExpandSummary] = useState(false);
   const summaryStats = useMemo(() => {
-    const activeItems = OPERATIONS_CATALOG.filter(c => c.frequency === "daily" && !c.comingSoon);
+    const activeItems = OPERATIONS_CATALOG.filter(c => c.frequency === "daily" && !c.comingSoon && c.dataKey !== "eodEntries");
     // Today stats
     const todayCompleted = activeItems.filter(c => getOpsCardStatus(data, c, viewDate) === "completed").length;
     const todayTotal = activeItems.length;
@@ -5385,6 +5394,7 @@ function OperationsHub({ data, save, nav, profile }) {
     in_progress: { label: "In Progress", bg: "#FEF3C7", color: "#D97706", barColor: "#F59E0B" },
     completed: { label: "Completed", bg: "#D1FAE5", color: "#059669", barColor: "#10B981" },
     coming_soon: { label: "Coming Soon", bg: "#F3F4F6", color: "#9CA3AF", barColor: "#E5E7EB" },
+    none: { label: "", bg: "transparent", color: "transparent", barColor: "transparent" },
   };
 
   const nbtn = { border: "none", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontFamily: "inherit", fontWeight: 600, fontSize: 12 };
@@ -5482,7 +5492,7 @@ function OperationsHub({ data, save, nav, profile }) {
                     onClick={() => !isComingSoon && nav(item.routeTo)}
                     style={{
                       background: C.surface, borderRadius: 14, padding: "18px 20px",
-                      border: `1.5px solid ${status === "completed" ? "#10B981" : status === "in_progress" ? "#F59E0B" : C.border}`,
+                      border: `1.5px solid ${isEod ? C.border : status === "completed" ? "#10B981" : status === "in_progress" ? "#F59E0B" : C.border}`,
                       cursor: isComingSoon ? "default" : "pointer",
                       opacity: isComingSoon ? 0.55 : 1,
                       transition: "all 0.2s",
@@ -5495,12 +5505,14 @@ function OperationsHub({ data, save, nav, profile }) {
                       <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{item.label}</div>
                       {countLabel && <div style={{ fontSize: 12, color: C.textSec, marginTop: 3 }}>{countLabel}</div>}
                     </div>
+                    {!isEod && (
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
                       <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: sc.bg, color: sc.color, textTransform: "uppercase", letterSpacing: "0.04em" }}>
                         {sc.label}
                       </span>
-                      {!isComingSoon && !isEod && <span style={{ fontSize: 12, fontWeight: 600, color: sc.color }}>{progress}%</span>}
+                      {!isComingSoon && <span style={{ fontSize: 12, fontWeight: 600, color: sc.color }}>{progress}%</span>}
                     </div>
+                    )}
                     {!isComingSoon && !isEod && (
                       <div style={{ marginTop: 8, height: 5, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
                         <div style={{ width: `${progress}%`, height: "100%", borderRadius: 3, background: sc.barColor, transition: "width 0.3s" }} />
