@@ -8,19 +8,29 @@ const C = {
 };
 
 export default function Login() {
-  const { signIn, signUp } = useAuth();
-  const [mode, setMode] = useState('login'); // 'login' or 'signup'
+  const { signIn, signUp, resetPassword } = useAuth();
+  const [mode, setMode] = useState('login'); // 'login', 'signup', or 'forgot'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [signupSuccess, setSignupSuccess] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+
+    if (mode === 'forgot') {
+      if (!email.trim()) { setError('Enter your email address'); setLoading(false); return; }
+      const { error } = await resetPassword(email);
+      if (error) setError(error.message);
+      else setResetSent(true);
+      setLoading(false);
+      return;
+    }
 
     if (mode === 'login') {
       const { error } = await signIn(email, password);
@@ -63,17 +73,39 @@ export default function Login() {
               Back to Sign In
             </button>
           </div>
+        ) : resetSent ? (
+          <div style={{ textAlign: 'center', padding: '20px 0' }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>&#9993;</div>
+            <h3 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700, color: C.text }}>Reset link sent</h3>
+            <p style={{ fontSize: 14, color: C.textMut, lineHeight: 1.6, margin: 0 }}>
+              We sent a password reset link to <strong>{email}</strong>. Click it to set a new password, then come back here to sign in.
+            </p>
+            <button onClick={() => { setMode('login'); setResetSent(false); setError(''); }} style={{ marginTop: 20, padding: '10px 24px', background: C.pri, color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+              Back to Sign In
+            </button>
+          </div>
         ) : (
           <>
-            {/* Tabs */}
-            <div style={{ display: 'flex', marginBottom: 24, background: C.bg, borderRadius: 10, padding: 4 }}>
-              {['login', 'signup'].map(m => (
-                <button key={m} onClick={() => { setMode(m); setError(''); }}
-                  style={{ flex: 1, padding: '10px 0', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: mode === m ? C.surface : 'transparent', color: mode === m ? C.pri : C.textMut, boxShadow: mode === m ? '0 1px 3px rgba(0,0,0,0.08)' : 'none', transition: 'all 0.2s' }}>
-                  {m === 'login' ? 'Sign In' : 'Create Account'}
-                </button>
-              ))}
-            </div>
+            {/* Tabs — only show for login/signup, not forgot */}
+            {mode !== 'forgot' && (
+              <div style={{ display: 'flex', marginBottom: 24, background: C.bg, borderRadius: 10, padding: 4 }}>
+                {['login', 'signup'].map(m => (
+                  <button key={m} onClick={() => { setMode(m); setError(''); }}
+                    style={{ flex: 1, padding: '10px 0', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: mode === m ? C.surface : 'transparent', color: mode === m ? C.pri : C.textMut, boxShadow: mode === m ? '0 1px 3px rgba(0,0,0,0.08)' : 'none', transition: 'all 0.2s' }}>
+                    {m === 'login' ? 'Sign In' : 'Create Account'}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {mode === 'forgot' && (
+              <div style={{ marginBottom: 20 }}>
+                <h3 style={{ margin: '0 0 6px', fontSize: 18, fontWeight: 700, color: C.text }}>Reset your password</h3>
+                <p style={{ margin: 0, fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
+                  Enter your email and we'll send you a link to set a new password.
+                </p>
+              </div>
+            )}
 
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               {mode === 'signup' && (
@@ -86,18 +118,38 @@ export default function Login() {
                 <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 }}>Email</label>
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@k9resorts.com" style={inputStyle} autoComplete="email" required />
               </div>
-              <div>
-                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 }}>Password</label>
-                <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password" style={inputStyle} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required />
-              </div>
+              {mode !== 'forgot' && (
+                <div>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 }}>Password</label>
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password" style={inputStyle} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required />
+                </div>
+              )}
 
               {error && <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', color: C.danger, fontSize: 13, fontWeight: 500 }}>{error}</div>}
 
               <button type="submit" disabled={loading}
                 style={{ width: '100%', padding: '13px', background: loading ? C.textMut : C.pri, color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: loading ? 'default' : 'pointer', fontFamily: 'inherit', marginTop: 4, transition: 'background 0.2s' }}>
-                {loading ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}
+                {loading ? 'Please wait...' : mode === 'forgot' ? 'Send Reset Link' : mode === 'login' ? 'Sign In' : 'Create Account'}
               </button>
             </form>
+
+            {/* Forgot password link */}
+            {mode === 'login' && (
+              <div style={{ textAlign: 'center', marginTop: 16 }}>
+                <button onClick={() => { setMode('forgot'); setError(''); }}
+                  style={{ background: 'none', border: 'none', color: C.textMut, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}>
+                  Forgot your password?
+                </button>
+              </div>
+            )}
+            {mode === 'forgot' && (
+              <div style={{ textAlign: 'center', marginTop: 16 }}>
+                <button onClick={() => { setMode('login'); setError(''); }}
+                  style={{ background: 'none', border: 'none', color: C.textMut, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline' }}>
+                  Back to Sign In
+                </button>
+              </div>
+            )}
           </>
         )}
 
