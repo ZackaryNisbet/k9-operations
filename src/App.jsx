@@ -7283,22 +7283,22 @@ function DailyOpsTemplateTab({ data, save }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ROLES & PERMISSIONS TAB (used inside Settings)
+// ROLES & PERMISSIONS TAB — Matrix Grid View
 // ═══════════════════════════════════════════════════════════════════════════
 function RolesPermissionsTab({ data, save, profile }) {
-  const [editingId, setEditingId] = useState(null);
-  const [editPerms, setEditPerms] = useState({});
-  const [editName, setEditName] = useState("");
-  const [editColor, setEditColor] = useState("default");
-  const [editDesc, setEditDesc] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState("default");
   const [newDesc, setNewDesc] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [editRoleId, setEditRoleId] = useState(null); // for editing name/color/desc
+  const [editName, setEditName] = useState("");
+  const [editColor, setEditColor] = useState("default");
+  const [editDesc, setEditDesc] = useState("");
 
   const roles = data.roles || DEFAULT_ROLES;
   const totalPerms = ALL_PERM_KEYS.length;
+  const canManage = hasPermission(profile, data, "manage_roles");
 
   const BADGE_COLORS = [
     { value:"default", label:"Gray" }, { value:"primary", label:"Blue" },
@@ -7306,28 +7306,52 @@ function RolesPermissionsTab({ data, save, profile }) {
     { value:"danger", label:"Red" }, { value:"info", label:"Sky" },
     { value:"accent", label:"Bronze" },
   ];
+  const badgeColorMap = {default:{bg:C.surfaceHover,text:C.textSec},primary:{bg:C.priLt,text:C.pri},success:{bg:C.sucLt,text:C.suc},warning:{bg:C.warnLt,text:C.warn},danger:{bg:C.danLt,text:C.dan},info:{bg:C.infoLt,text:C.info},accent:{bg:C.accLt,text:C.accDk}};
 
-  const openEdit = (role) => {
-    setEditingId(role.id);
-    setEditPerms({ ...role.permissions });
-    setEditName(role.name);
-    setEditColor(role.color || "default");
-    setEditDesc(role.description || "");
+  const enabledCount = (perms) => ALL_PERM_KEYS.filter(k => perms[k]).length;
+
+  // Toggle a single permission for a role — saves immediately
+  const togglePerm = async (roleId, permKey) => {
+    const updated = roles.map(r => {
+      if (r.id !== roleId) return r;
+      return { ...r, permissions: { ...r.permissions, [permKey]: !r.permissions[permKey] } };
+    });
+    await save({ ...data, roles: updated });
   };
 
-  const saveEdit = async () => {
-    const updated = roles.map(r => r.id === editingId ? { ...r, name: editName, color: editColor, description: editDesc, permissions: editPerms } : r);
+  // Toggle all permissions in a category for a role
+  const toggleCategoryForRole = async (roleId, catKey) => {
+    const cat = PERMISSION_CATEGORIES.find(c => c.key === catKey);
+    if (!cat) return;
+    const role = roles.find(r => r.id === roleId);
+    if (!role) return;
+    const allOn = cat.permissions.every(p => role.permissions[p.key]);
+    const updated = roles.map(r => {
+      if (r.id !== roleId) return r;
+      const np = { ...r.permissions };
+      cat.permissions.forEach(p => { np[p.key] = !allOn; });
+      return { ...r, permissions: np };
+    });
     await save({ ...data, roles: updated });
-    setEditingId(null);
+  };
+
+  // Toggle ALL permissions for a role (select all / deselect all)
+  const toggleAllForRole = async (roleId) => {
+    const role = roles.find(r => r.id === roleId);
+    if (!role) return;
+    const allOn = ALL_PERM_KEYS.every(k => role.permissions[k]);
+    const updated = roles.map(r => {
+      if (r.id !== roleId) return r;
+      const np = {};
+      ALL_PERM_KEYS.forEach(k => { np[k] = !allOn; });
+      return { ...r, permissions: np };
+    });
+    await save({ ...data, roles: updated });
   };
 
   const createRole = async () => {
     if (!newName.trim()) return;
-    const role = {
-      id: "role_" + gid(), name: newName.trim(), builtIn: false,
-      color: newColor, description: newDesc.trim(),
-      permissions: buildPerms({}), // all false by default
-    };
+    const role = { id: "role_" + gid(), name: newName.trim(), builtIn: false, color: newColor, description: newDesc.trim(), permissions: buildPerms({}) };
     await save({ ...data, roles: [...roles, role] });
     setNewName(""); setNewColor("default"); setNewDesc(""); setShowCreate(false);
   };
@@ -7342,124 +7366,44 @@ function RolesPermissionsTab({ data, save, profile }) {
     setConfirmDelete(null);
   };
 
-  const togglePerm = (key) => setEditPerms(p => ({ ...p, [key]: !p[key] }));
-
-  const toggleCategory = (catKey) => {
-    const cat = PERMISSION_CATEGORIES.find(c => c.key === catKey);
-    if (!cat) return;
-    const allOn = cat.permissions.every(p => editPerms[p.key]);
-    setEditPerms(p => {
-      const np = { ...p };
-      cat.permissions.forEach(perm => { np[perm.key] = !allOn; });
-      return np;
-    });
+  const startEditRole = (role) => {
+    setEditRoleId(role.id);
+    setEditName(role.name);
+    setEditColor(role.color || "default");
+    setEditDesc(role.description || "");
   };
 
-  const enabledCount = (perms) => ALL_PERM_KEYS.filter(k => perms[k]).length;
+  const saveRoleEdit = async () => {
+    const updated = roles.map(r => r.id === editRoleId ? { ...r, name: editName, color: editColor, description: editDesc } : r);
+    await save({ ...data, roles: updated });
+    setEditRoleId(null);
+  };
 
-  // ── EDIT VIEW ──
-  if (editingId) {
-    const editingRole = roles.find(r => r.id === editingId);
-    return (
-      <div>
-        <button onClick={() => setEditingId(null)} style={{ display:"flex", alignItems:"center", gap:6, border:"none", background:"none", cursor:"pointer", fontFamily:"inherit", fontSize:13, fontWeight:600, color:C.pri, padding:"6px 0", marginBottom:16 }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-          Back to Roles
-        </button>
+  // Grid dimensions
+  const colW = Math.max(100, Math.min(140, Math.floor(600 / roles.length)));
+  const labelW = 220;
 
-        {/* Role Info */}
-        <Card style={{ padding:"24px 28px", marginBottom:20 }}>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 180px", gap:16, alignItems:"flex-end" }}>
-            <Inp label="Role Name" value={editName} onChange={v => setEditName(v)} placeholder="e.g. Kennel Tech" />
-            <Inp label="Description" value={editDesc} onChange={v => setEditDesc(v)} placeholder="Brief description" />
-            <div>
-              <div style={{ fontSize:11, fontWeight:600, color:C.textSec, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.03em" }}>Badge Color</div>
-              <div style={{ display:"flex", gap:4 }}>
-                {BADGE_COLORS.map(bc => {
-                  const cm = {default:{bg:C.surfaceHover,text:C.textSec},primary:{bg:C.priLt,text:C.pri},success:{bg:C.sucLt,text:C.suc},warning:{bg:C.warnLt,text:C.warn},danger:{bg:C.danLt,text:C.dan},info:{bg:C.infoLt,text:C.info},accent:{bg:C.accLt,text:C.accDk}};
-                  const s = cm[bc.value] || cm.default;
-                  return (
-                    <button key={bc.value} onClick={() => setEditColor(bc.value)} title={bc.label}
-                      style={{ width:28, height:28, borderRadius:8, background:s.bg, border:`2.5px solid ${editColor === bc.value ? s.text : "transparent"}`, cursor:"pointer", transition:"all 0.15s" }} />
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-          <div style={{ marginTop:16, display:"flex", gap:10 }}>
-            <Btn onClick={saveEdit}>Save Changes</Btn>
-            <Btn variant="ghost" onClick={() => setEditingId(null)}>Cancel</Btn>
-            <div style={{ flex:1 }} />
-            <div style={{ fontSize:13, color:C.textSec, display:"flex", alignItems:"center", gap:6 }}>
-              <Badge color={editColor}>{enabledCount(editPerms)}/{totalPerms}</Badge> permissions enabled
-            </div>
-          </div>
-        </Card>
+  // Checkbox component
+  const Chk = ({ on, onClick }) => (
+    <button onClick={onClick} style={{ width:22, height:22, borderRadius:6, border:`2px solid ${on ? C.pri : C.border}`, background:on ? C.pri : "#fff", display:"inline-flex", alignItems:"center", justifyContent:"center", cursor:canManage?"pointer":"default", padding:0, flexShrink:0, transition:"all 0.12s" }}>
+      {on && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+    </button>
+  );
 
-        {/* Permission Categories */}
-        <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
-          {PERMISSION_CATEGORIES.map(cat => {
-            const catEnabled = cat.permissions.filter(p => editPerms[p.key]).length;
-            const allOn = catEnabled === cat.permissions.length;
-            return (
-              <Card key={cat.key} style={{ padding:0, overflow:"hidden" }}>
-                <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"16px 24px", background:C.bg, borderBottom:`1px solid ${C.border}` }}>
-                  <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                    <div style={{ fontSize:14, fontWeight:700, color:C.text }}>{cat.label}</div>
-                    <Badge color={allOn ? "success" : catEnabled > 0 ? "primary" : "default"}>{catEnabled}/{cat.permissions.length}</Badge>
-                  </div>
-                  <button onClick={() => toggleCategory(cat.key)}
-                    style={{ border:"none", background:"none", cursor:"pointer", fontFamily:"inherit", fontSize:12, fontWeight:600, color:C.pri }}>
-                    {allOn ? "Deselect All" : "Select All"}
-                  </button>
-                </div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, padding:"16px 24px" }}>
-                  {cat.permissions.map(perm => {
-                    const on = editPerms[perm.key];
-                    return (
-                      <label key={perm.key} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"12px 14px", borderRadius:10, border:`1.5px solid ${on ? C.pri+"40" : C.border}`, background:on ? C.priLt : C.surface, cursor:"pointer", transition:"all 0.15s" }}>
-                        <div style={{ width:20, height:20, borderRadius:6, border:`2px solid ${on ? C.pri : C.border}`, background:on ? C.pri : "#fff", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0, marginTop:1 }}>
-                          {on && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
-                        </div>
-                        <input type="checkbox" checked={on || false} onChange={() => togglePerm(perm.key)} style={{ display:"none" }} />
-                        <div style={{ flex:1 }}>
-                          <div style={{ fontSize:13, fontWeight:600, color:C.text }}>{perm.label}</div>
-                          <div style={{ fontSize:11, color:C.textSec, marginTop:2, lineHeight:1.4 }}>{perm.desc}</div>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-
-        {/* Bottom Save Bar */}
-        <div style={{ position:"sticky", bottom:0, padding:"16px 0", marginTop:20 }}>
-          <Card style={{ padding:"14px 24px", display:"flex", alignItems:"center", gap:12, boxShadow:"0 -4px 20px rgba(0,0,0,0.08)" }}>
-            <Btn onClick={saveEdit}>Save Changes</Btn>
-            <Btn variant="ghost" onClick={() => setEditingId(null)}>Cancel</Btn>
-            <div style={{ flex:1, textAlign:"right", fontSize:13, color:C.textSec }}>{enabledCount(editPerms)} of {totalPerms} permissions enabled</div>
-          </Card>
-        </div>
-      </div>
-    );
-  }
-
-  // ── LIST VIEW ──
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:20 }}>
       {/* Header */}
       <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
         <div>
           <div style={{ fontSize:16, fontWeight:700, color:C.text }}>Roles & Permissions</div>
-          <div style={{ fontSize:13, color:C.textSec, marginTop:2 }}>Define what each team member role can access and do.</div>
+          <div style={{ fontSize:13, color:C.textSec, marginTop:2 }}>Compare and configure permissions across all roles at a glance.</div>
         </div>
-        {hasPermission(profile, data, "manage_roles") && (
-          <Btn size="sm" onClick={() => setShowCreate(!showCreate)} icon={showCreate ? <I.X /> : <I.Plus />}>
-            {showCreate ? "Cancel" : "Create Role"}
-          </Btn>
+        {canManage && (
+          <div style={{ display:"flex", gap:8 }}>
+            <Btn size="sm" onClick={() => setShowCreate(!showCreate)} icon={showCreate ? <I.X /> : <I.Plus />}>
+              {showCreate ? "Cancel" : "Create Role"}
+            </Btn>
+          </div>
         )}
       </div>
 
@@ -7476,61 +7420,166 @@ function RolesPermissionsTab({ data, save, profile }) {
               <div style={{ fontSize:11, fontWeight:600, color:C.textSec, marginBottom:6, textTransform:"uppercase", letterSpacing:"0.03em" }}>Badge Color</div>
               <div style={{ display:"flex", gap:4 }}>
                 {BADGE_COLORS.map(bc => {
-                  const cm = {default:{bg:C.surfaceHover,text:C.textSec},primary:{bg:C.priLt,text:C.pri},success:{bg:C.sucLt,text:C.suc},warning:{bg:C.warnLt,text:C.warn},danger:{bg:C.danLt,text:C.dan},info:{bg:C.infoLt,text:C.info},accent:{bg:C.accLt,text:C.accDk}};
-                  const s = cm[bc.value] || cm.default;
-                  return (
-                    <button key={bc.value} onClick={() => setNewColor(bc.value)} title={bc.label}
-                      style={{ width:28, height:28, borderRadius:8, background:s.bg, border:`2.5px solid ${newColor === bc.value ? s.text : "transparent"}`, cursor:"pointer" }} />
-                  );
+                  const s = badgeColorMap[bc.value] || badgeColorMap.default;
+                  return (<button key={bc.value} onClick={() => setNewColor(bc.value)} title={bc.label} style={{ width:28, height:28, borderRadius:8, background:s.bg, border:`2.5px solid ${newColor === bc.value ? s.text : "transparent"}`, cursor:"pointer" }} />);
                 })}
               </div>
             </div>
             <div style={{ flex:1 }} />
             <Btn size="sm" onClick={createRole}>Create Role</Btn>
           </div>
-          <div style={{ fontSize:11, color:C.textMut, marginTop:10 }}>New roles start with all permissions disabled. Click "Edit" after creating to configure permissions.</div>
         </Card>
       )}
 
-      {/* Roles List */}
-      {roles.map(role => {
-        const ec = enabledCount(role.permissions);
-        const pct = Math.round((ec / totalPerms) * 100);
-        return (
-          <Card key={role.id} style={{ padding:"20px 24px" }}>
-            <div style={{ display:"flex", alignItems:"center", gap:16 }}>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:4 }}>
-                  <div style={{ fontSize:15, fontWeight:700, color:C.text }}>{role.name}</div>
-                  <Badge color={role.color}>{role.color === "accent" ? "Bronze" : role.color === "primary" ? "Blue" : role.color === "default" ? "Gray" : role.color === "success" ? "Green" : role.color === "warning" ? "Amber" : role.color === "danger" ? "Red" : "Sky"}</Badge>
-                  {role.builtIn && <Badge>Built-in</Badge>}
-                </div>
-                {role.description && <div style={{ fontSize:13, color:C.textSec, marginBottom:8 }}>{role.description}</div>}
-                {/* Permission bar */}
-                <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                  <div style={{ flex:1, maxWidth:200, height:6, borderRadius:3, background:C.surfaceHover, overflow:"hidden" }}>
-                    <div style={{ width: pct + "%", height:"100%", borderRadius:3, background: pct === 100 ? C.suc : pct > 50 ? C.pri : pct > 0 ? C.warn : C.border, transition:"width 0.3s" }} />
-                  </div>
-                  <div style={{ fontSize:12, fontWeight:600, color:C.textSec, whiteSpace:"nowrap" }}>{ec}/{totalPerms} permissions</div>
-                </div>
+      {/* Edit Role Name/Color Modal */}
+      {editRoleId && (
+        <Modal title="Edit Role" onClose={() => setEditRoleId(null)}>
+          <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+            <Inp label="Role Name" value={editName} onChange={v => setEditName(v)} />
+            <Inp label="Description" value={editDesc} onChange={v => setEditDesc(v)} placeholder="Brief description" />
+            <div>
+              <div style={{ fontSize:11, fontWeight:600, color:C.textSec, marginBottom:6, textTransform:"uppercase" }}>Badge Color</div>
+              <div style={{ display:"flex", gap:4 }}>
+                {BADGE_COLORS.map(bc => {
+                  const s = badgeColorMap[bc.value] || badgeColorMap.default;
+                  return (<button key={bc.value} onClick={() => setEditColor(bc.value)} title={bc.label} style={{ width:32, height:32, borderRadius:8, background:s.bg, border:`2.5px solid ${editColor === bc.value ? s.text : "transparent"}`, cursor:"pointer" }} />);
+                })}
               </div>
-              {hasPermission(profile, data, "manage_roles") && (
-                <div style={{ display:"flex", gap:6, flexShrink:0 }}>
-                  <Btn size="sm" variant="secondary" onClick={() => openEdit(role)}>Edit</Btn>
-                  <Btn size="sm" variant="ghost" onClick={() => duplicateRole(role)}>Duplicate</Btn>
-                  {!role.builtIn && (
-                    confirmDelete === role.id ? (
-                      <Btn size="sm" variant="danger" onClick={() => deleteRole(role.id)}>Confirm Delete</Btn>
-                    ) : (
-                      <Btn size="sm" variant="ghost" onClick={() => setConfirmDelete(role.id)} style={{ color:C.dan }}>Delete</Btn>
-                    )
-                  )}
-                </div>
-              )}
             </div>
-          </Card>
-        );
-      })}
+            <div style={{ display:"flex", gap:10, marginTop:8 }}>
+              <Btn onClick={saveRoleEdit}>Save</Btn>
+              <Btn variant="ghost" onClick={() => setEditRoleId(null)}>Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Permission Matrix Grid */}
+      <Card style={{ padding:0, overflow:"hidden" }}>
+        <div style={{ overflowX:"auto" }}>
+          <table style={{ width:"100%", borderCollapse:"collapse", minWidth: labelW + roles.length * colW }}>
+            {/* Column Headers = Role Names */}
+            <thead>
+              <tr style={{ background:`linear-gradient(135deg, ${C.pri}08, ${C.bg})` }}>
+                <th style={{ position:"sticky", left:0, background:C.bg, zIndex:2, width:labelW, minWidth:labelW, padding:"16px 20px", textAlign:"left", borderBottom:`2px solid ${C.border}`, borderRight:`1px solid ${C.border}` }}>
+                  <div style={{ fontSize:11, fontWeight:700, color:C.textMut, textTransform:"uppercase", letterSpacing:"0.05em" }}>Permission</div>
+                </th>
+                {roles.map(role => {
+                  const ec = enabledCount(role.permissions);
+                  const s = badgeColorMap[role.color] || badgeColorMap.default;
+                  return (
+                    <th key={role.id} style={{ width:colW, minWidth:colW, padding:"12px 8px", textAlign:"center", borderBottom:`2px solid ${C.border}`, borderRight:`1px solid ${C.borderLight}`, verticalAlign:"bottom" }}>
+                      <div style={{ display:"flex", flexDirection:"column", alignItems:"center", gap:6 }}>
+                        <Badge color={role.color}>{role.name}</Badge>
+                        <div style={{ fontSize:11, fontWeight:600, color:C.textMut }}>{ec}/{totalPerms}</div>
+                        {canManage && (
+                          <div style={{ display:"flex", gap:2, flexWrap:"wrap", justifyContent:"center" }}>
+                            <button onClick={() => startEditRole(role)} style={{ fontSize:10, color:C.pri, background:"none", border:"none", cursor:"pointer", fontWeight:600, fontFamily:"inherit", padding:"1px 4px" }}>Edit</button>
+                            <button onClick={() => duplicateRole(role)} style={{ fontSize:10, color:C.textMut, background:"none", border:"none", cursor:"pointer", fontWeight:600, fontFamily:"inherit", padding:"1px 4px" }}>Dup</button>
+                            {!role.builtIn && (confirmDelete === role.id ? (
+                              <button onClick={() => deleteRole(role.id)} style={{ fontSize:10, color:"#fff", background:C.dan, border:"none", cursor:"pointer", fontWeight:700, fontFamily:"inherit", padding:"1px 6px", borderRadius:4 }}>Yes</button>
+                            ) : (
+                              <button onClick={() => setConfirmDelete(role.id)} style={{ fontSize:10, color:C.dan, background:"none", border:"none", cursor:"pointer", fontWeight:600, fontFamily:"inherit", padding:"1px 4px" }}>Del</button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </th>
+                  );
+                })}
+              </tr>
+              {/* Select All / Deselect All row */}
+              {canManage && (
+                <tr style={{ background:C.bg }}>
+                  <td style={{ position:"sticky", left:0, background:C.bg, zIndex:2, padding:"8px 20px", borderBottom:`1px solid ${C.border}`, borderRight:`1px solid ${C.border}`, fontSize:11, fontWeight:700, color:C.pri, textTransform:"uppercase" }}>
+                    Toggle All
+                  </td>
+                  {roles.map(role => {
+                    const allOn = ALL_PERM_KEYS.every(k => role.permissions[k]);
+                    return (
+                      <td key={role.id} style={{ padding:"8px", textAlign:"center", borderBottom:`1px solid ${C.border}`, borderRight:`1px solid ${C.borderLight}` }}>
+                        <button onClick={() => toggleAllForRole(role.id)} style={{ fontSize:10, fontWeight:700, color: allOn ? C.dan : C.suc, background:"none", border:`1.5px solid ${allOn ? C.dan+"40" : C.suc+"40"}`, borderRadius:6, padding:"3px 10px", cursor:"pointer", fontFamily:"inherit" }}>
+                          {allOn ? "None" : "All"}
+                        </button>
+                      </td>
+                    );
+                  })}
+                </tr>
+              )}
+            </thead>
+            <tbody>
+              {PERMISSION_CATEGORIES.map(cat => (
+                <React.Fragment key={cat.key}>
+                  {/* Category Header Row */}
+                  <tr>
+                    <td colSpan={1 + roles.length} style={{ position:"sticky", left:0, padding:"10px 20px", background:`linear-gradient(90deg, ${C.pri}0A, ${C.bg})`, borderBottom:`1px solid ${C.border}`, borderTop:`1px solid ${C.border}` }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                        <div style={{ fontSize:12, fontWeight:800, color:C.pri, textTransform:"uppercase", letterSpacing:"0.06em" }}>{cat.label}</div>
+                        <div style={{ flex:1, height:1, background:C.border }} />
+                        {/* Per-role category toggles */}
+                        {canManage && <div style={{ display:"flex", gap:4, marginLeft:8 }}>
+                          {roles.map(role => {
+                            const catAllOn = cat.permissions.every(p => role.permissions[p.key]);
+                            const catSomeOn = cat.permissions.some(p => role.permissions[p.key]);
+                            return (
+                              <button key={role.id} onClick={() => toggleCategoryForRole(role.id, cat.key)} title={`${catAllOn ? "Deselect" : "Select"} all ${cat.label} for ${role.name}`}
+                                style={{ width:20, height:20, borderRadius:5, border:`1.5px solid ${catAllOn ? C.suc : catSomeOn ? C.pri+"60" : C.border}`, background:catAllOn ? C.suc : catSomeOn ? C.pri+"20" : "transparent", display:"inline-flex", alignItems:"center", justifyContent:"center", cursor:"pointer", fontSize:9, color:catAllOn ? "#fff" : C.textMut, fontWeight:700 }}>
+                                {catAllOn ? "\u2713" : catSomeOn ? "\u2022" : ""}
+                              </button>
+                            );
+                          })}
+                        </div>}
+                      </div>
+                    </td>
+                  </tr>
+                  {/* Permission Rows */}
+                  {cat.permissions.map((perm, pi) => (
+                    <tr key={perm.key} style={{ background: pi % 2 === 0 ? C.surface : C.bg }}>
+                      <td style={{ position:"sticky", left:0, background: pi % 2 === 0 ? C.surface : C.bg, zIndex:1, padding:"10px 20px", borderBottom:`1px solid ${C.borderLight}`, borderRight:`1px solid ${C.border}` }}>
+                        <div style={{ fontSize:13, fontWeight:600, color:C.text, lineHeight:1.3 }}>{perm.label}</div>
+                        <div style={{ fontSize:11, color:C.textMut, lineHeight:1.3, marginTop:1 }}>{perm.desc}</div>
+                      </td>
+                      {roles.map(role => {
+                        const on = role.permissions[perm.key];
+                        return (
+                          <td key={role.id} style={{ padding:"10px 8px", textAlign:"center", borderBottom:`1px solid ${C.borderLight}`, borderRight:`1px solid ${C.borderLight}` }}>
+                            {canManage ? (
+                              <Chk on={on} onClick={() => togglePerm(role.id, perm.key)} />
+                            ) : (
+                              on ? <span style={{ color:C.suc, fontSize:16 }}>\u2713</span> : <span style={{ color:C.border, fontSize:16 }}>\u2014</span>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </React.Fragment>
+              ))}
+            </tbody>
+            {/* Footer: total counts */}
+            <tfoot>
+              <tr style={{ background:C.bg }}>
+                <td style={{ position:"sticky", left:0, background:C.bg, zIndex:2, padding:"14px 20px", borderTop:`2px solid ${C.border}`, borderRight:`1px solid ${C.border}` }}>
+                  <div style={{ fontSize:12, fontWeight:800, color:C.text, textTransform:"uppercase", letterSpacing:"0.04em" }}>Total Enabled</div>
+                </td>
+                {roles.map(role => {
+                  const ec = enabledCount(role.permissions);
+                  const pct = Math.round((ec / totalPerms) * 100);
+                  return (
+                    <td key={role.id} style={{ padding:"14px 8px", textAlign:"center", borderTop:`2px solid ${C.border}`, borderRight:`1px solid ${C.borderLight}` }}>
+                      <div style={{ fontSize:16, fontWeight:800, color: pct === 100 ? C.suc : pct > 50 ? C.pri : C.warn }}>{ec}</div>
+                      <div style={{ fontSize:11, color:C.textMut }}>of {totalPerms}</div>
+                      <div style={{ width:"80%", height:4, borderRadius:2, background:C.surfaceHover, margin:"6px auto 0", overflow:"hidden" }}>
+                        <div style={{ width: pct + "%", height:"100%", borderRadius:2, background: pct === 100 ? C.suc : pct > 50 ? C.pri : pct > 0 ? C.warn : C.border, transition:"width 0.3s" }} />
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </Card>
     </div>
   );
 }
