@@ -3709,7 +3709,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               onFocus={e => e.currentTarget.style.borderBottomColor = C.pri}
               onBlur={e => e.currentTarget.style.borderBottomColor = C.borderLight}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={hasQ ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              <input data-shortcut-search value={curQ} onChange={e => setCurQ(e.target.value)} placeholder={isAct ? "Search by dog name, client name, or room…" : "Search by client name, dog name, phone, or email…"} style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }} />
+              <input data-shortcut-search className="no-focus-ring" value={curQ} onChange={e => setCurQ(e.target.value)} placeholder={isAct ? "Search by dog name, client name, or room…" : "Search by client name, dog name, phone, or email…"} style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }} />
               {!hasQ && !isAct && (data.hotkeySettings||{}).showHints===true && <kbd style={{fontSize:11,fontWeight:600,color:C.textMut,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:5,padding:"2px 7px",fontFamily:"'GT Eesti',monospace",flexShrink:0,lineHeight:1.4}}>/</kbd>}
               {hasQ && <button onClick={() => setCurQ("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex", fontFamily: "inherit" }} title="Clear search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
               {/* Filter pills — swap for Activities tab */}
@@ -11879,13 +11879,13 @@ function NewOverlay({ data, nav, onClose }) {
   };
 
   const handleKeyDown = (e) => {
-    const totalItems = results.length + (q.trim() ? 1 : 0); // +1 for "create new"
+    const totalItems = results.length + 1; // +1 for "create new" at index 0
     if (e.key === "ArrowDown") { e.preventDefault(); setHlIdx(i => (i + 1) % Math.max(totalItems, 1)); }
     else if (e.key === "ArrowUp") { e.preventDefault(); setHlIdx(i => (i - 1 + Math.max(totalItems, 1)) % Math.max(totalItems, 1)); }
     else if (e.key === "Enter") {
       e.preventDefault();
-      if (hlIdx < results.length) { selectClient(results[hlIdx]); }
-      else if (q.trim()) { createNew(); }
+      if (hlIdx === 0) { createNew(); }
+      else if (hlIdx - 1 < results.length) { selectClient(results[hlIdx - 1]); }
     }
   };
 
@@ -11898,24 +11898,37 @@ function NewOverlay({ data, nav, onClose }) {
         {/* Search bar */}
         <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "20px 24px", borderBottom: `1.5px solid ${C.borderLight}` }}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={handleKeyDown}
+          <input ref={inputRef} className="no-focus-ring" value={q} onChange={e => setQ(e.target.value)} onKeyDown={handleKeyDown}
             placeholder="Search clients by name, phone, email, or dog…"
             style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 17, fontWeight: 500, color: C.text, fontFamily: "'GT Eesti', sans-serif", letterSpacing: "-0.01em" }} />
           <kbd onClick={onClose} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', monospace", whiteSpace: "nowrap", cursor: "pointer" }}>Esc</kbd>
         </div>
         {/* Results */}
         <div style={{ maxHeight: 380, overflow: "auto", padding: "8px 0" }}>
-          {results.length === 0 && !q.trim() && (
-            <div style={{ padding: "24px 24px", textAlign: "center", color: C.textMut, fontSize: 14 }}>
-              <div style={{ fontSize: 28, marginBottom: 8 }}>🐾</div>
-              Start typing to search existing clients — or create a new one
-            </div>
-          )}
+          {/* Create new option — always first */}
+          {(() => {
+            const createIdx = 0;
+            const active = hlIdx === createIdx;
+            return (
+              <button onClick={createNew} onMouseEnter={() => setHlIdx(createIdx)}
+                style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "14px 24px", border: "none", borderBottom: results.length > 0 ? `1px solid ${C.borderLight}` : "none", background: active ? `${C.suc}12` : "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.1s" }}>
+                <div style={{ width: 40, height: 40, borderRadius: 12, border: `2.5px dashed ${active ? C.suc : C.pri}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: active ? C.suc : C.pri, transition: "all 0.15s" }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: active ? C.suc : C.pri }}>Create New Client</div>
+                  <div style={{ fontSize: 12, color: C.textMut }}>{q.trim() ? `Set up "${q.trim()}" with their dogs & first reservation` : "Set up a new client with their dogs & first reservation"}</div>
+                </div>
+                <kbd style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 10, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', monospace" }}>↵</kbd>
+              </button>
+            );
+          })()}
           {results.map((c, i) => {
             const dogs = data.dogs.filter(d => d.clientId === c.id);
-            const active = hlIdx === i;
+            const adjIdx = i + 1;
+            const active = hlIdx === adjIdx;
             return (
-              <button key={c.id} onClick={() => selectClient(c)} onMouseEnter={() => setHlIdx(i)}
+              <button key={c.id} onClick={() => selectClient(c)} onMouseEnter={() => setHlIdx(adjIdx)}
                 style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "12px 24px", border: "none", background: active ? C.priLt : "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.1s" }}>
                 <div style={{ width: 40, height: 40, borderRadius: 12, background: `linear-gradient(135deg, ${C.pri}, ${C.priL})`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13, color: "#fff", flexShrink: 0, letterSpacing: "-0.02em" }}>
                   {(c.fields.first_name || "?")[0]}{(c.fields.last_name || "?")[0]}
@@ -11931,24 +11944,6 @@ function NewOverlay({ data, nav, onClose }) {
               </button>
             );
           })}
-          {/* Create new option — always visible */}
-          {(() => {
-            const createIdx = results.length;
-            const active = hlIdx === createIdx;
-            return (
-              <button onClick={createNew} onMouseEnter={() => setHlIdx(createIdx)}
-                style={{ display: "flex", alignItems: "center", gap: 14, width: "100%", padding: "14px 24px", border: "none", borderTop: results.length > 0 ? `1px solid ${C.borderLight}` : "none", background: active ? `${C.suc}12` : "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.1s" }}>
-                <div style={{ width: 40, height: 40, borderRadius: 12, border: `2.5px dashed ${active ? C.suc : C.pri}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: active ? C.suc : C.pri, transition: "all 0.15s" }}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: active ? C.suc : C.pri }}>Create New Client</div>
-                  <div style={{ fontSize: 12, color: C.textMut }}>{q.trim() ? `Set up "${q.trim()}" with their dogs & first reservation` : "Set up a new client with their dogs & first reservation"}</div>
-                </div>
-                <kbd style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 10, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', monospace" }}>↵</kbd>
-              </button>
-            );
-          })()}
           {q.trim() && results.length === 0 && (
             <div style={{ padding: "0 24px 16px", textAlign: "center" }}>
               <div style={{ fontSize: 12, color: C.textMut }}>No existing clients match "<span style={{ fontWeight: 600 }}>{q.trim()}</span>"</div>
@@ -14298,6 +14293,7 @@ export default function App() {
         *{box-sizing:border-box;margin:0;padding:0;}
         ::-webkit-scrollbar{width:6px;} ::-webkit-scrollbar-thumb{background:#C4C8D0;border-radius:3px;} ::-webkit-scrollbar-track{background:transparent;}
         input:focus,select:focus,textarea:focus{border-color:${C.pri}!important;box-shadow:0 0 0 3px rgba(0,52,98,0.08);}
+        input.no-focus-ring:focus{border-color:transparent!important;box-shadow:none!important;outline:none!important;}
         @media(max-width:900px){.sidebar-d{display:none!important;}.mob-h{display:flex!important;}.main-content{padding:20px 16px!important;padding-top:72px!important;}}
         @media(min-width:901px){.mob-h{display:none!important;}.mob-ov{display:none!important;}}
         h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Canela', Georgia, serif !important;font-weight:700;}
