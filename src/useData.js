@@ -16,6 +16,7 @@ export function useData(profile) {
   // Load data from Supabase
   useEffect(() => {
     if (!locationId) { setLoading(false); return; }
+    setLoading(true); // Reset loading when switching locations
 
     const load = async () => {
       setLoadError(false);

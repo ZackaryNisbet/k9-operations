@@ -97,6 +97,16 @@ export function AuthProvider({ children }) {
     return { error };
   };
 
+  const refreshProfile = async () => {
+    if (!user) return;
+    const { data: updated } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+    if (updated) setProfile(updated);
+  };
+
   const signOut = async () => {
     await supabase.auth.signOut();
     setUser(null);
@@ -105,7 +115,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, signOut, resetPassword, updatePassword, needsPasswordSet }}>
+    <AuthContext.Provider value={{ user, profile, loading, signIn, signUp, signOut, resetPassword, updatePassword, needsPasswordSet, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );
