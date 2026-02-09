@@ -2223,6 +2223,22 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       const depositRequired = Math.round(adjTotal * 0.5 * 100) / 100;
       const collected = reservation.amountCollected || 0;
       if (adjTotal > 0 && collected < depositRequired) errs.deposit = `50% deposit required ($${depositRequired.toFixed(2)}). Collected: $${collected.toFixed(2)}`;
+      // Compliance gates — all must be green to check in
+      const vaxStatus = getVaxStatus(dog, data.requiredVaccines, data.resortPolicies);
+      if (!vaxStatus.ok) {
+        const issues = [...(vaxStatus.expired || []), ...(vaxStatus.missing || [])].map(v => v.replace(/_/g, " "));
+        errs.compliance_vaccines = `Vaccines not compliant: ${issues.join(", ")}`;
+      }
+      if (!ecName?.trim() || !ecPhone?.trim()) errs.compliance_ec = "Emergency contact name and phone are required";
+      const agreements = data.agreements || DEF_AGREEMENTS;
+      const reqAgrs = agreements.filter(a => a.required !== false);
+      const allAgrSigned = reqAgrs.every(a => agrSigned(client, a.id));
+      if (!allAgrSigned) {
+        const unsigned = reqAgrs.filter(a => !agrSigned(client, a.id)).map(a => a.name);
+        errs.compliance_agreements = `Unsigned agreements: ${unsigned.join(", ")}`;
+      }
+      const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
+      if (!ageStatus.ok) errs.compliance_age = ageStatus.reason || "Dog does not meet age requirements";
       if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     }
     if (doCheckOut && isBoarding) {
@@ -2825,6 +2841,15 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       {/* Footer */}
       {errors.deposit && <div style={{color:C.dan,fontSize:13,fontWeight:600,marginTop:8,padding:"8px 14px",background:C.danLt,borderRadius:8}}>{errors.deposit}</div>}
       {errors.payment && <div style={{color:C.dan,fontSize:13,fontWeight:600,marginTop:8,padding:"8px 14px",background:C.danLt,borderRadius:8}}>{errors.payment}</div>}
+      {(errors.compliance_vaccines || errors.compliance_ec || errors.compliance_agreements || errors.compliance_age) && (
+        <div style={{marginTop:8,padding:"10px 14px",background:C.danLt,borderRadius:8,border:`1px solid ${C.dan}30`}}>
+          <div style={{fontSize:13,fontWeight:700,color:C.dan,marginBottom:4}}>⚠ Compliance check(s) must be resolved before check-in:</div>
+          {errors.compliance_vaccines && <div style={{fontSize:12,color:C.dan,marginTop:2}}>• {errors.compliance_vaccines}</div>}
+          {errors.compliance_ec && <div style={{fontSize:12,color:C.dan,marginTop:2}}>• {errors.compliance_ec}</div>}
+          {errors.compliance_agreements && <div style={{fontSize:12,color:C.dan,marginTop:2}}>• {errors.compliance_agreements}</div>}
+          {errors.compliance_age && <div style={{fontSize:12,color:C.dan,marginTop:2}}>• {errors.compliance_age}</div>}
+        </div>
+      )}
       <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:24,alignItems:"center"}}>
         {reservation.status !== "checked-out" && reservation.status !== "cancelled" && (
           <button onClick={()=>setShowCancelConfirm(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"7px 14px",borderRadius:8,border:`1px solid ${C.danLt}`,background:"transparent",color:C.dan,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginRight:"auto"}}><I.Trash/> Cancel Reservation</button>
