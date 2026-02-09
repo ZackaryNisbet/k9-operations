@@ -8114,11 +8114,11 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
           })}
         </div>
 
-        {/* Overall occupancy rows — Day+Night and Overnight Only */}
-        {totalRoomCount > 0 && (<>
-          <div style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px repeat(7, ${COL_W})`, borderBottom: `1px solid ${C.borderLight}`, background: C.surface, minHeight: 36 }}>
-            <div style={{ padding: "0 8px", display: "flex", alignItems: "center", fontSize: 10, fontWeight: 700, color: C.text, borderRight: `1px solid ${C.border}`, textTransform: "uppercase", letterSpacing: "0.03em", lineHeight: 1.2 }}>Day + Night</div>
-            {dailyOccOverall.map((booked, di) => {
+        {/* Overall occupancy row — Overnight only (boarding, excludes dayboarding) */}
+        {totalRoomCount > 0 && (
+          <div style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px repeat(7, ${COL_W})`, borderBottom: `2px solid ${C.border}`, background: C.surface, minHeight: 36 }}>
+            <div style={{ padding: "0 8px", display: "flex", alignItems: "center", fontSize: 10, fontWeight: 700, color: C.text, borderRight: `1px solid ${C.border}`, textTransform: "uppercase", letterSpacing: "0.03em", lineHeight: 1.2 }}>Overnight</div>
+            {dailyOccOvernight.map((booked, di) => {
               const pct = totalRoomCount > 0 ? Math.round((booked / totalRoomCount) * 100) : 0;
               return (
                 <div key={di} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", borderRight: `1px solid ${C.borderLight}`, background: weekDays[di] === td ? `${C.priLt}40` : "transparent" }}>
@@ -8128,19 +8128,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
               );
             })}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px repeat(7, ${COL_W})`, borderBottom: `2px solid ${C.border}`, background: C.surface, minHeight: 36 }}>
-            <div style={{ padding: "0 8px", display: "flex", alignItems: "center", fontSize: 10, fontWeight: 700, color: C.textSec, borderRight: `1px solid ${C.border}`, textTransform: "uppercase", letterSpacing: "0.03em", lineHeight: 1.2 }}>Overnight</div>
-            {dailyOccOvernight.map((booked, di) => {
-              const pct = totalRoomCount > 0 ? Math.round((booked / totalRoomCount) * 100) : 0;
-              return (
-                <div key={di} style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", borderRight: `1px solid ${C.borderLight}`, background: weekDays[di] === td ? `${C.priLt}40` : "transparent" }}>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: pct === 0 ? C.textMut : C.text }}>{pct}%</span>
-                  <span style={{ fontSize: 9, fontWeight: 500, color: C.textMut }}>{booked}/{totalRoomCount}</span>
-                </div>
-              );
-            })}
-          </div>
-        </>)}
+        )}
 
         {/* Room rows */}
         {roomRows.length === 0 ? (
@@ -8202,9 +8190,10 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
                     const startIdx = weekDays.indexOf(ciDate);
                     const endIdx = weekDays.indexOf(coDate);
                     if (startIdx < 0 || endIdx < 0) return null;
-                    // Half-day positioning
-                    const startOff = res.checkIn >= weekStart ? 0.5 : 0;
-                    const endOff = res.checkOut <= weekEnd ? 0.5 : 1;
+                    // Half-day positioning — dayboarding (same-day) gets wider bar so name is readable
+                    const isSameDay = res.checkIn === res.checkOut;
+                    const startOff = isSameDay ? 0.08 : (res.checkIn >= weekStart ? 0.5 : 0);
+                    const endOff = isSameDay ? 0.92 : (res.checkOut <= weekEnd ? 0.5 : 1);
                     const leftPct = ((startIdx + startOff) / 7) * 100;
                     const widthPct = ((endIdx + endOff - startIdx - startOff) / 7) * 100;
                     const span = endIdx - startIdx + 1;
