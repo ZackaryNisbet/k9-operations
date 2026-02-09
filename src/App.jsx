@@ -2990,13 +2990,13 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
       feedSch.forEach(s => {
         (s.times || []).forEach(time => {
           const colKey = `feeding_${time.replace(/\s+/g, "_")}`;
-          rows.push({ ...base, id: `${res.id}_${colKey}`, type: "feeding", colKey, time, label: `Feeding – ${time}`, detail: [s.amount, s.unit, s.foodType].filter(Boolean).join(" "), instruction: s.instruction || "", notes: s.notes || "", logEntry: log[`${today}|${colKey}`] || {} });
+          rows.push({ ...base, id: `${res.id}_${colKey}`, type: "feeding", colKey, time, label: `Feeding – ${time}`, qty: [s.amount, s.unit].filter(Boolean).join(" "), foodType: s.foodType || "", detail: [s.amount, s.unit, s.foodType].filter(Boolean).join(" "), instruction: s.instruction || "", notes: s.notes || "", logEntry: log[`${today}|${colKey}`] || {} });
         });
       });
 
       medSch.forEach(s => {
         const colKey = `med_${(s.name || "").replace(/\s+/g, "_")}`;
-        rows.push({ ...base, id: `${res.id}_${colKey}`, type: "medication", colKey, time: s.time || "Any", label: s.name || "Medication", detail: [s.amount, s.unit].filter(Boolean).join(" "), instruction: s.notes || "", notes: "", logEntry: log[`${today}|${colKey}`] || {} });
+        rows.push({ ...base, id: `${res.id}_${colKey}`, type: "medication", colKey, time: s.time || "Any", label: s.name || "Medication", qty: [s.amount, s.unit].filter(Boolean).join(" "), foodType: "", detail: [s.amount, s.unit].filter(Boolean).join(" "), instruction: s.notes || "", notes: "", logEntry: log[`${today}|${colKey}`] || {} });
       });
 
       if (bath && res.checkOut === today) {
@@ -3821,10 +3821,10 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               const showDeparts = actTypeFilter.has("bathing") || (actTypeFilter.size === 0 && filteredActivities.some(r => r.type === "bathing"));
               const bathOnly = actTypeFilter.size === 1 && actTypeFilter.has("bathing");
               const actGrid = bathOnly
-                ? "68px minmax(140px,1.5fr) minmax(80px,1fr) 80px 90px 110px minmax(100px,0.9fr) 80px"
+                ? "52px minmax(120px,1.4fr) minmax(90px,1.2fr) 70px 80px minmax(90px,1fr) 80px 72px"
                 : showDeparts
-                  ? "68px minmax(130px,1.4fr) minmax(90px,1.1fr) 80px 100px minmax(110px,0.9fr) 130px 80px"
-                  : "68px minmax(140px,1.5fr) minmax(100px,1.2fr) 80px 110px minmax(130px,1.1fr) 140px";
+                  ? "52px minmax(120px,1.4fr) minmax(90px,1.2fr) 70px 80px minmax(90px,1fr) minmax(120px,1.3fr) 72px"
+                  : "52px minmax(130px,1.5fr) minmax(110px,1.3fr) 70px 80px minmax(100px,1fr) minmax(155px,1.4fr)";
               const CONSUMPTION_OPTS = ["0%","25%","50%","75%","100%"];
               const typeBadge = (t) => {
                 const cfg = t === "feeding" ? { bg: C.pri, label: "Feeding" } : t === "medication" ? { bg: C.acc, label: "Meds" } : { bg: C.info, label: "Bath" };
@@ -3879,13 +3879,14 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                             <div style={{ minWidth: 0 }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                                 {typeBadge(row.type)}
-                                {row.instruction && <span style={{ fontSize: 11, color: C.textSec, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.instruction}</span>}
+                                {row.foodType && <span style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{row.foodType}</span>}
                               </div>
-                              {row.notes && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{row.notes}</div>}
+                              {row.instruction && <div style={{ fontSize: 11, color: C.textSec, fontStyle: "italic", marginTop: 2 }}>{row.instruction}</div>}
+                              {row.notes && <div style={{ fontSize: 10, color: C.textMut, marginTop: 1 }}>{row.notes}</div>}
                             </div>
                             {/* QTY */}
                             <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>
-                              {row.detail || "—"}
+                              {row.qty || "—"}
                             </div>
                             {/* Administered Checkbox */}
                             <div>
