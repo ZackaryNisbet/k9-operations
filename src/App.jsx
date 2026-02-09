@@ -3653,7 +3653,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                           </div>
                           {/* Lodging */}
                           <div style={{ minWidth: 0, overflow: "hidden" }}>
-                            {(res.type === "boarding" || res.type === "dayboarding") && res.roomType && <><div style={{ fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{res.roomType}</div>{res.room && <div style={{ fontSize: 11, color: C.textSec }}>{res.room}</div>}</>}
+                            {(res.type === "boarding" || res.type === "dayboarding") && res.roomType && <><div style={{ fontSize: 13, fontWeight: 600, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{res.roomType}</div>{res.room && <div style={{ fontSize: 11, color: C.textSec }}>{res.room}</div>}{res.checkIn && res.checkOut && (() => { const nights = Math.round((new Date(res.checkOut+"T12:00:00") - new Date(res.checkIn+"T12:00:00")) / 86400000); return nights > 0 ? <div style={{ fontSize: 11, color: C.textMut }}>{nights} night{nights !== 1 ? "s" : ""}</div> : null; })()}</>}
                           </div>
                           {/* In Date */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
