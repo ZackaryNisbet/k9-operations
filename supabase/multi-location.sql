@@ -26,8 +26,8 @@ DECLARE
   slug_candidate TEXT;
   slug_suffix INT := 0;
 BEGIN
-  -- Only owners can create locations
-  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'owner') THEN
+  -- Only owners/enterprise admins can create locations
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin')) THEN
     RETURN jsonb_build_object('success', false, 'message', 'Only owners can create locations');
   END IF;
 
@@ -70,7 +70,7 @@ DECLARE
 BEGIN
   SELECT role INTO user_role FROM profiles WHERE id = auth.uid();
 
-  IF user_role = 'owner' THEN
+  IF user_role IN ('owner', 'enterprise_admin') THEN
     -- Owners see all locations
     RETURN (
       SELECT COALESCE(jsonb_agg(
@@ -112,8 +112,8 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION switch_location(p_location_id UUID)
 RETURNS JSONB AS $$
 BEGIN
-  -- Only owners can switch locations
-  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'owner') THEN
+  -- Only owners/enterprise admins can switch locations
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin')) THEN
     RETURN jsonb_build_object('success', false, 'message', 'Only owners can switch locations');
   END IF;
 
@@ -128,5 +128,109 @@ BEGIN
   WHERE id = auth.uid();
 
   RETURN jsonb_build_object('success', true, 'location_id', p_location_id);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+-- ============================================================
+-- 5. Update profiles role CHECK constraint to allow enterprise_admin
+-- ============================================================
+ALTER TABLE profiles DROP CONSTRAINT IF EXISTS profiles_role_check;
+ALTER TABLE profiles ADD CONSTRAINT profiles_role_check
+  CHECK (role IN ('owner', 'manager', 'staff', 'enterprise_admin'));
+
+
+-- ============================================================
+-- 6. get_locations_ops_data: Returns ops-relevant data for ALL
+--    locations. Used by Enterprise Operations Oversight page.
+--    Only owners/enterprise_admins can call.
+-- ============================================================
+CREATE OR REPLACE FUNCTION get_locations_ops_data()
+RETURNS JSONB AS $$
+BEGIN
+  -- Only owners/enterprise admins
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin')) THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  RETURN (
+    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+      'id', id,
+      'name', name,
+      'dailyOps', COALESCE(data->'dailyOps', '[]'::jsonb),
+      'eodEntries', COALESCE(data->'eodEntries', '[]'::jsonb),
+      'rooms', COALESCE(data->'rooms', '{}'::jsonb),
+      'reservations', COALESCE(data->'reservations', '[]'::jsonb),
+      'openingTemplate', data->'openingTemplate',
+      'feTemplate', data->'feTemplate',
+      'beTemplate', data->'beTemplate',
+      'closingTemplate', data->'closingTemplate'
+    )), '[]'::jsonb)
+    FROM locations
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+-- ============================================================
+-- 7. list_enterprise_users: Returns all profiles for user mgmt.
+--    Owner/enterprise_admin only.
+-- ============================================================
+CREATE OR REPLACE FUNCTION list_enterprise_users()
+RETURNS JSONB AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin')) THEN
+    RETURN '[]'::jsonb;
+  END IF;
+
+  RETURN (
+    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+      'id', p.id,
+      'email', p.email,
+      'full_name', p.full_name,
+      'role', p.role,
+      'location_id', p.location_id,
+      'location_name', COALESCE(l.name, ''),
+      'created_at', p.created_at
+    ) ORDER BY p.created_at), '[]'::jsonb)
+    FROM profiles p
+    LEFT JOIN locations l ON l.id = p.location_id
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+-- ============================================================
+-- 8. set_enterprise_admin: Promote/demote a user to/from
+--    enterprise_admin. Owner-only operation.
+-- ============================================================
+CREATE OR REPLACE FUNCTION set_enterprise_admin(p_user_id UUID, p_is_admin BOOLEAN)
+RETURNS JSONB AS $$
+DECLARE
+  target_role TEXT;
+BEGIN
+  -- Only owners can promote/demote
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'owner') THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Only owners can manage enterprise admins');
+  END IF;
+
+  -- Cannot change own role
+  IF p_user_id = auth.uid() THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Cannot change your own role');
+  END IF;
+
+  -- Cannot demote another owner
+  SELECT role INTO target_role FROM profiles WHERE id = p_user_id;
+  IF target_role = 'owner' THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Cannot change another owner role');
+  END IF;
+
+  IF p_is_admin THEN
+    UPDATE profiles SET role = 'enterprise_admin' WHERE id = p_user_id;
+  ELSE
+    UPDATE profiles SET role = 'manager' WHERE id = p_user_id;
+  END IF;
+
+  RETURN jsonb_build_object('success', true);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
