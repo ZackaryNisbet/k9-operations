@@ -1680,7 +1680,7 @@ function generateDemoData() {
     dogTags: DEF_DOG_TAGS,
     requiredVaccines: DEF_REQUIRED_VACCINES,
     facilitySettings: { largeDogDaycareSF: 3600, smallDogDaycareSF: 2400 },
-    hotkeySettings: { enabled: true, showHints: true },
+    hotkeySettings: { enabled: false, showHints: false },
     rooms: ROOMS,
     crmEntries: [],
     eodEntries,
@@ -2427,16 +2427,18 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                         <div style={{color:C.suc,fontSize:11}}>All vaccines current</div>
                       ) : (
                         <>
-                          {vaxStatus.expired.map(vId=><div key={vId} style={{color:C.dan,fontSize:11}}>• {vId.replace(/_/g," ")} — Expired</div>)}
-                          {vaxStatus.missing.map(vId=><div key={vId} style={{color:C.dan,fontSize:11}}>• {vId.replace(/_/g," ")} — Missing</div>)}
+                          {vaxStatus.expired.map(vId=>{const vax=VACCINES.find(v=>v.id===vId);return <div key={vId} style={{color:C.dan,fontSize:11}}>• {vax?vax.name:vId.replace(/_/g," ")} — Expired</div>;})}
+                          {vaxStatus.missing.map(vId=>{const vax=VACCINES.find(v=>v.id===vId);return <div key={vId} style={{color:C.dan,fontSize:11}}>• {vax?vax.name:vId.replace(/_/g," ")} — Missing</div>;})}
                         </>
                       )}
                       {(data.requiredVaccines||[]).map(vId=>{
                         const curDate = dog.fields[vId] || "";
+                        const vax = VACCINES.find(v=>v.id===vId);
+                        const vaxName = vax ? vax.name : vId.replace(/_/g," ");
                         return (
-                          <div key={vId+"edit"} style={{marginTop:4,display:"flex",alignItems:"center",gap:6}}>
-                            <span style={{fontSize:11,color:C.textSec,minWidth:120}}>{vId.replace(/_/g," ")}</span>
-                            <input type="date" value={curDate} style={{fontSize:11,padding:"4px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontFamily:"inherit"}}
+                          <div key={vId+"edit"} style={{marginTop:4,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                            <span style={{fontSize:11,color:C.textSec,minWidth:100,fontWeight:600}}>{vaxName}</span>
+                            <input type="date" value={curDate} style={{fontSize:11,padding:"4px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontFamily:"inherit",maxWidth:150,flex:"0 0 auto"}}
                               onChange={async(e)=>{
                                 const newDogs=data.dogs.map(d=>d.id===dog.id?{...d,fields:{...d.fields,[vId]:e.target.value}}:d);
                                 await save({...data,dogs:newDogs});
@@ -2533,7 +2535,17 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
               {profileHint(summarizeMeds(profileMedicationSchedules), medsChanged)}
             </div>
             <div>
-              <Inp label="Bathing Preference" type="select" value={bathType} onChange={setBathType} options={BATH_OPTS}/>
+              <div style={{fontSize:11,fontWeight:600,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:6}}>Bathing Preference</div>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                {BATH_OPTS.map(opt=>{
+                  const sel=bathType===opt;
+                  const isProfile=profileBath===opt;
+                  return <button key={opt} onClick={()=>setBathType(opt)} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:12,fontWeight:sel?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",display:"flex",alignItems:"center",gap:4}}>
+                    {sel&&<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                    {opt}{isProfile&&<span style={{fontSize:9,color:C.acc,fontWeight:700,marginLeft:2}}>(Profile)</span>}
+                  </button>;
+                })}
+              </div>
               {profileHint(profileBath, bathChanged)}
             </div>
           </div>
@@ -3529,8 +3541,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
           </div>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <span data-shortcut-quickdc="1" onClick={()=>setShowQuickDC(true)} style={{display:"inline-flex"}}><Btn variant="success" onClick={()=>setShowQuickDC(true)} icon={<I.Plus/>}>Quick Daycare{(data.hotkeySettings||{}).showHints!==false&&<kbd style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.6)",background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>Q</kbd>}</Btn></span>
-          <Btn onClick={onNew} icon={<I.Plus/>}>New {(data.hotkeySettings||{}).showHints!==false&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
+          <span data-shortcut-quickdc="1" onClick={()=>setShowQuickDC(true)} style={{display:"inline-flex"}}><Btn variant="success" onClick={()=>setShowQuickDC(true)} icon={<I.Plus/>}>Quick Daycare{(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.6)",background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>Q</kbd>}</Btn></span>
+          <Btn onClick={onNew} icon={<I.Plus/>}>New {(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
         </div>
       </div>
 
@@ -3693,10 +3705,12 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
           const setCurQ = isAct ? setActSearch : setSearchQuery;
           const hasQ = curQ.trim().length > 0;
           return (
-            <div style={{ display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+            <div style={{ display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1.5px solid ${C.borderLight}`, background: C.bg, transition: "border-color 0.15s" }}
+              onFocus={e => e.currentTarget.style.borderBottomColor = C.pri}
+              onBlur={e => e.currentTarget.style.borderBottomColor = C.borderLight}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={hasQ ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               <input data-shortcut-search value={curQ} onChange={e => setCurQ(e.target.value)} placeholder={isAct ? "Search by dog name, client name, or room…" : "Search by client name, dog name, phone, or email…"} style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }} />
-              {!hasQ && !isAct && (data.hotkeySettings||{}).showHints!==false && <kbd style={{fontSize:11,fontWeight:600,color:C.textMut,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:5,padding:"2px 7px",fontFamily:"'GT Eesti',monospace",flexShrink:0,lineHeight:1.4}}>/</kbd>}
+              {!hasQ && !isAct && (data.hotkeySettings||{}).showHints===true && <kbd style={{fontSize:11,fontWeight:600,color:C.textMut,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:5,padding:"2px 7px",fontFamily:"'GT Eesti',monospace",flexShrink:0,lineHeight:1.4}}>/</kbd>}
               {hasQ && <button onClick={() => setCurQ("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex", fontFamily: "inherit" }} title="Clear search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
               {/* Filter pills — swap for Activities tab */}
               <div style={{ display: "flex", gap: 4, marginLeft: 8, flexShrink: 0 }}>
@@ -5931,21 +5945,6 @@ function NewDogPage({ data, save, clientId, nav }) {
       <button onClick={()=>nav("client-detail",{clientId})} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.textSec,fontSize:14,fontWeight:600,padding:0,marginBottom:20,fontFamily:"inherit"}}><I.Back/> Back to {client.fields.first_name}</button>
       <h1 style={{margin:"0 0 24px",fontSize:26,fontWeight:800,color:C.text}}>Add Dog</h1>
       <Card style={{padding:28}}>
-        {/* Tag Selection */}
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 8 }}>Dog Tags</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {data.dogTags.map(tag => {
-              const sel = tags.includes(tag.id);
-              const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
-              return (
-                <button key={tag.id} onClick={() => toggleTag(tag.id)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, border: `2px solid ${sel ? tc.text : C.border}`, background: sel ? tc.bg : C.surface, color: sel ? tc.text : C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
-                  {sel && <I.Check />}<I.Tag />{tag.name}
-                </button>
-              );
-            })}
-          </div>
-        </div>
         <DogFormFields fields={fields} dogFields={data.dogFields} data={data} errors={errors} onChange={updateField}
           feedingSchedules={feedingSchedules} onFeedingChange={setFeedingSchedules}
           medSchedules={medSchedules} onMedChange={setMedSchedules} />
@@ -6182,9 +6181,24 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
     setCareFields(cf);
   },[selectedDogs.join(",")]);
 
-  useEffect(()=>{if(type==="daycare"||type==="dayboarding"||type==="tour"||type==="evaluation")setCheckOut(checkIn);},[type,checkIn]);
+  useEffect(()=>{if(type==="daycare"||type==="dayboarding"||type==="tour"||type==="evaluation")setCheckOut(checkIn);else if(type==="boarding"&&checkOut<=checkIn)setCheckOut(addDays(checkIn,1));},[type,checkIn]);
   useEffect(()=>{if(type==="daycare"||type==="dayboarding"){setCheckInTime("07:00");setCheckOutTime("18:00");}else if(type==="tour"){setCheckInTime("14:00");setCheckOutTime("14:30");}else if(type==="evaluation"){setCheckInTime("09:00");setCheckOutTime("10:00");}else{setCheckInTime("09:00");setCheckOutTime("11:00");}},[type]);
   useEffect(()=>{if(type==="dayboarding")setRoomType("Executive Room");},[type]);
+  // Auto-add bath for boarding stays of 2+ nights
+  useEffect(()=>{
+    if(type==="boarding"&&countNights(checkIn,checkOut)>=2&&selectedDogs.length>0){
+      setCareFields(prev=>{
+        const next={...prev};
+        selectedDogs.forEach(did=>{
+          const dog=data.dogs.find(d=>d.id===did);
+          if(dog&&!(next[did]||{}).bath_type){
+            next[did]={...next[did],bath_type:dog.fields.bath_type||"Standard"};
+          }
+        });
+        return next;
+      });
+    }
+  },[type,checkIn,checkOut,selectedDogs.join(",")]);
   useEffect(()=>{setSelectedRoom("");},[roomType]);
 
   // Hotkeys: T cycles type, R cycles room type (capture phase so page-level takes priority over global nav)
@@ -7108,16 +7122,20 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                         {medsChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
                         <MedicationScheduleEditor schedules={care.medicationSchedules || []} onChange={v=>updateCare(did,"medicationSchedules",v)} data={data}/>
                       </div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                        {type==="boarding"&&countNights(checkIn,checkOut)>=2&&<div>
+                      {(type!=="boarding"||countNights(checkIn,checkOut)>=2)&&<div>
                           {bathChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
-                          <Inp label="Bathing Type" type="select" value={care.bath_type ?? ""} onChange={v=>updateCare(did,"bath_type",v)} options={BATH_OPTS}/>
-                        </div>}
-                        {type!=="boarding"&&<div>
-                          {bathChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
-                          <Inp label="Bathing Type" type="select" value={care.bath_type ?? ""} onChange={v=>updateCare(did,"bath_type",v)} options={BATH_OPTS}/>
-                        </div>}
-                      </div>
+                          <div style={{fontSize:11,fontWeight:600,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:6}}>Bathing Type</div>
+                          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                            {BATH_OPTS.map(opt=>{
+                              const sel=(care.bath_type??"")=== opt;
+                              const isProfile=profileBath===opt;
+                              return <button key={opt} onClick={()=>updateCare(did,"bath_type",opt)} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:12,fontWeight:sel?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",display:"flex",alignItems:"center",gap:4}}>
+                                {sel&&<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                                {opt}{isProfile&&<span style={{fontSize:9,color:C.acc,fontWeight:700,marginLeft:2}}>(Profile)</span>}
+                              </button>;
+                            })}
+                          </div>
+                      </div>}
                     </div>
                     {/* Add-Ons */}
                     {type!=="tour"&&(
@@ -7567,7 +7585,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>Lodging Calendar</h1>
-        <Btn onClick={onNew} icon={<I.Plus />}>New {(data.hotkeySettings||{}).showHints!==false&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
+        <Btn onClick={onNew} icon={<I.Plus />}>New {(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
       </div>
 
       {/* Week navigation */}
@@ -10875,8 +10893,45 @@ function TeamTab({ profile, data, save }) {
     await save({ ...data, pendingInvites: pendingInvites.filter(i => i.id !== invId) });
   };
 
+  const autoDeact = data.teamSettings?.autoDeactivate || {};
+  const autoDeactEnabled = autoDeact.enabled || false;
+  const autoDeactDays = autoDeact.days || 30;
+  const fmtDt = (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  };
+  const daysSince = (iso) => {
+    if (!iso) return null;
+    return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Auto-deactivate toggle */}
+      {isOwner && (
+        <Card style={{ padding: "16px 24px" }}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Auto-Deactivate Inactive Accounts</div>
+              <div style={{ fontSize: 12, color: C.textSec, marginTop:2 }}>Automatically deactivate team members who haven't logged in within the specified number of days.</div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                <span style={{fontSize:12,color:C.textSec}}>After</span>
+                <input type="number" value={autoDeactDays} min={1} max={365}
+                  onChange={e=>save({...data,teamSettings:{...data.teamSettings,autoDeactivate:{...autoDeact,days:parseInt(e.target.value)||30}}})}
+                  style={{width:60,padding:"4px 8px",borderRadius:6,border:`1.5px solid ${C.border}`,fontSize:12,fontWeight:600,color:C.text,fontFamily:"inherit",textAlign:"center"}} />
+                <span style={{fontSize:12,color:C.textSec}}>days</span>
+              </div>
+              <button onClick={()=>save({...data,teamSettings:{...data.teamSettings,autoDeactivate:{...autoDeact,enabled:!autoDeactEnabled}}})}
+                style={{width:44,height:24,borderRadius:12,border:"none",background:autoDeactEnabled?C.suc:C.border,cursor:"pointer",position:"relative",transition:"background 0.2s"}}>
+                <div style={{width:18,height:18,borderRadius:9,background:"#fff",position:"absolute",top:3,left:autoDeactEnabled?23:3,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.2)"}}/>
+              </button>
+            </div>
+          </div>
+        </Card>
+      )}
       {/* Current Team Members */}
       <Card style={{ padding: 0, overflow: "hidden" }}>
         <div style={{ padding: "20px 24px 16px" }}>
@@ -10889,19 +10944,25 @@ function TeamTab({ profile, data, save }) {
           <div style={{ padding: "24px", textAlign: "center", color: C.textMut, fontSize: 13 }}>Loading team...</div>
         ) : (
           <>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 130px 48px", padding: "10px 24px", background: C.bg, borderTop: "1px solid " + C.border, borderBottom: "1px solid " + C.border, fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              <div>Name</div><div>Email</div><div>Role</div><div/>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(100px,1fr) minmax(120px,1fr) minmax(100px,0.8fr) minmax(100px,0.8fr) 100px 48px", padding: "10px 24px", background: C.bg, borderTop: "1px solid " + C.border, borderBottom: "1px solid " + C.border, fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              <div>Name</div><div>Email</div><div>First Login</div><div>Last Login</div><div>Role</div><div/>
             </div>
             {team.sort((a, b) => {
               const ro = { owner: 0, manager: 1, staff: 2 };
               return (ro[a.role] || 9) - (ro[b.role] || 9);
-            }).map(m => (
-              <div key={m.id} style={{ display: "grid", gridTemplateColumns: "1fr 1fr 130px 48px", padding: "14px 24px", borderBottom: "1px solid " + C.borderLight, alignItems: "center" }}>
+            }).map(m => {
+              const daysInactive = daysSince(m.last_sign_in_at);
+              const isInactive = autoDeactEnabled && daysInactive !== null && daysInactive >= autoDeactDays;
+              return (
+              <div key={m.id} style={{ display: "grid", gridTemplateColumns: "minmax(100px,1fr) minmax(120px,1fr) minmax(100px,0.8fr) minmax(100px,0.8fr) 100px 48px", padding: "14px 24px", borderBottom: "1px solid " + C.borderLight, alignItems: "center", background: isInactive ? C.danLt : "transparent" }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>
                   {m.full_name || "\u2014"}
                   {m.id === profile.id && <span style={{ marginLeft: 8, fontSize: 11, color: C.acc, fontWeight: 700 }}>(You)</span>}
+                  {isInactive && m.id !== profile.id && <div style={{fontSize:10,color:C.dan,fontWeight:600}}>Inactive {daysInactive}d</div>}
                 </div>
-                <div style={{ fontSize: 13, color: C.textSec }}>{m.email}</div>
+                <div style={{ fontSize: 13, color: C.textSec, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{m.email}</div>
+                <div style={{ fontSize: 12, color: C.textSec }}>{fmtDt(m.created_at)}</div>
+                <div style={{ fontSize: 12, color: isInactive ? C.dan : C.textSec, fontWeight: isInactive ? 600 : 400 }}>{fmtDt(m.last_sign_in_at)}</div>
                 <div>
                   {isOwner && m.id !== profile.id ? (
                     <select value={m.role || "staff"} onChange={e => updateRole(m.id, e.target.value)}
@@ -10932,7 +10993,8 @@ function TeamTab({ profile, data, save }) {
                   )}
                 </div>
               </div>
-            ))}
+              );
+            })}
             {team.length === 0 && (
               <div style={{ padding: "24px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No team members found.</div>
             )}
@@ -11144,6 +11206,7 @@ function SettingsPage({ data, save, profile }) {
       { id: "daily-ops", label: "Daily Ops Templates", desc: "Opening, FE, BE, and closing checklist templates", keywords: "daily ops operations checklists opening closing front back" },
     ]},
     { label: "Resort Configuration", items: [
+      { id: "resort-info", label: "Resort Info", desc: "Resort address and timezone configuration", keywords: "resort address location timezone time zone city state zip" },
       { id: "facility", label: "Facility", desc: "Daycare square footage and capacity calculations", keywords: "facility square footage capacity daycare large small" },
       { id: "rooms", label: "Rooms", desc: "Configure room numbers for each boarding room type", keywords: "rooms boarding luxury executive double single compartment" },
       { id: "closed-dates", label: "Closed Dates", desc: "Holidays and dates closed to the public — no check-ins or check-outs", keywords: "closed dates holidays christmas thanksgiving new year memorial labor easter july 4 blackout" },
@@ -11196,7 +11259,7 @@ function SettingsPage({ data, save, profile }) {
         ) : tab === "roles" ? (
           <RolesPermissionsTab data={data} save={save} profile={profile} />
         ) : tab === "hotkeys" ? (() => {
-          const hk = data.hotkeySettings || { enabled: true, showHints: true };
+          const hk = data.hotkeySettings || { enabled: false, showHints: false };
           const bindings = { ...DEF_HOTKEY_BINDINGS, ...(hk.bindings || {}) };
           const toggle = async (key) => await save({ ...data, hotkeySettings: { ...hk, [key]: !hk[key] } });
           const rebind = async (action, newKey) => {
@@ -11292,7 +11355,51 @@ function SettingsPage({ data, save, profile }) {
       ) : tab === "dropdowns" ? (
         <DropdownListsTab data={data} save={save} />
 
-      ) : tab === "facility" ? (
+      ) : tab === "resort-info" ? (() => {
+        const ri = data.resortInfo || {};
+        const updateRI = async (key, val) => await save({ ...data, resortInfo: { ...ri, [key]: val } });
+        const TZ_MAP = {"AL":"America/Chicago","AK":"America/Anchorage","AZ":"America/Phoenix","AR":"America/Chicago","CA":"America/Los_Angeles","CO":"America/Denver","CT":"America/New_York","DE":"America/New_York","FL":"America/New_York","GA":"America/New_York","HI":"Pacific/Honolulu","ID":"America/Boise","IL":"America/Chicago","IN":"America/Indiana/Indianapolis","IA":"America/Chicago","KS":"America/Chicago","KY":"America/New_York","LA":"America/Chicago","ME":"America/New_York","MD":"America/New_York","MA":"America/New_York","MI":"America/Detroit","MN":"America/Chicago","MS":"America/Chicago","MO":"America/Chicago","MT":"America/Denver","NE":"America/Chicago","NV":"America/Los_Angeles","NH":"America/New_York","NJ":"America/New_York","NM":"America/Denver","NY":"America/New_York","NC":"America/New_York","ND":"America/Chicago","OH":"America/New_York","OK":"America/Chicago","OR":"America/Los_Angeles","PA":"America/New_York","RI":"America/New_York","SC":"America/New_York","SD":"America/Chicago","TN":"America/Chicago","TX":"America/Chicago","UT":"America/Denver","VT":"America/New_York","VA":"America/New_York","WA":"America/Los_Angeles","WV":"America/New_York","WI":"America/Chicago","WY":"America/Denver","DC":"America/New_York"};
+        const detectTz = (addr) => {
+          const stMatch = (addr || "").match(/\b([A-Z]{2})\b(?:\s+\d{5})?/);
+          if (stMatch && TZ_MAP[stMatch[1]]) return TZ_MAP[stMatch[1]];
+          return null;
+        };
+        const detectedTz = ri.timezone || detectTz(ri.address);
+        const currentTime = detectedTz ? new Date().toLocaleTimeString("en-US", { timeZone: detectedTz, hour: "numeric", minute: "2-digit", hour12: true }) : null;
+        const tzLabel = detectedTz ? detectedTz.replace(/_/g, " ").replace("America/", "") : null;
+        return (
+          <Card style={{ padding: "24px 28px" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Resort Information</div>
+            <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>Set your resort's address to automatically configure the correct timezone for the software.</p>
+            <Inp label="Resort Address" value={ri.address || ""} onChange={v => {
+              const tz = detectTz(v);
+              const updates = { address: v };
+              if (tz) updates.timezone = tz;
+              save({ ...data, resortInfo: { ...ri, ...updates } });
+            }} placeholder="123 Main St, City, ST 12345" />
+            {detectedTz && (
+              <div style={{marginTop:12,padding:"12px 16px",borderRadius:10,background:C.sucLt,border:`1.5px solid ${C.suc}30`,display:"flex",alignItems:"center",gap:10}}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.suc} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <div>
+                  <div style={{fontSize:13,fontWeight:700,color:C.suc}}>Timezone detected: {tzLabel}</div>
+                  <div style={{fontSize:12,color:C.textSec}}>Current time: {currentTime}</div>
+                </div>
+              </div>
+            )}
+            {ri.address && !detectedTz && (
+              <div style={{marginTop:12,padding:"12px 16px",borderRadius:10,background:C.accLt,border:`1.5px solid ${C.acc}30`}}>
+                <div style={{fontSize:12,color:C.acc,fontWeight:600}}>Could not detect timezone. Please include a valid US state abbreviation in the address (e.g. "NJ", "FL").</div>
+              </div>
+            )}
+            <div style={{marginTop:16}}>
+              <Inp label="Override Timezone (optional)" type="select" value={ri.timezone || ""} onChange={v => updateRI("timezone", v)} options={["", ...Object.values(TZ_MAP).filter((v,i,a)=>a.indexOf(v)===i).sort()]} />
+              <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Leave blank to auto-detect from address. Override only if needed.</div>
+            </div>
+          </Card>
+        );
+      })()
+
+      : tab === "facility" ? (
         <div>
           <Card style={{ padding: "24px 28px" }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Daycare Square Footage</div>
@@ -11794,7 +11901,7 @@ function NewOverlay({ data, nav, onClose }) {
           <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={handleKeyDown}
             placeholder="Search clients by name, phone, email, or dog…"
             style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 17, fontWeight: 500, color: C.text, fontFamily: "'GT Eesti', sans-serif", letterSpacing: "-0.01em" }} />
-          <kbd style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', monospace", whiteSpace: "nowrap" }}>Esc</kbd>
+          <kbd onClick={onClose} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', monospace", whiteSpace: "nowrap", cursor: "pointer" }}>Esc</kbd>
         </div>
         {/* Results */}
         <div style={{ maxHeight: 380, overflow: "auto", padding: "8px 0" }}>
@@ -11824,8 +11931,8 @@ function NewOverlay({ data, nav, onClose }) {
               </button>
             );
           })}
-          {/* Create new option */}
-          {q.trim() && (() => {
+          {/* Create new option — always visible */}
+          {(() => {
             const createIdx = results.length;
             const active = hlIdx === createIdx;
             return (
@@ -11836,7 +11943,7 @@ function NewOverlay({ data, nav, onClose }) {
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 15, fontWeight: 700, color: active ? C.suc : C.pri }}>Create New Client</div>
-                  <div style={{ fontSize: 12, color: C.textMut }}>Set up "{q.trim()}" with their dogs & first reservation</div>
+                  <div style={{ fontSize: 12, color: C.textMut }}>{q.trim() ? `Set up "${q.trim()}" with their dogs & first reservation` : "Set up a new client with their dogs & first reservation"}</div>
                 </div>
                 <kbd style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 10, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', monospace" }}>↵</kbd>
               </button>
@@ -14021,8 +14128,8 @@ export default function App() {
   const dismissGlobalToast = useCallback((id) => setGlobalToasts(prev => prev.filter(x => x.id !== id)), []);
 
   // ═══ Keyboard Shortcuts ═══
-  const hkEnabled = ((data || {}).hotkeySettings || { enabled: true }).enabled !== false;
-  const hkHints = ((data || {}).hotkeySettings || { showHints: true }).showHints !== false;
+  const hkEnabled = ((data || {}).hotkeySettings || {}).enabled === true;
+  const hkHints = ((data || {}).hotkeySettings || {}).showHints === true;
   const hkBindingsGlobal = { ...DEF_HOTKEY_BINDINGS, ...((data || {}).hotkeySettings || {}).bindings };
   useEffect(() => {
     const b = hkBindingsGlobal;
