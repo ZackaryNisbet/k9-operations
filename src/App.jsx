@@ -15966,7 +15966,13 @@ export default function App() {
   // SAFETY: Only initialize DEMO when Supabase CONFIRMS data is empty (isEmpty=true).
   // NEVER overwrite on load errors or null data from slow connections.
   // NOTE: Locations created via "Add Location" use {_initialized:true} to skip this.
-  const data = rawData || (loading ? null : (isEmpty ? DEMO : null));
+  const rawOrDemo = rawData || (loading ? null : (isEmpty ? DEMO : null));
+  // Normalize: ensure all expected arrays exist so new/empty locations don't crash on .filter()
+  const data = rawOrDemo ? {
+    reservations: [], clients: [], dogs: [], messages: [], teamMembers: [],
+    packages: [], packageSales: [], agreements: [], dogTags: [],
+    ...rawOrDemo,
+  } : null;
   useEffect(() => {
     if (!loading && !rawData && locationId && isEmpty && !loadError) {
       console.log('[K9] Initializing new location with demo data');
