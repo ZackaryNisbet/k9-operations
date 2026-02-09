@@ -4186,7 +4186,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
 
       {/* Quick Check-in Modal */}
       {showQuickDC && (
-        <Modal title="Quick Check-In" onClose={()=>{setShowQuickDC(false);setDcSearch("");setDcCompExpand(null);}}>
+        <Modal title="Quick Check-In" wide onClose={()=>{setShowQuickDC(false);setDcSearch("");setDcCompExpand(null);}}>
           <div style={{marginBottom:12}}>
             <input ref={dcSearchRef} className="no-focus-ring" value={dcSearch} onChange={e=>setDcSearch(e.target.value)} placeholder="Search client or dog name..." style={{width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${C.border}`,fontSize:14,fontWeight:500,fontFamily:"inherit",outline:"none",background:C.bg}} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/>
           </div>
@@ -4285,9 +4285,13 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                 <div key={i} style={{padding:"12px 14px",borderRadius:12,border:`1px solid ${r.alreadyIn?C.suc+"40":C.border}`,marginBottom:8,background:r.alreadyIn?C.sucLt:C.surface}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:r.alreadyIn?0:8}}>
                     <div>
-                      <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+                      <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
                         <span onClick={(e)=>{e.stopPropagation();setShowQuickDC(false);setDcSearch("");nav("dog-detail",{clientId:r.clientId,dogId:r.dogId});}} style={{fontWeight:700,fontSize:14,color:C.pri,cursor:"pointer",textDecoration:"none"}} onMouseEnter={e=>e.currentTarget.style.textDecoration="underline"} onMouseLeave={e=>e.currentTarget.style.textDecoration="none"}>{r.dogName}</span>
                         <span style={{fontWeight:400,color:C.textSec,fontSize:12}}>({r.breed})</span>
+                        {dog && <DogPicHover dog={dog} size={20}/>}
+                        {dog && <VaxIcon dog={dog} requiredVaccines={data.requiredVaccines} policies={data.resortPolicies}/>}
+                        {dog && <DogTagChips dog={dog} dogTags={data.dogTags} size="sm"/>}
+                        {dog && (()=>{ const allEvals=(data.evaluations||[]).filter(e=>e.dogId===r.dogId&&e.locked).sort((a,b)=>(b.date||"").localeCompare(a.date||"")); if(!allEvals.length)return null; const le=allEvals[0]; const tipLines=allEvals.map((ev,ei)=>`Eval ${ei+1}: ${ev.result==="green"?"Approved":"Not Approved"} \u2014 ${ev.totalScore||0}/${ev.maxScore||0} pts (${fmtDate(ev.date)})`).join("\n"); return <Tip text={tipLines}><span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:16,height:16,borderRadius:"50%",background:le.result==="green"?C.suc:C.dan,color:"#fff",fontSize:9,fontWeight:800,flexShrink:0}}>{le.result==="green"?"\u2713":"\u2717"}</span></Tip>; })()}
                       </div>
                       <div style={{fontSize:12,color:C.textSec,display:"flex",alignItems:"center",gap:2,flexWrap:"wrap"}}>
                         <span onClick={(e)=>{e.stopPropagation();setShowQuickDC(false);setDcSearch("");nav("client-detail",{clientId:r.clientId});}} style={{color:C.pri,cursor:"pointer",fontWeight:600,textDecoration:"none"}} onMouseEnter={e=>e.currentTarget.style.textDecoration="underline"} onMouseLeave={e=>e.currentTarget.style.textDecoration="none"}>{r.clientName}</span>
@@ -4312,7 +4316,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                         <I.LogIn style={{width:14,height:14}}/> Day Boarding
                       </button>
                     </div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6}}>
                       {checks.map((ck,ci)=>{
                         const expKey=`${r.dogId}|${ck.expandKey}`;
                         const isExp=dcCompExpand===expKey;
