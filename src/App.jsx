@@ -2984,21 +2984,23 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
       const bath = res.careOverrides?.bath_type || dog.fields.bath_type || "";
       const log = res.activityLog || {};
 
+      const base = { reservationId: res.id, dogId: res.dogId, clientId: res.clientId, dog, client, room: res.room || "", checkOut: res.checkOut || "", checkOutTime: res.checkOutTime || "" };
+
       feedSch.forEach(s => {
         (s.times || []).forEach(time => {
           const colKey = `feeding_${time.replace(/\s+/g, "_")}`;
-          rows.push({ id: `${res.id}_${colKey}`, reservationId: res.id, dogId: res.dogId, clientId: res.clientId, dog, client, room: res.room || "", type: "feeding", colKey, time, label: `Feeding – ${time}`, detail: [s.amount, s.unit, s.foodType].filter(Boolean).join(" "), instruction: s.instruction || "", notes: s.notes || "", logEntry: log[`${today}|${colKey}`] || {} });
+          rows.push({ ...base, id: `${res.id}_${colKey}`, type: "feeding", colKey, time, label: `Feeding – ${time}`, detail: [s.amount, s.unit, s.foodType].filter(Boolean).join(" "), instruction: s.instruction || "", notes: s.notes || "", logEntry: log[`${today}|${colKey}`] || {} });
         });
       });
 
       medSch.forEach(s => {
         const colKey = `med_${(s.name || "").replace(/\s+/g, "_")}`;
-        rows.push({ id: `${res.id}_${colKey}`, reservationId: res.id, dogId: res.dogId, clientId: res.clientId, dog, client, room: res.room || "", type: "medication", colKey, time: s.time || "Any", label: s.name || "Medication", detail: [s.amount, s.unit].filter(Boolean).join(" "), instruction: s.notes || "", notes: "", logEntry: log[`${today}|${colKey}`] || {} });
+        rows.push({ ...base, id: `${res.id}_${colKey}`, type: "medication", colKey, time: s.time || "Any", label: s.name || "Medication", detail: [s.amount, s.unit].filter(Boolean).join(" "), instruction: s.notes || "", notes: "", logEntry: log[`${today}|${colKey}`] || {} });
       });
 
       if (bath && res.checkOut === today) {
         const colKey = "bathing";
-        rows.push({ id: `${res.id}_${colKey}`, reservationId: res.id, dogId: res.dogId, clientId: res.clientId, dog, client, room: res.room || "", type: "bathing", colKey, time: "End of Day", label: "Bath", detail: bath, instruction: "", notes: "", logEntry: log[`${today}|${colKey}`] || {} });
+        rows.push({ ...base, id: `${res.id}_${colKey}`, type: "bathing", colKey, time: "End of Day", label: "Bath", detail: bath, instruction: "", notes: "", logEntry: log[`${today}|${colKey}`] || {} });
       }
     });
     rows.sort((a, b) => parseTimeSort(a.time) - parseTimeSort(b.time));
@@ -3721,9 +3723,83 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
         {/* ═══ ACTIVITIES TAB ═══ */}
         {activeTab === "activities" ? (
           <div>
+            {/* Print Bath Schedule Button */}
+            {(() => {
+              const bathRows = allActivities.filter(r => r.type === "bathing");
+              if (bathRows.length === 0) return null;
+              const printBathSchedule = () => {
+                const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+                const sorted = [...bathRows].sort((a, b) => {
+                  const tA = a.checkOutTime || "23:59"; const tB = b.checkOutTime || "23:59";
+                  return tA.localeCompare(tB);
+                });
+                const rows = sorted.map(r => {
+                  const dName = r.dog?.fields.name || "Unknown";
+                  const cLast = r.client?.fields.last_name || "";
+                  const breed = r.dog?.fields.breed || "";
+                  const weight = r.dog?.fields.weight ? `${r.dog.fields.weight} lbs` : "";
+                  const co = r.checkOutTime ? fmtTimeLabel(r.checkOutTime) : "TBD";
+                  const administered = r.logEntry?.administered;
+                  return `<tr style="${administered ? "background:#e8f5e9;" : ""}">
+                    <td style="padding:10px 12px;border-bottom:1px solid #ddd;font-weight:700;">${dName}</td>
+                    <td style="padding:10px 12px;border-bottom:1px solid #ddd;">${cLast}</td>
+                    <td style="padding:10px 12px;border-bottom:1px solid #ddd;">${breed}</td>
+                    <td style="padding:10px 12px;border-bottom:1px solid #ddd;">${weight}</td>
+                    <td style="padding:10px 12px;border-bottom:1px solid #ddd;">${r.room || "—"}</td>
+                    <td style="padding:10px 12px;border-bottom:1px solid #ddd;font-weight:700;">${r.detail || "Standard"}</td>
+                    <td style="padding:10px 12px;border-bottom:1px solid #ddd;font-weight:700;">${co}</td>
+                    <td style="padding:10px 12px;border-bottom:1px solid #ddd;text-align:center;">${administered ? "✓" : "☐"}</td>
+                  </tr>`;
+                }).join("");
+                const html = `<!DOCTYPE html><html><head><title>Bath Schedule - ${today}</title>
+                  <style>
+                    @page { size: landscape; margin: 0.5in; }
+                    body { font-family: Arial, sans-serif; color: #222; padding: 0; margin: 0; }
+                    h1 { font-size: 22px; margin: 0 0 4px; color: #003462; }
+                    h2 { font-size: 14px; font-weight: 400; color: #666; margin: 0 0 16px; }
+                    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+                    th { background: #003462; color: #fff; padding: 10px 12px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+                    .summary { margin-top: 20px; font-size: 12px; color: #666; display: flex; gap: 24px; }
+                    .summary span { font-weight: 700; color: #222; }
+                  </style></head><body>
+                  <h1>K9 Resorts — Bath Schedule</h1>
+                  <h2>${today} · ${bathRows.length} bath${bathRows.length !== 1 ? "s" : ""} scheduled</h2>
+                  <table>
+                    <thead><tr><th>Dog</th><th>Owner</th><th>Breed</th><th>Weight</th><th>Room</th><th>Bath Type</th><th>Departs</th><th style="text-align:center">Done</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                  </table>
+                  <div class="summary">
+                    <div>Total: <span>${bathRows.length}</span></div>
+                    <div>Completed: <span>${bathRows.filter(r => r.logEntry?.administered).length}</span></div>
+                    <div>Remaining: <span>${bathRows.filter(r => !r.logEntry?.administered).length}</span></div>
+                  </div>
+                  <script>window.onload=()=>{window.print();}<\/script>
+                </body></html>`;
+                const w = window.open("", "_blank");
+                w.document.write(html);
+                w.document.close();
+              };
+              return (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: `1px solid ${C.borderLight}`, background: C.surface }}>
+                  <div style={{ fontSize: 12, color: C.textSec }}>
+                    <span style={{ fontWeight: 700, color: C.text }}>{bathRows.length}</span> bath{bathRows.length !== 1 ? "es" : ""} scheduled today · <span style={{ fontWeight: 700, color: C.suc }}>{bathRows.filter(r => r.logEntry?.administered).length}</span> done
+                  </div>
+                  <button onClick={printBathSchedule} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.pri}`, background: C.priLt, color: C.pri, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                    Print Bath Schedule
+                  </button>
+                </div>
+              );
+            })()}
             {/* Activities Table Header */}
             {(() => {
-              const actGrid = "68px minmax(140px,1.5fr) minmax(100px,1.2fr) 80px 110px minmax(130px,1.1fr) 140px";
+              const showDeparts = actTypeFilter.has("bathing") || (actTypeFilter.size === 0 && filteredActivities.some(r => r.type === "bathing"));
+              const bathOnly = actTypeFilter.size === 1 && actTypeFilter.has("bathing");
+              const actGrid = bathOnly
+                ? "68px minmax(140px,1.5fr) minmax(80px,1fr) 80px 90px 110px minmax(100px,0.9fr) 80px"
+                : showDeparts
+                  ? "68px minmax(130px,1.4fr) minmax(90px,1.1fr) 80px 100px minmax(110px,0.9fr) 130px 80px"
+                  : "68px minmax(140px,1.5fr) minmax(100px,1.2fr) 80px 110px minmax(130px,1.1fr) 140px";
               const CONSUMPTION_OPTS = ["0%","25%","50%","75%","100%"];
               const typeBadge = (t) => {
                 const cfg = t === "feeding" ? { bg: C.pri, label: "Feeding" } : t === "medication" ? { bg: C.acc, label: "Meds" } : { bg: C.info, label: "Bath" };
@@ -3738,7 +3814,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                     <div>Qty</div>
                     <div>Administered</div>
                     <div>By</div>
-                    <div>% Eaten</div>
+                    <div>{bathOnly ? "Bath Type" : "% Eaten"}</div>
+                    {showDeparts && <div>Departs</div>}
                   </div>
                   <div style={{ minHeight: 200 }}>
                     {filteredActivities.length === 0 ? (
@@ -3812,7 +3889,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                                 <span style={{ fontSize: 11, color: C.textMut }}>—</span>
                               )}
                             </div>
-                            {/* % Eaten */}
+                            {/* % Eaten / Bath Type */}
                             <div>
                               {row.type === "feeding" ? (
                                 <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
@@ -3826,10 +3903,19 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                                     );
                                   })}
                                 </div>
+                              ) : row.type === "bathing" && bathOnly ? (
+                                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{row.detail}</span>
                               ) : (
                                 <span style={{ fontSize: 11, color: C.textMut }}>—</span>
                               )}
                             </div>
+                            {/* Departs (shown when baths visible) */}
+                            {showDeparts && (
+                              <div style={{ fontSize: 12, fontWeight: 600, color: C.text, fontVariantNumeric: "tabular-nums" }}>
+                                {row.checkOutTime ? fmtTimeLabel(row.checkOutTime) : "—"}
+                                {row.checkOut && <div style={{ fontSize: 10, color: C.textMut }}>{fmtDate(row.checkOut)}</div>}
+                              </div>
+                            )}
                           </div>
                         );
                       })
