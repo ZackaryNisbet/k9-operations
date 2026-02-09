@@ -16011,10 +16011,15 @@ export default function App() {
   // NEVER overwrite on load errors or null data from slow connections.
   // NOTE: Locations created via "Add Location" use {_initialized:true} to skip this.
   const rawOrDemo = rawData || (loading ? null : (isEmpty ? DEMO : null));
-  // Normalize: ensure all expected arrays exist so new/empty locations don't crash on .filter()
+  // Normalize: ensure all expected arrays/objects exist so new/empty locations don't crash on .filter()
   const data = rawOrDemo ? {
     reservations: [], clients: [], dogs: [], messages: [], teamMembers: [],
     packages: [], packageSales: [], agreements: [], dogTags: [],
+    auditLog: [], closedDates: [], dailyOps: [], eodEntries: [],
+    evaluations: [], onlineBookings: [], payments: [], requiredVaccines: [],
+    roles: DEFAULT_ROLES,
+    clientFields: DEF_CLIENT_FIELDS, dogFields: DEF_DOG_FIELDS,
+    rooms: {},
     ...rawOrDemo,
   } : null;
   useEffect(() => {
