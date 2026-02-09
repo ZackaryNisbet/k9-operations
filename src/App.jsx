@@ -65,11 +65,11 @@ const PAGE_SLUGS = {
   "ops-opening":"ops/opening", "ops-fe":"ops/front-end", "ops-be":"ops/back-end", "ops-rooms":"ops/rooms",
   "ops-pictures":"ops/pictures", "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
   eod:"eod", ai:"ai", settings:"settings", "evaluation-form":"evaluation", "online-bookings":"bookings",
-  "enterprise-locations":"locations", "enterprise-operations":"oversight", "enterprise-users":"users",
+  "enterprise-locations":"locations", "enterprise-operations":"oversight", "enterprise-packages":"packages", "enterprise-users":"users",
 };
 const SLUG_TO_PAGE = {};
 Object.entries(PAGE_SLUGS).forEach(([k,v]) => { if (!k.startsWith("enterprise-")) SLUG_TO_PAGE[v] = k; });
-const ENT_SLUG_TO_PAGE = { locations:"enterprise-locations", oversight:"enterprise-operations", users:"enterprise-users" };
+const ENT_SLUG_TO_PAGE = { locations:"enterprise-locations", oversight:"enterprise-operations", packages:"enterprise-packages", users:"enterprise-users" };
 
 function buildUrl(locSlug, pg, prms, dataRef) {
   const slug = PAGE_SLUGS[pg] || pg;
@@ -1150,6 +1150,104 @@ const DEF_DOG_FIELDS = [
 const DEF_AGREEMENTS = [
   { id: "agr1", name: "Customer Agreement", required: true, order: 0, body: "CUSTOMER AGREEMENT — K9 RESORTS\n\nBy signing this agreement, the pet owner (\"Owner\") acknowledges and agrees to the following terms and conditions for all services provided by K9 Resorts (\"Facility\"):\n\n1. SERVICES\nThe Facility agrees to provide boarding, daycare, and/or ancillary services for the pet(s) identified in the Owner's registration. Services include supervised group or individual play, feeding per Owner instructions, overnight accommodations (boarding only), and basic daily care.\n\n2. HEALTH & VACCINATION REQUIREMENTS\nOwner certifies that pet(s) are current on all required vaccinations including Rabies, DHPP, Bordetella, and Canine Influenza. Owner agrees to provide proof of vaccination prior to the first visit. Pets not current on vaccinations will not be admitted.\n\n3. TEMPERAMENT & BEHAVIOR\nOwner certifies that pet(s) have not harmed or shown aggressive behavior toward any person or other animal. The Facility reserves the right to refuse service or terminate care at any time if a pet exhibits aggressive or dangerous behavior.\n\n4. ASSUMPTION OF RISK\nOwner understands that during group play and socialization, minor scrapes, nicks, or injuries may occur. Owner accepts these inherent risks associated with group play environments.\n\n5. EMERGENCY CARE\nIn the event of illness or injury, the Facility will attempt to contact the Owner immediately. If the Owner cannot be reached, the Facility is authorized to seek veterinary care at the Owner's expense.\n\n6. RELEASE OF LIABILITY\nOwner releases K9 Resorts, its owners, employees, and agents from any and all liability, claims, demands, or causes of action arising from or related to any injury, illness, or death of pet(s) while in the care of the Facility, except in cases of gross negligence. Owner agrees to indemnify and hold harmless the Facility from any claims, damages, or expenses arising from pet's behavior.\n\n7. PERSONAL PROPERTY\nThe Facility is not responsible for loss or damage to any personal items (collars, leashes, toys, bedding) left with pet(s).\n\n8. PHOTO/VIDEO CONSENT\nOwner grants the Facility permission to photograph or video pet(s) for use on social media, marketing materials, or internal records.\n\n9. PAYMENT\nOwner agrees to pay all fees for services rendered. Payment is due at the time of checkout. A deposit may be required for boarding reservations.\n\n10. ACKNOWLEDGMENT\nI have read this agreement in its entirety, understand its terms, and agree to be bound by it.\n\nOwner Signature: ___________________________  Date: __________\nPrinted Name: ___________________________", updatedAt: null },
 ];
+
+// Default questionnaire template — "Getting to Know Your Dog"
+const DEF_QUESTIONNAIRE = {
+  id: "gtky_default",
+  name: "Getting to Know Your Dog",
+  clientSections: [
+    {
+      id: "owner_info",
+      title: "Owner Information",
+      oncePerClient: true,
+      fields: [
+        { id: "owner_name", label: "Owner Name", type: "text", required: true },
+        { id: "emergency_contact_name", label: "Emergency Contact Name", type: "text", required: true },
+        { id: "emergency_contact_phone", label: "Emergency Contact Phone", type: "phone", required: true },
+        { id: "vet_name", label: "Veterinarian Name", type: "text", required: false },
+        { id: "vet_phone", label: "Veterinarian Phone", type: "phone", required: false },
+      ],
+    },
+  ],
+  dogSections: [
+    {
+      id: "basic_info",
+      title: "Dog Information",
+      fields: [
+        { id: "dog_name", label: "Dog's Name", type: "text", required: true },
+        { id: "age", label: "Age", type: "text", required: true },
+        { id: "breed", label: "Breed", type: "text", required: true },
+        { id: "how_long_owned", label: "How long have you owned your dog?", type: "text", required: false },
+        { id: "origin", label: "Where did you get your dog?", type: "select", options: ["Breeder", "Rescue/Shelter", "Rehomed", "Other"], required: false },
+        { id: "why_daycare", label: "Why are you interested in daycare for your dog?", type: "multiselect", options: ["Socialization", "Exercise / Energy", "Separation anxiety concerns", "Trainer recommendation", "Vet recommendation", "Other"], required: false },
+      ],
+    },
+    {
+      id: "socialization",
+      title: "Socialization & Interaction",
+      fields: [
+        { id: "interaction_level", label: "What level of interaction has your dog had with other dogs?", type: "select", options: ["None", "Minimal (walks only)", "Moderate (occasional playdates)", "Extensive (dog parks, daycare)"], required: true },
+        { id: "incident_history", label: "Has there been any incidents during off-leash interaction?", type: "radio", options: ["Yes", "No"], required: true },
+        { id: "incident_details", label: "If yes, please describe", type: "textarea", required: false, showIf: { field: "incident_history", value: "Yes" } },
+        { id: "dismissed_from_facility", label: "Has your dog been asked to leave or dismissed from any facility?", type: "radio", options: ["Yes", "No"], required: true },
+        { id: "dismissed_details", label: "If yes, please describe", type: "textarea", required: false, showIf: { field: "dismissed_from_facility", value: "Yes" } },
+        { id: "injuries", label: "Has your dog been injured during off-leash interaction?", type: "radio", options: ["Yes", "No"], required: false },
+        { id: "injury_details", label: "If yes, please describe", type: "textarea", required: false, showIf: { field: "injuries", value: "Yes" } },
+      ],
+    },
+    {
+      id: "health",
+      title: "Health & Physical",
+      fields: [
+        { id: "disabilities", label: "Does your dog have any physical disabilities or medical conditions?", type: "radio", options: ["Yes", "No"], required: true },
+        { id: "disability_details", label: "If yes, please describe", type: "textarea", required: false, showIf: { field: "disabilities", value: "Yes" } },
+        { id: "spayed_neutered", label: "Is your dog spayed/neutered?", type: "radio", options: ["Yes", "No"], required: true },
+      ],
+    },
+    {
+      id: "behavior",
+      title: "Behavior & Activity",
+      fields: [
+        { id: "activity_level", label: "Activity level", type: "select", options: ["Couch Potato", "Moderate", "Active", "Athlete"], required: true },
+        { id: "walk_frequency", label: "How often does your dog get walked?", type: "select", options: ["Rarely", "1-2x/week", "3-5x/week", "Daily", "Multiple times daily"], required: false },
+        { id: "reaction_strangers", label: "How does your dog react to strangers?", type: "select", options: ["Friendly/approaches", "Cautious/shy", "Indifferent", "Fearful", "Aggressive/reactive"], required: true },
+        { id: "reaction_dogs_leash", label: "How does your dog react to other dogs on-leash?", type: "select", options: ["Friendly/playful", "Cautious/shy", "Indifferent", "Reactive/lunging", "Aggressive"], required: true },
+        { id: "reaction_dogs_offleash", label: "How does your dog react to other dogs off-leash?", type: "select", options: ["Friendly/playful", "Cautious/shy", "Indifferent", "Reactive", "Aggressive"], required: true },
+        { id: "snapping_history", label: "Has your dog ever snapped at or bitten a person or dog?", type: "radio", options: ["Yes", "No"], required: true },
+        { id: "snapping_details", label: "If yes, please describe", type: "textarea", required: false, showIf: { field: "snapping_history", value: "Yes" } },
+        { id: "food_guarding", label: "Does your dog guard food or toys?", type: "radio", options: ["Yes", "No"], required: false },
+      ],
+    },
+    {
+      id: "training",
+      title: "Training & Commands",
+      fields: [
+        { id: "training_history", label: "Training history", type: "multiselect", options: ["Formal group classes", "Private trainer", "At-home self-trained", "Board & train program", "None"], required: false },
+        { id: "commands_known", label: "Commands your dog knows", type: "multiselect", options: ["Sit", "Stay", "Down", "Come", "Heel", "Leave it", "Drop it", "Off", "Place", "None"], required: false },
+        { id: "energy_level", label: "Energy level during play", type: "select", options: ["Low — prefers to observe", "Medium — plays then rests", "High — non-stop player", "Varies"], required: false },
+      ],
+    },
+    {
+      id: "fears",
+      title: "Fears & Sensitivities",
+      fields: [
+        { id: "fear_people", label: "Is your dog afraid of certain types of people?", type: "radio", options: ["Yes", "No"], required: false },
+        { id: "fear_people_details", label: "If yes, please describe", type: "textarea", required: false, showIf: { field: "fear_people", value: "Yes" } },
+        { id: "weather_fears", label: "Does your dog have weather-related fears?", type: "multiselect", options: ["Rain", "Thunder/lightning", "Fireworks", "None"], required: false },
+      ],
+    },
+    {
+      id: "acknowledgment",
+      title: "Acknowledgment",
+      fields: [
+        { id: "minor_injury_ack", label: "I understand that minor scrapes, nicks, or injuries are common during group play and are part of normal dog socialization", type: "checkbox", required: true },
+        { id: "disease_risk_ack", label: "I understand that kennel cough, canine influenza, and other contagious diseases can be contracted in group settings despite preventive measures", type: "checkbox", required: true },
+        { id: "vet_bill_ack", label: "I understand that I am responsible for any vet bills resulting from injuries to my dog during group play", type: "checkbox", required: true },
+        { id: "additional_notes", label: "Anything else you would like us to know about your dog?", type: "textarea", required: false },
+      ],
+    },
+  ],
+};
 
 // Default dog tag definitions
 const DEF_DOG_TAGS = [
@@ -3358,16 +3456,18 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const allRooms = data.rooms || {};
   const totalRoomCount = Object.values(allRooms).reduce((sum, arr) => sum + arr.length, 0);
 
-  // Count dogs in large daycare (checked-in daycare or boarding dogs classified as large)
+  // Count dogs in large daycare (checked-in daycare, dayboarding, evals, or group-play boarding dogs classified as large)
   const lgDaycareCount = inHouse.filter(r => {
     if (r.type === "daycare" && r.daycareSize === "large") return true;
-    if (r.type === "boarding") { const dog = data.dogs.find(d => d.id === r.dogId); return dog && getDogDaycareSize(dog) === "large"; }
+    if (r.type === "dayboarding" || r.type === "evaluation") { const dog = data.dogs.find(d => d.id === r.dogId); return dog && getDogDaycareSize(dog) === "large"; }
+    if (r.type === "boarding") { const dog = data.dogs.find(d => d.id === r.dogId); return dog && getDogDaycareSize(dog) === "large" && !(dog.tags || []).includes("tag_pp"); }
     return false;
   }).length;
   // Count dogs in small daycare
   const smDaycareCount = inHouse.filter(r => {
     if (r.type === "daycare" && r.daycareSize === "small") return true;
-    if (r.type === "boarding") { const dog = data.dogs.find(d => d.id === r.dogId); return dog && getDogDaycareSize(dog) === "small"; }
+    if (r.type === "dayboarding" || r.type === "evaluation") { const dog = data.dogs.find(d => d.id === r.dogId); return dog && getDogDaycareSize(dog) === "small"; }
+    if (r.type === "boarding") { const dog = data.dogs.find(d => d.id === r.dogId); return dog && getDogDaycareSize(dog) === "small" && !(dog.tags || []).includes("tag_pp"); }
     return false;
   }).length;
   // Count boarding rooms occupied tonight (exclude dogs checking out today — their room frees up tonight)
@@ -3425,6 +3525,24 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const undoDashToast = async (toast) => {
     await save({ ...data, reservations: data.reservations.map(r => r.id === toast.undoRes.id ? toast.undoRes : r) });
     dismissDashToast(toast.id);
+  };
+
+  // Text notification toast for reservation changes
+  const [textNotify, setTextNotify] = useState(null); // { clientName, clientPhone, dogName, diffs, message, showPreview, sending }
+  const showTextNotifyToast = (client, dog, diffs) => {
+    const clientName = `${client?.fields?.first_name || ""} ${client?.fields?.last_name || ""}`.trim() || "Client";
+    const dogName = dog?.fields?.name || "your dog";
+    const phone = client?.fields?.phone || "";
+    const changeLines = diffs.map(d => `${d.field}: ${d.oldVal} → ${d.newVal}`).join("\n");
+    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Resorts! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
+    setTextNotify({ clientName, clientPhone: phone, dogName, diffs, message: msg, showPreview: false, sending: false });
+  };
+  const sendTextNotify = async () => {
+    if (!textNotify) return;
+    setTextNotify(prev => ({ ...prev, sending: true }));
+    const newMsg = { id: gid(), type: "outbound", channel: "sms", to: textNotify.clientPhone, toName: textNotify.clientName, body: textNotify.message, sentAt: new Date().toISOString(), sentBy: profile ? (profile.full_name || profile.email || "Staff") : "Staff", status: "sent" };
+    await save({ ...data, messages: [...(data.messages || []), newMsg] });
+    setTextNotify(null);
   };
 
   // Direct check-in for non-boarding (evals, tours, daycare) with CRM auto-creation
@@ -4168,8 +4286,29 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                 const cfg = t === "feeding" ? { bg: C.pri, label: "Feeding" } : t === "medication" ? { bg: C.acc, label: "Meds" } : { bg: C.info, label: "Bath" };
                 return <span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:10,fontWeight:700,color:"#fff",background:cfg.bg,padding:"2px 8px",borderRadius:6,whiteSpace:"nowrap"}}>{cfg.label}</span>;
               };
+              const pendingCount = filteredActivities.filter(r => !r.logEntry?.administered).length;
+              const bulkMarkAll = () => { filteredActivities.forEach(row => { if (!row.logEntry?.administered) updateActivityLog(row.reservationId, row.colKey, { administered: true, by: actStaffName, at: new Date().toISOString() }); }); };
+              const bulkClearAll = () => { filteredActivities.forEach(row => { if (row.logEntry?.administered) updateActivityLog(row.reservationId, row.colKey, { administered: false, by: "", at: "" }); }); };
+              const bulkSet100 = () => { filteredActivities.filter(r => r.type === "feeding").forEach(row => { updateActivityLog(row.reservationId, row.colKey, { administered: true, by: actStaffName, at: new Date().toISOString(), consumption: "100%" }); }); };
               return (
                 <>
+                  {/* Bulk action bar */}
+                  {filteredActivities.length > 0 && (
+                    <div style={{ display: "flex", gap: 8, padding: "8px 12px", background: C.bg, borderBottom: `1px solid ${C.border}`, alignItems: "center", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: C.textSec }}>{pendingCount} pending</span>
+                      <button onClick={bulkMarkAll} disabled={pendingCount === 0} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 12px", borderRadius: 6, border: `1.5px solid ${C.suc}`, background: pendingCount > 0 ? C.suc + "12" : C.bg, color: pendingCount > 0 ? C.suc : C.textMut, fontSize: 11, fontWeight: 700, cursor: pendingCount > 0 ? "pointer" : "default", fontFamily: "inherit" }}>
+                        <I.Check /> Mark All Done
+                      </button>
+                      {filteredActivities.some(r => r.type === "feeding") && (
+                        <button onClick={bulkSet100} style={{ padding: "5px 12px", borderRadius: 6, border: `1.5px solid ${C.pri}`, background: C.priLt, color: C.pri, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                          All Feeding 100%
+                        </button>
+                      )}
+                      <button onClick={bulkClearAll} style={{ padding: "5px 12px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                        Clear All
+                      </button>
+                    </div>
+                  )}
                   <div style={{ display: "grid", gridTemplateColumns: actGrid, padding: "10px 12px", background: C.bg, borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", alignItems: "center" }}>
                     <div>Time</div>
                     <div>Dog / Client</div>
@@ -4677,6 +4816,10 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
             const newAuditLog = [...(data.auditLog || []), ...auditLogs];
             await save({ ...data, auditLog: newAuditLog, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
             addDashToast({ dogName: bDog.fields.name, action: doCheckIn ? "checked in" : doCheckOut ? "checked out" : "updated", oldVal: doCheckIn ? "Upcoming" : doCheckOut ? "Checked In" : "Previous", newVal: doCheckIn ? "Checked In" : doCheckOut ? "Checked Out" : "Saved", undoRes: origCopy });
+            // Offer to text client about reservation changes (not for check-in/out)
+            if (!doCheckIn && !doCheckOut && diffs.length > 0 && bClient) {
+              showTextNotifyToast(bClient, bDog, diffs);
+            }
             setBoardingPreviewId(null);
           }}
           data={data} save={save} profile={profile}
@@ -4710,6 +4853,33 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               <button onClick={() => dismissDashToast(t.id)} style={{ width: 22, height: 22, borderRadius: 11, border: "none", background: "transparent", cursor: "pointer", color: C.textMut, fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit" }}>&times;</button>
             </div>
           ))}
+          {/* Text notification toast */}
+          {textNotify && (
+            <div style={{ pointerEvents: "auto", background: "rgba(255,255,255,0.98)", backdropFilter: "blur(8px)", border: `2px solid ${C.pri}`, borderRadius: 14, padding: "14px 18px", maxWidth: 420, minWidth: 300, boxShadow: "0 6px 24px rgba(0,0,0,0.18)", animation: "k9toast 0.3s ease-out" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Text {textNotify.clientName} about changes?</span>
+              </div>
+              <div style={{ fontSize: 11, color: C.textSec, marginBottom: 8 }}>
+                {textNotify.diffs.map((d, i) => <div key={i}><span style={{ fontWeight: 600 }}>{d.field}:</span> <span style={{ textDecoration: "line-through", color: C.dan }}>{d.oldVal}</span> → <span style={{ color: C.suc, fontWeight: 600 }}>{d.newVal}</span></div>)}
+              </div>
+              {!textNotify.showPreview ? (
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => setTextNotify(prev => ({ ...prev, showPreview: true }))} style={{ flex: 1, padding: "7px 14px", borderRadius: 8, border: "none", background: C.pri, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Preview</button>
+                  <button onClick={() => setTextNotify(null)} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>No</button>
+                </div>
+              ) : (
+                <div>
+                  <textarea value={textNotify.message} onChange={e => setTextNotify(prev => ({ ...prev, message: e.target.value }))} rows={5} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", color: C.text, resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+                  <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                    <button onClick={sendTextNotify} disabled={textNotify.sending} style={{ flex: 1, padding: "7px 14px", borderRadius: 8, border: "none", background: C.suc, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{textNotify.sending ? "Sending..." : "Send Text"}</button>
+                    <button onClick={() => setTextNotify(null)} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                  </div>
+                  {!textNotify.clientPhone && <div style={{ fontSize: 10, color: C.acc, marginTop: 4 }}>No phone number on file — message will be saved to Messages only.</div>}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -5830,7 +6000,10 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
               </div>
             </div>
           </div>
-          <Btn variant="secondary" onClick={startEdit} icon={<I.Edit/>} size="sm">Edit</Btn>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn variant="secondary" onClick={() => nav("questionnaire", { clientId, dogId })} icon={<I.Clipboard />} size="sm">{dog.questionnaireResponses?._completedAt ? "View Questionnaire" : "Questionnaire"}</Btn>
+            <Btn variant="secondary" onClick={startEdit} icon={<I.Edit/>} size="sm">Edit</Btn>
+          </div>
         </div>
         {/* Age compliance banner */}
         {(() => {
@@ -5849,6 +6022,24 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
           );
           return null;
         })()}
+        {/* Questionnaire status */}
+        {dog.questionnaireResponses?._completedAt ? (
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",borderRadius:10,background:C.sucLt,border:`1px solid ${C.suc}30`,marginBottom:16,cursor:"pointer"}} onClick={() => nav("questionnaire",{clientId,dogId})}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:16}}>📋</span>
+              <div style={{fontSize:13,color:C.text}}><strong>Questionnaire Complete</strong> — Submitted {fmtDate(dog.questionnaireResponses._completedAt.slice(0,10))}</div>
+            </div>
+            <span style={{fontSize:12,color:C.pri,fontWeight:600}}>View →</span>
+          </div>
+        ) : (
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px",borderRadius:10,background:C.accLt,border:`1px solid ${C.acc}30`,marginBottom:16,cursor:"pointer"}} onClick={() => nav("questionnaire",{clientId,dogId})}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:16}}>📋</span>
+              <div style={{fontSize:13,color:C.text}}><strong>Questionnaire Pending</strong> — "Getting to Know Your Dog" form not yet completed</div>
+            </div>
+            <span style={{fontSize:12,color:C.pri,fontWeight:600}}>Fill Out →</span>
+          </div>
+        )}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(200px, 1fr))",gap:"12px 20px"}}>
           {infoFields.filter(f=>!["name","breed","weight","sex"].includes(f.id)&&dog.fields[f.id]&&f.type!=="textarea"&&f.type!=="checkbox").map(f=>(<div key={f.id}><div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{f.name}</div><div style={{fontSize:14,color:C.text}}>{f.type==="date"?fmtDate(dog.fields[f.id]):dog.fields[f.id]}</div></div>))}
           {infoFields.filter(f=>f.type==="checkbox"&&dog.fields[f.id]).map(f=>(<div key={f.id}><div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{f.name}</div><div style={{fontSize:14,color:C.suc,fontWeight:600}}>Yes</div></div>))}
@@ -6067,6 +6258,194 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
         <DogFormFields fields={editFields} dogFields={data.dogFields} data={data} errors={{}} onChange={(id,v)=>setEditFields({...editFields,[id]:v})} feedingSchedules={editFeedingSchedules} onFeedingChange={setEditFeedingSchedules} medSchedules={editMedSchedules} onMedChange={setEditMedSchedules} />
         <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:24}}><Btn variant="secondary" onClick={()=>setEditing(false)}>Cancel</Btn><Btn onClick={saveEdit}>Save</Btn></div>
       </Modal>}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// QUESTIONNAIRE VIEWER
+// ═══════════════════════════════════════════════════════════════════════════
+function QuestionnaireViewer({ data, save, clientId, dogId, nav }) {
+  const client = data.clients.find(c => c.id === clientId);
+  const dog = data.dogs.find(d => d.id === dogId);
+  const template = data.questionnaireTemplate || DEF_QUESTIONNAIRE;
+  const [responses, setResponses] = useState(() => ({ ...(client?.questionnaireResponses || {}), ...(dog?.questionnaireResponses || {}) }));
+  const [saving, setSaving] = useState(false);
+  const [expandedSections, setExpandedSections] = useState(() => {
+    const all = {};
+    (template.clientSections || []).forEach(s => { all[s.id] = true; });
+    (template.dogSections || []).forEach(s => { all[s.id] = true; });
+    return all;
+  });
+
+  if (!dog || !client) return <div style={{ padding: 40, textAlign: "center", color: C.textSec }}>Not found</div>;
+
+  const toggleSection = (sid) => setExpandedSections(prev => ({ ...prev, [sid]: !prev[sid] }));
+
+  const setVal = (fieldId, val) => setResponses(prev => ({ ...prev, [fieldId]: val }));
+
+  const toggleMulti = (fieldId, option) => {
+    setResponses(prev => {
+      const arr = Array.isArray(prev[fieldId]) ? [...prev[fieldId]] : [];
+      const idx = arr.indexOf(option);
+      if (idx >= 0) arr.splice(idx, 1); else arr.push(option);
+      return { ...prev, [fieldId]: arr };
+    });
+  };
+
+  const shouldShow = (field) => {
+    if (!field.showIf) return true;
+    return responses[field.showIf.field] === field.showIf.value;
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    const clientFieldIds = new Set();
+    (template.clientSections || []).forEach(s => s.fields.forEach(f => clientFieldIds.add(f.id)));
+    const clientResp = {};
+    const dogResp = {};
+    Object.entries(responses).forEach(([k, v]) => {
+      if (clientFieldIds.has(k)) clientResp[k] = v; else dogResp[k] = v;
+    });
+    dogResp._completedAt = new Date().toISOString();
+    dogResp._completedBy = "Staff";
+    await save({
+      ...data,
+      clients: data.clients.map(c => c.id === clientId ? { ...c, questionnaireResponses: { ...(c.questionnaireResponses || {}), ...clientResp } } : c),
+      dogs: data.dogs.map(d => d.id === dogId ? { ...d, questionnaireResponses: dogResp } : d),
+    });
+    setSaving(false);
+    nav("dog-detail", { clientId, dogId });
+  };
+
+  const renderField = (field) => {
+    if (!shouldShow(field)) return null;
+    const val = responses[field.id] || "";
+    const inputStyle = { width: "100%", padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", background: C.surface, color: C.text };
+
+    if (field.type === "text" || field.type === "phone") {
+      return <input type={field.type === "phone" ? "tel" : "text"} value={val} onChange={e => setVal(field.id, e.target.value)} style={inputStyle} placeholder={field.label} />;
+    }
+    if (field.type === "textarea") {
+      return <textarea value={val} onChange={e => setVal(field.id, e.target.value)} rows={3} style={{ ...inputStyle, resize: "vertical" }} placeholder="Type here..." />;
+    }
+    if (field.type === "select") {
+      return (
+        <select value={val} onChange={e => setVal(field.id, e.target.value)} style={inputStyle}>
+          <option value="">— Select —</option>
+          {(field.options || []).map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+      );
+    }
+    if (field.type === "radio") {
+      return (
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          {(field.options || []).map(o => (
+            <label key={o} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 14, color: C.text, cursor: "pointer" }}>
+              <input type="radio" name={field.id} checked={val === o} onChange={() => setVal(field.id, o)} />
+              {o}
+            </label>
+          ))}
+        </div>
+      );
+    }
+    if (field.type === "multiselect") {
+      const selected = Array.isArray(responses[field.id]) ? responses[field.id] : [];
+      return (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {(field.options || []).map(o => {
+            const active = selected.includes(o);
+            return (
+              <button key={o} onClick={() => toggleMulti(field.id, o)} style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${active ? C.pri : C.border}`, background: active ? C.priLt : "transparent", color: active ? C.pri : C.text, fontSize: 13, fontWeight: active ? 600 : 400, cursor: "pointer", fontFamily: "inherit" }}>
+                {active && <span style={{ marginRight: 4 }}>✓</span>}{o}
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
+    if (field.type === "checkbox") {
+      const checked = !!responses[field.id];
+      return (
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 10, fontSize: 14, color: C.text, cursor: "pointer", lineHeight: 1.5 }}>
+          <input type="checkbox" checked={checked} onChange={() => setVal(field.id, !checked)} style={{ marginTop: 3, width: 18, height: 18 }} />
+          <span>{field.label}</span>
+        </label>
+      );
+    }
+    return null;
+  };
+
+  const renderSection = (section, idx) => {
+    const expanded = expandedSections[section.id] !== false;
+    const answeredCount = section.fields.filter(f => shouldShow(f) && responses[f.id] && (Array.isArray(responses[f.id]) ? responses[f.id].length > 0 : true)).length;
+    const visibleFields = section.fields.filter(f => shouldShow(f));
+    const totalVisible = visibleFields.length;
+    const allDone = answeredCount === totalVisible && totalVisible > 0;
+
+    return (
+      <Card key={section.id} style={{ marginBottom: 16 }}>
+        <button onClick={() => toggleSection(section.id)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, background: allDone ? C.sucLt : C.priLt, color: allDone ? C.suc : C.pri }}>{idx + 1}</div>
+            <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{section.title}</span>
+            <span style={{ fontSize: 12, color: C.textMut }}>({answeredCount}/{totalVisible})</span>
+          </div>
+          {expanded ? <I.ChevronDown /> : <I.ChevronRight />}
+        </button>
+        {expanded && (
+          <div style={{ padding: "0 20px 20px" }}>
+            {section.fields.map(field => {
+              if (!shouldShow(field)) return null;
+              return (
+                <div key={field.id} style={{ marginBottom: 16 }}>
+                  {field.type !== "checkbox" && (
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 }}>
+                      {field.label}{field.required && <span style={{ color: C.dan, marginLeft: 2 }}>*</span>}
+                    </label>
+                  )}
+                  {renderField(field)}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+    );
+  };
+
+  const completed = dog.questionnaireResponses?._completedAt;
+
+  return (
+    <div style={{ maxWidth: 800, margin: "0 auto" }}>
+      <button onClick={() => nav("dog-detail", { clientId, dogId })} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: C.textSec, fontSize: 14, fontWeight: 600, padding: 0, marginBottom: 20, fontFamily: "inherit" }}><I.Back /> Back to {dog.fields.name}</button>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: C.text }}>{template.name}</h2>
+          <p style={{ margin: "4px 0 0", fontSize: 14, color: C.textSec }}>for {dog.fields.name} ({client.fields.first_name} {client.fields.last_name})</p>
+        </div>
+        {completed && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, background: C.sucLt, color: C.suc, fontSize: 13, fontWeight: 600 }}>
+            <I.Check /> Completed {fmtDate(completed.slice(0, 10))}
+          </div>
+        )}
+      </div>
+
+      {(template.clientSections || []).length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, paddingLeft: 4 }}>Owner Information (shared across dogs)</div>
+          {template.clientSections.map((s, i) => renderSection(s, i))}
+        </div>
+      )}
+
+      <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, paddingLeft: 4 }}>Dog-Specific Questions</div>
+      {template.dogSections.map((s, i) => renderSection(s, i + (template.clientSections || []).length))}
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 12, marginTop: 24, marginBottom: 40 }}>
+        <Btn variant="secondary" onClick={() => nav("dog-detail", { clientId, dogId })}>Cancel</Btn>
+        <Btn onClick={handleSave} disabled={saving}>{saving ? "Saving..." : completed ? "Update Responses" : "Save & Complete"}</Btn>
+      </div>
     </div>
   );
 }
@@ -6463,7 +6842,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
     return new Set(
       data.reservations.filter(r =>
         (r.type === "boarding" || r.type === "dayboarding") && r.roomType === roomType && r.room &&
-        r.status !== "checked-out" && r.checkIn <= co && r.checkOut >= ci
+        r.status !== "checked-out" && r.status !== "cancelled" && r.checkIn < co && r.checkOut > ci
       ).map(r => r.room)
     );
   }, [needsRoom, roomType, checkIn, checkOut, data.reservations]);
@@ -6473,7 +6852,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   // Room scoring: for each room compute gap before/after and a smart score
   const roomScored = useMemo(() => {
     const ci = checkIn; const co = checkOut || checkIn;
-    const allBoardingRes = data.reservations.filter(r => (r.type === "boarding" || r.type === "dayboarding") && r.roomType === roomType && r.room && r.status !== "checked-out");
+    const allBoardingRes = data.reservations.filter(r => (r.type === "boarding" || r.type === "dayboarding") && r.roomType === roomType && r.room && r.status !== "checked-out" && r.status !== "cancelled");
     const totalRooms = roomsForType.length;
     const occupancy = totalRooms > 0 ? (totalRooms - availableRooms.length) / totalRooms : 0;
 
@@ -8227,12 +8606,15 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
             if (collapsed[row.roomType]) return null;
             const roomReservations = resByRoom[row.room] || [];
             const isDropTarget = interaction && interaction.type === "move" && interaction.targetRoom === row.room && interaction.moved;
+            // Find checkout happening today for this room
+            const todayCheckout = roomReservations.find(r => r.checkOut === td && r.status !== "cancelled");
             return (
               <div key={`r-${row.room}`} data-room-row={row.room}
                 style={{ display: "grid", gridTemplateColumns: `${LABEL_W}px repeat(7, ${COL_W})`, borderBottom: `1px solid ${C.borderLight}`, minHeight: ROW_H, background: isDropTarget ? `${C.priLt}60` : "transparent", transition: "background 0.15s" }}>
-                {/* Room label */}
-                <div style={{ padding: "0 12px", display: "flex", alignItems: "center", fontSize: 13, fontWeight: 700, color: C.text, borderRight: `1px solid ${C.border}`, background: C.surface }}>
-                  {row.room}
+                {/* Room label with checkout time */}
+                <div style={{ padding: "0 12px", display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: C.text, borderRight: `1px solid ${C.border}`, background: C.surface }}>
+                  <span>{row.room}</span>
+                  {todayCheckout && <span style={{ fontSize: 9, fontWeight: 600, color: C.acc, background: C.acc + "15", padding: "1px 5px", borderRadius: 4, whiteSpace: "nowrap" }} title={`${dn(todayCheckout.dogId)} checking out ${fmtTime(todayCheckout.checkOutTime)}`}>out {fmtTime(todayCheckout.checkOutTime)}</span>}
                 </div>
                 {/* 7 day cells with reservation overlays */}
                 <div data-day-grid style={{ gridColumn: "2 / -1", position: "relative", display: "grid", gridTemplateColumns: `repeat(7, ${COL_W})`, minHeight: ROW_H }}>
@@ -10514,6 +10896,87 @@ function EODPage({ data, save, nav }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // RUN CARD CONFIG TAB
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// QUESTIONNAIRE SETTINGS TAB
+// ═══════════════════════════════════════════════════════════════════════════
+function QuestionnaireSettingsTab({ data, save }) {
+  const template = data.questionnaireTemplate || DEF_QUESTIONNAIRE;
+  const allSections = [...(template.clientSections || []), ...(template.dogSections || [])];
+  const [disabledFields, setDisabledFields] = useState(() => new Set(template.disabledFields || []));
+  const [disabledSections, setDisabledSections] = useState(() => new Set(template.disabledSections || []));
+  const [templateName, setTemplateName] = useState(template.name || "Getting to Know Your Dog");
+
+  const toggleField = async (fid) => {
+    const next = new Set(disabledFields);
+    if (next.has(fid)) next.delete(fid); else next.add(fid);
+    setDisabledFields(next);
+    await save({ ...data, questionnaireTemplate: { ...template, disabledFields: [...next] } });
+  };
+
+  const toggleSection = async (sid) => {
+    const next = new Set(disabledSections);
+    if (next.has(sid)) next.delete(sid); else next.add(sid);
+    setDisabledSections(next);
+    await save({ ...data, questionnaireTemplate: { ...template, disabledSections: [...next] } });
+  };
+
+  const saveName = async () => {
+    await save({ ...data, questionnaireTemplate: { ...template, name: templateName } });
+  };
+
+  return (
+    <div>
+      <Card style={{ padding: "24px 28px", marginBottom: 20 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Questionnaire Settings</div>
+        <div style={{ fontSize: 13, color: C.textSec, marginBottom: 20 }}>Customize which sections and fields appear on the "Getting to Know Your Dog" form. Disabled items will be hidden from staff.</div>
+
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>Questionnaire Name</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input type="text" value={templateName} onChange={e => setTemplateName(e.target.value)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 14, fontFamily: "inherit" }} />
+            <Btn variant="secondary" size="sm" onClick={saveName}>Update</Btn>
+          </div>
+        </div>
+      </Card>
+
+      {allSections.map(section => {
+        const sectionOff = disabledSections.has(section.id);
+        return (
+          <Card key={section.id} style={{ marginBottom: 12, opacity: sectionOff ? 0.5 : 1 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: sectionOff ? "none" : `1px solid ${C.borderLight}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{section.title}</span>
+                <span style={{ fontSize: 12, color: C.textMut }}>({section.fields.length} fields)</span>
+              </div>
+              <button onClick={() => toggleSection(section.id)} style={{ position: "relative", width: 40, height: 22, borderRadius: 11, background: sectionOff ? C.border : C.pri, border: "none", cursor: "pointer", transition: "background 0.2s" }}>
+                <div style={{ position: "absolute", top: 2, left: sectionOff ? 2 : 20, width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+              </button>
+            </div>
+            {!sectionOff && (
+              <div style={{ padding: "8px 20px 12px" }}>
+                {section.fields.map(field => {
+                  const fieldOff = disabledFields.has(field.id);
+                  return (
+                    <div key={field.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${C.borderLight}` }}>
+                      <div>
+                        <span style={{ fontSize: 13, color: fieldOff ? C.textMut : C.text }}>{field.label}</span>
+                        <span style={{ fontSize: 11, color: C.textMut, marginLeft: 8 }}>{field.type}{field.required ? " · required" : ""}</span>
+                      </div>
+                      <button onClick={() => toggleField(field.id)} style={{ position: "relative", width: 36, height: 20, borderRadius: 10, background: fieldOff ? C.border : C.suc, border: "none", cursor: "pointer", transition: "background 0.2s" }}>
+                        <div style={{ position: "absolute", top: 2, left: fieldOff ? 2 : 18, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 function RunCardConfigTab({ data, save }) {
   const cfg = data.runCardConfig || {};
   const toggle = async (key) => {
@@ -10709,6 +11172,7 @@ function PackagesSection({ data, save }) {
   const [showCreate, setShowCreate] = useState(false);
   const [showSell, setShowSell] = useState(false);
   const [editPkg, setEditPkg] = useState(null);
+  const [activeView, setActiveView] = useState("packages");
 
   const pkgs = data.packages || [];
   const sales = data.packageSales || [];
@@ -10729,12 +11193,23 @@ function PackagesSection({ data, save }) {
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24}}>
         <h2 style={{margin:0,fontSize:24,fontWeight:700,color:C.text}}>Packages</h2>
         <div style={{display:"flex",gap:12}}>
-          <Btn onClick={() => setShowCreate(true)} variant="primary" icon={<I.Plus/>}>Create Package</Btn>
-          <Btn onClick={() => setShowSell(true)} variant="primary" style={{background:C.acc}} icon={<I.ShoppingCart/>}>Sell Package</Btn>
+          <div style={{display:"flex",gap:6}}>
+            {[["packages", "Packages"], ["reports", "Reports"]].map(([view, label]) => (
+              <button key={view} onClick={() => setActiveView(view)} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${activeView === view ? C.pri : C.border}`,background:activeView === view ? C.priLt : "transparent",color:activeView === view ? C.pri : C.text,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
+            ))}
+          </div>
+          {activeView === "packages" && (
+            <div style={{display:"flex",gap:12}}>
+              <Btn onClick={() => setShowCreate(true)} variant="primary" icon={<I.Plus/>}>Create Package</Btn>
+              <Btn onClick={() => setShowSell(true)} variant="primary" style={{background:C.acc}} icon={<I.ShoppingCart/>}>Sell Package</Btn>
+            </div>
+          )}
         </div>
       </div>
 
-      {pkgs.length === 0 ? (
+      {activeView === "reports" ? (
+        <PackageReportsTab data={data} />
+      ) : pkgs.length === 0 ? (
         <div style={{textAlign:"center",padding:"60px 20px",color:C.textMut}}>
           <div style={{fontSize:48,marginBottom:16}}>🎁</div>
           <p style={{fontSize:16,fontWeight:500,margin:0}}>No packages yet. Create one to get started!</p>
@@ -12622,6 +13097,249 @@ function EnterpriseOperationsPage({ data, save, nav, profile, handleLocationChan
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ENTERPRISE — Package Management
+// ═══════════════════════════════════════════════════════════════════════════
+function EnterprisePackagesPage({ data, save, allLocations }) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [selectedPkg, setSelectedPkg] = useState(null);
+  const [pushModal, setPushModal] = useState(null);
+  const [pushLocations, setPushLocations] = useState([]);
+  const [pushing, setPushing] = useState(false);
+
+  const entPkgs = data.enterprisePackages || [];
+  const locations = (allLocations || []).filter(l => !l.isEnterprise);
+
+  const handleCreateEnterprisePkg = async (pkg) => {
+    const newPkg = { ...pkg, id: gid(), createdAt: todayStr(), pushedTo: [] };
+    await save({ ...data, enterprisePackages: [...entPkgs, newPkg] });
+    setShowCreate(false);
+  };
+
+  const handleDeletePkg = async (pkgId) => {
+    if (!window.confirm("Delete this enterprise package template?")) return;
+    await save({ ...data, enterprisePackages: entPkgs.filter(p => p.id !== pkgId) });
+    setSelectedPkg(null);
+  };
+
+  const handlePushToLocations = async () => {
+    if (!pushModal || pushLocations.length === 0) return;
+    setPushing(true);
+    const pkg = pushModal;
+    // Push to each selected location via RPC
+    for (const locId of pushLocations) {
+      try {
+        const { data: locData, error } = await supabase.rpc('get_location_data', { p_location_id: locId });
+        if (error || !locData) continue;
+        const existing = locData.packages || [];
+        // Don't duplicate - check by name
+        if (existing.some(p => p.name === pkg.name)) continue;
+        const localPkg = {
+          id: gid(), name: pkg.name, description: pkg.description,
+          serviceCategory: pkg.serviceCategory, serviceName: pkg.serviceName,
+          quantity: pkg.quantity, pricingMode: pkg.pricingMode,
+          discountPct: pkg.discountPct, discountDollar: pkg.discountDollar,
+          packagePrice: pkg.packagePrice, retailValue: pkg.retailValue,
+          unitPrice: pkg.unitPrice, savings: pkg.savings, savingsPerUnit: pkg.savingsPerUnit,
+          expirationType: pkg.expirationType, expirationDays: pkg.expirationDays,
+          expirationDate: pkg.expirationDate, availableOnline: pkg.availableOnline,
+          enterpriseSourceId: pkg.id,
+        };
+        await supabase.rpc('update_location_data', { p_location_id: locId, p_data: { ...locData, packages: [...existing, localPkg] } });
+      } catch (e) { console.error('Push package error:', e); }
+    }
+    // Update pushedTo
+    const updated = entPkgs.map(p => p.id === pkg.id ? { ...p, pushedTo: [...new Set([...(p.pushedTo || []), ...pushLocations])] } : p);
+    await save({ ...data, enterprisePackages: updated });
+    setPushing(false);
+    setPushModal(null);
+    setPushLocations([]);
+  };
+
+  return (
+    <div style={{ padding: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: C.text }}>Enterprise Packages</h2>
+          <p style={{ margin: "4px 0 0", fontSize: 14, color: C.textSec }}>Create package templates and roll them out to multiple locations</p>
+        </div>
+        <Btn onClick={() => setShowCreate(true)} icon={<I.Plus />}>Create Package</Btn>
+      </div>
+
+      {entPkgs.length === 0 ? (
+        <Card style={{ textAlign: "center", padding: "60px 20px" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🎁</div>
+          <p style={{ fontSize: 16, fontWeight: 500, color: C.textMut, margin: 0 }}>No enterprise packages yet. Create one to roll out to your locations.</p>
+        </Card>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 16 }}>
+          {entPkgs.map(pkg => (
+            <Card key={pkg.id} style={{ padding: "20px 24px", cursor: "pointer", border: selectedPkg?.id === pkg.id ? `2px solid ${C.pri}` : undefined }} onClick={() => setSelectedPkg(pkg)}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{pkg.name}</div>
+                  <div style={{ fontSize: 12, color: C.textMut, marginTop: 2 }}>{pkg.serviceName} × {pkg.quantity}</div>
+                </div>
+                <Badge color={pkg.availableOnline ? "success" : "default"} size="sm">{pkg.availableOnline ? "Online" : "In-Store"}</Badge>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+                <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Price</div><div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>${pkg.packagePrice?.toFixed(2)}</div></div>
+                <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Retail</div><div style={{ fontSize: 15, fontWeight: 600, color: C.textSec }}>${pkg.retailValue?.toFixed(2)}</div></div>
+                <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Savings</div><div style={{ fontSize: 15, fontWeight: 700, color: C.suc }}>${pkg.savings?.toFixed(2)}</div></div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ fontSize: 12, color: C.textSec }}>
+                  <span style={{ fontWeight: 600 }}>{(pkg.pushedTo || []).length}</span> of {locations.length} locations
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={e => { e.stopPropagation(); setPushModal(pkg); setPushLocations([]); }} style={{ padding: "5px 12px", borderRadius: 6, border: `1px solid ${C.pri}30`, background: C.priLt, color: C.pri, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Push to Locations</button>
+                  <button onClick={e => { e.stopPropagation(); handleDeletePkg(pkg.id); }} style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${C.dan}30`, background: "transparent", color: C.dan, fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center" }}><I.Trash /></button>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Create Package Modal */}
+      {showCreate && (
+        <Modal title="Create Enterprise Package" onClose={() => setShowCreate(false)} width={560}>
+          <EnterpriseCreatePkgForm onSave={handleCreateEnterprisePkg} onCancel={() => setShowCreate(false)} />
+        </Modal>
+      )}
+
+      {/* Push to Locations Modal */}
+      {pushModal && (
+        <Modal title={`Push "${pushModal.name}" to Locations`} onClose={() => setPushModal(null)} width={480}>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 13, color: C.textSec, marginBottom: 12 }}>Select locations to receive this package template:</div>
+            {locations.map(loc => {
+              const alreadyPushed = (pushModal.pushedTo || []).includes(loc.id);
+              const selected = pushLocations.includes(loc.id);
+              return (
+                <label key={loc.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, cursor: alreadyPushed ? "default" : "pointer", opacity: alreadyPushed ? 0.5 : 1, marginBottom: 4, background: selected ? C.priLt : "transparent" }}>
+                  <input type="checkbox" checked={selected || alreadyPushed} disabled={alreadyPushed} onChange={() => {
+                    if (alreadyPushed) return;
+                    setPushLocations(prev => prev.includes(loc.id) ? prev.filter(id => id !== loc.id) : [...prev, loc.id]);
+                  }} />
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{loc.name}</div>
+                    {alreadyPushed && <div style={{ fontSize: 11, color: C.suc }}>Already pushed</div>}
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <Btn variant="secondary" onClick={() => setPushModal(null)}>Cancel</Btn>
+            <Btn onClick={handlePushToLocations} disabled={pushing || pushLocations.length === 0}>{pushing ? "Pushing..." : `Push to ${pushLocations.length} Location${pushLocations.length !== 1 ? "s" : ""}`}</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// Inline form for enterprise package creation
+function EnterpriseCreatePkgForm({ onSave, onCancel }) {
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [serviceCategory, setServiceCategory] = useState("Boarding");
+  const [serviceName, setServiceName] = useState("");
+  const [unitPrice, setUnitPrice] = useState(0);
+  const [quantity, setQuantity] = useState(10);
+  const [pricingMode, setPricingMode] = useState("discount-pct");
+  const [discountPct, setDiscountPct] = useState(10);
+  const [discountDollar, setDiscountDollar] = useState(0);
+  const [customPrice, setCustomPrice] = useState(0);
+  const [expirationType, setExpirationType] = useState("relative");
+  const [expirationDays, setExpirationDays] = useState(180);
+  const [availableOnline, setAvailableOnline] = useState(true);
+
+  const retailValue = unitPrice * quantity;
+  const packagePrice = pricingMode === "discount-pct" ? retailValue * (1 - discountPct / 100) :
+    pricingMode === "discount-dollar" ? retailValue - discountDollar : customPrice;
+  const savings = retailValue - packagePrice;
+  const savingsPerUnit = quantity > 0 ? savings / quantity : 0;
+
+  const inputStyle = { width: "100%", padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", background: C.surface, color: C.text };
+  const labelStyle = { fontSize: 12, fontWeight: 600, color: C.text, display: "block", marginBottom: 4 };
+
+  const handleSubmit = () => {
+    if (!name.trim() || !serviceName.trim() || unitPrice <= 0) return;
+    onSave({ name, description, serviceCategory, serviceName, unitPrice, quantity, pricingMode, discountPct, discountDollar, packagePrice: Math.round(packagePrice * 100) / 100, retailValue: Math.round(retailValue * 100) / 100, savings: Math.round(savings * 100) / 100, savingsPerUnit: Math.round(savingsPerUnit * 100) / 100, expirationType, expirationDays, availableOnline });
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div>
+        <label style={labelStyle}>Package Name *</label>
+        <input value={name} onChange={e => setName(e.target.value)} style={inputStyle} placeholder="e.g., 10-Night Boarding Bundle" />
+      </div>
+      <div>
+        <label style={labelStyle}>Description</label>
+        <input value={description} onChange={e => setDescription(e.target.value)} style={inputStyle} placeholder="Brief description" />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <label style={labelStyle}>Service Category</label>
+          <select value={serviceCategory} onChange={e => setServiceCategory(e.target.value)} style={inputStyle}>
+            <option>Boarding</option><option>Daycare</option><option>Day Boarding</option><option>Grooming</option>
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Service Name *</label>
+          <input value={serviceName} onChange={e => setServiceName(e.target.value)} style={inputStyle} placeholder="e.g., Luxury Suite" />
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <label style={labelStyle}>Unit Price ($)</label>
+          <input type="number" value={unitPrice} onChange={e => setUnitPrice(parseFloat(e.target.value) || 0)} style={inputStyle} min="0" step="0.01" />
+        </div>
+        <div>
+          <label style={labelStyle}>Quantity</label>
+          <input type="number" value={quantity} onChange={e => setQuantity(parseInt(e.target.value) || 1)} style={inputStyle} min="1" />
+        </div>
+      </div>
+      <div>
+        <label style={labelStyle}>Pricing Mode</label>
+        <div style={{ display: "flex", gap: 8 }}>
+          {[["discount-pct", "% Off"], ["discount-dollar", "$ Off"], ["custom", "Custom Price"]].map(([mode, label]) => (
+            <button key={mode} onClick={() => setPricingMode(mode)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${pricingMode === mode ? C.pri : C.border}`, background: pricingMode === mode ? C.priLt : "transparent", color: pricingMode === mode ? C.pri : C.text, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
+          ))}
+        </div>
+      </div>
+      {pricingMode === "discount-pct" && <div><label style={labelStyle}>Discount %</label><input type="number" value={discountPct} onChange={e => setDiscountPct(parseFloat(e.target.value) || 0)} style={inputStyle} min="0" max="100" /></div>}
+      {pricingMode === "discount-dollar" && <div><label style={labelStyle}>Discount Amount ($)</label><input type="number" value={discountDollar} onChange={e => setDiscountDollar(parseFloat(e.target.value) || 0)} style={inputStyle} min="0" /></div>}
+      {pricingMode === "custom" && <div><label style={labelStyle}>Custom Package Price ($)</label><input type="number" value={customPrice} onChange={e => setCustomPrice(parseFloat(e.target.value) || 0)} style={inputStyle} min="0" step="0.01" /></div>}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <label style={labelStyle}>Expiration</label>
+          <select value={expirationType} onChange={e => setExpirationType(e.target.value)} style={inputStyle}>
+            <option value="relative">Days from purchase</option>
+            <option value="none">No expiration</option>
+          </select>
+        </div>
+        {expirationType === "relative" && <div><label style={labelStyle}>Days</label><input type="number" value={expirationDays} onChange={e => setExpirationDays(parseInt(e.target.value) || 90)} style={inputStyle} min="1" /></div>}
+      </div>
+      {/* Summary */}
+      <Card style={{ padding: 16, background: C.bg }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
+          <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Retail</div><div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>${retailValue.toFixed(2)}</div></div>
+          <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Package</div><div style={{ fontSize: 16, fontWeight: 700, color: C.pri }}>${packagePrice.toFixed(2)}</div></div>
+          <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Savings</div><div style={{ fontSize: 16, fontWeight: 700, color: C.suc }}>${savings.toFixed(2)}</div></div>
+          <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Per Unit</div><div style={{ fontSize: 16, fontWeight: 700, color: C.suc }}>${savingsPerUnit.toFixed(2)}</div></div>
+        </div>
+      </Card>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
+        <Btn onClick={handleSubmit} disabled={!name.trim() || !serviceName.trim() || unitPrice <= 0}>Create Package</Btn>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ENTERPRISE — User Management
 // ═══════════════════════════════════════════════════════════════════════════
 function EnterpriseUsersPage({ profile, allLocations }) {
@@ -13211,6 +13929,359 @@ function LMSPage({ data, save, nav, profile }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// DISCOUNTS SECTION
+// ═══════════════════════════════════════════════════════════════════════════
+function DiscountsSection({ data, save }) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [editDiscount, setEditDiscount] = useState(null);
+  const discounts = data.discounts || [];
+  const referralSources = data.referralSources || [
+    { id: "ref_friend", name: "Friend/Family" },
+    { id: "ref_google", name: "Google Search" },
+    { id: "ref_social", name: "Social Media" },
+    { id: "ref_vet", name: "Vet Referral" },
+  ];
+
+  const [newRefName, setNewRefName] = useState("");
+  const [showRefManager, setShowRefManager] = useState(false);
+
+  const addReferralSource = async () => {
+    if (!newRefName.trim()) return;
+    const newRef = { id: "ref_" + gid(), name: newRefName.trim() };
+    await save({ ...data, referralSources: [...referralSources, newRef] });
+    setNewRefName("");
+  };
+
+  const deleteReferralSource = async (refId) => {
+    if (!window.confirm("Delete this referral source?")) return;
+    await save({ ...data, referralSources: referralSources.filter(r => r.id !== refId) });
+  };
+
+  const handleSaveDiscount = async (disc) => {
+    if (editDiscount) {
+      await save({ ...data, discounts: discounts.map(d => d.id === editDiscount.id ? { ...editDiscount, ...disc } : d) });
+    } else {
+      await save({ ...data, discounts: [...discounts, { ...disc, id: gid(), createdAt: todayStr(), active: true }] });
+    }
+    setShowCreate(false);
+    setEditDiscount(null);
+  };
+
+  const toggleActive = async (discId) => {
+    await save({ ...data, discounts: discounts.map(d => d.id === discId ? { ...d, active: !d.active } : d) });
+  };
+
+  const deleteDiscount = async (discId) => {
+    if (!window.confirm("Delete this discount?")) return;
+    await save({ ...data, discounts: discounts.filter(d => d.id !== discId) });
+  };
+
+  return (
+    <div style={{ padding: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: C.text }}>Discounts</h2>
+          <p style={{ margin: "4px 0 0", fontSize: 14, color: C.textSec }}>Manage discounts linked to referral sources with usage caps</p>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="secondary" onClick={() => setShowRefManager(!showRefManager)} icon={<I.Users />}>Referral Sources</Btn>
+          <Btn onClick={() => { setEditDiscount(null); setShowCreate(true); }} icon={<I.Plus />}>Create Discount</Btn>
+        </div>
+      </div>
+
+      {/* Referral Sources Manager */}
+      {showRefManager && (
+        <Card style={{ marginBottom: 20, padding: "16px 20px" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Referral Sources</div>
+          {referralSources.map(ref => (
+            <div key={ref.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${C.borderLight}` }}>
+              <span style={{ fontSize: 13, color: C.text }}>{ref.name}</span>
+              <button onClick={() => deleteReferralSource(ref.id)} style={{ background: "none", border: "none", color: C.dan, cursor: "pointer", padding: 4 }}><I.Trash /></button>
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <input value={newRefName} onChange={e => setNewRefName(e.target.value)} placeholder="New source name" style={{ flex: 1, padding: "6px 10px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} onKeyDown={e => e.key === "Enter" && addReferralSource()} />
+            <Btn size="sm" onClick={addReferralSource}>Add</Btn>
+          </div>
+        </Card>
+      )}
+
+      {/* Discounts List */}
+      {discounts.length === 0 ? (
+        <Card style={{ textAlign: "center", padding: "60px 20px" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>💰</div>
+          <p style={{ fontSize: 16, fontWeight: 500, color: C.textMut, margin: 0 }}>No discounts yet. Create one to get started!</p>
+        </Card>
+      ) : (
+        <Card>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.8fr 1.5fr 0.8fr 0.6fr 0.6fr", gap: 0 }}>
+            {["Name", "Type", "Value", "Referral Source", "Lodging Types", "Cap", ""].map(h => (
+              <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", padding: "10px 12px", background: C.bg, borderBottom: `1px solid ${C.border}`, letterSpacing: "0.06em" }}>{h}</div>
+            ))}
+            {discounts.map(disc => {
+              const ref = referralSources.find(r => r.id === disc.referralSourceId);
+              return (
+                <React.Fragment key={disc.id}>
+                  <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: disc.active ? C.suc : C.border }} />
+                    <span style={{ fontSize: 14, fontWeight: 600, color: disc.active ? C.text : C.textMut }}>{disc.name}</span>
+                  </div>
+                  <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.text }}>{disc.type === "percentage" ? "%" : "$"}</div>
+                  <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.suc, fontWeight: 600 }}>{disc.type === "percentage" ? `${disc.value}%` : `$${disc.value}`}</div>
+                  <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.text }}>{ref ? ref.name : "Any"}</div>
+                  <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 12, color: C.textMut }}>{(disc.lodgingTypes || []).join(", ") || "All"}</div>
+                  <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.text }}>{disc.usageCap > 0 ? `${disc.usageCap}x` : "∞"}</div>
+                  <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", gap: 4 }}>
+                    <button onClick={() => toggleActive(disc.id)} style={{ background: "none", border: "none", cursor: "pointer", color: disc.active ? C.suc : C.textMut, padding: 4 }}>{disc.active ? <I.Check /> : <I.Edit />}</button>
+                    <button onClick={() => { setEditDiscount(disc); setShowCreate(true); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.pri, padding: 4 }}><I.Edit /></button>
+                    <button onClick={() => deleteDiscount(disc.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.dan, padding: 4 }}><I.Trash /></button>
+                  </div>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {/* Create/Edit Modal */}
+      {showCreate && (
+        <Modal title={editDiscount ? "Edit Discount" : "Create Discount"} onClose={() => { setShowCreate(false); setEditDiscount(null); }} width={480}>
+          <DiscountForm discount={editDiscount} referralSources={referralSources} onSave={handleSaveDiscount} onCancel={() => { setShowCreate(false); setEditDiscount(null); }} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function DiscountForm({ discount, referralSources, onSave, onCancel }) {
+  const [name, setName] = useState(discount?.name || "");
+  const [type, setType] = useState(discount?.type || "percentage");
+  const [value, setValue] = useState(discount?.value || 10);
+  const [referralSourceId, setReferralSourceId] = useState(discount?.referralSourceId || "");
+  const [lodgingTypes, setLodgingTypes] = useState(discount?.lodgingTypes || []);
+  const [usageCap, setUsageCap] = useState(discount?.usageCap ?? 0);
+
+  const toggleLodging = (lt) => setLodgingTypes(prev => prev.includes(lt) ? prev.filter(l => l !== lt) : [...prev, lt]);
+
+  const inputStyle = { width: "100%", padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", background: C.surface, color: C.text };
+  const labelStyle = { fontSize: 12, fontWeight: 600, color: C.text, display: "block", marginBottom: 4 };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div><label style={labelStyle}>Discount Name *</label><input value={name} onChange={e => setName(e.target.value)} style={inputStyle} placeholder="e.g., Friend Referral 10% Off" /></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <label style={labelStyle}>Type</label>
+          <select value={type} onChange={e => setType(e.target.value)} style={inputStyle}>
+            <option value="percentage">Percentage (%)</option>
+            <option value="fixed">Fixed Amount ($)</option>
+          </select>
+        </div>
+        <div><label style={labelStyle}>{type === "percentage" ? "Discount %" : "Discount $"}</label><input type="number" value={value} onChange={e => setValue(parseFloat(e.target.value) || 0)} style={inputStyle} min="0" /></div>
+      </div>
+      <div>
+        <label style={labelStyle}>Referral Source</label>
+        <select value={referralSourceId} onChange={e => setReferralSourceId(e.target.value)} style={inputStyle}>
+          <option value="">Any / No specific source</option>
+          {referralSources.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+        </select>
+      </div>
+      <div>
+        <label style={labelStyle}>Applies to Lodging Types</label>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {["boarding", "dayboarding", "daycare", "evaluation"].map(lt => {
+            const active = lodgingTypes.includes(lt);
+            return (
+              <button key={lt} onClick={() => toggleLodging(lt)} style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${active ? C.pri : C.border}`, background: active ? C.priLt : "transparent", color: active ? C.pri : C.text, fontSize: 13, fontWeight: active ? 600 : 400, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>
+                {active && <span style={{ marginRight: 4 }}>✓</span>}{lt}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Leave empty to apply to all types</div>
+      </div>
+      <div>
+        <label style={labelStyle}>Usage Cap per Client</label>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="number" value={usageCap} onChange={e => setUsageCap(parseInt(e.target.value) || 0)} style={{ ...inputStyle, width: 100 }} min="0" />
+          <span style={{ fontSize: 12, color: C.textMut }}>{usageCap === 0 ? "Unlimited" : `Max ${usageCap} use${usageCap > 1 ? "s" : ""} per client`}</span>
+        </div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
+        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
+        <Btn onClick={() => { if (!name.trim()) return; onSave({ name, type, value, referralSourceId, lodgingTypes, usageCap }); }} disabled={!name.trim()}>
+          {discount ? "Update" : "Create"}
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PACKAGE REPORTS TAB
+// ═══════════════════════════════════════════════════════════════════════════
+function PackageReportsTab({ data }) {
+  const sales = data.packageSales || [];
+  const pkgs = data.packages || [];
+  const clients = data.clients || [];
+  const [viewMode, setViewMode] = useState("by-client");
+
+  // Calculate outstanding for each sale
+  const outstanding = sales.map(sale => {
+    const pkg = pkgs.find(p => p.id === sale.packageId);
+    const remaining = (sale.quantity || 0) - (sale.used || 0);
+    if (remaining <= 0) return null;
+    const unitPrice = pkg ? (pkg.packagePrice / pkg.quantity) : 0;
+    const value = remaining * unitPrice;
+    // Calculate expiration
+    let expiresAt = null;
+    if (pkg?.expirationType === "relative" && sale.purchaseDate) {
+      const d = new Date(sale.purchaseDate + "T00:00:00");
+      d.setDate(d.getDate() + (pkg.expirationDays || 90));
+      expiresAt = d.toISOString().slice(0, 10);
+    }
+    const client = clients.find(c => c.id === sale.clientId);
+    return { saleId: sale.id, clientId: sale.clientId, clientName: client ? `${client.fields.first_name || ""} ${client.fields.last_name || ""}`.trim() : "Unknown", pkgName: pkg?.name || sale.packageName || "Package", remaining, total: sale.quantity, value, expiresAt, purchaseDate: sale.purchaseDate };
+  }).filter(Boolean);
+
+  const totalOutstandingValue = outstanding.reduce((s, o) => s + o.value, 0);
+  const totalRemaining = outstanding.reduce((s, o) => s + o.remaining, 0);
+
+  // Build value decay curve
+  const buildDecayCurve = () => {
+    const points = [];
+    const today = new Date();
+    let runningValue = totalOutstandingValue;
+    points.push({ date: todayStr(), value: runningValue });
+    const expirations = outstanding.filter(o => o.expiresAt).sort((a, b) => a.expiresAt.localeCompare(b.expiresAt));
+    expirations.forEach(o => {
+      points.push({ date: o.expiresAt, value: runningValue });
+      runningValue -= o.value;
+      points.push({ date: o.expiresAt, value: Math.max(0, runningValue) });
+    });
+    const lastDate = expirations.length > 0 ? expirations[expirations.length - 1].expiresAt : todayStr();
+    const endDate = new Date(lastDate + "T00:00:00");
+    endDate.setDate(endDate.getDate() + 30);
+    if (runningValue > 0) points.push({ date: endDate.toISOString().slice(0, 10), value: runningValue });
+    else points.push({ date: endDate.toISOString().slice(0, 10), value: 0 });
+    return points;
+  };
+  const decayCurve = buildDecayCurve();
+
+  // SVG chart
+  const chartW = 600, chartH = 200, padL = 60, padR = 20, padT = 20, padB = 40;
+  const innerW = chartW - padL - padR, innerH = chartH - padT - padB;
+  const maxVal = Math.max(...decayCurve.map(p => p.value), 1);
+  const minDate = new Date(decayCurve[0]?.date + "T00:00:00").getTime();
+  const maxDate = new Date(decayCurve[decayCurve.length - 1]?.date + "T00:00:00").getTime();
+  const dateRange = maxDate - minDate || 1;
+  const toX = (d) => padL + ((new Date(d + "T00:00:00").getTime() - minDate) / dateRange) * innerW;
+  const toY = (v) => padT + innerH - (v / maxVal) * innerH;
+  const pathD = decayCurve.map((p, i) => `${i === 0 ? "M" : "L"}${toX(p.date).toFixed(1)},${toY(p.value).toFixed(1)}`).join(" ");
+  const areaD = pathD + ` L${toX(decayCurve[decayCurve.length - 1].date).toFixed(1)},${(padT + innerH).toFixed(1)} L${toX(decayCurve[0].date).toFixed(1)},${(padT + innerH).toFixed(1)} Z`;
+
+  // Group by client
+  const byClient = {};
+  outstanding.forEach(o => {
+    if (!byClient[o.clientId]) byClient[o.clientId] = { name: o.clientName, items: [], totalValue: 0 };
+    byClient[o.clientId].items.push(o);
+    byClient[o.clientId].totalValue += o.value;
+  });
+  const clientEntries = Object.entries(byClient).sort((a, b) => b[1].totalValue - a[1].totalValue);
+
+  return (
+    <div>
+      {/* Summary cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 24 }}>
+        <Card style={{ padding: "20px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 4 }}>Outstanding Value</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: C.pri }}>${totalOutstandingValue.toFixed(2)}</div>
+        </Card>
+        <Card style={{ padding: "20px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 4 }}>Outstanding Units</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: C.acc }}>{totalRemaining}</div>
+        </Card>
+        <Card style={{ padding: "20px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 4 }}>Active Clients</div>
+          <div style={{ fontSize: 28, fontWeight: 800, color: C.suc }}>{clientEntries.length}</div>
+        </Card>
+      </div>
+
+      {/* Decay Chart */}
+      <Card style={{ padding: "20px 24px", marginBottom: 24 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>Outstanding Package Value Over Time</div>
+        <div style={{ fontSize: 12, color: C.textSec, marginBottom: 16 }}>Shows how outstanding package value decreases as packages expire</div>
+        <svg width={chartW} height={chartH} style={{ width: "100%", height: "auto" }} viewBox={`0 0 ${chartW} ${chartH}`}>
+          {/* Grid lines */}
+          {[0, 0.25, 0.5, 0.75, 1].map(pct => {
+            const y = padT + innerH - pct * innerH;
+            return <g key={pct}><line x1={padL} y1={y} x2={chartW - padR} y2={y} stroke={C.borderLight} strokeWidth={1} /><text x={padL - 8} y={y + 4} textAnchor="end" fontSize={10} fill={C.textMut}>${(maxVal * pct).toFixed(0)}</text></g>;
+          })}
+          {/* Area fill */}
+          <path d={areaD} fill={C.pri + "15"} />
+          {/* Line */}
+          <path d={pathD} fill="none" stroke={C.pri} strokeWidth={2.5} />
+          {/* Today marker */}
+          <line x1={toX(todayStr())} y1={padT} x2={toX(todayStr())} y2={padT + innerH} stroke={C.acc} strokeWidth={1} strokeDasharray="4 4" />
+          <text x={toX(todayStr())} y={padT + innerH + 14} textAnchor="middle" fontSize={10} fill={C.acc} fontWeight={600}>Today</text>
+          {/* X-axis dates */}
+          {decayCurve.filter((_, i) => i === 0 || i === decayCurve.length - 1).map((p, i) => (
+            <text key={i} x={toX(p.date)} y={padT + innerH + 28} textAnchor="middle" fontSize={10} fill={C.textMut}>{fmtDate(p.date)}</text>
+          ))}
+        </svg>
+      </Card>
+
+      {/* View toggle */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        {[["by-client", "By Client"], ["overall", "All Outstanding"]].map(([mode, label]) => (
+          <button key={mode} onClick={() => setViewMode(mode)} style={{ padding: "6px 16px", borderRadius: 20, border: `1.5px solid ${viewMode === mode ? C.pri : C.border}`, background: viewMode === mode ? C.priLt : "transparent", color: viewMode === mode ? C.pri : C.text, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
+        ))}
+      </div>
+
+      {viewMode === "by-client" ? (
+        clientEntries.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.textMut }}>No outstanding packages</div> : (
+          clientEntries.map(([cid, group]) => (
+            <Card key={cid} style={{ marginBottom: 12, padding: "16px 20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{group.name}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.pri }}>${group.totalValue.toFixed(2)}</span>
+              </div>
+              {group.items.map(item => (
+                <div key={item.saleId} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: `1px solid ${C.borderLight}`, fontSize: 13 }}>
+                  <div style={{ color: C.text }}>{item.pkgName} <span style={{ color: C.textMut }}>({item.remaining}/{item.total} remaining)</span></div>
+                  <div style={{ display: "flex", gap: 12 }}>
+                    <span style={{ color: C.text, fontWeight: 600 }}>${item.value.toFixed(2)}</span>
+                    {item.expiresAt && <span style={{ color: item.expiresAt < todayStr() ? C.dan : C.textMut, fontSize: 11 }}>Exp: {fmtDate(item.expiresAt)}</span>}
+                  </div>
+                </div>
+              ))}
+            </Card>
+          ))
+        )
+      ) : (
+        <Card>
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 1.2fr 0.6fr 0.6fr 0.9fr 0.8fr", gap: 0 }}>
+            {["Client", "Package", "Used", "Left", "Value", "Expires"].map(h => (
+              <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", padding: "10px 12px", background: C.bg, borderBottom: `1px solid ${C.border}` }}>{h}</div>
+            ))}
+            {outstanding.sort((a, b) => b.value - a.value).map(o => (
+              <React.Fragment key={o.saleId}>
+                <div style={{ padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.text }}>{o.clientName}</div>
+                <div style={{ padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.text }}>{o.pkgName}</div>
+                <div style={{ padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.textMut }}>{o.total - o.remaining}</div>
+                <div style={{ padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.pri, fontWeight: 600 }}>{o.remaining}</div>
+                <div style={{ padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.text, fontWeight: 600 }}>${o.value.toFixed(2)}</div>
+                <div style={{ padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 12, color: o.expiresAt && o.expiresAt < todayStr() ? C.dan : C.textMut }}>{o.expiresAt ? fmtDate(o.expiresAt) : "—"}</div>
+              </React.Fragment>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SETTINGS (Fields + Dog Tags)
 // ═══════════════════════════════════════════════════════════════════════════
 function SettingsPage({ data, save, profile }) {
@@ -13302,8 +14373,10 @@ function SettingsPage({ data, save, profile }) {
       { id: "tags", label: "Dog Tags", desc: "Create color-coded tags for daycare, private play, etc.", keywords: "tags labels categories private play daycare" },
       { id: "vaccines", label: "Vaccines", desc: "Configure required vaccinations and expiration tracking", keywords: "vaccines rabies bordetella dhpp flu required" },
       { id: "agreements", label: "Agreements", desc: "Manage boarding and daycare agreement documents", keywords: "agreements contracts waivers liability boarding" },
+      { id: "questionnaire", label: "Questionnaire", desc: "Customize the Getting to Know Your Dog questionnaire", keywords: "questionnaire form dog intake application getting to know" },
       { id: "pricing", label: "Pricing", desc: "Room rates, daycare fees, add-ons, and payment rules", keywords: "pricing rates fees cost money payment deposit" },
       { id: "packages", label: "Packages", desc: "Create and manage service packages with built-in discounts", keywords: "packages deals discounts bundles promotions savings" },
+      { id: "discounts", label: "Discounts", desc: "Create discounts linked to referral sources with usage caps", keywords: "discounts referral source lodging cap coupon promotion" },
       { id: "dropdowns", label: "Dropdown Lists", desc: "Customize dropdown options for breeds, food types, etc.", keywords: "dropdowns lists options breeds food bath medication" },
     ]},
     { label: "Operations", items: [
@@ -13330,7 +14403,7 @@ function SettingsPage({ data, save, profile }) {
   // Map settings tab IDs → required permission keys
   const SETTINGS_PERM_MAP = {
     client:"edit_fields",dog:"edit_fields",tags:"edit_tags_config",vaccines:"edit_vaccines_config",
-    agreements:"edit_agreements",pricing:"edit_pricing",dropdowns:"edit_dropdowns",
+    agreements:"edit_agreements",pricing:"edit_pricing",packages:"edit_pricing",discounts:"edit_pricing",dropdowns:"edit_dropdowns",
     eod:"edit_eod_template","daily-ops":"edit_ops_template",
     facility:"edit_facility",rooms:"edit_rooms","closed-dates":"edit_facility",policies:"edit_vaccines_config",
     team:"manage_team",roles:"manage_roles",reset:"reset_data",
@@ -13449,11 +14522,16 @@ function SettingsPage({ data, save, profile }) {
           </Card>
         ) : tab === "agreements" ? (
           <AgreementsPage data={data} save={save} />
+        ) : tab === "questionnaire" ? (
+          <QuestionnaireSettingsTab data={data} save={save} />
         ) : tab === "pricing" ? (
         <PricingTab data={data} save={save} />
 
       ) : tab === "packages" ? (
         <PackagesSection data={data} save={save} />
+
+      ) : tab === "discounts" ? (
+        <DiscountsSection data={data} save={save} />
 
       ) : tab === "eod" ? (
         <EODTemplateTab data={data} save={save} />
@@ -14129,14 +15207,14 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
   const bookedRoomNames = useMemo(() => {
     if (type !== "boarding" || !checkIn) return new Set();
     const ci = checkIn; const co = checkOut || checkIn;
-    return new Set(data.reservations.filter(r => r.type === "boarding" && r.roomType === roomType && r.room && r.status !== "checked-out" && r.checkIn <= co && r.checkOut >= ci).map(r => r.room));
+    return new Set(data.reservations.filter(r => r.type === "boarding" && r.roomType === roomType && r.room && r.status !== "checked-out" && r.status !== "cancelled" && r.checkIn < co && r.checkOut > ci).map(r => r.room));
   }, [type, roomType, checkIn, checkOut, data.reservations]);
   const availableRooms = roomsForType.filter(r => !bookedRoomNames.has(r));
   const bookedRoomsArr = roomsForType.filter(r => bookedRoomNames.has(r));
 
   const roomScored = useMemo(() => {
     const ci = checkIn; const co = checkOut || checkIn;
-    const allBoardingRes = data.reservations.filter(r => (r.type === "boarding" || r.type === "dayboarding") && r.roomType === roomType && r.room && r.status !== "checked-out");
+    const allBoardingRes = data.reservations.filter(r => (r.type === "boarding" || r.type === "dayboarding") && r.roomType === roomType && r.room && r.status !== "checked-out" && r.status !== "cancelled");
     const totalRooms = roomsForType.length;
     const occupancy = totalRooms > 0 ? (totalRooms - availableRooms.length) / totalRooms : 0;
     const scored = roomsForType.map(room => {
@@ -16440,6 +17518,7 @@ export default function App() {
       }
       case "enterprise-locations": return "Location Management";
       case "enterprise-operations": return "Operations Oversight";
+      case "enterprise-packages": return "Package Management";
       default: return pg;
     }
   }, [data]);
@@ -16480,6 +17559,7 @@ export default function App() {
     { label:null, items:[
       { id:"enterprise-locations",label:"Location Management",icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> },
       { id:"enterprise-operations",label:"Operations Oversight",icon:<I.Clipboard/> },
+      { id:"enterprise-packages",label:"Package Management",icon:<I.ShoppingCart/> },
       { id:"enterprise-users",label:"User Management",icon:<I.Users/> },
     ]},
   ];
@@ -16487,7 +17567,7 @@ export default function App() {
   // Flat list for lookups
   const navItems = navSections.flatMap(s => s.items);
   const isOpsPage = page.startsWith("ops-");
-  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","online-bookings","crm","messages","payments","settings","ai","lms"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
+  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","online-bookings","crm","messages","payments","settings","ai","lms"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog","questionnaire"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
 
   function renderPage() {
     // Enterprise pages — gated to owner/enterprise_admin
@@ -16495,6 +17575,7 @@ export default function App() {
     const entDenied = <div style={{padding:"60px 40px",textAlign:"center"}}><div style={{fontSize:36,marginBottom:12}}>🔒</div><div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:6}}>Access Restricted</div><div style={{fontSize:14,color:C.textSec}}>Enterprise features are only available to owners and enterprise admins.</div></div>;
     if (page === "enterprise-locations") return isEnterpriseRole ? <EnterpriseLocationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange} addGlobalToast={addGlobalToast} allLocations={allLocations} refreshLocations={loadLocations}/> : entDenied;
     if (page === "enterprise-operations") return isEnterpriseRole ? <EnterpriseOperationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange} allLocations={allLocations}/> : entDenied;
+    if (page === "enterprise-packages") return isEnterpriseRole ? <EnterprisePackagesPage data={data} save={save} allLocations={allLocations}/> : entDenied;
     if (page === "enterprise-users") return isEnterpriseRole ? <EnterpriseUsersPage profile={profile} allLocations={allLocations}/> : entDenied;
     if (isOpsPage) {
       const oc = opsChildren.find(c => c.id === page);
@@ -16510,6 +17591,7 @@ export default function App() {
       case "client-detail": return hp("view_client_detail") ? <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile} openReservationId={params.openReservation}/> : denied;
       case "new-client": return hp("create_client") ? <NewClientPage data={data} save={save} nav={nav} prefill={params.prefill} addGlobalToast={addGlobalToast}/> : denied;
       case "dog-detail": return hp("view_dog_detail") ? <DogDetailPage data={data} save={save} clientId={params.clientId} dogId={params.dogId} nav={nav} profile={profile}/> : denied;
+      case "questionnaire": return hp("view_dog_detail") ? <QuestionnaireViewer data={data} save={save} clientId={params.clientId} dogId={params.dogId} nav={nav}/> : denied;
       case "new-dog": return hp("create_dog") ? <NewDogPage data={data} save={save} clientId={params.clientId} nav={nav}/> : denied;
       case "reservations": return hp("view_calendar") ? <LodgingCalendarPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/> : denied;
       case "online-bookings": return <OnlineBookingsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} allLocations={allLocations}/>;
