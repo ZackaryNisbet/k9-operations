@@ -2921,6 +2921,11 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const typeFilterActive = typeFilters.size > 0;
   const typeMatch = (r) => !typeFilterActive || typeFilters.has(r.type);
 
+  // Activities tab state
+  const [actSearch, setActSearch] = useState("");
+  const [actTypeFilter, setActTypeFilter] = useState(new Set());
+  const toggleActType = (t) => setActTypeFilter(prev => { const n = new Set(prev); if (n.has(t)) n.delete(t); else n.add(t); return n; });
+
   const shiftDate = (days) => {
     const d = new Date(viewDate + "T12:00:00");
     d.setDate(d.getDate() + days);
@@ -2943,6 +2948,81 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const inHouse = data.reservations.filter(r=>r.status==="checked-in"&&r.checkIn<=vd&&r.checkOut>=vd);
   const goingHome = data.reservations.filter(r=>r.status==="checked-in"&&r.checkOut===vd);
   const checkedOut = data.reservations.filter(r=>r.status==="checked-out"&&r.checkOut===vd);
+
+  // ═══ Activities Hub — aggregate all feeding/meds/baths for in-house dogs today ═══
+  const actStaffName = profile ? (profile.full_name || profile.email || "Staff") : "Staff";
+  const parseTimeSort = (t) => {
+    const tl = (t || "").toLowerCase().trim();
+    if (tl === "am" || tl === "morning") return 6;
+    if (tl === "noon" || tl === "midday" || tl === "lunch") return 12;
+    if (tl === "pm" || tl === "afternoon") return 15;
+    if (tl === "evening" || tl === "dinner") return 18;
+    if (tl === "end of day") return 20;
+    if (tl === "any" || tl === "as needed") return 12;
+    const m = tl.match(/(\d{1,2}):?(\d{2})?\s*(am|pm)?/i);
+    if (m) { let h = parseInt(m[1]); const min = parseInt(m[2] || "0"); const ap = (m[3] || "").toLowerCase(); if (ap === "pm" && h < 12) h += 12; if (ap === "am" && h === 12) h = 0; return h + min / 60; }
+    return 12;
+  };
+  const fmtTimeLabel = (t) => {
+    const tl = (t || "").trim();
+    if (!tl) return "—";
+    const m = tl.match(/^(\d{1,2}):(\d{2})$/);
+    if (m) { let h = parseInt(m[1]); const min = m[2]; const ap = h >= 12 ? "PM" : "AM"; if (h > 12) h -= 12; if (h === 0) h = 12; return `${h}:${min} ${ap}`; }
+    return tl;
+  };
+
+  const allActivities = useMemo(() => {
+    const today = todayStr();
+    const ihRes = data.reservations.filter(r => r.status === "checked-in" && r.checkIn <= vd && r.checkOut >= vd);
+    const rows = [];
+    ihRes.forEach(res => {
+      const dog = data.dogs.find(d => d.id === res.dogId);
+      const client = data.clients.find(c => c.id === res.clientId);
+      if (!dog) return;
+      const feedSch = res.careOverrides?.feedingSchedules || dog.fields.feedingSchedules || [];
+      const medSch = res.careOverrides?.medicationSchedules || dog.fields.medicationSchedules || [];
+      const bath = res.careOverrides?.bath_type || dog.fields.bath_type || "";
+      const log = res.activityLog || {};
+
+      feedSch.forEach(s => {
+        (s.times || []).forEach(time => {
+          const colKey = `feeding_${time.replace(/\s+/g, "_")}`;
+          rows.push({ id: `${res.id}_${colKey}`, reservationId: res.id, dogId: res.dogId, clientId: res.clientId, dog, client, room: res.room || "", type: "feeding", colKey, time, label: `Feeding – ${time}`, detail: [s.amount, s.unit, s.foodType].filter(Boolean).join(" "), instruction: s.instruction || "", notes: s.notes || "", logEntry: log[`${today}|${colKey}`] || {} });
+        });
+      });
+
+      medSch.forEach(s => {
+        const colKey = `med_${(s.name || "").replace(/\s+/g, "_")}`;
+        rows.push({ id: `${res.id}_${colKey}`, reservationId: res.id, dogId: res.dogId, clientId: res.clientId, dog, client, room: res.room || "", type: "medication", colKey, time: s.time || "Any", label: s.name || "Medication", detail: [s.amount, s.unit].filter(Boolean).join(" "), instruction: s.notes || "", notes: "", logEntry: log[`${today}|${colKey}`] || {} });
+      });
+
+      if (bath && res.checkOut === today) {
+        const colKey = "bathing";
+        rows.push({ id: `${res.id}_${colKey}`, reservationId: res.id, dogId: res.dogId, clientId: res.clientId, dog, client, room: res.room || "", type: "bathing", colKey, time: "End of Day", label: "Bath", detail: bath, instruction: "", notes: "", logEntry: log[`${today}|${colKey}`] || {} });
+      }
+    });
+    rows.sort((a, b) => parseTimeSort(a.time) - parseTimeSort(b.time));
+    return rows;
+  }, [data.reservations, data.dogs, data.clients, vd]);
+
+  const filteredActivities = useMemo(() => {
+    let rows = allActivities;
+    if (actTypeFilter.size > 0) rows = rows.filter(r => actTypeFilter.has(r.type));
+    if (actSearch.trim()) {
+      const q = actSearch.toLowerCase();
+      rows = rows.filter(r => {
+        const dName = (r.dog?.fields.name || "").toLowerCase();
+        const cName = `${r.client?.fields.first_name || ""} ${r.client?.fields.last_name || ""}`.toLowerCase();
+        return dName.includes(q) || cName.includes(q) || (r.room || "").toLowerCase().includes(q);
+      });
+    }
+    return rows;
+  }, [allActivities, actTypeFilter, actSearch]);
+
+  const updateActivityLog = (reservationId, colKey, updates) => {
+    const logKey = `${todayStr()}|${colKey}`;
+    save({ ...data, reservations: data.reservations.map(r => r.id === reservationId ? { ...r, activityLog: { ...(r.activityLog || {}), [logKey]: { ...(r.activityLog || {})[logKey], ...updates } } } : r) });
+  };
 
   // Facility capacity calculations
   const fs = data.facilitySettings || { largeDogDaycareSF: 0, smallDogDaycareSF: 0 };
@@ -3149,7 +3229,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
 
   // Auto-switch to first tab with results when filtering
   useEffect(() => {
-    if (!isFiltering) return;
+    if (!isFiltering || activeTab === "activities") return;
     const current = activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : fCheckedOut;
     if (current.length > 0) return;
     if (fExpected.length > 0) setActiveTab("expected");
@@ -3162,9 +3242,10 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     { id: "inhouse", label: "In-House", count: isFiltering ? fInHouse.length : inHouse.length, total: inHouse.length, color: C.suc },
     { id: "goinghome", label: "Going Home", count: isFiltering ? fGoingHome.length : goingHome.length, total: goingHome.length, color: C.acc },
     { id: "checkedout", label: "Checked Out", count: isFiltering ? fCheckedOut.length : checkedOut.length, total: checkedOut.length, color: C.textSec },
+    { id: "activities", label: "Activities", count: filteredActivities.length, total: allActivities.length, color: C.acc },
   ];
 
-  const rawItems = activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : fCheckedOut;
+  const rawItems = activeTab === "activities" ? [] : activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : fCheckedOut;
 
   const handleSort = (col) => {
     if (sortCol === col) { setSortDir(d => d === "asc" ? "desc" : "asc"); }
@@ -3569,31 +3650,60 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
       {/* ═══ Tabbed Dashboard Table ═══ */}
       <Card style={{ padding: 0, overflow: "hidden" }}>
         {/* Search bar */}
-        <div style={{ display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={sq ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input data-shortcut-search value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search by client name, dog name, phone, or email…" style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }} />
-          {!sq && (data.hotkeySettings||{}).showHints!==false && <kbd style={{fontSize:11,fontWeight:600,color:C.textMut,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:5,padding:"2px 7px",fontFamily:"'GT Eesti',monospace",flexShrink:0,lineHeight:1.4}}>/</kbd>}
-          {sq && <button onClick={() => setSearchQuery("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex", fontFamily: "inherit" }} title="Clear search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
-          {/* Type filter pills */}
-          <div style={{ display: "flex", gap: 4, marginLeft: 8, flexShrink: 0 }}>
-            {[
-              { type: "evaluation", label: "Evals", color: C.acc },
-              { type: "tour", label: "Tours", color: C.info },
-              { type: "boarding", label: "Board", color: C.pri },
-              { type: "dayboarding", label: "Day Board", color: C.pri },
-              { type: "daycare", label: "Daycare", color: C.suc },
-            ].map(f => {
-              const on = typeFilters.has(f.type);
-              return (
-                <button key={f.type} onClick={() => toggleTypeFilter(f.type)}
-                  style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? f.color : C.border}`, background: on ? f.color : "transparent", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", whiteSpace: "nowrap", letterSpacing: "0.01em" }}>
-                  {f.label}
-                </button>
-              );
-            })}
-            {typeFilterActive && <button onClick={() => setTypeFilters(new Set())} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: "0 2px", display: "flex", alignItems: "center", fontFamily: "inherit" }} title="Clear filters"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
-          </div>
-        </div>
+        {(() => {
+          const isAct = activeTab === "activities";
+          const curQ = isAct ? actSearch : searchQuery;
+          const setCurQ = isAct ? setActSearch : setSearchQuery;
+          const hasQ = curQ.trim().length > 0;
+          return (
+            <div style={{ display: "flex", alignItems: "center", padding: "0 16px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={hasQ ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input data-shortcut-search value={curQ} onChange={e => setCurQ(e.target.value)} placeholder={isAct ? "Search by dog name, client name, or room…" : "Search by client name, dog name, phone, or email…"} style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }} />
+              {!hasQ && !isAct && (data.hotkeySettings||{}).showHints!==false && <kbd style={{fontSize:11,fontWeight:600,color:C.textMut,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:5,padding:"2px 7px",fontFamily:"'GT Eesti',monospace",flexShrink:0,lineHeight:1.4}}>/</kbd>}
+              {hasQ && <button onClick={() => setCurQ("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex", fontFamily: "inherit" }} title="Clear search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+              {/* Filter pills — swap for Activities tab */}
+              <div style={{ display: "flex", gap: 4, marginLeft: 8, flexShrink: 0 }}>
+                {isAct ? (
+                  <>
+                    {[
+                      { type: "feeding", label: "Feeding", icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8h1a4 4 0 010 8h-1"/><path d="M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>, color: C.pri },
+                      { type: "medication", label: "Meds", icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-6 9h6"/></svg>, color: C.acc },
+                      { type: "bathing", label: "Baths", icon: <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h16a1 1 0 011 1v3a4 4 0 01-4 4H7a4 4 0 01-4-4v-3a1 1 0 011-1z"/><path d="M6 12V5a2 2 0 012-2h0a2 2 0 012 2v1"/></svg>, color: C.info },
+                    ].map(f => {
+                      const on = actTypeFilter.has(f.type);
+                      return (
+                        <button key={f.type} onClick={() => toggleActType(f.type)}
+                          style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? f.color : C.border}`, background: on ? f.color : "transparent", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", whiteSpace: "nowrap", letterSpacing: "0.01em", display: "flex", alignItems: "center", gap: 4 }}>
+                          {f.icon}{f.label}
+                        </button>
+                      );
+                    })}
+                    {actTypeFilter.size > 0 && <button onClick={() => setActTypeFilter(new Set())} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: "0 2px", display: "flex", alignItems: "center", fontFamily: "inherit" }} title="Clear filters"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+                  </>
+                ) : (
+                  <>
+                    {[
+                      { type: "evaluation", label: "Evals", color: C.acc },
+                      { type: "tour", label: "Tours", color: C.info },
+                      { type: "boarding", label: "Board", color: C.pri },
+                      { type: "dayboarding", label: "Day Board", color: C.pri },
+                      { type: "daycare", label: "Daycare", color: C.suc },
+                    ].map(f => {
+                      const on = typeFilters.has(f.type);
+                      return (
+                        <button key={f.type} onClick={() => toggleTypeFilter(f.type)}
+                          style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? f.color : C.border}`, background: on ? f.color : "transparent", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", whiteSpace: "nowrap", letterSpacing: "0.01em" }}>
+                          {f.label}
+                        </button>
+                      );
+                    })}
+                    {typeFilterActive && <button onClick={() => setTypeFilters(new Set())} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: "0 2px", display: "flex", alignItems: "center", fontFamily: "inherit" }} title="Clear filters"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })()}
         {/* Tab Bar */}
         <div style={{ display: "flex", borderBottom: `2px solid ${C.borderLight}`, background: C.bg }}>
           {tabs.map(tab => {
@@ -3608,6 +3718,129 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
           })}
         </div>
 
+        {/* ═══ ACTIVITIES TAB ═══ */}
+        {activeTab === "activities" ? (
+          <div>
+            {/* Activities Table Header */}
+            {(() => {
+              const actGrid = "68px minmax(140px,1.5fr) minmax(100px,1.2fr) 80px 110px minmax(130px,1.1fr) 140px";
+              const CONSUMPTION_OPTS = ["0%","25%","50%","75%","100%"];
+              const typeBadge = (t) => {
+                const cfg = t === "feeding" ? { bg: C.pri, label: "Feeding" } : t === "medication" ? { bg: C.acc, label: "Meds" } : { bg: C.info, label: "Bath" };
+                return <span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:10,fontWeight:700,color:"#fff",background:cfg.bg,padding:"2px 8px",borderRadius:6,whiteSpace:"nowrap"}}>{cfg.label}</span>;
+              };
+              return (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: actGrid, padding: "10px 12px", background: C.bg, borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", alignItems: "center" }}>
+                    <div>Time</div>
+                    <div>Dog / Client</div>
+                    <div>Task Details</div>
+                    <div>Qty</div>
+                    <div>Administered</div>
+                    <div>By</div>
+                    <div>% Eaten</div>
+                  </div>
+                  <div style={{ minHeight: 200 }}>
+                    {filteredActivities.length === 0 ? (
+                      <div style={{ padding: "48px 12px", textAlign: "center" }}>
+                        <div style={{ fontSize: 36, marginBottom: 8 }}>{allActivities.length === 0 ? "☕" : "🔍"}</div>
+                        <div style={{ fontSize: 15, fontWeight: 600, color: C.textSec }}>
+                          {allActivities.length === 0 ? "No activities scheduled for in-house guests today" : "No activities match your search or filters"}
+                        </div>
+                        {allActivities.length === 0 && <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>Activities will appear here when checked-in dogs have feeding, medication, or bath schedules.</div>}
+                      </div>
+                    ) : (
+                      filteredActivities.map((row, ri) => {
+                        const entry = row.logEntry;
+                        const administered = !!entry.administered;
+                        const cLast = row.client?.fields.last_name || "";
+                        const dName = row.dog?.fields.name || "Unknown";
+                        return (
+                          <div key={row.id} style={{ display: "grid", gridTemplateColumns: actGrid, padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center", background: administered ? C.suc + "08" : "transparent", transition: "background 0.1s" }}
+                            onMouseEnter={e => { if (!administered) e.currentTarget.style.background = C.surfaceHover; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = administered ? C.suc + "08" : "transparent"; }}>
+                            {/* Time */}
+                            <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>
+                              {fmtTimeLabel(row.time)}
+                            </div>
+                            {/* Dog + Client */}
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                                <button onClick={() => nav("dog-detail", { clientId: row.clientId, dogId: row.dogId })} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}>
+                                  <span style={{ fontSize: 13, fontWeight: 700, color: C.pri, textDecoration: "underline", textDecorationColor: C.pri + "40" }}>{dName}</span>
+                                </button>
+                                <span style={{ fontSize: 12, color: C.textSec }}>{cLast}</span>
+                              </div>
+                              {row.room && <div style={{ fontSize: 11, color: C.textMut }}>Room {row.room}</div>}
+                            </div>
+                            {/* Task Details */}
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                                {typeBadge(row.type)}
+                                {row.instruction && <span style={{ fontSize: 11, color: C.textSec, fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.instruction}</span>}
+                              </div>
+                              {row.notes && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{row.notes}</div>}
+                            </div>
+                            {/* QTY */}
+                            <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>
+                              {row.detail || "—"}
+                            </div>
+                            {/* Administered Checkbox */}
+                            <div>
+                              <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+                                <input type="checkbox" checked={administered} style={{ accentColor: C.suc, width: 16, height: 16, cursor: "pointer" }}
+                                  onChange={e => {
+                                    if (e.target.checked) {
+                                      updateActivityLog(row.reservationId, row.colKey, { administered: true, by: actStaffName, at: new Date().toISOString() });
+                                    } else {
+                                      updateActivityLog(row.reservationId, row.colKey, { administered: false, by: "", at: "" });
+                                    }
+                                  }} />
+                                <span style={{ fontSize: 11, fontWeight: 600, color: administered ? C.suc : C.textMut }}>
+                                  {administered ? "Done" : "Mark"}
+                                </span>
+                              </label>
+                            </div>
+                            {/* Administered By */}
+                            <div>
+                              {administered && entry.by ? (
+                                <div>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{entry.by}</div>
+                                  {entry.at && <div style={{ fontSize: 10, color: C.textMut }}>{new Date(entry.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}</div>}
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: 11, color: C.textMut }}>—</span>
+                              )}
+                            </div>
+                            {/* % Eaten */}
+                            <div>
+                              {row.type === "feeding" ? (
+                                <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+                                  {CONSUMPTION_OPTS.map(opt => {
+                                    const sel = entry.consumption === opt;
+                                    return (
+                                      <button key={opt} onClick={() => updateActivityLog(row.reservationId, row.colKey, { consumption: sel ? "" : opt })}
+                                        style={{ padding: "3px 7px", borderRadius: 6, border: `1.5px solid ${sel ? C.pri : C.border}`, background: sel ? C.priLt : "transparent", color: sel ? C.pri : C.textSec, fontSize: 10, fontWeight: sel ? 700 : 500, cursor: "pointer", fontFamily: "inherit", minWidth: 30, transition: "all 0.12s" }}>
+                                        {opt}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: 11, color: C.textMut }}>—</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        ) : (
+        <>
         {/* Table Header */}
         <div style={{ display: "grid", gridTemplateColumns: grid, padding: "10px 12px", background: C.bg, borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", alignItems: "center" }}>
           <div style={colHeaderStyle("client")} onClick={() => handleSort("client")}>Client <SortIcon col="client" /></div>
@@ -3751,6 +3984,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
             })
           )}
         </div>
+        </>
+        )}
       </Card>
 
       {/* Add-On Quick-Add Popup */}
