@@ -62,7 +62,7 @@ const PAGE_SLUGS = {
   crm:"crm", messages:"messages", payments:"payments", operations:"operations",
   "ops-opening":"ops/opening", "ops-fe":"ops/front-end", "ops-be":"ops/back-end", "ops-rooms":"ops/rooms",
   "ops-pictures":"ops/pictures", "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
-  eod:"eod", ai:"ai", settings:"settings", "evaluation-form":"evaluation",
+  eod:"eod", ai:"ai", settings:"settings", "evaluation-form":"evaluation", "online-bookings":"bookings",
   "enterprise-locations":"locations", "enterprise-operations":"oversight", "enterprise-users":"users",
 };
 const SLUG_TO_PAGE = {};
@@ -11603,6 +11603,170 @@ function EnterpriseUsersPage({ profile, allLocations }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ONLINE BOOKINGS INBOX
+// ═══════════════════════════════════════════════════════════════════════════
+function OnlineBookingsPage({ data, save, nav, profile, addGlobalToast, allLocations }) {
+  const [tab, setTab] = useState("pending");
+  const [declineId, setDeclineId] = useState(null);
+  const [declineReason, setDeclineReason] = useState("");
+  const bookings = data.onlineBookings || [];
+  const pending = bookings.filter(b => b.status === "pending");
+  const processed = bookings.filter(b => b.status !== "pending");
+
+  const currentLoc = (allLocations || []).find(l => !l.isEnterprise && l.id === (profile?.location_id));
+  const bookingUrl = currentLoc ? `${window.location.origin}/book/${currentLoc.slug || "demo"}` : "";
+
+  const updateBooking = async (bookingId, updates) => {
+    const updated = bookings.map(b => b.id === bookingId ? { ...b, ...updates } : b);
+    await save({ ...data, onlineBookings: updated });
+  };
+
+  const acceptBooking = async (booking) => {
+    // Create client
+    const clientId = gid();
+    const newClient = { id: clientId, fields: { first_name: booking.client?.firstName || "", last_name: booking.client?.lastName || "", phone: booking.client?.phone || "", email: booking.client?.email || "", emergency_contact: booking.client?.emergencyContact || "", emergency_phone: booking.client?.emergencyPhone || "", notes: booking.notes || "", referral_source: "Online Booking" } };
+    // Create dog
+    const dogId = gid();
+    const newDog = { id: dogId, clientId, tags: [], fields: { name: booking.dog?.name || "", breed: booking.dog?.breed || "", weight: booking.dog?.weight || "", sex: booking.dog?.sex || "", spayed_neutered: booking.dog?.spayedNeutered || "", dob: booking.dog?.dob || "", bath_type: booking.dog?.bathType || "", temperament: "" } };
+    // Create reservation
+    const resId = gid();
+    const isBoarding = booking.type === "boarding";
+    const newRes = {
+      id: resId, clientId, dogId, type: isBoarding ? "boarding" : "evaluation",
+      checkIn: isBoarding ? booking.checkIn : booking.evalDate,
+      checkOut: isBoarding ? booking.checkOut : booking.evalDate,
+      checkInTime: isBoarding ? "" : (booking.evalTime || ""),
+      checkOutTime: "",
+      status: "upcoming",
+      ...(isBoarding ? { roomType: booking.roomType || "", room: "" } : { daycareSize: "large" }),
+      notes: `[Online Booking ${booking.id}] ${booking.notes || ""}`.trim(),
+      ...(isBoarding && booking.pricing ? { pricing: booking.pricing } : {}),
+      careOverrides: isBoarding ? { bath_type: booking.dog?.bathType || "", feeding: booking.dog?.feedingNotes || "", medications: booking.dog?.medicationNotes || "" } : {},
+    };
+    // Save everything
+    const updated = (data.onlineBookings || []).map(b => b.id === booking.id ? { ...b, status: "accepted", processedAt: new Date().toISOString() } : b);
+    await save({
+      ...data,
+      clients: [...data.clients, newClient],
+      dogs: [...data.dogs, newDog],
+      reservations: [...data.reservations, newRes],
+      onlineBookings: updated,
+    });
+    if (addGlobalToast) addGlobalToast("Booking accepted — client, dog, and reservation created", "success");
+  };
+
+  const declineBooking = async (bookingId) => {
+    await updateBooking(bookingId, { status: "declined", declineReason: declineReason, processedAt: new Date().toISOString() });
+    setDeclineId(null);
+    setDeclineReason("");
+    if (addGlobalToast) addGlobalToast("Booking declined", "default");
+  };
+
+  const fmtDate = (d) => { if (!d) return "—"; try { return new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }); } catch { return d; } };
+
+  const renderBookingCard = (b) => {
+    const isBoarding = b.type === "boarding";
+    const isPending = b.status === "pending";
+    return (
+      <Card key={b.id} style={{ padding: "20px 24px", marginBottom: 12, border: isPending ? `1.5px solid ${C.acc}30` : `1px solid ${C.borderLight}`, opacity: isPending ? 1 : 0.75 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <span style={{ padding: "3px 10px", borderRadius: 6, background: isBoarding ? C.pri + "15" : C.suc + "15", color: isBoarding ? C.pri : C.suc, fontSize: 11, fontWeight: 700 }}>{isBoarding ? "Boarding" : "Evaluation"}</span>
+              <span style={{ fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{b.id}</span>
+              {b.status === "accepted" && <span style={{ padding: "2px 8px", borderRadius: 4, background: C.suc + "15", color: C.suc, fontSize: 10, fontWeight: 700 }}>Accepted</span>}
+              {b.status === "declined" && <span style={{ padding: "2px 8px", borderRadius: 4, background: C.err + "15", color: C.err, fontSize: 10, fontWeight: 700 }}>Declined</span>}
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>{b.client?.firstName} {b.client?.lastName}</div>
+            <div style={{ fontSize: 13, color: C.textSec, marginBottom: 2 }}>{b.client?.phone} · {b.client?.email}</div>
+            <div style={{ fontSize: 13, color: C.text, marginTop: 8 }}>
+              <strong>Dog:</strong> {b.dog?.name} ({b.dog?.breed}{b.dog?.weight ? `, ${b.dog.weight} lbs` : ""})
+            </div>
+            <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>
+              {isBoarding ? (
+                <><strong>Dates:</strong> {fmtDate(b.checkIn)} — {fmtDate(b.checkOut)} · <strong>Room:</strong> {b.roomType}</>
+              ) : (
+                <><strong>Eval Date:</strong> {fmtDate(b.evalDate)} · <strong>Time:</strong> {b.evalTime || "—"}</>
+              )}
+            </div>
+            {isBoarding && b.pricing && (
+              <div style={{ fontSize: 13, color: C.acc, fontWeight: 600, marginTop: 4 }}>
+                Total: ${b.pricing.total?.toFixed(2)} · Deposit: ${b.pricing.deposit?.toFixed(2)}
+              </div>
+            )}
+            {b.notes && <div style={{ fontSize: 12, color: C.textMut, marginTop: 6, fontStyle: "italic" }}>"{b.notes}"</div>}
+            <div style={{ fontSize: 11, color: C.textMut, marginTop: 8 }}>Submitted {b.submittedAt ? new Date(b.submittedAt).toLocaleString() : "—"}</div>
+          </div>
+          {isPending && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 160 }}>
+              <button onClick={() => acceptBooking(b)} style={{ padding: "10px 20px", borderRadius: 10, border: "none", background: C.suc, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Accept & Create</button>
+              <button onClick={() => setDeclineId(b.id)} style={{ padding: "10px 20px", borderRadius: 10, border: `1.5px solid ${C.err}40`, background: "transparent", color: C.err, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Decline</button>
+            </div>
+          )}
+        </div>
+        {declineId === b.id && (
+          <div style={{ marginTop: 12, padding: 16, background: C.bg, borderRadius: 10, border: `1px solid ${C.borderLight}` }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 }}>Reason for declining (optional):</div>
+            <textarea value={declineReason} onChange={e => setDeclineReason(e.target.value)} rows={2} style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} placeholder="e.g. No availability, incomplete info..." />
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button onClick={() => declineBooking(b.id)} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: C.err, color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Confirm Decline</button>
+              <button onClick={() => { setDeclineId(null); setDeclineReason(""); }} style={{ padding: "8px 16px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </Card>
+    );
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h2 style={{ fontSize: 24, fontWeight: 700, color: C.text, margin: 0 }}>Online Bookings</h2>
+          <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>Review and process customer booking requests</div>
+        </div>
+        {bookingUrl && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 12, color: C.textMut }}>Booking page:</span>
+            <code style={{ fontSize: 12, padding: "4px 10px", borderRadius: 6, background: C.bg, border: `1px solid ${C.borderLight}`, color: C.pri, fontWeight: 600 }}>{bookingUrl}</code>
+            <button onClick={() => { navigator.clipboard.writeText(bookingUrl); if (addGlobalToast) addGlobalToast("Link copied!", "success"); }} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: C.surface, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", color: C.textSec }}>Copy</button>
+          </div>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 20 }}>
+        {[{ key: "pending", label: "Pending", count: pending.length }, { key: "processed", label: "Processed", count: processed.length }].map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)} style={{ padding: "8px 20px", borderRadius: 10, border: tab === t.key ? `1.5px solid ${C.pri}` : `1.5px solid ${C.border}`, background: tab === t.key ? C.priLt : "transparent", color: tab === t.key ? C.pri : C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6 }}>
+            {t.label}
+            {t.count > 0 && <span style={{ padding: "1px 7px", borderRadius: 10, background: tab === t.key ? C.pri : C.textMut, color: "#fff", fontSize: 10, fontWeight: 700 }}>{t.count}</span>}
+          </button>
+        ))}
+      </div>
+
+      {/* Content */}
+      {tab === "pending" && (
+        pending.length === 0 ? (
+          <div style={{ padding: 60, textAlign: "center", color: C.textMut }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>📬</div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 4 }}>No pending bookings</div>
+            <div style={{ fontSize: 13 }}>When customers submit booking requests, they'll appear here.</div>
+            {bookingUrl && <div style={{ fontSize: 12, marginTop: 16 }}>Share your booking link: <a href={bookingUrl} target="_blank" rel="noreferrer" style={{ color: C.pri, fontWeight: 600 }}>{bookingUrl}</a></div>}
+          </div>
+        ) : pending.sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || "")).map(renderBookingCard)
+      )}
+      {tab === "processed" && (
+        processed.length === 0 ? (
+          <div style={{ padding: 60, textAlign: "center", color: C.textMut }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: C.text, marginBottom: 4 }}>No processed bookings yet</div>
+          </div>
+        ) : processed.sort((a, b) => (b.processedAt || "").localeCompare(a.processedAt || "")).map(renderBookingCard)
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SETTINGS (Fields + Dog Tags)
 // ═══════════════════════════════════════════════════════════════════════════
 function SettingsPage({ data, save, profile }) {
@@ -14821,6 +14985,7 @@ export default function App() {
     { label:null, items:[
       { id:"dashboard",label:"Dashboard",icon:<I.Dashboard/>,hotkey:"1" },
       { id:"reservations",label:"Lodging Calendar",icon:<I.Calendar/>,hotkey:"2" },
+      { id:"online-bookings",label:"Online Bookings",icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> },
       { id:"clients",label:"Clients",icon:<I.Users/>,hotkey:"3" },
       { id:"crm",label:"CRM",icon:<I.BarChart/>,hotkey:"4" },
       { id:"messages",label:"Messages",icon:<I.MessageSquare/>,hotkey:"5" },
@@ -14847,7 +15012,7 @@ export default function App() {
   // Flat list for lookups
   const navItems = navSections.flatMap(s => s.items);
   const isOpsPage = page.startsWith("ops-");
-  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","crm","messages","payments","settings","ai"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
+  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","online-bookings","crm","messages","payments","settings","ai"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
 
   function renderPage() {
     // Enterprise pages — gated to owner/enterprise_admin
@@ -14872,6 +15037,7 @@ export default function App() {
       case "dog-detail": return hp("view_dog_detail") ? <DogDetailPage data={data} save={save} clientId={params.clientId} dogId={params.dogId} nav={nav} profile={profile}/> : denied;
       case "new-dog": return hp("create_dog") ? <NewDogPage data={data} save={save} clientId={params.clientId} nav={nav}/> : denied;
       case "reservations": return hp("view_calendar") ? <LodgingCalendarPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/> : denied;
+      case "online-bookings": return <OnlineBookingsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} allLocations={allLocations}/>;
       case "new-reservation": return hp("create_reservation") ? <NewReservationPage data={data} save={save} preClientId={params.clientId} nav={nav} profile={profile} addGlobalToast={addGlobalToast}/> : denied;
       case "unified-new": return <UnifiedNewPage data={data} save={save} nav={nav} prefill={params.prefill} profile={profile} addGlobalToast={addGlobalToast}/>;
       case "evaluation-form": return hp("edit_evaluations") ? <EvaluationFormPage data={data} save={save} reservationId={params.reservationId} nav={nav} profile={profile}/> : denied;
