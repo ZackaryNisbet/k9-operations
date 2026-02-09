@@ -63,11 +63,11 @@ const PAGE_SLUGS = {
   "ops-opening":"ops/opening", "ops-fe":"ops/front-end", "ops-be":"ops/back-end", "ops-rooms":"ops/rooms",
   "ops-pictures":"ops/pictures", "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
   eod:"eod", ai:"ai", settings:"settings", "evaluation-form":"evaluation",
-  "enterprise-locations":"locations", "enterprise-operations":"oversight",
+  "enterprise-locations":"locations", "enterprise-operations":"oversight", "enterprise-users":"users",
 };
 const SLUG_TO_PAGE = {};
 Object.entries(PAGE_SLUGS).forEach(([k,v]) => { if (!k.startsWith("enterprise-")) SLUG_TO_PAGE[v] = k; });
-const ENT_SLUG_TO_PAGE = { locations:"enterprise-locations", oversight:"enterprise-operations" };
+const ENT_SLUG_TO_PAGE = { locations:"enterprise-locations", oversight:"enterprise-operations", users:"enterprise-users" };
 
 function buildUrl(locSlug, pg, prms, dataRef) {
   const slug = PAGE_SLUGS[pg] || pg;
@@ -120,7 +120,7 @@ function parseUrl(pathname, dataRef) {
   return { locSlug, page: pg, params: {} };
 }
 
-function LocationSelector({ currentLocation, onLocationChange, collapsed, allLocations }) {
+function LocationSelector({ currentLocation, onLocationChange, collapsed, allLocations, profile }) {
   const [open, setOpen] = useState(false);
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
   const dropRef = useRef(null);
@@ -176,7 +176,8 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
       {open && (
         <div ref={dropRef} style={{ position: "fixed", top: dropPos.top, left: dropPos.left, width: dropPos.width || 212, zIndex: 9999, background: "#1a2940", border: "1.5px solid rgba(175,141,84,0.25)", borderRadius: 12, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ padding: "6px 6px" }}>
-            {/* Enterprise */}
+            {/* Enterprise — only for owner/enterprise_admin */}
+            {profile?.role && (profile.role === 'owner' || profile.role === 'enterprise_admin') && (<>
             <button onClick={() => { onLocationChange("enterprise"); setOpen(false); }}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: currentLocation === "enterprise" ? "rgba(175,141,84,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginBottom: 2 }}
               onMouseEnter={e => { if (currentLocation !== "enterprise") e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
@@ -192,6 +193,7 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
             </button>
 
             <div style={{ margin: "4px 10px", height: 1, background: "rgba(175,141,84,0.12)" }}/>
+            </>)}
 
             {/* Location list */}
             {locations.map(loc => (
@@ -777,6 +779,11 @@ const DEFAULT_ROLES = [
     }),
   },
   {
+    id: "role_enterprise_admin", name: "Enterprise Admin", builtIn: true, color: "accent",
+    description: "Full access to all locations and enterprise features",
+    permissions: buildPerms(Object.fromEntries(ALL_PERM_KEYS.map(k => [k, true]))),
+  },
+  {
     id: "role_staff", name: "Front Desk", builtIn: true, color: "default",
     description: "Customer-facing operations and basic tasks",
     permissions: buildPerms({
@@ -991,7 +998,7 @@ function getRoomCleaningStats(data, date) {
       if (needsDisinfect) { totalNeeded++; if (ei[rm] && ei[rm].disinfect) totalDone++; }
     });
   });
-  return { totalNeeded, totalDone };
+  return { totalNeeded, totalDone, total: totalNeeded, cleaned: totalDone };
 }
 
 function getOpsCardStatus(data, item, date) {
@@ -1778,7 +1785,7 @@ function Modal({title,onClose,children,wide,fullWidth}) {
 }
 
 // ─── Permission Helper ──────────────────────────────────────────────────────
-const LEGACY_ROLE_MAP = { owner:"role_owner", manager:"role_manager", staff:"role_staff" };
+const LEGACY_ROLE_MAP = { owner:"role_owner", enterprise_admin:"role_enterprise_admin", manager:"role_manager", staff:"role_staff" };
 
 function hasPermission(profile, data, permKey) {
   if (!profile || !data) return true; // graceful fallback during loading
@@ -8467,6 +8474,7 @@ function DailyOpsPage({ data, save, sub, nav, profile }) {
   };
 
   const toggleLock = async () => {
+    if (isPast && isLocked) return; // Cannot unlock prior days
     const entries = [...allOps];
     const idx = entries.findIndex(e => e.id === entryId);
     if (idx >= 0) {
@@ -8521,7 +8529,7 @@ function DailyOpsPage({ data, save, sub, nav, profile }) {
       </div>
       <div style={{ display: "flex", gap: 6 }}>
         {dirty && !isLocked && <Btn onClick={saveEntry}>Save</Btn>}
-        {existing && <Btn variant={isLocked ? "secondary" : "accent"} onClick={toggleLock} size="sm">{isLocked ? "🔒 Locked" : "🔓 Lock"}</Btn>}
+        {existing && (isPast && isLocked ? <Btn variant="secondary" size="sm" disabled style={{opacity:0.5,cursor:"not-allowed"}}>🔒 Locked</Btn> : <Btn variant={isLocked ? "secondary" : "accent"} onClick={toggleLock} size="sm">{isLocked ? "🔒 Locked" : "🔓 Lock"}</Btn>)}
         {existing && <button onClick={() => setShowHistory(v => !v)} style={{ padding: "4px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{showHistory ? "Hide History" : "History"}</button>}
         {isLocked && <Badge color="default">Read Only</Badge>}
       </div>
@@ -9822,6 +9830,7 @@ function EODPage({ data, save, nav }) {
 
   // Lock/unlock
   const toggleLock = async () => {
+    if (isPastDay && isLocked) return; // Cannot unlock prior days
     const entries = [...(data.eodEntries || [])];
     const idx = entries.findIndex(e => e.date === viewDate);
     if (idx >= 0) {
@@ -9894,9 +9903,7 @@ function EODPage({ data, save, nav }) {
         <div style={{ display: "flex", gap: 8 }}>
           <Btn variant="secondary" size="sm" onClick={() => setShowEODSearch(true)} icon={<I.Search />}>Search</Btn>
           {!isLocked && <Btn onClick={saveEOD} icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>}>Save</Btn>}
-          <Btn variant={isLocked ? "secondary" : "secondary"} onClick={toggleLock} size="sm">
-            {isLocked ? "🔒 Locked" : "🔓 Lock Day"}
-          </Btn>
+          {isPastDay && isLocked ? <Btn variant="secondary" size="sm" disabled style={{opacity:0.5,cursor:"not-allowed"}}>🔒 Locked</Btn> : <Btn variant="secondary" onClick={toggleLock} size="sm">{isLocked ? "🔒 Locked" : "🔓 Lock Day"}</Btn>}
         </div>
       </div>
 
@@ -11327,41 +11334,63 @@ function EnterpriseLocationsPage({ data, save, nav, profile, handleLocationChang
 // ═══════════════════════════════════════════════════════════════════════════
 function EnterpriseOperationsPage({ data, save, nav, profile, handleLocationChange, allLocations }) {
   const [viewDate, setViewDate] = useState(todayStr());
+  const [locationDataMap, setLocationDataMap] = useState({});
+  const [opsLoading, setOpsLoading] = useState(true);
   const locations = (allLocations || K9_LOCATIONS).filter(l => !l.isEnterprise);
   const dailyOps = OPERATIONS_CATALOG.filter(op => op.frequency === "daily");
 
+  // Fetch ops data for ALL locations via RPC
+  useEffect(() => {
+    setOpsLoading(true);
+    supabase.rpc('get_locations_ops_data').then(({ data: result, error }) => {
+      if (error) { console.error('get_locations_ops_data error:', error); setOpsLoading(false); return; }
+      const map = {};
+      (result || []).forEach(loc => { map[loc.id] = loc; });
+      setLocationDataMap(map);
+      setOpsLoading(false);
+    });
+  }, []);
+
   const getOpsStatus = (op, locId) => {
-    if (locId !== "demo") return { done: 0, total: 0, pct: 0, status: "none" };
+    const locData = locationDataMap[locId];
+    if (!locData) return { done: 0, total: 0, pct: 0, status: "none" };
     const dateKey = viewDate;
+
     if (op.id === "eod") {
-      const entries = data?.eodEntries || {};
-      const dayEntry = entries[dateKey] || {};
-      const fields = Object.values(dayEntry).filter(v => typeof v === "string" && v.trim());
+      const eodArr = locData.eodEntries || [];
+      const dayEntry = eodArr.find(e => e.date === dateKey);
+      if (!dayEntry) return { done: 0, total: 20, pct: 0, status: "none" };
+      const fields = (dayEntry.sections || []).filter(s => s.content && s.content.trim());
       return { done: fields.length, total: 20, pct: Math.round((fields.length / 20) * 100), status: fields.length === 0 ? "none" : fields.length >= 18 ? "complete" : "progress" };
     }
     if (op.typeSub === "room_cleaning") {
-      const rc = getRoomCleaningStats(data, dateKey);
+      const rc = getRoomCleaningStats(locData, dateKey);
       return { done: rc.cleaned, total: rc.total, pct: rc.total > 0 ? Math.round((rc.cleaned / rc.total) * 100) : 0, status: rc.total === 0 ? "none" : rc.cleaned >= rc.total ? "complete" : rc.cleaned > 0 ? "progress" : "none" };
     }
     if (op.typeSub === "pictures") {
-      const picLog = (data.dailyOps || {})[dateKey + "_pictures"] || {};
-      const done = Object.values(picLog).filter(v => v === true).length;
-      const total = (data.reservations || []).filter(r => r.type === "boarding" && r.checkIn <= dateKey && r.checkOut >= dateKey && (r.status === "checked-in" || r.status === "upcoming")).length;
+      const entryId = "ops_pictures_" + dateKey;
+      const entry = (locData.dailyOps || []).find(e => e.id === entryId);
+      const picItems = entry?.items || {};
+      const done = Object.values(picItems).filter(v => v === true).length;
+      const total = (locData.reservations || []).filter(r => r.type === "boarding" && r.checkIn <= dateKey && r.checkOut >= dateKey && (r.status === "checked-in" || r.status === "upcoming")).length;
       return { done, total, pct: total > 0 ? Math.round((done / total) * 100) : 0, status: total === 0 ? "none" : done >= total ? "complete" : done > 0 ? "progress" : "none" };
     }
     if (op.typeSub === "pp") {
-      const ppLog = (data.dailyOps || {})[dateKey + "_pp"] || {};
-      const done = Object.values(ppLog).filter(v => v === true).length;
+      const entryId = "ops_pp_" + dateKey;
+      const entry = (locData.dailyOps || []).find(e => e.id === entryId);
+      const ppItems = entry?.items || {};
+      const done = Object.values(ppItems).filter(v => v === true).length;
       return { done, total: 0, pct: done > 0 ? 100 : 0, status: done > 0 ? "complete" : "none" };
     }
     // Checklist-based ops (opening, fe, be, closing)
     const opsType = OPS_TYPES[op.typeSub];
     if (opsType && opsType.key) {
-      const template = data[opsType.key] || opsType.def || [];
+      const template = locData[opsType.key] || opsType.def || [];
       const items = template.filter(t => !t.isWeekly);
-      const logKey = dateKey + "_" + op.typeSub;
-      const log = (data.dailyOps || {})[logKey] || {};
-      const done = items.filter(t => log[t.id]).length;
+      const entryId = "ops_" + op.typeSub + "_" + dateKey;
+      const entry = (locData.dailyOps || []).find(e => e.id === entryId);
+      const log = entry?.items || {};
+      const done = items.filter(t => log[t.id]?.checked).length;
       return { done, total: items.length, pct: items.length > 0 ? Math.round((done / items.length) * 100) : 0, status: done === 0 ? "none" : done >= items.length ? "complete" : "progress" };
     }
     return { done: 0, total: 0, pct: 0, status: "none" };
@@ -11389,6 +11418,11 @@ function EnterpriseOperationsPage({ data, save, nav, profile, handleLocationChan
         {isToday && <span style={{marginLeft:8,padding:"2px 8px",borderRadius:6,background:C.priLt,color:C.pri,fontSize:11,fontWeight:700}}>Today</span>}
       </div>
 
+      {opsLoading ? (
+        <Card style={{padding:40,textAlign:"center"}}>
+          <div style={{fontSize:14,color:C.textSec}}>Loading operations data...</div>
+        </Card>
+      ) : (
       <Card style={{padding:0,overflow:"hidden"}}>
         {/* Header */}
         <div style={{display:"grid",gridTemplateColumns:`260px repeat(${locations.length},1fr)`,borderBottom:`2px solid ${C.border}`}}>
@@ -11417,7 +11451,7 @@ function EnterpriseOperationsPage({ data, save, nav, profile, handleLocationChan
               const label = st.status === "complete" ? "Complete" : st.status === "progress" ? "In Progress" : "Not Started";
               return (
                 <div key={loc.id} style={{padding:"12px 20px",borderLeft:`1px solid ${C.borderLight}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,cursor:"pointer"}}
-                  onClick={()=>{ if (loc.id === "demo") { handleLocationChange("demo"); setTimeout(()=>{ if (op.routeTo) nav(op.routeTo); }, 50); } }}>
+                  onClick={()=>{ handleLocationChange(loc.id); setTimeout(()=>{ if (op.routeTo) nav(op.routeTo); }, 50); }}>
                   <div style={{padding:"4px 12px",borderRadius:20,background:bg,fontSize:11,fontWeight:700,color,whiteSpace:"nowrap"}}>
                     {label}
                   </div>
@@ -11435,6 +11469,135 @@ function EnterpriseOperationsPage({ data, save, nav, profile, handleLocationChan
           </div>
         ))}
       </Card>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENTERPRISE — User Management
+// ═══════════════════════════════════════════════════════════════════════════
+function EnterpriseUsersPage({ profile, allLocations }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState(null);
+
+  const loadUsers = async () => {
+    setLoading(true);
+    const { data: result, error } = await supabase.rpc('list_enterprise_users');
+    if (error) { console.error('list_enterprise_users error:', error); setLoading(false); return; }
+    setUsers(result || []);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadUsers(); }, []);
+
+  const handleToggleAdmin = async (userId, isCurrentlyAdmin) => {
+    setActionLoading(userId);
+    const { data: result, error } = await supabase.rpc('set_enterprise_admin', { p_user_id: userId, p_is_admin: !isCurrentlyAdmin });
+    if (error) { console.error('set_enterprise_admin error:', error); setActionLoading(null); return; }
+    if (result && !result.success) { alert(result.message); setActionLoading(null); return; }
+    await loadUsers();
+    setActionLoading(null);
+  };
+
+  const isOwner = profile?.role === 'owner';
+  const enterpriseAdmins = users.filter(u => u.role === 'enterprise_admin');
+  const owners = users.filter(u => u.role === 'owner');
+  const otherUsers = users.filter(u => u.role !== 'owner' && u.role !== 'enterprise_admin');
+  const locations = (allLocations || []).filter(l => !l.isEnterprise);
+  const locMap = {};
+  locations.forEach(l => { locMap[l.id] = l.name; });
+
+  const roleBadge = (role) => {
+    const colors = { owner: { bg: C.acc+"20", color: C.acc }, enterprise_admin: { bg: C.pri+"15", color: C.pri }, manager: { bg: C.suc+"15", color: C.suc }, staff: { bg: C.border, color: C.textSec } };
+    const c = colors[role] || colors.staff;
+    const labels = { owner: "Owner", enterprise_admin: "Enterprise Admin", manager: "Manager", staff: "Staff" };
+    return <span style={{padding:"3px 10px",borderRadius:6,background:c.bg,color:c.color,fontSize:11,fontWeight:700}}>{labels[role] || role}</span>;
+  };
+
+  const userRow = (u, showActions) => (
+    <div key={u.id} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 140px",gap:12,alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.borderLight}`}}>
+      <div>
+        <div style={{fontSize:14,fontWeight:600,color:C.text}}>{u.full_name || "—"}</div>
+        <div style={{fontSize:12,color:C.textMut}}>{u.email}</div>
+      </div>
+      <div>{roleBadge(u.role)}</div>
+      <div style={{fontSize:13,color:C.textSec}}>{u.location_name || locMap[u.location_id] || "—"}</div>
+      <div style={{textAlign:"right"}}>
+        {showActions && isOwner && u.role !== 'owner' && u.id !== profile?.id && (
+          <button onClick={() => handleToggleAdmin(u.id, u.role === 'enterprise_admin')}
+            disabled={actionLoading === u.id}
+            style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${u.role === 'enterprise_admin' ? C.err+"40" : C.pri+"40"}`,background:u.role === 'enterprise_admin' ? C.err+"08" : C.priLt,color:u.role === 'enterprise_admin' ? C.err : C.pri,fontSize:12,fontWeight:600,cursor:actionLoading === u.id ? "default" : "pointer",fontFamily:"inherit",opacity:actionLoading === u.id ? 0.5 : 1}}>
+            {actionLoading === u.id ? "..." : u.role === 'enterprise_admin' ? "Remove Admin" : "Make Admin"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{marginBottom:28}}>
+        <h2 style={{fontSize:24,fontWeight:700,color:C.text,margin:0}}>User Management</h2>
+        <div style={{fontSize:13,color:C.textSec,marginTop:4}}>Manage enterprise admin access across all locations</div>
+      </div>
+
+      {loading ? (
+        <Card style={{padding:40,textAlign:"center"}}>
+          <div style={{fontSize:14,color:C.textSec}}>Loading users...</div>
+        </Card>
+      ) : (
+        <>
+          {/* Owners */}
+          <div style={{fontSize:13,fontWeight:700,color:C.textSec,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>Owners</div>
+          <Card style={{padding:0,overflow:"hidden",marginBottom:24}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 140px",gap:12,padding:"10px 20px",borderBottom:`2px solid ${C.border}`,background:C.bg}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.textMut}}>NAME</div>
+              <div style={{fontSize:11,fontWeight:700,color:C.textMut}}>ROLE</div>
+              <div style={{fontSize:11,fontWeight:700,color:C.textMut}}>LOCATION</div>
+              <div/>
+            </div>
+            {owners.map(u => userRow(u, false))}
+            {owners.length === 0 && <div style={{padding:20,textAlign:"center",color:C.textMut,fontSize:13}}>No owners found</div>}
+          </Card>
+
+          {/* Enterprise Admins */}
+          <div style={{fontSize:13,fontWeight:700,color:C.textSec,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>Enterprise Admins</div>
+          <Card style={{padding:0,overflow:"hidden",marginBottom:24}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 140px",gap:12,padding:"10px 20px",borderBottom:`2px solid ${C.border}`,background:C.bg}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.textMut}}>NAME</div>
+              <div style={{fontSize:11,fontWeight:700,color:C.textMut}}>ROLE</div>
+              <div style={{fontSize:11,fontWeight:700,color:C.textMut}}>LOCATION</div>
+              <div style={{fontSize:11,fontWeight:700,color:C.textMut,textAlign:"right"}}>ACTIONS</div>
+            </div>
+            {enterpriseAdmins.map(u => userRow(u, true))}
+            {enterpriseAdmins.length === 0 && <div style={{padding:20,textAlign:"center",color:C.textMut,fontSize:13}}>No enterprise admins yet</div>}
+          </Card>
+
+          {/* Other Users — Promotable */}
+          {isOwner && otherUsers.length > 0 && (
+            <>
+              <div style={{fontSize:13,fontWeight:700,color:C.textSec,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.05em"}}>Other Users</div>
+              <Card style={{padding:0,overflow:"hidden",marginBottom:24}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 140px",gap:12,padding:"10px 20px",borderBottom:`2px solid ${C.border}`,background:C.bg}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.textMut}}>NAME</div>
+                  <div style={{fontSize:11,fontWeight:700,color:C.textMut}}>ROLE</div>
+                  <div style={{fontSize:11,fontWeight:700,color:C.textMut}}>LOCATION</div>
+                  <div style={{fontSize:11,fontWeight:700,color:C.textMut,textAlign:"right"}}>ACTIONS</div>
+                </div>
+                {otherUsers.map(u => userRow(u, true))}
+              </Card>
+            </>
+          )}
+
+          {!isOwner && (
+            <div style={{padding:20,textAlign:"center",color:C.textMut,fontSize:13,background:C.bg,borderRadius:12,border:`1px solid ${C.borderLight}`}}>
+              Only owners can promote or demote enterprise admins.
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -14677,6 +14840,7 @@ export default function App() {
     { label:null, items:[
       { id:"enterprise-locations",label:"Location Management",icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> },
       { id:"enterprise-operations",label:"Operations Oversight",icon:<I.Clipboard/> },
+      { id:"enterprise-users",label:"User Management",icon:<I.Users/> },
     ]},
   ];
   const navSections = isEnterprise ? enterpriseNavSections : locationNavSections;
@@ -14686,9 +14850,12 @@ export default function App() {
   const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","crm","messages","payments","settings","ai"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
 
   function renderPage() {
-    // Enterprise pages
-    if (page === "enterprise-locations") return <EnterpriseLocationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange} addGlobalToast={addGlobalToast} allLocations={allLocations} refreshLocations={loadLocations}/>;
-    if (page === "enterprise-operations") return <EnterpriseOperationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange} allLocations={allLocations}/>;
+    // Enterprise pages — gated to owner/enterprise_admin
+    const isEnterpriseRole = profile?.role === 'owner' || profile?.role === 'enterprise_admin';
+    const entDenied = <div style={{padding:"60px 40px",textAlign:"center"}}><div style={{fontSize:36,marginBottom:12}}>🔒</div><div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:6}}>Access Restricted</div><div style={{fontSize:14,color:C.textSec}}>Enterprise features are only available to owners and enterprise admins.</div></div>;
+    if (page === "enterprise-locations") return isEnterpriseRole ? <EnterpriseLocationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange} addGlobalToast={addGlobalToast} allLocations={allLocations} refreshLocations={loadLocations}/> : entDenied;
+    if (page === "enterprise-operations") return isEnterpriseRole ? <EnterpriseOperationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange} allLocations={allLocations}/> : entDenied;
+    if (page === "enterprise-users") return isEnterpriseRole ? <EnterpriseUsersPage profile={profile} allLocations={allLocations}/> : entDenied;
     if (isOpsPage) {
       const oc = opsChildren.find(c => c.id === page);
       return <DailyOpsPage data={data} save={save} sub={oc ? oc.sub : "opening"} nav={nav} profile={profile}/>;
@@ -14750,7 +14917,7 @@ export default function App() {
           {sidebarOpen&&<div><div style={{fontSize:16,fontWeight:700,color:C.acc,whiteSpace:"nowrap",fontFamily:"'Canela', Georgia, serif",letterSpacing:"0.02em"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div>}
         </div>
         <div style={{margin:"0 16px 14px",height:1,background:"rgba(175,141,84,0.15)"}}/>
-        <LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={!sidebarOpen} allLocations={allLocations} />
+        <LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={!sidebarOpen} allLocations={allLocations} profile={profile} />
         <nav style={{flex:1,padding:sidebarOpen?"0 10px":"0 8px",overflowY:"auto"}}>
           {navSections.map((sec, si) => (
             <div key={si}>
@@ -14787,7 +14954,7 @@ export default function App() {
         <K9LogoMini size={28}/>
       </div>
 
-      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} allLocations={allLocations} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}{sec.items.map(item=>{const hasKids=!!item.children;return(<div key={item.id}><button onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else{nav(item.id);setMobileMenuOpen(false);}}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(175,141,84,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span>{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</button>{hasKids&&opsExpanded&&<div style={{marginLeft:28,marginBottom:4}}>{item.children.map(ch=>(<button key={ch.id} onClick={()=>{nav(ch.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 12px",border:"none",borderRadius:8,background:page===ch.id?"rgba(175,141,84,0.12)":"transparent",color:page===ch.id?C.acc:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:page===ch.id?600:400,cursor:"pointer",marginBottom:2,fontFamily:"inherit"}}><span style={{width:4,height:4,borderRadius:2,background:page===ch.id?C.acc:"rgba(255,255,255,0.2)"}}/>{ch.label}</button>))}</div>}</div>);})}</div>))}</div></div>}
+      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} allLocations={allLocations} profile={profile} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}{sec.items.map(item=>{const hasKids=!!item.children;return(<div key={item.id}><button onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else{nav(item.id);setMobileMenuOpen(false);}}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(175,141,84,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span>{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</button>{hasKids&&opsExpanded&&<div style={{marginLeft:28,marginBottom:4}}>{item.children.map(ch=>(<button key={ch.id} onClick={()=>{nav(ch.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 12px",border:"none",borderRadius:8,background:page===ch.id?"rgba(175,141,84,0.12)":"transparent",color:page===ch.id?C.acc:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:page===ch.id?600:400,cursor:"pointer",marginBottom:2,fontFamily:"inherit"}}><span style={{width:4,height:4,borderRadius:2,background:page===ch.id?C.acc:"rgba(255,255,255,0.2)"}}/>{ch.label}</button>))}</div>}</div>);})}</div>))}</div></div>}
 
       {/* Main */}
       <div className="main-content" style={{flex:1,overflow:"auto",padding:"28px 32px",scrollbarGutter:"stable"}}>
