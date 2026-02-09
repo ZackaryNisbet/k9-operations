@@ -135,6 +135,9 @@ export default function BookingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [confirmationId, setConfirmationId] = useState(null);
 
+  // Package purchase state
+  const [selectedPackage, setSelectedPackage] = useState(null);
+
   // Load location data on mount
   useEffect(() => {
     const loadData = async () => {
@@ -424,6 +427,85 @@ export default function BookingPage() {
             Schedule Free Evaluation
           </button>
         </div>
+
+        {/* Special Packages Section */}
+        {(() => {
+          const pkgs = (locationData.packages || []).filter(p => p.active && p.availableOnline);
+          if (pkgs.length === 0) return null;
+          return (
+            <div style={{ backgroundColor: BRAND_COLORS.surface, padding: '60px 32px', borderTop: `1px solid ${BRAND_COLORS.border}` }}>
+              <div style={{ maxWidth: 900, margin: '0 auto' }}>
+                <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+                  <h2 style={{ fontSize: '36px', fontWeight: '700', fontFamily: "'Canela', Georgia, serif", color: BRAND_COLORS.navy, margin: '0 0 12px 0' }}>
+                    Special Packages
+                  </h2>
+                  <div style={{ height: '3px', width: '50px', backgroundColor: BRAND_COLORS.gold, margin: '0 auto 16px auto' }}></div>
+                  <p style={{ fontSize: '16px', color: BRAND_COLORS.textSecondary, margin: 0 }}>Save with our bundled service packages</p>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: pkgs.length === 1 ? '1fr' : 'repeat(auto-fill, minmax(340px, 1fr))', gap: '24px' }}>
+                  {pkgs.map(pkg => {
+                    const discountPct = pkg.retailValue > 0 ? ((pkg.savings / pkg.retailValue) * 100).toFixed(0) : 0;
+                    return (
+                      <div key={pkg.id} style={{
+                        backgroundColor: BRAND_COLORS.background, borderRadius: '16px', padding: '28px',
+                        border: `1.5px solid ${BRAND_COLORS.border}`, transition: 'all 0.2s ease',
+                        position: 'relative', overflow: 'hidden',
+                      }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = BRAND_COLORS.gold; e.currentTarget.style.boxShadow = '0 8px 24px rgba(0,52,98,0.08)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = BRAND_COLORS.border; e.currentTarget.style.boxShadow = 'none'; }}
+                      >
+                        {pkg.savings > 0 && (
+                          <div style={{
+                            position: 'absolute', top: '16px', right: '16px',
+                            backgroundColor: BRAND_COLORS.gold, color: '#fff', fontSize: '12px', fontWeight: '700',
+                            padding: '4px 10px', borderRadius: '20px',
+                          }}>
+                            Save {discountPct}%
+                          </div>
+                        )}
+                        <h3 style={{ fontSize: '18px', fontWeight: '700', color: BRAND_COLORS.navy, margin: '0 0 6px 0', paddingRight: '70px' }}>
+                          {pkg.name}
+                        </h3>
+                        <p style={{ fontSize: '13px', color: BRAND_COLORS.textMuted, margin: '0 0 16px 0', lineHeight: '1.5' }}>
+                          {pkg.description}
+                        </p>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: '8px' }}>
+                          <span style={{ fontSize: '28px', fontWeight: '700', color: BRAND_COLORS.navy }}>${pkg.packagePrice.toFixed(2)}</span>
+                          {pkg.savings > 0 && (
+                            <span style={{ fontSize: '16px', color: BRAND_COLORS.textMuted, textDecoration: 'line-through' }}>${pkg.retailValue.toFixed(2)}</span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: '12px', color: BRAND_COLORS.textSecondary, marginBottom: '4px' }}>
+                          {pkg.quantity} {pkg.serviceCategory === 'boarding' ? 'nights' : 'sessions'} of {pkg.serviceName}
+                          {pkg.savingsPerUnit > 0 && ` \u00B7 Save $${pkg.savingsPerUnit.toFixed(2)} each`}
+                        </div>
+                        <div style={{ fontSize: '12px', color: BRAND_COLORS.textMuted, marginBottom: '20px' }}>
+                          {pkg.expirationType === 'relative' ? `Valid ${pkg.expirationDays} days from purchase` : `Expires ${pkg.expirationDate}`}
+                        </div>
+                        <button
+                          onClick={() => {
+                            setSelectedPackage(pkg);
+                            setBookingType('package');
+                            setStep('pkg-info');
+                          }}
+                          style={{
+                            width: '100%', backgroundColor: BRAND_COLORS.navy, color: '#fff', border: 'none',
+                            padding: '12px 24px', fontSize: '14px', fontWeight: '700', borderRadius: '10px',
+                            cursor: 'pointer', transition: 'all 0.2s ease',
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.backgroundColor = '#004a8a'; }}
+                          onMouseLeave={e => { e.currentTarget.style.backgroundColor = BRAND_COLORS.navy; }}
+                        >
+                          Purchase Package
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Footer Disclaimer */}
         <div style={{ backgroundColor: BRAND_COLORS.background, padding: '40px 32px', textAlign: 'center', borderTop: `1px solid ${BRAND_COLORS.border}` }}>
@@ -2104,6 +2186,170 @@ export default function BookingPage() {
   };
 
   // ============================================================================
+  // PACKAGE PURCHASE FLOW
+  // ============================================================================
+
+  const handleSubmitPackagePurchase = async () => {
+    setSubmitting(true);
+    try {
+      const booking = {
+        type: 'package',
+        packageId: selectedPackage.id,
+        packageName: selectedPackage.name,
+        packagePrice: selectedPackage.packagePrice,
+        serviceName: selectedPackage.serviceName,
+        quantity: selectedPackage.quantity,
+        client,
+        notes,
+      };
+
+      const { data: result, error: submitError } = await supabase.rpc('submit_online_booking', {
+        p_slug: slug,
+        p_booking: booking,
+      });
+
+      if (submitError) throw submitError;
+
+      if (result && (result.bookingId || result.success)) {
+        setConfirmationId(result.bookingId || 'confirmed');
+        setStep('pkg-confirm');
+      } else {
+        setError(result?.message || 'Failed to submit package purchase');
+      }
+    } catch (err) {
+      console.error('Error submitting package purchase:', err);
+      setError(err.message || 'Failed to submit package purchase');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const renderPkgInfo = () => {
+    if (!selectedPackage) return renderLanding();
+    const pkg = selectedPackage;
+    const inputStyle = {
+      width: '100%', padding: '12px 16px', fontSize: '14px',
+      border: `1.5px solid ${BRAND_COLORS.border}`, borderRadius: '10px',
+      boxSizing: 'border-box', fontFamily: 'inherit', transition: 'border-color 0.3s ease',
+    };
+    const labelStyle = { display: 'block', fontSize: '14px', fontWeight: '600', color: BRAND_COLORS.text, marginBottom: '8px' };
+    const canSubmit = client.firstName && client.lastName && client.phone && client.email;
+
+    return (
+      <div style={{ backgroundColor: BRAND_COLORS.background, minHeight: '100vh', padding: '40px 32px' }}>
+        {renderNav()}
+        <div style={{ maxWidth: '600px', margin: '0 auto', paddingTop: '40px' }}>
+          {renderStepIndicator('1', '2')}
+          <h1 style={{ fontSize: '36px', fontFamily: "'Canela', Georgia, serif", color: BRAND_COLORS.navy, marginBottom: '16px', textAlign: 'center' }}>
+            Purchase Package
+          </h1>
+
+          {/* Package Summary */}
+          <div style={{ backgroundColor: BRAND_COLORS.surface, padding: '20px 24px', borderRadius: '12px', marginBottom: '24px', border: `1.5px solid ${BRAND_COLORS.gold}40` }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: '700', color: BRAND_COLORS.navy }}>{pkg.name}</div>
+                <div style={{ fontSize: '13px', color: BRAND_COLORS.textMuted, marginTop: '4px' }}>
+                  {pkg.quantity} {pkg.serviceCategory === 'boarding' ? 'nights' : 'sessions'} of {pkg.serviceName}
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '24px', fontWeight: '700', color: BRAND_COLORS.navy }}>${pkg.packagePrice.toFixed(2)}</div>
+                {pkg.savings > 0 && <div style={{ fontSize: '12px', color: BRAND_COLORS.textMuted, textDecoration: 'line-through' }}>${pkg.retailValue.toFixed(2)}</div>}
+              </div>
+            </div>
+          </div>
+
+          {/* Client Info Form */}
+          <div style={{ backgroundColor: BRAND_COLORS.surface, padding: '32px', borderRadius: '16px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.06)' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: '700', color: BRAND_COLORS.navy, margin: '0 0 20px 0' }}>Your Information</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+              <div>
+                <label style={labelStyle}>First Name *</label>
+                <input value={client.firstName} onChange={e => setClient({ ...client, firstName: e.target.value })} style={inputStyle}
+                  onFocus={e => (e.target.style.borderColor = BRAND_COLORS.navy)} onBlur={e => (e.target.style.borderColor = BRAND_COLORS.border)} />
+              </div>
+              <div>
+                <label style={labelStyle}>Last Name *</label>
+                <input value={client.lastName} onChange={e => setClient({ ...client, lastName: e.target.value })} style={inputStyle}
+                  onFocus={e => (e.target.style.borderColor = BRAND_COLORS.navy)} onBlur={e => (e.target.style.borderColor = BRAND_COLORS.border)} />
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+              <div>
+                <label style={labelStyle}>Phone *</label>
+                <input type="tel" value={client.phone} onChange={e => setClient({ ...client, phone: e.target.value })} style={inputStyle}
+                  onFocus={e => (e.target.style.borderColor = BRAND_COLORS.navy)} onBlur={e => (e.target.style.borderColor = BRAND_COLORS.border)} />
+              </div>
+              <div>
+                <label style={labelStyle}>Email *</label>
+                <input type="email" value={client.email} onChange={e => setClient({ ...client, email: e.target.value })} style={inputStyle}
+                  onFocus={e => (e.target.style.borderColor = BRAND_COLORS.navy)} onBlur={e => (e.target.style.borderColor = BRAND_COLORS.border)} />
+              </div>
+            </div>
+            <div>
+              <label style={labelStyle}>Notes (optional)</label>
+              <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
+                style={{ ...inputStyle, resize: 'vertical' }}
+                onFocus={e => (e.target.style.borderColor = BRAND_COLORS.navy)} onBlur={e => (e.target.style.borderColor = BRAND_COLORS.border)} />
+            </div>
+          </div>
+
+          {/* Buttons */}
+          <div style={{ display: 'flex', gap: '16px', marginTop: '24px' }}>
+            <button onClick={() => { setStep('landing'); setSelectedPackage(null); setBookingType(null); }}
+              style={{ flex: 1, padding: '14px', fontSize: '14px', fontWeight: '600', borderRadius: '10px', border: `1.5px solid ${BRAND_COLORS.border}`, backgroundColor: 'transparent', color: BRAND_COLORS.text, cursor: 'pointer', fontFamily: 'inherit' }}>
+              Back
+            </button>
+            <button onClick={handleSubmitPackagePurchase} disabled={!canSubmit || submitting}
+              style={{
+                flex: 2, padding: '14px', fontSize: '14px', fontWeight: '700', borderRadius: '10px', border: 'none',
+                backgroundColor: (!canSubmit || submitting) ? BRAND_COLORS.border : BRAND_COLORS.navy,
+                color: (!canSubmit || submitting) ? BRAND_COLORS.textMuted : '#fff',
+                cursor: (!canSubmit || submitting) ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+              }}>
+              {submitting ? 'Submitting...' : `Request Package \u2014 $${pkg.packagePrice.toFixed(2)}`}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderPkgConfirm = () => {
+    const pkg = selectedPackage;
+    return (
+      <div style={{ backgroundColor: BRAND_COLORS.background, minHeight: '100vh', padding: '40px 32px' }}>
+        {renderNav()}
+        <div style={{ maxWidth: '600px', margin: '0 auto', paddingTop: '60px', textAlign: 'center' }}>
+          <div style={{ width: '72px', height: '72px', borderRadius: '50%', backgroundColor: '#10B981', margin: '0 auto 24px auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <h1 style={{ fontSize: '36px', fontFamily: "'Canela', Georgia, serif", color: BRAND_COLORS.navy, marginBottom: '16px' }}>
+            Package Request Submitted!
+          </h1>
+          <p style={{ fontSize: '16px', color: BRAND_COLORS.textSecondary, marginBottom: '8px', lineHeight: '1.6' }}>
+            Your request for <strong>{pkg?.name}</strong> has been submitted.
+          </p>
+          <p style={{ fontSize: '14px', color: BRAND_COLORS.textMuted, marginBottom: '32px' }}>
+            Our team will contact you within 24 hours to finalize your package purchase.
+          </p>
+          {confirmationId && (
+            <div style={{ backgroundColor: BRAND_COLORS.surface, display: 'inline-block', padding: '12px 24px', borderRadius: '10px', marginBottom: '32px', border: `1px solid ${BRAND_COLORS.border}` }}>
+              <div style={{ fontSize: '12px', color: BRAND_COLORS.textMuted, marginBottom: '4px' }}>Confirmation ID</div>
+              <div style={{ fontSize: '18px', fontWeight: '700', color: BRAND_COLORS.navy, fontFamily: 'monospace' }}>{confirmationId}</div>
+            </div>
+          )}
+          <div><button onClick={handleReset} style={{
+            backgroundColor: BRAND_COLORS.navy, color: '#fff', border: 'none', padding: '14px 32px',
+            fontSize: '14px', fontWeight: '700', borderRadius: '10px', cursor: 'pointer', fontFamily: 'inherit',
+          }}>Back to Home</button></div>
+        </div>
+      </div>
+    );
+  };
+
+  // ============================================================================
   // MAIN RENDER
   // ============================================================================
 
@@ -2132,6 +2378,10 @@ export default function BookingPage() {
       return renderBoardReview();
     case 'board-confirm':
       return renderBoardConfirm();
+    case 'pkg-info':
+      return renderPkgInfo();
+    case 'pkg-confirm':
+      return renderPkgConfirm();
     default:
       return renderLanding();
   }
