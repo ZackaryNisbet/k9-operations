@@ -3821,10 +3821,10 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               const showDeparts = actTypeFilter.has("bathing") || (actTypeFilter.size === 0 && filteredActivities.some(r => r.type === "bathing"));
               const bathOnly = actTypeFilter.size === 1 && actTypeFilter.has("bathing");
               const actGrid = bathOnly
-                ? "52px minmax(120px,1.4fr) minmax(90px,1.2fr) 70px 80px minmax(90px,1fr) 80px 72px"
+                ? "80px minmax(120px,1.4fr) minmax(90px,1.2fr) 70px 80px minmax(90px,1fr) 80px 72px"
                 : showDeparts
-                  ? "52px minmax(120px,1.4fr) minmax(90px,1.2fr) 70px 80px minmax(90px,1fr) minmax(120px,1.3fr) 72px"
-                  : "52px minmax(130px,1.5fr) minmax(110px,1.3fr) 70px 80px minmax(100px,1fr) minmax(155px,1.4fr)";
+                  ? "80px minmax(120px,1.4fr) minmax(90px,1.2fr) 70px 80px minmax(90px,1fr) minmax(120px,1.3fr) 72px"
+                  : "80px minmax(130px,1.5fr) minmax(110px,1.3fr) 70px 80px minmax(100px,1fr) minmax(155px,1.4fr)";
               const CONSUMPTION_OPTS = ["0%","25%","50%","75%","100%"];
               const typeBadge = (t) => {
                 const cfg = t === "feeding" ? { bg: C.pri, label: "Feeding" } : t === "medication" ? { bg: C.acc, label: "Meds" } : { bg: C.info, label: "Bath" };
