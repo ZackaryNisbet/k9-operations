@@ -41,6 +41,7 @@ const I = {
   CreditCard: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>,
   RefreshCw: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
   AlertTriangle: (props) => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+  ShoppingCart: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>,
 };
 
 // K9 Resorts Official Dog Logo (PNG from brand assets)
@@ -10347,6 +10348,639 @@ function PricingTab({ data, save }) {
   );
 }
 
+function PackagesSection({ data, save }) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [showSell, setShowSell] = useState(false);
+  const [editPkg, setEditPkg] = useState(null);
+
+  const pkgs = data.packages || [];
+  const sales = data.packageSales || [];
+
+  const handleDeletePackage = async (id) => {
+    const hasSales = sales.some(s => s.packageId === id);
+    if (hasSales) {
+      alert("Cannot delete package with existing sales.");
+      return;
+    }
+    const confirmed = window.confirm("Are you sure you want to delete this package?");
+    if (!confirmed) return;
+    await save({ ...data, packages: pkgs.filter(p => p.id !== id) });
+  };
+
+  return (
+    <div style={{padding:24}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24}}>
+        <h2 style={{margin:0,fontSize:24,fontWeight:700,color:C.text}}>Packages</h2>
+        <div style={{display:"flex",gap:12}}>
+          <Btn onClick={() => setShowCreate(true)} variant="primary" icon={<I.Plus/>}>Create Package</Btn>
+          <Btn onClick={() => setShowSell(true)} variant="primary" style={{background:C.acc}} icon={<I.ShoppingCart/>}>Sell Package</Btn>
+        </div>
+      </div>
+
+      {pkgs.length === 0 ? (
+        <div style={{textAlign:"center",padding:"60px 20px",color:C.textMut}}>
+          <div style={{fontSize:48,marginBottom:16}}>🎁</div>
+          <p style={{fontSize:16,fontWeight:500,margin:0}}>No packages yet. Create one to get started!</p>
+        </div>
+      ) : (
+        <Card>
+          <div style={{display:"grid",gridTemplateColumns:"2.5fr 1.2fr 0.6fr 0.9fr 0.9fr 0.9fr 0.9fr 1.1fr 0.7fr",gap:0,alignItems:"stretch"}}>
+            {/* Header */}
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Package Name</div>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Service</div>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Qty</div>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Price</div>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Retail</div>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Savings</div>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Savings/Unit</div>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Expiration</div>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Sold</div>
+
+            {/* Data rows */}
+            {pkgs.map((pkg) => {
+              const soldQty = sales.filter(s => s.packageId === pkg.id).reduce((sum, s) => sum + s.quantity, 0);
+              const expirationText = pkg.expirationType === "relative" ? `${pkg.expirationDays} days` : pkg.expirationDate;
+              return (
+                <React.Fragment key={pkg.id}>
+                  <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,cursor:"pointer",background:editPkg?.id === pkg.id ? C.surfaceHover : "transparent"}} onClick={() => setEditPkg(pkg)}>
+                    <div style={{fontWeight:600,color:C.text,fontSize:14}}>{pkg.name}</div>
+                    <div style={{fontSize:12,color:C.textMut,marginTop:2}}>{pkg.description?.substring(0,40)}</div>
+                  </div>
+                  <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13}}>{pkg.serviceName}</div>
+                  <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13,textAlign:"center"}}>{pkg.quantity}</div>
+                  <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13}}>${pkg.packagePrice?.toFixed(2)}</div>
+                  <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13}}>${pkg.retailValue?.toFixed(2)}</div>
+                  <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.suc,fontSize:13,fontWeight:600}}>${pkg.savings?.toFixed(2)}</div>
+                  <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13}}>${pkg.savingsPerUnit?.toFixed(2)}</div>
+                  <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13}}>{expirationText}</div>
+                  <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <span style={{color:C.text,fontSize:13}}>{soldQty}</span>
+                    {!sales.some(s => s.packageId === pkg.id) && (
+                      <button onClick={() => handleDeletePackage(pkg.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.dan,padding:4,display:"flex",alignItems:"center"}}>
+                        <I.Trash/>
+                      </button>
+                    )}
+                  </div>
+                </React.Fragment>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {showCreate && <CreatePackageWizard data={data} save={save} onClose={() => setShowCreate(false)} />}
+      {showSell && <SellPackageModal data={data} save={save} onClose={() => setShowSell(false)} />}
+    </div>
+  );
+}
+
+function CreatePackageWizard({ data, save, onClose }) {
+  const [step, setStep] = useState(1);
+  const [selectedCategory, setSelectedCategory] = useState("Boarding");
+  const [selectedService, setSelectedService] = useState(null);
+  const [quantity, setQuantity] = useState(1);
+  const [pricingMode, setPricingMode] = useState("discount-pct");
+  const [discountPct, setDiscountPct] = useState(10);
+  const [discountDollar, setDiscountDollar] = useState(0);
+  const [customPrice, setCustomPrice] = useState(0);
+  const [expirationType, setExpirationType] = useState("relative");
+  const [expirationDays, setExpirationDays] = useState(90);
+  const [expirationDate, setExpirationDate] = useState("");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [availableOnline, setAvailableOnline] = useState(true);
+
+  const pricing = { ...DEF_PRICING, ...(data.pricing || {}) };
+
+  const buildServices = () => {
+    const services = [];
+    if (selectedCategory === "Boarding") {
+      Object.entries(pricing.boardingRates || {}).forEach(([svc, rate]) => {
+        if (rate > 0) services.push({ name: svc, unitLabel: "night", rate });
+      });
+    } else if (selectedCategory === "Daycare") {
+      if ((pricing.daycareRates?.fullDay || 0) > 0) services.push({ name: "Full Day Daycare", unitLabel: "day", rate: pricing.daycareRates.fullDay });
+      if ((pricing.daycareRates?.halfDay || 0) > 0) services.push({ name: "Half Day Daycare", unitLabel: "day", rate: pricing.daycareRates.halfDay });
+      if ((pricing.dayboardingRate || 0) > 0) services.push({ name: "Day Boarding", unitLabel: "day", rate: pricing.dayboardingRate });
+    } else if (selectedCategory === "Add-Ons") {
+      const bathTypes = ["Standard Bath", "Hypo Bath", "Medicated Bath", "Whitening Bath", "Fresh N' Clean Bath"];
+      let hasBath = false;
+      Object.entries(pricing.addOns || {}).forEach(([key, rate]) => {
+        if (bathTypes.includes(key)) {
+          if (!hasBath) {
+            services.push({ name: "Bath (All Types)", unitLabel: "unit", rate });
+            hasBath = true;
+          }
+        } else if (rate > 0) {
+          services.push({ name: key, unitLabel: "unit", rate });
+        }
+      });
+    }
+    return services;
+  };
+
+  const services = buildServices();
+  const retailValue = (selectedService?.rate || 0) * quantity;
+  let packagePrice = retailValue;
+
+  if (pricingMode === "discount-pct") {
+    packagePrice = retailValue * (1 - discountPct / 100);
+  } else if (pricingMode === "discount-dollar") {
+    packagePrice = retailValue - discountDollar;
+  } else {
+    packagePrice = customPrice;
+  }
+
+  const savings = Math.max(0, retailValue - packagePrice);
+  const savingsPerUnit = savings / Math.max(1, quantity);
+
+  const handleNext = () => {
+    if (step === 1 && !selectedService) {
+      alert("Please select a service.");
+      return;
+    }
+    if (step === 2) {
+      if (packagePrice <= 0 || packagePrice > retailValue) {
+        alert("Package price must be greater than $0 and not exceed retail value.");
+        return;
+      }
+    }
+    if (step === 3) {
+      if (expirationType === "fixed" && !expirationDate) {
+        alert("Please select an expiration date.");
+        return;
+      }
+    }
+    setStep(step + 1);
+  };
+
+  const handleCreate = async () => {
+    const finalDiscountPct = retailValue > 0 ? ((retailValue - packagePrice) / retailValue) * 100 : 0;
+    const autoName = finalDiscountPct > 0
+      ? `${finalDiscountPct.toFixed(0)}% Off ${quantity}-${selectedService.unitLabel} ${selectedService.name} Package`
+      : `${quantity}-${selectedService.unitLabel} ${selectedService.name} Package`;
+
+    const expirationText = expirationType === "relative"
+      ? `Package expires ${expirationDays} days after purchase`
+      : `Package expires on ${expirationDate}`;
+
+    const autoDesc = `Save $${savings.toFixed(2)} (${finalDiscountPct.toFixed(1)}% off retail) on ${quantity} ${selectedService.unitLabel}s of ${selectedService.name}. That's $${savingsPerUnit.toFixed(2)} savings per ${selectedService.unitLabel}! ${expirationText}`;
+
+    const newPkg = {
+      id: "pkg_" + gid(),
+      serviceName: selectedService.name,
+      serviceCategory: selectedCategory,
+      unitRate: selectedService.rate,
+      quantity,
+      retailValue,
+      packagePrice,
+      discountType: pricingMode === "discount-pct" ? "percent" : pricingMode === "discount-dollar" ? "fixed" : "custom",
+      discountValue: pricingMode === "discount-pct" ? discountPct : pricingMode === "discount-dollar" ? discountDollar : 0,
+      savings,
+      savingsPerUnit,
+      expirationType,
+      expirationDate: expirationType === "fixed" ? expirationDate : null,
+      expirationDays: expirationType === "relative" ? expirationDays : null,
+      name: name || autoName,
+      description: description || autoDesc,
+      availableOnline,
+      active: true,
+      createdAt: todayStr(),
+    };
+
+    await save({ ...data, packages: [...(data.packages || []), newPkg] });
+    onClose();
+  };
+
+  return (
+    <Modal title="Create Package" wide onClose={onClose}>
+      {step === 1 && (
+        <div>
+          <div style={{display:"flex",gap:8,marginBottom:20}}>
+            {["Boarding", "Daycare", "Add-Ons"].map(cat => (
+              <button
+                key={cat}
+                onClick={() => { setSelectedCategory(cat); setSelectedService(null); }}
+                style={{
+                  flex:1,
+                  padding:"10px 16px",
+                  border:`2px solid ${selectedCategory === cat ? C.acc : C.border}`,
+                  background:selectedCategory === cat ? C.accLt : "transparent",
+                  borderRadius:8,
+                  fontWeight:600,
+                  cursor:"pointer",
+                  color:C.text,
+                  fontSize:13,
+                  transition:"all 0.2s"
+                }}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:24}}>
+            {services.map(svc => (
+              <Card
+                key={svc.name}
+                onClick={() => setSelectedService(svc)}
+                hoverable
+                style={{
+                  padding:16,
+                  cursor:"pointer",
+                  border:`2px solid ${selectedService?.name === svc.name ? C.acc : C.border}`,
+                  background:selectedService?.name === svc.name ? C.accLt : "transparent",
+                  textAlign:"center"
+                }}
+              >
+                <div style={{fontWeight:600,color:C.text,marginBottom:8}}>{svc.name}</div>
+                <div style={{fontSize:12,color:C.textMut,marginBottom:8}}>${svc.rate.toFixed(2)} / {svc.unitLabel}</div>
+              </Card>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:12,justifyContent:"flex-end"}}>
+            <Btn onClick={onClose} variant="secondary">Cancel</Btn>
+            <Btn onClick={handleNext} variant="primary" disabled={!selectedService}>Next</Btn>
+          </div>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div>
+          <div style={{marginBottom:24,padding:12,background:C.priLt,borderRadius:8}}>
+            <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Selected Service</div>
+            <div style={{fontSize:16,fontWeight:600,color:C.text}}>{selectedService?.name}</div>
+          </div>
+
+          <div style={{marginBottom:24}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Quantity</label>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <button onClick={() => setQuantity(Math.max(1, quantity - 1))} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>−</button>
+              <input type="number" value={quantity} onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))} style={{width:60,padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",fontSize:14}} className="no-focus-ring" />
+              <button onClick={() => setQuantity(quantity + 1)} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>+</button>
+              <span style={{marginLeft:"auto",fontSize:14,color:C.textMut}}>Unit: {selectedService?.unitLabel}</span>
+            </div>
+          </div>
+
+          <div style={{marginBottom:16,padding:12,background:C.bg,borderRadius:8}}>
+            <div style={{fontSize:13,color:C.textMut,marginBottom:4}}>Retail Value</div>
+            <div style={{fontSize:24,fontWeight:700,color:C.text}}>${retailValue.toFixed(2)}</div>
+          </div>
+
+          <div style={{marginBottom:24}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Package Price</label>
+            {[
+              { mode: "discount-pct", label: "Discount by %" },
+              { mode: "discount-dollar", label: "Subtract $" },
+              { mode: "custom", label: "Set custom price" }
+            ].map(opt => (
+              <div key={opt.mode} style={{marginBottom:12,display:"flex",alignItems:"center",gap:12}}>
+                <input
+                  type="radio"
+                  name="pricing"
+                  checked={pricingMode === opt.mode}
+                  onChange={() => setPricingMode(opt.mode)}
+                  style={{cursor:"pointer"}}
+                />
+                <label style={{flex:1,cursor:"pointer",display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:13,fontWeight:500}}>{opt.label}</span>
+                  {opt.mode === "discount-pct" && (
+                    <input
+                      type="number"
+                      value={discountPct}
+                      onChange={(e) => { setDiscountPct(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0))); setPricingMode("discount-pct"); }}
+                      style={{width:70,padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}}
+                      className="no-focus-ring"
+                    />
+                  )}
+                  {opt.mode === "discount-pct" && <span style={{fontSize:12,color:C.textMut}}>%</span>}
+                  {opt.mode === "discount-dollar" && (
+                    <input
+                      type="number"
+                      value={discountDollar}
+                      onChange={(e) => { setDiscountDollar(Math.max(0, parseFloat(e.target.value) || 0)); setPricingMode("discount-dollar"); }}
+                      style={{width:70,padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}}
+                      className="no-focus-ring"
+                    />
+                  )}
+                  {opt.mode === "discount-dollar" && <span style={{fontSize:12,color:C.textMut}}>$</span>}
+                  {opt.mode === "custom" && (
+                    <input
+                      type="number"
+                      value={customPrice}
+                      onChange={(e) => { setCustomPrice(Math.max(0, parseFloat(e.target.value) || 0)); setPricingMode("custom"); }}
+                      style={{width:70,padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}}
+                      className="no-focus-ring"
+                    />
+                  )}
+                  {opt.mode === "custom" && <span style={{fontSize:12,color:C.textMut}}>$</span>}
+                </label>
+              </div>
+            ))}
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:24,padding:12,background:C.bg,borderRadius:8}}>
+            <div>
+              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Total Savings</div>
+              <div style={{fontSize:18,fontWeight:700,color:savings > 0 ? C.suc : C.textMut}}>${savings.toFixed(2)}</div>
+            </div>
+            <div>
+              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Savings Per Unit</div>
+              <div style={{fontSize:18,fontWeight:700,color:C.text}}>${savingsPerUnit.toFixed(2)}</div>
+            </div>
+          </div>
+
+          <div style={{display:"flex",gap:12,justifyContent:"flex-end"}}>
+            <Btn onClick={() => setStep(1)} variant="secondary">Back</Btn>
+            <Btn onClick={handleNext} variant="primary">Next</Btn>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div>
+          <div style={{marginBottom:24}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Expiration</label>
+            {[
+              { type: "relative", label: "Relative to purchase" },
+              { type: "fixed", label: "Fixed date" }
+            ].map(opt => (
+              <div key={opt.type} style={{marginBottom:12,padding:12,border:`1px solid ${expirationType === opt.type ? C.acc : C.border}`,borderRadius:8,cursor:"pointer",background:expirationType === opt.type ? C.accLt : "transparent"}} onClick={() => setExpirationType(opt.type)}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+                  <input type="radio" checked={expirationType === opt.type} onChange={() => setExpirationType(opt.type)} />
+                  <span style={{fontWeight:600,fontSize:13,color:C.text}}>{opt.label}</span>
+                </div>
+                {opt.type === "relative" && expirationType === "relative" && (
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <input
+                      type="number"
+                      value={expirationDays}
+                      onChange={(e) => setExpirationDays(Math.max(1, parseInt(e.target.value) || 90))}
+                      style={{width:80,padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}}
+                      className="no-focus-ring"
+                    />
+                    <span style={{fontSize:12,color:C.textMut}}>days after purchase</span>
+                  </div>
+                )}
+                {opt.type === "fixed" && expirationType === "fixed" && (
+                  <input
+                    type="date"
+                    value={expirationDate}
+                    onChange={(e) => setExpirationDate(e.target.value)}
+                    min={todayStr()}
+                    style={{padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}}
+                    className="no-focus-ring"
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div style={{display:"flex",gap:12,justifyContent:"flex-end",marginBottom:24}}>
+            <Btn onClick={() => setStep(2)} variant="secondary">Back</Btn>
+            <Btn onClick={handleNext} variant="primary">Next</Btn>
+          </div>
+        </div>
+      )}
+
+      {step === 4 && (
+        <div>
+          <div style={{marginBottom:24}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Package Name</label>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Auto-generated name"
+              style={{width:"100%",padding:"10px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:14}}
+              className="no-focus-ring"
+            />
+          </div>
+
+          <div style={{marginBottom:24}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Description</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Auto-generated description"
+              rows={4}
+              style={{width:"100%",padding:"10px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:14,fontFamily:"inherit",resize:"vertical"}}
+              className="no-focus-ring"
+            />
+          </div>
+
+          <div style={{marginBottom:24,display:"flex",alignItems:"center",gap:12}}>
+            <input
+              type="checkbox"
+              checked={availableOnline}
+              onChange={(e) => setAvailableOnline(e.target.checked)}
+              id="online-pkg"
+              style={{cursor:"pointer"}}
+            />
+            <label htmlFor="online-pkg" style={{cursor:"pointer",fontSize:13,fontWeight:500,color:C.text}}>Available for online purchase</label>
+          </div>
+
+          <Card style={{marginBottom:24,padding:16,background:C.bg}}>
+            <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Summary</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,fontSize:12}}>
+              <div><span style={{color:C.textMut}}>Service:</span> {selectedService?.name}</div>
+              <div><span style={{color:C.textMut}}>Qty:</span> {quantity} {selectedService?.unitLabel}s</div>
+              <div><span style={{color:C.textMut}}>Retail:</span> ${retailValue.toFixed(2)}</div>
+              <div><span style={{color:C.textMut}}>Package Price:</span> ${packagePrice.toFixed(2)}</div>
+              <div><span style={{color:C.textMut}}>Savings:</span> <span style={{color:C.suc,fontWeight:600}}>${savings.toFixed(2)}</span></div>
+              <div><span style={{color:C.textMut}}>Savings/Unit:</span> ${savingsPerUnit.toFixed(2)}</div>
+              <div><span style={{color:C.textMut}}>Expires:</span> {expirationType === "relative" ? `${expirationDays} days` : expirationDate}</div>
+            </div>
+          </Card>
+
+          <div style={{display:"flex",gap:12,justifyContent:"flex-end"}}>
+            <Btn onClick={() => setStep(3)} variant="secondary">Back</Btn>
+            <Btn onClick={handleCreate} variant="primary">Create Package</Btn>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function SellPackageModal({ data, save, onClose }) {
+  const [selectedClient, setSelectedClient] = useState(null);
+  const [searchQ, setSearchQ] = useState("");
+  const [cartItems, setCartItems] = useState([{ packageId: null, qty: 1 }]);
+  const [success, setSuccess] = useState(false);
+
+  const pkgs = data.packages?.filter(p => p.active) || [];
+  const clients = data.clients || [];
+
+  const filteredClients = !selectedClient
+    ? clients.filter(cl => {
+        const name = `${cl.fields?.first_name || ""} ${cl.fields?.last_name || ""}`.toLowerCase();
+        const phone = cl.fields?.phone || "";
+        return name.includes(searchQ.toLowerCase()) || phone.includes(searchQ);
+      }).slice(0, 8)
+    : [];
+
+  const total = cartItems.reduce((sum, item) => {
+    const pkg = pkgs.find(p => p.id === item.packageId);
+    return sum + ((pkg?.packagePrice || 0) * item.qty);
+  }, 0);
+
+  const handleAddCart = () => {
+    setCartItems([...cartItems, { packageId: null, qty: 1 }]);
+  };
+
+  const handleRemoveCart = (idx) => {
+    setCartItems(cartItems.filter((_, i) => i !== idx));
+  };
+
+  const handleCompleteSale = async () => {
+    if (!selectedClient || cartItems.some(item => !item.packageId)) {
+      alert("Please select a client and all package details.");
+      return;
+    }
+
+    const sales = cartItems.map(item => ({
+      id: "ps_" + gid(),
+      packageId: item.packageId,
+      clientId: selectedClient.id,
+      packageName: pkgs.find(p => p.id === item.packageId)?.name,
+      packagePrice: pkgs.find(p => p.id === item.packageId)?.packagePrice,
+      quantity: item.qty,
+      totalPaid: (pkgs.find(p => p.id === item.packageId)?.packagePrice || 0) * item.qty,
+      purchaseDate: todayStr(),
+      expiryDate: (() => {
+        const pkg = pkgs.find(p => p.id === item.packageId);
+        if (pkg?.expirationType === "relative") {
+          const d = new Date();
+          d.setDate(d.getDate() + (pkg.expirationDays || 90));
+          return d.toISOString().split("T")[0];
+        }
+        return pkg?.expirationDate;
+      })(),
+      unitsRemaining: (pkgs.find(p => p.id === item.packageId)?.quantity || 1) * item.qty,
+      status: "active",
+    }));
+
+    await save({ ...data, packageSales: [...(data.packageSales || []), ...sales] });
+    setSuccess(true);
+  };
+
+  if (success) {
+    return (
+      <Modal title="Sale Complete" onClose={onClose}>
+        <div style={{textAlign:"center",padding:"40px 20px"}}>
+          <div style={{fontSize:48,marginBottom:16}}>✓</div>
+          <h3 style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:8}}>Sale Recorded</h3>
+          <p style={{color:C.textMut,marginBottom:24}}>Sold {cartItems.reduce((sum, i) => sum + i.qty, 0)} package(s) to {selectedClient?.fields?.first_name}</p>
+          <Btn onClick={onClose} variant="primary">Done</Btn>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title="Sell Package" wide onClose={onClose}>
+      <div style={{marginBottom:24}}>
+        <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Select Client</label>
+        {selectedClient ? (
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:12,background:C.priLt,borderRadius:8}}>
+            <div style={{fontSize:14,fontWeight:600,color:C.text}}>
+              {selectedClient.fields?.first_name} {selectedClient.fields?.last_name}
+            </div>
+            <Btn onClick={() => { setSelectedClient(null); setSearchQ(""); }} variant="secondary" size="sm">Change</Btn>
+          </div>
+        ) : (
+          <div>
+            <input
+              type="text"
+              value={searchQ}
+              onChange={(e) => setSearchQ(e.target.value)}
+              placeholder="Search by name or phone..."
+              style={{width:"100%",padding:"10px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:14,marginBottom:8}}
+              className="no-focus-ring"
+            />
+            {searchQ && filteredClients.length > 0 && (
+              <div style={{border:`1px solid ${C.border}`,borderRadius:6,maxHeight:240,overflow:"auto",background:C.surface}}>
+                {filteredClients.map(cl => (
+                  <div
+                    key={cl.id}
+                    onClick={() => { setSelectedClient(cl); setSearchQ(""); }}
+                    style={{padding:10,borderBottom:`1px solid ${C.borderLight}`,cursor:"pointer",fontSize:13}}
+                    onMouseEnter={(e) => e.currentTarget.style.background = C.surfaceHover}
+                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                  >
+                    <div style={{fontWeight:500,color:C.text}}>{cl.fields?.first_name} {cl.fields?.last_name}</div>
+                    <div style={{fontSize:11,color:C.textMut}}>{cl.fields?.phone}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div style={{marginBottom:24}}>
+        <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Packages</label>
+        {cartItems.map((item, idx) => (
+          <div key={idx} style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}>
+            <select
+              value={item.packageId || ""}
+              onChange={(e) => {
+                const newItems = [...cartItems];
+                newItems[idx].packageId = e.target.value || null;
+                setCartItems(newItems);
+              }}
+              style={{flex:1,padding:"8px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:13}}
+              className="no-focus-ring"
+            >
+              <option value="">Select a package...</option>
+              {pkgs.map(pkg => (
+                <option key={pkg.id} value={pkg.id}>
+                  {pkg.name} — ${pkg.packagePrice?.toFixed(2)}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min="1"
+              value={item.qty}
+              onChange={(e) => {
+                const newItems = [...cartItems];
+                newItems[idx].qty = Math.max(1, parseInt(e.target.value) || 1);
+                setCartItems(newItems);
+              }}
+              style={{width:60,padding:"8px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:13,textAlign:"center"}}
+              className="no-focus-ring"
+            />
+            <button
+              onClick={() => handleRemoveCart(idx)}
+              style={{padding:6,background:"none",border:"none",cursor:"pointer",color:C.dan}}
+            >
+              <I.X/>
+            </button>
+          </div>
+        ))}
+        <Btn onClick={handleAddCart} variant="secondary" size="sm" style={{marginTop:8}}>+ Add Another Package</Btn>
+      </div>
+
+      <div style={{marginBottom:24,padding:12,background:C.bg,borderRadius:8,textAlign:"right"}}>
+        <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Total</div>
+        <div style={{fontSize:20,fontWeight:700,color:C.text}}>${total.toFixed(2)}</div>
+      </div>
+
+      <div style={{display:"flex",gap:12,justifyContent:"flex-end"}}>
+        <Btn onClick={onClose} variant="secondary">Cancel</Btn>
+        <Btn
+          onClick={handleCompleteSale}
+          variant="primary"
+          disabled={!selectedClient || cartItems.some(item => !item.packageId)}
+        >
+          Complete Sale — ${total.toFixed(2)}
+        </Btn>
+      </div>
+    </Modal>
+  );
+}
+
 function DropdownListsTab({ data, save }) {
   const [addInputs, setAddInputs] = useState({});
 
@@ -11859,6 +12493,7 @@ function SettingsPage({ data, save, profile }) {
       { id: "vaccines", label: "Vaccines", desc: "Configure required vaccinations and expiration tracking", keywords: "vaccines rabies bordetella dhpp flu required" },
       { id: "agreements", label: "Agreements", desc: "Manage boarding and daycare agreement documents", keywords: "agreements contracts waivers liability boarding" },
       { id: "pricing", label: "Pricing", desc: "Room rates, daycare fees, add-ons, and payment rules", keywords: "pricing rates fees cost money payment deposit" },
+      { id: "packages", label: "Packages", desc: "Create and manage service packages with built-in discounts", keywords: "packages deals discounts bundles promotions savings" },
       { id: "dropdowns", label: "Dropdown Lists", desc: "Customize dropdown options for breeds, food types, etc.", keywords: "dropdowns lists options breeds food bath medication" },
     ]},
     { label: "Operations", items: [
@@ -12005,6 +12640,9 @@ function SettingsPage({ data, save, profile }) {
           <AgreementsPage data={data} save={save} />
         ) : tab === "pricing" ? (
         <PricingTab data={data} save={save} />
+
+      ) : tab === "packages" ? (
+        <PackagesSection data={data} save={save} />
 
       ) : tab === "eod" ? (
         <EODTemplateTab data={data} save={save} />

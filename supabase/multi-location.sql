@@ -277,7 +277,8 @@ BEGIN
     'rooms', COALESCE(loc.data->'rooms', '{}'::jsonb),
     'pricing', COALESCE(loc.data->'pricing', '{}'::jsonb),
     'closedDates', COALESCE(loc.data->'closedDates', '[]'::jsonb),
-    'reservations', res_data
+    'reservations', res_data,
+    'packages', COALESCE(loc.data->'packages', '[]'::jsonb)
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
