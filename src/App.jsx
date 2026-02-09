@@ -51,76 +51,87 @@ const K9LogoMini = ({size=28}) => <img src={K9_LOGO_PNG} alt="K9 Resorts" style=
 
 // K9 Resorts Locations
 const K9_LOCATIONS = [
-  { id: "enterprise", name: "Enterprise", region: "All Locations", isEnterprise: true },
-  { id: "deerfield", name: "Remy Calloway", region: "Illinois" },
-  { id: "cherry-hill", name: "Adair Forsythe", region: "New Jersey" },
-  { id: "clifton", name: "Clifton", region: "New Jersey" },
-  { id: "stamford", name: "Ellis Vance", region: "Connecticut" },
-  { id: "fanwood", name: "Fanwood-Scotch Plains", region: "New Jersey" },
-  { id: "fort-lauderdale", name: "Fort Lauderdale", region: "Florida" },
-  { id: "horsham", name: "Horsham", region: "Pennsylvania" },
-  { id: "jersey-city", name: "Jersey City", region: "New Jersey" },
-  { id: "madison", name: "Casey Beckett", region: "New Jersey" },
-  { id: "montville", name: "Montville", region: "New Jersey" },
-  { id: "north-brunswick", name: "North Brunswick", region: "New Jersey" },
-  { id: "norwood", name: "Norwood", region: "New Jersey" },
-  { id: "peoria", name: "Peoria", region: "Arizona" },
-  { id: "radisson", name: "Radisson", region: "New York" },
-  { id: "riverdale", name: "Riverdale", region: "New Jersey" },
-  { id: "rochelle-park", name: "Rochelle Park", region: "New Jersey" },
-  { id: "toms-river", name: "Toms River", region: "New Jersey" },
-  { id: "totowa", name: "Totowa", region: "New Jersey" },
-  { id: "vineland", name: "Vineland", region: "New Jersey" },
-  { id: "wayne", name: "Wayne", region: "New Jersey" },
-  { id: "west-windsor", name: "West Windsor", region: "New Jersey" },
-  { id: "woodbridge", name: "Woodbridge", region: "New Jersey" },
-  { id: "houston-cy", name: "Houston - Cypress", region: "Texas" },
-  { id: "houston-katy", name: "Houston - Katy", region: "Texas" },
-  { id: "san-antonio", name: "San Antonio", region: "Texas" },
-  { id: "frisco", name: "Frisco", region: "Texas" },
-  { id: "allen", name: "Allen", region: "Texas" },
-  { id: "plano", name: "Plano", region: "Texas" },
-  { id: "mckinney", name: "McKinney", region: "Texas" },
-  { id: "lewisville", name: "Lewisville", region: "Texas" },
-  { id: "southlake", name: "Southlake", region: "Texas" },
-  { id: "grapevine", name: "Grapevine", region: "Texas" },
-  { id: "charlotte", name: "Charlotte", region: "North Carolina" },
-  { id: "raleigh", name: "Raleigh", region: "North Carolina" },
-  { id: "nashville", name: "Nashville", region: "Tennessee" },
-  { id: "atlanta-buckhead", name: "Atlanta - Buckhead", region: "Georgia" },
-  { id: "atlanta-midtown", name: "Atlanta - Midtown", region: "Georgia" },
-  { id: "denver", name: "Denver", region: "Colorado" },
-  { id: "phoenix", name: "Phoenix", region: "Arizona" },
-  { id: "scottsdale", name: "Ellisonsdale", region: "Arizona" },
-  { id: "las-vegas", name: "Las Vegas", region: "Nevada" },
-  { id: "orlando", name: "Orlando", region: "Florida" },
-  { id: "tampa", name: "Tampa", region: "Florida" },
-  { id: "boca-raton", name: "Boca Raton", region: "Florida" },
+  { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
+  { id: "demo", name: "Demo", slug: "demo" },
 ];
 
-const K9_LOCATIONS_BY_REGION = K9_LOCATIONS.reduce((acc, loc) => {
-  if (loc.isEnterprise) return acc;
-  if (!acc[loc.region]) acc[loc.region] = [];
-  acc[loc.region].push(loc);
-  return acc;
-}, {});
+// ─── URL Routing ────────────────────────────────────────────────────────────
+const PAGE_SLUGS = {
+  dashboard:"dashboard", reservations:"lodging", clients:"clients", "client-detail":"client", "dog-detail":"dog",
+  "new-client":"new-client", "new-dog":"new-dog", "new-reservation":"new-reservation", "unified-new":"new",
+  crm:"crm", messages:"messages", payments:"payments", operations:"operations",
+  "ops-opening":"ops/opening", "ops-fe":"ops/front-end", "ops-be":"ops/back-end", "ops-rooms":"ops/rooms",
+  "ops-pictures":"ops/pictures", "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
+  eod:"eod", ai:"ai", settings:"settings", "evaluation-form":"evaluation",
+  "enterprise-locations":"locations", "enterprise-operations":"oversight",
+};
+const SLUG_TO_PAGE = {};
+Object.entries(PAGE_SLUGS).forEach(([k,v]) => { if (!k.startsWith("enterprise-")) SLUG_TO_PAGE[v] = k; });
+const ENT_SLUG_TO_PAGE = { locations:"enterprise-locations", oversight:"enterprise-operations" };
+
+function buildUrl(locSlug, pg, prms, dataRef) {
+  const slug = PAGE_SLUGS[pg] || pg;
+  if (locSlug === "enterprise") return `/enterprise/${slug}`;
+  if (pg === "client-detail" && prms?.clientId && dataRef) {
+    const c = (dataRef.clients||[]).find(cl => cl.id === prms.clientId);
+    const phone = c?.fields?.phone?.replace(/\D/g,"");
+    if (phone) return `/${locSlug}/client/${phone}`;
+  }
+  if (pg === "dog-detail" && prms?.clientId && prms?.dogId && dataRef) {
+    const c = (dataRef.clients||[]).find(cl => cl.id === prms.clientId);
+    const d = (dataRef.dogs||[]).find(dg => dg.id === prms.dogId);
+    const phone = c?.fields?.phone?.replace(/\D/g,"");
+    if (phone && d) return `/${locSlug}/client/${phone}/${encodeURIComponent((d.fields?.name||"dog").toLowerCase())}`;
+  }
+  return `/${locSlug}/${slug}`;
+}
+
+function parseUrl(pathname, dataRef) {
+  const parts = pathname.replace(/^\/+|\/+$/g,"").split("/").filter(Boolean);
+  if (parts.length === 0) return { locSlug: "demo", page: "dashboard", params: {} };
+  const locSlug = parts[0];
+  if (locSlug === "enterprise") {
+    const epSlug = parts.slice(1).join("/") || "locations";
+    const pg = ENT_SLUG_TO_PAGE[epSlug] || "enterprise-locations";
+    return { locSlug: "enterprise", page: pg, params: {} };
+  }
+  if (parts.length === 1) return { locSlug, page: "dashboard", params: {} };
+  // Client detail: /demo/client/5551234567
+  if (parts[1] === "client" && parts[2]) {
+    const phone = parts[2];
+    if (parts[3] && dataRef) {
+      // Dog detail: /demo/client/5551234567/duke
+      const c = (dataRef.clients||[]).find(cl => (cl.fields?.phone||"").replace(/\D/g,"") === phone);
+      if (c) {
+        const dogName = decodeURIComponent(parts[3]).toLowerCase();
+        const dogs = (dataRef.dogs||[]).filter(d => d.fields?.owner_id === c.id || (dataRef.reservations||[]).some(r => r.clientId === c.id && r.dogId === d.id));
+        const dog = dogs.find(d => (d.fields?.name||"").toLowerCase() === dogName) || dogs[0];
+        if (dog) return { locSlug, page: "dog-detail", params: { clientId: c.id, dogId: dog.id } };
+      }
+    }
+    if (dataRef) {
+      const c = (dataRef.clients||[]).find(cl => (cl.fields?.phone||"").replace(/\D/g,"") === phone);
+      if (c) return { locSlug, page: "client-detail", params: { clientId: c.id } };
+    }
+    return { locSlug, page: "clients", params: {} };
+  }
+  const pgSlug = parts.slice(1).join("/");
+  const pg = SLUG_TO_PAGE[pgSlug] || "dashboard";
+  return { locSlug, page: pg, params: {} };
+}
 
 function LocationSelector({ currentLocation, onLocationChange, collapsed }) {
   const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
   const dropRef = useRef(null);
   const btnRef = useRef(null);
-  const searchRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
-    const handler = (e) => { if (dropRef.current && !dropRef.current.contains(e.target) && btnRef.current && !btnRef.current.contains(e.target)) { setOpen(false); setSearch(""); } };
+    const handler = (e) => { if (dropRef.current && !dropRef.current.contains(e.target) && btnRef.current && !btnRef.current.contains(e.target)) setOpen(false); };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
-
-  useEffect(() => { if (open && searchRef.current) searchRef.current.focus(); }, [open]);
 
   useEffect(() => {
     if (open && btnRef.current) {
@@ -131,19 +142,7 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed }) {
 
   const current = K9_LOCATIONS.find(l => l.id === currentLocation) || K9_LOCATIONS[1];
   const isEnterprise = current.isEnterprise;
-
-  const filteredRegions = useMemo(() => {
-    const q = search.toLowerCase();
-    if (!q) return K9_LOCATIONS_BY_REGION;
-    const result = {};
-    Object.entries(K9_LOCATIONS_BY_REGION).forEach(([region, locs]) => {
-      const fl = locs.filter(l => l.name.toLowerCase().includes(q) || region.toLowerCase().includes(q));
-      if (fl.length > 0) result[region] = fl;
-    });
-    return result;
-  }, [search]);
-
-  const enterpriseMatch = !search || "enterprise".includes(search.toLowerCase()) || "all locations".includes(search.toLowerCase());
+  const locations = K9_LOCATIONS.filter(l => !l.isEnterprise);
 
   if (collapsed) {
     return (
@@ -165,7 +164,7 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed }) {
         </div>
         <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{current.name}</div>
-          <div style={{ fontSize: 9, color: "rgba(175,141,84,0.6)", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>{isEnterprise ? "All Locations" : current.region}</div>
+          <div style={{ fontSize: 9, color: "rgba(175,141,84,0.6)", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>{isEnterprise ? "All Locations" : "Location"}</div>
         </div>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(175,141,84,0.5)" strokeWidth="2.5" strokeLinecap="round"
           style={{ transition: "transform 0.2s", transform: open ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0 }}>
@@ -174,53 +173,40 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed }) {
       </button>
 
       {open && (
-        <div ref={dropRef} style={{ position: "fixed", top: dropPos.top, left: dropPos.left, width: dropPos.width || 212, zIndex: 9999, background: "#1a2940", border: "1.5px solid rgba(175,141,84,0.25)", borderRadius: 12, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", maxHeight: 360, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          <div style={{ padding: "10px 10px 6px" }}>
-            <div style={{ position: "relative" }}>
-              <div style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "rgba(175,141,84,0.4)" }}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="15.8" y2="15.8"/></svg>
-              </div>
-              <input ref={searchRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="Search locations..."
-                style={{ width: "100%", padding: "7px 10px 7px 28px", borderRadius: 8, border: "1px solid rgba(175,141,84,0.15)", background: "rgba(0,0,0,0.2)", fontSize: 12, fontFamily: "inherit", color: "#fff", outline: "none", boxSizing: "border-box" }}
-              />
-            </div>
-          </div>
-
-          <div style={{ overflow: "auto", flex: 1, padding: "0 6px 6px" }}>
-            {enterpriseMatch && (
-              <button onClick={() => { onLocationChange("enterprise"); setOpen(false); setSearch(""); }}
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, border: "none", background: currentLocation === "enterprise" ? "rgba(175,141,84,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginBottom: 4 }}
-                onMouseEnter={e => { if (currentLocation !== "enterprise") e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
-                onMouseLeave={e => { if (currentLocation !== "enterprise") e.currentTarget.style.background = "transparent"; }}
-              >
+        <div ref={dropRef} style={{ position: "fixed", top: dropPos.top, left: dropPos.left, width: dropPos.width || 212, zIndex: 9999, background: "#1a2940", border: "1.5px solid rgba(175,141,84,0.25)", borderRadius: 12, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: "6px 6px" }}>
+            {/* Enterprise */}
+            <button onClick={() => { onLocationChange("enterprise"); setOpen(false); }}
+              style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: currentLocation === "enterprise" ? "rgba(175,141,84,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginBottom: 2 }}
+              onMouseEnter={e => { if (currentLocation !== "enterprise") e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+              onMouseLeave={e => { if (currentLocation !== "enterprise") e.currentTarget.style.background = "transparent"; }}>
+              <div style={{ width: 26, height: 26, borderRadius: 6, background: "rgba(175,141,84,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <span style={{ fontSize: 13, fontWeight: 800, color: C.acc }}>{"\u2605"}</span>
-                <div style={{ textAlign: "left" }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: C.acc }}>Enterprise</div>
-                  <div style={{ fontSize: 9, color: "rgba(175,141,84,0.5)", textTransform: "uppercase" }}>Aggregated &middot; All Locations</div>
-                </div>
-                {currentLocation === "enterprise" && <span style={{ marginLeft: "auto", color: C.acc }}><I.Check/></span>}
-              </button>
-            )}
-
-            {Object.entries(filteredRegions).sort(([a],[b])=>a.localeCompare(b)).map(([region, locs]) => (
-              <div key={region}>
-                <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(175,141,84,0.4)", textTransform: "uppercase", letterSpacing: "0.08em", padding: "8px 10px 4px" }}>{region}</div>
-                {locs.map(loc => (
-                  <button key={loc.id} onClick={() => { onLocationChange(loc.id); setOpen(false); setSearch(""); }}
-                    style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderRadius: 8, border: "none", background: currentLocation === loc.id ? "rgba(175,141,84,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s" }}
-                    onMouseEnter={e => { if (currentLocation !== loc.id) e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
-                    onMouseLeave={e => { if (currentLocation !== loc.id) e.currentTarget.style.background = "transparent"; }}
-                  >
-                    <span style={{ fontSize: 12, fontWeight: 600, color: currentLocation === loc.id ? "#fff" : "rgba(255,255,255,0.7)" }}>{loc.name}</span>
-                    {currentLocation === loc.id && <span style={{ marginLeft: "auto", color: C.acc }}><I.Check/></span>}
-                  </button>
-                ))}
               </div>
-            ))}
+              <div style={{ textAlign: "left", flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.acc }}>Enterprise</div>
+                <div style={{ fontSize: 9, color: "rgba(175,141,84,0.5)", textTransform: "uppercase" }}>All Locations</div>
+              </div>
+              {currentLocation === "enterprise" && <span style={{ color: C.acc }}><I.Check/></span>}
+            </button>
 
-            {!enterpriseMatch && Object.keys(filteredRegions).length === 0 && (
-              <div style={{ padding: "16px 10px", textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.3)" }}>No locations found</div>
-            )}
+            <div style={{ margin: "4px 10px", height: 1, background: "rgba(175,141,84,0.12)" }}/>
+
+            {/* Location list */}
+            {locations.map(loc => (
+              <button key={loc.id} onClick={() => { onLocationChange(loc.id); setOpen(false); }}
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: currentLocation === loc.id ? "rgba(175,141,84,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginTop: 2 }}
+                onMouseEnter={e => { if (currentLocation !== loc.id) e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+                onMouseLeave={e => { if (currentLocation !== loc.id) e.currentTarget.style.background = "transparent"; }}>
+                <div style={{ width: 26, height: 26, borderRadius: 6, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                </div>
+                <div style={{ textAlign: "left", flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: currentLocation === loc.id ? "#fff" : "rgba(255,255,255,0.7)" }}>{loc.name}</div>
+                </div>
+                {currentLocation === loc.id && <span style={{ color: C.acc }}><I.Check/></span>}
+              </button>
+            ))}
           </div>
         </div>
       )}
@@ -11248,6 +11234,192 @@ function TeamTab({ profile, data, save }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ENTERPRISE — Location Management
+// ═══════════════════════════════════════════════════════════════════════════
+function EnterpriseLocationsPage({ data, save, nav, profile, handleLocationChange, addGlobalToast }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newRegion, setNewRegion] = useState("");
+  const locations = K9_LOCATIONS.filter(l => !l.isEnterprise);
+
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:28}}>
+        <div>
+          <h2 style={{fontSize:24,fontWeight:700,color:C.text,margin:0}}>Location Management</h2>
+          <div style={{fontSize:13,color:C.textSec,marginTop:4}}>Manage your K9 Resorts locations</div>
+        </div>
+        <Btn onClick={()=>setShowAdd(!showAdd)} icon={<I.Plus/>}>Add Location</Btn>
+      </div>
+
+      {showAdd && (
+        <Card style={{marginBottom:20,padding:"20px 24px"}}>
+          <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:14}}>New Location</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:12,alignItems:"end"}}>
+            <Inp label="Location Name" value={newName} onChange={setNewName} placeholder="e.g. Adair Forsythe"/>
+            <Inp label="Region / State" value={newRegion} onChange={setNewRegion} placeholder="e.g. New Jersey"/>
+            <Btn variant="success" onClick={()=>{
+              if (!newName.trim()) return;
+              addGlobalToast({ message: `"${newName.trim()}" location created. Supabase provisioning coming soon.` });
+              setNewName(""); setNewRegion(""); setShowAdd(false);
+            }}>Create</Btn>
+          </div>
+          <div style={{fontSize:11,color:C.textMut,marginTop:8,fontStyle:"italic"}}>New locations will require Supabase provisioning for full data isolation.</div>
+        </Card>
+      )}
+
+      <Card style={{padding:0,overflow:"hidden"}}>
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1.5fr 1fr 1fr 100px",padding:"12px 20px",borderBottom:`2px solid ${C.border}`,background:C.bg}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.05em"}}>Name</div>
+          <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.05em"}}>Region</div>
+          <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.05em"}}>Slug</div>
+          <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.05em"}}>Status</div>
+          <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.05em"}}>Actions</div>
+        </div>
+        {locations.map(loc => (
+          <div key={loc.id} style={{display:"grid",gridTemplateColumns:"2fr 1.5fr 1fr 1fr 100px",padding:"14px 20px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center"}}
+            onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <div style={{display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:32,height:32,borderRadius:8,background:C.priLt,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              </div>
+              <div>
+                <div style={{fontSize:14,fontWeight:700,color:C.text}}>{loc.name}</div>
+                <div style={{fontSize:11,color:C.textMut}}>ID: {loc.id}</div>
+              </div>
+            </div>
+            <div style={{fontSize:13,color:C.textSec}}>—</div>
+            <div style={{fontSize:12,color:C.textMut,fontFamily:"monospace"}}>/{loc.slug}</div>
+            <div><Badge color="success" size="sm">Active</Badge></div>
+            <div>
+              <button onClick={()=>{ handleLocationChange(loc.id); }} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${C.border}`,background:"transparent",color:C.pri,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Open</button>
+            </div>
+          </div>
+        ))}
+        {locations.length === 0 && <div style={{padding:40,textAlign:"center",color:C.textMut,fontSize:14}}>No locations configured</div>}
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENTERPRISE — Operations Oversight
+// ═══════════════════════════════════════════════════════════════════════════
+function EnterpriseOperationsPage({ data, save, nav, profile, handleLocationChange }) {
+  const [viewDate, setViewDate] = useState(todayStr());
+  const locations = K9_LOCATIONS.filter(l => !l.isEnterprise);
+  const dailyOps = OPERATIONS_CATALOG.filter(op => op.frequency === "daily");
+
+  const getOpsStatus = (op, locId) => {
+    if (locId !== "demo") return { done: 0, total: 0, pct: 0, status: "none" };
+    const dateKey = viewDate;
+    if (op.id === "eod") {
+      const entries = data?.eodEntries || {};
+      const dayEntry = entries[dateKey] || {};
+      const fields = Object.values(dayEntry).filter(v => typeof v === "string" && v.trim());
+      return { done: fields.length, total: 20, pct: Math.round((fields.length / 20) * 100), status: fields.length === 0 ? "none" : fields.length >= 18 ? "complete" : "progress" };
+    }
+    if (op.typeSub === "room_cleaning") {
+      const rc = getRoomCleaningStats(data, dateKey);
+      return { done: rc.cleaned, total: rc.total, pct: rc.total > 0 ? Math.round((rc.cleaned / rc.total) * 100) : 0, status: rc.total === 0 ? "none" : rc.cleaned >= rc.total ? "complete" : rc.cleaned > 0 ? "progress" : "none" };
+    }
+    if (op.typeSub === "pictures") {
+      const picLog = (data.dailyOps || {})[dateKey + "_pictures"] || {};
+      const done = Object.values(picLog).filter(v => v === true).length;
+      const total = (data.reservations || []).filter(r => r.type === "boarding" && r.checkIn <= dateKey && r.checkOut >= dateKey && (r.status === "checked-in" || r.status === "upcoming")).length;
+      return { done, total, pct: total > 0 ? Math.round((done / total) * 100) : 0, status: total === 0 ? "none" : done >= total ? "complete" : done > 0 ? "progress" : "none" };
+    }
+    if (op.typeSub === "pp") {
+      const ppLog = (data.dailyOps || {})[dateKey + "_pp"] || {};
+      const done = Object.values(ppLog).filter(v => v === true).length;
+      return { done, total: 0, pct: done > 0 ? 100 : 0, status: done > 0 ? "complete" : "none" };
+    }
+    // Checklist-based ops (opening, fe, be, closing)
+    const opsType = OPS_TYPES[op.typeSub];
+    if (opsType && opsType.key) {
+      const template = data[opsType.key] || opsType.def || [];
+      const items = template.filter(t => !t.isWeekly);
+      const logKey = dateKey + "_" + op.typeSub;
+      const log = (data.dailyOps || {})[logKey] || {};
+      const done = items.filter(t => log[t.id]).length;
+      return { done, total: items.length, pct: items.length > 0 ? Math.round((done / items.length) * 100) : 0, status: done === 0 ? "none" : done >= items.length ? "complete" : "progress" };
+    }
+    return { done: 0, total: 0, pct: 0, status: "none" };
+  };
+
+  const isToday = viewDate === todayStr();
+
+  return (
+    <div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:28}}>
+        <div>
+          <h2 style={{fontSize:24,fontWeight:700,color:C.text,margin:0}}>Operations Oversight</h2>
+          <div style={{fontSize:13,color:C.textSec,marginTop:4}}>Cross-location operations status at a glance</div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <button onClick={()=>setViewDate(addDays(viewDate,-1))} style={{width:32,height:32,borderRadius:8,border:`1px solid ${C.border}`,background:C.surface,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:C.textSec,fontFamily:"inherit",fontSize:16}}>&lsaquo;</button>
+          <input type="date" value={viewDate} onChange={e=>setViewDate(e.target.value)} style={{padding:"6px 12px",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13,fontFamily:"inherit",fontWeight:600,color:C.text}}/>
+          <button onClick={()=>setViewDate(addDays(viewDate,1))} style={{width:32,height:32,borderRadius:8,border:`1px solid ${C.border}`,background:C.surface,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:C.textSec,fontFamily:"inherit",fontSize:16}}>&rsaquo;</button>
+          {!isToday && <Btn size="sm" onClick={()=>setViewDate(todayStr())}>Today</Btn>}
+        </div>
+      </div>
+
+      <div style={{fontSize:13,fontWeight:600,color:C.textSec,marginBottom:12}}>
+        {new Date(viewDate+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"})}
+        {isToday && <span style={{marginLeft:8,padding:"2px 8px",borderRadius:6,background:C.priLt,color:C.pri,fontSize:11,fontWeight:700}}>Today</span>}
+      </div>
+
+      <Card style={{padding:0,overflow:"hidden"}}>
+        {/* Header */}
+        <div style={{display:"grid",gridTemplateColumns:`260px repeat(${locations.length},1fr)`,borderBottom:`2px solid ${C.border}`}}>
+          <div style={{padding:"14px 20px",background:C.bg}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.05em"}}>Checklist</div>
+          </div>
+          {locations.map(loc => (
+            <div key={loc.id} style={{padding:"14px 20px",background:C.bg,textAlign:"center",borderLeft:`1px solid ${C.borderLight}`}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.text}}>{loc.name}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Rows */}
+        {dailyOps.map((op, oi) => (
+          <div key={op.id} style={{display:"grid",gridTemplateColumns:`260px repeat(${locations.length},1fr)`,borderBottom:`1px solid ${C.borderLight}`,transition:"background 0.1s"}}
+            onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+            <div style={{padding:"14px 20px",display:"flex",alignItems:"center",gap:10}}>
+              <div style={{width:6,height:6,borderRadius:3,background:C.pri,flexShrink:0}}/>
+              <div style={{fontSize:13,fontWeight:600,color:C.text}}>{op.label}</div>
+            </div>
+            {locations.map(loc => {
+              const st = getOpsStatus(op, loc.id);
+              const bg = st.status === "complete" ? C.suc+"14" : st.status === "progress" ? C.acc+"14" : "transparent";
+              const color = st.status === "complete" ? C.suc : st.status === "progress" ? C.acc : C.textMut;
+              const label = st.status === "complete" ? "Complete" : st.status === "progress" ? "In Progress" : "Not Started";
+              return (
+                <div key={loc.id} style={{padding:"12px 20px",borderLeft:`1px solid ${C.borderLight}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,cursor:"pointer"}}
+                  onClick={()=>{ if (loc.id === "demo") { handleLocationChange("demo"); setTimeout(()=>{ if (op.routeTo) nav(op.routeTo); }, 50); } }}>
+                  <div style={{padding:"4px 12px",borderRadius:20,background:bg,fontSize:11,fontWeight:700,color,whiteSpace:"nowrap"}}>
+                    {label}
+                  </div>
+                  {st.total > 0 && (
+                    <div style={{display:"flex",alignItems:"center",gap:6,width:"100%",maxWidth:120}}>
+                      <div style={{flex:1,height:4,borderRadius:2,background:C.border}}>
+                        <div style={{height:4,borderRadius:2,background:color,width:`${st.pct}%`,transition:"width 0.3s"}}/>
+                      </div>
+                      <span style={{fontSize:10,fontWeight:600,color:C.textMut,whiteSpace:"nowrap"}}>{st.done}/{st.total}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // SETTINGS (Fields + Dog Tags)
 // ═══════════════════════════════════════════════════════════════════════════
 function SettingsPage({ data, save, profile }) {
@@ -14216,25 +14388,81 @@ export default function App() {
   }, [loading, rawData, locationId, isEmpty, loadError]);
   // Auto-initialize roles system for existing data that predates the permissions feature
   useEffect(() => { if (data && !data.roles) { save({ ...data, roles: DEFAULT_ROLES }); } }, [data?.roles]);
-  const [page, setPage] = useState("dashboard");
-  const [params, setParams] = useState({});
+  // ═══ URL-based routing state ═══
+  const [currentLocation, setCurrentLocation] = useState(() => {
+    try { const v = localStorage.getItem("k9_location"); if (v && K9_LOCATIONS.some(l => l.id === v)) return v; } catch {}
+    return "demo";
+  });
+  const initRoute = useMemo(() => parseUrl(window.location.pathname, null), []);
+  const [page, setPage] = useState(() => initRoute.locSlug === "enterprise" ? initRoute.page : initRoute.page);
+  const [params, setParams] = useState(() => initRoute.params);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [navTooltip, setNavTooltip] = useState(null); // {label, top, left}
+  const [navTooltip, setNavTooltip] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [opsExpanded, setOpsExpanded] = useState(false);
-  const [currentLocation, setCurrentLocation] = useState("deerfield");
-  const [navStack, setNavStack] = useState([{ page: "dashboard", params: {} }]);
+  const [navStack, setNavStack] = useState([{ page: initRoute.page, params: initRoute.params }]);
+  const skipUrlPush = useRef(false);
+  const isEnterprise = currentLocation === "enterprise";
+  const locSlug = useMemo(() => (K9_LOCATIONS.find(l => l.id === currentLocation) || K9_LOCATIONS[1]).slug, [currentLocation]);
 
-  // Load/save location preference (localStorage for non-critical UI prefs)
+  // Set initial location from URL on mount
   useEffect(() => {
-    try { const v = localStorage.getItem("k9_location"); if (v) setCurrentLocation(v); } catch {}
+    const parsed = parseUrl(window.location.pathname, data);
+    const locMatch = K9_LOCATIONS.find(l => l.slug === parsed.locSlug);
+    if (locMatch && locMatch.id !== currentLocation) {
+      setCurrentLocation(locMatch.id);
+      try { localStorage.setItem("k9_location", locMatch.id); } catch {}
+    }
+    // Re-parse with data to resolve client/dog params
+    if (data && parsed.page === "clients" && window.location.pathname.includes("/client/")) {
+      const reParsed = parseUrl(window.location.pathname, data);
+      if (reParsed.page !== "clients") { setPage(reParsed.page); setParams(reParsed.params); setNavStack([{ page: reParsed.page, params: reParsed.params }]); }
+    }
+  }, [data]);
+
+  // Sync URL when page/params/location change
+  useEffect(() => {
+    if (skipUrlPush.current) { skipUrlPush.current = false; return; }
+    const url = buildUrl(locSlug, page, params, data);
+    if (window.location.pathname !== url) window.history.pushState({ page, params, loc: currentLocation }, "", url);
+  }, [page, params, locSlug]);
+
+  // Handle browser back/forward
+  useEffect(() => {
+    const handler = (e) => {
+      skipUrlPush.current = true;
+      const parsed = parseUrl(window.location.pathname, data);
+      const locMatch = K9_LOCATIONS.find(l => l.slug === parsed.locSlug);
+      if (locMatch) { setCurrentLocation(locMatch.id); try { localStorage.setItem("k9_location", locMatch.id); } catch {} }
+      setPage(parsed.page); setParams(parsed.params);
+      setNavStack([{ page: parsed.page, params: parsed.params }]);
+    };
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, [data]);
+
+  // Replace initial URL if at root
+  useEffect(() => {
+    if (window.location.pathname === "/" || window.location.pathname === "") {
+      window.history.replaceState({}, "", buildUrl(locSlug, page, params, data));
+    }
   }, []);
+
   const handleLocationChange = useCallback((locId) => {
     setCurrentLocation(locId);
     try { localStorage.setItem("k9_location", locId); } catch {}
+    const loc = K9_LOCATIONS.find(l => l.id === locId);
+    const slug = loc ? loc.slug : locId;
+    if (locId === "enterprise") {
+      setPage("enterprise-locations"); setParams({}); setNavStack([{ page: "enterprise-locations", params: {} }]);
+      window.history.pushState({}, "", `/enterprise/locations`);
+    } else {
+      setPage("dashboard"); setParams({}); setNavStack([{ page: "dashboard", params: {} }]);
+      window.history.pushState({}, "", `/${slug}/dashboard`);
+    }
   }, []);
 
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard","clients","reservations","crm","messages","payments","operations","eod","ops-opening","ops-forms","ops-closing","ai","settings"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard","clients","reservations","crm","messages","payments","operations","eod","ops-opening","ops-forms","ops-closing","ai","settings","enterprise-locations","enterprise-operations"]), []);
   const nav = useCallback((pg, prms = {}) => {
     setPage(pg); setParams(prms); setMobileMenuOpen(false);
     if (TOP_LEVEL_PAGES.has(pg)) {
@@ -14349,6 +14577,8 @@ export default function App() {
         const evDog = evRes ? (data?.dogs||[]).find(d => d.id === evRes.dogId) : null;
         return evDog ? `Evaluate ${evDog.fields.name}` : "Evaluation Form";
       }
+      case "enterprise-locations": return "Location Management";
+      case "enterprise-operations": return "Operations Oversight";
       default: return pg;
     }
   }, [data]);
@@ -14364,7 +14594,7 @@ export default function App() {
     {id:"ops-pp",label:"PP Checklist",sub:"pp"},
     {id:"ops-closing",label:"Closing",sub:"closing"},
   ];
-  const navSections = [
+  const locationNavSections = [
     { label:null, items:[
       { id:"dashboard",label:"Dashboard",icon:<I.Dashboard/>,hotkey:"1" },
       { id:"reservations",label:"Lodging Calendar",icon:<I.Calendar/>,hotkey:"2" },
@@ -14383,12 +14613,22 @@ export default function App() {
       { id:"settings",label:"Settings",icon:<I.Settings/>,hotkey:"8" },
     ]},
   ];
+  const enterpriseNavSections = [
+    { label:null, items:[
+      { id:"enterprise-locations",label:"Location Management",icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> },
+      { id:"enterprise-operations",label:"Operations Oversight",icon:<I.Clipboard/> },
+    ]},
+  ];
+  const navSections = isEnterprise ? enterpriseNavSections : locationNavSections;
   // Flat list for lookups
   const navItems = navSections.flatMap(s => s.items);
   const isOpsPage = page.startsWith("ops-");
-  const activeNav = isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","crm","messages","payments","settings","ai"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
+  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","crm","messages","payments","settings","ai"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
 
   function renderPage() {
+    // Enterprise pages
+    if (page === "enterprise-locations") return <EnterpriseLocationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange} addGlobalToast={addGlobalToast}/>;
+    if (page === "enterprise-operations") return <EnterpriseOperationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange}/>;
     if (isOpsPage) {
       const oc = opsChildren.find(c => c.id === page);
       return <DailyOpsPage data={data} save={save} sub={oc ? oc.sub : "opening"} nav={nav} profile={profile}/>;
@@ -14483,7 +14723,7 @@ export default function App() {
 
       {/* Mobile Header */}
       <div className="mob-h" style={{display:"none",position:"fixed",top:0,left:0,right:0,height:56,background:C.pri,alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}><button onClick={()=>setMobileMenuOpen(!mobileMenuOpen)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",padding:4}}><I.Menu/></button><div><span style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</span><div style={{fontSize:9,color:"rgba(175,141,84,0.6)",letterSpacing:"0.05em",textTransform:"uppercase"}}>{(K9_LOCATIONS.find(l=>l.id===currentLocation)||{}).name}</div></div></div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}><button onClick={()=>setMobileMenuOpen(!mobileMenuOpen)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",padding:4}}><I.Menu/></button><div><span style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</span><div style={{fontSize:9,color:"rgba(175,141,84,0.6)",letterSpacing:"0.05em",textTransform:"uppercase"}}>{(K9_LOCATIONS.find(l=>l.id===currentLocation)||K9_LOCATIONS[1]).name}</div></div></div>
         <K9LogoMini size={28}/>
       </div>
 
@@ -14498,7 +14738,7 @@ export default function App() {
                 <React.Fragment key={i}>
                   {i > 0 && <span style={{color:C.border,fontSize:11,userSelect:"none"}}>›</span>}
                   {i < navStack.length - 1 ? (
-                    <span onClick={() => { setPage(entry.page); setParams(entry.params); setNavStack(s => s.slice(0, i + 1)); }}
+                    <span onClick={() => { setPage(entry.page); setParams(entry.params); setNavStack(s => s.slice(0, i + 1)); const url = buildUrl(locSlug, entry.page, entry.params, data); if (window.location.pathname !== url) window.history.pushState({}, "", url); }}
                       style={{cursor:"pointer",color:C.pri,fontWeight:500,padding:"2px 6px",borderRadius:6,transition:"background 0.15s"}}
                       onMouseEnter={e=>e.currentTarget.style.background=C.priLt}
                       onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
