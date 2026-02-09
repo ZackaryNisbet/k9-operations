@@ -3516,24 +3516,24 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                     const dateStr = `${calYear}-${m}-${d}`;
                     const isSelected = dateStr === viewDate;
                     const isTodayCell = dateStr === td;
-                    // count reservations for this date
-                    const hasRes = data.reservations.some(r => r.checkIn === dateStr || r.checkOut === dateStr || (r.checkIn <= dateStr && r.checkOut >= dateStr));
+                    // count total dogs on-site for this date
+                    const resCount = data.reservations.filter(r => r.status !== "cancelled" && r.checkIn <= dateStr && r.checkOut >= dateStr).length;
                     return (
                       <button key={i} onClick={() => calSelect(day)}
                         style={{
-                          width: 34, height: 34, borderRadius: 10, border: isSelected ? `2px solid ${C.pri}` : isTodayCell ? `2px solid ${C.acc}` : "2px solid transparent",
+                          width: 34, height: 38, borderRadius: 10, border: isSelected ? `2px solid ${C.pri}` : isTodayCell ? `2px solid ${C.acc}` : "2px solid transparent",
                           background: isSelected ? C.pri : "transparent",
                           color: isSelected ? "#fff" : isTodayCell ? C.acc : C.text,
                           fontSize: 13, fontWeight: isSelected || isTodayCell ? 700 : 500,
                           cursor: "pointer", fontFamily: "inherit", padding: 0,
                           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", margin: "0 auto",
-                          transition: "all 0.1s",
+                          transition: "all 0.1s", gap: 0, lineHeight: 1,
                         }}
                         onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = C.surfaceHover; }}
                         onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
                       >
                         {day}
-                        {hasRes && !isSelected && <div style={{ width: 4, height: 4, borderRadius: 2, background: C.pri, marginTop: 1 }} />}
+                        {resCount > 0 && <span style={{ fontSize: 8, fontWeight: 600, color: isSelected ? "rgba(255,255,255,0.7)" : C.textMut, lineHeight: 1, marginTop: 1 }}>{resCount}</span>}
                       </button>
                     );
                   })}
