@@ -1153,10 +1153,10 @@ const DEF_AGREEMENTS = [
 
 // Default dog tag definitions
 const DEF_DOG_TAGS = [
-  { id: "tag_pp", name: "Private Play", colorIdx: 3 },
   { id: "tag_eval", name: "Evaluation", colorIdx: 2 },
   { id: "tag_lp", name: "Large Playgroup", colorIdx: 0 },
   { id: "tag_sp", name: "Small Playgroup", colorIdx: 1 },
+  { id: "tag_pp", name: "Private Play", colorIdx: 3 },
 ];
 const CLASSIFICATION_TAG_IDS = ["tag_lp", "tag_sp", "tag_pp"];
 
@@ -5999,7 +5999,7 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
         <div style={{ marginBottom: 20 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 8 }}>Dog Tags</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {data.dogTags.map(tag => {
+            {[...data.dogTags].sort((a, b) => a.id === "tag_eval" ? -1 : b.id === "tag_eval" ? 1 : 0).map(tag => {
               const sel = editTags.includes(tag.id);
               const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
               return (
@@ -14096,7 +14096,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
   }, []);
 
   // Dog fields — support multiple dogs
-  const [dogs, setDogs] = useState([{ id: gid(), fields: {}, tags: [] }]);
+  const [dogs, setDogs] = useState([{ id: gid(), fields: {}, tags: ["tag_eval"] }]);
   const [dogErrors, setDogErrors] = useState({});
 
   // Reservation fields
@@ -14175,7 +14175,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
     setDogs(prev => prev.map((d, i) => i === dogIdx ? { ...d, tags: d.tags.includes(tagId) ? d.tags.filter(t => t !== tagId) : [...d.tags, tagId] } : d));
   };
 
-  const addDog = () => setDogs(prev => [...prev, { id: gid(), fields: {}, tags: [] }]);
+  const addDog = () => setDogs(prev => [...prev, { id: gid(), fields: {}, tags: ["tag_eval"] }]);
   const removeDog = (idx) => { if (dogs.length > 1) setDogs(prev => prev.filter((_, i) => i !== idx)); };
 
   // Continue from client to dog+reservation
@@ -14393,13 +14393,17 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                   <div style={{ marginBottom: 14 }}>
                     <div style={{ fontSize: 10, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 6 }}>Tags</div>
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      {data.dogTags.map(tag => {
+                      {[...data.dogTags].sort((a, b) => a.id === "tag_eval" ? -1 : b.id === "tag_eval" ? 1 : 0).map(tag => {
                         const sel = dog.tags.includes(tag.id);
                         const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
+                        const isEval = tag.id === "tag_eval";
                         return (
-                          <button key={tag.id} onClick={() => toggleDogTag(idx, tag.id)} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 6, border: `1.5px solid ${sel ? tc.text : C.border}`, background: sel ? tc.bg : C.surface, color: sel ? tc.text : C.textMut, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-                            {sel && <I.Check />}{tag.name}
-                          </button>
+                          <div key={tag.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                            {isEval && <span style={{ fontSize: 9, fontWeight: 700, color: C.suc, textTransform: "uppercase", letterSpacing: "0.04em" }}>Recommended</span>}
+                            <button onClick={() => toggleDogTag(idx, tag.id)} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 6, border: `1.5px solid ${sel ? tc.text : C.border}`, background: sel ? tc.bg : C.surface, color: sel ? tc.text : C.textMut, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                              {sel && <I.Check />}{tag.name}
+                            </button>
+                          </div>
                         );
                       })}
                     </div>
