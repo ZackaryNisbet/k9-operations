@@ -3242,7 +3242,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     { id: "inhouse", label: "In-House", count: isFiltering ? fInHouse.length : inHouse.length, total: inHouse.length, color: C.suc },
     { id: "goinghome", label: "Going Home", count: isFiltering ? fGoingHome.length : goingHome.length, total: goingHome.length, color: C.acc },
     { id: "checkedout", label: "Checked Out", count: isFiltering ? fCheckedOut.length : checkedOut.length, total: checkedOut.length, color: C.textSec },
-    { id: "activities", label: "Activities", count: filteredActivities.length, total: allActivities.length, color: C.acc },
+    { id: "activities", label: "Activities", count: filteredActivities.filter(r => !r.logEntry?.administered).length, total: allActivities.length, color: C.acc },
   ];
 
   const rawItems = activeTab === "activities" ? [] : activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : fCheckedOut;
