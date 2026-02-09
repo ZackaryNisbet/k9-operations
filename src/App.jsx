@@ -7924,7 +7924,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
   // Boarding + dayboarding reservations that overlap this week
   const weekRes = useMemo(() =>
     data.reservations.filter(r =>
-      (r.type === "boarding" || r.type === "dayboarding") && r.room && r.status !== "checked-out" &&
+      (r.type === "boarding" || r.type === "dayboarding") && r.room && r.status !== "checked-out" && r.status !== "cancelled" &&
       r.checkIn <= weekEnd && r.checkOut >= weekStart
     ), [data.reservations, weekStart, weekEnd]);
 
