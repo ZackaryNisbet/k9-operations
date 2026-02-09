@@ -2127,14 +2127,16 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   const clientEcPhone = client.fields.emergency_phone || "";
 
   // Local state — initialized from careOverrides (if set) else profile
+  const [activeTab, setActiveTab] = useState("overview");
+  const [complianceExpand, setComplianceExpand] = useState(null);
   const [parentDest, setParentDest] = useState(reservation.parentDestination || "");
   const [belongings, setBelongings] = useState(reservation.belongings || "");
   const [checkIn, setCheckIn] = useState(reservation.checkIn);
   const [checkOut, setCheckOut] = useState(reservation.checkOut);
   const [checkInTime, setCheckInTime] = useState(reservation.checkInTime);
   const [checkOutTime, setCheckOutTime] = useState(reservation.checkOutTime);
-  const [feeding, setFeeding] = useState(reservation.careOverrides?.feeding ?? profileFeeding);
-  const [medications, setMedications] = useState(reservation.careOverrides?.medications ?? profileMeds);
+  const [feedingSchedules, setFeedingSchedules] = useState(reservation.careOverrides?.feedingSchedules ?? dog.fields.feedingSchedules ?? []);
+  const [medicationSchedules, setMedicationSchedules] = useState(reservation.careOverrides?.medicationSchedules ?? dog.fields.medicationSchedules ?? []);
   const [bathType, setBathType] = useState(reservation.careOverrides?.bath_type ?? profileBath);
   const [ecName, setEcName] = useState(reservation.emergencyContactOverride?.name ?? clientEcName);
   const [ecPhone, setEcPhone] = useState(reservation.emergencyContactOverride?.phone ?? clientEcPhone);
@@ -2150,8 +2152,10 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   const [discountValue, setDiscountValue] = useState(reservation.discountValue || 0);
 
   const BATH_OPTS = data.bathTypeOptions || ["Standard","Hypo","Medicated","Whitening"];
-  const feedingChanged = feeding !== profileFeeding;
-  const medsChanged = medications !== profileMeds;
+  const profileFeedingSchedules = dog.fields.feedingSchedules ?? [];
+  const profileMedicationSchedules = dog.fields.medicationSchedules ?? [];
+  const feedingChanged = JSON.stringify(feedingSchedules) !== JSON.stringify(profileFeedingSchedules);
+  const medsChanged = JSON.stringify(medicationSchedules) !== JSON.stringify(profileMedicationSchedules);
   const bathChanged = bathType !== profileBath;
   const ecNameChanged = ecName !== clientEcName;
   const ecPhoneChanged = ecPhone !== clientEcPhone;
@@ -2163,7 +2167,12 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     belongings,
     checkIn, checkOut, checkInTime, checkOutTime,
     notes,
-    careOverrides: { feeding, medications, bath_type: bathType },
+    careOverrides: {
+      feedingSchedules, medicationSchedules,
+      bath_type: bathType,
+      feeding: summarizeFeeding(feedingSchedules),
+      medications: summarizeMeds(medicationSchedules)
+    },
     emergencyContactOverride: (ecNameChanged || ecPhoneChanged) ? { name: ecName, phone: ecPhone } : reservation.emergencyContactOverride || null,
     discountType: discountType !== "none" ? discountType : undefined,
     discountValue: discountType !== "none" ? discountValue : undefined,
@@ -2172,8 +2181,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   // Detect profile changes
   const detectChanges = () => {
     const changes = [];
-    if (feedingChanged && feeding !== "") changes.push({ type:"dog", field:"feeding", label:"Feeding Instructions", oldVal:profileFeeding, newVal:feeding });
-    if (medsChanged && medications !== "" && medications !== "None") changes.push({ type:"dog", field:"medications", label:"Medications", oldVal:profileMeds, newVal:medications });
+    if (feedingChanged && feedingSchedules.length > 0) changes.push({ type:"dog", field:"feedingSchedules", label:"Feeding Instructions", oldVal:profileFeedingSchedules, newVal:feedingSchedules, oldLabel:profileFeeding, newLabel:summarizeFeeding(feedingSchedules) });
+    if (medsChanged && medicationSchedules.length > 0) changes.push({ type:"dog", field:"medicationSchedules", label:"Medications", oldVal:profileMedicationSchedules, newVal:medicationSchedules, oldLabel:profileMeds, newLabel:summarizeMeds(medicationSchedules) });
     if (bathChanged && bathType !== "") changes.push({ type:"dog", field:"bath_type", label:"Bathing Preference", oldVal:profileBath, newVal:bathType });
     if (ecNameChanged && ecName !== "") changes.push({ type:"client", field:"emergency_contact", label:"Emergency Contact Name", oldVal:clientEcName, newVal:ecName });
     if (ecPhoneChanged && ecPhone !== "") changes.push({ type:"client", field:"emergency_phone", label:"Emergency Contact Phone", oldVal:clientEcPhone, newVal:ecPhone });
@@ -2272,11 +2281,70 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     </div>
   );
   const errMsg = (field) => errors[field] ? <div style={{color:C.dan,fontSize:12,fontWeight:600,marginTop:4}}>{errors[field]}</div> : null;
+  const tabStyle = (active) => ({
+    padding: "10px 20px",
+    fontSize: 13,
+    fontWeight: 700,
+    color: active ? C.pri : C.textSec,
+    background: active ? C.priLt : "transparent",
+    border: "none",
+    borderBottom: active ? `2px solid ${C.pri}` : "2px solid transparent",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    transition: "all 0.15s",
+  });
+
+  // Build activity matrix
+  const buildActivityMatrix = () => {
+    const days = [];
+    let d = new Date(checkIn + "T12:00:00");
+    const end = new Date(checkOut + "T12:00:00");
+    while (d <= end) {
+      days.push(d.toISOString().split("T")[0]);
+      d = new Date(d.getTime() + 86400000);
+    }
+
+    const rows = [];
+    feedingSchedules.forEach(s => {
+      (s.times || []).forEach(time => {
+        rows.push({
+          label: `Feeding - ${time}`,
+          type: "feeding",
+          detail: [s.amount, s.unit, s.foodType].filter(Boolean).join(" "),
+          instruction: s.instruction || "",
+          notes: s.notes || "",
+          days: days.map(() => true),
+        });
+      });
+    });
+
+    medicationSchedules.forEach(s => {
+      rows.push({
+        label: `Medication - ${s.name}`,
+        type: "medication",
+        detail: [s.time, s.amount, s.unit].filter(Boolean).join(" "),
+        notes: s.notes || "",
+        days: days.map(() => true),
+      });
+    });
+
+    if (bathType) {
+      rows.push({
+        label: "Bathing",
+        type: "bathing",
+        detail: bathType,
+        notes: "",
+        days: days.map((_, i) => i === days.length - 1),
+      });
+    }
+
+    return { days, rows };
+  };
 
   return (
     <Modal title={isCheckInMode ? `Check In: ${dog.fields.name}` : isCheckOutMode ? `Check Out: ${dog.fields.name}` : `${isBoarding ? "Boarding" : "Daycare"} Reservation: ${dog.fields.name}`} onClose={onClose} wide>
       {/* Header info bar */}
-      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:16}}>
         <span style={{fontSize:16,fontWeight:800,color:C.text}}>{dog.fields.name}</span>
         <Badge color="default" size="sm">{dog.fields.breed}</Badge>
         <span style={{fontSize:13,color:C.textSec}}>owned by <strong>{client.fields.first_name} {client.fields.last_name}</strong></span>
@@ -2286,195 +2354,418 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         </div>
       </div>
 
-      {/* Section: Dates */}
-      {secHeader("Reservation Dates")}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12}}>
-        <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn}/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
-        <Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime}/>
-        <div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut}/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
-        <Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/>
+      {/* Tab bar */}
+      <div style={{display:"flex",borderBottom:`1px solid ${C.border}`,marginBottom:16,gap:0}}>
+        <button onClick={()=>setActiveTab("overview")} style={tabStyle(activeTab==="overview")}>Overview</button>
+        <button onClick={()=>setActiveTab("activities")} style={tabStyle(activeTab==="activities")}>Activities</button>
+        <button onClick={()=>setActiveTab("history")} style={tabStyle(activeTab==="history")}>History</button>
       </div>
 
-      {/* Section: Check-In Requirements (boarding only shows required fields) */}
-      {isBoarding && <>
-        {secHeader(isCheckInMode ? "Check-In Requirements" : "Stay Details")}
-        <div style={{padding:"16px 18px",borderRadius:12,border:`1.5px solid ${isCheckInMode?C.acc:C.border}`,background:isCheckInMode?C.accLt+"20":C.bg}}>
-          <Inp label={<>Parent Destination {isCheckInMode && <span style={{color:C.dan}}>*</span>}</>} value={parentDest} onChange={v=>{setParentDest(v);setErrors({...errors,parentDestination:undefined});}} placeholder="Where is the parent going during this stay?"/>
-          {errMsg("parentDestination")}
-          <div style={{marginTop:12}}>
-            <Inp label={<>Belongings from Home {isCheckInMode && <span style={{color:C.dan}}>*</span>}</>} type="textarea" rows={2} value={belongings} onChange={v=>{setBelongings(v);setErrors({...errors,belongings:undefined});}} placeholder="List items brought from home (bed, toys, food, etc.)"/>
-            {errMsg("belongings")}
-          </div>
-        </div>
-      </>}
-
-      {/* Section: Care Instructions */}
-      {secHeader("Care Instructions")}
-      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+      {/* TAB 1: OVERVIEW */}
+      {activeTab === "overview" && (
         <div>
-          <Inp label="Feeding Instructions" type="textarea" rows={2} value={feeding} onChange={setFeeding} placeholder="e.g. 2 cups AM/PM Blue Buffalo"/>
-          {profileHint(profileFeeding, feedingChanged)}
-        </div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <div>
-            <Inp label="Medication Instructions" type="textarea" rows={2} value={medications} onChange={setMedications} placeholder="e.g. Glucosamine 1 tablet daily"/>
-            {profileHint(profileMeds, medsChanged)}
-          </div>
-          <div>
-            <Inp label="Bathing Preference" type="select" value={bathType} onChange={setBathType} options={BATH_OPTS}/>
-            {profileHint(profileBath, bathChanged)}
-          </div>
-        </div>
-      </div>
-
-      {/* Section: Emergency Contact */}
-      {secHeader("Emergency Contact")}
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-        <div>
-          <Inp label="Contact Name" value={ecName} onChange={setEcName} placeholder="Emergency contact name"/>
-          {profileHint(clientEcName, ecNameChanged)}
-        </div>
-        <div>
-          <Inp label="Contact Phone" type="tel" value={ecPhone} onChange={setEcPhone} placeholder="Emergency contact phone"/>
-          {profileHint(clientEcPhone, ecPhoneChanged)}
-        </div>
-      </div>
-
-      {/* Section: Notes */}
-      {secHeader("Notes")}
-      <Inp type="textarea" rows={2} value={notes} onChange={setNotes} placeholder="Special instructions for this stay..."/>
-
-      {/* Section: Discount */}
-      {secHeader("Discount")}
-      <div style={{display:"flex",gap:12,alignItems:"flex-end"}}>
-        <div style={{flex:"0 0 140px"}}>
-          <Inp label="Discount Type" type="select" value={discountType} onChange={v => { setDiscountType(v); if (v === "none") setDiscountValue(0); }} options={["none","percent","flat"]}/>
-        </div>
-        {discountType !== "none" && (
-          <div style={{flex:"0 0 120px"}}>
-            <Inp label={discountType === "percent" ? "Percent Off" : "Amount Off ($)"} type="number" value={discountValue} onChange={v => setDiscountValue(Math.max(0, parseFloat(v) || 0))}/>
-          </div>
-        )}
-        {discountType !== "none" && discountValue > 0 && <div style={{fontSize:12,fontWeight:600,color:C.suc,paddingBottom:10}}>Discount applied</div>}
-      </div>
-
-      {/* Section: Pricing Estimate */}
-      {secHeader("Pricing Estimate")}
-      {(() => {
-        const pr = calcReservationPricing({
-          type: reservation.type || "boarding",
-          roomType: reservation.roomType,
-          checkIn, checkOut, checkInTime, checkOutTime,
-          dogs: [dog], dogProfiles: data.dogs,
-          pricing: data.pricing,
-          isSecondDogSameRoom: false,
-        });
-        // Apply manual discount
-        let adjTotal = pr.total;
-        let manualDiscount = 0;
-        if (discountType === "percent" && discountValue > 0) {
-          manualDiscount = Math.round(pr.total * (discountValue / 100) * 100) / 100;
-        } else if (discountType === "flat" && discountValue > 0) {
-          manualDiscount = Math.min(discountValue, pr.total);
-        }
-        adjTotal = Math.max(0, Math.round((pr.total - manualDiscount) * 100) / 100);
-        const collected = reservation.amountCollected || 0;
-        const outstanding = Math.max(0, adjTotal - collected);
-        const depositRequired = Math.round(adjTotal * 0.5 * 100) / 100;
-        const depositMet = collected >= depositRequired;
-        const fullPaymentMet = collected >= adjTotal;
-        return adjTotal > 0 ? (
-          <div>
-            <ItemizedReceipt pricingResult={pr} />
-            {manualDiscount > 0 && (
-              <div style={{display:"flex",justifyContent:"space-between",padding:"8px 20px",background:C.sucLt,borderRadius:8,marginTop:6,border:`1px solid ${C.suc}25`}}>
-                <span style={{fontSize:13,fontWeight:600,color:C.suc}}>Manual Discount ({discountType === "percent" ? `${discountValue}%` : `$${discountValue.toFixed(2)}`})</span>
-                <span style={{fontSize:13,fontWeight:700,color:C.suc}}>-${manualDiscount.toFixed(2)}</span>
+          {/* Reservation Compliance */}
+          {(() => {
+            const agreements = data.agreements || DEF_AGREEMENTS;
+            const reqAgrs = agreements.filter(a=>a.required!==false);
+            const vaxStatus = getVaxStatus(dog, data.requiredVaccines, data.resortPolicies);
+            const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
+            const allAgrSigned = reqAgrs.every(a=>agrSigned(client,a.id));
+            const CheckItem = ({ok,warn,label,detail,expandKey,children})=>(
+              <div style={{flex:1,minWidth:140}}>
+                <button onClick={()=>setComplianceExpand(prev=>prev===expandKey?null:expandKey)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${ok?C.suc+"60":warn?C.acc+"60":C.dan+"60"}`,background:ok?C.suc+"12":warn?C.acc+"12":C.dan+"12",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <span style={{fontSize:14}}>{ok?"✓":warn?"⚠":"✗"}</span>
+                    <span style={{fontSize:12,fontWeight:700,color:ok?C.suc:warn?C.acc:C.dan}}>{label}</span>
+                    <span style={{fontSize:9,color:C.textMut,marginLeft:"auto"}}>{complianceExpand===expandKey?"▲":"▼"}</span>
+                  </div>
+                  <div style={{fontSize:10,color:C.textSec,marginTop:2}}>{detail}</div>
+                </button>
+                {complianceExpand===expandKey&&children&&<div style={{marginTop:6,padding:"10px 12px",borderRadius:8,border:`1px solid ${C.border}`,background:C.surface}}>{children}</div>}
               </div>
-            )}
-            {manualDiscount > 0 && (
-              <div style={{display:"flex",justifyContent:"space-between",padding:"8px 20px",marginTop:4}}>
-                <span style={{fontSize:15,fontWeight:800,color:C.text}}>Adjusted Total</span>
-                <span style={{fontSize:15,fontWeight:800,color:C.text}}>${adjTotal.toFixed(2)}</span>
+            );
+            return (
+              <div style={{marginBottom:20}}>
+                <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Reservation Compliance</div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <CheckItem ok={vaxStatus.ok} label="Vaccines" expandKey="vax"
+                    detail={vaxStatus.ok?"All up to date":`${[...vaxStatus.expired,...vaxStatus.missing].length} issue${[...vaxStatus.expired,...vaxStatus.missing].length>1?"s":""}`}>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {vaxStatus.ok ? (
+                        <div style={{color:C.suc,fontSize:11}}>All vaccines current</div>
+                      ) : (
+                        <>
+                          {vaxStatus.expired.map(vId=><div key={vId} style={{color:C.dan,fontSize:11}}>• {vId.replace(/_/g," ")} — Expired</div>)}
+                          {vaxStatus.missing.map(vId=><div key={vId} style={{color:C.dan,fontSize:11}}>• {vId.replace(/_/g," ")} — Missing</div>)}
+                        </>
+                      )}
+                      {(data.requiredVaccines||[]).map(vId=>{
+                        const curDate = dog.fields[vId] || "";
+                        return (
+                          <div key={vId+"edit"} style={{marginTop:4,display:"flex",alignItems:"center",gap:6}}>
+                            <span style={{fontSize:11,color:C.textSec,minWidth:120}}>{vId.replace(/_/g," ")}</span>
+                            <input type="date" value={curDate} style={{fontSize:11,padding:"4px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontFamily:"inherit"}}
+                              onChange={async(e)=>{
+                                const newDogs=data.dogs.map(d=>d.id===dog.id?{...d,fields:{...d.fields,[vId]:e.target.value}}:d);
+                                await save({...data,dogs:newDogs});
+                              }}/>
+                            {curDate && <span style={{fontSize:10,color:vaxStatus.expired?.includes(vId)?C.dan:C.suc,fontWeight:600}}>{vaxStatus.expired?.includes(vId)?"Expired":"Valid"}</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CheckItem>
+                  <CheckItem ok={!!(ecName&&ecPhone)} label="Emergency Contact" expandKey="ec"
+                    detail={ecName ? ecName : "Not on file"}>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      <Inp label="Contact Name" value={ecName} onChange={setEcName}/>
+                      <Inp label="Contact Phone" type="tel" value={ecPhone} onChange={setEcPhone}/>
+                    </div>
+                  </CheckItem>
+                  <CheckItem ok={allAgrSigned} label="Agreements" expandKey="agr"
+                    detail={allAgrSigned?"All signed":reqAgrs.filter(a=>!agrSigned(client,a.id)).map(a=>a.name).join(", ")+" unsigned"}>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {reqAgrs.map(agr=>{
+                        const signed = agrSigned(client,agr.id);
+                        const signedData = (client.agreements||{})[agr.id];
+                        return (
+                          <div key={agr.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${C.borderLight}`}}>
+                            <div>
+                              <span style={{fontSize:12,color:C.text,fontWeight:600}}>{agr.name}</span>
+                              {signed && signedData?.date && <span style={{fontSize:10,color:C.suc,marginLeft:8}}>Signed {fmtDate(signedData.date)}</span>}
+                            </div>
+                            {!signed ? (
+                              <Btn size="sm" onClick={async()=>{
+                                const agrs={...(client.agreements||{}),[ agr.id]:{signed:true,date:todayStr()}};
+                                await save({...data,clients:data.clients.map(c=>c.id===client.id?{...c,agreements:agrs}:c)});
+                              }}>Sign Now</Btn>
+                            ) : (
+                              <span style={{fontSize:11,color:C.suc,fontWeight:700}}>✓ Signed</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CheckItem>
+                  <CheckItem ok={ageStatus.ok} warn={ageStatus.grandfathered} label="Dog Age" expandKey="age"
+                    detail={ageStatus.age?`${ageStatus.age}yr${ageStatus.grandfathered?" (Grandfathered)":""}`:ageStatus.ok?"N/A":`${ageStatus.age}yr — ${ageStatus.reason}`}>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      {ageStatus.age ? (
+                        <span style={{color:ageStatus.ok?C.suc:C.dan}}>
+                          {ageStatus.age} years old
+                          {ageStatus.grandfathered&&` (Grandfathered — ${ageStatus.visitCount || 0} visits)`}
+                          {!ageStatus.ok&&!ageStatus.grandfathered&&` — ${ageStatus.reason}`}
+                        </span>
+                      ) : (
+                        <span style={{color:C.textMut}}>Age not set</span>
+                      )}
+                      <div style={{fontSize:10,color:C.textMut,marginTop:4}}>Max age: {(data.resortPolicies||{}).maxDogAge||13} years. Grandfathered after {(data.resortPolicies||{}).grandfatherVisitThreshold||10} visits.</div>
+                    </div>
+                  </CheckItem>
+                </div>
               </div>
-            )}
-            <div style={{display:"flex",gap:12,marginTop:10}}>
-              <div style={{flex:1,padding:"10px 14px",borderRadius:10,background:C.sucLt,border:`1px solid ${C.suc}25`}}>
-                <div style={{fontSize:10,fontWeight:700,color:C.suc,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>Collected</div>
-                <div style={{fontSize:18,fontWeight:800,color:C.suc}}>${collected.toFixed(2)}</div>
-              </div>
-              <div style={{flex:1,padding:"10px 14px",borderRadius:10,background:outstanding>0?C.accLt:`${C.suc}10`,border:`1px solid ${outstanding>0?C.acc:C.suc}25`}}>
-                <div style={{fontSize:10,fontWeight:700,color:outstanding>0?C.acc:C.suc,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{outstanding>0?"Outstanding":"Paid in Full"}</div>
-                <div style={{fontSize:18,fontWeight:800,color:outstanding>0?C.acc:C.suc}}>${outstanding.toFixed(2)}</div>
+            );
+          })()}
+
+          {/* Section: Dates */}
+          {secHeader("Reservation Dates")}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12}}>
+            <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn}/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
+            <Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime}/>
+            <div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut}/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
+            <Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/>
+          </div>
+
+          {/* Section: Check-In Requirements (boarding only) */}
+          {isBoarding && <>
+            {secHeader(isCheckInMode ? "Check-In Requirements" : "Stay Details")}
+            <div style={{padding:"16px 18px",borderRadius:12,border:`1.5px solid ${isCheckInMode?C.acc:C.border}`,background:isCheckInMode?C.accLt+"20":C.bg}}>
+              <Inp label={<>Parent Destination {isCheckInMode && <span style={{color:C.dan}}>*</span>}</>} value={parentDest} onChange={v=>{setParentDest(v);setErrors({...errors,parentDestination:undefined});}} placeholder="Where is the parent going during this stay?"/>
+              {errMsg("parentDestination")}
+              <div style={{marginTop:12}}>
+                <Inp label={<>Belongings from Home {isCheckInMode && <span style={{color:C.dan}}>*</span>}</>} type="textarea" rows={2} value={belongings} onChange={v=>{setBelongings(v);setErrors({...errors,belongings:undefined});}} placeholder="List items brought from home (bed, toys, food, etc.)"/>
+                {errMsg("belongings")}
               </div>
             </div>
-            {isCheckInMode && !depositMet && (
-              <div style={{marginTop:10,padding:"10px 14px",borderRadius:10,background:C.danLt,border:`1.5px solid ${C.dan}30`,display:"flex",alignItems:"center",gap:8}}>
-                <I.AlertTriangle style={{color:C.dan,flexShrink:0}}/>
-                <div style={{fontSize:13,fontWeight:600,color:C.dan}}>50% deposit required to check in. Minimum deposit: ${depositRequired.toFixed(2)}</div>
-              </div>
-            )}
-            {isCheckOutMode && !fullPaymentMet && (
-              <div style={{marginTop:10,padding:"10px 14px",borderRadius:10,background:C.danLt,border:`1.5px solid ${C.dan}30`,display:"flex",alignItems:"center",gap:8}}>
-                <I.AlertTriangle style={{color:C.dan,flexShrink:0}}/>
-                <div style={{fontSize:13,fontWeight:600,color:C.dan}}>Full payment required to check out. Outstanding: ${outstanding.toFixed(2)}</div>
-              </div>
-            )}
-          </div>
-        ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No charge for this reservation.</div>;
-      })()}
+          </>}
 
-      {/* Section: Payment History */}
-      {secHeader("Payment History")}
-      {(() => {
-        const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-        const totalPaid = resPmts.filter(p => p.status === "completed" && p.type !== "refund").reduce((s, p) => s + p.amount, 0);
-        const totalRefunded = resPmts.filter(p => p.type === "refund" || p.status === "refunded").reduce((s, p) => s + p.amount, 0);
-        const statusClr = { completed: C.suc, pending: "#f59e0b", refunded: C.dan, failed: C.dan };
-        const typeClr = { payment: C.pri, deposit: "#0ea5e9", tip: "#ec4899", refund: C.dan };
-        return (
-          <div>
-            {resPmts.length > 0 ? (
-              <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                {resPmts.map(p => (
-                  <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:C.bg,border:`1px solid ${C.border}`}}>
-                    <span style={{padding:"2px 6px",borderRadius:4,fontSize:11,fontWeight:600,background:typeClr[p.type]+"18",color:typeClr[p.type]}}>{p.type}</span>
-                    <span style={{fontSize:14,fontWeight:700,color:C.text}}>${p.amount.toFixed(2)}</span>
-                    <span style={{fontSize:12,color:C.textMut}}>{p.method === "card" ? `Card ····${p.cardLast4||""}` : p.method}</span>
-                    <span style={{fontSize:12,color:C.textMut,marginLeft:"auto"}}>{new Date(p.timestamp).toLocaleDateString()}</span>
-                    <span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:600,background:statusClr[p.status]+"18",color:statusClr[p.status]}}>{p.status}</span>
+          {/* Section: Care Instructions - with structured editors */}
+          {secHeader("Care Instructions")}
+          <div style={{display:"flex",flexDirection:"column",gap:12}}>
+            <div>
+              <FeedingScheduleEditor schedules={feedingSchedules} onChange={setFeedingSchedules} data={data}/>
+              {profileHint(summarizeFeeding(profileFeedingSchedules), feedingChanged)}
+            </div>
+            <div>
+              <MedicationScheduleEditor schedules={medicationSchedules} onChange={setMedicationSchedules} data={data}/>
+              {profileHint(summarizeMeds(profileMedicationSchedules), medsChanged)}
+            </div>
+            <div>
+              <Inp label="Bathing Preference" type="select" value={bathType} onChange={setBathType} options={BATH_OPTS}/>
+              {profileHint(profileBath, bathChanged)}
+            </div>
+          </div>
+
+          {/* Section: Notes */}
+          {secHeader("Notes")}
+          <Inp type="textarea" rows={2} value={notes} onChange={setNotes} placeholder="Special instructions for this stay..."/>
+
+          {/* Section: Discount */}
+          {secHeader("Discount")}
+          <div style={{display:"flex",gap:12,alignItems:"flex-end"}}>
+            <div style={{flex:"0 0 140px"}}>
+              <Inp label="Discount Type" type="select" value={discountType} onChange={v => { setDiscountType(v); if (v === "none") setDiscountValue(0); }} options={["none","percent","flat"]}/>
+            </div>
+            {discountType !== "none" && (
+              <div style={{flex:"0 0 120px"}}>
+                <Inp label={discountType === "percent" ? "Percent Off" : "Amount Off ($)"} type="number" value={discountValue} onChange={v => setDiscountValue(Math.max(0, parseFloat(v) || 0))}/>
+              </div>
+            )}
+            {discountType !== "none" && discountValue > 0 && <div style={{fontSize:12,fontWeight:600,color:C.suc,paddingBottom:10}}>Discount applied</div>}
+          </div>
+
+          {/* Section: Pricing Estimate */}
+          {secHeader("Pricing Estimate")}
+          {(() => {
+            const pr = calcReservationPricing({
+              type: reservation.type || "boarding",
+              roomType: reservation.roomType,
+              checkIn, checkOut, checkInTime, checkOutTime,
+              dogs: [dog], dogProfiles: data.dogs,
+              pricing: data.pricing,
+              isSecondDogSameRoom: false,
+            });
+            let adjTotal = pr.total;
+            let manualDiscount = 0;
+            if (discountType === "percent" && discountValue > 0) {
+              manualDiscount = Math.round(pr.total * (discountValue / 100) * 100) / 100;
+            } else if (discountType === "flat" && discountValue > 0) {
+              manualDiscount = Math.min(discountValue, pr.total);
+            }
+            adjTotal = Math.max(0, Math.round((pr.total - manualDiscount) * 100) / 100);
+            const collected = reservation.amountCollected || 0;
+            const outstanding = Math.max(0, adjTotal - collected);
+            const depositRequired = Math.round(adjTotal * 0.5 * 100) / 100;
+            const depositMet = collected >= depositRequired;
+            const fullPaymentMet = collected >= adjTotal;
+            return adjTotal > 0 ? (
+              <div>
+                <ItemizedReceipt pricingResult={pr} />
+                {manualDiscount > 0 && (
+                  <div style={{display:"flex",justifyContent:"space-between",padding:"8px 20px",background:C.sucLt,borderRadius:8,marginTop:6,border:`1px solid ${C.suc}25`}}>
+                    <span style={{fontSize:13,fontWeight:600,color:C.suc}}>Manual Discount ({discountType === "percent" ? `${discountValue}%` : `$${discountValue.toFixed(2)}`})</span>
+                    <span style={{fontSize:13,fontWeight:700,color:C.suc}}>-${manualDiscount.toFixed(2)}</span>
+                  </div>
+                )}
+                {manualDiscount > 0 && (
+                  <div style={{display:"flex",justifyContent:"space-between",padding:"8px 20px",marginTop:4}}>
+                    <span style={{fontSize:15,fontWeight:800,color:C.text}}>Adjusted Total</span>
+                    <span style={{fontSize:15,fontWeight:800,color:C.text}}>${adjTotal.toFixed(2)}</span>
+                  </div>
+                )}
+                <div style={{display:"flex",gap:12,marginTop:10}}>
+                  <div style={{flex:1,padding:"10px 14px",borderRadius:10,background:C.sucLt,border:`1px solid ${C.suc}25`}}>
+                    <div style={{fontSize:10,fontWeight:700,color:C.suc,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>Collected</div>
+                    <div style={{fontSize:18,fontWeight:800,color:C.suc}}>${collected.toFixed(2)}</div>
+                  </div>
+                  <div style={{flex:1,padding:"10px 14px",borderRadius:10,background:outstanding>0?C.accLt:`${C.suc}10`,border:`1px solid ${outstanding>0?C.acc:C.suc}25`}}>
+                    <div style={{fontSize:10,fontWeight:700,color:outstanding>0?C.acc:C.suc,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{outstanding>0?"Outstanding":"Paid in Full"}</div>
+                    <div style={{fontSize:18,fontWeight:800,color:outstanding>0?C.acc:C.suc}}>${outstanding.toFixed(2)}</div>
+                  </div>
+                </div>
+                {isCheckInMode && !depositMet && (
+                  <div style={{marginTop:10,padding:"10px 14px",borderRadius:10,background:C.danLt,border:`1.5px solid ${C.dan}30`,display:"flex",alignItems:"center",gap:8}}>
+                    <I.AlertTriangle style={{color:C.dan,flexShrink:0}}/>
+                    <div style={{fontSize:13,fontWeight:600,color:C.dan}}>50% deposit required to check in. Minimum deposit: ${depositRequired.toFixed(2)}</div>
+                  </div>
+                )}
+                {isCheckOutMode && !fullPaymentMet && (
+                  <div style={{marginTop:10,padding:"10px 14px",borderRadius:10,background:C.danLt,border:`1.5px solid ${C.dan}30`,display:"flex",alignItems:"center",gap:8}}>
+                    <I.AlertTriangle style={{color:C.dan,flexShrink:0}}/>
+                    <div style={{fontSize:13,fontWeight:600,color:C.dan}}>Full payment required to check out. Outstanding: ${outstanding.toFixed(2)}</div>
+                  </div>
+                )}
+              </div>
+            ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No charge for this reservation.</div>;
+          })()}
+
+          {/* Section: Payment History */}
+          {secHeader("Payment History")}
+          {(() => {
+            const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            const totalPaid = resPmts.filter(p => p.status === "completed" && p.type !== "refund").reduce((s, p) => s + p.amount, 0);
+            const totalRefunded = resPmts.filter(p => p.type === "refund" || p.status === "refunded").reduce((s, p) => s + p.amount, 0);
+            const statusClr = { completed: C.suc, pending: "#f59e0b", refunded: C.dan, failed: C.dan };
+            const typeClr = { payment: C.pri, deposit: "#0ea5e9", tip: "#ec4899", refund: C.dan };
+            return (
+              <div>
+                {resPmts.length > 0 ? (
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {resPmts.map(p => (
+                      <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:C.bg,border:`1px solid ${C.border}`}}>
+                        <span style={{padding:"2px 6px",borderRadius:4,fontSize:11,fontWeight:600,background:typeClr[p.type]+"18",color:typeClr[p.type]}}>{p.type}</span>
+                        <span style={{fontSize:14,fontWeight:700,color:C.text}}>${p.amount.toFixed(2)}</span>
+                        <span style={{fontSize:12,color:C.textMut}}>{p.method === "card" ? `Card ····${p.cardLast4||""}` : p.method}</span>
+                        <span style={{fontSize:12,color:C.textMut,marginLeft:"auto"}}>{new Date(p.timestamp).toLocaleDateString()}</span>
+                        <span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:600,background:statusClr[p.status]+"18",color:statusClr[p.status]}}>{p.status}</span>
+                      </div>
+                    ))}
+                    {totalRefunded > 0 && <div style={{fontSize:12,color:C.dan,marginTop:4}}>Refunded: ${totalRefunded.toFixed(2)}</div>}
+                  </div>
+                ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No payments recorded</div>}
+                <div style={{display:"flex",gap:8,marginTop:10}}>
+                  <button onClick={()=>{
+                    if (isCheckInMode) {
+                      const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
+                      let adjT = pr.total;
+                      if (discountType === "percent" && discountValue > 0) adjT = Math.max(0, adjT - Math.round(adjT * (discountValue / 100) * 100) / 100);
+                      else if (discountType === "flat" && discountValue > 0) adjT = Math.max(0, adjT - Math.min(discountValue, adjT));
+                      const depAmt = Math.max(0, Math.round(adjT * 0.5 * 100) / 100 - (reservation.amountCollected || 0));
+                      setPayFormDefaults({ amount: depAmt > 0 ? depAmt.toFixed(2) : "", type: "deposit" });
+                    } else if (isCheckOutMode) {
+                      const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
+                      let adjT = pr.total;
+                      if (discountType === "percent" && discountValue > 0) adjT = Math.max(0, adjT - Math.round(adjT * (discountValue / 100) * 100) / 100);
+                      else if (discountType === "flat" && discountValue > 0) adjT = Math.max(0, adjT - Math.min(discountValue, adjT));
+                      const outst = Math.max(0, adjT - (reservation.amountCollected || 0));
+                      setPayFormDefaults({ amount: outst > 0 ? outst.toFixed(2) : "", type: "payment" });
+                    } else {
+                      setPayFormDefaults(null);
+                    }
+                    setShowPayForm(true);
+                  }} style={{padding:"7px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><I.DollarSign/> {isCheckInMode ? "Collect Deposit" : isCheckOutMode ? "Collect Balance" : "Collect Payment"}</button>
+                  {totalPaid > 0 && <button onClick={()=>{setPayFormDefaults({ type: "refund" });setShowPayForm(true);}} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${C.dan}30`,background:"transparent",color:C.dan,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><I.RefreshCw/> Issue Refund</button>}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {/* TAB 2: ACTIVITIES */}
+      {activeTab === "activities" && (
+        <div>
+          {secHeader("Daily Activities")}
+          {(() => {
+            const { days, rows } = buildActivityMatrix();
+            if (days.length === 0) return <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No activities scheduled</div>;
+            if (rows.length === 0) return <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No feeding, medication, or bathing scheduled</div>;
+
+            const shouldTranspose = days.length > 5;
+
+            if (shouldTranspose) {
+              // Days as rows, activities as columns
+              return (
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                    <thead>
+                      <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                        <th style={{padding:"8px 12px",textAlign:"left",fontWeight:700,color:C.text}}>Date</th>
+                        {rows.map((r,i) => (
+                          <th key={i} style={{padding:"8px 12px",textAlign:"center",fontWeight:700,color:C.text}}>{r.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {days.map((day,di) => (
+                        <tr key={day} style={{borderBottom:`1px solid ${C.borderLight}`}}>
+                          <td style={{padding:"8px 12px",fontWeight:600,color:C.pri}}>{new Date(day + "T00:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</td>
+                          {rows.map((r,ri) => (
+                            <td key={ri} style={{padding:"8px 12px",textAlign:"center",color:r.days[di]?C.text:C.textMut,background:r.days[di]?C.surface:"transparent"}}>
+                              {r.days[di] ? (
+                                <div style={{fontSize:11}}>
+                                  {r.detail && <div style={{fontWeight:600}}>{r.detail}</div>}
+                                  {r.instruction && <div style={{fontSize:10,color:C.textSec}}>{r.instruction}</div>}
+                                  {r.notes && <div style={{fontSize:10,fontStyle:"italic",color:C.textMut}}>{r.notes}</div>}
+                                </div>
+                              ) : "—"}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            } else {
+              // Activities as rows, days as columns
+              return (
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                    <thead>
+                      <tr style={{borderBottom:`1px solid ${C.border}`}}>
+                        <th style={{padding:"8px 12px",textAlign:"left",fontWeight:700,color:C.text}}>Activity</th>
+                        {days.map((day,di) => (
+                          <th key={day} style={{padding:"8px 12px",textAlign:"center",fontWeight:700,color:C.text}}>{new Date(day + "T00:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((r,ri) => (
+                        <tr key={ri} style={{borderBottom:`1px solid ${C.borderLight}`}}>
+                          <td style={{padding:"8px 12px",fontWeight:600,color:C.text}}>{r.label}</td>
+                          {r.days.map((active,di) => (
+                            <td key={di} style={{padding:"8px 12px",textAlign:"center",color:active?C.text:C.textMut,background:active?C.surface:"transparent"}}>
+                              {active ? (
+                                <div style={{fontSize:11}}>
+                                  {r.detail && <div style={{fontWeight:600}}>{r.detail}</div>}
+                                  {r.instruction && <div style={{fontSize:10,color:C.textSec}}>{r.instruction}</div>}
+                                  {r.notes && <div style={{fontSize:10,fontStyle:"italic",color:C.textMut}}>{r.notes}</div>}
+                                </div>
+                              ) : "—"}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            }
+          })()}
+        </div>
+      )}
+
+      {/* TAB 3: HISTORY */}
+      {activeTab === "history" && (
+        <div>
+          {secHeader("Reservation History")}
+          {(() => {
+            const logs = (data.auditLog || []).filter(l => l.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            return logs.length > 0 ? (
+              <div style={{maxHeight:400,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
+                {logs.map(log => (
+                  <div key={log.id} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.borderLight}`,fontSize:12}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:log.details.length>0?6:0}}>
+                      <span style={{fontWeight:700,color:C.pri}}>{log.userName}</span>
+                      <span style={{fontWeight:600,color:C.text}}>{log.action}</span>
+                      <span style={{marginLeft:"auto",color:C.textMut,fontSize:11,fontVariantNumeric:"tabular-nums"}}>{new Date(log.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true})}</span>
+                    </div>
+                    {log.details.length > 0 && (
+                      <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                        {log.details.map((d, di) => (
+                          <div key={di} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,paddingLeft:4}}>
+                            <span style={{color:C.textMut,fontWeight:500,minWidth:90}}>{d.field}</span>
+                            {d.oldVal != null && d.oldVal !== "" && (
+                              <span style={{color:C.dan,textDecoration:"line-through",opacity:0.7}}>{d.oldVal}</span>
+                            )}
+                            {d.oldVal != null && d.oldVal !== "" && d.newVal != null && d.newVal !== "" && (
+                              <span style={{color:C.textMut}}>→</span>
+                            )}
+                            {d.newVal != null && d.newVal !== "" && (
+                              <span style={{color:C.suc,fontWeight:600}}>{d.newVal}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
-                {totalRefunded > 0 && <div style={{fontSize:12,color:C.dan,marginTop:4}}>Refunded: ${totalRefunded.toFixed(2)}</div>}
               </div>
-            ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No payments recorded</div>}
-            <div style={{display:"flex",gap:8,marginTop:10}}>
-              <button onClick={()=>{
-                // For check-in: default to 50% deposit
-                if (isCheckInMode) {
-                  const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
-                  let adjT = pr.total;
-                  if (discountType === "percent" && discountValue > 0) adjT = Math.max(0, adjT - Math.round(adjT * (discountValue / 100) * 100) / 100);
-                  else if (discountType === "flat" && discountValue > 0) adjT = Math.max(0, adjT - Math.min(discountValue, adjT));
-                  const depAmt = Math.max(0, Math.round(adjT * 0.5 * 100) / 100 - (reservation.amountCollected || 0));
-                  setPayFormDefaults({ amount: depAmt > 0 ? depAmt.toFixed(2) : "", type: "deposit" });
-                } else if (isCheckOutMode) {
-                  const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
-                  let adjT = pr.total;
-                  if (discountType === "percent" && discountValue > 0) adjT = Math.max(0, adjT - Math.round(adjT * (discountValue / 100) * 100) / 100);
-                  else if (discountType === "flat" && discountValue > 0) adjT = Math.max(0, adjT - Math.min(discountValue, adjT));
-                  const outst = Math.max(0, adjT - (reservation.amountCollected || 0));
-                  setPayFormDefaults({ amount: outst > 0 ? outst.toFixed(2) : "", type: "payment" });
-                } else {
-                  setPayFormDefaults(null);
-                }
-                setShowPayForm(true);
-              }} style={{padding:"7px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><I.DollarSign/> {isCheckInMode ? "Collect Deposit" : isCheckOutMode ? "Collect Balance" : "Collect Payment"}</button>
-              {totalPaid > 0 && <button onClick={()=>{setPayFormDefaults({ type: "refund" });setShowPayForm(true);}} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${C.dan}30`,background:"transparent",color:C.dan,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><I.RefreshCw/> Issue Refund</button>}
-            </div>
-          </div>
-        );
-      })()}
+            ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No history recorded yet</div>;
+          })()}
+        </div>
+      )}
 
       {/* Payment Form Modal */}
       {showPayForm && (
@@ -2496,43 +2787,6 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           }}
         />
       )}
-
-      {/* Section: Reservation History / Audit Log */}
-      {secHeader("Reservation History")}
-      {(() => {
-        const logs = (data.auditLog || []).filter(l => l.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-        return logs.length > 0 ? (
-          <div style={{maxHeight:280,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
-            {logs.map(log => (
-              <div key={log.id} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.borderLight}`,fontSize:12}}>
-                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:log.details.length>0?6:0}}>
-                  <span style={{fontWeight:700,color:C.pri}}>{log.userName}</span>
-                  <span style={{fontWeight:600,color:C.text}}>{log.action}</span>
-                  <span style={{marginLeft:"auto",color:C.textMut,fontSize:11,fontVariantNumeric:"tabular-nums"}}>{new Date(log.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true})}</span>
-                </div>
-                {log.details.length > 0 && (
-                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                    {log.details.map((d, di) => (
-                      <div key={di} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,paddingLeft:4}}>
-                        <span style={{color:C.textMut,fontWeight:500,minWidth:90}}>{d.field}</span>
-                        {d.oldVal != null && d.oldVal !== "" && (
-                          <span style={{color:C.dan,textDecoration:"line-through",opacity:0.7}}>{d.oldVal}</span>
-                        )}
-                        {d.oldVal != null && d.oldVal !== "" && d.newVal != null && d.newVal !== "" && (
-                          <span style={{color:C.textMut}}>→</span>
-                        )}
-                        {d.newVal != null && d.newVal !== "" && (
-                          <span style={{color:C.suc,fontWeight:600}}>{d.newVal}</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No history recorded yet</div>;
-      })()}
 
       {/* Footer */}
       {errors.deposit && <div style={{color:C.dan,fontSize:13,fontWeight:600,marginTop:8,padding:"8px 14px",background:C.danLt,borderRadius:8}}>{errors.deposit}</div>}
@@ -5421,7 +5675,15 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   // Auto-select recommended room when room type or dates change
   useEffect(() => {
     const rec = roomScored.find(r => r.recommended);
-    if (rec && !selectedRoom) setSelectedRoom(rec.room);
+    if (rec) {
+      // Always select recommended room if current selection is empty or not available
+      const currentStillAvail = selectedRoom && roomScored.some(r => r.room === selectedRoom && !r.booked);
+      if (!currentStillAvail) setSelectedRoom(rec.room);
+    } else if (roomScored.length > 0 && !roomScored.some(r => r.room === selectedRoom && !r.booked)) {
+      // Current room no longer available and no recommended — pick first available
+      const firstAvail = roomScored.find(r => !r.booked);
+      setSelectedRoom(firstAvail ? firstAvail.room : "");
+    }
   }, [roomScored]);
 
   const [showRoomGuide, setShowRoomGuide] = useState(false);
@@ -11176,7 +11438,7 @@ function NewOverlay({ data, nav, onClose }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // UNIFIED NEW PAGE (Client + Dog + Reservation — all in one)
 // ═══════════════════════════════════════════════════════════════════════════
-function UnifiedNewPage({ data, save, nav, prefill }) {
+function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
   // Phase tracking: "client" → "dog" → "reservation"
   const [phase, setPhase] = useState("client");
 
@@ -11225,6 +11487,7 @@ function UnifiedNewPage({ data, save, nav, prefill }) {
   const [resErrors, setResErrors] = useState({});
   const [selectedRoom, setSelectedRoom] = useState("");
   const [showBookedRooms, setShowBookedRooms] = useState(false);
+  const [complianceExpand, setComplianceExpand] = useState(null);
 
   const BATH_OPTS = data.bathTypeOptions || DEF_BATH_TYPE_OPTIONS;
 
@@ -11364,7 +11627,7 @@ function UnifiedNewPage({ data, save, nav, prefill }) {
       });
       return {
         id: gid(), clientId: newClient.id, dogId: did, type,
-        ...(type === "boarding" ? { roomType, ...(selectedRoom ? { room: selectedRoom } : {}) } : {}),
+        ...((type === "boarding" || type === "dayboarding") ? { roomType, ...(selectedRoom ? { room: selectedRoom } : {}) } : {}),
         ...(type === "daycare" ? { daycareSize: autoDaycareSize } : {}),
         ...(type === "evaluation" ? { evalResult: "pending" } : {}),
         checkIn, checkOut: type === "boarding" ? checkOut : checkIn,
@@ -11374,13 +11637,41 @@ function UnifiedNewPage({ data, save, nav, prefill }) {
       };
     });
 
+    const createAudits = newReservations.map(r => buildAuditEntry(r.id, "Reservation Created", [{field:"Type",oldVal:"",newVal:r.type},{field:"Dates",oldVal:"",newVal:`${r.checkIn} → ${r.checkOut}`},{field:"Status",oldVal:"",newVal:"Upcoming"}], profile));
     await save({
       ...data,
       clients: [...data.clients, newClient],
       dogs: [...data.dogs, ...newDogs],
       reservations: [...data.reservations, ...newReservations],
+      auditLog: [...(data.auditLog || []), ...createAudits],
+    });
+    nav("dashboard");
+    if (addGlobalToast) addGlobalToast({ message: "Client & Reservation Created", actionLabel: "View Reservation", onAction: () => nav("client-detail", { clientId: newClient.id, openReservation: newReservations[0]?.id }) });
+  };
+
+  // Create client + dogs only (skip reservation)
+  const handleCreateClientOnly = async () => {
+    // Validate client fields
+    const cErrs = {};
+    data.clientFields.forEach(f => { if (f.required && !clientFields[f.id]) cErrs[f.id] = "Required"; });
+    if (Object.keys(cErrs).length > 0) { setClientErrors(cErrs); return; }
+    // Validate dogs
+    const dErrs = {};
+    dogs.forEach((dog, i) => {
+      data.dogFields.forEach(f => { if (f.required && !dog.fields[f.id]) dErrs[`${i}_${f.id}`] = "Required"; });
+    });
+    if (Object.keys(dErrs).length > 0) { setDogErrors(dErrs); return; }
+    // Create client
+    const newClient = { id: gid(), fields: { ...clientFields, phone: (clientFields.phone || "").replace(/\D/g, "") }, createdAt: todayStr(), agreements: {} };
+    // Create dogs
+    const newDogs = dogs.map(d => ({ id: d.id, clientId: newClient.id, fields: { ...d.fields }, tags: d.tags }));
+    await save({
+      ...data,
+      clients: [...data.clients, newClient],
+      dogs: [...data.dogs, ...newDogs],
     });
     nav("client-detail", { clientId: newClient.id });
+    if (addGlobalToast) addGlobalToast({ message: "Client Profile Created", actionLabel: "View Profile", onAction: () => nav("client-detail", { clientId: newClient.id }) });
   };
 
   const sectionStyle = (num, title, active) => ({
@@ -11546,6 +11837,116 @@ function UnifiedNewPage({ data, save, nav, prefill }) {
                 )}
               </div>
             )}
+            {/* Reservation Compliance for new clients */}
+            {dogs.length > 0 && (() => {
+              const vaxResults = dogs.map(dog => ({ dog, status: getVaxStatus(dog, data.requiredVaccines, data.resortPolicies) }));
+              const allVaxOk = vaxResults.every(v => v.status.ok);
+              const hasEmergency = !!(clientFields.emergency_contact && clientFields.emergency_phone);
+              const agreements = data.agreements || DEF_AGREEMENTS;
+              const reqAgrs = agreements.filter(a => a.required !== false);
+              // New clients have no signed agreements
+              const allAgrSigned = false;
+              const ageResults = dogs.map(dog => ({ dog, status: getDogAgeCompliance(dog, data.resortPolicies, data.reservations) }));
+              const allAgeOk = ageResults.every(a => a.status.ok);
+              const CheckItem = ({ ok, warn, label, detail, expandKey, children }) => (
+                <div style={{ flex: 1, minWidth: 140 }}>
+                  <button onClick={() => setComplianceExpand(prev => prev === expandKey ? null : expandKey)} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${ok ? C.suc + "60" : warn ? C.acc + "60" : C.dan + "60"}`, background: ok ? C.suc + "12" : warn ? C.acc + "12" : C.dan + "12", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 14 }}>{ok ? "✓" : warn ? "⚠" : "✗"}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: ok ? C.suc : warn ? C.acc : C.dan }}>{label}</span>
+                      <span style={{ fontSize: 9, color: C.textMut, marginLeft: "auto" }}>{complianceExpand === expandKey ? "▲" : "▼"}</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: C.textSec, marginTop: 2 }}>{detail}</div>
+                  </button>
+                  {complianceExpand === expandKey && children && <div style={{ marginTop: 6, padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface }}>{children}</div>}
+                </div>
+              );
+              return (
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8, letterSpacing: "0.03em", textTransform: "uppercase" }}>Reservation Compliance</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <CheckItem ok={allVaxOk} label="Vaccines" expandKey="vax"
+                      detail={allVaxOk ? "All up to date" : vaxResults.filter(v => !v.status.ok).map(v => `${v.dog.fields.name || "Dog"}: ${[...v.status.expired, ...v.status.missing].length} issue${[...v.status.expired, ...v.status.missing].length > 1 ? "s" : ""}`).join(", ")}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {vaxResults.map((v, vi) => (
+                          <div key={vi} style={{ fontSize: 12 }}>
+                            <div style={{ fontWeight: 700, color: C.text, marginBottom: 4 }}>{v.dog.fields.name || `Dog ${vi + 1}`}</div>
+                            {v.status.ok ? (
+                              <div style={{ color: C.suc, fontSize: 11 }}>All vaccines current</div>
+                            ) : (
+                              <>
+                                {v.status.expired.map(vId => <div key={vId} style={{ color: C.dan, fontSize: 11 }}>• {vId.replace(/_/g, " ")} — Expired</div>)}
+                                {v.status.missing.map(vId => <div key={vId} style={{ color: C.dan, fontSize: 11 }}>• {vId.replace(/_/g, " ")} — Missing</div>)}
+                              </>
+                            )}
+                            {(data.requiredVaccines || []).map(vId => {
+                              const curDate = v.dog.fields[vId] || "";
+                              return (
+                                <div key={vId + "edit"} style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                                  <span style={{ fontSize: 11, color: C.textSec, minWidth: 120 }}>{vId.replace(/_/g, " ")}</span>
+                                  <input type="date" value={curDate} style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.border}`, fontFamily: "inherit" }}
+                                    onChange={(e) => {
+                                      const newDogs = [...dogs];
+                                      const idx = newDogs.findIndex(d => d.id === v.dog.id);
+                                      if (idx >= 0) { newDogs[idx] = { ...newDogs[idx], fields: { ...newDogs[idx].fields, [vId]: e.target.value } }; setDogs(newDogs); }
+                                    }} />
+                                  {curDate && <span style={{ fontSize: 10, color: v.status.expired?.includes(vId) ? C.dan : C.suc, fontWeight: 600 }}>{v.status.expired?.includes(vId) ? "Expired" : "Valid"}</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    </CheckItem>
+                    <CheckItem ok={hasEmergency} label="Emergency Contact" expandKey="ec"
+                      detail={hasEmergency ? clientFields.emergency_contact : "Not provided"}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <Inp label="Emergency Contact Name" value={clientFields.emergency_contact || ""} onChange={v => setClientFields({ ...clientFields, emergency_contact: v })} />
+                        <Inp label="Emergency Phone" type="tel" value={clientFields.emergency_phone || ""} onChange={v => setClientFields({ ...clientFields, emergency_phone: v })} />
+                      </div>
+                    </CheckItem>
+                    <CheckItem ok={allAgrSigned} label="Agreements" expandKey="agr"
+                      detail={reqAgrs.length > 0 ? `${reqAgrs.length} unsigned (new client)` : "None required"}>
+                      <div style={{ fontSize: 12, color: C.textMut }}>
+                        {reqAgrs.length > 0 ? (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            {reqAgrs.map(agr => (
+                              <div key={agr.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0" }}>
+                                <span style={{ color: C.dan, fontSize: 12 }}>✗</span>
+                                <span style={{ fontWeight: 600 }}>{agr.name}</span>
+                                <span style={{ fontSize: 11, color: C.textMut }}>— Will need to sign after profile creation</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : "No agreements configured"}
+                      </div>
+                    </CheckItem>
+                    <CheckItem ok={allAgeOk} warn={ageResults.some(a => a.status.grandfathered)} label="Dog Age" expandKey="age"
+                      detail={ageResults.every(a => !a.status.age || a.status.ok)
+                        ? ageResults.map(a => a.status.age ? `${a.dog.fields.name || "Dog"}: ${a.status.age}yr` : null).filter(Boolean).join(", ") || "N/A"
+                        : ageResults.filter(a => !a.status.ok).map(a => `${a.dog.fields.name || "Dog"}: ${a.status.age}yr — ${a.status.reason}`).join(", ")}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {ageResults.map((a, ai) => (
+                          <div key={ai} style={{ fontSize: 12 }}>
+                            <span style={{ fontWeight: 700, color: C.text }}>{a.dog.fields.name || `Dog ${ai + 1}`}</span>
+                            {a.status.age ? (
+                              <span style={{ color: a.status.ok ? C.suc : C.dan, marginLeft: 8 }}>
+                                {a.status.age} years old
+                                {!a.status.ok && !a.status.grandfathered && ` — ${a.status.reason}`}
+                              </span>
+                            ) : (
+                              <span style={{ color: C.textMut, marginLeft: 8 }}>Age not set</span>
+                            )}
+                          </div>
+                        ))}
+                        <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>Max age: {(data.resortPolicies || {}).maxDogAge || 13} years.</div>
+                      </div>
+                    </CheckItem>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Daycare size is auto-derived from the dog's weight/override classification */}
             <div style={{ marginBottom: 16 }}><Inp label="General Notes" type="textarea" value={notes} onChange={setNotes} placeholder="Special instructions for this stay..." /></div>
 
@@ -11559,6 +11960,7 @@ function UnifiedNewPage({ data, save, nav, prefill }) {
             {/* Submit */}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 8 }}>
               <Btn variant="secondary" onClick={() => nav("dashboard")}>Cancel</Btn>
+              <Btn variant="secondary" onClick={handleCreateClientOnly}>Create Profile & Skip Reservation</Btn>
               <Btn onClick={handleCreateAll}>Create Client, Dog{dogs.length > 1 ? "s" : ""} & Reservation</Btn>
             </div>
           </div>
@@ -13336,7 +13738,7 @@ export default function App() {
       case "new-dog": return hp("create_dog") ? <NewDogPage data={data} save={save} clientId={params.clientId} nav={nav}/> : denied;
       case "reservations": return hp("view_calendar") ? <LodgingCalendarPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/> : denied;
       case "new-reservation": return hp("create_reservation") ? <NewReservationPage data={data} save={save} preClientId={params.clientId} nav={nav} profile={profile} addGlobalToast={addGlobalToast}/> : denied;
-      case "unified-new": return <UnifiedNewPage data={data} save={save} nav={nav} prefill={params.prefill}/>;
+      case "unified-new": return <UnifiedNewPage data={data} save={save} nav={nav} prefill={params.prefill} profile={profile} addGlobalToast={addGlobalToast}/>;
       case "evaluation-form": return hp("edit_evaluations") ? <EvaluationFormPage data={data} save={save} reservationId={params.reservationId} nav={nav} profile={profile}/> : denied;
       case "eod": return hp("view_eod") ? <EODPage data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "crm": return hp("view_crm") ? <CRMPage data={data} save={save} nav={nav} profile={profile}/> : denied;
