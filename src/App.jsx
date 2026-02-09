@@ -4208,33 +4208,65 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                 });
               });
               if (results.length === 0) return <div style={{padding:20,textAlign:"center",color:C.textMut,fontSize:13}}>No dogs found matching "{dcSearch}"</div>;
-              return results.slice(0, 10).map((r, i) => (
+              return results.slice(0, 10).map((r, i) => {
+                const dog = data.dogs.find(d=>d.id===r.dogId);
+                const client = data.clients.find(c=>c.id===r.clientId);
+                const vaxStatus = getVaxStatus(dog, data.requiredVaccines, data.resortPolicies);
+                const ecOk = !!(client?.fields?.emergency_contact?.trim() && client?.fields?.emergency_phone?.trim());
+                const agreements = data.agreements || DEF_AGREEMENTS;
+                const reqAgrs = agreements.filter(a=>a.required!==false);
+                const agrOk = reqAgrs.every(a=>agrSigned(client,a.id));
+                const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
+                const allGreen = vaxStatus.ok && ecOk && agrOk && ageStatus.ok;
+                const checks = [
+                  { ok: vaxStatus.ok, label: "Vaccines", detail: vaxStatus.ok ? "Up to date" : `${[...(vaxStatus.expired||[]),...(vaxStatus.missing||[])].length} issue(s)` },
+                  { ok: ecOk, label: "Emergency Contact", detail: ecOk ? client.fields.emergency_contact : "Missing" },
+                  { ok: agrOk, label: "Agreements", detail: agrOk ? "All signed" : `${reqAgrs.filter(a=>!agrSigned(client,a.id)).length} unsigned` },
+                  { ok: ageStatus.ok, warn: ageStatus.grandfathered, label: "Dog Age", detail: ageStatus.ok ? (ageStatus.age ? `${ageStatus.age}yr` : "OK") : (ageStatus.reason || "Failed") },
+                ];
+                return (
                 <div key={i} style={{padding:"12px 14px",borderRadius:12,border:`1px solid ${r.alreadyIn?C.suc+"40":C.border}`,marginBottom:8,background:r.alreadyIn?C.sucLt:C.surface}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:r.alreadyIn?0:10}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:r.alreadyIn?0:8}}>
                     <div>
-                      <div style={{fontWeight:700,fontSize:14,color:C.text}}>{r.dogName} <span style={{fontWeight:400,color:C.textSec,fontSize:12}}>({r.breed})</span></div>
-                      <div style={{fontSize:12,color:C.textSec}}>{r.clientName} {"\u2022"} {r.size === "small" ? "Small" : "Large"} daycare</div>
+                      <div style={{display:"flex",alignItems:"center",gap:4,flexWrap:"wrap"}}>
+                        <span onClick={(e)=>{e.stopPropagation();setShowQuickDC(false);setDcSearch("");nav("dog-detail",{clientId:r.clientId,dogId:r.dogId});}} style={{fontWeight:700,fontSize:14,color:C.pri,cursor:"pointer",textDecoration:"none"}} onMouseEnter={e=>e.currentTarget.style.textDecoration="underline"} onMouseLeave={e=>e.currentTarget.style.textDecoration="none"}>{r.dogName}</span>
+                        <span style={{fontWeight:400,color:C.textSec,fontSize:12}}>({r.breed})</span>
+                      </div>
+                      <div style={{fontSize:12,color:C.textSec,display:"flex",alignItems:"center",gap:2,flexWrap:"wrap"}}>
+                        <span onClick={(e)=>{e.stopPropagation();setShowQuickDC(false);setDcSearch("");nav("client-detail",{clientId:r.clientId});}} style={{color:C.pri,cursor:"pointer",fontWeight:600,textDecoration:"none"}} onMouseEnter={e=>e.currentTarget.style.textDecoration="underline"} onMouseLeave={e=>e.currentTarget.style.textDecoration="none"}>{r.clientName}</span>
+                        <span style={{color:C.textMut}}>{"\u2022"}</span>
+                        <span>{r.size === "small" ? "Small" : "Large"} daycare</span>
+                      </div>
                     </div>
                     {r.alreadyIn && <Badge color="success" size="sm">Already In</Badge>}
                   </div>
-                  {!r.alreadyIn && (
-                    <div style={{display:"flex",gap:8}}>
-                      <button onClick={()=>quickDCCheckIn(r.clientId, r.dogId, "daycare")}
-                        style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 12px",borderRadius:10,border:`1.5px solid ${C.suc}30`,background:`${C.suc}08`,color:C.suc,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}
-                        onMouseEnter={e=>{e.currentTarget.style.background=C.suc;e.currentTarget.style.color="#fff";e.currentTarget.style.borderColor=C.suc;}}
-                        onMouseLeave={e=>{e.currentTarget.style.background=`${C.suc}08`;e.currentTarget.style.color=C.suc;e.currentTarget.style.borderColor=`${C.suc}30`;}}>
+                  {!r.alreadyIn && (<>
+                    <div style={{display:"flex",gap:8,marginBottom:8}}>
+                      <button onClick={()=>{if(allGreen)quickDCCheckIn(r.clientId, r.dogId, "daycare");}} disabled={!allGreen}
+                        style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 12px",borderRadius:10,border:`1.5px solid ${allGreen?C.suc+"30":C.border}`,background:allGreen?`${C.suc}08`:C.bg,color:allGreen?C.suc:C.textMut,fontSize:13,fontWeight:700,cursor:allGreen?"pointer":"not-allowed",fontFamily:"inherit",transition:"all 0.15s",opacity:allGreen?1:0.5}}
+                        onMouseEnter={e=>{if(allGreen){e.currentTarget.style.background=C.suc;e.currentTarget.style.color="#fff";e.currentTarget.style.borderColor=C.suc;}}}
+                        onMouseLeave={e=>{if(allGreen){e.currentTarget.style.background=`${C.suc}08`;e.currentTarget.style.color=C.suc;e.currentTarget.style.borderColor=`${C.suc}30`;}}}>
                         <I.LogIn style={{width:14,height:14}}/> Daycare
                       </button>
-                      <button onClick={()=>quickDCCheckIn(r.clientId, r.dogId, "dayboarding")}
-                        style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 12px",borderRadius:10,border:`1.5px solid ${C.pri}30`,background:`${C.pri}08`,color:C.pri,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}
-                        onMouseEnter={e=>{e.currentTarget.style.background=C.pri;e.currentTarget.style.color="#fff";e.currentTarget.style.borderColor=C.pri;}}
-                        onMouseLeave={e=>{e.currentTarget.style.background=`${C.pri}08`;e.currentTarget.style.color=C.pri;e.currentTarget.style.borderColor=`${C.pri}30`;}}>
+                      <button onClick={()=>{if(allGreen)quickDCCheckIn(r.clientId, r.dogId, "dayboarding");}} disabled={!allGreen}
+                        style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 12px",borderRadius:10,border:`1.5px solid ${allGreen?C.pri+"30":C.border}`,background:allGreen?`${C.pri}08`:C.bg,color:allGreen?C.pri:C.textMut,fontSize:13,fontWeight:700,cursor:allGreen?"pointer":"not-allowed",fontFamily:"inherit",transition:"all 0.15s",opacity:allGreen?1:0.5}}
+                        onMouseEnter={e=>{if(allGreen){e.currentTarget.style.background=C.pri;e.currentTarget.style.color="#fff";e.currentTarget.style.borderColor=C.pri;}}}
+                        onMouseLeave={e=>{if(allGreen){e.currentTarget.style.background=`${C.pri}08`;e.currentTarget.style.color=C.pri;e.currentTarget.style.borderColor=`${C.pri}30`;}}}>
                         <I.LogIn style={{width:14,height:14}}/> Day Boarding
                       </button>
                     </div>
-                  )}
+                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                      {checks.map((ck,ci)=>(
+                        <div key={ci} style={{display:"flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:6,background:ck.ok?`${C.suc}10`:`${C.dan}10`,border:`1px solid ${ck.ok?C.suc+"30":C.dan+"30"}`}}>
+                          <span style={{fontSize:11,fontWeight:800,color:ck.ok?C.suc:ck.warn?C.acc:C.dan}}>{ck.ok?"✓":"✗"}</span>
+                          <span style={{fontSize:10,fontWeight:600,color:ck.ok?C.suc:C.dan}}>{ck.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>)}
                 </div>
-              ));
+                );
+              });
             })()}
           </div>
         </Modal>
