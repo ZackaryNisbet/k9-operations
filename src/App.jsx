@@ -2925,6 +2925,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const [actSearch, setActSearch] = useState("");
   const [actTypeFilter, setActTypeFilter] = useState(new Set());
   const toggleActType = (t) => setActTypeFilter(prev => { const n = new Set(prev); if (n.has(t)) n.delete(t); else n.add(t); return n; });
+  const [actTimeFilter, setActTimeFilter] = useState(""); // "", "am", "noon", "pm"
 
   const shiftDate = (days) => {
     const d = new Date(viewDate + "T12:00:00");
@@ -3010,6 +3011,15 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const filteredActivities = useMemo(() => {
     let rows = allActivities;
     if (actTypeFilter.size > 0) rows = rows.filter(r => actTypeFilter.has(r.type));
+    if (actTimeFilter) {
+      rows = rows.filter(r => {
+        const s = parseTimeSort(r.time);
+        if (actTimeFilter === "am") return s < 11;
+        if (actTimeFilter === "noon") return s >= 11 && s < 14;
+        if (actTimeFilter === "pm") return s >= 14;
+        return true;
+      });
+    }
     if (actSearch.trim()) {
       const q = actSearch.toLowerCase();
       rows = rows.filter(r => {
@@ -3019,7 +3029,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
       });
     }
     return rows;
-  }, [allActivities, actTypeFilter, actSearch]);
+  }, [allActivities, actTypeFilter, actTimeFilter, actSearch]);
 
   const updateActivityLog = (reservationId, colKey, updates) => {
     const logKey = `${todayStr()}|${colKey}`;
@@ -3680,7 +3690,22 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                         </button>
                       );
                     })}
-                    {actTypeFilter.size > 0 && <button onClick={() => setActTypeFilter(new Set())} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: "0 2px", display: "flex", alignItems: "center", fontFamily: "inherit" }} title="Clear filters"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+                    {actTypeFilter.size > 0 && <button onClick={() => setActTypeFilter(new Set())} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: "0 2px", display: "flex", alignItems: "center", fontFamily: "inherit" }} title="Clear type filters"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+                    {/* Time-of-day filter divider + pills */}
+                    <div style={{ width: 1, height: 20, background: C.border, margin: "0 4px", flexShrink: 0 }}/>
+                    {[
+                      { id: "am", label: "AM", desc: "Before 11 AM" },
+                      { id: "noon", label: "Noon", desc: "11 AM – 2 PM" },
+                      { id: "pm", label: "PM", desc: "After 2 PM" },
+                    ].map(f => {
+                      const on = actTimeFilter === f.id;
+                      return (
+                        <button key={f.id} onClick={() => setActTimeFilter(on ? "" : f.id)} title={f.desc}
+                          style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${on ? C.text : C.border}`, background: on ? C.text : "transparent", color: on ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", whiteSpace: "nowrap", letterSpacing: "0.01em" }}>
+                          {f.label}
+                        </button>
+                      );
+                    })}
                   </>
                 ) : (
                   <>
