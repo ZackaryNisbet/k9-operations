@@ -52,6 +52,7 @@ export function AuthProvider({ children }) {
       id: userId,
       email: authUser?.email || '',
       full_name: authUser?.user_metadata?.full_name || '',
+      role: 'staff',
     };
     const { data: created, error: insertErr } = await supabase
       .from('profiles')
