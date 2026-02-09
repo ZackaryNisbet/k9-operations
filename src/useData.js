@@ -8,6 +8,8 @@ import { supabase } from './supabaseClient';
 export function useData(profile) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false); // Track load failures to prevent DEMO overwrite
+  const [isEmpty, setIsEmpty] = useState(false); // True ONLY when Supabase confirms no data exists
   const locationId = profile?.location_id;
   const saveTimeoutRef = useRef(null);
 
@@ -16,6 +18,7 @@ export function useData(profile) {
     if (!locationId) { setLoading(false); return; }
 
     const load = async () => {
+      setLoadError(false);
       const { data: row, error } = await supabase
         .from('locations')
         .select('data')
@@ -24,15 +27,18 @@ export function useData(profile) {
 
       if (error) {
         console.error('Failed to load data:', error);
+        setLoadError(true); // Mark as error — DO NOT allow DEMO overwrite
         setLoading(false);
         return;
       }
 
       if (row?.data && Object.keys(row.data).length > 0) {
         setData(row.data);
+        setIsEmpty(false);
       } else {
-        // No data yet — will be initialized with DEMO data from the app
+        // Supabase confirmed: location exists but has no data (truly empty)
         setData(null);
+        setIsEmpty(true);
       }
       setLoading(false);
     };
@@ -51,6 +57,7 @@ export function useData(profile) {
         // Only update if the change came from someone else
         if (payload.new?.data) {
           setData(payload.new.data);
+          setIsEmpty(false);
         }
       })
       .subscribe();
@@ -61,6 +68,7 @@ export function useData(profile) {
   // Save data to Supabase (debounced to avoid hammering the DB)
   const save = useCallback(async (newData) => {
     setData(newData); // Update UI immediately
+    setIsEmpty(false); // No longer empty after save
 
     if (!locationId) return;
 
@@ -76,5 +84,5 @@ export function useData(profile) {
     }, 300);
   }, [locationId]);
 
-  return { data, loading, save, locationId };
+  return { data, loading, save, locationId, loadError, isEmpty };
 }

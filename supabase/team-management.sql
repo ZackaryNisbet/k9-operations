@@ -47,9 +47,13 @@ BEGIN
         invite := invites->i;
         IF lower(invite->>'email') = lower(user_email) THEN
           -- Found a matching invitation! Update the user's profile
+          -- Translate role IDs: role_owner->owner, role_manager->manager, role_staff->staff
           UPDATE profiles
           SET location_id = loc.id,
-              role = COALESCE(invite->>'role', 'staff')
+              role = CASE
+                WHEN invite->>'role' LIKE 'role_%' THEN replace(invite->>'role', 'role_', '')
+                ELSE COALESCE(invite->>'role', 'staff')
+              END
           WHERE id = auth.uid();
 
           -- Remove the claimed invite from the array
@@ -64,7 +68,11 @@ BEGIN
           SET data = jsonb_set(loc.data, '{pendingInvites}', new_invites)
           WHERE id = loc.id;
 
-          RETURN jsonb_build_object('success', true, 'location_id', loc.id, 'role', COALESCE(invite->>'role', 'staff'));
+          RETURN jsonb_build_object('success', true, 'location_id', loc.id, 'role',
+            CASE
+              WHEN invite->>'role' LIKE 'role_%' THEN replace(invite->>'role', 'role_', '')
+              ELSE COALESCE(invite->>'role', 'staff')
+            END);
         END IF;
       END LOOP;
     END IF;
