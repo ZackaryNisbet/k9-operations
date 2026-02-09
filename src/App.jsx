@@ -120,11 +120,12 @@ function parseUrl(pathname, dataRef) {
   return { locSlug, page: pg, params: {} };
 }
 
-function LocationSelector({ currentLocation, onLocationChange, collapsed }) {
+function LocationSelector({ currentLocation, onLocationChange, collapsed, allLocations }) {
   const [open, setOpen] = useState(false);
   const [dropPos, setDropPos] = useState({ top: 0, left: 0, width: 0 });
   const dropRef = useRef(null);
   const btnRef = useRef(null);
+  const locs = allLocations || K9_LOCATIONS;
 
   useEffect(() => {
     if (!open) return;
@@ -140,9 +141,9 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed }) {
     }
   }, [open]);
 
-  const current = K9_LOCATIONS.find(l => l.id === currentLocation) || K9_LOCATIONS[1];
-  const isEnterprise = current.isEnterprise;
-  const locations = K9_LOCATIONS.filter(l => !l.isEnterprise);
+  const current = locs.find(l => l.id === currentLocation) || locs[1] || locs[0];
+  const isEnterprise = current?.isEnterprise;
+  const locations = locs.filter(l => !l.isEnterprise);
 
   if (collapsed) {
     return (
@@ -11236,11 +11237,35 @@ function TeamTab({ profile, data, save }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // ENTERPRISE — Location Management
 // ═══════════════════════════════════════════════════════════════════════════
-function EnterpriseLocationsPage({ data, save, nav, profile, handleLocationChange, addGlobalToast }) {
+function EnterpriseLocationsPage({ data, save, nav, profile, handleLocationChange, addGlobalToast, allLocations, refreshLocations }) {
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newRegion, setNewRegion] = useState("");
-  const locations = K9_LOCATIONS.filter(l => !l.isEnterprise);
+  const [creating, setCreating] = useState(false);
+  const locations = (allLocations || K9_LOCATIONS).filter(l => !l.isEnterprise);
+
+  const handleCreate = async () => {
+    if (!newName.trim() || creating) return;
+    setCreating(true);
+    try {
+      const { data: result, error } = await supabase.rpc('create_location', {
+        p_name: newName.trim(),
+        p_region: newRegion.trim()
+      });
+      if (error) {
+        addGlobalToast({ message: `Failed to create location: ${error.message}`, type: 'error' });
+      } else if (result && !result.success) {
+        addGlobalToast({ message: result.message || 'Failed to create location', type: 'error' });
+      } else {
+        addGlobalToast({ message: `"${newName.trim()}" location created successfully!` });
+        if (refreshLocations) await refreshLocations();
+      }
+    } catch (err) {
+      addGlobalToast({ message: `Error: ${err.message}`, type: 'error' });
+    }
+    setNewName(""); setNewRegion(""); setShowAdd(false);
+    setCreating(false);
+  };
 
   return (
     <div>
@@ -11258,13 +11283,8 @@ function EnterpriseLocationsPage({ data, save, nav, profile, handleLocationChang
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:12,alignItems:"end"}}>
             <Inp label="Location Name" value={newName} onChange={setNewName} placeholder="e.g. Cherry Hill"/>
             <Inp label="Region / State" value={newRegion} onChange={setNewRegion} placeholder="e.g. New Jersey"/>
-            <Btn variant="success" onClick={()=>{
-              if (!newName.trim()) return;
-              addGlobalToast({ message: `"${newName.trim()}" location created. Supabase provisioning coming soon.` });
-              setNewName(""); setNewRegion(""); setShowAdd(false);
-            }}>Create</Btn>
+            <Btn variant="success" onClick={handleCreate} disabled={creating}>{creating ? "Creating..." : "Create"}</Btn>
           </div>
-          <div style={{fontSize:11,color:C.textMut,marginTop:8,fontStyle:"italic"}}>New locations will require Supabase provisioning for full data isolation.</div>
         </Card>
       )}
 
@@ -11285,10 +11305,10 @@ function EnterpriseLocationsPage({ data, save, nav, profile, handleLocationChang
               </div>
               <div>
                 <div style={{fontSize:14,fontWeight:700,color:C.text}}>{loc.name}</div>
-                <div style={{fontSize:11,color:C.textMut}}>ID: {loc.id}</div>
+                <div style={{fontSize:11,color:C.textMut}}>ID: {typeof loc.id === "string" && loc.id.length > 12 ? loc.id.slice(0,8)+"..." : loc.id}</div>
               </div>
             </div>
-            <div style={{fontSize:13,color:C.textSec}}>—</div>
+            <div style={{fontSize:13,color:C.textSec}}>{loc.region || "—"}</div>
             <div style={{fontSize:12,color:C.textMut,fontFamily:"monospace"}}>/{loc.slug}</div>
             <div><Badge color="success" size="sm">Active</Badge></div>
             <div>
@@ -11305,9 +11325,9 @@ function EnterpriseLocationsPage({ data, save, nav, profile, handleLocationChang
 // ═══════════════════════════════════════════════════════════════════════════
 // ENTERPRISE — Operations Oversight
 // ═══════════════════════════════════════════════════════════════════════════
-function EnterpriseOperationsPage({ data, save, nav, profile, handleLocationChange }) {
+function EnterpriseOperationsPage({ data, save, nav, profile, handleLocationChange, allLocations }) {
   const [viewDate, setViewDate] = useState(todayStr());
-  const locations = K9_LOCATIONS.filter(l => !l.isEnterprise);
+  const locations = (allLocations || K9_LOCATIONS).filter(l => !l.isEnterprise);
   const dailyOps = OPERATIONS_CATALOG.filter(op => op.frequency === "daily");
 
   const getOpsStatus = (op, locId) => {
@@ -14374,11 +14394,12 @@ function AIPage({ data, save, nav }) {
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════════════════
 export default function App() {
-  const { profile, signOut } = useAuth();
+  const { profile, signOut, refreshProfile } = useAuth();
   const { data: rawData, loading, save, locationId, loadError, isEmpty } = useData(profile);
   // If no data yet in Supabase, initialize with DEMO data
   // SAFETY: Only initialize DEMO when Supabase CONFIRMS data is empty (isEmpty=true).
   // NEVER overwrite on load errors or null data from slow connections.
+  // NOTE: Locations created via "Add Location" use {_initialized:true} to skip this.
   const data = rawData || (loading ? null : (isEmpty ? DEMO : null));
   useEffect(() => {
     if (!loading && !rawData && locationId && isEmpty && !loadError) {
@@ -14388,10 +14409,39 @@ export default function App() {
   }, [loading, rawData, locationId, isEmpty, loadError]);
   // Auto-initialize roles system for existing data that predates the permissions feature
   useEffect(() => { if (data && !data.roles) { save({ ...data, roles: DEFAULT_ROLES }); } }, [data?.roles]);
+
+  // ═══ Dynamic Locations (loaded from Supabase) ═══
+  const [dbLocations, setDbLocations] = useState([]);
+  const [locationsLoading, setLocationsLoading] = useState(true);
+
+  const loadLocations = useCallback(async () => {
+    try {
+      const { data: locs, error } = await supabase.rpc('list_locations');
+      if (!error && locs) {
+        setDbLocations(Array.isArray(locs) ? locs : []);
+      }
+    } catch (e) {
+      console.log('[K9] list_locations RPC not available:', e.message);
+    }
+    setLocationsLoading(false);
+  }, []);
+
+  useEffect(() => { if (profile) loadLocations(); }, [profile]);
+
+  const allLocations = useMemo(() => [
+    { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
+    ...dbLocations.map(l => ({ id: l.id, name: l.name, slug: l.slug || l.id, region: l.region || "" }))
+  ], [dbLocations]);
+
   // ═══ URL-based routing state ═══
   const [currentLocation, setCurrentLocation] = useState(() => {
-    try { const v = localStorage.getItem("k9_location"); if (v && K9_LOCATIONS.some(l => l.id === v)) return v; } catch {}
-    return "demo";
+    try {
+      const v = localStorage.getItem("k9_location");
+      if (v === "enterprise") return v;
+      // Accept stored UUIDs — they'll be validated once locations load
+      if (v) return v;
+    } catch {}
+    return "enterprise";
   });
   const initRoute = useMemo(() => parseUrl(window.location.pathname, null), []);
   const [page, setPage] = useState(() => initRoute.locSlug === "enterprise" ? initRoute.page : initRoute.page);
@@ -14403,12 +14453,15 @@ export default function App() {
   const [navStack, setNavStack] = useState([{ page: initRoute.page, params: initRoute.params }]);
   const skipUrlPush = useRef(false);
   const isEnterprise = currentLocation === "enterprise";
-  const locSlug = useMemo(() => (K9_LOCATIONS.find(l => l.id === currentLocation) || K9_LOCATIONS[1]).slug, [currentLocation]);
+  const locSlug = useMemo(() => {
+    const loc = allLocations.find(l => l.id === currentLocation);
+    return loc ? loc.slug : (allLocations[1]?.slug || "demo");
+  }, [currentLocation, allLocations]);
 
   // Set initial location from URL on mount
   useEffect(() => {
     const parsed = parseUrl(window.location.pathname, data);
-    const locMatch = K9_LOCATIONS.find(l => l.slug === parsed.locSlug);
+    const locMatch = allLocations.find(l => l.slug === parsed.locSlug);
     if (locMatch && locMatch.id !== currentLocation) {
       setCurrentLocation(locMatch.id);
       try { localStorage.setItem("k9_location", locMatch.id); } catch {}
@@ -14418,7 +14471,7 @@ export default function App() {
       const reParsed = parseUrl(window.location.pathname, data);
       if (reParsed.page !== "clients") { setPage(reParsed.page); setParams(reParsed.params); setNavStack([{ page: reParsed.page, params: reParsed.params }]); }
     }
-  }, [data]);
+  }, [data, allLocations]);
 
   // Sync URL when page/params/location change
   useEffect(() => {
@@ -14432,14 +14485,14 @@ export default function App() {
     const handler = (e) => {
       skipUrlPush.current = true;
       const parsed = parseUrl(window.location.pathname, data);
-      const locMatch = K9_LOCATIONS.find(l => l.slug === parsed.locSlug);
+      const locMatch = allLocations.find(l => l.slug === parsed.locSlug);
       if (locMatch) { setCurrentLocation(locMatch.id); try { localStorage.setItem("k9_location", locMatch.id); } catch {} }
       setPage(parsed.page); setParams(parsed.params);
       setNavStack([{ page: parsed.page, params: parsed.params }]);
     };
     window.addEventListener("popstate", handler);
     return () => window.removeEventListener("popstate", handler);
-  }, [data]);
+  }, [data, allLocations]);
 
   // Replace initial URL if at root
   useEffect(() => {
@@ -14448,10 +14501,10 @@ export default function App() {
     }
   }, []);
 
-  const handleLocationChange = useCallback((locId) => {
+  const handleLocationChange = useCallback(async (locId) => {
     setCurrentLocation(locId);
     try { localStorage.setItem("k9_location", locId); } catch {}
-    const loc = K9_LOCATIONS.find(l => l.id === locId);
+    const loc = allLocations.find(l => l.id === locId);
     const slug = loc ? loc.slug : locId;
     if (locId === "enterprise") {
       setPage("enterprise-locations"); setParams({}); setNavStack([{ page: "enterprise-locations", params: {} }]);
@@ -14459,8 +14512,15 @@ export default function App() {
     } else {
       setPage("dashboard"); setParams({}); setNavStack([{ page: "dashboard", params: {} }]);
       window.history.pushState({}, "", `/${slug}/dashboard`);
+      // Switch active location in Supabase so useData loads the right data
+      try {
+        const { data: result } = await supabase.rpc('switch_location', { p_location_id: locId });
+        if (result?.success) await refreshProfile();
+      } catch (e) {
+        console.log('[K9] switch_location RPC not available:', e.message);
+      }
     }
-  }, []);
+  }, [allLocations, refreshProfile]);
 
   const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard","clients","reservations","crm","messages","payments","operations","eod","ops-opening","ops-forms","ops-closing","ai","settings","enterprise-locations","enterprise-operations"]), []);
   const nav = useCallback((pg, prms = {}) => {
@@ -14627,8 +14687,8 @@ export default function App() {
 
   function renderPage() {
     // Enterprise pages
-    if (page === "enterprise-locations") return <EnterpriseLocationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange} addGlobalToast={addGlobalToast}/>;
-    if (page === "enterprise-operations") return <EnterpriseOperationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange}/>;
+    if (page === "enterprise-locations") return <EnterpriseLocationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange} addGlobalToast={addGlobalToast} allLocations={allLocations} refreshLocations={loadLocations}/>;
+    if (page === "enterprise-operations") return <EnterpriseOperationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange} allLocations={allLocations}/>;
     if (isOpsPage) {
       const oc = opsChildren.find(c => c.id === page);
       return <DailyOpsPage data={data} save={save} sub={oc ? oc.sub : "opening"} nav={nav} profile={profile}/>;
@@ -14690,7 +14750,7 @@ export default function App() {
           {sidebarOpen&&<div><div style={{fontSize:16,fontWeight:700,color:C.acc,whiteSpace:"nowrap",fontFamily:"'Canela', Georgia, serif",letterSpacing:"0.02em"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div>}
         </div>
         <div style={{margin:"0 16px 14px",height:1,background:"rgba(175,141,84,0.15)"}}/>
-        <LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={!sidebarOpen} />
+        <LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={!sidebarOpen} allLocations={allLocations} />
         <nav style={{flex:1,padding:sidebarOpen?"0 10px":"0 8px",overflowY:"auto"}}>
           {navSections.map((sec, si) => (
             <div key={si}>
@@ -14723,11 +14783,11 @@ export default function App() {
 
       {/* Mobile Header */}
       <div className="mob-h" style={{display:"none",position:"fixed",top:0,left:0,right:0,height:56,background:C.pri,alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}><button onClick={()=>setMobileMenuOpen(!mobileMenuOpen)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",padding:4}}><I.Menu/></button><div><span style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</span><div style={{fontSize:9,color:"rgba(175,141,84,0.6)",letterSpacing:"0.05em",textTransform:"uppercase"}}>{(K9_LOCATIONS.find(l=>l.id===currentLocation)||K9_LOCATIONS[1]).name}</div></div></div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}><button onClick={()=>setMobileMenuOpen(!mobileMenuOpen)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",padding:4}}><I.Menu/></button><div><span style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</span><div style={{fontSize:9,color:"rgba(175,141,84,0.6)",letterSpacing:"0.05em",textTransform:"uppercase"}}>{(allLocations.find(l=>l.id===currentLocation)||allLocations[1]||allLocations[0]).name}</div></div></div>
         <K9LogoMini size={28}/>
       </div>
 
-      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}{sec.items.map(item=>{const hasKids=!!item.children;return(<div key={item.id}><button onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else{nav(item.id);setMobileMenuOpen(false);}}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(175,141,84,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span>{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</button>{hasKids&&opsExpanded&&<div style={{marginLeft:28,marginBottom:4}}>{item.children.map(ch=>(<button key={ch.id} onClick={()=>{nav(ch.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 12px",border:"none",borderRadius:8,background:page===ch.id?"rgba(175,141,84,0.12)":"transparent",color:page===ch.id?C.acc:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:page===ch.id?600:400,cursor:"pointer",marginBottom:2,fontFamily:"inherit"}}><span style={{width:4,height:4,borderRadius:2,background:page===ch.id?C.acc:"rgba(255,255,255,0.2)"}}/>{ch.label}</button>))}</div>}</div>);})}</div>))}</div></div>}
+      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} allLocations={allLocations} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}{sec.items.map(item=>{const hasKids=!!item.children;return(<div key={item.id}><button onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else{nav(item.id);setMobileMenuOpen(false);}}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(175,141,84,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span>{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</button>{hasKids&&opsExpanded&&<div style={{marginLeft:28,marginBottom:4}}>{item.children.map(ch=>(<button key={ch.id} onClick={()=>{nav(ch.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 12px",border:"none",borderRadius:8,background:page===ch.id?"rgba(175,141,84,0.12)":"transparent",color:page===ch.id?C.acc:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:page===ch.id?600:400,cursor:"pointer",marginBottom:2,fontFamily:"inherit"}}><span style={{width:4,height:4,borderRadius:2,background:page===ch.id?C.acc:"rgba(255,255,255,0.2)"}}/>{ch.label}</button>))}</div>}</div>);})}</div>))}</div></div>}
 
       {/* Main */}
       <div className="main-content" style={{flex:1,overflow:"auto",padding:"28px 32px",scrollbarGutter:"stable"}}>
