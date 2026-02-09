@@ -2146,6 +2146,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   const [payFormDefaults, setPayFormDefaults] = useState(null);
   const [discountType, setDiscountType] = useState(reservation.discountType || "none"); // "none", "percent", "flat"
   const [discountValue, setDiscountValue] = useState(reservation.discountValue || 0);
+  const [fedToday, setFedToday] = useState(reservation.fedToday || "");
+  const [medsToday, setMedsToday] = useState(reservation.medsToday || "");
   // Activity tracking: { "2026-02-07|feeding_AM": { administered: true, by: "Name", at: "ISO", consumption: "100%" } }
   const [activityLog, setActivityLog] = useState(reservation.activityLog || {});
   const activityLogInitRef = useRef(JSON.stringify(reservation.activityLog || {}));
@@ -2172,6 +2174,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     ...reservation,
     parentDestination: parentDest,
     belongings,
+    fedToday, medsToday,
     checkIn, checkOut, checkInTime, checkOutTime,
     notes,
     careOverrides: {
@@ -2377,7 +2380,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     const dName = dog.fields.name || "Unknown";
     const cLast = client.fields.last_name || "";
     const cFirst = client.fields.first_name || "";
-    const cPhone = fmtPhone(client.fields.phone);
+    const cPhoneRaw = (client.fields.phone || "").replace(/\D/g, "");
+    const cPhoneStr = cPhoneRaw.length === 10 ? `(${cPhoneRaw.slice(0,3)}) ${cPhoneRaw.slice(3,6)}-${cPhoneRaw.slice(6)}` : client.fields.phone || "";
     const breed = dog.fields.breed || "";
     const weight = dog.fields.weight ? `${dog.fields.weight} lbs` : "";
     const sex = dog.fields.sex || "";
@@ -2397,7 +2401,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
     // Emergency contact
     const ecNameVal = ecName || client.fields.emergency_contact || "";
-    const ecPhoneVal = ecPhone || client.fields.emergency_phone || "";
+    const ecPhoneRaw = (ecPhone || client.fields.emergency_phone || "").replace(/\D/g, "");
+    const ecPhoneStr = ecPhoneRaw.length === 10 ? `(${ecPhoneRaw.slice(0,3)}) ${ecPhoneRaw.slice(3,6)}-${ecPhoneRaw.slice(6)}` : ecPhone || client.fields.emergency_phone || "";
 
     // Room + dates
     const roomLabel = reservation.roomType || "";
@@ -2434,8 +2439,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     const hasFeeding = feedingSchedules.length > 0;
     const hasBath = bathType && bathType !== "None" && bathType !== "";
 
-    // Feeding summary
-    const feedingHtml = feedingSchedules.map(s => {
+    // Feeding summary (above the table)
+    const feedingSummaryHtml = feedingSchedules.map(s => {
       const times = (s.times || []).join(", ");
       const detail = [s.amount, s.unit, s.foodType].filter(Boolean).join(" ");
       const inst = s.instruction ? ` ${s.instruction}` : "";
@@ -2443,62 +2448,112 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       return `<div style="margin-bottom:4px;"><strong>${times}:</strong> ${detail}${inst}${n}</div>`;
     }).join("");
 
-    // Medication summary
-    const medHtml = medicationSchedules.map(s => {
-      const detail = [s.amount, s.unit].filter(Boolean).join(" ");
-      const n = s.notes ? `, ${s.notes}` : "";
-      return `<div style="margin-bottom:4px;"><strong>${s.time || ""}:</strong> ${detail} ${s.name || ""}${n}</div>`;
-    }).join("");
+    // Profile picture placeholder (or default silhouette)
+    const dogPicUrl = dog.fields.profilePic || "";
+    const picHtml = dogPicUrl
+      ? `<img src="${dogPicUrl}" style="width:120px;height:120px;object-fit:cover;border-radius:8px;border:1px solid #ccc;"/>`
+      : `<div style="width:120px;height:120px;border-radius:8px;border:1px solid #ccc;background:#f0f0f0;display:flex;align-items:center;justify-content:center;">
+          <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#bbb" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/>
+          </svg>
+        </div>`;
 
-    // Activity grid
+    // ── Activity grid (feeding only — no bathing/meds rows) ──
     const { days: actDays, cols: actCols } = buildActivityMatrix();
+    const feedingCols = actCols.filter(c => c.type === "feeding");
 
-    const gridHtml = actDays.length > 0 && actCols.length > 0 ? (() => {
+    const gridHtml = actDays.length > 0 && feedingCols.length > 0 ? (() => {
       const dayHeaders = actDays.map(d => {
         const dt = new Date(d + "T00:00:00");
         const dayName = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][dt.getDay()];
         const dateStr = `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}`;
-        return `<th style="padding:6px 8px;text-align:center;border:1px solid #999;font-size:11px;background:#f5f5f5;">
+        return `<th colspan="2" style="padding:4px 2px;text-align:center;border:1px solid #999;font-size:11px;background:#f5f5f5;">
           <div style="font-weight:700;">${dayName}</div>
           <div>${dateStr}</div>
-          <div style="font-size:10px;color:#666;">${roomLabel},</div>
-          <div style="font-size:10px;color:#666;">${roomNum}</div>
         </th>`;
       }).join("");
 
-      const serviceRows = actCols.map(col => {
-        const label = col.label + (col.detail ? ` + ${col.detail}` : "");
+      // Sub-header row: "administered" | "% eaten" for each day
+      const subHeaders = actDays.map(() =>
+        `<th style="padding:2px 4px;text-align:center;border:1px solid #999;font-size:8px;color:#666;background:#fafafa;width:50px;">administered</th>
+         <th style="padding:2px 4px;text-align:center;border:1px solid #999;font-size:8px;color:#666;background:#fafafa;width:50px;">% eaten</th>`
+      ).join("");
+
+      const serviceRows = feedingCols.map(col => {
+        // Parse label: remove "Feeding - " prefix, split time from detail
+        const timeMatch = col.key.match(/feeding_(.+)/);
+        const timeName = timeMatch ? timeMatch[1].replace(/_/g, " ") : "";
+        const detailStr = col.detail || "";
+        const labelHtml = `<div style="font-weight:700;font-size:11px;">${timeName}</div><div style="font-size:10px;color:#444;">${detailStr}</div>`;
+
         const cells = actDays.map((_, di) => {
           const isActive = col.activeDays ? col.activeDays[di] : true;
-          if (!isActive) return `<td style="padding:6px 8px;text-align:center;border:1px solid #999;color:#ccc;">—</td>`;
-          // For feeding/medication, show a scheduled time based on type
-          let timeStr = "";
-          if (col.type === "feeding") {
-            const timeMatch = col.key.match(/feeding_(.+)/);
-            if (timeMatch) { const t = timeMatch[1].replace(/_/g," "); timeStr = t === "AM" ? "9:00 AM" : t === "noon" ? "12:00 PM" : t === "PM" ? "5:00 PM" : t; }
-          } else if (col.type === "medication") {
-            const med = medicationSchedules.find(s => col.key.includes((s.name||"").replace(/\s+/g,"_")));
-            timeStr = med && med.time ? med.time : "9:00 AM";
-          } else if (col.type === "bathing") {
-            timeStr = "9:00 AM";
-          }
-          return `<td style="padding:6px 8px;text-align:center;border:1px solid #999;font-size:11px;">${timeStr}</td>`;
+          if (!isActive) return `<td style="border:1px solid #999;padding:8px 4px;">&nbsp;</td><td style="border:1px solid #999;padding:8px 4px;">&nbsp;</td>`;
+          return `<td style="border:1px solid #999;padding:8px 4px;min-width:40px;">&nbsp;</td>
+                  <td style="border:1px solid #999;padding:8px 4px;min-width:40px;">&nbsp;</td>`;
         }).join("");
-        return `<tr><td style="padding:6px 8px;border:1px solid #999;font-size:11px;font-weight:700;white-space:nowrap;">${label}</td>${cells}</tr>`;
+        return `<tr><td style="padding:6px 8px;border:1px solid #999;white-space:nowrap;vertical-align:top;">${labelHtml}</td>${cells}</tr>`;
       }).join("");
 
       return `<table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:11px;">
-        <thead><tr><th style="padding:6px 8px;text-align:left;border:1px solid #999;font-size:11px;background:#f5f5f5;min-width:180px;"></th>${dayHeaders}</tr></thead>
+        <thead>
+          <tr><th style="padding:6px 8px;text-align:left;border:1px solid #999;font-size:11px;background:#f5f5f5;min-width:140px;"></th>${dayHeaders}</tr>
+          <tr><th style="border:1px solid #999;"></th>${subHeaders}</tr>
+        </thead>
         <tbody>${serviceRows}</tbody>
       </table>`;
     })() : "";
+
+    // ── Medication table (ALWAYS shown) ──
+    const medTableHtml = (() => {
+      if (!hasMeds) return `<div style="margin-top:14px;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:12px;color:#666;"><strong>MEDICATIONS:</strong> No medications on file for this stay.</div>`;
+      const medDayHeaders = actDays.map(d => {
+        const dt = new Date(d + "T00:00:00");
+        const dayName = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][dt.getDay()];
+        const dateStr = `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}`;
+        return `<th style="padding:4px 6px;text-align:center;border:1px solid #999;font-size:10px;background:#f5f5f5;"><div style="font-weight:700;">${dayName}</div><div>${dateStr}</div></th>`;
+      }).join("");
+      const medRows = medicationSchedules.map(s => {
+        const label = `<div style="font-weight:700;font-size:11px;">${s.name || "Medication"}</div><div style="font-size:10px;color:#444;">${[s.time, s.amount, s.unit].filter(Boolean).join(" ")}${s.notes ? " — " + s.notes : ""}</div>`;
+        const cells = actDays.map(() => `<td style="border:1px solid #999;padding:6px 4px;text-align:center;">&nbsp;</td>`).join("");
+        return `<tr><td style="padding:6px 8px;border:1px solid #999;vertical-align:top;">${label}</td>${cells}</tr>`;
+      }).join("");
+      return `<div style="margin-top:14px;"><div style="font-weight:900;font-size:12px;margin-bottom:4px;">MEDICATIONS:</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead><tr><th style="padding:4px 8px;text-align:left;border:1px solid #999;font-size:10px;background:#f5f5f5;min-width:140px;"></th>${medDayHeaders}</tr></thead>
+          <tbody>${medRows}</tbody>
+        </table></div>`;
+    })();
+
+    // ── Bath table (ALWAYS shown) ──
+    const bathTableHtml = (() => {
+      if (!hasBath) return `<div style="margin-top:14px;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:12px;color:#666;"><strong>BATH:</strong> No bath scheduled for this stay.</div>`;
+      // Bath on last day only
+      const lastDay = actDays.length > 0 ? actDays[actDays.length - 1] : "";
+      const bathDayHeaders = actDays.map(d => {
+        const dt = new Date(d + "T00:00:00");
+        const dayName = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][dt.getDay()];
+        const dateStr = `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}`;
+        return `<th style="padding:4px 6px;text-align:center;border:1px solid #999;font-size:10px;background:#f5f5f5;"><div style="font-weight:700;">${dayName}</div><div>${dateStr}</div></th>`;
+      }).join("");
+      const bathCells = actDays.map(d => {
+        return `<td style="border:1px solid #999;padding:6px 4px;text-align:center;font-size:10px;">${d === lastDay ? "Scheduled" : ""}</td>`;
+      }).join("");
+      return `<div style="margin-top:14px;"><div style="font-weight:900;font-size:12px;margin-bottom:4px;">BATH: ${bathType}</div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead><tr><th style="padding:4px 8px;text-align:left;border:1px solid #999;font-size:10px;background:#f5f5f5;min-width:140px;"></th>${bathDayHeaders}</tr></thead>
+          <tbody><tr><td style="padding:6px 8px;border:1px solid #999;font-weight:700;">${bathType} Bath</td>${bathCells}</tr></tbody>
+        </table></div>`;
+    })();
 
     const html = `<!DOCTYPE html><html><head><title>Run Card - ${dName}</title>
       <style>
         @page { size: portrait; margin: 0.4in; }
         body { font-family: Arial, sans-serif; color: #222; padding: 0; margin: 0; font-size: 13px; line-height: 1.4; }
         .card { border: 2px solid #333; padding: 16px; }
-        .header { margin-bottom: 8px; }
+        .header { display: flex; gap: 16px; margin-bottom: 8px; }
+        .pic { flex-shrink: 0; }
+        .header-info { flex: 1; }
         .dog-name { font-size: 26px; font-weight: 900; }
         .owner-last { font-size: 26px; font-weight: 300; }
         .room-badge { font-size: 16px; color: #444; }
@@ -2511,23 +2566,25 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       </style></head><body>
       <div class="card">
         <div class="run-card-num">Run Card 1 of 1</div>
+
         <div class="header">
-          <div>
-            <span class="dog-name">${dName}</span> <span class="owner-last">${cLast}</span>
-            <span style="margin-left:12px;" class="room-badge">| ${roomLabel}, ${roomNum}</span>
+          <div class="pic">${picHtml}</div>
+          <div class="header-info">
+            <div>
+              <span class="dog-name">${dName}</span> <span class="owner-last">${cLast}</span>
+              <span style="margin-left:12px;" class="room-badge">| ${roomLabel}, ${roomNum}</span>
+            </div>
+            <div class="info-line">&bull; ${breed}${ageStr ? ", " + ageStr : ""}${sexStr ? " " + sexStr : ""}</div>
+            <div class="info-line">&bull; ${cFirst} ${cLast} ${cPhoneStr ? "(" + cPhoneStr + ")" : ""}</div>
+            <div style="font-size:14px;font-weight:700;margin:8px 0 4px;">
+              ${resType} | ${roomLabel}${inclNote}: ${fmtD(ciDate)}, ${fmtT(ciTime)} - <strong>${fmtD(coDate)}, ${fmtT(coTime)}</strong>
+            </div>
           </div>
-          <div class="info-line">&bull; ${breed}${ageStr ? ", " + ageStr : ""}${sexStr ? " " + sexStr : ""}</div>
-          <div class="info-line">&bull; ${cFirst} ${cLast} ${cPhone ? "(" + cPhone + ")" : ""}</div>
         </div>
-        <div style="font-size:14px;font-weight:700;margin:10px 0 6px;">
-          ${resType} | ${roomLabel}${inclNote}: ${fmtD(ciDate)}, ${fmtT(ciTime)} - <strong>${fmtD(coDate)}, ${fmtT(coTime)}</strong>
-        </div>
-        ${show("showBelongings") && (belongings || parentDest) ? `
-          <div style="margin:6px 0;">
-            ${belongings ? `<div class="info-line">&bull; <strong>Describe pets belongings</strong> ${belongings}</div>` : ""}
-          </div>` : ""}
-        ${show("showFedToday") ? `<div class="info-line">&bull; <strong>Has your pet been fed today?</strong> </div>` : ""}
-        ${show("showMedsToday") && hasMeds ? `<div class="info-line">&bull; <strong>Has your pet had medications today?</strong> </div>` : ""}
+
+        ${show("showBelongings") && belongings ? `<div class="info-line">&bull; <strong>Describe pets belongings</strong> ${belongings}</div>` : ""}
+        ${show("showFedToday") ? `<div class="info-line">&bull; <strong>Has your pet been fed today?</strong> ${fedToday || ""}</div>` : ""}
+        ${show("showMedsToday") ? `<div class="info-line">&bull; <strong>Has your pet had medications today?</strong> ${medsToday || ""}</div>` : ""}
 
         ${show("showDogTags") || hasMeds || hasFeeding || hasBath ? `
         <div class="tag-row">
@@ -2537,9 +2594,9 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           ${hasBath ? `<span class="icon-badge">🛁${bathType} Bath:</span>` : ""}
         </div>` : ""}
 
-        ${show("showEmergencyContact") && (ecNameVal || ecPhoneVal) ? `
+        ${show("showEmergencyContact") && (ecNameVal || ecPhoneStr) ? `
         <div style="margin:6px 0;font-size:12px;">
-          <strong>Emergency Contact:</strong> ${ecNameVal} ${ecPhoneVal ? "(" + fmtPhone(ecPhoneVal) + ")" : ""}
+          <strong>Emergency Contact:</strong> ${ecNameVal} ${ecPhoneStr ? "(" + ecPhoneStr + ")" : ""}
         </div>` : ""}
 
         ${show("showNotes") && notes ? `
@@ -2549,13 +2606,13 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
         ${show("showFeeding") && hasFeeding ? `
         <div class="section-header">FOOD: ${feedingSchedules.some(s => (s.foodType||"").toLowerCase().includes("home")) ? "FFH - Food From Home" : feedingSchedules[0]?.foodType || ""}</div>
-        ${feedingHtml}` : ""}
-
-        ${show("showMedications") && hasMeds ? `
-        <div class="section-header">MEDS:</div>
-        ${medHtml}` : ""}
+        ${feedingSummaryHtml}` : ""}
 
         ${show("showActivityGrid") && gridHtml ? gridHtml : ""}
+
+        ${medTableHtml}
+
+        ${bathTableHtml}
       </div>
       <script>window.onload=()=>{window.print();}<\/script>
     </body></html>`;
@@ -2710,6 +2767,10 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
               <div style={{marginTop:12}}>
                 <Inp label={<>Belongings from Home {isCheckInMode && <span style={{color:C.dan}}>*</span>}</>} type="textarea" rows={2} value={belongings} onChange={v=>{setBelongings(v);setErrors({...errors,belongings:undefined});}} placeholder="List items brought from home (bed, toys, food, etc.)"/>
                 {errMsg("belongings")}
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:12}}>
+                <Inp label="Has your pet been fed today?" value={fedToday} onChange={setFedToday} placeholder="Yes / No / Details"/>
+                <Inp label="Has your pet had medications today?" value={medsToday} onChange={setMedsToday} placeholder="Yes / No / Details"/>
               </div>
             </div>
           </>}
