@@ -13185,7 +13185,7 @@ function PaymentsPage({ data, save, nav, profile }) {
   const openRecordPayment = () => { setEditPmt(null); setShowClientPicker(true); setPickerSearch(""); };
 
   return (
-    <div style={{ padding: 24 }}>
+    <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: C.text }}>Payments</h1>
         <Btn onClick={openRecordPayment} variant="primary" icon={<I.Plus />}>Record Payment</Btn>
@@ -14350,7 +14350,7 @@ export default function App() {
 
       {/* Main */}
       <div className="main-content" style={{flex:1,overflow:"auto",padding:"28px 32px",scrollbarGutter:"stable"}}>
-        <div style={{maxWidth: page === "dashboard" ? 1440 : 1100, margin:"0 auto", transition:"max-width 0.24s"}}>
+        <div style={{maxWidth: 1440, margin:"0 auto"}}>
           {navStack.length > 1 && (
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:16,fontSize:13,flexWrap:"wrap"}}>
               {navStack.map((entry, i) => (
