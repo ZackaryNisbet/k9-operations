@@ -10708,7 +10708,19 @@ function SettingsPage({ data, save, profile }) {
     await save({ ...data, dogTags: newTags, dogs: newDogs });
   };
 
-  const handleReset = async () => { await save(DEMO); setResetConfirm(false); };
+  const handleReset = async () => {
+    // Create a downloadable backup before resetting
+    try {
+      const backup = JSON.stringify(data, null, 2);
+      const blob = new Blob([backup], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `k9-backup-${new Date().toISOString().slice(0,10)}.json`;
+      a.click(); URL.revokeObjectURL(url);
+    } catch (e) { console.warn("Backup download failed:", e); }
+    await save(DEMO);
+    setResetConfirm(false);
+  };
 
   // Settings sections for grouped list view
   const settingsSections = [
@@ -13542,10 +13554,17 @@ function AIPage({ data, save, nav }) {
 // ═══════════════════════════════════════════════════════════════════════════
 export default function App() {
   const { profile, signOut } = useAuth();
-  const { data: rawData, loading, save, locationId } = useData(profile);
+  const { data: rawData, loading, save, locationId, loadError, isEmpty } = useData(profile);
   // If no data yet in Supabase, initialize with DEMO data
-  const data = rawData || (loading ? null : DEMO);
-  useEffect(() => { if (!loading && !rawData && locationId) { save(DEMO); } }, [loading, rawData, locationId]);
+  // SAFETY: Only initialize DEMO when Supabase CONFIRMS data is empty (isEmpty=true).
+  // NEVER overwrite on load errors or null data from slow connections.
+  const data = rawData || (loading ? null : (isEmpty ? DEMO : null));
+  useEffect(() => {
+    if (!loading && !rawData && locationId && isEmpty && !loadError) {
+      console.log('[K9] Initializing new location with demo data');
+      save(DEMO);
+    }
+  }, [loading, rawData, locationId, isEmpty, loadError]);
   // Auto-initialize roles system for existing data that predates the permissions feature
   useEffect(() => { if (data && !data.roles) { save({ ...data, roles: DEFAULT_ROLES }); } }, [data?.roles]);
   const [page, setPage] = useState("dashboard");
