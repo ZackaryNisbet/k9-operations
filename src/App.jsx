@@ -40,6 +40,7 @@ const I = {
   Send: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
   CreditCard: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>,
   RefreshCw: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
+  AlertTriangle: (props) => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
 };
 
 // K9 Resorts Official Dog Logo (PNG from brand assets)
@@ -2103,7 +2104,7 @@ function DogPicHover({ dog, size = 20 }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // BOARDING PREVIEW / CHECK-IN MODAL
 // ═══════════════════════════════════════════════════════════════════════════
-function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose, onSave, data, save }) {
+function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheckOutMode, onClose, onSave, data, save }) {
   // Profile defaults
   const profileFeeding = summarizeFeeding(dog.fields.feedingSchedules) || "";
   const profileMeds = summarizeMeds(dog.fields.medicationSchedules) || "";
@@ -2130,6 +2131,9 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose
   const [pendingAction, setPendingAction] = useState(null); // "save" or "checkin"
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showPayForm, setShowPayForm] = useState(false);
+  const [payFormDefaults, setPayFormDefaults] = useState(null);
+  const [discountType, setDiscountType] = useState(reservation.discountType || "none"); // "none", "percent", "flat"
+  const [discountValue, setDiscountValue] = useState(reservation.discountValue || 0);
 
   const BATH_OPTS = data.bathTypeOptions || ["Standard","Hypo","Medicated","Whitening"];
   const feedingChanged = feeding !== profileFeeding;
@@ -2147,6 +2151,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose
     notes,
     careOverrides: { feeding, medications, bath_type: bathType },
     emergencyContactOverride: (ecNameChanged || ecPhoneChanged) ? { name: ecName, phone: ecPhone } : reservation.emergencyContactOverride || null,
+    discountType: discountType !== "none" ? discountType : undefined,
+    discountValue: discountType !== "none" ? discountValue : undefined,
   });
 
   // Detect profile changes
@@ -2161,21 +2167,43 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose
   };
 
   const isBoarding = reservation.type === "boarding";
-  const handleSave = (doCheckIn) => {
+
+  // Calculate adjusted total for deposit/payment gating
+  const getAdjustedTotal = () => {
+    const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
+    let adjT = pr.total;
+    if (discountType === "percent" && discountValue > 0) adjT = Math.max(0, adjT - Math.round(adjT * (discountValue / 100) * 100) / 100);
+    else if (discountType === "flat" && discountValue > 0) adjT = Math.max(0, adjT - Math.min(discountValue, adjT));
+    return Math.round(adjT * 100) / 100;
+  };
+
+  const handleSave = (doCheckIn, doCheckOut) => {
     if (doCheckIn && isBoarding) {
       const errs = {};
       if (!parentDest.trim()) errs.parentDestination = "Required — ask where the parent is going";
       if (!belongings.trim()) errs.belongings = "Required — list items brought from home";
+      // Deposit gate: 50% required
+      const adjTotal = getAdjustedTotal();
+      const depositRequired = Math.round(adjTotal * 0.5 * 100) / 100;
+      const collected = reservation.amountCollected || 0;
+      if (adjTotal > 0 && collected < depositRequired) errs.deposit = `50% deposit required ($${depositRequired.toFixed(2)}). Collected: $${collected.toFixed(2)}`;
+      if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+    }
+    if (doCheckOut && isBoarding) {
+      const errs = {};
+      const adjTotal = getAdjustedTotal();
+      const collected = reservation.amountCollected || 0;
+      if (adjTotal > 0 && collected < adjTotal) { errs.payment = `Full payment required to check out. Outstanding: $${Math.max(0, adjTotal - collected).toFixed(2)}`; }
       if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     }
     setErrors({});
     const changes = detectChanges();
     if (changes.length > 0) {
       setPendingChanges(changes);
-      setPendingAction(doCheckIn ? "checkin" : "save");
+      setPendingAction(doCheckIn ? "checkin" : doCheckOut ? "checkout" : "save");
       setShowConflict(true);
     } else {
-      onSave(buildUpdatedRes(), doCheckIn);
+      onSave(buildUpdatedRes(), doCheckIn, doCheckOut);
     }
   };
 
@@ -2203,7 +2231,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose
     }
     const updatedRes = buildUpdatedRes();
     const doCheckIn = pendingAction === "checkin";
-    const merged = doCheckIn ? { ...updatedRes, status: "checked-in" } : updatedRes;
+    const doCheckOut = pendingAction === "checkout";
+    const merged = doCheckIn ? { ...updatedRes, status: "checked-in" } : doCheckOut ? { ...updatedRes, status: "checked-out" } : updatedRes;
     newData.reservations = newData.reservations.map(r => r.id === reservation.id ? merged : r);
     // CRM auto-creation for boarding check-in
     if (doCheckIn) {
@@ -2231,7 +2260,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose
   const errMsg = (field) => errors[field] ? <div style={{color:C.dan,fontSize:12,fontWeight:600,marginTop:4}}>{errors[field]}</div> : null;
 
   return (
-    <Modal title={isCheckInMode ? `Check In: ${dog.fields.name}` : `${isBoarding ? "Boarding" : "Daycare"} Reservation: ${dog.fields.name}`} onClose={onClose} wide>
+    <Modal title={isCheckInMode ? `Check In: ${dog.fields.name}` : isCheckOutMode ? `Check Out: ${dog.fields.name}` : `${isBoarding ? "Boarding" : "Daycare"} Reservation: ${dog.fields.name}`} onClose={onClose} wide>
       {/* Header info bar */}
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:8}}>
         <span style={{fontSize:16,fontWeight:800,color:C.text}}>{dog.fields.name}</span>
@@ -2301,6 +2330,20 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose
       {secHeader("Notes")}
       <Inp type="textarea" rows={2} value={notes} onChange={setNotes} placeholder="Special instructions for this stay..."/>
 
+      {/* Section: Discount */}
+      {secHeader("Discount")}
+      <div style={{display:"flex",gap:12,alignItems:"flex-end"}}>
+        <div style={{flex:"0 0 140px"}}>
+          <Inp label="Discount Type" type="select" value={discountType} onChange={v => { setDiscountType(v); if (v === "none") setDiscountValue(0); }} options={["none","percent","flat"]}/>
+        </div>
+        {discountType !== "none" && (
+          <div style={{flex:"0 0 120px"}}>
+            <Inp label={discountType === "percent" ? "Percent Off" : "Amount Off ($)"} type="number" value={discountValue} onChange={v => setDiscountValue(Math.max(0, parseFloat(v) || 0))}/>
+          </div>
+        )}
+        {discountType !== "none" && discountValue > 0 && <div style={{fontSize:12,fontWeight:600,color:C.suc,paddingBottom:10}}>Discount applied</div>}
+      </div>
+
       {/* Section: Pricing Estimate */}
       {secHeader("Pricing Estimate")}
       {(() => {
@@ -2312,11 +2355,35 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose
           pricing: data.pricing,
           isSecondDogSameRoom: false,
         });
+        // Apply manual discount
+        let adjTotal = pr.total;
+        let manualDiscount = 0;
+        if (discountType === "percent" && discountValue > 0) {
+          manualDiscount = Math.round(pr.total * (discountValue / 100) * 100) / 100;
+        } else if (discountType === "flat" && discountValue > 0) {
+          manualDiscount = Math.min(discountValue, pr.total);
+        }
+        adjTotal = Math.max(0, Math.round((pr.total - manualDiscount) * 100) / 100);
         const collected = reservation.amountCollected || 0;
-        const outstanding = Math.max(0, pr.total - collected);
-        return pr.total > 0 ? (
+        const outstanding = Math.max(0, adjTotal - collected);
+        const depositRequired = Math.round(adjTotal * 0.5 * 100) / 100;
+        const depositMet = collected >= depositRequired;
+        const fullPaymentMet = collected >= adjTotal;
+        return adjTotal > 0 ? (
           <div>
             <ItemizedReceipt pricingResult={pr} />
+            {manualDiscount > 0 && (
+              <div style={{display:"flex",justifyContent:"space-between",padding:"8px 20px",background:C.sucLt,borderRadius:8,marginTop:6,border:`1px solid ${C.suc}25`}}>
+                <span style={{fontSize:13,fontWeight:600,color:C.suc}}>Manual Discount ({discountType === "percent" ? `${discountValue}%` : `$${discountValue.toFixed(2)}`})</span>
+                <span style={{fontSize:13,fontWeight:700,color:C.suc}}>-${manualDiscount.toFixed(2)}</span>
+              </div>
+            )}
+            {manualDiscount > 0 && (
+              <div style={{display:"flex",justifyContent:"space-between",padding:"8px 20px",marginTop:4}}>
+                <span style={{fontSize:15,fontWeight:800,color:C.text}}>Adjusted Total</span>
+                <span style={{fontSize:15,fontWeight:800,color:C.text}}>${adjTotal.toFixed(2)}</span>
+              </div>
+            )}
             <div style={{display:"flex",gap:12,marginTop:10}}>
               <div style={{flex:1,padding:"10px 14px",borderRadius:10,background:C.sucLt,border:`1px solid ${C.suc}25`}}>
                 <div style={{fontSize:10,fontWeight:700,color:C.suc,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>Collected</div>
@@ -2327,6 +2394,18 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose
                 <div style={{fontSize:18,fontWeight:800,color:outstanding>0?C.acc:C.suc}}>${outstanding.toFixed(2)}</div>
               </div>
             </div>
+            {isCheckInMode && !depositMet && (
+              <div style={{marginTop:10,padding:"10px 14px",borderRadius:10,background:C.danLt,border:`1.5px solid ${C.dan}30`,display:"flex",alignItems:"center",gap:8}}>
+                <I.AlertTriangle style={{color:C.dan,flexShrink:0}}/>
+                <div style={{fontSize:13,fontWeight:600,color:C.dan}}>50% deposit required to check in. Minimum deposit: ${depositRequired.toFixed(2)}</div>
+              </div>
+            )}
+            {isCheckOutMode && !fullPaymentMet && (
+              <div style={{marginTop:10,padding:"10px 14px",borderRadius:10,background:C.danLt,border:`1.5px solid ${C.dan}30`,display:"flex",alignItems:"center",gap:8}}>
+                <I.AlertTriangle style={{color:C.dan,flexShrink:0}}/>
+                <div style={{fontSize:13,fontWeight:600,color:C.dan}}>Full payment required to check out. Outstanding: ${outstanding.toFixed(2)}</div>
+              </div>
+            )}
           </div>
         ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No charge for this reservation.</div>;
       })()}
@@ -2356,8 +2435,28 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose
               </div>
             ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No payments recorded</div>}
             <div style={{display:"flex",gap:8,marginTop:10}}>
-              <button onClick={()=>setShowPayForm(true)} style={{padding:"7px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><I.DollarSign/> Collect Payment</button>
-              {totalPaid > 0 && <button onClick={()=>{setShowPayForm(true);}} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${C.dan}30`,background:"transparent",color:C.dan,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><I.RefreshCw/> Issue Refund</button>}
+              <button onClick={()=>{
+                // For check-in: default to 50% deposit
+                if (isCheckInMode) {
+                  const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
+                  let adjT = pr.total;
+                  if (discountType === "percent" && discountValue > 0) adjT = Math.max(0, adjT - Math.round(adjT * (discountValue / 100) * 100) / 100);
+                  else if (discountType === "flat" && discountValue > 0) adjT = Math.max(0, adjT - Math.min(discountValue, adjT));
+                  const depAmt = Math.max(0, Math.round(adjT * 0.5 * 100) / 100 - (reservation.amountCollected || 0));
+                  setPayFormDefaults({ amount: depAmt > 0 ? depAmt.toFixed(2) : "", type: "deposit" });
+                } else if (isCheckOutMode) {
+                  const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
+                  let adjT = pr.total;
+                  if (discountType === "percent" && discountValue > 0) adjT = Math.max(0, adjT - Math.round(adjT * (discountValue / 100) * 100) / 100);
+                  else if (discountType === "flat" && discountValue > 0) adjT = Math.max(0, adjT - Math.min(discountValue, adjT));
+                  const outst = Math.max(0, adjT - (reservation.amountCollected || 0));
+                  setPayFormDefaults({ amount: outst > 0 ? outst.toFixed(2) : "", type: "payment" });
+                } else {
+                  setPayFormDefaults(null);
+                }
+                setShowPayForm(true);
+              }} style={{padding:"7px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><I.DollarSign/> {isCheckInMode ? "Collect Deposit" : isCheckOutMode ? "Collect Balance" : "Collect Payment"}</button>
+              {totalPaid > 0 && <button onClick={()=>{setPayFormDefaults({ type: "refund" });setShowPayForm(true);}} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${C.dan}30`,background:"transparent",color:C.dan,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><I.RefreshCw/> Issue Refund</button>}
             </div>
           </div>
         );
@@ -2366,9 +2465,11 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose
       {/* Payment Form Modal */}
       {showPayForm && (
         <PaymentFormModal
-          onClose={()=>setShowPayForm(false)}
+          onClose={()=>{setShowPayForm(false);setPayFormDefaults(null);}}
           client={client}
           reservation={reservation}
+          defaultAmount={payFormDefaults?.amount}
+          defaultType={payFormDefaults?.type}
           onSave={async (pmt) => {
             const payments = [...(data.payments||[]), pmt];
             const resPmts = payments.filter(p => p.reservationId === reservation.id && p.status === "completed" && p.type !== "refund");
@@ -2381,15 +2482,19 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, onClose
       )}
 
       {/* Footer */}
+      {errors.deposit && <div style={{color:C.dan,fontSize:13,fontWeight:600,marginTop:8,padding:"8px 14px",background:C.danLt,borderRadius:8}}>{errors.deposit}</div>}
+      {errors.payment && <div style={{color:C.dan,fontSize:13,fontWeight:600,marginTop:8,padding:"8px 14px",background:C.danLt,borderRadius:8}}>{errors.payment}</div>}
       <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:24,alignItems:"center"}}>
         {reservation.status !== "checked-out" && reservation.status !== "cancelled" && (
           <button onClick={()=>setShowCancelConfirm(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"7px 14px",borderRadius:8,border:`1px solid ${C.danLt}`,background:"transparent",color:C.dan,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginRight:"auto"}}><I.Trash/> Cancel Reservation</button>
         )}
         <Btn variant="secondary" onClick={onClose}>Close</Btn>
         {isCheckInMode ? (
-          <Btn variant="success" onClick={()=>handleSave(true)} icon={<I.LogIn/>}>Check In</Btn>
+          <Btn variant="success" onClick={()=>handleSave(true, false)} icon={<I.LogIn/>}>Check In</Btn>
+        ) : isCheckOutMode ? (
+          <Btn variant="accent" onClick={()=>handleSave(false, true)} icon={<I.LogOut/>}>Check Out</Btn>
         ) : (
-          <Btn onClick={()=>handleSave(false)}>Save Changes</Btn>
+          <Btn onClick={()=>handleSave(false, false)}>Save Changes</Btn>
         )}
       </div>
 
@@ -2606,6 +2711,11 @@ function DashboardPage({ data, save, nav, onNew }) {
   };
   const handleCheckOut = async (rid) => {
     const res = data.reservations.find(r=>r.id===rid);
+    // Boarding/dayboarding: open preview modal for checkout (payment gate)
+    if (res && (res.type === "boarding" || res.type === "dayboarding")) {
+      setBoardingPreviewId(rid);
+      return;
+    }
     if (res && res.type === "evaluation") {
       const existingEval = (data.evaluations || []).find(e => e.reservationId === rid && e.locked);
       if (!existingEval) {
@@ -3378,13 +3488,20 @@ function DashboardPage({ data, save, nav, onNew }) {
         return <BoardingPreviewModal
           reservation={bRes} dog={bDog} client={bClient}
           isCheckInMode={bRes.status === "upcoming"}
+          isCheckOutMode={bRes.status === "checked-in"}
           onClose={() => setBoardingPreviewId(null)}
-          onSave={async (updatedRes, doCheckIn) => {
+          onSave={async (updatedRes, doCheckIn, doCheckOut) => {
             const origCopy = { ...bRes };
             const merged = { ...bRes, ...updatedRes };
             if (doCheckIn) merged.status = "checked-in";
+            if (doCheckOut) merged.status = "checked-out";
+            // Store adjusted pricing with discount on reservation
+            if (updatedRes.discountType && updatedRes.discountValue) {
+              merged.discountType = updatedRes.discountType;
+              merged.discountValue = updatedRes.discountValue;
+            }
             await save({ ...data, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
-            addDashToast({ dogName: bDog.fields.name, action: doCheckIn ? "checked in" : "updated", oldVal: doCheckIn ? "Upcoming" : "Previous", newVal: doCheckIn ? "Checked In" : "Saved", undoRes: origCopy });
+            addDashToast({ dogName: bDog.fields.name, action: doCheckIn ? "checked in" : doCheckOut ? "checked out" : "updated", oldVal: doCheckIn ? "Upcoming" : doCheckOut ? "Checked In" : "Previous", newVal: doCheckIn ? "Checked In" : doCheckOut ? "Checked Out" : "Saved", undoRes: origCopy });
             setBoardingPreviewId(null);
           }}
           data={data} save={save}
@@ -3605,7 +3722,7 @@ function ClientsPage({ data, nav }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENT DETAIL
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientDetailPage({ data, save, clientId, nav, profile }) {
+function ClientDetailPage({ data, save, clientId, nav, profile, openReservationId }) {
   const client = data.clients.find(c=>c.id===clientId);
   const dogs = data.dogs.filter(d=>d.clientId===clientId);
   const reservations = data.reservations.filter(r=>r.clientId===clientId).sort((a,b)=>b.checkIn.localeCompare(a.checkIn));
@@ -3628,13 +3745,17 @@ function ClientDetailPage({ data, save, clientId, nav, profile }) {
     await save({...data, clients: data.clients.map(c => c.id === clientId ? { ...c, agreements: agrs } : c)});
   };
 
-  const [boardingPreviewId, setBoardingPreviewId] = useState(null);
+  const [boardingPreviewId, setBoardingPreviewId] = useState(openReservationId || null);
   const handleCheckIn = (rid) => {
     const res = data.reservations.find(r => r.id === rid);
     if (res && (res.type === "boarding" || res.type === "dayboarding")) { setBoardingPreviewId(rid); return; }
     save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-in"}:r)});
   };
-  const handleCheckOut = async (rid) => { await save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out"}:r)}); };
+  const handleCheckOut = async (rid) => {
+    const res = data.reservations.find(r => r.id === rid);
+    if (res && (res.type === "boarding" || res.type === "dayboarding")) { setBoardingPreviewId(rid); return; }
+    await save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out"}:r)});
+  };
 
   const dn=(did)=>{const d=data.dogs.find(x=>x.id===did);return d?d.fields.name:"Unknown";};
   const tl=(t)=>t==="boarding"?"Boarding":t==="dayboarding"?"Day Board":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
@@ -4000,10 +4121,16 @@ function ClientDetailPage({ data, save, clientId, nav, profile }) {
         return <BoardingPreviewModal
           reservation={bRes} dog={bDog} client={bClient}
           isCheckInMode={bRes.status === "upcoming"}
+          isCheckOutMode={bRes.status === "checked-in"}
           onClose={() => setBoardingPreviewId(null)}
-          onSave={async (updatedRes, doCheckIn) => {
+          onSave={async (updatedRes, doCheckIn, doCheckOut) => {
             const merged = { ...bRes, ...updatedRes };
             if (doCheckIn) merged.status = "checked-in";
+            if (doCheckOut) merged.status = "checked-out";
+            if (updatedRes.discountType && updatedRes.discountValue) {
+              merged.discountType = updatedRes.discountType;
+              merged.discountValue = updatedRes.discountValue;
+            }
             await save({ ...data, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
             setBoardingPreviewId(null);
           }}
@@ -5059,7 +5186,7 @@ function NewDogPage({ data, save, clientId, nav }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // NEW RESERVATION
 // ═══════════════════════════════════════════════════════════════════════════
-function NewReservationPage({ data, save, preClientId, nav, profile }) {
+function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalToast }) {
   const [clientId, setClientId] = useState(preClientId||"");
   const [selectedDogs, setSelectedDogs] = useState([]); // array of dogIds
   const [type, setType] = useState("boarding");
@@ -5071,6 +5198,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
   const [checkOutTime, setCheckOutTime] = useState("11:00");
   const [notes, setNotes] = useState("");
   const [parentDestination, setParentDestination] = useState("");
+  const [resDiscountType, setResDiscountType] = useState("none"); // "none", "percent", "flat"
+  const [resDiscountValue, setResDiscountValue] = useState(0);
   const [errors, setErrors] = useState({});
   const [selectedRoom, setSelectedRoom] = useState("");
   const [showBookedRooms, setShowBookedRooms] = useState(false);
@@ -5374,6 +5503,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
         },
         pricing: resPricing,
         ...(isSecondInRoom ? {isSecondDogSameRoom: true} : {}),
+        ...(resDiscountType !== "none" && resDiscountValue > 0 ? { discountType: resDiscountType, discountValue: resDiscountValue } : {}),
       };
     });
 
@@ -5442,7 +5572,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
         });
       }
       await save({...data, dogs: saveDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...saveRes]});
-      nav("client-detail",{clientId});
+      nav("dashboard");
+      if (addGlobalToast) addGlobalToast({ message: "Reservation Created", actionLabel: "View Reservation", onAction: () => nav("client-detail", { clientId, openReservation: saveRes[0]?.id }) });
     }
   };
 
@@ -5476,7 +5607,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
     }
     await save({...data, clients: newClients, dogs: newDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...saveRes]});
     setShowUpdateModal(false);
-    nav("client-detail",{clientId});
+    nav("dashboard");
+    if (addGlobalToast) addGlobalToast({ message: "Reservation Created", actionLabel: "View Reservation", onAction: () => nav("client-detail", { clientId, openReservation: saveRes[0]?.id }) });
   };
 
   const fieldLabel = (f) => ({ feedingSchedules: "Feeding Schedule", medicationSchedules: "Medication Schedule", bath_type: "Preferred Bath Type", emergency_contact: "Emergency Contact Name", emergency_phone: "Emergency Phone", feeding: "Feeding Instructions", medications: "Medications" })[f] || f;
@@ -6238,10 +6370,45 @@ function NewReservationPage({ data, save, preClientId, nav, profile }) {
         )}
         <div style={{marginTop:16}}><Inp label="General Notes" type="textarea" value={notes} onChange={setNotes} placeholder="Special instructions for this stay..."/></div>
 
+        {/* Discount */}
+        {livePricing && livePricing.total > 0 && (
+          <div style={{marginTop:16}}>
+            <div style={{fontSize:11,fontWeight:700,color:C.textMut,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:8}}>Discount</div>
+            <div style={{display:"flex",gap:12,alignItems:"flex-end"}}>
+              <div style={{flex:"0 0 140px"}}>
+                <Inp label="Type" type="select" value={resDiscountType} onChange={v => { setResDiscountType(v); if (v === "none") setResDiscountValue(0); }} options={["none","percent","flat"]}/>
+              </div>
+              {resDiscountType !== "none" && (
+                <div style={{flex:"0 0 120px"}}>
+                  <Inp label={resDiscountType === "percent" ? "% Off" : "$ Off"} type="number" value={resDiscountValue} onChange={v => setResDiscountValue(Math.max(0, parseFloat(v) || 0))}/>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Itemized Receipt */}
         {livePricing && livePricing.lineItems.length > 0 && (
           <div style={{ marginTop: 20 }}>
             <ItemizedReceipt pricingResult={livePricing} />
+            {resDiscountType !== "none" && resDiscountValue > 0 && (() => {
+              let disc = 0;
+              if (resDiscountType === "percent") disc = Math.round(livePricing.total * (resDiscountValue / 100) * 100) / 100;
+              else disc = Math.min(resDiscountValue, livePricing.total);
+              const adjTotal = Math.max(0, Math.round((livePricing.total - disc) * 100) / 100);
+              return (
+                <div style={{marginTop:8}}>
+                  <div style={{display:"flex",justifyContent:"space-between",padding:"8px 20px",background:C.sucLt,borderRadius:8,border:`1px solid ${C.suc}25`}}>
+                    <span style={{fontSize:13,fontWeight:600,color:C.suc}}>Discount ({resDiscountType === "percent" ? `${resDiscountValue}%` : `$${resDiscountValue.toFixed(2)}`})</span>
+                    <span style={{fontSize:13,fontWeight:700,color:C.suc}}>-${disc.toFixed(2)}</span>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",padding:"8px 20px",marginTop:4}}>
+                    <span style={{fontSize:15,fontWeight:800,color:C.text}}>Adjusted Total</span>
+                    <span style={{fontSize:15,fontWeight:800,color:C.text}}>${adjTotal.toFixed(2)}</span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -7019,10 +7186,16 @@ function LodgingCalendarPage({ data, save, nav, onNew }) {
         return <BoardingPreviewModal
           reservation={bRes} dog={bDog} client={bClient}
           isCheckInMode={bRes.status === "upcoming"}
+          isCheckOutMode={bRes.status === "checked-in"}
           onClose={() => setBoardingPreviewId(null)}
-          onSave={async (updatedRes, doCheckIn) => {
+          onSave={async (updatedRes, doCheckIn, doCheckOut) => {
             const merged = { ...bRes, ...updatedRes };
             if (doCheckIn) merged.status = "checked-in";
+            if (doCheckOut) merged.status = "checked-out";
+            if (updatedRes.discountType && updatedRes.discountValue) {
+              merged.discountType = updatedRes.discountType;
+              merged.discountValue = updatedRes.discountValue;
+            }
             await save({ ...data, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
             setBoardingPreviewId(null);
           }}
@@ -11824,9 +11997,9 @@ function MessagesPage({ data, save, nav }) {
 }
 
 // ─── Payment Form Modal ──────────────────────────────────────────────────
-function PaymentFormModal({ onClose, onSave, reservation, client, existingPayment }) {
-  const [amt, setAmt] = useState(existingPayment?.amount?.toString() || (reservation ? Math.max(0, (reservation.totalPrice || 0) - (reservation.amountCollected || 0)).toFixed(2) : ""));
-  const [type, setType] = useState(existingPayment?.type || "payment");
+function PaymentFormModal({ onClose, onSave, reservation, client, existingPayment, defaultAmount, defaultType }) {
+  const [amt, setAmt] = useState(defaultAmount || existingPayment?.amount?.toString() || (reservation ? Math.max(0, (reservation.totalPrice || 0) - (reservation.amountCollected || 0)).toFixed(2) : ""));
+  const [type, setType] = useState(defaultType || existingPayment?.type || "payment");
   const [method, setMethod] = useState(existingPayment?.method || "card");
   const [card4, setCard4] = useState(existingPayment?.cardLast4 || "");
   const [tip, setTip] = useState("");
@@ -13017,12 +13190,12 @@ export default function App() {
       case "operations": return hp("view_daily_ops") ? <OperationsHub data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "dashboard": return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
       case "clients": return hp("view_clients") ? <ClientsPage data={data} nav={nav} profile={profile}/> : denied;
-      case "client-detail": return hp("view_client_detail") ? <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile}/> : denied;
+      case "client-detail": return hp("view_client_detail") ? <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile} openReservationId={params.openReservation}/> : denied;
       case "new-client": return hp("create_client") ? <NewClientPage data={data} save={save} nav={nav} prefill={params.prefill} addGlobalToast={addGlobalToast}/> : denied;
       case "dog-detail": return hp("view_dog_detail") ? <DogDetailPage data={data} save={save} clientId={params.clientId} dogId={params.dogId} nav={nav} profile={profile}/> : denied;
       case "new-dog": return hp("create_dog") ? <NewDogPage data={data} save={save} clientId={params.clientId} nav={nav}/> : denied;
       case "reservations": return hp("view_calendar") ? <LodgingCalendarPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/> : denied;
-      case "new-reservation": return hp("create_reservation") ? <NewReservationPage data={data} save={save} preClientId={params.clientId} nav={nav} profile={profile}/> : denied;
+      case "new-reservation": return hp("create_reservation") ? <NewReservationPage data={data} save={save} preClientId={params.clientId} nav={nav} profile={profile} addGlobalToast={addGlobalToast}/> : denied;
       case "unified-new": return <UnifiedNewPage data={data} save={save} nav={nav} prefill={params.prefill}/>;
       case "evaluation-form": return hp("edit_evaluations") ? <EvaluationFormPage data={data} save={save} reservationId={params.reservationId} nav={nav} profile={profile}/> : denied;
       case "eod": return hp("view_eod") ? <EODPage data={data} save={save} nav={nav} profile={profile}/> : denied;
