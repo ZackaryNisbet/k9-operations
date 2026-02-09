@@ -12437,47 +12437,69 @@ function EnterpriseOperationsPage({ data, save, nav, profile, handleLocationChan
         </Card>
       ) : viewMode === "day" ? (
       /* ═══ DAY VIEW ═══ */
-      <Card style={{padding:0,overflow:"hidden"}}>
-        <div style={{display:"grid",gridTemplateColumns:`260px repeat(${locations.length},1fr)`,borderBottom:`2px solid ${C.border}`}}>
-          <div style={{padding:"14px 20px",background:C.bg}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.05em"}}>Checklist</div>
+      <>
+      {/* Helper to render a section table */}
+      {[
+        { title: "Daily Operations", ops: dailyOps, comingSoon: false },
+        { title: "Weekly Maintenance", ops: weeklyOps, comingSoon: true },
+        { title: "Monthly Inspections", ops: monthlyOps, comingSoon: true },
+      ].map(section => (
+        <div key={section.title} style={{marginBottom:24}}>
+          <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
+            {section.title}
+            <span style={{fontSize:12,fontWeight:500,color:C.textMut}}>({section.ops.length} items)</span>
           </div>
-          {locations.map(loc => (
-            <div key={loc.id} style={{padding:"14px 20px",background:C.bg,textAlign:"center",borderLeft:`1px solid ${C.borderLight}`}}>
-              <div style={{fontSize:13,fontWeight:700,color:C.text}}>{loc.name}</div>
-            </div>
-          ))}
-        </div>
-        {dailyOps.map(op => (
-          <div key={op.id} style={{display:"grid",gridTemplateColumns:`260px repeat(${locations.length},1fr)`,borderBottom:`1px solid ${C.borderLight}`,transition:"background 0.1s"}}
-            onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-            <div style={{padding:"14px 20px",display:"flex",alignItems:"center",gap:10}}>
-              <div style={{width:6,height:6,borderRadius:3,background:C.pri,flexShrink:0}}/>
-              <div style={{fontSize:13,fontWeight:600,color:C.text}}>{op.label}</div>
-            </div>
-            {locations.map(loc => {
-              const st = getOpsStatus(op, loc.id);
-              const bg = st.status === "complete" ? C.suc+"14" : st.status === "progress" ? C.acc+"14" : "transparent";
-              const color = st.status === "complete" ? C.suc : st.status === "progress" ? C.acc : C.textMut;
-              const label = st.status === "complete" ? "Complete" : st.status === "progress" ? "In Progress" : "Not Started";
-              return (
-                <div key={loc.id} style={{padding:"12px 20px",borderLeft:`1px solid ${C.borderLight}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,cursor:"pointer"}}
-                  onClick={()=>{ handleLocationChange(loc.id); setTimeout(()=>{ if (op.routeTo) nav(op.routeTo); }, 50); }}>
-                  <div style={{padding:"4px 12px",borderRadius:20,background:bg,fontSize:11,fontWeight:700,color,whiteSpace:"nowrap"}}>{label}</div>
-                  {st.total > 0 && (
-                    <div style={{display:"flex",alignItems:"center",gap:6,width:"100%",maxWidth:120}}>
-                      <div style={{flex:1,height:4,borderRadius:2,background:C.border}}>
-                        <div style={{height:4,borderRadius:2,background:color,width:`${st.pct}%`,transition:"width 0.3s"}}/>
-                      </div>
-                      <span style={{fontSize:10,fontWeight:600,color:C.textMut,whiteSpace:"nowrap"}}>{st.done}/{st.total}</span>
-                    </div>
-                  )}
+          <Card style={{padding:0,overflow:"hidden"}}>
+            <div style={{display:"grid",gridTemplateColumns:`260px repeat(${locations.length},1fr)`,borderBottom:`2px solid ${C.border}`}}>
+              <div style={{padding:"14px 20px",background:C.bg}}>
+                <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.05em"}}>Checklist</div>
+              </div>
+              {locations.map(loc => (
+                <div key={loc.id} style={{padding:"14px 20px",background:C.bg,textAlign:"center",borderLeft:`1px solid ${C.borderLight}`}}>
+                  <div style={{fontSize:13,fontWeight:700,color:C.text}}>{loc.name}</div>
                 </div>
-              );
-            })}
-          </div>
-        ))}
-      </Card>
+              ))}
+            </div>
+            {section.ops.map(op => (
+              <div key={op.id} style={{display:"grid",gridTemplateColumns:`260px repeat(${locations.length},1fr)`,borderBottom:`1px solid ${C.borderLight}`,transition:"background 0.1s"}}
+                onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                <div style={{padding:"14px 20px",display:"flex",alignItems:"center",gap:10}}>
+                  <div style={{width:6,height:6,borderRadius:3,background:section.comingSoon?C.textMut:C.pri,flexShrink:0}}/>
+                  <div style={{fontSize:13,fontWeight:600,color:C.text}}>{op.label}</div>
+                </div>
+                {locations.map(loc => {
+                  if (section.comingSoon) {
+                    return (
+                      <div key={loc.id} style={{padding:"12px 20px",borderLeft:`1px solid ${C.borderLight}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        <span style={{fontSize:11,fontWeight:700,color:C.textMut,background:C.bg,borderRadius:12,padding:"3px 10px",textTransform:"uppercase",letterSpacing:"0.05em"}}>Coming Soon</span>
+                      </div>
+                    );
+                  }
+                  const st = getOpsStatus(op, loc.id);
+                  const bg = st.status === "complete" ? C.suc+"14" : st.status === "progress" ? C.acc+"14" : "transparent";
+                  const color = st.status === "complete" ? C.suc : st.status === "progress" ? C.acc : C.textMut;
+                  const label = st.status === "complete" ? "Complete" : st.status === "progress" ? "In Progress" : "Not Started";
+                  return (
+                    <div key={loc.id} style={{padding:"12px 20px",borderLeft:`1px solid ${C.borderLight}`,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,cursor:"pointer"}}
+                      onClick={()=>{ handleLocationChange(loc.id); setTimeout(()=>{ if (op.routeTo) nav(op.routeTo); }, 50); }}>
+                      <div style={{padding:"4px 12px",borderRadius:20,background:bg,fontSize:11,fontWeight:700,color,whiteSpace:"nowrap"}}>{label}</div>
+                      {st.total > 0 && (
+                        <div style={{display:"flex",alignItems:"center",gap:6,width:"100%",maxWidth:120}}>
+                          <div style={{flex:1,height:4,borderRadius:2,background:C.border}}>
+                            <div style={{height:4,borderRadius:2,background:color,width:`${st.pct}%`,transition:"width 0.3s"}}/>
+                          </div>
+                          <span style={{fontSize:10,fontWeight:600,color:C.textMut,whiteSpace:"nowrap"}}>{st.done}/{st.total}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </Card>
+        </div>
+      ))}
+      </>
       ) : (
       /* ═══ WEEK VIEW ═══ */
       <>
@@ -12538,33 +12560,6 @@ function EnterpriseOperationsPage({ data, save, nav, profile, handleLocationChan
       </>
       )}
 
-      {/* Weekly Maintenance */}
-      <div style={{marginTop:32,marginBottom:12}}>
-        <h3 style={{fontSize:18,fontWeight:800,color:C.text,margin:0}}>Weekly Maintenance</h3>
-        <span style={{fontSize:12,color:C.textMut,marginLeft:8}}>({weeklyOps.length} items)</span>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:`repeat(auto-fill, minmax(260px, 1fr))`,gap:12,marginBottom:32}}>
-        {weeklyOps.map(op => (
-          <Card key={op.id} style={{padding:"20px 24px",border:`1px dashed ${C.border}`}}>
-            <div style={{fontSize:14,fontWeight:700,color:C.textSec,marginBottom:8}}>{op.label}</div>
-            <span style={{fontSize:11,fontWeight:700,color:C.textMut,background:C.bg,borderRadius:12,padding:"3px 10px",textTransform:"uppercase",letterSpacing:"0.05em"}}>Coming Soon</span>
-          </Card>
-        ))}
-      </div>
-
-      {/* Monthly Inspections */}
-      <div style={{marginBottom:12}}>
-        <h3 style={{fontSize:18,fontWeight:800,color:C.text,margin:0}}>Monthly Inspections</h3>
-        <span style={{fontSize:12,color:C.textMut,marginLeft:8}}>({monthlyOps.length} items)</span>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:`repeat(auto-fill, minmax(260px, 1fr))`,gap:12,marginBottom:32}}>
-        {monthlyOps.map(op => (
-          <Card key={op.id} style={{padding:"20px 24px",border:`1px dashed ${C.border}`}}>
-            <div style={{fontSize:14,fontWeight:700,color:C.textSec,marginBottom:8}}>{op.label}</div>
-            <span style={{fontSize:11,fontWeight:700,color:C.textMut,background:C.bg,borderRadius:12,padding:"3px 10px",textTransform:"uppercase",letterSpacing:"0.05em"}}>Coming Soon</span>
-          </Card>
-        ))}
-      </div>
     </div>
   );
 }
