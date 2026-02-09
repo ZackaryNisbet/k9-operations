@@ -4,8 +4,16 @@ import { AuthProvider, useAuth } from './AuthProvider';
 import { supabase } from './supabaseClient';
 import Login from './Login';
 import App from './App';
+import BookingPage from './BookingPage';
+
+// Public route check — render booking page without auth
+const path = window.location.pathname;
+const isBookingPage = path.startsWith('/book/') || path === '/book';
 
 function Root() {
+  // Public booking page — no auth required
+  if (isBookingPage) return <BookingPage />;
+
   const { user, profile, loading, signOut, needsPasswordSet, updatePassword } = useAuth();
   const [claiming, setClaiming] = useState(false);
   const [claimChecked, setClaimChecked] = useState(false);

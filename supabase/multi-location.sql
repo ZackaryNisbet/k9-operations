@@ -234,3 +234,94 @@ BEGIN
   RETURN jsonb_build_object('success', true);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+-- ============================================================
+-- 9. get_public_booking_data: Returns public-safe location data
+--    for the self-booking page. NO AUTH REQUIRED.
+--    Only exposes room counts, pricing, availability — no PII.
+-- ============================================================
+CREATE OR REPLACE FUNCTION get_public_booking_data(p_slug TEXT)
+RETURNS JSONB AS $$
+DECLARE
+  loc RECORD;
+  res_data JSONB;
+BEGIN
+  -- Find location by slug
+  SELECT id, name, slug, region, data INTO loc
+  FROM locations
+  WHERE slug = p_slug
+  LIMIT 1;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Location not found');
+  END IF;
+
+  -- Build sanitized reservations (dates + room types only, no PII)
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'type', r->>'type',
+    'roomType', r->>'roomType',
+    'checkIn', r->>'checkIn',
+    'checkOut', r->>'checkOut',
+    'status', r->>'status'
+  )), '[]'::jsonb) INTO res_data
+  FROM jsonb_array_elements(COALESCE(loc.data->'reservations', '[]'::jsonb)) r
+  WHERE r->>'status' NOT IN ('cancelled', 'checked-out');
+
+  RETURN jsonb_build_object(
+    'success', true,
+    'location_name', loc.name,
+    'location_slug', COALESCE(loc.slug, ''),
+    'region', COALESCE(loc.region, ''),
+    'resortInfo', COALESCE(loc.data->'resortInfo', '{}'::jsonb),
+    'rooms', COALESCE(loc.data->'rooms', '{}'::jsonb),
+    'pricing', COALESCE(loc.data->'pricing', '{}'::jsonb),
+    'closedDates', COALESCE(loc.data->'closedDates', '[]'::jsonb),
+    'reservations', res_data
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+-- ============================================================
+-- 10. submit_online_booking: Appends a booking request to the
+--     location's data.onlineBookings array. NO AUTH REQUIRED.
+-- ============================================================
+CREATE OR REPLACE FUNCTION submit_online_booking(p_slug TEXT, p_booking JSONB)
+RETURNS JSONB AS $$
+DECLARE
+  loc_id UUID;
+  booking_id TEXT;
+  enriched JSONB;
+  existing JSONB;
+BEGIN
+  -- Find location
+  SELECT id INTO loc_id FROM locations WHERE slug = p_slug LIMIT 1;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Location not found');
+  END IF;
+
+  -- Generate booking ID and enrich
+  booking_id := 'ob_' || substr(md5(random()::text), 1, 12);
+  enriched := p_booking || jsonb_build_object(
+    'id', booking_id,
+    'submittedAt', now()::text,
+    'status', 'pending'
+  );
+
+  -- Get existing onlineBookings array (or empty)
+  SELECT COALESCE(data->'onlineBookings', '[]'::jsonb) INTO existing
+  FROM locations WHERE id = loc_id;
+
+  -- Append new booking
+  UPDATE locations
+  SET data = jsonb_set(
+    COALESCE(data, '{}'::jsonb),
+    '{onlineBookings}',
+    existing || jsonb_build_array(enriched)
+  )
+  WHERE id = loc_id;
+
+  RETURN jsonb_build_object('success', true, 'bookingId', booking_id);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
