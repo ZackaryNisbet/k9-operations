@@ -2150,6 +2150,17 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   const [payFormDefaults, setPayFormDefaults] = useState(null);
   const [discountType, setDiscountType] = useState(reservation.discountType || "none"); // "none", "percent", "flat"
   const [discountValue, setDiscountValue] = useState(reservation.discountValue || 0);
+  // Activity tracking: { "2026-02-07|feeding_AM": { administered: true, by: "Name", at: "ISO", consumption: "100%" } }
+  const [activityLog, setActivityLog] = useState(reservation.activityLog || {});
+  const activityLogInitRef = useRef(JSON.stringify(reservation.activityLog || {}));
+  // Auto-save activity log changes directly to reservation (no need to hit Save)
+  useEffect(() => {
+    const cur = JSON.stringify(activityLog);
+    if (cur !== activityLogInitRef.current) {
+      activityLogInitRef.current = cur;
+      save({ ...data, reservations: data.reservations.map(r => r.id === reservation.id ? { ...r, activityLog } : r) });
+    }
+  }, [activityLog]);
 
   const BATH_OPTS = data.bathTypeOptions || ["Standard","Hypo","Medicated","Whitening"];
   const profileFeedingSchedules = dog.fields.feedingSchedules ?? [];
@@ -2176,6 +2187,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     emergencyContactOverride: (ecNameChanged || ecPhoneChanged) ? { name: ecName, phone: ecPhone } : reservation.emergencyContactOverride || null,
     discountType: discountType !== "none" ? discountType : undefined,
     discountValue: discountType !== "none" ? discountValue : undefined,
+    activityLog,
   });
 
   // Detect profile changes
@@ -2294,7 +2306,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     transition: "all 0.15s",
   });
 
-  // Build activity matrix
+  // Build activity matrix — columns = service types, rows = dates
   const buildActivityMatrix = () => {
     const days = [];
     let d = new Date(checkIn + "T12:00:00");
@@ -2304,41 +2316,44 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       d = new Date(d.getTime() + 86400000);
     }
 
-    const rows = [];
+    const cols = [];
     feedingSchedules.forEach(s => {
       (s.times || []).forEach(time => {
-        rows.push({
+        cols.push({
+          key: `feeding_${time.replace(/\s+/g,"_")}`,
           label: `Feeding - ${time}`,
           type: "feeding",
           detail: [s.amount, s.unit, s.foodType].filter(Boolean).join(" "),
           instruction: s.instruction || "",
           notes: s.notes || "",
-          days: days.map(() => true),
+          activeDays: days.map(() => true),
         });
       });
     });
 
     medicationSchedules.forEach(s => {
-      rows.push({
+      cols.push({
+        key: `med_${(s.name||"").replace(/\s+/g,"_")}`,
         label: `Medication - ${s.name}`,
         type: "medication",
         detail: [s.time, s.amount, s.unit].filter(Boolean).join(" "),
         notes: s.notes || "",
-        days: days.map(() => true),
+        activeDays: days.map(() => true),
       });
     });
 
     if (bathType) {
-      rows.push({
+      cols.push({
+        key: "bathing",
         label: "Bathing",
         type: "bathing",
         detail: bathType,
         notes: "",
-        days: days.map((_, i) => i === days.length - 1),
+        activeDays: days.map((_, i) => i === days.length - 1),
       });
     }
 
-    return { days, rows };
+    return { days, cols };
   };
 
   return (
@@ -2647,81 +2662,99 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         <div>
           {secHeader("Daily Activities")}
           {(() => {
-            const { days, rows } = buildActivityMatrix();
+            const { days, cols } = buildActivityMatrix();
             if (days.length === 0) return <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No activities scheduled</div>;
-            if (rows.length === 0) return <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No feeding, medication, or bathing scheduled</div>;
+            if (cols.length === 0) return <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No feeding, medication, or bathing scheduled</div>;
 
-            const shouldTranspose = days.length > 5;
+            const CONSUMPTION_OPTS = ["","0%","25%","50%","75%","100%"];
+            const logKey = (day, col) => `${day}|${col.key}`;
+            const getLog = (day, col) => activityLog[logKey(day, col)] || {};
+            const updateLog = (day, col, updates) => {
+              const key = logKey(day, col);
+              const prev = activityLog[key] || {};
+              const next = { ...prev, ...updates };
+              setActivityLog({ ...activityLog, [key]: next });
+            };
+            const staffName = profile ? (profile.full_name || profile.email || "Staff") : "Staff";
 
-            if (shouldTranspose) {
-              // Days as rows, activities as columns
-              return (
-                <div style={{overflowX:"auto"}}>
-                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                    <thead>
-                      <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                        <th style={{padding:"8px 12px",textAlign:"left",fontWeight:700,color:C.text}}>Date</th>
-                        {rows.map((r,i) => (
-                          <th key={i} style={{padding:"8px 12px",textAlign:"center",fontWeight:700,color:C.text}}>{r.label}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {days.map((day,di) => (
-                        <tr key={day} style={{borderBottom:`1px solid ${C.borderLight}`}}>
-                          <td style={{padding:"8px 12px",fontWeight:600,color:C.pri}}>{new Date(day + "T00:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</td>
-                          {rows.map((r,ri) => (
-                            <td key={ri} style={{padding:"8px 12px",textAlign:"center",color:r.days[di]?C.text:C.textMut,background:r.days[di]?C.surface:"transparent"}}>
-                              {r.days[di] ? (
-                                <div style={{fontSize:11}}>
-                                  {r.detail && <div style={{fontWeight:600}}>{r.detail}</div>}
-                                  {r.instruction && <div style={{fontSize:10,color:C.textSec}}>{r.instruction}</div>}
-                                  {r.notes && <div style={{fontSize:10,fontStyle:"italic",color:C.textMut}}>{r.notes}</div>}
-                                </div>
-                              ) : "—"}
-                            </td>
-                          ))}
-                        </tr>
+            return (
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                  <thead>
+                    <tr style={{borderBottom:`2px solid ${C.border}`}}>
+                      <th style={{padding:"10px 12px",textAlign:"left",fontWeight:700,color:C.text,position:"sticky",left:0,background:C.surface,zIndex:1,minWidth:110}}>Date</th>
+                      {cols.map(col => (
+                        <th key={col.key} style={{padding:"10px 12px",textAlign:"center",fontWeight:700,color:C.text,minWidth:140}}>
+                          <div>{col.label}</div>
+                          {col.detail && <div style={{fontSize:10,fontWeight:500,color:C.textSec,marginTop:2}}>{col.detail}</div>}
+                          {col.instruction && <div style={{fontSize:10,fontWeight:500,color:C.textMut,marginTop:1}}>{col.instruction}</div>}
+                        </th>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              );
-            } else {
-              // Activities as rows, days as columns
-              return (
-                <div style={{overflowX:"auto"}}>
-                  <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                    <thead>
-                      <tr style={{borderBottom:`1px solid ${C.border}`}}>
-                        <th style={{padding:"8px 12px",textAlign:"left",fontWeight:700,color:C.text}}>Activity</th>
-                        {days.map((day,di) => (
-                          <th key={day} style={{padding:"8px 12px",textAlign:"center",fontWeight:700,color:C.text}}>{new Date(day + "T00:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((r,ri) => (
-                        <tr key={ri} style={{borderBottom:`1px solid ${C.borderLight}`}}>
-                          <td style={{padding:"8px 12px",fontWeight:600,color:C.text}}>{r.label}</td>
-                          {r.days.map((active,di) => (
-                            <td key={di} style={{padding:"8px 12px",textAlign:"center",color:active?C.text:C.textMut,background:active?C.surface:"transparent"}}>
-                              {active ? (
-                                <div style={{fontSize:11}}>
-                                  {r.detail && <div style={{fontWeight:600}}>{r.detail}</div>}
-                                  {r.instruction && <div style={{fontSize:10,color:C.textSec}}>{r.instruction}</div>}
-                                  {r.notes && <div style={{fontSize:10,fontStyle:"italic",color:C.textMut}}>{r.notes}</div>}
-                                </div>
-                              ) : "—"}
-                            </td>
-                          ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {days.map((day, di) => {
+                      const isToday = day === todayStr();
+                      return (
+                        <tr key={day} style={{borderBottom:`1px solid ${C.borderLight}`,background:isToday?C.priLt:"transparent"}}>
+                          <td style={{padding:"10px 12px",fontWeight:700,color:C.pri,position:"sticky",left:0,background:isToday?C.priLt:C.surface,zIndex:1,whiteSpace:"nowrap"}}>
+                            <div style={{fontSize:13}}>{new Date(day+"T00:00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})}</div>
+                            {isToday && <div style={{fontSize:9,fontWeight:800,color:C.pri,textTransform:"uppercase",letterSpacing:"0.06em"}}>Today</div>}
+                          </td>
+                          {cols.map(col => {
+                            const active = col.activeDays[di];
+                            if (!active) return <td key={col.key} style={{padding:"10px 12px",textAlign:"center",color:C.textMut}}>—</td>;
+                            const entry = getLog(day, col);
+                            const administered = !!entry.administered;
+                            return (
+                              <td key={col.key} style={{padding:"8px 10px",textAlign:"center",verticalAlign:"top",background:administered?C.suc+"10":"transparent"}}>
+                                {/* Administered checkbox */}
+                                <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,cursor:"pointer",marginBottom:col.type==="feeding"?6:0}}>
+                                  <input type="checkbox" checked={administered} style={{accentColor:C.suc,width:15,height:15,cursor:"pointer"}}
+                                    onChange={e => {
+                                      if (e.target.checked) {
+                                        updateLog(day, col, { administered: true, by: staffName, at: new Date().toISOString() });
+                                      } else {
+                                        updateLog(day, col, { administered: false, by: "", at: "" });
+                                      }
+                                    }} />
+                                  <span style={{fontSize:11,fontWeight:600,color:administered?C.suc:C.textMut}}>
+                                    {administered ? "Done" : "Administered"}
+                                  </span>
+                                </label>
+                                {administered && entry.by && (
+                                  <div style={{fontSize:9,color:C.suc,marginBottom:col.type==="feeding"?4:0}}>
+                                    by {entry.by}{entry.at ? ` · ${new Date(entry.at).toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true})}` : ""}
+                                  </div>
+                                )}
+                                {/* Consumption tracker — feeding only */}
+                                {col.type === "feeding" && (
+                                  <div style={{marginTop:2}}>
+                                    <div style={{fontSize:9,fontWeight:600,color:C.textMut,marginBottom:2,textTransform:"uppercase",letterSpacing:"0.04em"}}>Ate</div>
+                                    <div style={{display:"flex",gap:2,justifyContent:"center",flexWrap:"wrap"}}>
+                                      {CONSUMPTION_OPTS.filter(o=>o).map(opt => {
+                                        const sel = entry.consumption === opt;
+                                        return (
+                                          <button key={opt} onClick={() => updateLog(day, col, { consumption: sel ? "" : opt })}
+                                            style={{padding:"3px 6px",borderRadius:5,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:10,fontWeight:sel?700:500,cursor:"pointer",fontFamily:"inherit",minWidth:28}}>
+                                            {opt}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                                {col.notes && <div style={{fontSize:9,fontStyle:"italic",color:C.textMut,marginTop:3}}>{col.notes}</div>}
+                              </td>
+                            );
+                          })}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              );
-            }
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
           })()}
         </div>
       )}
