@@ -199,11 +199,11 @@ export default function BookingPage() {
 
       if (submitError) throw submitError;
 
-      if (result && result.confirmationId) {
-        setConfirmationId(result.confirmationId);
+      if (result && (result.bookingId || result.success)) {
+        setConfirmationId(result.bookingId || 'confirmed');
         setStep(bookingType === 'evaluation' ? 'eval-confirm' : 'board-confirm');
       } else {
-        setError('Failed to create booking');
+        setError(result?.message || 'Failed to create booking');
       }
     } catch (err) {
       console.error('Error submitting booking:', err);
@@ -266,8 +266,8 @@ export default function BookingPage() {
   const renderLanding = () => {
     if (!locationData) return null;
 
-    const googleRating = locationData.resortInfo?.googleRating || '4.8';
-    const googleReviewCount = locationData.resortInfo?.googleReviewCount || '200+';
+    const googleRating = locationData.resortInfo?.googleRating || '5.0';
+    const googleReviewCount = locationData.resortInfo?.googleReviewCount || '100+';
     const address = locationData.resortInfo?.address || '';
 
     return (
@@ -277,7 +277,7 @@ export default function BookingPage() {
         {/* Hero Section */}
         <div style={{ backgroundColor: BRAND_COLORS.surface, padding: '80px 32px', textAlign: 'center' }}>
           <h1 style={{ fontSize: '56px', fontWeight: '700', fontFamily: "'Canela', Georgia, serif", color: BRAND_COLORS.navy, margin: '0 0 16px 0' }}>
-            Welcome to K9 Resorts {locationData.location_name}
+            Welcome to {locationData.location_name}
           </h1>
           <div style={{ fontSize: '12px', height: '4px', width: '60px', backgroundColor: BRAND_COLORS.gold, margin: '0 auto 32px auto' }}></div>
           <p style={{ fontSize: '24px', color: BRAND_COLORS.textSecondary, margin: '0 0 40px 0', fontWeight: '400' }}>
