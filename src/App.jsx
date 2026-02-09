@@ -3101,30 +3101,38 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   // Quick Daycare Check-in
   const [showQuickDC, setShowQuickDC] = useState(false);
   const [dcSearch, setDcSearch] = useState("");
+  const [dcType, setDcType] = useState("daycare"); // "daycare" or "dayboarding"
   const dcSearchRef = useRef(null);
   useEffect(() => { if (showQuickDC && dcSearchRef.current) dcSearchRef.current.focus(); }, [showQuickDC]);
 
   const quickDCCheckIn = async (clientId, dogId) => {
     const dog = data.dogs.find(d => d.id === dogId);
     const daycareSize = dog ? getDogDaycareSize(dog) : "large";
+    const nowTime = new Date().toTimeString().slice(0, 5);
+    const nowISO = new Date().toISOString();
+    const resType = dcType;
     const newRes = {
-      id: gid(), clientId, dogId, type: "daycare", daycareSize,
+      id: gid(), clientId, dogId, type: resType, daycareSize,
+      ...(resType === "dayboarding" ? { roomType: "Executive Room" } : {}),
       checkIn: vd, checkOut: vd,
-      checkInTime: new Date().toTimeString().slice(0, 5),
+      checkInTime: nowTime,
       checkOutTime: "", status: "checked-in", notes: "",
+      actualCheckInTime: nowISO,
+      checkedInBy: profile ? (profile.full_name || profile.email || "Staff") : "Staff",
       careOverrides: {},
       pricing: calcReservationPricing({
-        type: "daycare", checkIn: vd, checkOut: vd,
-        checkInTime: new Date().toTimeString().slice(0, 5),
+        type: resType, checkIn: vd, checkOut: vd,
+        checkInTime: nowTime,
         checkOutTime: "", daycareSize,
         dogs: dog ? [dog] : [], dogProfiles: data.dogs,
         pricing: data.pricing, isSecondDogSameRoom: false,
       }),
     };
-    await save({ ...data, reservations: [...data.reservations, newRes] });
+    const auditEntry = buildAuditEntry(newRes.id, "Checked In", [{field:"Status",oldVal:"Walk-in",newVal:"Checked In"},{field:"Actual Check-In",oldVal:"—",newVal:new Date().toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true})}], profile);
+    await save({ ...data, auditLog: [...(data.auditLog||[]), auditEntry], reservations: [...data.reservations, newRes] });
     setShowQuickDC(false);
     setDcSearch("");
-    addDashToast({ dogName: dog?.fields?.name || "?", action: "daycare checked in", oldVal: "Walk-in", newVal: "Checked In", undoRes: newRes });
+    addDashToast({ dogName: dog?.fields?.name || "?", action: `${resType} checked in`, oldVal: "Walk-in", newVal: "Checked In", undoRes: newRes });
   };
 
   // Toast notifications
@@ -4080,6 +4088,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                           {/* In Time */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
                             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkInTime)}</span>
+                            {res.actualCheckInTime && <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>actual: {new Date(res.actualCheckInTime).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>}
                           </div>
                           {/* Out Date */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
@@ -4088,6 +4097,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                           {/* Out Time */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
                             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkOutTime)}</span>
+                            {res.actualCheckOutTime && <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>actual: {new Date(res.actualCheckOutTime).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>}
                           </div>
                           {/* Add-Ons */}
                           <div style={{ position: "relative" }} onClick={e => e.stopPropagation()}
@@ -4170,9 +4180,16 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
 
       {/* Quick Daycare Check-in Modal */}
       {showQuickDC && (
-        <Modal title="Quick Daycare Check-in" onClose={()=>{setShowQuickDC(false);setDcSearch("");}}>
-          <div style={{marginBottom:16}}>
-            <input ref={dcSearchRef} value={dcSearch} onChange={e=>setDcSearch(e.target.value)} placeholder="Search client or dog name..." style={{width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${C.border}`,fontSize:14,fontWeight:500,fontFamily:"inherit",outline:"none",background:C.bg}} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/>
+        <Modal title="Quick Check-in" onClose={()=>{setShowQuickDC(false);setDcSearch("");}}>
+          <div style={{marginBottom:12}}>
+            <input ref={dcSearchRef} className="no-focus-ring" value={dcSearch} onChange={e=>setDcSearch(e.target.value)} placeholder="Search client or dog name..." style={{width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${C.border}`,fontSize:14,fontWeight:500,fontFamily:"inherit",outline:"none",background:C.bg}} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/>
+          </div>
+          {/* Type selector */}
+          <div style={{display:"flex",gap:8,marginBottom:16}}>
+            {[{id:"daycare",label:"Daycare"},{id:"dayboarding",label:"Day Boarding"}].map(t=>{
+              const sel=dcType===t.id;
+              return <button key={t.id} onClick={()=>setDcType(t.id)} style={{flex:1,padding:"8px 14px",borderRadius:10,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:13,fontWeight:sel?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>{t.label}</button>;
+            })}
           </div>
           <div style={{maxHeight:350,overflowY:"auto"}}>
             {(() => {
@@ -4187,8 +4204,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                 uniqueDogs.forEach(dog => {
                   const dName = (dog.fields?.name || "").toLowerCase();
                   if (cMatch || dName.includes(q)) {
-                    // Check if already checked in for daycare today
-                    const alreadyIn = data.reservations.some(r => r.dogId === dog.id && r.type === "daycare" && r.checkIn === vd && r.status === "checked-in");
+                    const alreadyIn = data.reservations.some(r => r.dogId === dog.id && (r.type === "daycare" || r.type === "dayboarding") && r.checkIn === vd && r.status === "checked-in");
                     results.push({ clientId: cl.id, clientName: cName, dogId: dog.id, dogName: dog.fields?.name, breed: dog.fields?.breed, size: getDogDaycareSize(dog), alreadyIn });
                   }
                 });
@@ -4198,7 +4214,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                 <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderRadius:10,border:`1px solid ${C.border}`,marginBottom:6,background:r.alreadyIn?C.sucLt:C.surface}}>
                   <div>
                     <div style={{fontWeight:700,fontSize:14,color:C.text}}>{r.dogName} <span style={{fontWeight:400,color:C.textSec,fontSize:12}}>({r.breed})</span></div>
-                    <div style={{fontSize:12,color:C.textSec}}>{r.clientName} {"\u2022"} {r.size === "small" ? "Small" : "Large"} daycare</div>
+                    <div style={{fontSize:12,color:C.textSec}}>{r.clientName} {"\u2022"} {r.size === "small" ? "Small" : "Large"} {dcType === "dayboarding" ? "day boarding" : "daycare"}</div>
                   </div>
                   {r.alreadyIn ? (
                     <Badge color="success" size="sm">Already In</Badge>
@@ -4225,8 +4241,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
           onSave={async (updatedRes, doCheckIn, doCheckOut) => {
             const origCopy = { ...bRes };
             const merged = { ...bRes, ...updatedRes };
-            if (doCheckIn) merged.status = "checked-in";
-            if (doCheckOut) merged.status = "checked-out";
+            if (doCheckIn) { merged.status = "checked-in"; merged.actualCheckInTime = new Date().toISOString(); merged.checkedInBy = profile ? (profile.full_name || profile.email || "Staff") : "Staff"; }
+            if (doCheckOut) { merged.status = "checked-out"; merged.actualCheckOutTime = new Date().toISOString(); merged.checkedOutBy = profile ? (profile.full_name || profile.email || "Staff") : "Staff"; }
             // Store adjusted pricing with discount on reservation
             if (updatedRes.discountType && updatedRes.discountValue) {
               merged.discountType = updatedRes.discountType;
@@ -4235,8 +4251,9 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
             // Build audit log entries
             const auditLogs = [];
             const diffs = [];
-            if (doCheckIn) auditLogs.push(buildAuditEntry(bRes.id, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"}], profile));
-            if (doCheckOut) auditLogs.push(buildAuditEntry(bRes.id, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"}], profile));
+            const fmtNow = new Date().toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true});
+            if (doCheckIn) auditLogs.push(buildAuditEntry(bRes.id, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"},{field:"Actual Check-In",oldVal:"—",newVal:fmtNow},{field:"Checked In By",oldVal:"—",newVal:profile?(profile.full_name||profile.email||"Staff"):"Staff"}], profile));
+            if (doCheckOut) auditLogs.push(buildAuditEntry(bRes.id, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"},{field:"Actual Check-Out",oldVal:"—",newVal:fmtNow},{field:"Checked Out By",oldVal:"—",newVal:profile?(profile.full_name||profile.email||"Staff"):"Staff"}], profile));
             if (!doCheckIn && !doCheckOut) {
               // Detect what changed
               if (updatedRes.parentDestination !== bRes.parentDestination) diffs.push({field:"Parent Destination",oldVal:bRes.parentDestination||"(empty)",newVal:updatedRes.parentDestination||"(empty)"});
@@ -4588,8 +4605,14 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           <div style={{fontSize:13,color:C.textSec,marginTop:4}}>{fmtDate(res.checkIn)}{res.type!=="tour"&&res.type!=="evaluation"&&res.checkIn!==res.checkOut?` \u2192 ${fmtDate(res.checkOut)}`:""}{res.notes?` \u00B7 ${res.notes}`:""}</div>
         </div>
         <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:2,flexShrink:0,minWidth:90}}>
-          <div style={{display:"flex",alignItems:"center",gap:3}}><I.Clock/><span style={{fontSize:10,fontWeight:600,color:C.textMut}}>IN</span><span style={{fontSize:12,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmtTime(res.checkInTime)}</span></div>
-          <div style={{display:"flex",alignItems:"center",gap:3}}><I.Clock/><span style={{fontSize:10,fontWeight:600,color:C.textMut}}>OUT</span><span style={{fontSize:12,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmtTime(res.checkOutTime)}</span></div>
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:3}}><I.Clock/><span style={{fontSize:10,fontWeight:600,color:C.textMut}}>IN</span><span style={{fontSize:12,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmtTime(res.checkInTime)}</span></div>
+            {res.actualCheckInTime && <div style={{fontSize:9,color:C.textMut,fontStyle:"italic",textAlign:"right"}}>actual: {new Date(res.actualCheckInTime).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}</div>}
+          </div>
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:3}}><I.Clock/><span style={{fontSize:10,fontWeight:600,color:C.textMut}}>OUT</span><span style={{fontSize:12,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmtTime(res.checkOutTime)}</span></div>
+            {res.actualCheckOutTime && <div style={{fontSize:9,color:C.textMut,fontStyle:"italic",textAlign:"right"}}>actual: {new Date(res.actualCheckOutTime).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}</div>}
+          </div>
         </div>
         <div style={{display:"flex",gap:6}}>
           {res.status==="upcoming"&&<Btn size="sm" variant="success" onClick={e=>{e.stopPropagation();handleCheckIn(res.id);}} icon={<I.LogIn/>}>Check In</Btn>}
@@ -4884,8 +4907,8 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           onClose={() => setBoardingPreviewId(null)}
           onSave={async (updatedRes, doCheckIn, doCheckOut) => {
             const merged = { ...bRes, ...updatedRes };
-            if (doCheckIn) merged.status = "checked-in";
-            if (doCheckOut) merged.status = "checked-out";
+            if (doCheckIn) { merged.status = "checked-in"; merged.actualCheckInTime = new Date().toISOString(); merged.checkedInBy = profile ? (profile.full_name || profile.email || "Staff") : "Staff"; }
+            if (doCheckOut) { merged.status = "checked-out"; merged.actualCheckOutTime = new Date().toISOString(); merged.checkedOutBy = profile ? (profile.full_name || profile.email || "Staff") : "Staff"; }
             if (updatedRes.discountType && updatedRes.discountValue) {
               merged.discountType = updatedRes.discountType;
               merged.discountValue = updatedRes.discountValue;
@@ -4893,8 +4916,9 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             // Build audit log entries
             const auditLogs = [];
             const diffs = [];
-            if (doCheckIn) auditLogs.push(buildAuditEntry(bRes.id, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"}], profile));
-            if (doCheckOut) auditLogs.push(buildAuditEntry(bRes.id, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"}], profile));
+            const fmtNow = new Date().toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true});
+            if (doCheckIn) auditLogs.push(buildAuditEntry(bRes.id, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"},{field:"Actual Check-In",oldVal:"—",newVal:fmtNow},{field:"Checked In By",oldVal:"—",newVal:profile?(profile.full_name||profile.email||"Staff"):"Staff"}], profile));
+            if (doCheckOut) auditLogs.push(buildAuditEntry(bRes.id, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"},{field:"Actual Check-Out",oldVal:"—",newVal:fmtNow},{field:"Checked Out By",oldVal:"—",newVal:profile?(profile.full_name||profile.email||"Staff"):"Staff"}], profile));
             if (!doCheckIn && !doCheckOut) {
               // Detect what changed
               if (updatedRes.parentDestination !== bRes.parentDestination) diffs.push({field:"Parent Destination",oldVal:bRes.parentDestination||"(empty)",newVal:updatedRes.parentDestination||"(empty)"});
@@ -7880,8 +7904,8 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
                           <span style={{ fontSize: 11, fontWeight: 700, color: fg, overflow: "hidden", textOverflow: "ellipsis", padding: "0 4px" }}>
                             {dn(res.dogId)}
                           </span>
-                          {showGreenEdge && span > 1 && <span style={{ fontSize: 9, color: isCheckedIn ? "rgba(255,255,255,0.6)" : C.textMut, flexShrink: 0 }}>in {fmtTime(res.checkInTime)}</span>}
-                          {showRedEdge && span > 2 && <span style={{ fontSize: 9, color: isCheckedIn ? "rgba(255,255,255,0.6)" : C.textMut, flexShrink: 0 }}>out {fmtTime(res.checkOutTime)}</span>}
+                          {showGreenEdge && span > 1 && <span style={{ fontSize: 9, color: isCheckedIn ? "rgba(255,255,255,0.6)" : C.textMut, flexShrink: 0 }}>in {fmtTime(res.checkInTime)}{res.actualCheckInTime ? ` (${new Date(res.actualCheckInTime).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})})` : ""}</span>}
+                          {showRedEdge && span > 2 && <span style={{ fontSize: 9, color: isCheckedIn ? "rgba(255,255,255,0.6)" : C.textMut, flexShrink: 0 }}>out {fmtTime(res.checkOutTime)}{res.actualCheckOutTime ? ` (${new Date(res.actualCheckOutTime).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})})` : ""}</span>}
                         </div>
                       </React.Fragment>
                     );
@@ -7990,8 +8014,8 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
           onClose={() => setBoardingPreviewId(null)}
           onSave={async (updatedRes, doCheckIn, doCheckOut) => {
             const merged = { ...bRes, ...updatedRes };
-            if (doCheckIn) merged.status = "checked-in";
-            if (doCheckOut) merged.status = "checked-out";
+            if (doCheckIn) { merged.status = "checked-in"; merged.actualCheckInTime = new Date().toISOString(); merged.checkedInBy = profile ? (profile.full_name || profile.email || "Staff") : "Staff"; }
+            if (doCheckOut) { merged.status = "checked-out"; merged.actualCheckOutTime = new Date().toISOString(); merged.checkedOutBy = profile ? (profile.full_name || profile.email || "Staff") : "Staff"; }
             if (updatedRes.discountType && updatedRes.discountValue) {
               merged.discountType = updatedRes.discountType;
               merged.discountValue = updatedRes.discountValue;
@@ -7999,8 +8023,9 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
             // Build audit log entries
             const auditLogs = [];
             const diffs = [];
-            if (doCheckIn) auditLogs.push(buildAuditEntry(bRes.id, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"}], profile));
-            if (doCheckOut) auditLogs.push(buildAuditEntry(bRes.id, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"}], profile));
+            const fmtNow = new Date().toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true});
+            if (doCheckIn) auditLogs.push(buildAuditEntry(bRes.id, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"},{field:"Actual Check-In",oldVal:"—",newVal:fmtNow},{field:"Checked In By",oldVal:"—",newVal:profile?(profile.full_name||profile.email||"Staff"):"Staff"}], profile));
+            if (doCheckOut) auditLogs.push(buildAuditEntry(bRes.id, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"},{field:"Actual Check-Out",oldVal:"—",newVal:fmtNow},{field:"Checked Out By",oldVal:"—",newVal:profile?(profile.full_name||profile.email||"Staff"):"Staff"}], profile));
             if (!doCheckIn && !doCheckOut) {
               // Detect what changed
               if (updatedRes.parentDestination !== bRes.parentDestination) diffs.push({field:"Parent Destination",oldVal:bRes.parentDestination||"(empty)",newVal:updatedRes.parentDestination||"(empty)"});
