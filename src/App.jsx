@@ -1178,7 +1178,7 @@ const DEF_HOTKEY_BINDINGS = {
 };
 const HOTKEY_LABELS = {
   dashboard: "Dashboard", lodging: "Lodging Calendar", clients: "Clients", crm: "CRM",
-  newReservation: "New Reservation", settings: "Settings", ai: "AI Command", quickDaycare: "Quick Daycare", search: "Search",
+  newReservation: "New Reservation", settings: "Settings", ai: "AI Command", quickDaycare: "Quick Check-In", search: "Search",
   cycleType: "Cycle Type (Booking)", cycleRoom: "Cycle Room (Booking)",
 };
 
@@ -3105,19 +3105,17 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
 
   const [boardingPreviewId, setBoardingPreviewId] = useState(null);
 
-  // Quick Daycare Check-in
+  // Quick Check-in
   const [showQuickDC, setShowQuickDC] = useState(false);
   const [dcSearch, setDcSearch] = useState("");
-  const [dcType, setDcType] = useState("daycare"); // "daycare" or "dayboarding"
   const dcSearchRef = useRef(null);
   useEffect(() => { if (showQuickDC && dcSearchRef.current) dcSearchRef.current.focus(); }, [showQuickDC]);
 
-  const quickDCCheckIn = async (clientId, dogId) => {
+  const quickDCCheckIn = async (clientId, dogId, resType) => {
     const dog = data.dogs.find(d => d.id === dogId);
     const daycareSize = dog ? getDogDaycareSize(dog) : "large";
     const nowTime = new Date().toTimeString().slice(0, 5);
     const nowISO = new Date().toISOString();
-    const resType = dcType;
     const newRes = {
       id: gid(), clientId, dogId, type: resType, daycareSize,
       ...(resType === "dayboarding" ? { roomType: "Executive Room" } : {}),
@@ -3556,7 +3554,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
           </div>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <span data-shortcut-quickdc="1" onClick={()=>setShowQuickDC(true)} style={{display:"inline-flex"}}><Btn variant="success" onClick={()=>setShowQuickDC(true)} icon={<I.Plus/>}>Quick Daycare{(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.6)",background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>Q</kbd>}</Btn></span>
+          <span data-shortcut-quickdc="1" onClick={()=>setShowQuickDC(true)} style={{display:"inline-flex"}}><Btn variant="success" onClick={()=>setShowQuickDC(true)} icon={<I.Plus/>}>Quick Check-In{(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.6)",background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>Q</kbd>}</Btn></span>
           <Btn onClick={onNew} icon={<I.Plus/>}>New {(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
         </div>
       </div>
@@ -4185,18 +4183,11 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
         );
       })()}
 
-      {/* Quick Daycare Check-in Modal */}
+      {/* Quick Check-in Modal */}
       {showQuickDC && (
-        <Modal title="Quick Check-in" onClose={()=>{setShowQuickDC(false);setDcSearch("");}}>
+        <Modal title="Quick Check-In" onClose={()=>{setShowQuickDC(false);setDcSearch("");}}>
           <div style={{marginBottom:12}}>
             <input ref={dcSearchRef} className="no-focus-ring" value={dcSearch} onChange={e=>setDcSearch(e.target.value)} placeholder="Search client or dog name..." style={{width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${C.border}`,fontSize:14,fontWeight:500,fontFamily:"inherit",outline:"none",background:C.bg}} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/>
-          </div>
-          {/* Type selector */}
-          <div style={{display:"flex",gap:8,marginBottom:16}}>
-            {[{id:"daycare",label:"Daycare"},{id:"dayboarding",label:"Day Boarding"}].map(t=>{
-              const sel=dcType===t.id;
-              return <button key={t.id} onClick={()=>setDcType(t.id)} style={{flex:1,padding:"8px 14px",borderRadius:10,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:13,fontWeight:sel?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>{t.label}</button>;
-            })}
           </div>
           <div style={{maxHeight:350,overflowY:"auto"}}>
             {(() => {
@@ -4218,15 +4209,29 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               });
               if (results.length === 0) return <div style={{padding:20,textAlign:"center",color:C.textMut,fontSize:13}}>No dogs found matching "{dcSearch}"</div>;
               return results.slice(0, 10).map((r, i) => (
-                <div key={i} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderRadius:10,border:`1px solid ${C.border}`,marginBottom:6,background:r.alreadyIn?C.sucLt:C.surface}}>
-                  <div>
-                    <div style={{fontWeight:700,fontSize:14,color:C.text}}>{r.dogName} <span style={{fontWeight:400,color:C.textSec,fontSize:12}}>({r.breed})</span></div>
-                    <div style={{fontSize:12,color:C.textSec}}>{r.clientName} {"\u2022"} {r.size === "small" ? "Small" : "Large"} {dcType === "dayboarding" ? "day boarding" : "daycare"}</div>
+                <div key={i} style={{padding:"12px 14px",borderRadius:12,border:`1px solid ${r.alreadyIn?C.suc+"40":C.border}`,marginBottom:8,background:r.alreadyIn?C.sucLt:C.surface}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:r.alreadyIn?0:10}}>
+                    <div>
+                      <div style={{fontWeight:700,fontSize:14,color:C.text}}>{r.dogName} <span style={{fontWeight:400,color:C.textSec,fontSize:12}}>({r.breed})</span></div>
+                      <div style={{fontSize:12,color:C.textSec}}>{r.clientName} {"\u2022"} {r.size === "small" ? "Small" : "Large"} daycare</div>
+                    </div>
+                    {r.alreadyIn && <Badge color="success" size="sm">Already In</Badge>}
                   </div>
-                  {r.alreadyIn ? (
-                    <Badge color="success" size="sm">Already In</Badge>
-                  ) : (
-                    <Btn size="sm" variant="success" onClick={()=>quickDCCheckIn(r.clientId, r.dogId)} icon={<I.LogIn/>}>Check In</Btn>
+                  {!r.alreadyIn && (
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={()=>quickDCCheckIn(r.clientId, r.dogId, "daycare")}
+                        style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 12px",borderRadius:10,border:`1.5px solid ${C.suc}30`,background:`${C.suc}08`,color:C.suc,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}
+                        onMouseEnter={e=>{e.currentTarget.style.background=C.suc;e.currentTarget.style.color="#fff";e.currentTarget.style.borderColor=C.suc;}}
+                        onMouseLeave={e=>{e.currentTarget.style.background=`${C.suc}08`;e.currentTarget.style.color=C.suc;e.currentTarget.style.borderColor=`${C.suc}30`;}}>
+                        <I.LogIn style={{width:14,height:14}}/> Daycare
+                      </button>
+                      <button onClick={()=>quickDCCheckIn(r.clientId, r.dogId, "dayboarding")}
+                        style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 12px",borderRadius:10,border:`1.5px solid ${C.pri}30`,background:`${C.pri}08`,color:C.pri,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}
+                        onMouseEnter={e=>{e.currentTarget.style.background=C.pri;e.currentTarget.style.color="#fff";e.currentTarget.style.borderColor=C.pri;}}
+                        onMouseLeave={e=>{e.currentTarget.style.background=`${C.pri}08`;e.currentTarget.style.color=C.pri;e.currentTarget.style.borderColor=`${C.pri}30`;}}>
+                        <I.LogIn style={{width:14,height:14}}/> Day Boarding
+                      </button>
+                    </div>
                   )}
                 </div>
               ));
