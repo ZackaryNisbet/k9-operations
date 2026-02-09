@@ -315,7 +315,7 @@ const getDogDaycareSize = (dog) => {
   return w < 35 ? "small" : "large";
 };
 
-const todayStr = () => new Date().toISOString().split("T")[0];
+const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
 const formatTime12hr = (t) => { if (!t) return ""; const [h, m] = t.split(":").map(Number); if (isNaN(h)) return t; const suffix = h >= 12 ? "PM" : "AM"; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m || 0).padStart(2, "0")} ${suffix}`; };
 const addDays = (d, n) => { const dt = new Date(d + "T12:00:00"); dt.setDate(dt.getDate() + n); return dt.toISOString().split("T")[0]; };
 const getMonday = (d) => { const dt = new Date(d + "T12:00:00"); const day = dt.getDay(); const diff = day === 0 ? -6 : 1 - day; dt.setDate(dt.getDate() + diff); return dt.toISOString().split("T")[0]; };
@@ -2692,6 +2692,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           {secHeader("Daily Activities")}
           {(() => {
             const { days, cols } = buildActivityMatrix();
+            const isLocked = reservation.status === "checked-out" || reservation.status === "cancelled";
             if (days.length === 0) return <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No activities scheduled</div>;
             if (cols.length === 0) return <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No feeding, medication, or bathing scheduled</div>;
 
@@ -2699,6 +2700,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             const logKey = (day, col) => `${day}|${col.key}`;
             const getLog = (day, col) => activityLog[logKey(day, col)] || {};
             const updateLog = (day, col, updates) => {
+              if (isLocked) return;
               const key = logKey(day, col);
               const prev = activityLog[key] || {};
               const next = { ...prev, ...updates };
@@ -2708,6 +2710,10 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
             return (
               <div style={{overflowX:"auto"}}>
+                {isLocked && <div style={{padding:"8px 12px",background:C.bg,borderRadius:8,border:`1px solid ${C.border}`,marginBottom:10,fontSize:12,color:C.textSec,display:"flex",alignItems:"center",gap:6}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  Activities are locked after checkout (read-only)
+                </div>}
                 <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
                   <thead>
                     <tr style={{borderBottom:`2px solid ${C.border}`}}>
@@ -2738,9 +2744,10 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                             return (
                               <td key={col.key} style={{padding:"8px 10px",textAlign:"center",verticalAlign:"top",background:administered?C.suc+"10":"transparent"}}>
                                 {/* Administered checkbox */}
-                                <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,cursor:"pointer",marginBottom:col.type==="feeding"?6:0}}>
-                                  <input type="checkbox" checked={administered} style={{accentColor:C.suc,width:15,height:15,cursor:"pointer"}}
+                                <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:5,cursor:isLocked?"default":"pointer",marginBottom:col.type==="feeding"?6:0}}>
+                                  <input type="checkbox" checked={administered} disabled={isLocked} style={{accentColor:C.suc,width:15,height:15,cursor:isLocked?"default":"pointer"}}
                                     onChange={e => {
+                                      if (isLocked) return;
                                       if (e.target.checked) {
                                         updateLog(day, col, { administered: true, by: staffName, at: new Date().toISOString() });
                                       } else {
@@ -2764,8 +2771,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                                       {CONSUMPTION_OPTS.filter(o=>o).map(opt => {
                                         const sel = entry.consumption === opt;
                                         return (
-                                          <button key={opt} onClick={() => updateLog(day, col, { consumption: sel ? "" : opt })}
-                                            style={{padding:"3px 6px",borderRadius:5,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:10,fontWeight:sel?700:500,cursor:"pointer",fontFamily:"inherit",minWidth:28}}>
+                                          <button key={opt} onClick={() => { if (!isLocked) updateLog(day, col, { consumption: sel ? "" : opt }); }} disabled={isLocked}
+                                            style={{padding:"3px 6px",borderRadius:5,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:10,fontWeight:sel?700:500,cursor:isLocked?"default":"pointer",fontFamily:"inherit",minWidth:28,opacity:isLocked?0.6:1}}>
                                             {opt}
                                           </button>
                                         );
