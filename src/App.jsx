@@ -2368,6 +2368,202 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     return { days, cols };
   };
 
+  // ── Print Run Card ────────────────────────────────────────────
+  const printRunCard = () => {
+    const cfg = data.runCardConfig || {};
+    const show = (key) => cfg[key] !== false; // default true
+
+    // Dog info
+    const dName = dog.fields.name || "Unknown";
+    const cLast = client.fields.last_name || "";
+    const cFirst = client.fields.first_name || "";
+    const cPhone = fmtPhone(client.fields.phone);
+    const breed = dog.fields.breed || "";
+    const weight = dog.fields.weight ? `${dog.fields.weight} lbs` : "";
+    const sex = dog.fields.sex || "";
+    const altered = dog.fields.spayed_neutered || "";
+    const sexStr = [sex, altered].filter(Boolean).join("/");
+
+    // Age calculation
+    let ageStr = "";
+    if (dog.fields.dob) {
+      const bd = new Date(dog.fields.dob + "T00:00:00");
+      const now = new Date();
+      let years = now.getFullYear() - bd.getFullYear();
+      let months = now.getMonth() - bd.getMonth();
+      if (months < 0) { years--; months += 12; }
+      ageStr = years > 0 ? `${years} Year${years !== 1 ? "s" : ""}${months > 0 ? `, ${months} Month${months !== 1 ? "s" : ""}` : ""}` : `${months} Month${months !== 1 ? "s" : ""}`;
+    }
+
+    // Emergency contact
+    const ecNameVal = ecName || client.fields.emergency_contact || "";
+    const ecPhoneVal = ecPhone || client.fields.emergency_phone || "";
+
+    // Room + dates
+    const roomLabel = reservation.roomType || "";
+    const roomNum = reservation.room || "";
+    const ciDate = reservation.checkIn || "";
+    const coDate = reservation.checkOut || "";
+    const ciTime = reservation.checkInTime || "";
+    const coTime = reservation.checkOutTime || "";
+
+    const fmtT = (t) => {
+      if (!t) return "";
+      const m = t.match(/^(\d{1,2}):(\d{2})$/);
+      if (m) { let h = parseInt(m[1]); const min = m[2]; const ap = h >= 12 ? "PM" : "AM"; if (h > 12) h -= 12; if (h === 0) h = 12; return `${h}:${min} ${ap}`; }
+      return t;
+    };
+    const fmtD = (d) => {
+      if (!d) return "";
+      const dt = new Date(d + "T00:00:00");
+      const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+      return `${days[dt.getDay()]}, ${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}`;
+    };
+
+    const resType = reservation.type === "dayboarding" ? "Day Boarding" : "Boarding";
+    const inclNote = roomLabel.includes("Suite") || roomLabel.includes("Executive") ? " (All Inclusive)" : "";
+
+    // Dog tags
+    const tagNames = (dog.tags || []).map(tid => {
+      const t = (data.dogTags || []).find(dt => dt.id === tid);
+      return t ? t.name : "";
+    }).filter(Boolean);
+
+    // Icon indicators
+    const hasMeds = medicationSchedules.length > 0;
+    const hasFeeding = feedingSchedules.length > 0;
+    const hasBath = bathType && bathType !== "None" && bathType !== "";
+
+    // Feeding summary
+    const feedingHtml = feedingSchedules.map(s => {
+      const times = (s.times || []).join(", ");
+      const detail = [s.amount, s.unit, s.foodType].filter(Boolean).join(" ");
+      const inst = s.instruction ? ` ${s.instruction}` : "";
+      const n = s.notes ? ` ${s.notes}` : "";
+      return `<div style="margin-bottom:4px;"><strong>${times}:</strong> ${detail}${inst}${n}</div>`;
+    }).join("");
+
+    // Medication summary
+    const medHtml = medicationSchedules.map(s => {
+      const detail = [s.amount, s.unit].filter(Boolean).join(" ");
+      const n = s.notes ? `, ${s.notes}` : "";
+      return `<div style="margin-bottom:4px;"><strong>${s.time || ""}:</strong> ${detail} ${s.name || ""}${n}</div>`;
+    }).join("");
+
+    // Activity grid
+    const { days: actDays, cols: actCols } = buildActivityMatrix();
+
+    const gridHtml = actDays.length > 0 && actCols.length > 0 ? (() => {
+      const dayHeaders = actDays.map(d => {
+        const dt = new Date(d + "T00:00:00");
+        const dayName = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][dt.getDay()];
+        const dateStr = `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}`;
+        return `<th style="padding:6px 8px;text-align:center;border:1px solid #999;font-size:11px;background:#f5f5f5;">
+          <div style="font-weight:700;">${dayName}</div>
+          <div>${dateStr}</div>
+          <div style="font-size:10px;color:#666;">${roomLabel},</div>
+          <div style="font-size:10px;color:#666;">${roomNum}</div>
+        </th>`;
+      }).join("");
+
+      const serviceRows = actCols.map(col => {
+        const label = col.label + (col.detail ? ` + ${col.detail}` : "");
+        const cells = actDays.map((_, di) => {
+          const isActive = col.activeDays ? col.activeDays[di] : true;
+          if (!isActive) return `<td style="padding:6px 8px;text-align:center;border:1px solid #999;color:#ccc;">—</td>`;
+          // For feeding/medication, show a scheduled time based on type
+          let timeStr = "";
+          if (col.type === "feeding") {
+            const timeMatch = col.key.match(/feeding_(.+)/);
+            if (timeMatch) { const t = timeMatch[1].replace(/_/g," "); timeStr = t === "AM" ? "9:00 AM" : t === "noon" ? "12:00 PM" : t === "PM" ? "5:00 PM" : t; }
+          } else if (col.type === "medication") {
+            const med = medicationSchedules.find(s => col.key.includes((s.name||"").replace(/\s+/g,"_")));
+            timeStr = med && med.time ? med.time : "9:00 AM";
+          } else if (col.type === "bathing") {
+            timeStr = "9:00 AM";
+          }
+          return `<td style="padding:6px 8px;text-align:center;border:1px solid #999;font-size:11px;">${timeStr}</td>`;
+        }).join("");
+        return `<tr><td style="padding:6px 8px;border:1px solid #999;font-size:11px;font-weight:700;white-space:nowrap;">${label}</td>${cells}</tr>`;
+      }).join("");
+
+      return `<table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:11px;">
+        <thead><tr><th style="padding:6px 8px;text-align:left;border:1px solid #999;font-size:11px;background:#f5f5f5;min-width:180px;"></th>${dayHeaders}</tr></thead>
+        <tbody>${serviceRows}</tbody>
+      </table>`;
+    })() : "";
+
+    const html = `<!DOCTYPE html><html><head><title>Run Card - ${dName}</title>
+      <style>
+        @page { size: portrait; margin: 0.4in; }
+        body { font-family: Arial, sans-serif; color: #222; padding: 0; margin: 0; font-size: 13px; line-height: 1.4; }
+        .card { border: 2px solid #333; padding: 16px; }
+        .header { margin-bottom: 8px; }
+        .dog-name { font-size: 26px; font-weight: 900; }
+        .owner-last { font-size: 26px; font-weight: 300; }
+        .room-badge { font-size: 16px; color: #444; }
+        .info-line { margin: 3px 0; font-size: 13px; }
+        .section-header { font-weight: 900; font-size: 13px; margin: 10px 0 4px; padding-top: 6px; border-top: 1px solid #ccc; }
+        .tag-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; margin: 6px 0; }
+        .tag { display: inline-block; background: #eee; border: 1px solid #999; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+        .icon-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; }
+        .run-card-num { text-align: right; font-size: 11px; color: #666; margin-bottom: 8px; }
+      </style></head><body>
+      <div class="card">
+        <div class="run-card-num">Run Card 1 of 1</div>
+        <div class="header">
+          <div>
+            <span class="dog-name">${dName}</span> <span class="owner-last">${cLast}</span>
+            <span style="margin-left:12px;" class="room-badge">| ${roomLabel}, ${roomNum}</span>
+          </div>
+          <div class="info-line">&bull; ${breed}${ageStr ? ", " + ageStr : ""}${sexStr ? " " + sexStr : ""}</div>
+          <div class="info-line">&bull; ${cFirst} ${cLast} ${cPhone ? "(" + cPhone + ")" : ""}</div>
+        </div>
+        <div style="font-size:14px;font-weight:700;margin:10px 0 6px;">
+          ${resType} | ${roomLabel}${inclNote}: ${fmtD(ciDate)}, ${fmtT(ciTime)} - <strong>${fmtD(coDate)}, ${fmtT(coTime)}</strong>
+        </div>
+        ${show("showBelongings") && (belongings || parentDest) ? `
+          <div style="margin:6px 0;">
+            ${belongings ? `<div class="info-line">&bull; <strong>Describe pets belongings</strong> ${belongings}</div>` : ""}
+          </div>` : ""}
+        ${show("showFedToday") ? `<div class="info-line">&bull; <strong>Has your pet been fed today?</strong> </div>` : ""}
+        ${show("showMedsToday") && hasMeds ? `<div class="info-line">&bull; <strong>Has your pet had medications today?</strong> </div>` : ""}
+
+        ${show("showDogTags") || hasMeds || hasFeeding || hasBath ? `
+        <div class="tag-row">
+          ${show("showDogTags") ? tagNames.map(t => `<span class="tag">${t}</span>`).join("") : ""}
+          ${hasMeds ? `<span class="icon-badge">💊Meds:</span>` : ""}
+          ${hasFeeding ? `<span class="icon-badge">🍽Food from Home:</span>` : ""}
+          ${hasBath ? `<span class="icon-badge">🛁${bathType} Bath:</span>` : ""}
+        </div>` : ""}
+
+        ${show("showEmergencyContact") && (ecNameVal || ecPhoneVal) ? `
+        <div style="margin:6px 0;font-size:12px;">
+          <strong>Emergency Contact:</strong> ${ecNameVal} ${ecPhoneVal ? "(" + fmtPhone(ecPhoneVal) + ")" : ""}
+        </div>` : ""}
+
+        ${show("showNotes") && notes ? `
+        <div style="margin:6px 0;font-size:12px;">
+          <strong>Notes:</strong> ${notes}
+        </div>` : ""}
+
+        ${show("showFeeding") && hasFeeding ? `
+        <div class="section-header">FOOD: ${feedingSchedules.some(s => (s.foodType||"").toLowerCase().includes("home")) ? "FFH - Food From Home" : feedingSchedules[0]?.foodType || ""}</div>
+        ${feedingHtml}` : ""}
+
+        ${show("showMedications") && hasMeds ? `
+        <div class="section-header">MEDS:</div>
+        ${medHtml}` : ""}
+
+        ${show("showActivityGrid") && gridHtml ? gridHtml : ""}
+      </div>
+      <script>window.onload=()=>{window.print();}<\/script>
+    </body></html>`;
+
+    const w = window.open("", "_blank");
+    if (w) { w.document.write(html); w.document.close(); }
+  };
+
   return (
     <Modal title={isCheckInMode ? `Check In: ${dog.fields.name}` : isCheckOutMode ? `Check Out: ${dog.fields.name}` : `${isBoarding ? "Boarding" : "Daycare"} Reservation: ${dog.fields.name}`} onClose={onClose} fullWidth>
       {/* Header info bar */}
@@ -2867,6 +3063,12 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:24,alignItems:"center"}}>
         {reservation.status !== "checked-out" && reservation.status !== "cancelled" && (
           <button onClick={()=>setShowCancelConfirm(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"7px 14px",borderRadius:8,border:`1px solid ${C.danLt}`,background:"transparent",color:C.dan,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginRight:"auto"}}><I.Trash/> Cancel Reservation</button>
+        )}
+        {isBoarding && reservation.status !== "checked-out" && reservation.status !== "cancelled" && (
+          <button onClick={printRunCard} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:8,border:`1.5px solid ${C.pri}`,background:C.priLt||"#EBF5FF",color:C.pri,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+            Print Run Card
+          </button>
         )}
         <Btn variant="secondary" onClick={onClose}>Close</Btn>
         {isCheckInMode ? (
@@ -10202,6 +10404,53 @@ function EODPage({ data, save, nav }) {
 // DROPDOWN LISTS SETTINGS TAB
 // ═══════════════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════
+// RUN CARD CONFIG TAB
+// ═══════════════════════════════════════════════════════════════════════════
+function RunCardConfigTab({ data, save }) {
+  const cfg = data.runCardConfig || {};
+  const toggle = async (key) => {
+    const cur = cfg[key] !== false; // default true
+    await save({ ...data, runCardConfig: { ...cfg, [key]: !cur } });
+  };
+
+  const options = [
+    { key: "showBelongings", label: "Belongings from Home", desc: "Show the belongings/items the pet brought from home" },
+    { key: "showFeeding", label: "Feeding Schedule", desc: "Show detailed feeding instructions including times, amounts, and food type" },
+    { key: "showMedications", label: "Medication Schedule", desc: "Show medication names, doses, and administration times" },
+    { key: "showBath", label: "Bath Type", desc: "Show the preferred bath type for the stay" },
+    { key: "showActivityGrid", label: "Daily Activity Grid", desc: "Show the day-by-day grid with feeding, medication, and bathing columns" },
+    { key: "showEmergencyContact", label: "Emergency Contact", desc: "Show the emergency contact name and phone number" },
+    { key: "showNotes", label: "Reservation Notes", desc: "Show any special notes or instructions for the stay" },
+    { key: "showDogTags", label: "Dog Tags", desc: "Show classification tags like Private Play, Small Playgroup, etc." },
+    { key: "showFedToday", label: '"Has pet been fed today?" prompt', desc: "Show a blank prompt for staff to note if pet was fed before drop-off" },
+    { key: "showMedsToday", label: '"Has pet had medications today?" prompt', desc: "Show a blank prompt for staff to note if pet had meds before drop-off" },
+  ];
+
+  return (
+    <Card style={{ padding: "24px 28px" }}>
+      <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Run Card Configuration</div>
+      <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 24px" }}>Choose what information to include on printed boarding run cards. All options are enabled by default.</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {options.map(opt => {
+          const on = cfg[opt.key] !== false;
+          return (
+            <div key={opt.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 12, background: on ? C.sucLt : C.bg, border: `1.5px solid ${on ? "#A7F3D0" : C.border}`, transition: "all 0.15s" }}>
+              <div style={{ flex: 1, marginRight: 16 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{opt.label}</div>
+                <div style={{ fontSize: 12, color: C.textSec, marginTop: 2, lineHeight: 1.4 }}>{opt.desc}</div>
+              </div>
+              <button onClick={() => toggle(opt.key)} style={{ width: 48, height: 28, borderRadius: 14, border: "none", background: on ? C.suc : C.border, cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+                <div style={{ width: 22, height: 22, borderRadius: 11, background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", position: "absolute", top: 3, left: on ? 23 : 3, transition: "left 0.2s" }} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // PRICING TAB
 // ═══════════════════════════════════════════════════════════════════════════
 function PricingTab({ data, save }) {
@@ -12499,6 +12748,7 @@ function SettingsPage({ data, save, profile }) {
     { label: "Operations", items: [
       { id: "eod", label: "EOD Template", desc: "End-of-day report sections and template setup", keywords: "eod end of day template report sections" },
       { id: "daily-ops", label: "Daily Ops Templates", desc: "Opening, FE, BE, and closing checklist templates", keywords: "daily ops operations checklists opening closing front back" },
+      { id: "run-card", label: "Run Card", desc: "Configure which information appears on printed boarding run cards", keywords: "run card print boarding kennel card daily schedule" },
     ]},
     { label: "Resort Configuration", items: [
       { id: "resort-info", label: "Resort Info", desc: "Resort address and timezone configuration", keywords: "resort address location timezone time zone city state zip" },
@@ -12649,6 +12899,9 @@ function SettingsPage({ data, save, profile }) {
 
       ) : tab === "daily-ops" ? (
         <DailyOpsTemplateTab data={data} save={save} />
+
+      ) : tab === "run-card" ? (
+        <RunCardConfigTab data={data} save={save} />
 
       ) : tab === "dropdowns" ? (
         <DropdownListsTab data={data} save={save} />
