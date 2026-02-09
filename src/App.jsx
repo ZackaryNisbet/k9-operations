@@ -3108,6 +3108,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   // Quick Check-in
   const [showQuickDC, setShowQuickDC] = useState(false);
   const [dcSearch, setDcSearch] = useState("");
+  const [dcCompExpand, setDcCompExpand] = useState(null);
   const dcSearchRef = useRef(null);
   useEffect(() => { if (showQuickDC && dcSearchRef.current) dcSearchRef.current.focus(); }, [showQuickDC]);
 
@@ -4185,7 +4186,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
 
       {/* Quick Check-in Modal */}
       {showQuickDC && (
-        <Modal title="Quick Check-In" onClose={()=>{setShowQuickDC(false);setDcSearch("");}}>
+        <Modal title="Quick Check-In" onClose={()=>{setShowQuickDC(false);setDcSearch("");setDcCompExpand(null);}}>
           <div style={{marginBottom:12}}>
             <input ref={dcSearchRef} className="no-focus-ring" value={dcSearch} onChange={e=>setDcSearch(e.target.value)} placeholder="Search client or dog name..." style={{width:"100%",padding:"12px 14px",borderRadius:10,border:`1.5px solid ${C.border}`,fontSize:14,fontWeight:500,fontFamily:"inherit",outline:"none",background:C.bg}} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/>
           </div>
@@ -4219,10 +4220,66 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                 const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
                 const allGreen = vaxStatus.ok && ecOk && agrOk && ageStatus.ok;
                 const checks = [
-                  { ok: vaxStatus.ok, label: "Vaccines", detail: vaxStatus.ok ? "Up to date" : `${[...(vaxStatus.expired||[]),...(vaxStatus.missing||[])].length} issue(s)` },
-                  { ok: ecOk, label: "Emergency Contact", detail: ecOk ? client.fields.emergency_contact : "Missing" },
-                  { ok: agrOk, label: "Agreements", detail: agrOk ? "All signed" : `${reqAgrs.filter(a=>!agrSigned(client,a.id)).length} unsigned` },
-                  { ok: ageStatus.ok, warn: ageStatus.grandfathered, label: "Dog Age", detail: ageStatus.ok ? (ageStatus.age ? `${ageStatus.age}yr` : "OK") : (ageStatus.reason || "Failed") },
+                  { ok: vaxStatus.ok, label: "Vaccines", expandKey: "vax",
+                    detail: vaxStatus.ok ? "Up to date" : `${[...(vaxStatus.expired||[]),...(vaxStatus.missing||[])].length} issue(s)`,
+                    children: <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                      {vaxStatus.ok ? <div style={{color:C.suc,fontSize:11}}>All vaccines current</div> : <>
+                        {(vaxStatus.expired||[]).map(vId=>{const vax=VACCINES.find(v=>v.id===vId);return <div key={vId} style={{color:C.dan,fontSize:11}}>• {vax?vax.name:vId.replace(/_/g," ")} — Expired</div>;})}
+                        {(vaxStatus.missing||[]).map(vId=>{const vax=VACCINES.find(v=>v.id===vId);return <div key={vId} style={{color:C.dan,fontSize:11}}>• {vax?vax.name:vId.replace(/_/g," ")} — Missing</div>;})}
+                      </>}
+                      {(data.requiredVaccines||[]).map(vId=>{
+                        const curDate=dog.fields[vId]||"";const vax=VACCINES.find(v=>v.id===vId);const vaxName=vax?vax.name:vId.replace(/_/g," ");
+                        return <div key={vId+"e"} style={{marginTop:2,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                          <span style={{fontSize:10,color:C.textSec,minWidth:90,fontWeight:600}}>{vaxName}</span>
+                          <input type="date" value={curDate} style={{fontSize:10,padding:"3px 6px",borderRadius:5,border:`1px solid ${C.border}`,fontFamily:"inherit",maxWidth:140,flex:"0 0 auto"}}
+                            onChange={async(e)=>{await save({...data,dogs:data.dogs.map(d=>d.id===dog.id?{...d,fields:{...d.fields,[vId]:e.target.value}}:d)});}}/>
+                          {curDate&&<span style={{fontSize:9,color:vaxStatus.expired?.includes(vId)?C.dan:C.suc,fontWeight:600}}>{vaxStatus.expired?.includes(vId)?"Expired":"Valid"}</span>}
+                        </div>;
+                      })}
+                    </div>
+                  },
+                  { ok: ecOk, label: "Emergency Contact", expandKey: "ec",
+                    detail: ecOk ? client.fields.emergency_contact : "Missing",
+                    children: <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontSize:10,color:C.textSec,fontWeight:600,minWidth:50}}>Name</span>
+                        <input value={client?.fields?.emergency_contact||""} placeholder="Contact name..." style={{flex:1,fontSize:11,padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontFamily:"inherit",outline:"none"}}
+                          onChange={async(e)=>{await save({...data,clients:data.clients.map(c=>c.id===client.id?{...c,fields:{...c.fields,emergency_contact:e.target.value}}:c)});}}/>
+                      </div>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontSize:10,color:C.textSec,fontWeight:600,minWidth:50}}>Phone</span>
+                        <input value={client?.fields?.emergency_phone||""} placeholder="Contact phone..." style={{flex:1,fontSize:11,padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontFamily:"inherit",outline:"none"}}
+                          onChange={async(e)=>{await save({...data,clients:data.clients.map(c=>c.id===client.id?{...c,fields:{...c.fields,emergency_phone:e.target.value}}:c)});}}/>
+                      </div>
+                    </div>
+                  },
+                  { ok: agrOk, label: "Agreements", expandKey: "agr",
+                    detail: agrOk ? "All signed" : `${reqAgrs.filter(a=>!agrSigned(client,a.id)).length} unsigned`,
+                    children: <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      {reqAgrs.map(agr=>{
+                        const signed=agrSigned(client,agr.id);const signedData=(client.agreements||{})[agr.id];
+                        return <div key={agr.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"4px 0",borderBottom:`1px solid ${C.borderLight}`}}>
+                          <div>
+                            <span style={{fontSize:11,color:C.text,fontWeight:600}}>{agr.name}</span>
+                            {signed&&signedData?.date&&<span style={{fontSize:9,color:C.suc,marginLeft:6}}>Signed {fmtDate(signedData.date)}</span>}
+                          </div>
+                          {!signed ? <Btn size="sm" onClick={async()=>{
+                            const agrs={...(client.agreements||{}),[agr.id]:{signed:true,date:todayStr()}};
+                            await save({...data,clients:data.clients.map(c=>c.id===client.id?{...c,agreements:agrs}:c)});
+                          }}>Sign Now</Btn> : <span style={{fontSize:10,color:C.suc,fontWeight:700}}>✓ Signed</span>}
+                        </div>;
+                      })}
+                    </div>
+                  },
+                  { ok: ageStatus.ok, warn: ageStatus.grandfathered, label: "Dog Age", expandKey: "age",
+                    detail: ageStatus.ok ? (ageStatus.age ? `${ageStatus.age}yr${ageStatus.grandfathered?" (Grandfathered)":""}` : "OK") : (ageStatus.reason || "Failed"),
+                    children: <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      {ageStatus.age ? <span style={{color:ageStatus.ok?C.suc:C.dan,fontSize:11}}>
+                        {ageStatus.age} years old{ageStatus.grandfathered&&` (Grandfathered — ${ageStatus.visitCount||0} visits)`}{!ageStatus.ok&&!ageStatus.grandfathered&&` — ${ageStatus.reason}`}
+                      </span> : <span style={{color:C.textMut,fontSize:11}}>Age not set</span>}
+                      <div style={{fontSize:9,color:C.textMut,marginTop:2}}>Max age: {(data.resortPolicies||{}).maxDogAge||13} years. Grandfathered after {(data.resortPolicies||{}).grandfatherVisitThreshold||10} visits.</div>
+                    </div>
+                  },
                 ];
                 return (
                 <div key={i} style={{padding:"12px 14px",borderRadius:12,border:`1px solid ${r.alreadyIn?C.suc+"40":C.border}`,marginBottom:8,background:r.alreadyIn?C.sucLt:C.surface}}>
@@ -4255,13 +4312,24 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                         <I.LogIn style={{width:14,height:14}}/> Day Boarding
                       </button>
                     </div>
-                    <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                      {checks.map((ck,ci)=>(
-                        <div key={ci} style={{display:"flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:6,background:ck.ok?`${C.suc}10`:`${C.dan}10`,border:`1px solid ${ck.ok?C.suc+"30":C.dan+"30"}`}}>
-                          <span style={{fontSize:11,fontWeight:800,color:ck.ok?C.suc:ck.warn?C.acc:C.dan}}>{ck.ok?"✓":"✗"}</span>
-                          <span style={{fontSize:10,fontWeight:600,color:ck.ok?C.suc:C.dan}}>{ck.label}</span>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                      {checks.map((ck,ci)=>{
+                        const expKey=`${r.dogId}|${ck.expandKey}`;
+                        const isExp=dcCompExpand===expKey;
+                        return (
+                        <div key={ci} style={{gridColumn:isExp?"1 / -1":"auto"}}>
+                          <button onClick={()=>setDcCompExpand(prev=>prev===expKey?null:expKey)} style={{width:"100%",padding:"7px 10px",borderRadius:8,border:`1.5px solid ${ck.ok?C.suc+"50":ck.warn?C.acc+"50":C.dan+"50"}`,background:ck.ok?`${C.suc}0C`:ck.warn?`${C.acc}0C`:`${C.dan}0C`,cursor:"pointer",fontFamily:"inherit",textAlign:"left",transition:"all 0.12s"}}>
+                            <div style={{display:"flex",alignItems:"center",gap:5}}>
+                              <span style={{fontSize:12,fontWeight:800,color:ck.ok?C.suc:ck.warn?C.acc:C.dan}}>{ck.ok?"✓":ck.warn?"⚠":"✗"}</span>
+                              <span style={{fontSize:11,fontWeight:700,color:ck.ok?C.suc:ck.warn?C.acc:C.dan}}>{ck.label}</span>
+                              <span style={{fontSize:8,color:C.textMut,marginLeft:"auto"}}>{isExp?"▲":"▼"}</span>
+                            </div>
+                            <div style={{fontSize:9,color:C.textSec,marginTop:1,paddingLeft:17}}>{ck.detail}</div>
+                          </button>
+                          {isExp && ck.children && <div style={{marginTop:4,padding:"8px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surface,fontSize:11}}>{ck.children}</div>}
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </>)}
                 </div>
