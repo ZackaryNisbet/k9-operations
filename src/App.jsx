@@ -2240,6 +2240,18 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       if (!ageStatus.ok) errs.compliance_age = ageStatus.reason || "Dog does not meet age requirements";
       if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     }
+    // Agreement gate for ALL reservation types (not just boarding)
+    if (doCheckIn && !isBoarding) {
+      const errs = {};
+      const agreements = data.agreements || DEF_AGREEMENTS;
+      const reqAgrs = agreements.filter(a => a.required !== false);
+      const allAgrSigned = reqAgrs.every(a => agrSigned(client, a.id));
+      if (!allAgrSigned) {
+        const unsigned = reqAgrs.filter(a => !agrSigned(client, a.id)).map(a => a.name);
+        errs.compliance_agreements = `Unsigned agreements: ${unsigned.join(", ")}`;
+      }
+      if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+    }
     if (doCheckOut && isBoarding) {
       const errs = {};
       const adjTotal = getAdjustedTotal();
@@ -3418,6 +3430,20 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   // Direct check-in for non-boarding (evals, tours, daycare) with CRM auto-creation
   const directCheckIn = async (rid) => {
     const res = data.reservations.find(r => r.id === rid);
+    // Agreement gate: block check-in if required agreements unsigned
+    if (res) {
+      const ciClient = data.clients.find(c => c.id === res.clientId);
+      if (ciClient) {
+        const ciAgrs = (data.agreements || DEF_AGREEMENTS).filter(a => a.required !== false);
+        const allSigned = ciAgrs.every(a => agrSigned(ciClient, a.id));
+        if (!allSigned) {
+          const unsigned = ciAgrs.filter(a => !agrSigned(ciClient, a.id)).map(a => a.name);
+          addDashToast({ dogName: (data.dogs.find(d => d.id === res.dogId)?.fields?.name) || "?", action: "cannot check in", oldVal: "Unsigned: " + unsigned.join(", "), newVal: "Open reservation to sign" });
+          nav("client-detail", { clientId: ciClient.id, openReservation: rid });
+          return;
+        }
+      }
+    }
     const newData = { ...data, reservations: data.reservations.map(r => r.id === rid ? { ...r, status: "checked-in" } : r) };
     if (res) {
       const client = data.clients.find(c => c.id === res.clientId);
@@ -4898,6 +4924,12 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const handleCheckIn = async (rid) => {
     const res = data.reservations.find(r => r.id === rid);
     if (res && (res.type === "boarding" || res.type === "dayboarding")) { setBoardingPreviewId(rid); return; }
+    // Agreement gate for non-boarding check-ins
+    if (res) {
+      const ciAgrs = (data.agreements || DEF_AGREEMENTS).filter(a => a.required !== false);
+      const allSigned = ciAgrs.every(a => agrSigned(client, a.id));
+      if (!allSigned) { setBoardingPreviewId(rid); return; }
+    }
     const ciAudit = buildAuditEntry(rid, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"}], profile);
     await save({...data, auditLog:[...(data.auditLog||[]),ciAudit], reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-in"}:r)});
   };
@@ -5985,8 +6017,33 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <DogAvatar dog={{ ...dog, profilePic: editProfilePic, fields: editFields }} size={48} />
             <div style={{ flex: 1 }}>
-              <input value={editProfilePic} onChange={e => setEditProfilePic(e.target.value)} placeholder="Paste image URL…" style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }} />
-              <div style={{ fontSize: 10, color: C.textMut, marginTop: 3 }}>Enter a direct image URL (jpg, png, etc.)</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input value={editProfilePic && !editProfilePic.startsWith("data:") ? editProfilePic : ""} onChange={e => setEditProfilePic(e.target.value)} placeholder="Paste image URL…" style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }} />
+                <input type="file" accept="image/*" id="dogPicUpload" style={{ display: "none" }} onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  // Resize to max 400px and compress
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    const img = new Image();
+                    img.onload = () => {
+                      const maxDim = 400;
+                      let w = img.width, h = img.height;
+                      if (w > maxDim || h > maxDim) { const r = Math.min(maxDim / w, maxDim / h); w = Math.round(w * r); h = Math.round(h * r); }
+                      const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
+                      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+                      setEditProfilePic(canvas.toDataURL("image/jpeg", 0.8));
+                    };
+                    img.src = ev.target.result;
+                  };
+                  reader.readAsDataURL(file);
+                  e.target.value = "";
+                }} />
+                <button onClick={() => document.getElementById("dogPicUpload").click()} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${C.pri}`, background: C.priLt, color: C.pri, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Upload</span>
+                </button>
+              </div>
+              <div style={{ fontSize: 10, color: C.textMut, marginTop: 3 }}>{editProfilePic && editProfilePic.startsWith("data:") ? "Image uploaded ✓" : "Paste a URL or upload a photo"}</div>
             </div>
             {editProfilePic && <button onClick={() => setEditProfilePic("")} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, fontSize: 12, fontFamily: "inherit" }}>Clear</button>}
           </div>
@@ -6581,7 +6638,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   },[selectedDogs.join(",")]);
 
   useEffect(()=>{if(type==="daycare"||type==="dayboarding"||type==="tour"||type==="evaluation")setCheckOut(checkIn);else if(type==="boarding"&&checkOut<=checkIn)setCheckOut(addDays(checkIn,1));},[type,checkIn]);
-  useEffect(()=>{if(type==="daycare"||type==="dayboarding"){setCheckInTime("07:00");setCheckOutTime("18:00");}else if(type==="tour"){setCheckInTime("14:00");setCheckOutTime("14:30");}else if(type==="evaluation"){setCheckInTime("09:00");setCheckOutTime("10:00");}else{setCheckInTime("09:00");setCheckOutTime("11:00");}},[type]);
+  useEffect(()=>{if(type==="daycare"||type==="dayboarding"){setCheckInTime("07:00");setCheckOutTime("18:00");}else if(type==="tour"){setCheckInTime("14:00");setCheckOutTime("14:30");}else if(type==="evaluation"){setCheckInTime("09:00");setCheckOutTime("15:00");}else{setCheckInTime("09:00");setCheckOutTime("11:00");}},[type]);
   useEffect(()=>{if(type==="dayboarding")setRoomType("Executive Room");},[type]);
   // Auto-add bath for boarding stays of 2+ nights
   useEffect(()=>{
@@ -6653,7 +6710,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         const names = unevaluated.map(did => { const d = data.dogs.find(x=>x.id===did); return d ? d.fields.name : "Unknown"; }).join(", ");
         setType("evaluation");
         setCheckInTime("09:00");
-        setCheckOutTime("10:00");
+        setCheckOutTime("15:00");
         setErrors({ evalGate: `No evaluation on file for ${names}. Converted to Evaluation.` });
         return;
       }
@@ -14106,7 +14163,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
 
   useEffect(() => { const rec = roomScored.find(r => r.recommended); if (rec && !selectedRoom) setSelectedRoom(rec.room); }, [roomScored]);
   useEffect(() => { if (type === "daycare" || type === "tour" || type === "evaluation") setCheckOut(checkIn); }, [type, checkIn]);
-  useEffect(() => { if (type === "daycare") { setCheckInTime("07:00"); setCheckOutTime("18:00"); } else if (type === "tour") { setCheckInTime("14:00"); setCheckOutTime("14:30"); } else if (type === "evaluation") { setCheckInTime("09:00"); setCheckOutTime("10:00"); } else { setCheckInTime("09:00"); setCheckOutTime("11:00"); } }, [type]);
+  useEffect(() => { if (type === "daycare") { setCheckInTime("07:00"); setCheckOutTime("18:00"); } else if (type === "tour") { setCheckInTime("14:00"); setCheckOutTime("14:30"); } else if (type === "evaluation") { setCheckInTime("09:00"); setCheckOutTime("15:00"); } else { setCheckInTime("09:00"); setCheckOutTime("11:00"); } }, [type]);
   useEffect(() => { setSelectedRoom(""); }, [roomType]);
 
   const updateDogField = (dogIdx, field, val) => {
@@ -14212,11 +14269,20 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
       };
     });
 
+    // Auto-set eval tag for evaluation appointments or dogs without eval
+    let saveDogs = [...data.dogs, ...newDogs];
+    let saveDogTags = data.dogTags || [];
+    if (type === "evaluation") {
+      if (!saveDogTags.find(t => t.id === "tag_eval")) saveDogTags = [...saveDogTags, { id: "tag_eval", name: "Evaluation", colorIdx: 2 }];
+      saveDogs = saveDogs.map(d => dogIds.includes(d.id) && !(d.tags || []).includes("tag_eval") ? { ...d, tags: [...(d.tags || []), "tag_eval"] } : d);
+    }
+
     const createAudits = newReservations.map(r => buildAuditEntry(r.id, "Reservation Created", [{field:"Type",oldVal:"",newVal:r.type},{field:"Dates",oldVal:"",newVal:`${r.checkIn} → ${r.checkOut}`},{field:"Status",oldVal:"",newVal:"Upcoming"}], profile));
     await save({
       ...data,
       clients: [...data.clients, newClient],
-      dogs: [...data.dogs, ...newDogs],
+      dogs: saveDogs,
+      dogTags: saveDogTags,
       reservations: [...data.reservations, ...newReservations],
       auditLog: [...(data.auditLog || []), ...createAudits],
     });
@@ -14423,8 +14489,8 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
               const allAgrSigned = false;
               const ageResults = dogs.map(dog => ({ dog, status: getDogAgeCompliance(dog, data.resortPolicies, data.reservations) }));
               const allAgeOk = ageResults.every(a => a.status.ok);
-              const CheckItem = ({ ok, warn, label, detail, expandKey, children }) => (
-                <div style={{ flex: 1, minWidth: 140 }}>
+              const renderCI = (ok, warn, label, detail, expandKey, children) => (
+                <div key={expandKey} style={{ flex: 1, minWidth: 140 }}>
                   <button onClick={() => setComplianceExpand(prev => prev === expandKey ? null : expandKey)} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${ok ? C.suc + "60" : warn ? C.acc + "60" : C.dan + "60"}`, background: ok ? C.suc + "12" : warn ? C.acc + "12" : C.dan + "12", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       <span style={{ fontSize: 14 }}>{ok ? "✓" : warn ? "⚠" : "✗"}</span>
@@ -14440,8 +14506,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8, letterSpacing: "0.03em", textTransform: "uppercase" }}>Reservation Compliance</div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    <CheckItem ok={allVaxOk} label="Vaccines" expandKey="vax"
-                      detail={allVaxOk ? "All up to date" : vaxResults.filter(v => !v.status.ok).map(v => `${v.dog.fields.name || "Dog"}: ${[...v.status.expired, ...v.status.missing].length} issue${[...v.status.expired, ...v.status.missing].length > 1 ? "s" : ""}`).join(", ")}>
+                    {renderCI(allVaxOk, false, "Vaccines", allVaxOk ? "All up to date" : vaxResults.filter(v => !v.status.ok).map(v => `${v.dog.fields.name || "Dog"}: ${[...v.status.expired, ...v.status.missing].length} issue${[...v.status.expired, ...v.status.missing].length > 1 ? "s" : ""}`).join(", "), "vax",
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {vaxResults.map((v, vi) => (
                           <div key={vi} style={{ fontSize: 12 }}>
@@ -14472,16 +14537,14 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                           </div>
                         ))}
                       </div>
-                    </CheckItem>
-                    <CheckItem ok={hasEmergency} label="Emergency Contact" expandKey="ec"
-                      detail={hasEmergency ? clientFields.emergency_contact : "Not provided"}>
+                    )}
+                    {renderCI(!!(clientFields.emergency_contact && clientFields.emergency_phone), false, "Emergency Contact", (clientFields.emergency_contact && clientFields.emergency_phone) ? clientFields.emergency_contact : "Not provided", "ec",
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        <Inp label="Emergency Contact Name" value={clientFields.emergency_contact || ""} onChange={v => setClientFields({ ...clientFields, emergency_contact: v })} />
-                        <Inp label="Emergency Phone" type="tel" value={clientFields.emergency_phone || ""} onChange={v => setClientFields({ ...clientFields, emergency_phone: v })} />
+                        <Inp label="Emergency Contact Name" value={clientFields.emergency_contact || ""} onChange={v => setClientFields(prev => ({ ...prev, emergency_contact: v }))} />
+                        <Inp label="Emergency Phone" type="tel" value={clientFields.emergency_phone || ""} onChange={v => setClientFields(prev => ({ ...prev, emergency_phone: v }))} />
                       </div>
-                    </CheckItem>
-                    <CheckItem ok={allAgrSigned} label="Agreements" expandKey="agr"
-                      detail={reqAgrs.length > 0 ? `${reqAgrs.length} unsigned (new client)` : "None required"}>
+                    )}
+                    {renderCI(allAgrSigned, false, "Agreements", reqAgrs.length > 0 ? `${reqAgrs.length} unsigned (new client)` : "None required", "agr",
                       <div style={{ fontSize: 12, color: C.textMut }}>
                         {reqAgrs.length > 0 ? (
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -14495,11 +14558,12 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                           </div>
                         ) : "No agreements configured"}
                       </div>
-                    </CheckItem>
-                    <CheckItem ok={allAgeOk} warn={ageResults.some(a => a.status.grandfathered)} label="Dog Age" expandKey="age"
-                      detail={ageResults.every(a => !a.status.age || a.status.ok)
+                    )}
+                    {renderCI(allAgeOk, ageResults.some(a => a.status.grandfathered), "Dog Age",
+                      ageResults.every(a => !a.status.age || a.status.ok)
                         ? ageResults.map(a => a.status.age ? `${a.dog.fields.name || "Dog"}: ${a.status.age}yr` : null).filter(Boolean).join(", ") || "N/A"
-                        : ageResults.filter(a => !a.status.ok).map(a => `${a.dog.fields.name || "Dog"}: ${a.status.age}yr — ${a.status.reason}`).join(", ")}>
+                        : ageResults.filter(a => !a.status.ok).map(a => `${a.dog.fields.name || "Dog"}: ${a.status.age}yr — ${a.status.reason}`).join(", "),
+                      "age",
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {ageResults.map((a, ai) => (
                           <div key={ai} style={{ fontSize: 12 }}>
@@ -14516,7 +14580,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                         ))}
                         <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>Max age: {(data.resortPolicies || {}).maxDogAge || 13} years.</div>
                       </div>
-                    </CheckItem>
+                    )}
                   </div>
                 </div>
               );
