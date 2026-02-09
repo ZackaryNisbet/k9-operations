@@ -2102,9 +2102,23 @@ function DogPicHover({ dog, size = 20 }) {
 // useData is now imported from ./useData.js (Supabase-powered)
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AUDIT LOG HELPER
+// ═══════════════════════════════════════════════════════════════════════════
+function buildAuditEntry(reservationId, action, details, profile) {
+  return {
+    id: gid(),
+    reservationId,
+    timestamp: new Date().toISOString(),
+    userName: profile ? (profile.full_name || profile.email || "Staff") : "System",
+    action,
+    details: details || [],
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // BOARDING PREVIEW / CHECK-IN MODAL
 // ═══════════════════════════════════════════════════════════════════════════
-function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheckOutMode, onClose, onSave, data, save }) {
+function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheckOutMode, onClose, onSave, data, save, profile }) {
   // Profile defaults
   const profileFeeding = summarizeFeeding(dog.fields.feedingSchedules) || "";
   const profileMeds = summarizeMeds(dog.fields.medicationSchedules) || "";
@@ -2470,16 +2484,55 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           reservation={reservation}
           defaultAmount={payFormDefaults?.amount}
           defaultType={payFormDefaults?.type}
+          profile={profile}
           onSave={async (pmt) => {
             const payments = [...(data.payments||[]), pmt];
             const resPmts = payments.filter(p => p.reservationId === reservation.id && p.status === "completed" && p.type !== "refund");
             const resRefunds = payments.filter(p => p.reservationId === reservation.id && (p.type === "refund" || p.status === "refunded"));
             const newCollected = resPmts.reduce((s, p) => s + p.amount, 0) - resRefunds.reduce((s, p) => s + p.amount, 0);
-            await save({...data, payments, reservations: data.reservations.map(r => r.id === reservation.id ? {...r, amountCollected: newCollected} : r)});
+            const pmtAudit = buildAuditEntry(reservation.id, pmt.type === "refund" ? "Issued Refund" : "Collected Payment", [{field:pmt.type==="refund"?"Refund":"Payment",oldVal:`$${(reservation.amountCollected||0).toFixed(2)} collected`,newVal:`$${pmt.amount.toFixed(2)} ${pmt.type} via ${pmt.method}${pmt.method==="card"?" ····"+pmt.cardLast4:""}`}], profile);
+            await save({...data, payments, auditLog: [...(data.auditLog||[]), pmtAudit], reservations: data.reservations.map(r => r.id === reservation.id ? {...r, amountCollected: newCollected} : r)});
             setShowPayForm(false);
           }}
         />
       )}
+
+      {/* Section: Reservation History / Audit Log */}
+      {secHeader("Reservation History")}
+      {(() => {
+        const logs = (data.auditLog || []).filter(l => l.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        return logs.length > 0 ? (
+          <div style={{maxHeight:280,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
+            {logs.map(log => (
+              <div key={log.id} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.borderLight}`,fontSize:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:log.details.length>0?6:0}}>
+                  <span style={{fontWeight:700,color:C.pri}}>{log.userName}</span>
+                  <span style={{fontWeight:600,color:C.text}}>{log.action}</span>
+                  <span style={{marginLeft:"auto",color:C.textMut,fontSize:11,fontVariantNumeric:"tabular-nums"}}>{new Date(log.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true})}</span>
+                </div>
+                {log.details.length > 0 && (
+                  <div style={{display:"flex",flexDirection:"column",gap:3}}>
+                    {log.details.map((d, di) => (
+                      <div key={di} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,paddingLeft:4}}>
+                        <span style={{color:C.textMut,fontWeight:500,minWidth:90}}>{d.field}</span>
+                        {d.oldVal != null && d.oldVal !== "" && (
+                          <span style={{color:C.dan,textDecoration:"line-through",opacity:0.7}}>{d.oldVal}</span>
+                        )}
+                        {d.oldVal != null && d.oldVal !== "" && d.newVal != null && d.newVal !== "" && (
+                          <span style={{color:C.textMut}}>→</span>
+                        )}
+                        {d.newVal != null && d.newVal !== "" && (
+                          <span style={{color:C.suc,fontWeight:600}}>{d.newVal}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No history recorded yet</div>;
+      })()}
 
       {/* Footer */}
       {errors.deposit && <div style={{color:C.dan,fontSize:13,fontWeight:600,marginTop:8,padding:"8px 14px",background:C.danLt,borderRadius:8}}>{errors.deposit}</div>}
@@ -2510,7 +2563,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
             <Btn variant="secondary" onClick={()=>setShowCancelConfirm(false)}>Keep Reservation</Btn>
             <Btn variant="danger" onClick={async ()=>{
-              await save({...data, reservations: data.reservations.map(r => r.id === reservation.id ? {...r, status:"cancelled"} : r)});
+              const cancelAudit = buildAuditEntry(reservation.id, "Cancelled Reservation", [{field:"Status",oldVal:reservation.status==="checked-in"?"Checked In":"Upcoming",newVal:"Cancelled"}], profile);
+              await save({...data, auditLog:[...(data.auditLog||[]),cancelAudit], reservations: data.reservations.map(r => r.id === reservation.id ? {...r, status:"cancelled"} : r)});
               setShowCancelConfirm(false);
               onClose();
             }} icon={<I.Trash/>}>Cancel Reservation</Btn>
@@ -2561,7 +2615,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 // ═══════════════════════════════════════════════════════════════════════════
 // DASHBOARD - Tabbed layout with check-in/out times
 // ═══════════════════════════════════════════════════════════════════════════
-function DashboardPage({ data, save, nav, onNew }) {
+function DashboardPage({ data, save, nav, onNew, profile }) {
   const td = todayStr();
   const [viewDate, setViewDate] = useState(td);
   const [activeTab, setActiveTab] = useState("expected");
@@ -2694,6 +2748,8 @@ function DashboardPage({ data, save, nav, onNew }) {
         if (entry) newData.crmEntries = [...crm, entry];
       }
     }
+    // Audit log for direct check-in
+    newData.auditLog = [...(newData.auditLog || []), buildAuditEntry(rid, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"}], profile)];
     await save(newData);
     if (res) {
       const dog = data.dogs.find(d => d.id === res.dogId);
@@ -2725,7 +2781,8 @@ function DashboardPage({ data, save, nav, onNew }) {
       // Eval already done — proceed with checkout, set evalResult from evaluation
       const evalResultVal = existingEval.result === "green" ? "passed_group" : "pending";
       const origRes = res ? { ...res } : null;
-      await save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out",evalResult:evalResultVal}:r)});
+      const evalCoAudit = buildAuditEntry(rid, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"},{field:"Eval Result",oldVal:"Pending",newVal:evalResultVal==="passed_group"?"Passed Group":"Pending"}], profile);
+      await save({...data, auditLog:[...(data.auditLog||[]),evalCoAudit], reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out",evalResult:evalResultVal}:r)});
       if (origRes) {
         const dog = data.dogs.find(d => d.id === origRes.dogId);
         addDashToast({ dogName: dog ? dog.fields.name : "?", action: "checked out", oldVal: "Checked In", newVal: "Checked Out", undoRes: origRes });
@@ -2733,7 +2790,8 @@ function DashboardPage({ data, save, nav, onNew }) {
       return;
     }
     const origRes = res ? { ...res } : null;
-    await save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out"}:r)});
+    const coAudit = buildAuditEntry(rid, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"}], profile);
+    await save({...data, auditLog:[...(data.auditLog||[]),coAudit], reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out"}:r)});
     if (origRes) {
       const dog = data.dogs.find(d => d.id === origRes.dogId);
       addDashToast({ dogName: dog ? dog.fields.name : "?", action: "checked out", oldVal: "Checked In", newVal: "Checked Out", undoRes: origRes });
@@ -3500,11 +3558,36 @@ function DashboardPage({ data, save, nav, onNew }) {
               merged.discountType = updatedRes.discountType;
               merged.discountValue = updatedRes.discountValue;
             }
-            await save({ ...data, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
+            // Build audit log entries
+            const auditLogs = [];
+            const diffs = [];
+            if (doCheckIn) auditLogs.push(buildAuditEntry(bRes.id, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"}], profile));
+            if (doCheckOut) auditLogs.push(buildAuditEntry(bRes.id, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"}], profile));
+            if (!doCheckIn && !doCheckOut) {
+              // Detect what changed
+              if (updatedRes.parentDestination !== bRes.parentDestination) diffs.push({field:"Parent Destination",oldVal:bRes.parentDestination||"(empty)",newVal:updatedRes.parentDestination||"(empty)"});
+              if (updatedRes.belongings !== bRes.belongings) diffs.push({field:"Belongings",oldVal:bRes.belongings||"(empty)",newVal:updatedRes.belongings||"(empty)"});
+              if (updatedRes.checkIn !== bRes.checkIn) diffs.push({field:"Check-In Date",oldVal:bRes.checkIn,newVal:updatedRes.checkIn});
+              if (updatedRes.checkOut !== bRes.checkOut) diffs.push({field:"Check-Out Date",oldVal:bRes.checkOut,newVal:updatedRes.checkOut});
+              if (updatedRes.checkInTime !== bRes.checkInTime) diffs.push({field:"Check-In Time",oldVal:bRes.checkInTime,newVal:updatedRes.checkInTime});
+              if (updatedRes.checkOutTime !== bRes.checkOutTime) diffs.push({field:"Check-Out Time",oldVal:bRes.checkOutTime,newVal:updatedRes.checkOutTime});
+              if (updatedRes.notes !== bRes.notes) diffs.push({field:"Notes",oldVal:bRes.notes||"(empty)",newVal:updatedRes.notes||"(empty)"});
+              if (updatedRes.discountType !== bRes.discountType || updatedRes.discountValue !== bRes.discountValue) diffs.push({field:"Discount",oldVal:bRes.discountType&&bRes.discountValue?`${bRes.discountType} ${bRes.discountValue}`:"None",newVal:updatedRes.discountType&&updatedRes.discountValue?`${updatedRes.discountType} ${updatedRes.discountValue}`:"None"});
+              if (diffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Updated Reservation", diffs, profile));
+            }
+            // Also log check-in/out detail changes
+            if (doCheckIn) {
+              const ciDiffs = [];
+              if (updatedRes.parentDestination && updatedRes.parentDestination !== bRes.parentDestination) ciDiffs.push({field:"Parent Destination",oldVal:bRes.parentDestination||"(empty)",newVal:updatedRes.parentDestination});
+              if (updatedRes.belongings && updatedRes.belongings !== bRes.belongings) ciDiffs.push({field:"Belongings",oldVal:bRes.belongings||"(empty)",newVal:updatedRes.belongings});
+              if (ciDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Filled Check-In Details", ciDiffs, profile));
+            }
+            const newAuditLog = [...(data.auditLog || []), ...auditLogs];
+            await save({ ...data, auditLog: newAuditLog, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
             addDashToast({ dogName: bDog.fields.name, action: doCheckIn ? "checked in" : doCheckOut ? "checked out" : "updated", oldVal: doCheckIn ? "Upcoming" : doCheckOut ? "Checked In" : "Previous", newVal: doCheckIn ? "Checked In" : doCheckOut ? "Checked Out" : "Saved", undoRes: origCopy });
             setBoardingPreviewId(null);
           }}
-          data={data} save={save}
+          data={data} save={save} profile={profile}
         />;
       })()}
 
@@ -3746,15 +3829,17 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   };
 
   const [boardingPreviewId, setBoardingPreviewId] = useState(openReservationId || null);
-  const handleCheckIn = (rid) => {
+  const handleCheckIn = async (rid) => {
     const res = data.reservations.find(r => r.id === rid);
     if (res && (res.type === "boarding" || res.type === "dayboarding")) { setBoardingPreviewId(rid); return; }
-    save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-in"}:r)});
+    const ciAudit = buildAuditEntry(rid, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"}], profile);
+    await save({...data, auditLog:[...(data.auditLog||[]),ciAudit], reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-in"}:r)});
   };
   const handleCheckOut = async (rid) => {
     const res = data.reservations.find(r => r.id === rid);
     if (res && (res.type === "boarding" || res.type === "dayboarding")) { setBoardingPreviewId(rid); return; }
-    await save({...data,reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out"}:r)});
+    const coAudit = buildAuditEntry(rid, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"}], profile);
+    await save({...data, auditLog:[...(data.auditLog||[]),coAudit], reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out"}:r)});
   };
 
   const dn=(did)=>{const d=data.dogs.find(x=>x.id===did);return d?d.fields.name:"Unknown";};
@@ -4131,10 +4216,35 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               merged.discountType = updatedRes.discountType;
               merged.discountValue = updatedRes.discountValue;
             }
-            await save({ ...data, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
+            // Build audit log entries
+            const auditLogs = [];
+            const diffs = [];
+            if (doCheckIn) auditLogs.push(buildAuditEntry(bRes.id, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"}], profile));
+            if (doCheckOut) auditLogs.push(buildAuditEntry(bRes.id, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"}], profile));
+            if (!doCheckIn && !doCheckOut) {
+              // Detect what changed
+              if (updatedRes.parentDestination !== bRes.parentDestination) diffs.push({field:"Parent Destination",oldVal:bRes.parentDestination||"(empty)",newVal:updatedRes.parentDestination||"(empty)"});
+              if (updatedRes.belongings !== bRes.belongings) diffs.push({field:"Belongings",oldVal:bRes.belongings||"(empty)",newVal:updatedRes.belongings||"(empty)"});
+              if (updatedRes.checkIn !== bRes.checkIn) diffs.push({field:"Check-In Date",oldVal:bRes.checkIn,newVal:updatedRes.checkIn});
+              if (updatedRes.checkOut !== bRes.checkOut) diffs.push({field:"Check-Out Date",oldVal:bRes.checkOut,newVal:updatedRes.checkOut});
+              if (updatedRes.checkInTime !== bRes.checkInTime) diffs.push({field:"Check-In Time",oldVal:bRes.checkInTime,newVal:updatedRes.checkInTime});
+              if (updatedRes.checkOutTime !== bRes.checkOutTime) diffs.push({field:"Check-Out Time",oldVal:bRes.checkOutTime,newVal:updatedRes.checkOutTime});
+              if (updatedRes.notes !== bRes.notes) diffs.push({field:"Notes",oldVal:bRes.notes||"(empty)",newVal:updatedRes.notes||"(empty)"});
+              if (updatedRes.discountType !== bRes.discountType || updatedRes.discountValue !== bRes.discountValue) diffs.push({field:"Discount",oldVal:bRes.discountType&&bRes.discountValue?`${bRes.discountType} ${bRes.discountValue}`:"None",newVal:updatedRes.discountType&&updatedRes.discountValue?`${updatedRes.discountType} ${updatedRes.discountValue}`:"None"});
+              if (diffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Updated Reservation", diffs, profile));
+            }
+            // Also log check-in/out detail changes
+            if (doCheckIn) {
+              const ciDiffs = [];
+              if (updatedRes.parentDestination && updatedRes.parentDestination !== bRes.parentDestination) ciDiffs.push({field:"Parent Destination",oldVal:bRes.parentDestination||"(empty)",newVal:updatedRes.parentDestination});
+              if (updatedRes.belongings && updatedRes.belongings !== bRes.belongings) ciDiffs.push({field:"Belongings",oldVal:bRes.belongings||"(empty)",newVal:updatedRes.belongings});
+              if (ciDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Filled Check-In Details", ciDiffs, profile));
+            }
+            const newAuditLog = [...(data.auditLog || []), ...auditLogs];
+            await save({ ...data, auditLog: newAuditLog, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
             setBoardingPreviewId(null);
           }}
-          data={data} save={save}
+          data={data} save={save} profile={profile}
         />;
       })()}
     </div>
@@ -4215,12 +4325,14 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
       if (selectedClassTag) tags = [...tags, selectedClassTag];
       return { ...d, tags };
     });
+    const evalAudit = buildAuditEntry(reservationId, "Evaluation Completed", [{field:"Result",oldVal:"Pending",newVal:finalResult==="green"?"Passed Group":finalResult==="yellow"?"Passed Private":"Needs Work"},{field:"Score",oldVal:"",newVal:`${totalScore}/${maxScore}`},{field:"Evaluator",oldVal:"",newVal:profile?.full_name||"Staff"}], profile);
     const newData = {
       ...data,
       dogs: updatedDogs,
       dogTags: newDogTags,
       evaluations: [...(data.evaluations || []), evalObj],
       reservations: data.reservations.map(r => r.id === reservationId ? { ...r, evalResult, ...(r.needsEval ? { needsEval: false } : {}) } : r),
+      auditLog: [...(data.auditLog || []), evalAudit],
     };
     await save(newData);
     setSubmitting(false);
@@ -5571,7 +5683,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           }
         });
       }
-      await save({...data, dogs: saveDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...saveRes]});
+      const createAudits = saveRes.map(r => buildAuditEntry(r.id, "Reservation Created", [{field:"Type",oldVal:"",newVal:r.type},{field:"Dates",oldVal:"",newVal:`${r.checkIn} → ${r.checkOut}`},{field:"Status",oldVal:"",newVal:"Upcoming"}], profile));
+      await save({...data, dogs: saveDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...saveRes], auditLog:[...(data.auditLog||[]),...createAudits]});
       nav("dashboard");
       if (addGlobalToast) addGlobalToast({ message: "Reservation Created", actionLabel: "View Reservation", onAction: () => nav("client-detail", { clientId, openReservation: saveRes[0]?.id }) });
     }
@@ -5605,7 +5718,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         }
       });
     }
-    await save({...data, clients: newClients, dogs: newDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...saveRes]});
+    const createAudits2 = saveRes.map(r => buildAuditEntry(r.id, "Reservation Created", [{field:"Type",oldVal:"",newVal:r.type},{field:"Dates",oldVal:"",newVal:`${r.checkIn} → ${r.checkOut}`},{field:"Status",oldVal:"",newVal:"Upcoming"}], profile));
+    await save({...data, clients: newClients, dogs: newDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...saveRes], auditLog:[...(data.auditLog||[]),...createAudits2]});
     setShowUpdateModal(false);
     nav("dashboard");
     if (addGlobalToast) addGlobalToast({ message: "Reservation Created", actionLabel: "View Reservation", onAction: () => nav("client-detail", { clientId, openReservation: saveRes[0]?.id }) });
@@ -6483,7 +6597,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
 // ═══════════════════════════════════════════════════════════════════════════
 // LODGING CALENDAR
 // ═══════════════════════════════════════════════════════════════════════════
-function LodgingCalendarPage({ data, save, nav, onNew }) {
+function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
   const td = todayStr();
   const [weekStart, setWeekStart] = useState(() => getMonday(td));
   const weekDays = useMemo(() => getWeekDays(weekStart), [weekStart]);
@@ -7196,10 +7310,35 @@ function LodgingCalendarPage({ data, save, nav, onNew }) {
               merged.discountType = updatedRes.discountType;
               merged.discountValue = updatedRes.discountValue;
             }
-            await save({ ...data, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
+            // Build audit log entries
+            const auditLogs = [];
+            const diffs = [];
+            if (doCheckIn) auditLogs.push(buildAuditEntry(bRes.id, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"}], profile));
+            if (doCheckOut) auditLogs.push(buildAuditEntry(bRes.id, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"}], profile));
+            if (!doCheckIn && !doCheckOut) {
+              // Detect what changed
+              if (updatedRes.parentDestination !== bRes.parentDestination) diffs.push({field:"Parent Destination",oldVal:bRes.parentDestination||"(empty)",newVal:updatedRes.parentDestination||"(empty)"});
+              if (updatedRes.belongings !== bRes.belongings) diffs.push({field:"Belongings",oldVal:bRes.belongings||"(empty)",newVal:updatedRes.belongings||"(empty)"});
+              if (updatedRes.checkIn !== bRes.checkIn) diffs.push({field:"Check-In Date",oldVal:bRes.checkIn,newVal:updatedRes.checkIn});
+              if (updatedRes.checkOut !== bRes.checkOut) diffs.push({field:"Check-Out Date",oldVal:bRes.checkOut,newVal:updatedRes.checkOut});
+              if (updatedRes.checkInTime !== bRes.checkInTime) diffs.push({field:"Check-In Time",oldVal:bRes.checkInTime,newVal:updatedRes.checkInTime});
+              if (updatedRes.checkOutTime !== bRes.checkOutTime) diffs.push({field:"Check-Out Time",oldVal:bRes.checkOutTime,newVal:updatedRes.checkOutTime});
+              if (updatedRes.notes !== bRes.notes) diffs.push({field:"Notes",oldVal:bRes.notes||"(empty)",newVal:updatedRes.notes||"(empty)"});
+              if (updatedRes.discountType !== bRes.discountType || updatedRes.discountValue !== bRes.discountValue) diffs.push({field:"Discount",oldVal:bRes.discountType&&bRes.discountValue?`${bRes.discountType} ${bRes.discountValue}`:"None",newVal:updatedRes.discountType&&updatedRes.discountValue?`${updatedRes.discountType} ${updatedRes.discountValue}`:"None"});
+              if (diffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Updated Reservation", diffs, profile));
+            }
+            // Also log check-in/out detail changes
+            if (doCheckIn) {
+              const ciDiffs = [];
+              if (updatedRes.parentDestination && updatedRes.parentDestination !== bRes.parentDestination) ciDiffs.push({field:"Parent Destination",oldVal:bRes.parentDestination||"(empty)",newVal:updatedRes.parentDestination});
+              if (updatedRes.belongings && updatedRes.belongings !== bRes.belongings) ciDiffs.push({field:"Belongings",oldVal:bRes.belongings||"(empty)",newVal:updatedRes.belongings});
+              if (ciDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Filled Check-In Details", ciDiffs, profile));
+            }
+            const newAuditLog = [...(data.auditLog || []), ...auditLogs];
+            await save({ ...data, auditLog: newAuditLog, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
             setBoardingPreviewId(null);
           }}
-          data={data} save={save}
+          data={data} save={save} profile={profile}
         />;
       })()}
     </div>
@@ -11997,14 +12136,14 @@ function MessagesPage({ data, save, nav }) {
 }
 
 // ─── Payment Form Modal ──────────────────────────────────────────────────
-function PaymentFormModal({ onClose, onSave, reservation, client, existingPayment, defaultAmount, defaultType }) {
+function PaymentFormModal({ onClose, onSave, reservation, client, existingPayment, defaultAmount, defaultType, profile }) {
   const [amt, setAmt] = useState(defaultAmount || existingPayment?.amount?.toString() || (reservation ? Math.max(0, (reservation.totalPrice || 0) - (reservation.amountCollected || 0)).toFixed(2) : ""));
   const [type, setType] = useState(defaultType || existingPayment?.type || "payment");
   const [method, setMethod] = useState(existingPayment?.method || "card");
   const [card4, setCard4] = useState(existingPayment?.cardLast4 || "");
   const [tip, setTip] = useState("");
   const [note, setNote] = useState(existingPayment?.note || "");
-  const [staff, setStaff] = useState(existingPayment?.processedBy || "");
+  const [staff, setStaff] = useState(existingPayment?.processedBy || (profile ? (profile.full_name || profile.email || "").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0,3) : ""));
   const [err, setErr] = useState("");
   const labelS = { display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: C.text };
   const inputS = { width: "100%", padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" };
@@ -12048,7 +12187,7 @@ function PaymentFormModal({ onClose, onSave, reservation, client, existingPaymen
 }
 
 // ─── Payments Page ────────────────────────────────────────────────────────
-function PaymentsPage({ data, save, nav }) {
+function PaymentsPage({ data, save, nav, profile }) {
   const [search, setSearch] = useState("");
   const [typeF, setTypeF] = useState("all");
   const [methodF, setMethodF] = useState("all");
@@ -12217,6 +12356,7 @@ function PaymentsPage({ data, save, nav }) {
           reservation={editPmt?.__newForClient ? null : getRes(editPmt?.reservationId)}
           client={editPmt?.__newForClient || getClient(editPmt?.clientId)}
           existingPayment={editPmt?.__newForClient ? null : editPmt}
+          profile={profile}
         />
       )}
     </div>
