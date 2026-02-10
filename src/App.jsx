@@ -3131,8 +3131,11 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
               <MedicationScheduleEditor schedules={medicationSchedules} onChange={setMedicationSchedules} data={data} readOnly={isReadOnly}/>
               {profileHint(summarizeMeds(profileMedicationSchedules), medsChanged)}
             </div>
-            <div>
-              <div style={{fontSize:11,fontWeight:600,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:6}}>Bathing Preference</div>
+            {countNights(checkIn,checkOut)>=2&&<div>
+              <div style={{padding:"10px 14px",borderRadius:10,border:`1.5px dashed ${C.acc}`,background:C.acc+"08",marginBottom:10,fontSize:12,lineHeight:1.5,color:C.textSec}}>
+                <strong style={{color:C.text}}>Bathing Policy:</strong> K9 Resorts requires all dogs boarding 2 or more nights receive a bath to ensure every pup goes home smelling and feeling great.
+              </div>
+              <div style={{fontSize:11,fontWeight:600,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:6}}>Bathing Type <span style={{color:C.dan}}>*</span></div>
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                 {BATH_OPTS.map(opt=>{
                   const sel=bathType===opt;
@@ -3144,7 +3147,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                 })}
               </div>
               {profileHint(profileBath, bathChanged)}
-            </div>
+            </div>}
           </div>
 
           {/* Section: Notes */}
@@ -3154,6 +3157,29 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           {/* ─── RECEIPT ─── Clean, unified receipt section ─── */}
           {(() => {
             const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
+            // Append bath add-on if bath type is selected and 2+ nights
+            if (bathType && countNights(checkIn,checkOut) >= 2) {
+              const addOnPrices = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
+              const bathKey = `${bathType} Bath`;
+              const bathRate = addOnPrices[bathKey] ?? 0;
+              if (bathRate > 0) {
+                pr.lineItems.push({ label: `${bathKey}`, rate: bathRate, qty: 1, total: bathRate, isAddon: true });
+                pr.subtotal += bathRate;
+                pr.total += bathRate;
+              }
+            }
+            // Also append any saved selectedAddOns from the reservation (non-bath add-ons)
+            if (reservation.selectedAddOns && Array.isArray(reservation.selectedAddOns)) {
+              const addOnPrices2 = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
+              reservation.selectedAddOns.filter(a => !a.endsWith(" Bath")).forEach(addon => {
+                const rate = addOnPrices2[addon] ?? 0;
+                if (rate > 0) {
+                  pr.lineItems.push({ label: addon, rate, qty: 1, total: rate, isAddon: true });
+                  pr.subtotal += rate;
+                  pr.total += rate;
+                }
+              });
+            }
             let manualDiscount = 0;
             if (discountType === "percent" && discountValue > 0) manualDiscount = Math.round(pr.total * (discountValue / 100) * 100) / 100;
             else if (discountType === "flat" && discountValue > 0) manualDiscount = Math.min(discountValue, pr.total);
