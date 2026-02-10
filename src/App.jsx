@@ -17151,6 +17151,607 @@ function PaymentsPage({ data, save, nav, profile }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// REPORTS PAGE — Settings-style hub with Payments, Resort Volume, Accrual Revenue
+// ═══════════════════════════════════════════════════════════════════════════
+function ReportsPage({ data, save, nav, profile }) {
+  const [tab, setTab] = useState(null);
+  const [reportsSearch, setReportsSearch] = useState("");
+
+  // ── Date range state (shared by volume & revenue reports) ──
+  const today = new Date().toISOString().split("T")[0];
+  const def30 = addDays(today, -30);
+  const [rangeFrom, setRangeFrom] = useState(def30);
+  const [rangeTo, setRangeTo] = useState(today);
+
+  // ── Report sections ──
+  const reportSections = [
+    { label: "Financial", items: [
+      { id: "payments", label: "Payments", desc: "View transaction history, record payments, and manage refunds", keywords: "payments transactions money refund deposit" },
+      { id: "accrual-revenue", label: "Accrual Revenue", desc: "Daily revenue recognized at time of service completion, not transaction", keywords: "accrual revenue daily income recognized earned" },
+    ]},
+    { label: "Operations", items: [
+      { id: "resort-volume", label: "Resort Volume", desc: "Evaluations, tours, daycare, and overnight rooms — accrual-based", keywords: "volume evaluations tours daycare boarding rooms occupancy" },
+    ]},
+  ];
+
+  const allCategories = reportSections.flatMap(s => s.items);
+  const sq = reportsSearch.trim().toLowerCase();
+  const filteredSections = sq
+    ? [{ label: null, items: allCategories.filter(c => c.label.toLowerCase().includes(sq) || c.desc.toLowerCase().includes(sq) || c.keywords.includes(sq)) }]
+    : reportSections;
+
+  // ════════════════════════════════════════════════════════════════════
+  // ACCRUAL HELPERS — used by both Volume and Revenue reports
+  // ════════════════════════════════════════════════════════════════════
+  const buildAccrualData = useMemo(() => {
+    const from = rangeFrom, to = rangeTo;
+    if (!from || !to) return { days: [], totals: {} };
+
+    const reservations = data.reservations || [];
+    const pricing = data.pricing || DEF_PRICING;
+    const addOnPrices = { ...DEF_PRICING.addOns, ...(pricing.addOns || {}) };
+    const boardingRates = { ...DEF_PRICING.boardingRates, ...(pricing.boardingRates || {}) };
+    const daycareRates = { ...DEF_PRICING.daycareRates, ...(pricing.daycareRates || {}) };
+    const dayboardingRate = pricing.dayboardingRate ?? DEF_PRICING.dayboardingRate;
+    const multiDogDiscount = pricing.multiDogDiscount ?? DEF_PRICING.multiDogDiscount;
+    const evalFee = pricing.evaluationFee ?? DEF_PRICING.evaluationFee;
+    const tourFee = pricing.tourFee ?? DEF_PRICING.tourFee;
+    const halfDayThreshold = pricing.halfDayThreshold ?? DEF_PRICING.halfDayThreshold;
+    const ftp = { ...DEF_PRICING.foodTypePricing, ...(pricing.foodTypePricing || {}) };
+    const mp = { ...DEF_PRICING.medPricing, ...(pricing.medPricing || {}) };
+
+    // Build each day in range
+    const days = [];
+    let cur = from;
+    while (cur <= to) { days.push(cur); cur = addDays(cur, 1); }
+
+    // Per-day accumulators
+    const dayData = {};
+    days.forEach(d => { dayData[d] = { roomRevenue: 0, multiDogAdj: 0, feedingRevenue: 0, medRevenue: 0, addOnRevenue: 0, discountAdj: 0, evalRevenue: 0, tourRevenue: 0, daycareRevenue: 0, dayboardingRevenue: 0, totalRevenue: 0, roomsSold: 0, evalCount: 0, tourCount: 0, daycareCount: 0, refunds: 0 }; });
+
+    // Process each reservation
+    reservations.forEach(res => {
+      if (res.status === "cancelled") return;
+
+      const dog = (data.dogs || []).find(d => d.id === res.dogId);
+      const fields = dog ? dog.fields : {};
+
+      // ─── BOARDING (accrual per night) ─────────────────────────────
+      if (res.type === "boarding" && res.checkIn && res.checkOut) {
+        // Only count nights that are actually completed (checked-in or checked-out, and day is in the past or today)
+        const resStart = res.checkIn;
+        const resEnd = res.checkOut;
+        // A night is "completed" when the guest has stayed through that night.
+        // Night N = the night starting on date N. It's completed when the following morning arrives.
+        // So for accrual, we count date D as a completed night if D >= resStart AND D < resEnd AND D < today (or D <= today if checked-out)
+        const isActive = res.status === "checked-in" || res.status === "checked-out";
+        if (!isActive && res.status !== "upcoming") return;
+        // For upcoming reservations that haven't started yet, skip entirely
+        if (res.status === "upcoming" && resStart > today) return;
+
+        const totalNights = countNights(resStart, resEnd);
+        if (totalNights <= 0) return;
+
+        // Per-night room rate (handle room segments)
+        const getNightRate = (nightDate) => {
+          if (res.roomSegments && res.roomSegments.length > 0) {
+            const seg = res.roomSegments.find(s => nightDate >= s.startDate && nightDate < s.endDate);
+            return seg ? (boardingRates[seg.roomType] || 0) : (boardingRates[res.roomType] || 0);
+          }
+          return boardingRates[res.roomType] || 0;
+        };
+
+        // Multi-dog discount factor
+        const multiDogFactor = res.isSecondDogSameRoom ? (1 - multiDogDiscount / 100) : 1;
+
+        // Manual discount: spread evenly across nights
+        let manualDiscountPerNight = 0;
+        if (res.discountType === "percent" && res.discountValue > 0) {
+          // Calculate total room cost first to get per-night discount
+          let totalRoom = 0;
+          let nd = resStart;
+          while (nd < resEnd) { totalRoom += getNightRate(nd) * multiDogFactor; nd = addDays(nd, 1); }
+          const totalDisc = totalRoom * (res.discountValue / 100);
+          manualDiscountPerNight = totalNights > 0 ? totalDisc / totalNights : 0;
+        } else if (res.discountType === "flat" && res.discountValue > 0) {
+          manualDiscountPerNight = totalNights > 0 ? res.discountValue / totalNights : 0;
+        }
+
+        // Iterate each night of the stay
+        let nightDate = resStart;
+        while (nightDate < resEnd) {
+          // Is this night completed? For checked-out: all nights count up to resEnd.
+          // For checked-in: only nights up to and including yesterday (today's night hasn't been completed yet).
+          const nightCompleted = res.status === "checked-out" ? true : (nightDate < today);
+          if (nightCompleted && nightDate >= from && nightDate <= to) {
+            const dd = dayData[nightDate];
+            if (dd) {
+              const rate = getNightRate(nightDate);
+              const roomRev = rate * multiDogFactor;
+              dd.roomRevenue += rate;
+              dd.multiDogAdj += rate - roomRev; // negative if discount
+              dd.discountAdj += manualDiscountPerNight;
+              dd.roomsSold += 1;
+            }
+          }
+          nightDate = addDays(nightDate, 1);
+        }
+
+        // Feeding revenue: accrued per day the dog is present
+        const feeds = (res.careOverrides?.feedingSchedules || fields.feedingSchedules || []);
+        if (feeds.length > 0) {
+          const feedsByTime = { am: [], noon: [], pm: [] };
+          feeds.forEach(f => {
+            (f.times || []).forEach(t => {
+              const tl = t.toLowerCase();
+              if (tl.includes("am")) feedsByTime.am.push(f);
+              else if (tl.includes("noon") || tl.includes("12")) feedsByTime.noon.push(f);
+              else if (tl.includes("pm")) feedsByTime.pm.push(f);
+            });
+          });
+          const ciHour = res.checkInTime ? parseInt(res.checkInTime.split(":")[0]) : 9;
+          const coHour = res.checkOutTime ? parseInt(res.checkOutTime.split(":")[0]) : 11;
+          // Build day dates from checkIn to checkOut
+          let feedDay = resStart;
+          let dayIdx = 0;
+          const lastDay = resEnd;
+          while (feedDay <= lastDay) {
+            const dayCompleted = res.status === "checked-out" ? true : (feedDay < today);
+            if (dayCompleted && feedDay >= from && feedDay <= to) {
+              const isFirst = feedDay === resStart;
+              const isLast = feedDay === lastDay;
+              const amActive = !(isFirst && ciHour > 6);
+              const pmActive = !(isLast && coHour < 17);
+              const noonActive = feedsByTime.noon.length > 0;
+              const dayCost = (amActive ? feedsByTime.am.reduce((s, f) => s + (ftp[f.foodType] || 0), 0) : 0)
+                + (noonActive ? feedsByTime.noon.reduce((s, f) => s + (ftp[f.foodType] || 0), 0) : 0)
+                + (pmActive ? feedsByTime.pm.reduce((s, f) => s + (ftp[f.foodType] || 0), 0) : 0);
+              if (dayCost > 0 && dayData[feedDay]) dayData[feedDay].feedingRevenue += dayCost;
+            }
+            feedDay = addDays(feedDay, 1);
+            dayIdx++;
+          }
+        }
+
+        // Medication revenue: accrued per day
+        const meds = (res.careOverrides?.medicationSchedules || fields.medicationSchedules || []);
+        if (meds.length > 0) {
+          const medsByTime = { am: [], noon: [], pm: [] };
+          meds.forEach(m => {
+            (m.times || []).forEach(t => {
+              const tl = t.toLowerCase();
+              if (tl.includes("am")) medsByTime.am.push(m);
+              else if (tl.includes("noon") || tl.includes("12")) medsByTime.noon.push(m);
+              else if (tl.includes("pm")) medsByTime.pm.push(m);
+            });
+          });
+          const ciHour = res.checkInTime ? parseInt(res.checkInTime.split(":")[0]) : 9;
+          const coHour = res.checkOutTime ? parseInt(res.checkOutTime.split(":")[0]) : 11;
+          let medDay = resStart;
+          const lastDay = resEnd;
+          while (medDay <= lastDay) {
+            const dayCompleted = res.status === "checked-out" ? true : (medDay < today);
+            if (dayCompleted && medDay >= from && medDay <= to) {
+              const isFirst = medDay === resStart;
+              const isLast = medDay === lastDay;
+              const amActive = !(isFirst && ciHour > 6);
+              const pmActive = !(isLast && coHour < 17);
+              const noonActive = medsByTime.noon.length > 0;
+              const defaultRate = mp.Bagged || mp.Unbagged || 0;
+              const dayCost = (amActive ? medsByTime.am.length * defaultRate : 0)
+                + (noonActive ? medsByTime.noon.length * defaultRate : 0)
+                + (pmActive ? medsByTime.pm.length * defaultRate : 0);
+              if (dayCost > 0 && dayData[medDay]) dayData[medDay].medRevenue += dayCost;
+            }
+            medDay = addDays(medDay, 1);
+          }
+        }
+
+        // Add-on revenue (bath, extras): recognized on checkout day
+        const addOns = res.selectedAddOns || [];
+        // Also include bath from careOverrides if 2+ nights
+        const bathType = res.careOverrides?.bath_type || "";
+        if (bathType && totalNights >= 2) {
+          const bKey = `${bathType} Bath`;
+          if (!addOns.includes(bKey)) addOns.push(bKey);
+        }
+        if (addOns.length > 0) {
+          // Recognize add-ons on checkout date (last day of stay)
+          const recognitionDate = res.status === "checked-out" ? addDays(resEnd, -1) : null;
+          if (recognitionDate && recognitionDate >= from && recognitionDate <= to && dayData[recognitionDate]) {
+            addOns.forEach(addon => {
+              const rate = addOnPrices[addon] ?? 0;
+              if (rate > 0) dayData[recognitionDate].addOnRevenue += rate;
+            });
+          }
+        }
+      }
+
+      // ─── DAYCARE ─────────────────────────────────────────────────
+      else if (res.type === "daycare" && res.checkIn) {
+        const isCompleted = res.status === "checked-out" || (res.status === "checked-in" && res.checkIn < today);
+        if (isCompleted && res.checkIn >= from && res.checkIn <= to) {
+          const dd = dayData[res.checkIn];
+          if (dd) {
+            const hrs = countHours(res.checkInTime || "09:00", res.checkOutTime || "17:00");
+            const isHalf = hrs < halfDayThreshold;
+            const rate = isHalf ? (daycareRates.halfDay || 0) : (daycareRates.fullDay || 0);
+            dd.daycareRevenue += rate;
+            dd.daycareCount += 1;
+          }
+        }
+      }
+
+      // ─── DAY BOARDING ────────────────────────────────────────────
+      else if (res.type === "dayboarding" && res.checkIn) {
+        const isCompleted = res.status === "checked-out" || (res.status === "checked-in" && res.checkIn < today);
+        if (isCompleted && res.checkIn >= from && res.checkIn <= to) {
+          const dd = dayData[res.checkIn];
+          if (dd) {
+            dd.dayboardingRevenue += dayboardingRate;
+          }
+        }
+      }
+
+      // ─── EVALUATION ──────────────────────────────────────────────
+      else if (res.type === "evaluation" && res.checkIn) {
+        const isCompleted = res.status === "checked-out";
+        if (isCompleted && res.checkIn >= from && res.checkIn <= to) {
+          const dd = dayData[res.checkIn];
+          if (dd) {
+            dd.evalRevenue += evalFee;
+            dd.evalCount += 1;
+          }
+        }
+      }
+
+      // ─── TOUR ────────────────────────────────────────────────────
+      else if (res.type === "tour" && res.checkIn) {
+        const isCompleted = res.status === "checked-out";
+        if (isCompleted && res.checkIn >= from && res.checkIn <= to) {
+          const dd = dayData[res.checkIn];
+          if (dd) {
+            dd.tourRevenue += tourFee;
+            dd.tourCount += 1;
+          }
+        }
+      }
+    });
+
+    // Refunds: check payments
+    (data.payments || []).forEach(pmt => {
+      if (pmt.type === "refund" && pmt.status === "completed" && pmt.timestamp) {
+        const pmtDate = pmt.timestamp.split("T")[0];
+        if (pmtDate >= from && pmtDate <= to && dayData[pmtDate]) {
+          dayData[pmtDate].refunds += pmt.amount || 0;
+        }
+      }
+    });
+
+    // Calculate total revenue per day
+    days.forEach(d => {
+      const dd = dayData[d];
+      dd.totalRevenue = dd.roomRevenue - dd.multiDogAdj - dd.discountAdj
+        + dd.feedingRevenue + dd.medRevenue + dd.addOnRevenue
+        + dd.evalRevenue + dd.tourRevenue + dd.daycareRevenue + dd.dayboardingRevenue
+        - dd.refunds;
+    });
+
+    // Aggregate totals
+    const totals = { roomRevenue: 0, multiDogAdj: 0, feedingRevenue: 0, medRevenue: 0, addOnRevenue: 0, discountAdj: 0, evalRevenue: 0, tourRevenue: 0, daycareRevenue: 0, dayboardingRevenue: 0, totalRevenue: 0, roomsSold: 0, evalCount: 0, tourCount: 0, daycareCount: 0, refunds: 0 };
+    days.forEach(d => {
+      const dd = dayData[d];
+      Object.keys(totals).forEach(k => { totals[k] += dd[k]; });
+    });
+
+    return { days, dayData, totals };
+  }, [rangeFrom, rangeTo, data.reservations, data.payments, data.dogs, data.pricing]);
+
+  const fmt = (v) => `$${Math.abs(v).toFixed(2)}`;
+  const fmtK = (v) => v >= 1000 ? `$${(v/1000).toFixed(1)}k` : fmt(v);
+
+  // ════════════════════════════════════════════════════════════════════
+  // TAB CONTENT RENDERING
+  // ════════════════════════════════════════════════════════════════════
+  if (tab) {
+    return (
+      <div>
+        {/* Tab header with back navigation */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+          <button onClick={() => setTab(null)} style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.pri, padding: "6px 0" }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            Reports
+          </button>
+          <span style={{ color: C.textMut, fontSize: 13 }}>/</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{(allCategories.find(c => c.id === tab) || {}).label}</span>
+        </div>
+
+        {/* ── PAYMENTS TAB (delegate to existing PaymentsPage) ── */}
+        {tab === "payments" && <PaymentsPage data={data} save={save} nav={nav} profile={profile}/>}
+
+        {/* ── RESORT VOLUME REPORT ── */}
+        {tab === "resort-volume" && (() => {
+          const { totals } = buildAccrualData;
+          const cards = [
+            { label: "Evaluations Completed", value: totals.evalCount, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>, color: C.acc },
+            { label: "Tours Given", value: totals.tourCount, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.info} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>, color: C.info },
+            { label: "Daycare Appointments", value: totals.daycareCount, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.suc} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>, color: C.suc },
+            { label: "Overnight Rooms Sold", value: totals.roomsSold, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>, color: C.pri },
+          ];
+
+          return (
+            <div>
+              {/* Date range controls */}
+              <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>From</span>
+                  <input type="date" value={rangeFrom} onChange={e => setRangeFrom(e.target.value)} style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", outline: "none" }}/>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>To</span>
+                  <input type="date" value={rangeTo} onChange={e => setRangeTo(e.target.value)} style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", outline: "none" }}/>
+                </div>
+                <div style={{ fontSize: 11, color: C.textMut, fontStyle: "italic" }}>Accrual basis — only completed activities within the date range are counted</div>
+              </div>
+
+              {/* Volume cards */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16, marginBottom: 32 }}>
+                {cards.map(c => (
+                  <div key={c.label} style={{ padding: "24px 20px", borderRadius: 16, border: `1.5px solid ${C.border}`, background: C.surface, display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div style={{ width: 40, height: 40, borderRadius: 12, background: c.color + "14", display: "flex", alignItems: "center", justifyContent: "center" }}>{c.icon}</div>
+                    </div>
+                    <div style={{ fontSize: 32, fontWeight: 800, color: C.text, letterSpacing: "-0.03em", lineHeight: 1 }}>{c.value.toLocaleString()}</div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>{c.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Daily breakdown table */}
+              <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+                <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daily Breakdown</span>
+                </div>
+                <div style={{ maxHeight: 400, overflowY: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
+                        <th style={{ padding: "10px 16px", textAlign: "left", fontWeight: 700, color: C.text }}>Date</th>
+                        <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.acc }}>Evals</th>
+                        <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.info }}>Tours</th>
+                        <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.suc }}>Daycare</th>
+                        <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.pri }}>Rooms</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...buildAccrualData.days].reverse().map(d => {
+                        const dd = buildAccrualData.dayData[d];
+                        const isToday = d === today;
+                        return (
+                          <tr key={d} style={{ borderBottom: `1px solid ${C.borderLight}`, background: isToday ? C.priLt : "transparent" }}>
+                            <td style={{ padding: "8px 16px", fontWeight: isToday ? 700 : 500, color: isToday ? C.pri : C.text, whiteSpace: "nowrap" }}>
+                              {new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                              {isToday && <span style={{ fontSize: 9, fontWeight: 800, color: C.pri, marginLeft: 6, textTransform: "uppercase" }}>Today</span>}
+                            </td>
+                            <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: dd.evalCount ? C.acc : C.textMut }}>{dd.evalCount || "—"}</td>
+                            <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: dd.tourCount ? C.info : C.textMut }}>{dd.tourCount || "—"}</td>
+                            <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: dd.daycareCount ? C.suc : C.textMut }}>{dd.daycareCount || "—"}</td>
+                            <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: dd.roomsSold ? C.pri : C.textMut }}>{dd.roomsSold || "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── ACCRUAL REVENUE REPORT ── */}
+        {tab === "accrual-revenue" && (() => {
+          const { days, dayData, totals } = buildAccrualData;
+          const summaryRows = [
+            { label: "Room Revenue", value: totals.roomRevenue, color: C.pri },
+            { label: "Multi-Dog Adjustment", value: -totals.multiDogAdj, color: C.warn, isNeg: true },
+            { label: "Feeding Revenue", value: totals.feedingRevenue, color: C.text },
+            { label: "Medication Revenue", value: totals.medRevenue, color: C.text },
+            { label: "Add-On Revenue", value: totals.addOnRevenue, color: C.text },
+            { label: "Evaluation Revenue", value: totals.evalRevenue, color: C.acc },
+            { label: "Tour Revenue", value: totals.tourRevenue, color: C.info },
+            { label: "Daycare Revenue", value: totals.daycareRevenue, color: C.suc },
+            { label: "Day Boarding Revenue", value: totals.dayboardingRevenue, color: C.text },
+            { label: "Discounts", value: -totals.discountAdj, color: C.dan, isNeg: true },
+            { label: "Refunds", value: -totals.refunds, color: C.dan, isNeg: true },
+          ].filter(r => Math.abs(r.value) > 0.005);
+
+          // Bar chart: daily totals
+          const maxRev = Math.max(1, ...days.map(d => Math.max(0, dayData[d].totalRevenue)));
+
+          return (
+            <div>
+              {/* Date range controls */}
+              <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>From</span>
+                  <input type="date" value={rangeFrom} onChange={e => setRangeFrom(e.target.value)} style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", outline: "none" }}/>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>To</span>
+                  <input type="date" value={rangeTo} onChange={e => setRangeTo(e.target.value)} style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", outline: "none" }}/>
+                </div>
+                <div style={{ fontSize: 11, color: C.textMut, fontStyle: "italic" }}>
+                  Accrual Revenue = Room Count × Room Price ± Multi-Dog Factor + Ancillary Services − Discounts − Refunds
+                </div>
+              </div>
+
+              {/* Total revenue card */}
+              <div style={{ padding: "28px 24px", borderRadius: 16, background: `linear-gradient(135deg, ${C.pri}12, ${C.pri}06)`, border: `1.5px solid ${C.pri}30`, marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Total Accrual Revenue</div>
+                  <div style={{ fontSize: 36, fontWeight: 800, color: C.text, letterSpacing: "-0.03em", lineHeight: 1 }}>{fmt(totals.totalRevenue)}</div>
+                  <div style={{ fontSize: 12, color: C.textMut, marginTop: 6 }}>{days.length} days · Avg {fmt(days.length > 0 ? totals.totalRevenue / days.length : 0)}/day</div>
+                </div>
+              </div>
+
+              {/* Revenue breakdown */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
+                {/* Summary card */}
+                <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+                  <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Revenue Breakdown</span>
+                  </div>
+                  <div style={{ padding: "12px 20px" }}>
+                    {summaryRows.map((r, i) => (
+                      <div key={r.label} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: i < summaryRows.length - 1 ? `1px solid ${C.borderLight}` : "none" }}>
+                        <span style={{ fontSize: 13, color: C.textSec, fontWeight: 500 }}>{r.label}</span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: r.isNeg ? C.dan : r.color, fontVariantNumeric: "tabular-nums" }}>{r.isNeg ? `−${fmt(Math.abs(r.value))}` : fmt(r.value)}</span>
+                      </div>
+                    ))}
+                    <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 0 4px", borderTop: `2px solid ${C.border}`, marginTop: 4 }}>
+                      <span style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Net Revenue</span>
+                      <span style={{ fontSize: 15, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>{fmt(totals.totalRevenue)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Mini bar chart */}
+                <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+                  <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daily Revenue</span>
+                  </div>
+                  <div style={{ padding: "16px 20px", display: "flex", alignItems: "flex-end", gap: 2, height: 180, overflowX: "auto" }}>
+                    {days.map(d => {
+                      const dd = dayData[d];
+                      const h = Math.max(2, (dd.totalRevenue / maxRev) * 140);
+                      const isToday = d === today;
+                      return (
+                        <div key={d} title={`${new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}: ${fmt(dd.totalRevenue)}`}
+                          style={{ flex: "1 0 4px", maxWidth: 16, minWidth: 3, height: h, background: isToday ? C.pri : dd.totalRevenue > 0 ? C.pri + "60" : C.border, borderRadius: "3px 3px 0 0", transition: "height 0.2s" }}/>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+
+              {/* Daily detail table */}
+              <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+                <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daily Accrual Detail</span>
+                </div>
+                <div style={{ maxHeight: 420, overflowY: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
+                        <th style={{ padding: "10px 16px", textAlign: "left", fontWeight: 700, color: C.text }}>Date</th>
+                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Rooms</th>
+                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Multi-Dog</th>
+                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Feeding</th>
+                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Meds</th>
+                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Add-Ons</th>
+                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Discount</th>
+                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Other</th>
+                        <th style={{ padding: "10px 16px", textAlign: "right", fontWeight: 800, color: C.pri }}>Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...days].reverse().map(d => {
+                        const dd = dayData[d];
+                        const isToday = d === today;
+                        const other = dd.evalRevenue + dd.tourRevenue + dd.daycareRevenue + dd.dayboardingRevenue;
+                        const cell = (v, neg) => (
+                          <td style={{ padding: "8px 8px", textAlign: "right", fontWeight: 600, color: v > 0.005 ? (neg ? C.dan : C.text) : C.textMut, fontVariantNumeric: "tabular-nums" }}>
+                            {v > 0.005 ? (neg ? `−${fmt(v)}` : fmt(v)) : "—"}
+                          </td>
+                        );
+                        return (
+                          <tr key={d} style={{ borderBottom: `1px solid ${C.borderLight}`, background: isToday ? C.priLt : "transparent" }}>
+                            <td style={{ padding: "8px 16px", fontWeight: isToday ? 700 : 500, color: isToday ? C.pri : C.text, whiteSpace: "nowrap" }}>
+                              {new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                              {isToday && <span style={{ fontSize: 9, fontWeight: 800, color: C.pri, marginLeft: 6, textTransform: "uppercase" }}>Today</span>}
+                            </td>
+                            {cell(dd.roomRevenue)}
+                            {cell(dd.multiDogAdj, true)}
+                            {cell(dd.feedingRevenue)}
+                            {cell(dd.medRevenue)}
+                            {cell(dd.addOnRevenue)}
+                            {cell(dd.discountAdj, true)}
+                            {cell(other)}
+                            <td style={{ padding: "8px 16px", textAlign: "right", fontWeight: 800, color: dd.totalRevenue > 0.005 ? C.pri : C.textMut, fontVariantNumeric: "tabular-nums" }}>
+                              {dd.totalRevenue > 0.005 ? fmt(dd.totalRevenue) : "—"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+      </div>
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // LIST VIEW (no tab selected) — mirrors Settings layout exactly
+  // ════════════════════════════════════════════════════════════════════
+  return (
+    <div>
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ margin: "0 0 4px", fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>Reports</h2>
+        <p style={{ margin: 0, fontSize: 14, color: C.textSec }}>Financial reports, operational analytics, and performance insights</p>
+      </div>
+
+      {/* Search */}
+      <div style={{ position: "relative", marginBottom: 24 }}>
+        <div style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", color: C.textMut, display: "flex" }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </div>
+        <input value={reportsSearch} onChange={e => setReportsSearch(e.target.value)} placeholder="Search reports…"
+          style={{ width: "100%", padding: "14px 16px 14px 46px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 15, fontWeight: 500, color: C.text, fontFamily: "'GT Eesti', sans-serif", outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" }}
+          onFocus={e => { e.target.style.borderColor = C.pri; }} onBlur={e => { e.target.style.borderColor = C.border; }} />
+        {reportsSearch && <button onClick={() => setReportsSearch("")} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", color: C.textMut, display: "flex", padding: 4 }}><I.X /></button>}
+      </div>
+
+      {/* Sectioned category grid */}
+      {filteredSections.map((sec, si) => {
+        if (sec.items.length === 0) return null;
+        return (
+          <div key={sec.label || si} style={{ marginBottom: sec.label ? 28 : 16 }}>
+            {sec.label && <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, paddingLeft: 4 }}>{sec.label}</div>}
+            {!sec.label && si > 0 && <div style={{ borderTop: `1.5px solid ${C.border}`, marginBottom: 16, marginTop: 4 }} />}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+              {sec.items.map(cat => (
+                <button key={cat.id} onClick={() => { setTab(cat.id); setReportsSearch(""); }}
+                  style={{ display: "flex", alignItems: "center", gap: 16, padding: "18px 20px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "all 0.15s", width: "100%" }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = C.priLt; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.surface; }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 2 }}>{cat.label}</div>
+                    <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.4 }}>{cat.desc}</div>
+                  </div>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, opacity: 0.4 }}><polyline points="9 18 15 12 9 6"/></svg>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      {allCategories.length > 0 && filteredSections.every(s => s.items.length === 0) && (
+        <div style={{ textAlign: "center", padding: "48px 24px", color: C.textMut }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🔍</div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>No reports found</div>
+          <div style={{ fontSize: 13, marginTop: 4 }}>Try a different search term</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AIPage({ data, save, nav }) {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState("");
@@ -18168,7 +18769,7 @@ export default function App() {
     }
   }, [allLocations, refreshProfile]);
 
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard","clients","reservations","crm","messages","payments","operations","eod","ops-opening","ops-forms","ops-closing","ai","settings","enterprise-locations","enterprise-operations"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard","clients","reservations","crm","messages","payments","reports","operations","eod","ops-opening","ops-forms","ops-closing","ai","settings","enterprise-locations","enterprise-operations"]), []);
   const nav = useCallback((pg, prms = {}) => {
     setPage(pg); setParams(prms); setMobileMenuOpen(false);
     if (TOP_LEVEL_PAGES.has(pg)) {
@@ -18309,7 +18910,6 @@ export default function App() {
       { id:"clients",label:"Clients",icon:<I.Users/>,hotkey:"3" },
       { id:"crm",label:"CRM",icon:<I.BarChart/>,hotkey:"4" },
       { id:"messages",label:"Messages",icon:<I.MessageSquare/>,hotkey:"5" },
-      { id:"payments",label:"Payments",icon:<I.DollarSign/> },
     ]},
     { label:null, items:[
       { id:"operations",label:"Operations",icon:<I.Clipboard/>,hotkey:"6" },
@@ -18320,6 +18920,7 @@ export default function App() {
     ]},
     { label:null, items:[
       { id:"settings",label:"Settings",icon:<I.Settings/>,hotkey:"8" },
+      { id:"reports",label:"Reports",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="3" y1="20" x2="21" y2="20"/></svg> },
     ]},
   ];
   const enterpriseNavSections = [
@@ -18334,7 +18935,7 @@ export default function App() {
   // Flat list for lookups
   const navItems = navSections.flatMap(s => s.items);
   const isOpsPage = page.startsWith("ops-");
-  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","online-bookings","crm","messages","payments","settings","ai","lms"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog","questionnaire"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
+  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","online-bookings","crm","messages","reports","settings","ai","lms"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog","questionnaire"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
 
   function renderPage() {
     // Enterprise pages — gated to owner/enterprise_admin
@@ -18369,6 +18970,7 @@ export default function App() {
       case "crm": return hp("view_crm") ? <CRMPage data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "messages": return hp("view_messages") ? <MessagesPage data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "payments": return hp("view_payments") ? <PaymentsPage data={data} save={save} nav={nav} profile={profile}/> : denied;
+      case "reports": return hp("view_payments") ? <ReportsPage data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "ai": return hp("use_ai") ? <AIPage data={data} save={save} nav={nav}/> : denied;
       case "lms": return <LMSPage data={data} save={save} nav={nav} profile={profile}/>;
       case "settings": return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile}/> : denied;
