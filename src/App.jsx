@@ -1795,6 +1795,24 @@ function generateDemoData() {
       { id: gid(), name: "Ready for Pickup", body: "Hi {clientName}! {dogName} is all ready for pickup! We had a great time with them. You can pick up anytime before 6 PM today.", active: true },
       { id: gid(), name: "Thank You", body: "Thank you for choosing K9 Resorts, {clientName}! We loved having {dogName} stay with us. We'd appreciate a review if you have a moment. See you next time!", active: true },
     ],
+    packages: [
+      { id: "pkg_1", name: "10-Night Luxury Suite", description: "Save on boarding stays", serviceCategory: "Boarding", serviceName: "Luxury Suite", quantity: 10, pricingMode: "discount-pct", discountPct: 15, packagePrice: 807.50, retailValue: 950.00, unitPrice: 95, savings: 142.50, savingsPerUnit: 14.25, expirationType: "relative", expirationDays: 365, availableOnline: true },
+      { id: "pkg_2", name: "20-Day Daycare Pass", description: "Full day daycare bundle", serviceCategory: "Daycare", serviceName: "Full Day Daycare", quantity: 20, pricingMode: "discount-pct", discountPct: 20, packagePrice: 720, retailValue: 900, unitPrice: 45, savings: 180, savingsPerUnit: 9, expirationType: "relative", expirationDays: 180, availableOnline: true },
+      { id: "pkg_3", name: "5-Night Executive Stay", description: "Executive room package", serviceCategory: "Boarding", serviceName: "Executive Room", quantity: 5, pricingMode: "discount-dollar", discountDollar: 50, packagePrice: 325, retailValue: 375, unitPrice: 75, savings: 50, savingsPerUnit: 10, expirationType: "relative", expirationDays: 120, availableOnline: false },
+    ],
+    packageSales: (() => {
+      const sales = [];
+      if (clients.length >= 3) {
+        sales.push({ id: gid(), packageId: "pkg_1", clientId: clients[0].id, quantity: 10, used: 3, purchaseDate: new Date(Date.now() - 45 * 86400000).toISOString().slice(0,10), packageName: "10-Night Luxury Suite" });
+        sales.push({ id: gid(), packageId: "pkg_2", clientId: clients[0].id, quantity: 20, used: 8, purchaseDate: new Date(Date.now() - 60 * 86400000).toISOString().slice(0,10), packageName: "20-Day Daycare Pass" });
+        sales.push({ id: gid(), packageId: "pkg_2", clientId: clients[1].id, quantity: 20, used: 12, purchaseDate: new Date(Date.now() - 90 * 86400000).toISOString().slice(0,10), packageName: "20-Day Daycare Pass" });
+        sales.push({ id: gid(), packageId: "pkg_3", clientId: clients[2].id, quantity: 5, used: 1, purchaseDate: new Date(Date.now() - 30 * 86400000).toISOString().slice(0,10), packageName: "5-Night Executive Stay" });
+        if (clients.length >= 5) {
+          sales.push({ id: gid(), packageId: "pkg_1", clientId: clients[4].id, quantity: 10, used: 7, purchaseDate: new Date(Date.now() - 120 * 86400000).toISOString().slice(0,10), packageName: "10-Night Luxury Suite" });
+        }
+      }
+      return sales;
+    })(),
     payments: generateDemoPayments(clients, reservations),
     pendingInvites: [],
     roles: DEFAULT_ROLES,
@@ -4287,26 +4305,104 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                 return <span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:10,fontWeight:700,color:"#fff",background:cfg.bg,padding:"2px 8px",borderRadius:6,whiteSpace:"nowrap"}}>{cfg.label}</span>;
               };
               const pendingCount = filteredActivities.filter(r => !r.logEntry?.administered).length;
-              const bulkMarkAll = () => { filteredActivities.forEach(row => { if (!row.logEntry?.administered) updateActivityLog(row.reservationId, row.colKey, { administered: true, by: actStaffName, at: new Date().toISOString() }); }); };
-              const bulkClearAll = () => { filteredActivities.forEach(row => { if (row.logEntry?.administered) updateActivityLog(row.reservationId, row.colKey, { administered: false, by: "", at: "" }); }); };
-              const bulkSet100 = () => { filteredActivities.filter(r => r.type === "feeding").forEach(row => { updateActivityLog(row.reservationId, row.colKey, { administered: true, by: actStaffName, at: new Date().toISOString(), consumption: "100%" }); }); };
+              const [bulkTime, setBulkTime] = React.useState("all");
+              const [bulkType, setBulkType] = React.useState("all");
+              const [bulkAnimating, setBulkAnimating] = React.useState(false);
+              const [bulkAnimatedIds, setBulkAnimatedIds] = React.useState(new Set());
+
+              // Filter activities by bulk selectors
+              const getBulkTargets = () => {
+                return filteredActivities.filter(row => {
+                  if (row.logEntry?.administered) return false;
+                  // Time filter
+                  if (bulkTime !== "all") {
+                    const s = parseTimeSort(row.time);
+                    if (bulkTime === "am" && s >= 11) return false;
+                    if (bulkTime === "noon" && (s < 11 || s >= 14)) return false;
+                    if (bulkTime === "pm" && s < 14) return false;
+                  }
+                  // Type filter
+                  if (bulkType !== "all" && row.type !== bulkType) return false;
+                  return true;
+                });
+              };
+              const bulkTargets = getBulkTargets();
+
+              const executeBulkAction = async () => {
+                if (bulkTargets.length === 0 || bulkAnimating) return;
+                setBulkAnimating(true);
+                setBulkAnimatedIds(new Set());
+                // Animate through each row with a cascade delay
+                for (let i = 0; i < bulkTargets.length; i++) {
+                  const row = bulkTargets[i];
+                  setBulkAnimatedIds(prev => new Set([...prev, row.id]));
+                  const logData = { administered: true, by: actStaffName, at: new Date().toISOString() };
+                  if (row.type === "feeding") logData.consumption = "100%";
+                  updateActivityLog(row.reservationId, row.colKey, logData);
+                  if (i < bulkTargets.length - 1) await new Promise(r => setTimeout(r, 80));
+                }
+                setTimeout(() => { setBulkAnimating(false); setBulkAnimatedIds(new Set()); }, 600);
+              };
+
+              const bulkClearAll = () => {
+                filteredActivities.forEach(row => {
+                  if (row.logEntry?.administered) updateActivityLog(row.reservationId, row.colKey, { administered: false, by: "", at: "" });
+                });
+              };
+
+              const timePills = [["all","All"],["am","AM"],["noon","Noon"],["pm","PM"]];
+              const typePills = [["all","All"],["feeding","Feeding"],["medication","Meds"],["bathing","Bath"]];
+
               return (
                 <>
-                  {/* Bulk action bar */}
+                  {/* Bulk action bar — redesigned */}
                   {filteredActivities.length > 0 && (
-                    <div style={{ display: "flex", gap: 8, padding: "8px 12px", background: C.bg, borderBottom: `1px solid ${C.border}`, alignItems: "center", flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: C.textSec }}>{pendingCount} pending</span>
-                      <button onClick={bulkMarkAll} disabled={pendingCount === 0} style={{ display: "flex", alignItems: "center", gap: 4, padding: "5px 12px", borderRadius: 6, border: `1.5px solid ${C.suc}`, background: pendingCount > 0 ? C.suc + "12" : C.bg, color: pendingCount > 0 ? C.suc : C.textMut, fontSize: 11, fontWeight: 700, cursor: pendingCount > 0 ? "pointer" : "default", fontFamily: "inherit" }}>
-                        <I.Check /> Mark All Done
+                    <div style={{ padding: "10px 14px", background: `linear-gradient(135deg, ${C.pri}08, ${C.acc}06)`, borderBottom: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+                      {/* Label */}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: C.pri, letterSpacing: "0.02em" }}>BULK ACTION</span>
+                      </div>
+
+                      {/* Separator */}
+                      <div style={{ width: 1, height: 24, background: C.border }} />
+
+                      {/* Time pills */}
+                      <div style={{ display: "flex", gap: 2, background: C.surface, borderRadius: 8, padding: 2, border: `1px solid ${C.borderLight}` }}>
+                        {timePills.map(([val, label]) => (
+                          <button key={val} onClick={() => setBulkTime(val)} style={{ padding: "4px 12px", borderRadius: 6, border: "none", background: bulkTime === val ? C.pri : "transparent", color: bulkTime === val ? "#fff" : C.textSec, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>{label}</button>
+                        ))}
+                      </div>
+
+                      {/* Type pills */}
+                      <div style={{ display: "flex", gap: 2, background: C.surface, borderRadius: 8, padding: 2, border: `1px solid ${C.borderLight}` }}>
+                        {typePills.map(([val, label]) => {
+                          const typeColor = val === "feeding" ? C.pri : val === "medication" ? C.acc : val === "bathing" ? "#0891B2" : C.pri;
+                          return (
+                            <button key={val} onClick={() => setBulkType(val)} style={{ padding: "4px 12px", borderRadius: 6, border: "none", background: bulkType === val ? typeColor : "transparent", color: bulkType === val ? "#fff" : C.textSec, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>{label}</button>
+                          );
+                        })}
+                      </div>
+
+                      {/* Separator */}
+                      <div style={{ width: 1, height: 24, background: C.border }} />
+
+                      {/* Execute button */}
+                      <button onClick={executeBulkAction} disabled={bulkTargets.length === 0 || bulkAnimating} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 16px", borderRadius: 8, border: "none", background: bulkTargets.length > 0 ? (bulkAnimating ? C.suc : C.pri) : C.border, color: bulkTargets.length > 0 ? "#fff" : C.textMut, fontSize: 12, fontWeight: 700, cursor: bulkTargets.length > 0 && !bulkAnimating ? "pointer" : "default", fontFamily: "inherit", transition: "all 0.2s", boxShadow: bulkTargets.length > 0 ? `0 2px 8px ${C.pri}30` : "none" }}>
+                        {bulkAnimating ? (
+                          <><svg width="14" height="14" viewBox="0 0 24 24" style={{ animation: "spin 1s linear infinite" }}><circle cx="12" cy="12" r="10" stroke="#fff" strokeWidth="3" fill="none" strokeDasharray="30 70" /></svg> Marking...</>
+                        ) : (
+                          <><I.Check /> Mark {bulkTargets.length} Complete</>
+                        )}
                       </button>
-                      {filteredActivities.some(r => r.type === "feeding") && (
-                        <button onClick={bulkSet100} style={{ padding: "5px 12px", borderRadius: 6, border: `1.5px solid ${C.pri}`, background: C.priLt, color: C.pri, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
-                          All Feeding 100%
-                        </button>
-                      )}
-                      <button onClick={bulkClearAll} style={{ padding: "5px 12px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-                        Clear All
+
+                      {/* Clear all (secondary) */}
+                      <button onClick={bulkClearAll} style={{ padding: "6px 10px", borderRadius: 6, border: "none", background: "transparent", color: C.textMut, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} title="Clear all checked items">
+                        Reset
                       </button>
+
+                      {/* Pending count */}
+                      <span style={{ fontSize: 11, color: C.textMut, marginLeft: "auto" }}>{pendingCount} pending</span>
                     </div>
                   )}
                   <div style={{ display: "grid", gridTemplateColumns: actGrid, padding: "10px 12px", background: C.bg, borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", alignItems: "center" }}>
@@ -4332,10 +4428,11 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                       filteredActivities.map((row, ri) => {
                         const entry = row.logEntry;
                         const administered = !!entry.administered;
+                        const justAnimated = bulkAnimatedIds.has(row.id);
                         const cLast = row.client?.fields.last_name || "";
                         const dName = row.dog?.fields.name || "Unknown";
                         return (
-                          <div key={row.id} style={{ display: "grid", gridTemplateColumns: actGrid, padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center", background: administered ? C.suc + "08" : "transparent", transition: "background 0.1s" }}
+                          <div key={row.id} style={{ display: "grid", gridTemplateColumns: actGrid, padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center", background: administered ? C.suc + "08" : "transparent", transition: "background 0.1s", ...(justAnimated ? { background: C.sucLt, transition: "background 0.4s ease-out" } : {}) }}
                             onMouseEnter={e => { if (!administered) e.currentTarget.style.background = C.surfaceHover; }}
                             onMouseLeave={e => { e.currentTarget.style.background = administered ? C.suc + "08" : "transparent"; }}>
                             {/* Time */}
@@ -5077,11 +5174,28 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const [resSubTab, setResSubTab] = useState("upcoming");
   const [newNote, setNewNote] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
+  const [textNotify, setTextNotify] = useState(null);
 
   if (!client) return <div style={{padding:40,textAlign:"center",color:C.textSec}}>Client not found</div>;
 
   const startEdit = () => { setEditFields({...client.fields}); setEditing(true); };
   const saveEdit = async () => { await save({...data,clients:data.clients.map(c=>c.id===clientId?{...c,fields:editFields}:c)}); setEditing(false); };
+
+  const showTextNotifyToast = (client, dog, diffs) => {
+    const clientName = `${client?.fields?.first_name || ""} ${client?.fields?.last_name || ""}`.trim() || "Client";
+    const dogName = dog?.fields?.name || "your dog";
+    const phone = client?.fields?.phone || "";
+    const changeLines = diffs.map(d => `${d.field}: ${d.oldVal} → ${d.newVal}`).join("\n");
+    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Resorts! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
+    setTextNotify({ clientName, clientPhone: phone, dogName, diffs, message: msg, showPreview: false, sending: false });
+  };
+  const sendTextNotify = async () => {
+    if (!textNotify) return;
+    setTextNotify(prev => ({ ...prev, sending: true }));
+    const newMsg = { id: gid(), type: "outbound", channel: "sms", to: textNotify.clientPhone, toName: textNotify.clientName, body: textNotify.message, sentAt: new Date().toISOString(), sentBy: profile ? (profile.full_name || profile.email || "Staff") : "Staff", status: "sent" };
+    await save({ ...data, messages: [...(data.messages || []), newMsg] });
+    setTextNotify(null);
+  };
 
   const toggleAgreement = async (agrId) => {
     const agrs = { ...(client.agreements || {}) };
@@ -5161,10 +5275,13 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   // Tab config
   const clientNotes = client.clientNotes || [];
   const notesCount = clientNotes.length + eodMentions.length;
+  const clientSalesForCount = (data.packageSales || []).filter(s => s.clientId === clientId);
+  const activePkgCount = clientSalesForCount.filter(s => (s.quantity || 0) - (s.used || 0) > 0).length;
   const tabs = [
     { id: "dogs", label: "Dogs", count: dogs.length, color: C.pri },
     { id: "reservations", label: "Reservations", count: reservations.length, color: C.acc },
     { id: "payments", label: "Payments", count: pmts.length, color: C.info },
+    { id: "packages", label: "Packages", count: activePkgCount, color: "#EC4899" },
     { id: "notes", label: "Notes", count: notesCount, color: "#8B5CF6" },
   ];
 
@@ -5380,6 +5497,105 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           </div>
         )}
 
+        {/* ──── PACKAGES TAB ──── */}
+        {activeTab === "packages" && (() => {
+          const clientSales = (data.packageSales || []).filter(s => s.clientId === clientId);
+          const pkgs = data.packages || [];
+          const totalOutstanding = clientSales.reduce((sum, sale) => {
+            const pkg = pkgs.find(p => p.id === sale.packageId);
+            const remaining = (sale.quantity || 0) - (sale.used || 0);
+            const unitPrice = pkg ? (pkg.packagePrice / pkg.quantity) : 0;
+            return sum + (remaining > 0 ? remaining * unitPrice : 0);
+          }, 0);
+          const storeCredit = client.storeCredit || 0;
+
+          return (
+            <div>
+              {/* Summary strip */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 }}>
+                <Card style={{ padding: "16px 20px", textAlign: "center" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 2 }}>Active Packages</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: C.pri }}>{clientSales.filter(s => (s.quantity || 0) - (s.used || 0) > 0).length}</div>
+                </Card>
+                <Card style={{ padding: "16px 20px", textAlign: "center" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 2 }}>Outstanding Value</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: C.acc }}>${totalOutstanding.toFixed(2)}</div>
+                </Card>
+                <Card style={{ padding: "16px 20px", textAlign: "center" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 2 }}>Store Credit</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: C.suc }}>${storeCredit.toFixed(2)}</div>
+                </Card>
+              </div>
+
+              {/* Package list */}
+              {clientSales.length === 0 ? (
+                <Card style={{ textAlign: "center", padding: "40px 20px" }}>
+                  <div style={{ fontSize: 36, marginBottom: 12 }}>🎁</div>
+                  <div style={{ fontSize: 14, fontWeight: 500, color: C.textMut }}>No packages purchased yet</div>
+                </Card>
+              ) : (
+                <Card>
+                  <div style={{ display: "grid", gridTemplateColumns: "2fr 0.7fr 0.7fr 1fr 0.8fr 0.8fr", gap: 0 }}>
+                    {["Package", "Used", "Left", "Value", "Purchased", "Expires"].map(h => (
+                      <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", padding: "10px 12px", background: C.bg, borderBottom: `1px solid ${C.border}` }}>{h}</div>
+                    ))}
+                    {clientSales.map(sale => {
+                      const pkg = pkgs.find(p => p.id === sale.packageId);
+                      const remaining = Math.max(0, (sale.quantity || 0) - (sale.used || 0));
+                      const unitPrice = pkg ? (pkg.packagePrice / pkg.quantity) : 0;
+                      const value = remaining * unitPrice;
+                      let expiresAt = null;
+                      if (pkg?.expirationType === "relative" && sale.purchaseDate) {
+                        const d = new Date(sale.purchaseDate + "T00:00:00");
+                        d.setDate(d.getDate() + (pkg.expirationDays || 90));
+                        expiresAt = d.toISOString().slice(0, 10);
+                      }
+                      const expired = expiresAt && expiresAt < todayStr();
+                      const usedUp = remaining <= 0;
+                      const pctUsed = sale.quantity > 0 ? ((sale.used || 0) / sale.quantity) * 100 : 0;
+                      return (
+                        <React.Fragment key={sale.id}>
+                          <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}` }}>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: usedUp || expired ? C.textMut : C.text }}>{sale.packageName || pkg?.name || "Package"}</div>
+                            <div style={{ height: 4, borderRadius: 2, background: C.borderLight, marginTop: 6 }}>
+                              <div style={{ height: 4, borderRadius: 2, background: usedUp ? C.textMut : expired ? C.dan : C.pri, width: `${Math.min(100, pctUsed)}%`, transition: "width 0.3s" }} />
+                            </div>
+                          </div>
+                          <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.textMut }}>{sale.used || 0}</div>
+                          <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, fontWeight: 700, color: remaining > 0 ? C.pri : C.textMut }}>{remaining}</div>
+                          <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, fontWeight: 600, color: value > 0 ? C.text : C.textMut }}>${value.toFixed(2)}</div>
+                          <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 12, color: C.textMut }}>{sale.purchaseDate ? fmtDate(sale.purchaseDate) : "—"}</div>
+                          <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 12, color: expired ? C.dan : C.textMut, fontWeight: expired ? 600 : 400 }}>{expiresAt ? (expired ? "Expired " : "") + fmtDate(expiresAt) : "Never"}</div>
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+                </Card>
+              )}
+
+              {/* Applicable Discounts */}
+              {(() => {
+                const discounts = (data.discounts || []).filter(d => d.active);
+                if (discounts.length === 0) return null;
+                return (
+                  <div style={{ marginTop: 20 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>Available Discounts</div>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      {discounts.map(d => (
+                        <div key={d.id} style={{ padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${C.suc}30`, background: C.sucLt, fontSize: 12, color: C.text }}>
+                          <span style={{ fontWeight: 700 }}>{d.name}</span>
+                          <span style={{ marginLeft: 6, color: C.suc, fontWeight: 600 }}>{d.type === "percentage" ? `${d.value}% off` : `$${d.value} off`}</span>
+                          {d.usageCap > 0 && <span style={{ marginLeft: 6, color: C.textMut }}>({d.usageCap}x max)</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          );
+        })()}
+
         {/* ──── NOTES TAB ──── */}
         {activeTab === "notes" && (
           <div>
@@ -5517,11 +5733,42 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             }
             const newAuditLog = [...(data.auditLog || []), ...auditLogs];
             await save({ ...data, auditLog: newAuditLog, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
+            if (!doCheckIn && !doCheckOut && diffs.length > 0 && bClient) {
+              showTextNotifyToast(bClient, bDog, diffs);
+            }
             setBoardingPreviewId(null);
           }}
           data={data} save={save} profile={profile}
         />;
       })()}
+
+      {/* Text notification toast */}
+      {textNotify && (
+        <div style={{ position: "fixed", top: 16, right: 16, zIndex: 99999, pointerEvents: "auto", background: "rgba(255,255,255,0.98)", backdropFilter: "blur(8px)", border: `2px solid ${C.pri}`, borderRadius: 14, padding: "14px 18px", maxWidth: 420, minWidth: 300, boxShadow: "0 6px 24px rgba(0,0,0,0.18)", animation: "k9toast 0.3s ease-out" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Text {textNotify.clientName} about changes?</span>
+          </div>
+          <div style={{ fontSize: 11, color: C.textSec, marginBottom: 8 }}>
+            {textNotify.diffs.map((d, i) => <div key={i}><span style={{ fontWeight: 600 }}>{d.field}:</span> <span style={{ textDecoration: "line-through", color: C.dan }}>{d.oldVal}</span> → <span style={{ color: C.suc, fontWeight: 600 }}>{d.newVal}</span></div>)}
+          </div>
+          {!textNotify.showPreview ? (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setTextNotify(prev => ({ ...prev, showPreview: true }))} style={{ flex: 1, padding: "7px 14px", borderRadius: 8, border: "none", background: C.pri, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Preview</button>
+              <button onClick={() => setTextNotify(null)} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>No</button>
+            </div>
+          ) : (
+            <div>
+              <textarea value={textNotify.message} onChange={e => setTextNotify(prev => ({ ...prev, message: e.target.value }))} rows={5} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", color: C.text, resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button onClick={sendTextNotify} disabled={textNotify.sending} style={{ flex: 1, padding: "7px 14px", borderRadius: 8, border: "none", background: C.suc, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{textNotify.sending ? "Sending..." : "Send Text"}</button>
+                <button onClick={() => setTextNotify(null)} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              </div>
+              {!textNotify.clientPhone && <div style={{ fontSize: 10, color: C.acc, marginTop: 4 }}>No phone number on file — message will be saved to Messages only.</div>}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -5956,11 +6203,27 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
   const [editProfilePic, setEditProfilePic] = useState("");
   const [editFeedingSchedules, setEditFeedingSchedules] = useState([]);
   const [editMedSchedules, setEditMedSchedules] = useState([]);
+  const [sentQuestionnaire, setSentQuestionnaire] = useState(false);
 
   if (!dog||!client) return <div style={{padding:40,textAlign:"center",color:C.textSec}}>Dog not found</div>;
 
   const startEdit = () => { setEditFields({...dog.fields}); setEditTags([...(dog.tags||[])]); setEditGroupOverride(dog.daycareGroupOverride || null); setEditProfilePic(dog.profilePic || ""); setEditFeedingSchedules([...(dog.fields.feedingSchedules||[])]); setEditMedSchedules([...(dog.fields.medicationSchedules||[])]); setEditing(true); };
   const saveEdit = async () => { await save({...data,dogs:data.dogs.map(d=>d.id===dogId?{...d,fields:{...editFields,feedingSchedules:editFeedingSchedules,medicationSchedules:editMedSchedules},tags:editTags,daycareGroupOverride:editGroupOverride||null,profilePic:editProfilePic||""}:d)}); setEditing(false); };
+
+  const sendQuestionnaireText = async () => {
+    const clientName = `${client.fields.first_name || ""} ${client.fields.last_name || ""}`.trim();
+    const phone = client.fields.phone || client.fields.mobile || "";
+    const msg = {
+      id: gid(), type: "outbound", channel: "sms",
+      to: phone, toName: clientName,
+      body: `Hi ${(client.fields.first_name || "").trim()}, this is K9 Resorts! Please fill out the "Getting to Know Your Dog" questionnaire for ${dog.fields.name} before your visit. You can complete it at the resort or let us know if you have any questions!`,
+      sentAt: new Date().toISOString(),
+      sentBy: "Staff", status: "sent",
+    };
+    await save({ ...data, messages: [...(data.messages || []), msg] });
+    setSentQuestionnaire(true);
+    setTimeout(() => setSentQuestionnaire(false), 3000);
+  };
 
   const toggleTag = (tagId) => {
     setEditTags(prev => prev.includes(tagId) ? prev.filter(t=>t!==tagId) : [...prev, tagId]);
@@ -6002,6 +6265,7 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <Btn variant="secondary" onClick={() => nav("questionnaire", { clientId, dogId })} icon={<I.Clipboard />} size="sm">{dog.questionnaireResponses?._completedAt ? "View Questionnaire" : "Questionnaire"}</Btn>
+            <Btn variant="secondary" onClick={sendQuestionnaireText} icon={sentQuestionnaire ? <I.Check /> : <I.Send />} size="sm" style={sentQuestionnaire ? { background: C.sucLt, borderColor: C.suc, color: C.suc } : {}}>{sentQuestionnaire ? "Sent!" : "Send Form"}</Btn>
             <Btn variant="secondary" onClick={startEdit} icon={<I.Edit/>} size="sm">Edit</Btn>
           </div>
         </div>
@@ -8173,6 +8437,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
   const interRef = useRef(null);
   const justDraggedRef = useRef(false);
   const [boardingPreviewId, setBoardingPreviewId] = useState(null);
+  const [textNotify, setTextNotify] = useState(null);
 
   // Toast notifications
   const [toasts, setToasts] = useState([]);
@@ -8215,6 +8480,22 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
       await save({ ...data, reservations: data.reservations.map(r => r.id === toast.undoRes.id ? toast.undoRes : r) });
     }
     dismissToast(toast.id);
+  };
+
+  const showTextNotifyToast = (client, dog, diffs) => {
+    const clientName = `${client?.fields?.first_name || ""} ${client?.fields?.last_name || ""}`.trim() || "Client";
+    const dogName = dog?.fields?.name || "your dog";
+    const phone = client?.fields?.phone || "";
+    const changeLines = diffs.map(d => `${d.field}: ${d.oldVal} → ${d.newVal}`).join("\n");
+    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Resorts! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
+    setTextNotify({ clientName, clientPhone: phone, dogName, diffs, message: msg, showPreview: false, sending: false });
+  };
+  const sendTextNotify = async () => {
+    if (!textNotify) return;
+    setTextNotify(prev => ({ ...prev, sending: true }));
+    const newMsg = { id: gid(), type: "outbound", channel: "sms", to: textNotify.clientPhone, toName: textNotify.clientName, body: textNotify.message, sentAt: new Date().toISOString(), sentBy: profile ? (profile.full_name || profile.email || "Staff") : "Staff", status: "sent" };
+    await save({ ...data, messages: [...(data.messages || []), newMsg] });
+    setTextNotify(null);
   };
 
   // Find roomType for a given room string
@@ -8850,11 +9131,42 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
             }
             const newAuditLog = [...(data.auditLog || []), ...auditLogs];
             await save({ ...data, auditLog: newAuditLog, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
+            if (!doCheckIn && !doCheckOut && diffs.length > 0 && bClient) {
+              showTextNotifyToast(bClient, bDog, diffs);
+            }
             setBoardingPreviewId(null);
           }}
           data={data} save={save} profile={profile}
         />;
       })()}
+
+      {/* Text notification toast */}
+      {textNotify && (
+        <div style={{ position: "fixed", top: 16, right: 16, zIndex: 99999, pointerEvents: "auto", background: "rgba(255,255,255,0.98)", backdropFilter: "blur(8px)", border: `2px solid ${C.pri}`, borderRadius: 14, padding: "14px 18px", maxWidth: 420, minWidth: 300, boxShadow: "0 6px 24px rgba(0,0,0,0.18)", animation: "k9toast 0.3s ease-out" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Text {textNotify.clientName} about changes?</span>
+          </div>
+          <div style={{ fontSize: 11, color: C.textSec, marginBottom: 8 }}>
+            {textNotify.diffs.map((d, i) => <div key={i}><span style={{ fontWeight: 600 }}>{d.field}:</span> <span style={{ textDecoration: "line-through", color: C.dan }}>{d.oldVal}</span> → <span style={{ color: C.suc, fontWeight: 600 }}>{d.newVal}</span></div>)}
+          </div>
+          {!textNotify.showPreview ? (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setTextNotify(prev => ({ ...prev, showPreview: true }))} style={{ flex: 1, padding: "7px 14px", borderRadius: 8, border: "none", background: C.pri, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Preview</button>
+              <button onClick={() => setTextNotify(null)} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>No</button>
+            </div>
+          ) : (
+            <div>
+              <textarea value={textNotify.message} onChange={e => setTextNotify(prev => ({ ...prev, message: e.target.value }))} rows={5} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", color: C.text, resize: "vertical", outline: "none", boxSizing: "border-box" }} />
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button onClick={sendTextNotify} disabled={textNotify.sending} style={{ flex: 1, padding: "7px 14px", borderRadius: 8, border: "none", background: C.suc, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>{textNotify.sending ? "Sending..." : "Send Text"}</button>
+                <button onClick={() => setTextNotify(null)} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+              </div>
+              {!textNotify.clientPhone && <div style={{ fontSize: 10, color: C.acc, marginTop: 4 }}>No phone number on file — message will be saved to Messages only.</div>}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -17630,6 +17942,7 @@ export default function App() {
         @media(min-width:901px){.mob-h{display:none!important;}.mob-ov{display:none!important;}}
         h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Canela', Georgia, serif !important;font-weight:700;}
         @keyframes k9toast{from{opacity:0;transform:translateX(40px);}to{opacity:1;transform:translateX(0);}}
+        @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
         @keyframes k9overlay{from{opacity:0;transform:translateY(-16px) scale(0.97);}to{opacity:1;transform:translateY(0) scale(1);}}
         .nav-tip{position:relative;} .nav-tip::after{content:attr(data-tip);position:absolute;left:calc(100% + 12px);top:50%;transform:translateY(-50%);background:#1a2940;color:#fff;padding:5px 10px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity 0.15s;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.2);} .nav-tip:hover::after{opacity:1;}
       `}</style>
