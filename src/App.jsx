@@ -5335,6 +5335,189 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   );
 }
 
+// ─── Client Search & Filter System ──────────────────────────────────────────
+const CLIENT_FILTER_FIELDS = [
+  { key: 'first_name', label: 'First Name', type: 'text', shortLabel: 'First' },
+  { key: 'last_name', label: 'Last Name', type: 'text', shortLabel: 'Last' },
+  { key: 'phone', label: 'Phone Number', type: 'text', shortLabel: 'Phone' },
+  { key: 'email', label: 'Email', type: 'text', shortLabel: 'Email' },
+  { key: 'dog_names', label: 'Dog Names', type: 'text', shortLabel: 'Dogs' },
+  { key: 'total_res', label: 'Total Reservations', type: 'number', shortLabel: 'Total Res' },
+  { key: 'last_res', label: 'Last Reservation', type: 'date', shortLabel: 'Last Res' },
+  { key: 'days_since', label: 'Days Since Last Visit', type: 'number', shortLabel: 'Days Since' },
+  { key: 'daycare', label: '# Daycare', type: 'number', shortLabel: 'Daycare' },
+  { key: 'boarding', label: '# Boarding', type: 'number', shortLabel: 'Board' },
+  { key: 'evals', label: '# Evals', type: 'number', shortLabel: 'Evals' },
+  { key: 'post_eval', label: 'Appts After Eval', type: 'number', shortLabel: 'Post-Eval' },
+  { key: 'tours', label: '# Tours', type: 'number', shortLabel: 'Tours' },
+  { key: 'post_tour', label: 'Appts After Tour', type: 'number', shortLabel: 'Post-Tour' },
+  { key: 'total_spent', label: 'Total Spent ($)', type: 'number', shortLabel: 'Spent' },
+  { key: 'next_res', label: 'Next Reservation', type: 'date', shortLabel: 'Next Res' },
+];
+
+const CLIENT_FILTER_OPS = {
+  text: [
+    { key: 'contains', label: 'contains' },
+    { key: 'equals', label: 'equals' },
+    { key: 'starts_with', label: 'starts with' },
+    { key: 'is_blank', label: 'is blank' },
+    { key: 'is_not_blank', label: 'is not blank' },
+  ],
+  number: [
+    { key: 'eq', label: '=' },
+    { key: 'gt', label: '>' },
+    { key: 'lt', label: '<' },
+    { key: 'gte', label: '>=' },
+    { key: 'lte', label: '<=' },
+    { key: 'is_blank', label: 'is blank' },
+    { key: 'is_not_blank', label: 'is not blank' },
+  ],
+  date: [
+    { key: 'before', label: 'before' },
+    { key: 'after', label: 'after' },
+    { key: 'within_days', label: 'within last (days)' },
+    { key: 'older_than_days', label: 'older than (days)' },
+    { key: 'is_blank', label: 'is blank' },
+    { key: 'is_not_blank', label: 'is not blank' },
+  ],
+};
+
+const CLIENT_FIELD_ALIASES = {
+  'first_name': 'first_name', 'first': 'first_name', 'fn': 'first_name', 'firstname': 'first_name',
+  'last_name': 'last_name', 'last': 'last_name', 'ln': 'last_name', 'lastname': 'last_name',
+  'phone': 'phone', 'ph': 'phone', 'phone_number': 'phone',
+  'email': 'email', 'em': 'email',
+  'dog': 'dog_names', 'dogs': 'dog_names', 'dog_name': 'dog_names', 'dog_names': 'dog_names',
+  'total_res': 'total_res', 'reservations': 'total_res', 'total_reservations': 'total_res', 'res': 'total_res',
+  'last_res': 'last_res', 'last_reservation': 'last_res', 'last_visit': 'last_res',
+  'days_since': 'days_since', 'days': 'days_since', 'inactive': 'days_since',
+  'daycare': 'daycare', 'dc': 'daycare',
+  'boarding': 'boarding', 'board': 'boarding',
+  'evals': 'evals', 'eval': 'evals', 'evaluations': 'evals',
+  'post_eval': 'post_eval', 'after_eval': 'post_eval', 'postevals': 'post_eval', 'posteval': 'post_eval',
+  'tours': 'tours', 'tour': 'tours',
+  'post_tour': 'post_tour', 'after_tour': 'post_tour', 'posttour': 'post_tour',
+  'total_spent': 'total_spent', 'spent': 'total_spent',
+  'next_res': 'next_res', 'next_reservation': 'next_res', 'next': 'next_res', 'upcoming': 'next_res',
+};
+
+function parseClientFilters(searchStr) {
+  if (!searchStr || !searchStr.trim()) return { filters: [], plainText: '' };
+  const hasStructured = /\w+\s*[:=><]/.test(searchStr) || searchStr.includes('&&');
+  if (!hasStructured) return { filters: [], plainText: searchStr };
+  const segments = searchStr.split('&&').map(s => s.trim()).filter(Boolean);
+  const filters = [];
+  const plainParts = [];
+  for (const seg of segments) {
+    const match = seg.match(/^(\w+)\s*(>=|<=|>|<|=|:)\s*(.*)$/i);
+    if (match) {
+      const rawField = match[1].toLowerCase();
+      const opChar = match[2];
+      const value = match[3].trim();
+      const fieldKey = CLIENT_FIELD_ALIASES[rawField];
+      if (fieldKey) {
+        const fieldDef = CLIENT_FILTER_FIELDS.find(f => f.key === fieldKey);
+        if (fieldDef) {
+          let op;
+          const lv = value.toLowerCase();
+          if (lv === 'blank' || lv === 'empty' || lv === 'none') {
+            op = 'is_blank';
+          } else if (fieldDef.type === 'text') {
+            op = opChar === '=' ? 'equals' : 'contains';
+          } else if (fieldDef.type === 'number') {
+            op = opChar === '>=' ? 'gte' : opChar === '<=' ? 'lte' : opChar === '>' ? 'gt' : opChar === '<' ? 'lt' : 'eq';
+          } else if (fieldDef.type === 'date') {
+            if (/^\d+\s*days?$/i.test(value)) {
+              op = (opChar === '<' || opChar === '<=') ? 'within_days' : 'older_than_days';
+            } else {
+              op = (opChar === '<' || opChar === '<=') ? 'before' : 'after';
+            }
+          }
+          filters.push({ field: fieldKey, op, value });
+          continue;
+        }
+      }
+    }
+    const blankMatch = seg.match(/^(\w+)\s+is\s*:\s*(blank|not_blank|not\s*blank|empty|not\s*empty)$/i);
+    if (blankMatch) {
+      const rawField = blankMatch[1].toLowerCase();
+      const blankType = blankMatch[2].toLowerCase();
+      const fieldKey = CLIENT_FIELD_ALIASES[rawField];
+      if (fieldKey) {
+        filters.push({ field: fieldKey, op: blankType.includes('not') ? 'is_not_blank' : 'is_blank', value: '' });
+        continue;
+      }
+    }
+    plainParts.push(seg);
+  }
+  return { filters, plainText: plainParts.join(' ') };
+}
+
+function applyClientFilter(client, filter, stats) {
+  const { field, op, value } = filter;
+  const s = stats || {};
+  let rawVal;
+  switch (field) {
+    case 'first_name': rawVal = client.fields.first_name || ''; break;
+    case 'last_name': rawVal = client.fields.last_name || ''; break;
+    case 'phone': rawVal = (client.fields.phone || '').replace(/\D/g, ''); break;
+    case 'email': rawVal = client.fields.email || ''; break;
+    case 'dog_names': rawVal = (s.dogNames || []).join(' '); break;
+    case 'total_res': rawVal = s.totalRes; break;
+    case 'last_res': rawVal = s.lastRes ? s.lastRes.checkIn : null; break;
+    case 'days_since': rawVal = s.daysSinceLast; break;
+    case 'daycare': rawVal = s.daycareCount; break;
+    case 'boarding': rawVal = s.boardingCount; break;
+    case 'evals': rawVal = s.evalCount; break;
+    case 'post_eval': rawVal = s.postEvalAppts; break;
+    case 'tours': rawVal = s.tourCount; break;
+    case 'post_tour': rawVal = s.postTourAppts; break;
+    case 'total_spent': rawVal = s.totalSpent; break;
+    case 'next_res': rawVal = s.nextRes ? s.nextRes.checkIn : null; break;
+    default: return true;
+  }
+  if (op === 'is_blank') return rawVal === null || rawVal === undefined || rawVal === '' || rawVal === 0;
+  if (op === 'is_not_blank') return rawVal !== null && rawVal !== undefined && rawVal !== '' && rawVal !== 0;
+  const fieldDef = CLIENT_FILTER_FIELDS.find(f => f.key === field);
+  if (!fieldDef) return true;
+  if (fieldDef.type === 'text') {
+    const lv = String(rawVal).toLowerCase();
+    const sv = value.toLowerCase();
+    if (op === 'contains') return lv.includes(sv);
+    if (op === 'equals') return lv === sv;
+    if (op === 'starts_with') return lv.startsWith(sv);
+    return true;
+  }
+  if (fieldDef.type === 'number') {
+    const numVal = typeof rawVal === 'number' ? rawVal : (parseFloat(rawVal) || 0);
+    const numTarget = parseFloat(value) || 0;
+    if (op === 'eq') return numVal === numTarget;
+    if (op === 'gt') return numVal > numTarget;
+    if (op === 'lt') return numVal < numTarget;
+    if (op === 'gte') return numVal >= numTarget;
+    if (op === 'lte') return numVal <= numTarget;
+    return true;
+  }
+  if (fieldDef.type === 'date') {
+    if (op === 'within_days' || op === 'older_than_days') {
+      const daysMatch = value.match(/^(\d+)/);
+      if (daysMatch) {
+        const numDays = parseInt(daysMatch[1]);
+        const d = new Date(); d.setDate(d.getDate() - numDays);
+        const cutoff = d.toISOString().split('T')[0];
+        if (op === 'within_days') return rawVal && rawVal >= cutoff;
+        if (op === 'older_than_days') return rawVal && rawVal < cutoff;
+      }
+      return true;
+    }
+    if (!rawVal) return false;
+    if (op === 'before') return rawVal < value;
+    if (op === 'after') return rawVal > value;
+    return true;
+  }
+  return true;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENTS PAGE
 // ═══════════════════════════════════════════════════════════════════════════
@@ -5342,8 +5525,12 @@ function ClientsPage({ data, nav }) {
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState("last_name");
   const [sortDir, setSortDir] = useState("asc");
+  const [panelFilters, setPanelFilters] = useState([]);
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const [showExplainer, setShowExplainer] = useState(false);
+  const [filterDraft, setFilterDraft] = useState([{ field: '', op: '', value: '' }]);
 
-  // Pre-compute client stats
+  // Pre-compute client stats including post-eval and post-tour metrics
   const clientStats = useMemo(() => {
     const map = {};
     data.clients.forEach(c => {
@@ -5359,15 +5546,33 @@ function ClientsPage({ data, nav }) {
       const totalSpent = cRes.reduce((s, r) => s + ((r.pricing && r.pricing.total) || 0), 0);
       const daysSinceLast = lastRes ? Math.round((new Date(todayStr()+"T12:00:00") - new Date(lastRes.checkIn+"T12:00:00")) / 86400000) : null;
       const dogNames = dogs.map(d => d.fields.name || "Unknown");
-      map[c.id] = { dogCount: dogs.length, dogNames, daycareCount, boardingCount, evalCount, tourCount, lastRes, nextRes, totalSpent, totalRes: cRes.length, daysSinceLast };
+      // Post-eval: count all appointments after client's FIRST evaluation
+      let postEvalAppts = 0;
+      const evalsSorted = cRes.filter(r => r.type === "evaluation").sort((a, b) => a.checkIn.localeCompare(b.checkIn));
+      if (evalsSorted.length > 0) {
+        const firstEvalDate = evalsSorted[0].checkIn;
+        postEvalAppts = cRes.filter(r => r.checkIn > firstEvalDate).length;
+      }
+      // Post-tour: count all appointments after client's FIRST tour
+      let postTourAppts = 0;
+      const toursSorted = cRes.filter(r => r.type === "tour").sort((a, b) => a.checkIn.localeCompare(b.checkIn));
+      if (toursSorted.length > 0) {
+        const firstTourDate = toursSorted[0].checkIn;
+        postTourAppts = cRes.filter(r => r.checkIn > firstTourDate).length;
+      }
+      map[c.id] = { dogCount: dogs.length, dogNames, daycareCount, boardingCount, evalCount, tourCount, lastRes, nextRes, totalSpent, totalRes: cRes.length, daysSinceLast, postEvalAppts, postTourAppts };
     });
     return map;
   }, [data.clients, data.reservations, data.dogs]);
 
+  // Filter pipeline: parse inline search + combine with panel filters
   const filtered = useMemo(() => {
     let list = data.clients;
-    if (search.trim()) {
-      const q = search.toLowerCase();
+    const { filters: inlineFilters, plainText } = parseClientFilters(search);
+    const allFilters = [...inlineFilters, ...panelFilters];
+    // Plain text fuzzy search
+    if (plainText.trim()) {
+      const q = plainText.toLowerCase();
       const sq = q.replace(/\D/g, "");
       list = list.filter(c => {
         const fn = `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.toLowerCase();
@@ -5375,6 +5580,12 @@ function ClientsPage({ data, nav }) {
         const dogNames = data.dogs.filter(d => d.clientId === c.id).map(d => (d.fields.name || "").toLowerCase()).join(" ");
         return fn.includes(q) || dogNames.includes(q) || (c.fields.email || "").toLowerCase().includes(q) || (sq && ph.includes(sq));
       });
+    }
+    // Apply structured filters
+    for (const filter of allFilters) {
+      if (filter.field && filter.op && (filter.value || filter.op === 'is_blank' || filter.op === 'is_not_blank')) {
+        list = list.filter(c => applyClientFilter(c, filter, clientStats[c.id]));
+      }
     }
     // Sort
     list = [...list].sort((a, b) => {
@@ -5389,7 +5600,9 @@ function ClientsPage({ data, nav }) {
         case "daycare": va = sa.daycareCount || 0; vb = sb.daycareCount || 0; break;
         case "boarding": va = sa.boardingCount || 0; vb = sb.boardingCount || 0; break;
         case "evals": va = sa.evalCount || 0; vb = sb.evalCount || 0; break;
+        case "postEval": va = sa.postEvalAppts || 0; vb = sb.postEvalAppts || 0; break;
         case "tours": va = sa.tourCount || 0; vb = sb.tourCount || 0; break;
+        case "postTour": va = sa.postTourAppts || 0; vb = sb.postTourAppts || 0; break;
         case "totalRes": va = sa.totalRes || 0; vb = sb.totalRes || 0; break;
         case "daysSince": va = sa.daysSinceLast ?? 99999; vb = sb.daysSinceLast ?? 99999; break;
         case "totalSpent": va = sa.totalSpent || 0; vb = sb.totalSpent || 0; break;
@@ -5402,50 +5615,192 @@ function ClientsPage({ data, nav }) {
       return 0;
     });
     return list;
-  }, [data.clients, search, sortCol, sortDir, clientStats]);
+  }, [data.clients, search, panelFilters, sortCol, sortDir, clientStats]);
 
   const toggleSort = (col) => {
     if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
     else { setSortCol(col); setSortDir("asc"); }
   };
-  const sortIcon = (col) => sortCol === col ? (sortDir === "asc" ? " ↑" : " ↓") : "";
+  const sortIcon = (col) => sortCol === col ? (sortDir === "asc" ? " \u2191" : " \u2193") : "";
   const thStyle = (col) => ({
     fontSize: 10, fontWeight: 700, color: sortCol === col ? C.pri : C.textMut, textTransform: "uppercase",
-    letterSpacing: "0.05em", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", padding: "10px 8px",
+    letterSpacing: "0.05em", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", padding: "10px 6px",
     background: sortCol === col ? C.priLt : "transparent", borderRadius: 6, transition: "all 0.1s",
   });
-  const tdStyle = { fontSize: 13, color: C.text, padding: "10px 8px", whiteSpace: "nowrap" };
+  const tdStyle = { fontSize: 13, color: C.text, padding: "10px 6px", whiteSpace: "nowrap" };
   const typeLabel = (t) => t === "boarding" ? "Board" : t === "dayboarding" ? "Day Board" : t === "daycare" ? "Daycare" : t === "evaluation" ? "Eval" : "Tour";
   const typeColor = (t) => t === "boarding" ? C.pri : t === "dayboarding" ? C.pri : t === "daycare" ? C.suc : t === "evaluation" ? C.warn : C.acc;
+
+  // Filter panel handlers
+  const openFilterPanel = () => {
+    setFilterDraft(panelFilters.length > 0 ? panelFilters.map(f => ({ ...f })) : [{ field: '', op: '', value: '' }]);
+    setShowFilterPanel(true);
+  };
+  const addFilterRow = () => setFilterDraft(d => [...d, { field: '', op: '', value: '' }]);
+  const removeFilterRow = (idx) => setFilterDraft(d => d.length === 1 ? [{ field: '', op: '', value: '' }] : d.filter((_, i) => i !== idx));
+  const updateFilterRow = (idx, key, val) => {
+    setFilterDraft(d => d.map((r, i) => {
+      if (i !== idx) return r;
+      const updated = { ...r, [key]: val };
+      if (key === 'field') {
+        const fieldDef = CLIENT_FILTER_FIELDS.find(f => f.key === val);
+        const ops = fieldDef ? CLIENT_FILTER_OPS[fieldDef.type] : [];
+        updated.op = ops.length > 0 ? ops[0].key : '';
+        updated.value = '';
+      }
+      return updated;
+    }));
+  };
+  const applyFilters = () => {
+    const valid = filterDraft.filter(f => f.field && f.op && (f.value || f.op === 'is_blank' || f.op === 'is_not_blank'));
+    setPanelFilters(valid);
+    setShowFilterPanel(false);
+  };
+  const clearFilters = () => { setPanelFilters([]); setFilterDraft([{ field: '', op: '', value: '' }]); setShowFilterPanel(false); };
+  const removeChip = (idx) => setPanelFilters(f => f.filter((_, i) => i !== idx));
+  const chipLabel = (f) => {
+    const fieldDef = CLIENT_FILTER_FIELDS.find(fd => fd.key === f.field);
+    const opDef = fieldDef ? (CLIENT_FILTER_OPS[fieldDef.type] || []).find(o => o.key === f.op) : null;
+    return `${fieldDef ? fieldDef.shortLabel : f.field} ${opDef ? opDef.label : f.op} ${f.value || ''}`.trim();
+  };
+  const filterInputStyle = { padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none" };
 
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text }}>Clients</h1>
-          <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>{data.clients.length} total client{data.clients.length !== 1 ? "s" : ""}</div>
+          <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>{data.clients.length} total client{data.clients.length !== 1 ? "s" : ""}{panelFilters.length > 0 || search.trim() ? ` \xB7 ${filtered.length} shown` : ""}</div>
         </div>
         <Btn onClick={() => nav("new-client")} icon={<I.Plus />}>New Client</Btn>
       </div>
-      <div style={{ position: "relative", marginBottom: 16 }}>
-        <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.textMut }}><I.Search /></div>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by client name, dog name, phone, or email..."
-          style={{ width: "100%", padding: "12px 14px 12px 42px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" }}
-          onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
+
+      {/* Search bar with filter and explainer buttons */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: panelFilters.length > 0 ? 8 : 16 }}>
+        <div style={{ position: "relative", flex: 1 }}>
+          <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.textMut }}><I.Search /></div>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clients, dogs, phone, email \u2014 or use filters like: last_name: Vance && days_since > 30"
+            style={{ width: "100%", padding: "12px 14px 12px 42px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" }}
+            onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
+        </div>
+        <button onClick={openFilterPanel} style={{ width: 40, height: 40, borderRadius: 10, border: `1.5px solid ${panelFilters.length > 0 ? C.pri : C.border}`, background: panelFilters.length > 0 ? C.priLt : C.surface, color: panelFilters.length > 0 ? C.pri : C.textMut, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, position: "relative", flexShrink: 0 }} title="Advanced filters">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          {panelFilters.length > 0 && <span style={{ position: "absolute", top: -4, right: -4, width: 16, height: 16, borderRadius: 8, background: C.pri, color: "#fff", fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{panelFilters.length}</span>}
+        </button>
+        <button onClick={() => setShowExplainer(v => !v)} style={{ width: 28, height: 28, borderRadius: 14, border: `1.5px solid ${showExplainer ? C.pri : C.border}`, background: showExplainer ? C.priLt : "transparent", color: showExplainer ? C.pri : C.textMut, fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit", lineHeight: 1, flexShrink: 0 }} title="Search help">?</button>
       </div>
+
+      {/* Active filter chips */}
+      {panelFilters.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12, alignItems: "center" }}>
+          {panelFilters.map((f, i) => (
+            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 20, background: C.priLt, color: C.pri, fontSize: 11, fontWeight: 600, border: `1px solid ${C.pri}30` }}>
+              {chipLabel(f)}
+              <button onClick={(e) => { e.stopPropagation(); removeChip(i); }} style={{ background: "none", border: "none", color: C.pri, cursor: "pointer", padding: 0, display: "flex", fontSize: 14, fontWeight: 700, lineHeight: 1, marginLeft: 2 }}>&times;</button>
+            </span>
+          ))}
+          <button onClick={clearFilters} style={{ background: "none", border: "none", color: C.textMut, cursor: "pointer", fontSize: 11, fontWeight: 600, fontFamily: "inherit", textDecoration: "underline", padding: "4px 4px" }}>Clear all</button>
+        </div>
+      )}
+
+      {/* Filter panel dropdown */}
+      {showFilterPanel && (
+        <Card style={{ marginBottom: 16, padding: 20, position: "relative" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Advanced Filters</div>
+            <button onClick={() => setShowFilterPanel(false)} style={{ background: "none", border: "none", color: C.textMut, cursor: "pointer", padding: 4 }}><I.X /></button>
+          </div>
+          {filterDraft.map((row, idx) => {
+            const fieldDef = CLIENT_FILTER_FIELDS.find(f => f.key === row.field);
+            const ops = fieldDef ? CLIENT_FILTER_OPS[fieldDef.type] : [];
+            const needsValue = row.op && row.op !== 'is_blank' && row.op !== 'is_not_blank';
+            return (
+              <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+                <select value={row.field} onChange={e => updateFilterRow(idx, 'field', e.target.value)} style={{ ...filterInputStyle, minWidth: 150 }}>
+                  <option value="">Select field...</option>
+                  {CLIENT_FILTER_FIELDS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+                </select>
+                {row.field && (
+                  <select value={row.op} onChange={e => updateFilterRow(idx, 'op', e.target.value)} style={{ ...filterInputStyle, minWidth: 130 }}>
+                    {ops.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+                  </select>
+                )}
+                {needsValue && (
+                  <input value={row.value} onChange={e => updateFilterRow(idx, 'value', e.target.value)}
+                    placeholder={fieldDef && fieldDef.type === 'date' ? 'YYYY-MM-DD or 30 days' : fieldDef && fieldDef.type === 'number' ? '0' : 'value...'}
+                    style={{ ...filterInputStyle, flex: 1, minWidth: 100 }} />
+                )}
+                <button onClick={() => removeFilterRow(idx)} style={{ background: "none", border: "none", color: C.textMut, cursor: "pointer", padding: 4, flexShrink: 0 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+            );
+          })}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4 }}>
+            <button onClick={addFilterRow} style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add Filter
+            </button>
+            <div style={{ flex: 1 }} />
+            <button onClick={clearFilters} style={{ padding: "7px 18px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Clear</button>
+            <button onClick={applyFilters} style={{ padding: "7px 18px", borderRadius: 8, border: "none", background: C.pri, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Apply Filters</button>
+          </div>
+        </Card>
+      )}
+
+      {/* Explainer guide */}
+      {showExplainer && (
+        <div style={{ marginBottom: 16, padding: "16px 18px", borderRadius: 10, border: `1.5px solid ${C.priLt}`, background: `linear-gradient(135deg, ${C.priLt}40, ${C.surface})`, fontSize: 12, lineHeight: 1.7, color: C.textSec }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.pri, marginBottom: 10 }}>Client Search & Filter Guide</div>
+          <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>Quick Search</div>
+          <div style={{ paddingLeft: 12, marginBottom: 10 }}>
+            <div>Type any text to search across <span style={{ fontWeight: 700, color: C.text }}>client names, dog names, phone numbers, and emails</span> simultaneously.</div>
+          </div>
+          <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>Inline Filters</div>
+          <div style={{ paddingLeft: 12, marginBottom: 10 }}>
+            <div>Use <span style={{ fontWeight: 700, color: C.pri }}>field: value</span> syntax for targeted searches. Combine multiple filters with <span style={{ fontWeight: 700, color: C.pri }}>&&</span>.</div>
+            <div style={{ marginTop: 6, fontFamily: "monospace", background: C.bg, padding: "8px 12px", borderRadius: 6, fontSize: 11, color: C.text, lineHeight: 1.9 }}>
+              last_name: Adams && first_name: Tim<br />
+              days_since &gt; 60 && boarding &gt; 0<br />
+              dog: Max && spent &gt; 500<br />
+              evals &gt; 0 && post_eval = 0<br />
+              email is:blank && tours &gt; 0
+            </div>
+          </div>
+          <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>Available Fields</div>
+          <div style={{ paddingLeft: 12, marginBottom: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 24px" }}>
+            {CLIENT_FILTER_FIELDS.map(f => (
+              <div key={f.key} style={{ fontSize: 11 }}><span style={{ fontWeight: 700, color: C.pri, fontFamily: "monospace" }}>{f.key}</span> \u2014 {f.label}</div>
+            ))}
+          </div>
+          <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>Operators</div>
+          <div style={{ paddingLeft: 12, marginBottom: 4 }}>
+            <div><span style={{ fontWeight: 700, color: C.text }}>Text fields:</span> <span style={{ fontFamily: "monospace", fontSize: 11 }}>field: value</span> (contains), <span style={{ fontFamily: "monospace", fontSize: 11 }}>field = value</span> (exact match)</div>
+            <div><span style={{ fontWeight: 700, color: C.text }}>Number fields:</span> <span style={{ fontFamily: "monospace", fontSize: 11 }}>&gt;, &lt;, &gt;=, &lt;=, =</span></div>
+            <div><span style={{ fontWeight: 700, color: C.text }}>Date fields:</span> <span style={{ fontFamily: "monospace", fontSize: 11 }}>&gt; 2024-06-01</span> or <span style={{ fontFamily: "monospace", fontSize: 11 }}>&lt; 30 days</span></div>
+            <div><span style={{ fontWeight: 700, color: C.text }}>Any field:</span> <span style={{ fontFamily: "monospace", fontSize: 11 }}>field is:blank</span> or <span style={{ fontFamily: "monospace", fontSize: 11 }}>field is:not_blank</span></div>
+          </div>
+          <div style={{ fontWeight: 700, color: C.text, marginBottom: 2, marginTop: 8 }}>Filter Panel</div>
+          <div style={{ paddingLeft: 12, marginBottom: 4 }}>
+            <div>Click the <span style={{ fontWeight: 700, color: C.pri }}>filter icon</span> next to the search bar for a point-and-click filter builder. Active filters appear as removable chips.</div>
+          </div>
+          <div style={{ fontSize: 11, color: C.textMut, fontStyle: "italic", marginTop: 8 }}>Inline filters and panel filters work together. Plain text search can be combined with any filters.</div>
+        </div>
+      )}
+
       {filtered.length === 0 ? (
         <Card style={{ textAlign: "center", padding: 48 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>{search ? "No clients found" : "No clients yet"}</div>
-          <div style={{ fontSize: 14, color: C.textSec, marginBottom: 16 }}>{search ? "Try a different search" : "Add your first client"}</div>
-          {!search && <Btn onClick={() => nav("new-client")} icon={<I.Plus />}>Add Client</Btn>}
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>{search || panelFilters.length > 0 ? "No clients found" : "No clients yet"}</div>
+          <div style={{ fontSize: 14, color: C.textSec, marginBottom: 16 }}>{search || panelFilters.length > 0 ? "Try different search terms or filters" : "Add your first client"}</div>
+          {!search && panelFilters.length === 0 && <Btn onClick={() => nav("new-client")} icon={<I.Plus />}>Add Client</Btn>}
         </Card>
       ) : (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1250 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1500 }}>
               <thead>
                 <tr style={{ borderBottom: `1.5px solid ${C.border}`, background: C.bg }}>
-                  <th style={{ ...thStyle("last_name"), textAlign: "left", paddingLeft: 20 }} onClick={() => toggleSort("last_name")}>Last Name{sortIcon("last_name")}</th>
+                  <th style={{ ...thStyle("last_name"), textAlign: "left", paddingLeft: 16 }} onClick={() => toggleSort("last_name")}>Last Name{sortIcon("last_name")}</th>
                   <th style={{ ...thStyle("first_name"), textAlign: "left" }} onClick={() => toggleSort("first_name")}>First Name{sortIcon("first_name")}</th>
                   <th style={{ ...thStyle("phone"), textAlign: "left" }} onClick={() => toggleSort("phone")}>Phone{sortIcon("phone")}</th>
                   <th style={{ ...thStyle("email"), textAlign: "left" }} onClick={() => toggleSort("email")}>Email{sortIcon("email")}</th>
@@ -5456,7 +5811,9 @@ function ClientsPage({ data, nav }) {
                   <th style={{ ...thStyle("daycare"), textAlign: "center" }} onClick={() => toggleSort("daycare")}>Daycare{sortIcon("daycare")}</th>
                   <th style={{ ...thStyle("boarding"), textAlign: "center" }} onClick={() => toggleSort("boarding")}>Board{sortIcon("boarding")}</th>
                   <th style={{ ...thStyle("evals"), textAlign: "center" }} onClick={() => toggleSort("evals")}>Eval{sortIcon("evals")}</th>
+                  <th style={{ ...thStyle("postEval"), textAlign: "center" }} onClick={() => toggleSort("postEval")}>Post-Eval{sortIcon("postEval")}</th>
                   <th style={{ ...thStyle("tours"), textAlign: "center" }} onClick={() => toggleSort("tours")}>Tour{sortIcon("tours")}</th>
+                  <th style={{ ...thStyle("postTour"), textAlign: "center" }} onClick={() => toggleSort("postTour")}>Post-Tour{sortIcon("postTour")}</th>
                   <th style={{ ...thStyle("totalSpent"), textAlign: "right" }} onClick={() => toggleSort("totalSpent")}>Total Spent{sortIcon("totalSpent")}</th>
                   <th style={{ ...thStyle("nextRes"), textAlign: "left" }} onClick={() => toggleSort("nextRes")}>Next Res{sortIcon("nextRes")}</th>
                 </tr>
@@ -5469,10 +5826,10 @@ function ClientsPage({ data, nav }) {
                       style={{ borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer", transition: "background 0.1s" }}
                       onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                      <td style={{ ...tdStyle, fontWeight: 700, paddingLeft: 20 }}>{client.fields.last_name || "—"}</td>
-                      <td style={tdStyle}>{client.fields.first_name || "—"}</td>
+                      <td style={{ ...tdStyle, fontWeight: 700, paddingLeft: 16 }}>{client.fields.last_name || "\u2014"}</td>
+                      <td style={tdStyle}>{client.fields.first_name || "\u2014"}</td>
                       <td style={{ ...tdStyle, fontSize: 12 }}>{fmtPhone(client.fields.phone)}</td>
-                      <td style={{ ...tdStyle, fontSize: 12, color: C.textSec, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{client.fields.email || "—"}</td>
+                      <td style={{ ...tdStyle, fontSize: 12, color: C.textSec, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>{client.fields.email || "\u2014"}</td>
                       <td style={{ ...tdStyle, textAlign: "center", position: "relative" }} title={s.dogNames && s.dogNames.length > 0 ? s.dogNames.join("\n") : ""}>
                         <span style={{ cursor: "default", position: "relative" }}>
                           <Badge>{s.dogCount || 0}</Badge>
@@ -5485,21 +5842,23 @@ function ClientsPage({ data, nav }) {
                             <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDateShort(s.lastRes.checkIn)}</span>
                             <span style={{ display: "inline-block", marginLeft: 6, padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: typeColor(s.lastRes.type) + "18", color: typeColor(s.lastRes.type) }}>{typeLabel(s.lastRes.type)}</span>
                           </div>
-                        ) : <span style={{ color: C.textMut, fontSize: 12 }}>—</span>}
+                        ) : <span style={{ color: C.textMut, fontSize: 12 }}>{"\u2014"}</span>}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.daysSinceLast != null ? (s.daysSinceLast > 90 ? C.dan : s.daysSinceLast > 30 ? C.warn : C.suc) : C.textMut }}>{s.daysSinceLast != null ? s.daysSinceLast : "—"}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.daysSinceLast != null ? (s.daysSinceLast > 90 ? C.dan : s.daysSinceLast > 30 ? C.warn : C.suc) : C.textMut }}>{s.daysSinceLast != null ? s.daysSinceLast : "\u2014"}</td>
                       <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.daycareCount ? C.suc : C.textMut }}>{s.daycareCount || 0}</td>
                       <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.boardingCount ? C.pri : C.textMut }}>{s.boardingCount || 0}</td>
                       <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.evalCount ? C.warn : C.textMut }}>{s.evalCount || 0}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.postEvalAppts ? C.suc : C.textMut }}>{s.postEvalAppts || 0}</td>
                       <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.tourCount ? C.acc : C.textMut }}>{s.tourCount || 0}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: s.totalSpent > 0 ? C.text : C.textMut }}>{s.totalSpent > 0 ? `$${s.totalSpent.toFixed(2)}` : "—"}</td>
+                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.postTourAppts ? C.suc : C.textMut }}>{s.postTourAppts || 0}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: s.totalSpent > 0 ? C.text : C.textMut }}>{s.totalSpent > 0 ? `$${s.totalSpent.toFixed(2)}` : "\u2014"}</td>
                       <td style={tdStyle}>
                         {s.nextRes ? (
                           <div>
                             <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDateShort(s.nextRes.checkIn)}</span>
                             <span style={{ display: "inline-block", marginLeft: 6, padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: typeColor(s.nextRes.type) + "18", color: typeColor(s.nextRes.type) }}>{typeLabel(s.nextRes.type)}</span>
                           </div>
-                        ) : <span style={{ color: C.textMut, fontSize: 12 }}>—</span>}
+                        ) : <span style={{ color: C.textMut, fontSize: 12 }}>{"\u2014"}</span>}
                       </td>
                     </tr>
                   );
