@@ -17995,7 +17995,7 @@ export default function App() {
           {sidebarOpen && <div style={{padding:"0 4px 4px",fontSize:11,color:"rgba(175,141,84,0.4)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{profile?.full_name || profile?.email}</div>}
           <button onClick={signOut} style={{width:"100%",padding:"7px 0",border:"none",borderRadius:8,background:"rgba(239,68,68,0.12)",color:"rgba(255,150,150,0.8)",cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:500}}>{sidebarOpen?"Sign Out":"⏻"}</button>
           <button onClick={()=>setSidebarOpen(!sidebarOpen)} style={{width:"100%",padding:"7px 0",border:"none",borderRadius:8,background:"rgba(175,141,84,0.08)",color:"rgba(175,141,84,0.5)",cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{sidebarOpen?"‹ Collapse":"›"}</button>
-          {sidebarOpen && <div style={{textAlign:"center",fontSize:9,color:"rgba(175,141,84,0.3)",marginTop:4,lineHeight:1.4}}>&copy; 2026 K9 Operations LLC<br/>All Rights Reserved</div>}
+          {sidebarOpen && <div style={{textAlign:"center",fontSize:9,color:"rgba(255,255,255,0.5)",marginTop:4,lineHeight:1.4}}>&copy; 2026 K9 Operations LLC<br/>All Rights Reserved</div>}
         </div>
       </div>
 
