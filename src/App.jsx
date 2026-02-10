@@ -3357,6 +3357,10 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const [actTypeFilter, setActTypeFilter] = useState(new Set());
   const toggleActType = (t) => setActTypeFilter(prev => { const n = new Set(prev); if (n.has(t)) n.delete(t); else n.add(t); return n; });
   const [actTimeFilter, setActTimeFilter] = useState(""); // "", "am", "noon", "pm"
+  const [bulkTime, setBulkTime] = useState("all");
+  const [bulkType, setBulkType] = useState("all");
+  const [bulkAnimating, setBulkAnimating] = useState(false);
+  const [bulkAnimatedIds, setBulkAnimatedIds] = useState(new Set());
 
   const shiftDate = (days) => {
     const d = new Date(viewDate + "T12:00:00");
@@ -4305,10 +4309,6 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                 return <span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:10,fontWeight:700,color:"#fff",background:cfg.bg,padding:"2px 8px",borderRadius:6,whiteSpace:"nowrap"}}>{cfg.label}</span>;
               };
               const pendingCount = filteredActivities.filter(r => !r.logEntry?.administered).length;
-              const [bulkTime, setBulkTime] = React.useState("all");
-              const [bulkType, setBulkType] = React.useState("all");
-              const [bulkAnimating, setBulkAnimating] = React.useState(false);
-              const [bulkAnimatedIds, setBulkAnimatedIds] = React.useState(new Set());
 
               // Filter activities by bulk selectors
               const getBulkTargets = () => {
