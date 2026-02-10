@@ -3151,131 +3151,123 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           {secHeader("Notes")}
           <Inp type="textarea" rows={2} value={notes} onChange={setNotes} placeholder="Special instructions for this stay..." disabled={isReadOnly}/>
 
-          {/* Section: Discount */}
-          {secHeader("Discount")}
-          <div style={{display:"flex",gap:12,alignItems:"flex-end"}}>
-            <div style={{flex:"0 0 140px"}}>
-              <Inp label="Discount Type" type="select" value={discountType} onChange={v => { setDiscountType(v); if (v === "none") setDiscountValue(0); }} options={["none","percent","flat"]} disabled={isReadOnly}/>
-            </div>
-            {discountType !== "none" && (
-              <div style={{flex:"0 0 120px"}}>
-                <Inp label={discountType === "percent" ? "Percent Off" : "Amount Off ($)"} type="number" value={discountValue} onChange={v => setDiscountValue(Math.max(0, parseFloat(v) || 0))} disabled={isReadOnly}/>
-              </div>
-            )}
-            {discountType !== "none" && discountValue > 0 && <div style={{fontSize:12,fontWeight:600,color:C.suc,paddingBottom:10}}>Discount applied</div>}
-          </div>
-
-          {/* Section: Pricing Estimate */}
-          {secHeader("Pricing Estimate")}
+          {/* ─── RECEIPT ─── Clean, unified receipt section ─── */}
           {(() => {
-            const pr = calcReservationPricing({
-              type: reservation.type || "boarding",
-              roomType: reservation.roomType,
-              checkIn, checkOut, checkInTime, checkOutTime,
-              dogs: [dog], dogProfiles: data.dogs,
-              pricing: data.pricing,
-              isSecondDogSameRoom: false,
-            });
-            let adjTotal = pr.total;
+            const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
             let manualDiscount = 0;
-            if (discountType === "percent" && discountValue > 0) {
-              manualDiscount = Math.round(pr.total * (discountValue / 100) * 100) / 100;
-            } else if (discountType === "flat" && discountValue > 0) {
-              manualDiscount = Math.min(discountValue, pr.total);
-            }
-            adjTotal = Math.max(0, Math.round((pr.total - manualDiscount) * 100) / 100);
+            if (discountType === "percent" && discountValue > 0) manualDiscount = Math.round(pr.total * (discountValue / 100) * 100) / 100;
+            else if (discountType === "flat" && discountValue > 0) manualDiscount = Math.min(discountValue, pr.total);
+            const adjTotal = Math.max(0, Math.round((pr.total - manualDiscount) * 100) / 100);
             const collected = reservation.amountCollected || 0;
             const outstanding = Math.max(0, adjTotal - collected);
             const depositRequired = Math.round(adjTotal * 0.5 * 100) / 100;
             const depositMet = collected >= depositRequired;
             const fullPaymentMet = collected >= adjTotal;
-            return adjTotal > 0 ? (
-              <div>
-                <ItemizedReceipt pricingResult={pr} />
-                {manualDiscount > 0 && (
-                  <div style={{display:"flex",justifyContent:"space-between",padding:"8px 20px",background:C.sucLt,borderRadius:8,marginTop:6,border:`1px solid ${C.suc}25`}}>
-                    <span style={{fontSize:13,fontWeight:600,color:C.suc}}>Manual Discount ({discountType === "percent" ? `${discountValue}%` : `$${discountValue.toFixed(2)}`})</span>
-                    <span style={{fontSize:13,fontWeight:700,color:C.suc}}>-${manualDiscount.toFixed(2)}</span>
-                  </div>
-                )}
-                {manualDiscount > 0 && (
-                  <div style={{display:"flex",justifyContent:"space-between",padding:"8px 20px",marginTop:4}}>
-                    <span style={{fontSize:15,fontWeight:800,color:C.text}}>Adjusted Total</span>
-                    <span style={{fontSize:15,fontWeight:800,color:C.text}}>${adjTotal.toFixed(2)}</span>
-                  </div>
-                )}
-                <div style={{display:"flex",gap:12,marginTop:10}}>
-                  <div style={{flex:1,padding:"10px 14px",borderRadius:10,background:C.sucLt,border:`1px solid ${C.suc}25`}}>
-                    <div style={{fontSize:10,fontWeight:700,color:C.suc,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>Collected</div>
-                    <div style={{fontSize:18,fontWeight:800,color:C.suc}}>${collected.toFixed(2)}</div>
-                  </div>
-                  <div style={{flex:1,padding:"10px 14px",borderRadius:10,background:outstanding>0?C.accLt:`${C.suc}10`,border:`1px solid ${outstanding>0?C.acc:C.suc}25`}}>
-                    <div style={{fontSize:10,fontWeight:700,color:outstanding>0?C.acc:C.suc,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{outstanding>0?"Outstanding":"Paid in Full"}</div>
-                    <div style={{fontSize:18,fontWeight:800,color:outstanding>0?C.acc:C.suc}}>${outstanding.toFixed(2)}</div>
-                  </div>
-                </div>
-                {isCheckInMode && !depositMet && (
-                  <div style={{marginTop:10,padding:"10px 14px",borderRadius:10,background:C.danLt,border:`1.5px solid ${C.dan}30`,display:"flex",alignItems:"center",gap:8}}>
-                    <I.AlertTriangle style={{color:C.dan,flexShrink:0}}/>
-                    <div style={{fontSize:13,fontWeight:600,color:C.dan}}>50% deposit required to check in. Minimum deposit: ${depositRequired.toFixed(2)}</div>
-                  </div>
-                )}
-                {isCheckOutMode && !fullPaymentMet && (
-                  <div style={{marginTop:10,padding:"10px 14px",borderRadius:10,background:C.danLt,border:`1.5px solid ${C.dan}30`,display:"flex",alignItems:"center",gap:8}}>
-                    <I.AlertTriangle style={{color:C.dan,flexShrink:0}}/>
-                    <div style={{fontSize:13,fontWeight:600,color:C.dan}}>Full payment required to check out. Outstanding: ${outstanding.toFixed(2)}</div>
-                  </div>
-                )}
-              </div>
-            ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No charge for this reservation.</div>;
-          })()}
-
-          {/* Section: Payment History */}
-          {secHeader("Payment History")}
-          {(() => {
             const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
             const totalPaid = resPmts.filter(p => p.status === "completed" && p.type !== "refund").reduce((s, p) => s + p.amount, 0);
-            const totalRefunded = resPmts.filter(p => p.type === "refund" || p.status === "refunded").reduce((s, p) => s + p.amount, 0);
-            const statusClr = { completed: C.suc, pending: "#f59e0b", refunded: C.dan, failed: C.dan };
-            const typeClr = { payment: C.pri, deposit: "#0ea5e9", tip: "#ec4899", refund: C.dan };
+            const fmt = (v) => `$${Math.abs(v).toFixed(2)}`;
+            const configuredDiscounts = (data.discounts || []).filter(d => d.active !== false);
+            const hasDiscount = discountType !== "none" && discountValue > 0;
+            const [expandedLines, setExpandedLines] = [useState({})[0], useState({})[1]];
+
+            if (adjTotal === 0 && pr.total === 0) return <div style={{marginTop:20,fontSize:13,color:C.textMut,fontStyle:"italic"}}>No charge for this reservation.</div>;
+
             return (
-              <div>
-                {resPmts.length > 0 ? (
-                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                    {resPmts.map(p => (
-                      <div key={p.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:C.bg,border:`1px solid ${C.border}`}}>
-                        <span style={{padding:"2px 6px",borderRadius:4,fontSize:11,fontWeight:600,background:typeClr[p.type]+"18",color:typeClr[p.type]}}>{p.type}</span>
-                        <span style={{fontSize:14,fontWeight:700,color:C.text}}>${p.amount.toFixed(2)}</span>
-                        <span style={{fontSize:12,color:C.textMut}}>{p.method === "card" ? `Card ····${p.cardLast4||""}` : p.method}</span>
-                        <span style={{fontSize:12,color:C.textMut,marginLeft:"auto"}}>{new Date(p.timestamp).toLocaleDateString()}</span>
-                        <span style={{padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:600,background:statusClr[p.status]+"18",color:statusClr[p.status]}}>{p.status}</span>
+              <div style={{marginTop:24,border:`1px solid ${C.border}`,borderRadius:16,overflow:"hidden",background:C.surface}}>
+                {/* Receipt line items */}
+                <div style={{padding:"20px 24px 0"}}>
+                  {pr.lineItems.filter(l=>!l.isDogHeader).map((line, i, arr) => {
+                    const hasDetail = line.feedDetail || line.medDetail;
+                    const isExp = expandedLines[i];
+                    return (
+                      <div key={i} style={{borderBottom:i<arr.length-1?`1px solid ${C.borderLight||"#f0f0f0"}`:"none"}}>
+                        <div onClick={()=>hasDetail&&setExpandedLines(p=>({...p,[i]:!p[i]}))} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",cursor:hasDetail?"pointer":"default"}}>
+                          <span style={{fontSize:14,color:line.isAddon?C.textSec:C.text,fontWeight:line.isAddon?500:600,fontStyle:line.isAddon?"italic":"normal",display:"flex",alignItems:"center",gap:4}}>
+                            {line.label}
+                            {hasDetail&&<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2.5" strokeLinecap="round" style={{transition:"transform 0.15s",transform:isExp?"rotate(180deg)":"rotate(0deg)"}}><polyline points="6 9 12 15 18 9"/></svg>}
+                          </span>
+                          <span style={{fontSize:14,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmt(line.total)}</span>
+                        </div>
+                        {hasDetail&&isExp&&<div style={{paddingBottom:8}}><FeedMedBreakdown detail={line.feedDetail||line.medDetail} label={line.feedDetail?"Feeding":"Medication"}/></div>}
                       </div>
-                    ))}
-                    {totalRefunded > 0 && <div style={{fontSize:12,color:C.dan,marginTop:4}}>Refunded: ${totalRefunded.toFixed(2)}</div>}
+                    );
+                  })}
+                </div>
+
+                {/* Totals section */}
+                <div style={{padding:"16px 24px",background:C.bg,borderTop:`1px solid ${C.borderLight||"#f0f0f0"}`}}>
+                  {/* Discount row */}
+                  {hasDiscount && (
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                      <span style={{fontSize:13,color:C.suc,fontWeight:600}}>Discount ({discountType==="percent"?`${discountValue}%`:`$${Number(discountValue).toFixed(2)}`})</span>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}>
+                        <span style={{fontSize:13,fontWeight:700,color:C.suc}}>−{fmt(manualDiscount)}</span>
+                        {!isReadOnly&&<button onClick={()=>{setDiscountType("none");setDiscountValue(0);}} style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,padding:0,display:"flex",fontSize:12}}>✕</button>}
+                      </div>
+                    </div>
+                  )}
+                  {/* Add discount link */}
+                  {!hasDiscount && !isReadOnly && configuredDiscounts.length > 0 && (
+                    <div style={{marginBottom:8,position:"relative"}}>
+                      <DiscountPicker discounts={configuredDiscounts} onSelect={(d) => { setDiscountType(d.type === "percentage" ? "percent" : "flat"); setDiscountValue(d.value); }}/>
+                    </div>
+                  )}
+                  {/* Total */}
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"8px 0",borderTop:`1.5px solid ${C.border}`}}>
+                    <span style={{fontSize:18,fontWeight:800,color:C.text,letterSpacing:"-0.02em"}}>Total</span>
+                    <span style={{fontSize:18,fontWeight:800,color:C.text,fontVariantNumeric:"tabular-nums"}}>{fmt(adjTotal)}</span>
                   </div>
-                ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No payments recorded</div>}
-                <div style={{display:"flex",gap:8,marginTop:10}}>
-                  <button onClick={()=>{
-                    if (isCheckInMode) {
-                      const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
-                      let adjT = pr.total;
-                      if (discountType === "percent" && discountValue > 0) adjT = Math.max(0, adjT - Math.round(adjT * (discountValue / 100) * 100) / 100);
-                      else if (discountType === "flat" && discountValue > 0) adjT = Math.max(0, adjT - Math.min(discountValue, adjT));
-                      const depAmt = Math.max(0, Math.round(adjT * 0.5 * 100) / 100 - (reservation.amountCollected || 0));
-                      setPayFormDefaults({ amount: depAmt > 0 ? depAmt.toFixed(2) : "", type: "deposit" });
-                    } else if (isCheckOutMode) {
-                      const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
-                      let adjT = pr.total;
-                      if (discountType === "percent" && discountValue > 0) adjT = Math.max(0, adjT - Math.round(adjT * (discountValue / 100) * 100) / 100);
-                      else if (discountType === "flat" && discountValue > 0) adjT = Math.max(0, adjT - Math.min(discountValue, adjT));
-                      const outst = Math.max(0, adjT - (reservation.amountCollected || 0));
-                      setPayFormDefaults({ amount: outst > 0 ? outst.toFixed(2) : "", type: "payment" });
-                    } else {
-                      setPayFormDefaults(null);
-                    }
-                    setShowPayForm(true);
-                  }} style={{padding:"7px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><I.DollarSign/> {isCheckInMode ? "Collect Deposit" : isCheckOutMode ? "Collect Balance" : "Collect Payment"}</button>
-                  {totalPaid > 0 && <button onClick={()=>{setPayFormDefaults({ type: "refund" });setShowPayForm(true);}} style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${C.dan}30`,background:"transparent",color:C.dan,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}><I.RefreshCw/> Issue Refund</button>}
+                </div>
+
+                {/* Payment summary — clean two-column */}
+                <div style={{padding:"16px 24px",borderTop:`1px solid ${C.borderLight||"#f0f0f0"}`}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+                    <span style={{fontSize:13,color:C.textSec}}>Paid</span>
+                    <span style={{fontSize:13,fontWeight:700,color:C.suc,fontVariantNumeric:"tabular-nums"}}>{fmt(collected)}</span>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between"}}>
+                    <span style={{fontSize:13,color:outstanding>0?C.text:C.suc,fontWeight:outstanding>0?600:600}}>{outstanding>0?"Balance Due":"Paid in Full"}</span>
+                    <span style={{fontSize:13,fontWeight:800,color:outstanding>0?C.text:C.suc,fontVariantNumeric:"tabular-nums"}}>{outstanding>0?fmt(outstanding):"✓"}</span>
+                  </div>
+
+                  {/* Warnings — subtle inline */}
+                  {isCheckInMode && !depositMet && <div style={{marginTop:10,fontSize:12,fontWeight:600,color:C.dan}}>50% deposit required to check in (min ${fmt(depositRequired)})</div>}
+                  {isCheckOutMode && !fullPaymentMet && <div style={{marginTop:10,fontSize:12,fontWeight:600,color:C.dan}}>Full payment required to check out — {fmt(outstanding)} outstanding</div>}
+
+                  {/* Payment history */}
+                  {resPmts.length > 0 && (
+                    <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${C.borderLight||"#f0f0f0"}`}}>
+                      <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:8}}>Transactions</div>
+                      {resPmts.map(p => (
+                        <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${C.borderLight||"#f0f0f0"}`}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <span style={{width:6,height:6,borderRadius:3,background:p.type==="refund"?C.dan:p.status==="completed"?C.suc:"#f59e0b",flexShrink:0}}/>
+                            <span style={{fontSize:13,fontWeight:600,color:C.text}}>{fmt(p.amount)}</span>
+                            <span style={{fontSize:12,color:C.textMut}}>{p.method==="card"?`····${p.cardLast4||""}`:p.method}</span>
+                          </div>
+                          <span style={{fontSize:12,color:C.textMut}}>{new Date(p.timestamp).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Payment action */}
+                  {!isReadOnly && (
+                    <div style={{display:"flex",gap:8,marginTop:14}}>
+                      <button onClick={()=>{
+                        if (isCheckInMode) { const depAmt = Math.max(0, depositRequired - collected); setPayFormDefaults({ amount: depAmt > 0 ? depAmt.toFixed(2) : "", type: "deposit" }); }
+                        else if (isCheckOutMode) { setPayFormDefaults({ amount: outstanding > 0 ? outstanding.toFixed(2) : "", type: "payment" }); }
+                        else { setPayFormDefaults(null); }
+                        setShowPayForm(true);
+                      }} style={{padding:"8px 16px",borderRadius:10,border:"none",background:C.pri,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6,transition:"opacity 0.15s"}}
+                        onMouseEnter={e=>e.currentTarget.style.opacity="0.9"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+                        <I.DollarSign/>{isCheckInMode?"Collect Deposit":isCheckOutMode?"Collect Balance":"Collect Payment"}
+                      </button>
+                      {totalPaid>0&&<button onClick={()=>{setPayFormDefaults({type:"refund"});setShowPayForm(true);}} style={{padding:"8px 16px",borderRadius:10,border:`1px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+                        <I.RefreshCw/>Refund
+                      </button>}
+                    </div>
+                  )}
                 </div>
               </div>
             );
