@@ -1265,12 +1265,10 @@ const EVAL_RESULTS = ["pending","passed_group","passed_private"];
 const DEF_HOTKEY_BINDINGS = {
   dashboard: "d", lodging: "l", clients: "c", crm: "r",
   newReservation: "n", settings: "s", ai: "a", quickDaycare: "q", search: "/",
-  cycleType: "t", cycleRoom: "r",
 };
 const HOTKEY_LABELS = {
   dashboard: "Dashboard", lodging: "Lodging Calendar", clients: "Clients", crm: "CRM",
   newReservation: "New Reservation", settings: "Settings", ai: "AI Command", quickDaycare: "Quick Check-In", search: "Search",
-  cycleType: "Cycle Type (Booking)", cycleRoom: "Cycle Room (Booking)",
 };
 
 // ─── Default Pricing ─────────────────────────────────────────────────────────
@@ -1380,8 +1378,8 @@ const DEF_FOOD_TYPE_OPTIONS = ["Food From Home - Bagged","Food From Home - Unbag
 const DEF_FOOD_SOURCE_OPTIONS = ["From Home","Resort Provided","Prescription"];
 const DEF_FEEDING_INSTRUCTION_OPTIONS = ["Regular","Slow Feeder","Hand Fed","Elevated Bowl","Separate from Others"];
 const DEF_MEDICATION_UNIT_OPTIONS = ["Tablet","Capsule","mL","Pump","Drop","Scoop"];
-const DEF_MEDICATION_TIME_OPTIONS = ["AM (6:00 am)","Noon (12:00 pm)","PM (6:00 pm)","With Meals","Before Bed"];
-const DEF_MEDICATION_NAME_OPTIONS = ["Glucosamine","Apoquel","Trazodone","Thyroid Medication","Heart Medication","Joint Supplement","Fish Oil","Probiotic","Benadryl","Gabapentin","Rimadyl","Cerenia"];
+const DEF_MEDICATION_TIME_OPTIONS = ["AM (6:00 am)","Noon (12:00 pm)","PM (6:00 pm)"];
+const DEF_MEDICATION_NAME_OPTIONS = ["Acepromazine","Amoxicillin","Apoquel","Benadryl","Carprofen","Cephalexin","Cerenia","Clavamox","Clindamycin","Cosequin","Cytopoint","Dasuquin","Denamarin","Deramaxx","Doxycycline","Enrofloxacin","Famotidine","Fish Oil","Fluconazole","Fluoxetine","Gabapentin","Galliprant","Glucosamine","Heartgard","Heart Medication","Hydroxyzine","Joint Supplement","Ketoconazole","Librela","Meloxicam","Metoclopramide","Metronidazole","Omeprazole","Ondansetron","Pepcid","Phenobarbital","Potassium Bromide","Prednisolone","Prednisone","Probiotic","Rimadyl","Sentinel","Simparica Trio","Sucralfate","Thyroid Medication","Tramadol","Trazodone","Vetmedin","Welactin","Zonisamide"];
 const DEF_MEDICATION_INSTRUCTION_OPTIONS = ["Give with food","Give on empty stomach","Monitor for lethargy","Crush and mix with food","Do not mix with other meds"];
 const DEF_BATH_TYPE_OPTIONS = ["Standard","Hypo","Medicated","Whitening"];
 
@@ -3269,7 +3267,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
               {profileHint(summarizeFeeding(profileFeedingSchedules), feedingChanged)}
             </div>
             <div>
-              <MedicationScheduleEditor schedules={medicationSchedules} onChange={setMedicationSchedules} data={data} readOnly={isReadOnly}/>
+              <MedicationScheduleEditor schedules={medicationSchedules} onChange={setMedicationSchedules} data={data} readOnly={isReadOnly} save={save}/>
               {profileHint(summarizeMeds(profileMedicationSchedules), medsChanged)}
             </div>
             {countNights(checkIn,checkOut)>=2&&<div>
@@ -7255,7 +7253,7 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // MEDICATION SCHEDULE EDITOR
 // ═══════════════════════════════════════════════════════════════════════════
-function MedicationScheduleEditor({ schedules, onChange, data, readOnly, checkIn, checkOut }) {
+function MedicationScheduleEditor({ schedules, onChange, data, readOnly, checkIn, checkOut, save }) {
   const [showModal, setShowModal] = useState(false);
   const [editIdx, setEditIdx] = useState(-1);
   const timeOpts = data.medicationTimeOptions || DEF_MEDICATION_TIME_OPTIONS;
@@ -7265,13 +7263,19 @@ function MedicationScheduleEditor({ schedules, onChange, data, readOnly, checkIn
 
   const blank = { id: gid(), times: [], amount: "", unit: "", name: "", instruction: "", notes: "", dateMode: "every_day", customDates: [] };
   const [draft, setDraft] = useState(blank);
+  // Searchable medication name state
+  const [medNameSearch, setMedNameSearch] = useState("");
+  const [medNameOpen, setMedNameOpen] = useState(false);
+  const medNameRef = useRef(null);
+  useEffect(() => { if (!medNameOpen) return; const h = (e) => { if (medNameRef.current && !medNameRef.current.contains(e.target)) setMedNameOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [medNameOpen]);
 
-  const openAdd = () => { setDraft({ ...blank, id: gid() }); setEditIdx(-1); setShowModal(true); };
+  const openAdd = () => { setDraft({ ...blank, id: gid() }); setMedNameSearch(""); setEditIdx(-1); setShowModal(true); };
   const openEdit = (idx) => {
     const s = schedules[idx];
     // Migrate legacy single `time` string to `times` array
     const times = s.times || (s.time ? [s.time] : []);
     setDraft({ ...s, times, instruction: s.instruction || s.notes || "", dateMode: s.dateMode || "every_day", customDates: s.customDates || [] });
+    setMedNameSearch(s.name || "");
     setEditIdx(idx);
     setShowModal(true);
   };
@@ -7346,10 +7350,10 @@ function MedicationScheduleEditor({ schedules, onChange, data, readOnly, checkIn
                 </div>
               )}
             </div>}
-            {/* Time multi-select pills — matches feeding schedule structure */}
+            {/* Time multi-select pills + custom time */}
             <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.03em" }}>Time <span style={{ color: C.dan }}>*</span></div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
                 {timeOpts.map(t => {
                   const sel = draft.times.includes(t);
                   return (
@@ -7358,9 +7362,43 @@ function MedicationScheduleEditor({ schedules, onChange, data, readOnly, checkIn
                     </button>
                   );
                 })}
+                {/* Show custom time entries */}
+                {draft.times.filter(t => !timeOpts.includes(t)).map(t => (
+                  <span key={t} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, border: `2px solid ${C.pri}`, background: C.priLt, color: C.pri, fontSize: 13, fontWeight: 600, fontFamily: "inherit" }}>
+                    <span style={{cursor:"pointer",display:"flex"}} onClick={() => toggleTime(t)}><I.X /></span>{t}
+                  </span>
+                ))}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+                <input type="time" id="med-custom-time-input" style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none" }} />
+                <button type="button" onClick={() => { const inp = document.getElementById("med-custom-time-input"); if (!inp || !inp.value) return; const [h,m] = inp.value.split(":"); const hr = parseInt(h); const ampm = hr >= 12 ? "pm" : "am"; const hr12 = hr === 0 ? 12 : hr > 12 ? hr - 12 : hr; const label = `Custom (${hr12}:${m} ${ampm})`; if (!draft.times.includes(label)) toggleTime(label); inp.value = ""; }} style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.pri, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>Add Custom Time</button>
               </div>
             </div>
-            <Inp label="Medication Name" type="select" value={draft.name} onChange={v => setDraft({ ...draft, name: v })} options={nameOpts} />
+            {/* Searchable medication name with type-to-filter and Enter-to-add */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, letterSpacing: "0.03em", textTransform: "uppercase" }}>Medication Name <span style={{ color: C.dan }}>*</span></div>
+              <div ref={medNameRef} style={{ position: "relative" }}>
+                <input type="text" value={medNameSearch} onChange={e => { setMedNameSearch(e.target.value); setDraft(d => ({...d, name: e.target.value})); setMedNameOpen(true); }} onFocus={() => setMedNameOpen(true)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); const val = medNameSearch.trim(); if (val) { setDraft(d => ({...d, name: val})); setMedNameOpen(false); if (save && !nameOpts.includes(val)) { const current = data.medicationNameOptions || DEF_MEDICATION_NAME_OPTIONS; if (!current.includes(val)) save({...data, medicationNameOptions: [...current, val].sort()}); } } } }} placeholder="Search or type new medication..." style={{ width: "100%", padding: "10px 14px", border: `1.5px solid ${medNameOpen ? C.pri : C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none", transition: "border 0.15s", boxSizing: "border-box" }} />
+                {medNameOpen && (
+                  <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 200, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 8px 30px rgba(0,0,0,0.15)", maxHeight: 220, overflowY: "auto" }}>
+                    {nameOpts.filter(n => n.toLowerCase().includes(medNameSearch.toLowerCase())).map(n => (
+                      <button key={n} onClick={() => { setDraft(d => ({...d, name: n})); setMedNameSearch(n); setMedNameOpen(false); }} style={{ width: "100%", padding: "10px 14px", border: "none", borderBottom: `1px solid ${C.borderLight}`, background: draft.name === n ? C.priLt : "transparent", color: draft.name === n ? C.pri : C.text, fontSize: 13, fontWeight: draft.name === n ? 700 : 500, cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", alignItems: "center", justifyContent: "space-between" }} onMouseEnter={e => { if (draft.name !== n) e.currentTarget.style.background = C.bg; }} onMouseLeave={e => { if (draft.name !== n) e.currentTarget.style.background = "transparent"; }}>
+                        <span>{n}</span>
+                        {draft.name === n && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                      </button>
+                    ))}
+                    {medNameSearch.trim() && !nameOpts.some(n => n.toLowerCase() === medNameSearch.trim().toLowerCase()) && (
+                      <button onClick={() => { const val = medNameSearch.trim(); setDraft(d => ({...d, name: val})); setMedNameOpen(false); if (save) { const current = data.medicationNameOptions || DEF_MEDICATION_NAME_OPTIONS; if (!current.includes(val)) save({...data, medicationNameOptions: [...current, val].sort()}); } }} style={{ width: "100%", padding: "10px 14px", border: "none", background: C.bg, color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+                        + Add "{medNameSearch.trim()}" as new medication
+                      </button>
+                    )}
+                    {nameOpts.filter(n => n.toLowerCase().includes(medNameSearch.toLowerCase())).length === 0 && !medNameSearch.trim() && (
+                      <div style={{ padding: "10px 14px", fontSize: 12, color: C.textMut }}>Type to search medications...</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <Inp label="Amount" value={draft.amount} onChange={v => setDraft({ ...draft, amount: v })} placeholder="e.g. 1" />
               <Inp label="Unit" type="select" value={draft.unit} onChange={v => setDraft({ ...draft, unit: v })} options={unitOpts} />
@@ -7515,6 +7553,18 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   const allRooms = data.rooms || {};
   const roomsForType = allRooms[roomType] || [];
   const needsRoom = type === "boarding" || type === "dayboarding";
+  // Per-room-type availability for the selected date range
+  const roomAvailByType = useMemo(() => {
+    if (!checkIn || !needsRoom) return {};
+    const ci = checkIn; const co = checkOut || checkIn;
+    const result = {};
+    ROOM_TYPES.forEach(rt => {
+      const rooms = allRooms[rt] || [];
+      const booked = new Set(data.reservations.filter(r => (r.type === "boarding" || r.type === "dayboarding") && r.roomType === rt && r.room && r.status !== "checked-out" && r.status !== "cancelled" && r.checkIn < co && r.checkOut > ci).map(r => r.room));
+      result[rt] = { available: rooms.filter(r => !booked.has(r)).length, total: rooms.length };
+    });
+    return result;
+  }, [checkIn, checkOut, needsRoom, data.reservations]);
   const bookedRoomNames = useMemo(() => {
     if (!needsRoom || !checkIn) return new Set();
     const ci = checkIn; const co = checkOut || checkIn;
@@ -7700,31 +7750,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   // (Bath auto-add removed — baths are manual add-ons only)
   useEffect(()=>{setSelectedRoom("");},[roomType]);
 
-  // Hotkeys: T cycles type, R cycles room type (capture phase so page-level takes priority over global nav)
-  const hkBindings = (data.hotkeySettings || {}).bindings || {};
-  const cycleTypeKey = (hkBindings.cycleType || "t").toLowerCase();
-  const cycleRoomKey = (hkBindings.cycleRoom || "r").toLowerCase();
-  useEffect(() => {
-    const types = ["boarding","dayboarding","daycare","evaluation","tour"];
-    const handler = (e) => {
-      const tag = e.target.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      const k = e.key.toLowerCase();
-      if (k === cycleTypeKey) {
-        e.preventDefault();
-        e.stopPropagation();
-        setType(prev => types[(types.indexOf(prev) + 1) % types.length]);
-      }
-      if (k === cycleRoomKey && (type === "boarding" || type === "dayboarding")) {
-        e.preventDefault();
-        e.stopPropagation();
-        setRoomType(prev => ROOM_TYPES[(ROOM_TYPES.indexOf(prev) + 1) % ROOM_TYPES.length]);
-      }
-    };
-    window.addEventListener("keydown", handler, true); // capture phase — fires before global handler
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [type, cycleTypeKey, cycleRoomKey]);
+  // (Cycle hotkeys removed)
 
   const toggleDog = (did) => {
     setSelectedDogs(prev => prev.includes(did) ? prev.filter(d=>d!==did) : [...prev, did]);
@@ -7734,12 +7760,14 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
     setCareFields(prev => ({ ...prev, [dogId]: { ...prev[dogId], [field]: val } }));
   };
 
-  const handleSave = async () => {
+  const handleSave = async (saveMode = "reserve") => {
     const errs={};
     if(!clientId)errs.clientId="Required";
     if(selectedDogs.length===0)errs.dogs="Select at least one dog";
     if(!checkIn)errs.checkIn="Required";
     if(type==="boarding"&&checkOut<checkIn)errs.checkOut="Must be after check-in";
+    // Room validation: require a room for boarding/dayboarding
+    if((type==="boarding"||type==="dayboarding")&&!perDogMode&&!selectedRoom)errs.room="Please select a room";
     // Closed dates check — block check-ins and check-outs on closed dates
     const closedSet = new Set((data.closedDates || []).map(cd => cd.date));
     if(closedSet.has(checkIn)){const cd=(data.closedDates||[]).find(c=>c.date===checkIn);errs.checkIn=`Resort is closed on this date${cd?.label?` (${cd.label})`:""}`;}
@@ -7797,6 +7825,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         pricing: resPricing,
         ...(isSecondInRoom ? {isSecondDogSameRoom: true} : {}),
         ...(resDiscountType !== "none" && resDiscountValue > 0 ? { discountType: resDiscountType, discountValue: resDiscountValue } : {}),
+        ...(saveMode === "save-only" ? { noDeposit: true } : {}),
       };
     });
 
@@ -8046,7 +8075,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
             {errors.clientId&&<div style={{color:C.dan,fontSize:12,fontWeight:600,marginTop:4}}>{errors.clientId}</div>}
           </div>
           <div>
-            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"}}>Type <span style={{color:C.textMut,fontWeight:400,textTransform:"none"}}>({cycleTypeKey.toUpperCase()})</span></div>
+            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"}}>Type</div>
             <div style={{display:"flex",gap:8}}>
               {[{v:"boarding",l:"Boarding"},{v:"dayboarding",l:"Day Boarding"},{v:"daycare",l:"Daycare"},{v:"evaluation",l:"Evaluation"},{v:"tour",l:"Tour"}].map(t=>(
                 <button key={t.v} onClick={()=>setType(t.v)} style={{flex:1,padding:"10px 0",borderRadius:10,border:`2px solid ${type===t.v?C.pri:C.border}`,background:type===t.v?C.priLt:C.surface,color:type===t.v?C.pri:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{t.l}</button>
@@ -8075,9 +8104,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           {type==="boarding"&&<CalendarPicker label="Check-Out Date" value={checkOut} onChange={setCheckOut} required min={checkIn} extraContent={<>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{checkIn&&checkOut&&<div style={{fontSize:11,fontWeight:600,color:C.textSec,marginTop:2}}>Nights: {countNights(checkIn,checkOut)}</div>}{checkOut&&(data.closedDates||[]).some(cd=>cd.date===checkOut)&&<div style={{fontSize:11,fontWeight:700,color:C.dan,marginTop:2}}>Resort closed: {(data.closedDates||[]).find(cd=>cd.date===checkOut)?.label||"Closed"}</div>}{errors.checkOut&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkOut}</div>}</>}/>}
           {type==="boarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
           {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Boarding pick-up hours start at 9 AM. Check-out time is 12:30 PM. Extended checkout to 5:30 PM available 7 days a week for a half-day daycare fee ({`$${((data.pricing||DEF_PRICING).daycareRates?.halfDay||30).toFixed(2)}`}).</div></div>}
-          {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>
-            <strong style={{color:C.text}}>Bathing Policy:</strong> K9 Resorts brand standard requires all dogs boarding 2 or more nights receive a bath before going home.{countNights(checkIn,checkOut)>=2?" A bath type selection will appear in each dog's care section below.":""}
-          </div></div>}
+          {/* Bathing policy notice moved to each dog's care section — only shown for 2+ night stays */}
           {type==="dayboarding"&&<div><Inp label="Pick-Up Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
           {type!=="boarding"&&type!=="dayboarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
         </div>
@@ -8085,12 +8112,19 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         {/* Sub-type selectors */}
         {(type === "boarding" || type === "dayboarding") && (
           <div style={{marginTop:20}}>
-            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Room Type <span style={{color:C.dan}}>*</span> <span style={{color:C.textMut,fontWeight:400,textTransform:"none"}}>({cycleRoomKey.toUpperCase()})</span></div>
+            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Room Type <span style={{color:C.dan}}>*</span></div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-              {ROOM_TYPES.map(rt => (
+              {ROOM_TYPES.map(rt => {
+                const avail = roomAvailByType[rt];
+                const noRooms = avail && avail.available === 0 && avail.total > 0;
+                return (
                 <button key={rt} onClick={()=>setRoomType(rt)}
-                  style={{padding:"10px 18px",borderRadius:10,border:`2px solid ${roomType===rt?C.pri:C.border}`,background:roomType===rt?C.priLt:C.surface,color:roomType===rt?C.pri:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>{rt}</button>
-              ))}
+                  style={{padding:"10px 18px",borderRadius:10,border:`2px solid ${roomType===rt?C.pri:noRooms?C.dan+"60":C.border}`,background:roomType===rt?C.priLt:C.surface,color:roomType===rt?C.pri:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                  <span>{rt}</span>
+                  {avail && avail.total > 0 && <span style={{fontSize:10,fontWeight:500,color:noRooms?C.dan:roomType===rt?C.pri:C.textMut}}>{avail.available}/{avail.total} remaining</span>}
+                </button>
+                );
+              })}
             </div>
             {/* Smart Room Selection */}
             {roomsForType.length > 0 && (
@@ -8156,6 +8190,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                   })}
                 </div>
                 {availableRooms.length === 0 && <div style={{fontSize:12,color:C.dan,fontWeight:600,marginTop:6}}>No rooms available for these dates</div>}
+                {errors.room && <div style={{fontSize:12,color:C.dan,fontWeight:600,marginTop:6}}>{errors.room}</div>}
               </div>
             )}
           </div>
@@ -8635,7 +8670,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                       </div>
                       <div>
                         {medsChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
-                        <MedicationScheduleEditor schedules={care.medicationSchedules || []} onChange={v=>updateCare(did,"medicationSchedules",v)} data={data} checkIn={checkIn} checkOut={checkOut}/>
+                        <MedicationScheduleEditor schedules={care.medicationSchedules || []} onChange={v=>updateCare(did,"medicationSchedules",v)} data={data} checkIn={checkIn} checkOut={checkOut} save={save}/>
                       </div>
                       {type==="boarding"&&countNights(checkIn,checkOut)>=2&&<div>
                         <div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`,marginBottom:8}}>
@@ -8728,9 +8763,19 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           </div>
         )}
 
-        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:28}}>
-          <Btn variant="secondary" onClick={()=>nav(preClientId?"client-detail":"dashboard",preClientId?{clientId:preClientId}:{})}>Cancel</Btn>
-          <Btn onClick={handleSave}>Create Reservation{selectedDogs.length>1?"s":""}</Btn>
+        <div style={{marginTop:28}}>
+          <div style={{display:"flex",justifyContent:"flex-end",gap:10,alignItems:"center"}}>
+            <Btn variant="secondary" onClick={()=>nav(preClientId?"client-detail":"dashboard",preClientId?{clientId:preClientId}:{})}>Cancel</Btn>
+            <div style={{position:"relative"}}>
+              <Btn variant="ghost" onClick={()=>handleSave("save-only")} style={{border:`1.5px solid ${C.border}`,color:C.textSec}}>Save Without Reserving</Btn>
+            </div>
+            <Btn onClick={()=>handleSave("reserve")}>Reserve Stay{selectedDogs.length>1?"s":""}</Btn>
+          </div>
+          <div style={{display:"flex",justifyContent:"flex-end",marginTop:6}}>
+            <div style={{fontSize:10,color:C.textMut,maxWidth:420,textAlign:"right",lineHeight:1.4}}>
+              <strong>Save Without Reserving</strong> saves details in the system for high-intent clients who cannot pay now. They will not be guaranteed this spot and may be booked over if needed.
+            </div>
+          </div>
         </div>
       </Card>
 
@@ -9402,6 +9447,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
                           onMouseEnter={e => { if (!interaction) e.currentTarget.style.opacity = "0.85"; }}
                           onMouseLeave={e => { if (!interaction) e.currentTarget.style.opacity = "1"; }}
                         >
+                          {res.noDeposit && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isCheckedIn ? "#fca5a5" : C.dan} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}} title="No deposit collected"><line x1="12" y1="1" x2="12" y2="17"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/><line x1="4" y1="1" x2="20" y2="23" stroke={isCheckedIn ? "#fca5a5" : C.dan} strokeWidth="2"/></svg>}
                           <span style={{ fontSize: 11, fontWeight: 700, color: fg, overflow: "hidden", textOverflow: "ellipsis", padding: "0 4px" }}>
                             {dn(res.dogId)}
                           </span>
