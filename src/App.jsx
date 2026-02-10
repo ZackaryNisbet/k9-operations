@@ -2225,10 +2225,12 @@ function DogTagChips({ dog, dogTags, size = "sm" }) {
           const tag = dogTags.find(t => t.id === tagId);
           if (!tag) return null;
           const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
-          const abbr = tag.name.split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
+          // Abbreviate: multi-word → initials (LP, SP, PP), single word → first 4 chars (EVAL)
+          const words = tag.name.split(/\s+/);
+          const abbr = words.length > 1 ? words.map(w => w[0]).join("").toUpperCase().slice(0, 2) : tag.name.toUpperCase().slice(0, 4);
           return (
             <Tip key={tagId} text={tag.name}>
-              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, borderRadius: 4, fontSize: 10, fontWeight: 800, background: tc.text, color: "#fff", cursor: "default", flexShrink: 0, padding: "0 3px", letterSpacing: 0 }}>{abbr}</span>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, borderRadius: 4, fontSize: 10, fontWeight: 800, background: tc.text, color: "#fff", cursor: "default", flexShrink: 0, padding: "0 4px", letterSpacing: 0 }}>{abbr}</span>
             </Tip>
           );
         })}
@@ -17793,16 +17795,21 @@ export default function App() {
   // NOTE: Locations created via "Add Location" use {_initialized:true} to skip this.
   const rawOrDemo = rawData || (loading ? null : (isEmpty ? DEMO : null));
   // Normalize: ensure all expected arrays/objects exist so new/empty locations don't crash on .filter()
-  const data = rawOrDemo ? {
-    reservations: [], clients: [], dogs: [], messages: [], teamMembers: [],
-    packages: [], packageSales: [], agreements: [], dogTags: [],
-    auditLog: [], closedDates: [], dailyOps: [], eodEntries: [],
-    evaluations: [], onlineBookings: [], payments: [], requiredVaccines: [],
-    roles: DEFAULT_ROLES,
-    clientFields: DEF_CLIENT_FIELDS, dogFields: DEF_DOG_FIELDS,
-    rooms: {},
-    ...rawOrDemo,
-  } : null;
+  const data = rawOrDemo ? (() => {
+    const merged = {
+      reservations: [], clients: [], dogs: [], messages: [], teamMembers: [],
+      packages: [], packageSales: [], agreements: [], dogTags: [],
+      auditLog: [], closedDates: [], dailyOps: [], eodEntries: [],
+      evaluations: [], onlineBookings: [], payments: [], requiredVaccines: [],
+      roles: DEFAULT_ROLES,
+      clientFields: DEF_CLIENT_FIELDS, dogFields: DEF_DOG_FIELDS,
+      rooms: {},
+      ...rawOrDemo,
+    };
+    // Ensure core tag definitions always exist (can't operate without them)
+    if (!merged.dogTags || merged.dogTags.length === 0) merged.dogTags = DEF_DOG_TAGS;
+    return merged;
+  })() : null;
   useEffect(() => {
     if (!loading && !rawData && locationId && isEmpty && !loadError) {
       console.log('[K9] Initializing new location with demo data');
@@ -17818,6 +17825,41 @@ export default function App() {
   }, [rawData?._initialized, rawData?.dogTags]);
   // Auto-initialize roles system for existing data that predates the permissions feature
   useEffect(() => { if (data && !data.roles) { save({ ...data, roles: DEFAULT_ROLES }); } }, [data?.roles]);
+
+  // ═══ Auto-migration: ensure every dog has exactly ONE tag ═══
+  // Fixes data from older versions where dogs might have no tags, multiple tags, or stale combos.
+  useEffect(() => {
+    if (!data || !data.dogs || data.dogs.length === 0) return;
+    const VALID_CLASS_TAGS = new Set(["tag_eval", "tag_lp", "tag_sp", "tag_pp"]);
+    const dogsNeedingFix = data.dogs.filter(d => {
+      const classTags = (d.tags || []).filter(t => VALID_CLASS_TAGS.has(t));
+      return classTags.length !== 1; // should have exactly 1 classification tag
+    });
+    if (dogsNeedingFix.length === 0) return;
+    console.log(`[K9] Auto-migration: fixing tags on ${dogsNeedingFix.length} dogs`);
+    const hasEval = (dogId) => (data.evaluations || []).some(e => e.dogId === dogId && e.locked);
+    const hasPastRes = (dogId) => (data.reservations || []).some(r => r.dogId === dogId && r.status === "checked-out");
+    const fixedDogs = data.dogs.map(d => {
+      const classTags = (d.tags || []).filter(t => VALID_CLASS_TAGS.has(t));
+      if (classTags.length === 1) return d; // already correct
+      // Determine correct single tag based on history + weight
+      const w = parseInt(d.fields?.weight) || 40;
+      const evalOnFile = hasEval(d.id);
+      const hadPriorStay = hasPastRes(d.id);
+      let newTag;
+      if (!evalOnFile && !hadPriorStay) {
+        newTag = "tag_eval"; // new dog, no history
+      } else if ((d.tags || []).includes("tag_pp")) {
+        newTag = "tag_pp"; // preserve existing PP classification
+      } else if (w < 35) {
+        newTag = "tag_sp";
+      } else {
+        newTag = "tag_lp";
+      }
+      return { ...d, tags: [newTag] };
+    });
+    save({ ...data, dogs: fixedDogs });
+  }, [data?.dogs?.length]);
 
   // ═══ Dynamic Locations (loaded from Supabase) ═══
   const [dbLocations, setDbLocations] = useState([]);
