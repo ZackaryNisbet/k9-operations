@@ -233,7 +233,7 @@ const fmtDateFull = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00");
 const fmtDateShort = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00"); return `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${String(dt.getFullYear()).slice(2)}`; };
 const fmtTime = (t) => { if(!t) return ""; const [h,m] = t.split(":").map(Number); const ampm = h >= 12 ? "PM" : "AM"; const h12 = h % 12 || 12; return `${h12}:${String(m).padStart(2,"0")} ${ampm}`; };
 const summarizeFeeding = (schedules) => { if(!schedules||!schedules.length) return ""; return schedules.map(s => { const t = (s.times||[]).join("/"); return `${s.amount||""} ${s.unit||""} ${t} ${s.foodType||""}`.trim(); }).join("; "); };
-const summarizeMeds = (schedules) => { if(!schedules||!schedules.length) return "None"; return schedules.map(s => `${s.name||""} ${s.amount||""} ${s.unit||""} @ ${s.time||""}`.trim()).join("; "); };
+const summarizeMeds = (schedules) => { if(!schedules||!schedules.length) return "None"; return schedules.map(s => { const timeStr = (s.times && s.times.length) ? s.times.join(", ") : (s.time || ""); return `${s.name||""} ${s.amount||""} ${s.unit||""} @ ${timeStr}`.trim(); }).join("; "); };
 
 // Vaccine status: returns {ok:bool, expired:[], missing:[], expiringSoon:[], graceperiod:[]}
 const getVaxStatus = (dog, requiredVaccines, policies) => {
@@ -1387,6 +1387,9 @@ const DEF_FOOD_TYPE_OPTIONS = ["Food From Home - Bagged","Food From Home - Unbag
 const DEF_FOOD_SOURCE_OPTIONS = ["From Home","Resort Provided","Prescription"];
 const DEF_FEEDING_INSTRUCTION_OPTIONS = ["Regular","Slow Feeder","Hand Fed","Elevated Bowl","Separate from Others"];
 const DEF_MEDICATION_UNIT_OPTIONS = ["Tablet","Capsule","mL","Pump","Drop","Scoop"];
+const DEF_MEDICATION_TIME_OPTIONS = ["AM (6:00 am)","Noon (12:00 pm)","PM (6:00 pm)","With Meals","Before Bed"];
+const DEF_MEDICATION_NAME_OPTIONS = ["Glucosamine","Apoquel","Trazodone","Thyroid Medication","Heart Medication","Joint Supplement","Fish Oil","Probiotic","Benadryl","Gabapentin","Rimadyl","Cerenia"];
+const DEF_MEDICATION_INSTRUCTION_OPTIONS = ["Give with food","Give on empty stomach","Monitor for lethargy","Crush and mix with food","Do not mix with other meds"];
 const DEF_BATH_TYPE_OPTIONS = ["Standard","Hypo","Medicated","Whitening"];
 
 // Vaccine configuration
@@ -1482,10 +1485,12 @@ function generateDemoData() {
       }
       const meds = [];
       if (srand()>0.8) meds.push({
-        time: rp(["8:00 AM","Morning","Morning & Evening","With meals"]),
+        id: gid(),
+        times: srand() > 0.5 ? ["AM (6:00 am)","PM (6:00 pm)"] : [rp(["AM (6:00 am)","Noon (12:00 pm)","PM (6:00 pm)","With Meals"])],
         amount:"1", unit: rp(["Tablet","Capsule","mL","Pump"]),
-        name: rp(["Glucosamine","Apoquel","Trazodone","Thyroid medication","Heart medication","Joint supplement","Fish oil","Probiotic"]),
-        notes: rp(["Daily","As needed","Monitor for lethargy","Give with food","",""])
+        name: rp(["Glucosamine","Apoquel","Trazodone","Thyroid Medication","Heart Medication","Joint Supplement","Fish Oil","Probiotic"]),
+        instruction: rp(["Give with food","Give on empty stomach","Monitor for lethargy","Crush and mix with food",""]),
+        notes: rp(["Daily medication","As needed","","",""])
       });
       dogs.push({
         id:"d"+di, clientId:cl.id,
@@ -1883,6 +1888,9 @@ function generateDemoData() {
     foodTypeOptions: DEF_FOOD_TYPE_OPTIONS,
     feedingInstructionOptions: DEF_FEEDING_INSTRUCTION_OPTIONS,
     medicationUnitOptions: DEF_MEDICATION_UNIT_OPTIONS,
+    medicationTimeOptions: DEF_MEDICATION_TIME_OPTIONS,
+    medicationNameOptions: DEF_MEDICATION_NAME_OPTIONS,
+    medicationInstructionOptions: DEF_MEDICATION_INSTRUCTION_OPTIONS,
     bathTypeOptions: DEF_BATH_TYPE_OPTIONS,
     messages: generateDemoMessages(clients, dogs, reservations),
     messageTemplates: [
@@ -1937,6 +1945,9 @@ const NEW_LOCATION_DEFAULTS = {
   foodTypeOptions: DEF_FOOD_TYPE_OPTIONS,
   feedingInstructionOptions: DEF_FEEDING_INSTRUCTION_OPTIONS,
   medicationUnitOptions: DEF_MEDICATION_UNIT_OPTIONS,
+  medicationTimeOptions: DEF_MEDICATION_TIME_OPTIONS,
+  medicationNameOptions: DEF_MEDICATION_NAME_OPTIONS,
+  medicationInstructionOptions: DEF_MEDICATION_INSTRUCTION_OPTIONS,
   bathTypeOptions: DEF_BATH_TYPE_OPTIONS,
   messageTemplates: [
     { id: "mt1", name: "Booking Confirmation", body: "Hi {clientName}! Your reservation for {dogName} has been confirmed. Check-in: {checkInDate}, Check-out: {checkOutDate}. Room: {roomType}. Total: ${totalPrice}. See you soon!", active: true },
@@ -2603,12 +2614,13 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     });
 
     medicationSchedules.forEach(s => {
+      const timeStr = (s.times && s.times.length) ? s.times.join(", ") : (s.time || "");
       cols.push({
         key: `med_${(s.name||"").replace(/\s+/g,"_")}`,
         label: `Medication - ${s.name}`,
         type: "medication",
-        detail: [s.time, s.amount, s.unit].filter(Boolean).join(" "),
-        notes: s.notes || "",
+        detail: [timeStr, s.amount, s.unit].filter(Boolean).join(" "),
+        notes: s.instruction || s.notes || "",
         activeDays: days.map(() => true),
       });
     });
@@ -2770,7 +2782,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         return `<th style="padding:4px 6px;text-align:center;border:1px solid #999;font-size:10px;background:#f5f5f5;"><div style="font-weight:700;">${dayName}</div><div>${dateStr}</div></th>`;
       }).join("");
       const medRows = medicationSchedules.map(s => {
-        const label = `<div style="font-weight:700;font-size:11px;">${s.name || "Medication"}</div><div style="font-size:10px;color:#444;">${[s.time, s.amount, s.unit].filter(Boolean).join(" ")}${s.notes ? " — " + s.notes : ""}</div>`;
+        const timeStr = (s.times && s.times.length) ? s.times.join(", ") : (s.time || "");
+        const label = `<div style="font-weight:700;font-size:11px;">${s.name || "Medication"}</div><div style="font-size:10px;color:#444;">${[timeStr, s.amount, s.unit].filter(Boolean).join(" ")}${s.instruction ? " — " + s.instruction : (s.notes ? " — " + s.notes : "")}</div>`;
         const cells = actDays.map(() => `<td style="border:1px solid #999;padding:6px 4px;text-align:center;">&nbsp;</td>`).join("");
         return `<tr><td style="padding:6px 8px;border:1px solid #999;vertical-align:top;">${label}</td>${cells}</tr>`;
       }).join("");
@@ -3569,8 +3582,12 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
       });
 
       medSch.forEach(s => {
-        const colKey = `med_${(s.name || "").replace(/\s+/g, "_")}`;
-        rows.push({ ...base, id: `${res.id}_${colKey}`, type: "medication", colKey, time: s.time || "Any", label: s.name || "Medication", qty: [s.amount, s.unit].filter(Boolean).join(" "), foodType: "", detail: [s.amount, s.unit].filter(Boolean).join(" "), instruction: s.notes || "", notes: "", logEntry: log[`${today}|${colKey}`] || {} });
+        // Support both new `times` array and legacy `time` string
+        const medTimes = (s.times && s.times.length > 0) ? s.times : (s.time ? [s.time] : ["Any"]);
+        medTimes.forEach(time => {
+          const colKey = `med_${(s.name || "").replace(/\s+/g, "_")}_${time.replace(/\s+/g, "_")}`;
+          rows.push({ ...base, id: `${res.id}_${colKey}`, type: "medication", colKey, time, label: s.name || "Medication", qty: [s.amount, s.unit].filter(Boolean).join(" "), foodType: "", detail: [s.amount, s.unit].filter(Boolean).join(" "), instruction: s.instruction || s.notes || "", notes: s.notes || "", logEntry: log[`${today}|${colKey}`] || {} });
+        });
       });
 
       if (bath && res.checkOut === today) {
@@ -6433,12 +6450,15 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
             <div style={{display:"flex",flexDirection:"column",gap:8}}>
               {dog.fields.medicationSchedules.map((s,i) => (
                 <div key={i} style={{padding:"10px 14px",background:C.bg,borderRadius:10,border:`1px solid ${C.borderLight}`}}>
-                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                     <span style={{fontSize:13,fontWeight:700,color:C.text}}>{s.name}</span>
                     <span style={{fontSize:12,color:C.textSec}}>{s.amount} {s.unit}</span>
-                    {s.time && <span style={{display:"inline-block",padding:"2px 8px",borderRadius:6,background:C.accLt,color:C.acc,fontSize:11,fontWeight:700}}>{s.time}</span>}
+                    {((s.times && s.times.length > 0) ? s.times : (s.time ? [s.time] : [])).map((t,ti) => (
+                      <span key={ti} style={{display:"inline-block",padding:"2px 8px",borderRadius:6,background:C.accLt,color:C.acc,fontSize:11,fontWeight:700}}>{t}</span>
+                    ))}
                   </div>
-                  {s.notes && <div style={{fontSize:12,color:C.textSec,marginTop:4,fontStyle:"italic"}}>{s.notes}</div>}
+                  {s.instruction && <div style={{fontSize:12,color:C.textSec,marginTop:4,fontStyle:"italic"}}>{s.instruction}</div>}
+                  {s.notes && !s.instruction && <div style={{fontSize:12,color:C.textSec,marginTop:4,fontStyle:"italic"}}>{s.notes}</div>}
                 </div>
               ))}
             </div>
@@ -7000,13 +7020,23 @@ function FeedingScheduleEditor({ schedules, onChange, data }) {
 function MedicationScheduleEditor({ schedules, onChange, data }) {
   const [showModal, setShowModal] = useState(false);
   const [editIdx, setEditIdx] = useState(-1);
+  const timeOpts = data.medicationTimeOptions || DEF_MEDICATION_TIME_OPTIONS;
   const unitOpts = data.medicationUnitOptions || DEF_MEDICATION_UNIT_OPTIONS;
+  const nameOpts = data.medicationNameOptions || DEF_MEDICATION_NAME_OPTIONS;
+  const instrOpts = data.medicationInstructionOptions || DEF_MEDICATION_INSTRUCTION_OPTIONS;
 
-  const blank = { id: gid(), time: "", amount: "", unit: "", name: "", notes: "" };
+  const blank = { id: gid(), times: [], amount: "", unit: "", name: "", instruction: "", notes: "" };
   const [draft, setDraft] = useState(blank);
 
   const openAdd = () => { setDraft({ ...blank, id: gid() }); setEditIdx(-1); setShowModal(true); };
-  const openEdit = (idx) => { setDraft({ ...schedules[idx] }); setEditIdx(idx); setShowModal(true); };
+  const openEdit = (idx) => {
+    const s = schedules[idx];
+    // Migrate legacy single `time` string to `times` array
+    const times = s.times || (s.time ? [s.time] : []);
+    setDraft({ ...s, times, instruction: s.instruction || s.notes || "" });
+    setEditIdx(idx);
+    setShowModal(true);
+  };
   const saveDraft = () => {
     if (!draft.name.trim()) return;
     const updated = editIdx >= 0 ? schedules.map((s, i) => i === editIdx ? draft : s) : [...schedules, draft];
@@ -7015,17 +7045,19 @@ function MedicationScheduleEditor({ schedules, onChange, data }) {
   };
   const remove = (idx) => onChange(schedules.filter((_, i) => i !== idx));
 
+  const toggleTime = (t) => setDraft(d => ({ ...d, times: d.times.includes(t) ? d.times.filter(x => x !== t) : [...d.times, t] }));
+
   return (
     <div>
       <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8, letterSpacing: "0.03em", textTransform: "uppercase" }}>Medication Schedules</div>
       {schedules.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
           {schedules.map((s, i) => (
-            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg }}>
+            <div key={s.id || i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg }}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{s.name || "Unnamed"}</div>
-                <div style={{ fontSize: 12, color: C.textSec }}>
-                  {[s.time, s.amount && s.unit ? `${s.amount} ${s.unit}` : s.amount].filter(Boolean).join(" · ") || "No details"}
+                <div style={{ fontSize: 12, color: C.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {[(s.times || []).join(", ") || s.time, s.amount && s.unit ? `${s.amount} ${s.unit}` : s.amount].filter(Boolean).join(" · ") || "No details"}
                 </div>
               </div>
               <button onClick={() => openEdit(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 4 }}><I.Edit /></button>
@@ -7041,13 +7073,27 @@ function MedicationScheduleEditor({ schedules, onChange, data }) {
       {showModal && (
         <Modal title={editIdx >= 0 ? "Edit Medication Schedule" : "Add Medication Schedule"} onClose={() => setShowModal(false)}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <Inp label="Time" value={draft.time} onChange={v => setDraft({ ...draft, time: v })} placeholder="e.g. 8:00 AM, Every 12 hours, With meals…" />
+            {/* Time multi-select pills — matches feeding schedule structure */}
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.03em" }}>Time <span style={{ color: C.dan }}>*</span></div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {timeOpts.map(t => {
+                  const sel = draft.times.includes(t);
+                  return (
+                    <button key={t} onClick={() => toggleTime(t)} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, border: `2px solid ${sel ? C.pri : C.border}`, background: sel ? C.priLt : C.surface, color: sel ? C.pri : C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                      {sel && <I.X />}{t}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <Inp label="Medication Name" type="select" value={draft.name} onChange={v => setDraft({ ...draft, name: v })} options={nameOpts} />
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
               <Inp label="Amount" value={draft.amount} onChange={v => setDraft({ ...draft, amount: v })} placeholder="e.g. 1" />
-              <Inp label="Unit" type="select" value={draft.unit} onChange={v => setDraft({ ...draft, unit: v })} options={["", ...unitOpts]} />
+              <Inp label="Unit" type="select" value={draft.unit} onChange={v => setDraft({ ...draft, unit: v })} options={unitOpts} />
             </div>
-            <Inp label="Medication Name" value={draft.name} onChange={v => setDraft({ ...draft, name: v })} placeholder="e.g. Glucosamine" />
-            <Inp label="Medication Notes" type="textarea" value={draft.notes} onChange={v => setDraft({ ...draft, notes: v })} placeholder="Special instructions…" rows={2} />
+            <Inp label="Medication Instruction" type="select" value={draft.instruction} onChange={v => setDraft({ ...draft, instruction: v })} options={instrOpts} />
+            <Inp label="Medication Notes" value={draft.notes} onChange={v => setDraft({ ...draft, notes: v })} placeholder="Any special notes…" />
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 4 }}>
               <Btn variant="secondary" onClick={() => setShowModal(false)}>Cancel</Btn>
               <Btn onClick={saveDraft}>Save</Btn>
@@ -12231,6 +12277,9 @@ function DropdownListsTab({ data, save }) {
     { key: "foodTypeOptions", label: "Food Types", def: DEF_FOOD_TYPE_OPTIONS, desc: "Types of food available for dogs." },
     { key: "feedingInstructionOptions", label: "Feeding Instructions", def: DEF_FEEDING_INSTRUCTION_OPTIONS, desc: "Special feeding instructions." },
     { key: "medicationUnitOptions", label: "Medication Units", def: DEF_MEDICATION_UNIT_OPTIONS, desc: "Units for medication dosages." },
+    { key: "medicationTimeOptions", label: "Medication Times", def: DEF_MEDICATION_TIME_OPTIONS, desc: "Time slots for medication schedules." },
+    { key: "medicationNameOptions", label: "Medication Names", def: DEF_MEDICATION_NAME_OPTIONS, desc: "Common medications for quick selection." },
+    { key: "medicationInstructionOptions", label: "Medication Instructions", def: DEF_MEDICATION_INSTRUCTION_OPTIONS, desc: "Special instructions for administering medications." },
     { key: "bathTypeOptions", label: "Bath Types", def: DEF_BATH_TYPE_OPTIONS, desc: "Bath service options offered." },
   ];
 
