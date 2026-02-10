@@ -4332,22 +4332,34 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                 if (bulkTargets.length === 0 || bulkAnimating) return;
                 setBulkAnimating(true);
                 setBulkAnimatedIds(new Set());
-                // Animate through each row with a cascade delay
-                for (let i = 0; i < bulkTargets.length; i++) {
-                  const row = bulkTargets[i];
-                  setBulkAnimatedIds(prev => new Set([...prev, row.id]));
+                const today = todayStr();
+                // Build ONE merged reservations array with all updates applied
+                let updatedReservations = [...data.reservations];
+                bulkTargets.forEach(row => {
+                  const logKey = `${today}|${row.colKey}`;
                   const logData = { administered: true, by: actStaffName, at: new Date().toISOString() };
                   if (row.type === "feeding") logData.consumption = "100%";
-                  updateActivityLog(row.reservationId, row.colKey, logData);
+                  updatedReservations = updatedReservations.map(r => r.id === row.reservationId ? { ...r, activityLog: { ...(r.activityLog || {}), [logKey]: { ...(r.activityLog || {})[logKey], ...logData } } } : r);
+                });
+                // Save all changes in one batch
+                save({ ...data, reservations: updatedReservations });
+                // Run cascade animation visually
+                for (let i = 0; i < bulkTargets.length; i++) {
+                  setBulkAnimatedIds(prev => new Set([...prev, bulkTargets[i].id]));
                   if (i < bulkTargets.length - 1) await new Promise(r => setTimeout(r, 80));
                 }
                 setTimeout(() => { setBulkAnimating(false); setBulkAnimatedIds(new Set()); }, 600);
               };
 
               const bulkClearAll = () => {
+                const today = todayStr();
+                let updatedReservations = [...data.reservations];
                 filteredActivities.forEach(row => {
-                  if (row.logEntry?.administered) updateActivityLog(row.reservationId, row.colKey, { administered: false, by: "", at: "" });
+                  if (!row.logEntry?.administered) return;
+                  const logKey = `${today}|${row.colKey}`;
+                  updatedReservations = updatedReservations.map(r => r.id === row.reservationId ? { ...r, activityLog: { ...(r.activityLog || {}), [logKey]: { administered: false, by: "", at: "" } } } : r);
                 });
+                save({ ...data, reservations: updatedReservations });
               };
 
               const timePills = [["all","All"],["am","AM"],["noon","Noon"],["pm","PM"]];
