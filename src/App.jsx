@@ -3724,19 +3724,22 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     setBulkAnimatedIds(new Set());
     const today = todayStr();
     const actStaffName = profile?.full_name || "Staff";
-    let updatedReservations = [...data.reservations];
-    pendingActivities.forEach(row => {
+    // Stagger saves row-by-row so checkboxes check off in sync with the highlight
+    const snapshot = [...pendingActivities];
+    let runningReservations = [...data.reservations];
+    for (let i = 0; i < snapshot.length; i++) {
+      const row = snapshot[i];
       const logKey = `${today}|${row.colKey}`;
       const logData = { administered: true, by: actStaffName, at: new Date().toISOString() };
       if (row.type === "feeding") logData.consumption = "100%";
-      updatedReservations = updatedReservations.map(r => r.id === row.reservationId ? { ...r, activityLog: { ...(r.activityLog || {}), [logKey]: { ...(r.activityLog || {})[logKey], ...logData } } } : r);
-    });
-    save({ ...data, reservations: updatedReservations });
-    for (let i = 0; i < pendingActivities.length; i++) {
-      setBulkAnimatedIds(prev => new Set([...prev, pendingActivities[i].id]));
-      if (i < pendingActivities.length - 1) await new Promise(r => setTimeout(r, 80));
+      // Update the accumulator with this single row
+      runningReservations = runningReservations.map(r => r.id === row.reservationId ? { ...r, activityLog: { ...(r.activityLog || {}), [logKey]: { ...(r.activityLog || {})[logKey], ...logData } } } : r);
+      // Save triggers re-render → this row's checkbox checks off
+      save({ ...data, reservations: runningReservations });
+      setBulkAnimatedIds(prev => new Set([...prev, row.id]));
+      if (i < snapshot.length - 1) await new Promise(r => setTimeout(r, 120));
     }
-    setTimeout(() => { setBulkAnimating(false); setBulkAnimatedIds(new Set()); }, 600);
+    setTimeout(() => { setBulkAnimating(false); setBulkAnimatedIds(new Set()); }, 800);
   };
   const bulkResetAll = () => {
     const today = todayStr();
@@ -4639,7 +4642,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                         const cLast = row.client?.fields.last_name || "";
                         const dName = row.dog?.fields.name || "Unknown";
                         return (
-                          <div key={row.id} style={{ display: "grid", gridTemplateColumns: actGrid, padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center", background: administered ? C.suc + "08" : "transparent", transition: "background 0.1s", ...(justAnimated ? { background: C.sucLt, transition: "background 0.4s ease-out" } : {}) }}
+                          <div key={row.id} style={{ display: "grid", gridTemplateColumns: actGrid, padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center", background: administered ? C.suc + "08" : "transparent", transition: "background 0.3s", ...(justAnimated ? { background: C.suc + "22", boxShadow: `inset 4px 0 0 ${C.suc}`, transition: "background 0.6s ease-out, box-shadow 0.6s ease-out" } : {}) }}
                             onMouseEnter={e => { if (!administered) e.currentTarget.style.background = C.surfaceHover; }}
                             onMouseLeave={e => { e.currentTarget.style.background = administered ? C.suc + "08" : "transparent"; }}>
                             {/* Time */}
