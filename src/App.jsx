@@ -549,15 +549,8 @@ function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime
       const profile = dogProfiles ? dogProfiles.find(d => d.id === dog.id) : null;
       const fields = profile ? profile.fields : (dog.fields || {});
       const dogName = fields.name || "Dog";
-      // Bath
-      if (fields.bath_type && fields.bath_type !== "None") {
-        const bathKey = `${fields.bath_type} Bath`;
-        const bathRate = (p.addOns || {})[bathKey] ?? (p.bathPrices || {})[fields.bath_type] ?? 0;
-        if (bathRate > 0) {
-          lines.push({ label: `${bathKey} — ${dogName}`, rate: bathRate, qty: 1, total: bathRate, isAddon: true });
-          subtotal += bathRate;
-        }
-      }
+      // Bath — only priced when explicitly included via selectedAddOns on the reservation
+      // (no longer auto-added from dog profile; bath add-ons are manual)
       // Feeding pricing — per serving with AM/PM skip logic
       const feeds = fields.feedingSchedules || [];
       if (feeds.length > 0 && dayDates.length > 0) {
@@ -7421,7 +7414,6 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         cf[did] = {
           feedingSchedules: careFields[did]?.feedingSchedules ?? (dog.fields.feedingSchedules || []),
           medicationSchedules: careFields[did]?.medicationSchedules ?? (dog.fields.medicationSchedules || []),
-          bath_type: careFields[did]?.bath_type ?? dog.fields.bath_type ?? "",
         };
       }
     });
@@ -7431,21 +7423,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   useEffect(()=>{if(type==="daycare"||type==="dayboarding"||type==="tour"||type==="evaluation")setCheckOut(checkIn);else if(type==="boarding"&&checkOut<=checkIn)setCheckOut(addDays(checkIn,1));},[type,checkIn]);
   useEffect(()=>{if(type==="daycare"||type==="dayboarding"){setCheckInTime("07:00");setCheckOutTime("18:00");}else if(type==="tour"){setCheckInTime("14:00");setCheckOutTime("14:30");}else if(type==="evaluation"){setCheckInTime("09:00");setCheckOutTime("15:00");}else{setCheckInTime("09:00");setCheckOutTime("11:00");}},[type]);
   useEffect(()=>{if(type==="dayboarding")setRoomType("Executive Room");},[type]);
-  // Auto-add bath for boarding stays of 2+ nights
-  useEffect(()=>{
-    if(type==="boarding"&&countNights(checkIn,checkOut)>=2&&selectedDogs.length>0){
-      setCareFields(prev=>{
-        const next={...prev};
-        selectedDogs.forEach(did=>{
-          const dog=data.dogs.find(d=>d.id===did);
-          if(dog&&!(next[did]||{}).bath_type){
-            next[did]={...next[did],bath_type:dog.fields.bath_type||"Standard"};
-          }
-        });
-        return next;
-      });
-    }
-  },[type,checkIn,checkOut,selectedDogs.join(",")]);
+  // (Bath auto-add removed — baths are manual add-ons only)
   useEffect(()=>{setSelectedRoom("");},[roomType]);
 
   // Hotkeys: T cycles type, R cycles room type (capture phase so page-level takes priority over global nav)
@@ -7537,11 +7515,11 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         careOverrides: {
           feedingSchedules: (careFields[did] || {}).feedingSchedules || [],
           medicationSchedules: (careFields[did] || {}).medicationSchedules || [],
-          bath_type: (careFields[did] || {}).bath_type || "",
           // Legacy text fields for backward compat with check-in modal
           feeding: summarizeFeeding((careFields[did] || {}).feedingSchedules || []),
           medications: summarizeMeds((careFields[did] || {}).medicationSchedules || []),
         },
+        selectedAddOns: (dogAddOns[did]?.selectedAddOns || []),
         pricing: resPricing,
         ...(isSecondInRoom ? {isSecondDogSameRoom: true} : {}),
         ...(resDiscountType !== "none" && resDiscountValue > 0 ? { discountType: resDiscountType, discountValue: resDiscountValue } : {}),
@@ -7556,10 +7534,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
       const care = careFields[did] || {};
       const profileFeedSch = dog.fields.feedingSchedules || [];
       const profileMedSch = dog.fields.medicationSchedules || [];
-      const profileBath = dog.fields.bath_type || "";
       const resFeedSch = care.feedingSchedules || [];
       const resMedSch = care.medicationSchedules || [];
-      const resBath = care.bath_type || "";
       if(JSON.stringify(resFeedSch) !== JSON.stringify(profileFeedSch) && resFeedSch.length > 0) {
         changes.push({ dogId: did, dogName: dog.fields.name, field: "feedingSchedules", oldVal: profileFeedSch, newVal: resFeedSch,
           oldLabel: summarizeFeeding(profileFeedSch) || "None", newLabel: summarizeFeeding(resFeedSch) || "None", target: "dog" });
@@ -7567,9 +7543,6 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
       if(JSON.stringify(resMedSch) !== JSON.stringify(profileMedSch) && resMedSch.length > 0) {
         changes.push({ dogId: did, dogName: dog.fields.name, field: "medicationSchedules", oldVal: profileMedSch, newVal: resMedSch,
           oldLabel: summarizeMeds(profileMedSch) || "None", newLabel: summarizeMeds(resMedSch) || "None", target: "dog" });
-      }
-      if(resBath !== profileBath && resBath !== "") {
-        changes.push({ dogId: did, dogName: dog.fields.name, field: "bath_type", oldVal: profileBath, newVal: resBath, target: "dog" });
       }
     });
     // Check emergency contact changes
@@ -7659,6 +7632,25 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   // Live pricing calculation
   const livePricing = useMemo(() => {
     if (!type || selectedDogs.length === 0) return null;
+    const addOnPrices = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
+    // Helper: append selected add-on line items for a dog
+    const appendAddOns = (result, did) => {
+      const dog = data.dogs.find(d => d.id === did);
+      const dogName = dog ? (dog.fields.name || "Dog") : "Dog";
+      const addOns = (dogAddOns[did]?.selectedAddOns || []);
+      let addOnTotal = 0;
+      addOns.forEach(addon => {
+        const rate = addOnPrices[addon] ?? 0;
+        if (rate > 0) {
+          result.lineItems.push({ label: `${addon} — ${dogName}`, rate, qty: 1, total: rate, isAddon: true });
+          addOnTotal += rate;
+        }
+      });
+      result.subtotal += addOnTotal;
+      result.total += addOnTotal;
+      result.deposit = Math.round(result.subtotal * (result.depositPercent / 100) * 100) / 100;
+      result.balance = Math.round((result.total - result.deposit) * 100) / 100;
+    };
     // For multi-dog boarding, compute per-dog then combine
     if (type === "boarding" && selectedDogs.length > 1) {
       let combined = { lineItems: [], subtotal: 0, discountTotal: 0, total: 0, deposit: 0, balance: 0, payAt: "booking", depositRefundable: false, depositPercent: 0 };
@@ -7685,6 +7677,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         combined.depositRefundable = pr.depositRefundable;
         combined.depositPercent = pr.depositPercent;
       });
+      // Append manual add-ons for each dog
+      selectedDogs.forEach(did => appendAddOns(combined, did));
       combined.subtotal = Math.round(combined.subtotal * 100) / 100;
       combined.discountTotal = Math.round(combined.discountTotal * 100) / 100;
       combined.total = Math.round(combined.total * 100) / 100;
@@ -7695,13 +7689,16 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
     const did = selectedDogs[0];
     const dog = data.dogs.find(d => d.id === did);
     const singleSegs = (perDogConfig[did] || {}).roomSegments || [];
-    return calcReservationPricing({
+    const result = calcReservationPricing({
       type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize,
       dogs: dog ? [dog] : [], dogProfiles: data.dogs, pricing: data.pricing,
       isSecondDogSameRoom: false,
       roomSegments: singleSegs.length > 0 ? singleSegs : undefined,
     });
-  }, [type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, selectedDogs.join(","), data.pricing, perDogMode, JSON.stringify(perDogConfig)]);
+    // Append manual add-ons
+    appendAddOns(result, did);
+    return result;
+  }, [type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, selectedDogs.join(","), data.pricing, perDogMode, JSON.stringify(perDogConfig), JSON.stringify(dogAddOns)]);
 
   return (
     <div>
@@ -8348,11 +8345,9 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                 const care = careFields[did] || {};
                 const profileFeedSch = dog.fields.feedingSchedules || [];
                 const profileMedSch = dog.fields.medicationSchedules || [];
-                const profileBath = dog.fields.bath_type || "";
                 const feedingChanged = JSON.stringify(care.feedingSchedules || []) !== JSON.stringify(profileFeedSch);
                 const medsChanged = JSON.stringify(care.medicationSchedules || []) !== JSON.stringify(profileMedSch);
-                const bathChanged = care.bath_type !== undefined && care.bath_type !== profileBath;
-                const anyChanged = feedingChanged || medsChanged || bathChanged;
+                const anyChanged = feedingChanged || medsChanged;
                 return (
                   <div key={did} style={{padding:"16px 20px",borderRadius:12,border:`1.5px solid ${anyChanged?C.acc:C.border}`,background:anyChanged?C.accLt+"30":C.bg}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
@@ -8369,19 +8364,27 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                         {medsChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
                         <MedicationScheduleEditor schedules={care.medicationSchedules || []} onChange={v=>updateCare(did,"medicationSchedules",v)} data={data}/>
                       </div>
-                      {(type!=="boarding"||countNights(checkIn,checkOut)>=2)&&<div>
-                          {bathChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
-                          <div style={{fontSize:11,fontWeight:600,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:6}}>Bathing Type</div>
-                          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                            {BATH_OPTS.map(opt=>{
-                              const sel=(care.bath_type??"")=== opt;
-                              const isProfile=profileBath===opt;
-                              return <button key={opt} onClick={()=>updateCare(did,"bath_type",opt)} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:12,fontWeight:sel?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",display:"flex",alignItems:"center",gap:4}}>
-                                {sel&&<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
-                                {opt}{isProfile&&<span style={{fontSize:9,color:C.acc,fontWeight:700,marginLeft:2}}>(Profile)</span>}
-                              </button>;
-                            })}
-                          </div>
+                      {type==="boarding"&&countNights(checkIn,checkOut)>=2&&<div>
+                        <div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`,marginBottom:8}}>
+                          <strong style={{color:C.text}}>Bathing Policy:</strong> K9 Resorts requires all dogs boarding 2 or more nights receive a bath to ensure every pup goes home smelling and feeling great.
+                        </div>
+                        <div style={{fontSize:11,fontWeight:600,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:6}}>Bathing Type <span style={{color:C.dan}}>*</span></div>
+                        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                          {BATH_OPTS.map(opt=>{
+                            const bathAddonKey = `${opt} Bath`;
+                            const sel=(dogAddOns[did]?.selectedBath||"")=== opt;
+                            return <button key={opt} onClick={()=>{
+                              // Set selected bath type and sync into selectedAddOns for pricing
+                              setDogAddOns(prev=>{
+                                const prevAddOns = (prev[did]?.selectedAddOns||[]).filter(a=>!a.endsWith(" Bath"));
+                                return {...prev,[did]:{...prev[did], selectedBath: sel ? "" : opt, selectedAddOns: sel ? prevAddOns : [...prevAddOns, bathAddonKey]}};
+                              });
+                            }} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:12,fontWeight:sel?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",display:"flex",alignItems:"center",gap:4}}>
+                              {sel&&<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                              {opt}
+                            </button>;
+                          })}
+                        </div>
                       </div>}
                     </div>
                     {/* Add-Ons */}
