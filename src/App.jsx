@@ -2010,13 +2010,104 @@ function Btn({children,variant="primary",size="md",onClick,disabled,style={},ico
   return <button onClick={onClick} disabled={disabled} style={{...base,...sz[size],...vr[variant],...style}}>{icon&&icon}{children}</button>;
 }
 
+// ─── Custom Select — premium dropdown replacing native <select> everywhere ───
+function CustomSelect({ value, onChange, options, placeholder, disabled, style: extraStyle, small }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const listRef = useRef(null);
+  useEffect(() => { if (!open) return; const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [open]);
+  // Scroll to selected item when opening
+  useEffect(() => { if (open && listRef.current && value) { const el = listRef.current.querySelector(`[data-val="${CSS.escape ? CSS.escape(value) : value}"]`); if (el) el.scrollIntoView({ block: "nearest" }); } }, [open]);
+  const opts = (options || []).map(o => typeof o === "string" ? { value: o, label: o } : o);
+  const selected = opts.find(o => o.value === value);
+  const sz = small ? { padding: "6px 10px", fontSize: 12, borderRadius: 8 } : { padding: "10px 14px", fontSize: 14, borderRadius: 10 };
+  return (
+    <div ref={ref} style={{ position: "relative", width: "100%", ...extraStyle }}>
+      <button type="button" onClick={() => { if (!disabled) setOpen(!open); }}
+        style={{ width: "100%", ...sz, border: `1.5px solid ${open ? C.pri : C.border}`, fontFamily: "inherit", color: selected ? C.text : C.textMut, background: disabled ? C.bg : C.surface, cursor: disabled ? "default" : "pointer", textAlign: "left", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, transition: "border 0.15s", outline: "none", boxSizing: "border-box", fontWeight: selected ? 500 : 400, ...(disabled ? { opacity: 0.55, pointerEvents: "none" } : {}) }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{selected ? selected.label : (placeholder || "Select...")}</span>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2.5" strokeLinecap="round" style={{ flexShrink: 0, transition: "transform 0.15s", transform: open ? "rotate(180deg)" : "rotate(0deg)" }}><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      {open && (
+        <div ref={listRef} style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, zIndex: 200, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 8px 30px rgba(0,0,0,0.12)", maxHeight: 220, overflowY: "auto", padding: "4px 0" }}>
+          {/* Empty option */}
+          <button type="button" data-val="" onClick={() => { onChange(""); setOpen(false); }}
+            style={{ width: "100%", padding: small ? "7px 12px" : "9px 16px", border: "none", background: value === "" ? C.priLt : "transparent", color: C.textMut, fontSize: small ? 12 : 13, fontWeight: 500, fontFamily: "inherit", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 8, transition: "background 0.1s" }}
+            onMouseEnter={e => { if (value !== "") e.currentTarget.style.background = C.bg; }}
+            onMouseLeave={e => { if (value !== "") e.currentTarget.style.background = "transparent"; }}>
+            <span style={{ color: C.textMut, fontStyle: "italic" }}>{placeholder || "Select..."}</span>
+          </button>
+          {opts.filter(o => o.value !== "").map(o => {
+            const isSel = o.value === value;
+            return (
+              <button type="button" key={o.value} data-val={o.value} onClick={() => { onChange(o.value); setOpen(false); }}
+                style={{ width: "100%", padding: small ? "7px 12px" : "9px 16px", border: "none", background: isSel ? C.priLt : "transparent", color: isSel ? C.pri : C.text, fontSize: small ? 12 : 13, fontWeight: isSel ? 700 : 500, fontFamily: "inherit", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 8, transition: "background 0.1s" }}
+                onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = C.bg; }}
+                onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = "transparent"; }}>
+                {isSel && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="20 6 9 17 4 12"/></svg>}
+                <span>{o.label}</span>
+              </button>
+            );
+          })}
+          {opts.length === 0 && <div style={{ padding: "12px 16px", fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No options available</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Mini Date Picker — compact inline date picker with calendar popup ───
+function MiniDatePicker({ value, onChange, style: extraStyle, min, max, disabled, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const parsed = value ? new Date(value + "T12:00:00") : new Date();
+  const [vMonth, setVMonth] = useState(parsed.getMonth());
+  const [vYear, setVYear] = useState(parsed.getFullYear());
+  useEffect(() => { if (!open) return; const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [open]);
+  useEffect(() => { if (value && open) { const d = new Date(value + "T12:00:00"); setVMonth(d.getMonth()); setVYear(d.getFullYear()); } }, [open]);
+  const days = useMemo(() => { const first = new Date(vYear, vMonth, 1); const sd = first.getDay(); const dim = new Date(vYear, vMonth + 1, 0).getDate(); const c = []; for (let i = 0; i < sd; i++) c.push(null); for (let d = 1; d <= dim; d++) c.push(d); return c; }, [vMonth, vYear]);
+  const ml = new Date(vYear, vMonth).toLocaleDateString("en-US", { month: "short", year: "numeric" });
+  const prev = () => { if (vMonth === 0) { setVMonth(11); setVYear(y => y - 1); } else setVMonth(m => m - 1); };
+  const next = () => { if (vMonth === 11) { setVMonth(0); setVYear(y => y + 1); } else setVMonth(m => m + 1); };
+  const pick = (day) => { const m = String(vMonth + 1).padStart(2, "0"); const d = String(day).padStart(2, "0"); onChange(`${vYear}-${m}-${d}`); setOpen(false); };
+  const display = value ? new Date(value + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+  const td = new Date().toISOString().slice(0, 10);
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-block", ...extraStyle }}>
+      <button type="button" onClick={() => { if (!disabled) setOpen(!open); }}
+        style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${open ? C.pri : C.border}`, fontSize: 11, fontFamily: "inherit", color: value ? C.text : C.textMut, background: disabled ? C.bg : C.surface, cursor: disabled ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 5, transition: "border 0.15s", outline: "none", fontWeight: 600, whiteSpace: "nowrap", ...(disabled ? { opacity: 0.55, pointerEvents: "none" } : {}) }}>
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        {display || (placeholder || "Pick date")}
+      </button>
+      {open && (
+        <div style={{ position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 200, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 8px 30px rgba(0,0,0,0.15)", padding: 14, width: 260 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            <button onClick={prev} style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${C.border}`, background: C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, fontFamily: "inherit", padding: 0 }}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{ml}</span>
+            <button onClick={next} style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${C.border}`, background: C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, fontFamily: "inherit", padding: 0 }}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", marginBottom: 2 }}>{["Su","Mo","Tu","We","Th","Fr","Sa"].map(d => <span key={d} style={{ fontSize: 9, fontWeight: 700, color: C.textMut, padding: "2px 0" }}>{d}</span>)}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", gap: 1 }}>
+            {days.map((day, i) => { if (day === null) return <div key={`e${i}`} />; const m = String(vMonth + 1).padStart(2, "0"); const d = String(day).padStart(2, "0"); const ds = `${vYear}-${m}-${d}`; const isSel = ds === value; const isToday = ds === td; const isDis = (min && ds < min) || (max && ds > max); return (
+              <button key={i} onClick={() => !isDis && pick(day)} style={{ width: 30, height: 30, borderRadius: 8, border: isSel ? `2px solid ${C.pri}` : isToday ? `1.5px solid ${C.acc}` : "1.5px solid transparent", background: isSel ? C.priLt : "transparent", color: isDis ? C.border : isSel ? C.pri : isToday ? C.acc : C.text, fontSize: 12, fontWeight: isSel || isToday ? 700 : 500, cursor: isDis ? "default" : "pointer", fontFamily: "inherit", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto", opacity: isDis ? 0.35 : 1 }} onMouseEnter={e => { if (!isSel && !isDis) e.currentTarget.style.background = C.bg; }} onMouseLeave={e => { if (!isSel && !isDis) e.currentTarget.style.background = "transparent"; }}>{day}</button>
+            ); })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Inp({label,value,onChange,type="text",placeholder,required,style={},options,rows,autoFocus,disabled}) {
   const ls={display:"block",fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"};
   const dis=disabled?{opacity:0.55,pointerEvents:"none",background:C.bg}:{};
   const is={width:"100%",padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:14,fontFamily:"inherit",color:C.text,background:C.surface,outline:"none",transition:"border 0.15s",boxSizing:"border-box",...style,...dis};
   if(type==="select") {
     const opts = (options||[]).map(o => typeof o === "string" ? { value: o, label: o } : o);
-    return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<select value={value||""} onChange={e=>onChange(e.target.value)} disabled={disabled} style={{...is,appearance:"none",backgroundImage:`url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236B7280' fill='none' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")`,backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center"}}><option value="">Select...</option>{opts.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select></label>;
+    return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<CustomSelect value={value||""} onChange={onChange} options={opts} placeholder={placeholder||"Select..."} disabled={disabled}/></label>;
+  }
+  if(type==="date") {
+    return <CalendarPicker label={label} value={value||""} onChange={onChange} required={required} disabled={disabled}/>;
   }
   if(type==="checkbox") return <label style={{display:"flex",alignItems:"center",gap:10,cursor:disabled?"default":"pointer",...(disabled?{opacity:0.55,pointerEvents:"none"}:{})}}><div onClick={()=>{if(!disabled)onChange(!value);}} style={{width:22,height:22,borderRadius:6,border:`2px solid ${value?C.pri:C.border}`,background:value?C.pri:"#fff",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s",cursor:disabled?"default":"pointer",flexShrink:0,color:"#fff"}}>{value&&<I.Check/>}</div><span style={{fontSize:14,color:C.text}}>{label}</span></label>;
   if(type==="textarea") return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<textarea value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows||3} disabled={disabled} style={{...is,resize:"vertical",minHeight:70}} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/></label>;
@@ -3025,9 +3116,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                         return (
                           <div key={vId+"edit"} style={{marginTop:4,display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                             <span style={{fontSize:11,color:C.textSec,minWidth:100,fontWeight:600}}>{vaxName}</span>
-                            <input type="date" value={curDate} style={{fontSize:11,padding:"4px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontFamily:"inherit",maxWidth:150,flex:"0 0 auto"}}
-                              onChange={async(e)=>{
-                                const newDogs=data.dogs.map(d=>d.id===dog.id?{...d,fields:{...d.fields,[vId]:e.target.value}}:d);
+                            <MiniDatePicker value={curDate} onChange={async(v)=>{
+                                const newDogs=data.dogs.map(d=>d.id===dog.id?{...d,fields:{...d.fields,[vId]:v}}:d);
                                 await save({...data,dogs:newDogs});
                               }}/>
                             {curDate && <span style={{fontSize:10,color:vaxStatus.expired?.includes(vId)?C.dan:C.suc,fontWeight:600}}>{vaxStatus.expired?.includes(vId)?"Expired":"Valid"}</span>}
@@ -4966,8 +5056,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                         const curDate=dog.fields[vId]||"";const vax=VACCINES.find(v=>v.id===vId);const vaxName=vax?vax.name:vId.replace(/_/g," ");
                         return <div key={vId+"e"} style={{marginTop:2,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                           <span style={{fontSize:10,color:C.textSec,minWidth:90,fontWeight:600}}>{vaxName}</span>
-                          <input type="date" value={curDate} style={{fontSize:10,padding:"3px 6px",borderRadius:5,border:`1px solid ${C.border}`,fontFamily:"inherit",maxWidth:140,flex:"0 0 auto"}}
-                            onChange={async(e)=>{await save({...data,dogs:data.dogs.map(d=>d.id===dog.id?{...d,fields:{...d.fields,[vId]:e.target.value}}:d)});}}/>
+                          <MiniDatePicker value={curDate} onChange={async(v)=>{await save({...data,dogs:data.dogs.map(d=>d.id===dog.id?{...d,fields:{...d.fields,[vId]:v}}:d)});}}/>
                           {curDate&&<span style={{fontSize:9,color:vaxStatus.expired?.includes(vId)?C.dan:C.suc,fontWeight:600}}>{vaxStatus.expired?.includes(vId)?"Expired":"Valid"}</span>}
                         </div>;
                       })}
@@ -6812,10 +6901,7 @@ function QuestionnaireViewer({ data, save, clientId, dogId, nav }) {
     }
     if (field.type === "select") {
       return (
-        <select value={val} onChange={e => setVal(field.id, e.target.value)} style={inputStyle}>
-          <option value="">— Select —</option>
-          {(field.options || []).map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
+        <CustomSelect value={val} onChange={v => setVal(field.id, v)} options={(field.options||[]).map(o=>({value:o,label:o}))} placeholder="— Select —"/>
       );
     }
     if (field.type === "radio") {
@@ -8060,8 +8146,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                         </div>
                         <div>
                           <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,textTransform:"uppercase"}}>Check-Out</div>
-                          <input type="date" value={dogCO} onChange={e=>setPerDogConfig(prev=>({...prev,[did]:{...prev[did],checkOut:e.target.value}}))}
-                            style={{padding:"8px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,background:C.surface,fontSize:12,fontFamily:"inherit",color:C.text,width:"100%"}}/>
+                          <MiniDatePicker value={dogCO} onChange={v=>setPerDogConfig(prev=>({...prev,[did]:{...prev[did],checkOut:v}}))}/>
                         </div>
                       </div>
                       {segments.length===0&&(
@@ -8130,8 +8215,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                                   style={{padding:"2px 6px",borderRadius:4,border:`1px solid ${C.dan}40`,background:C.dan+"12",color:C.dan,fontSize:9,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Remove</button>
                               </div>
                               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
-                                <div><div style={{fontSize:9,color:C.textMut}}>From</div><input type="date" value={seg.startDate} onChange={e=>pdUpdateStart(si,e.target.value)} style={{padding:"4px 6px",borderRadius:5,border:`1px solid ${C.border}`,fontSize:10,fontFamily:"inherit",width:"100%"}}/></div>
-                                <div><div style={{fontSize:9,color:C.textMut}}>To</div><input type="date" value={seg.endDate} onChange={e=>pdUpdateEnd(si,e.target.value)} style={{padding:"4px 6px",borderRadius:5,border:`1px solid ${C.border}`,fontSize:10,fontFamily:"inherit",width:"100%"}}/></div>
+                                <div><div style={{fontSize:9,color:C.textMut}}>From</div><MiniDatePicker value={seg.startDate} onChange={v=>pdUpdateStart(si,v)}/></div>
+                                <div><div style={{fontSize:9,color:C.textMut}}>To</div><MiniDatePicker value={seg.endDate} onChange={v=>pdUpdateEnd(si,v)}/></div>
                               </div>
                               <div style={{display:"flex",gap:3,flexWrap:"wrap",marginBottom:6}}>
                                 {ROOM_TYPES.map(rt=>(
@@ -8254,13 +8339,11 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
                         <div>
                           <div style={{fontSize:10,color:C.textMut,marginBottom:3}}>From</div>
-                          <input type="date" value={seg.startDate} onChange={e=>updateSegStart(si,e.target.value)}
-                            style={{padding:"6px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11,fontFamily:"inherit",width:"100%"}}/>
+                          <MiniDatePicker value={seg.startDate} onChange={v=>updateSegStart(si,v)}/>
                         </div>
                         <div>
                           <div style={{fontSize:10,color:C.textMut,marginBottom:3}}>To</div>
-                          <input type="date" value={seg.endDate} onChange={e=>updateSegEnd(si,e.target.value)}
-                            style={{padding:"6px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:11,fontFamily:"inherit",width:"100%"}}/>
+                          <MiniDatePicker value={seg.endDate} onChange={v=>updateSegEnd(si,v)}/>
                         </div>
                       </div>
                       <div style={{fontSize:10,fontWeight:600,color:C.textSec,marginBottom:4,textTransform:"uppercase"}}>Room Type</div>
@@ -8400,9 +8483,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                           return (
                             <div key={vId+"edit"} style={{marginTop:4,display:"flex",alignItems:"center",gap:6}}>
                               <span style={{fontSize:11,color:C.textSec,minWidth:120}}>{vId.replace(/_/g," ")}</span>
-                              <input type="date" value={curDate} style={{fontSize:11,padding:"4px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontFamily:"inherit"}}
-                                onChange={async(e)=>{
-                                  const newDogs=data.dogs.map(d=>d.id===v.dog.id?{...d,fields:{...d.fields,[vId]:e.target.value}}:d);
+                              <MiniDatePicker value={curDate} onChange={async(v)=>{
+                                  const newDogs=data.dogs.map(d=>d.id===v.dog.id?{...d,fields:{...d.fields,[vId]:v}}:d);
                                   await save({...data,dogs:newDogs});
                                 }}/>
                               {curDate && <span style={{fontSize:10,color:v.status.expired?.includes(vId)?C.dan:C.suc,fontWeight:600}}>{v.status.expired?.includes(vId)?"Expired":"Valid"}</span>}
@@ -10178,10 +10260,7 @@ function CRMPage({ data, save, nav, profile }) {
     if (type === "select") {
       return (
         <div style={{ width }}>
-          <select value={entry[field] || ""} onChange={e => updateEntry(entry.id, field, e.target.value)} style={{ width: "100%", border: "none", background: "transparent", fontSize: 12, fontFamily: "inherit", color: C.text, padding: "2px 0", cursor: "pointer", outline: "none" }}>
-            <option value="">—</option>
-            {options.map(o => <option key={o} value={o}>{o}</option>)}
-          </select>
+          <CustomSelect value={entry[field]||""} onChange={v=>updateEntry(entry.id,field,v)} options={options.map(o=>({value:o,label:o}))} placeholder="—" small/>
         </div>
       );
     }
@@ -11743,12 +11822,7 @@ function PricingTab({ data, save }) {
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Pay at:</span>
-                  <select value={rule.payAt || "booking"} onChange={e => update(`paymentRules.${type}.payAt`, e.target.value)}
-                    style={{ padding: "5px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 12, fontWeight: 600, color: C.text, fontFamily: "inherit" }}>
-                    <option value="booking">Booking</option>
-                    <option value="checkout">Checkout</option>
-                    <option value="free">Free</option>
-                  </select>
+                  <CustomSelect value={rule.payAt||"booking"} onChange={v=>update(`paymentRules.${type}.payAt`,v)} options={[{value:"booking",label:"Booking"},{value:"checkout",label:"Checkout"},{value:"free",label:"Free"}]} small style={{width:110}}/>
                 </div>
                 <label style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: C.textSec, cursor: "pointer" }}>
                   <input type="checkbox" checked={rule.depositRefundable || false} onChange={e => update(`paymentRules.${type}.depositRefundable`, e.target.checked)}
@@ -12150,13 +12224,10 @@ function CreatePackageWizard({ data, save, onClose }) {
                   </div>
                 )}
                 {opt.type === "fixed" && expirationType === "fixed" && (
-                  <input
-                    type="date"
+                  <MiniDatePicker
                     value={expirationDate}
-                    onChange={(e) => setExpirationDate(e.target.value)}
+                    onChange={(v) => setExpirationDate(v)}
                     min={todayStr()}
-                    style={{padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}}
-                    className="no-focus-ring"
                   />
                 )}
               </div>
@@ -12638,10 +12709,7 @@ function DailyOpsTemplateTab({ data, save }) {
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   {t.hasTime && <input type="text" value={draft.time} onChange={e => setDraft({ ...draft, time: e.target.value })} placeholder="HH:MM" style={{ width: 70, border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 12, fontFamily: "inherit" }} />}
                   <input type="text" value={draft.label} onChange={e => setDraft({ ...draft, label: e.target.value })} style={{ flex: 1, border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 8px", fontSize: 12, fontFamily: "inherit" }} />
-                  {t.hasTime && <select value={draft.dayOfWeek ?? ""} onChange={e => setDraft({ ...draft, dayOfWeek: e.target.value === "" ? null : Number(e.target.value) })} style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 4px", fontSize: 11, fontFamily: "inherit" }}>
-                    <option value="">Daily</option>
-                    {DAY_NAMES_SHORT.map((d, di) => <option key={di} value={di}>{d}</option>)}
-                  </select>}
+                  {t.hasTime && <CustomSelect value={String(draft.dayOfWeek ?? "")} onChange={v=>setDraft({...draft,dayOfWeek:v===""?null:Number(v)})} options={[{value:"",label:"Daily"},...DAY_NAMES_SHORT.map((d,di)=>({value:String(di),label:d}))]} small style={{width:90}}/>}
                 </div>
                 <div style={{ display: "flex", gap: 6 }}><Btn size="sm" onClick={confirmEdit}>Save</Btn><Btn size="sm" variant="secondary" onClick={cancelEdit}>Cancel</Btn></div>
               </div>
@@ -13165,14 +13233,7 @@ function TeamTab({ profile, data, save }) {
                 <div style={{ fontSize: 12, color: isInactive ? C.dan : C.textSec, fontWeight: isInactive ? 600 : 400 }}>{fmtDt(m.last_sign_in_at)}</div>
                 <div>
                   {isOwner && m.id !== profile.id ? (
-                    <select value={m.role || "staff"} onChange={e => updateRole(m.id, e.target.value)}
-                      style={{ padding: "5px 8px", borderRadius: 6, border: "1.5px solid " + C.border, fontSize: 12, fontWeight: 600, color: C.text, background: C.surface, cursor: "pointer", fontFamily: "inherit" }}>
-                      {(data.roles || DEFAULT_ROLES).map(r => (
-                        <option key={r.id} value={r.id}>{r.name}</option>
-                      ))}
-                      {/* Legacy fallbacks if profile.role is a plain string */}
-                      {!((data.roles || []).some(r => r.id === m.role)) && m.role && <option value={m.role}>{m.role}</option>}
-                    </select>
+                    <CustomSelect value={m.role||"staff"} onChange={v=>updateRole(m.id,v)} options={[...(data.roles||DEFAULT_ROLES).map(r=>({value:r.id,label:r.name})),...(!((data.roles||[]).some(r=>r.id===m.role))&&m.role?[{value:m.role,label:m.role}]:[])]} small style={{width:130}}/>
                   ) : (
                     <Badge color={getRoleColor(m, data)}>{getRoleName(m, data)}</Badge>
                   )}
@@ -13555,7 +13616,7 @@ function EnterpriseOperationsPage({ data, save, nav, profile, handleLocationChan
             ))}
           </div>
           <button onClick={()=>setViewDate(addDays(viewDate,viewMode==="week"?-7:-1))} style={{width:32,height:32,borderRadius:8,border:`1px solid ${C.border}`,background:C.surface,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:C.textSec,fontFamily:"inherit",fontSize:16}}>&lsaquo;</button>
-          <input type="date" value={viewDate} onChange={e=>setViewDate(e.target.value)} style={{padding:"6px 12px",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13,fontFamily:"inherit",fontWeight:600,color:C.text}}/>
+          <MiniDatePicker value={viewDate} onChange={v=>setViewDate(v)}/>
           <button onClick={()=>setViewDate(addDays(viewDate,viewMode==="week"?7:1))} style={{width:32,height:32,borderRadius:8,border:`1px solid ${C.border}`,background:C.surface,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",color:C.textSec,fontFamily:"inherit",fontSize:16}}>&rsaquo;</button>
           {!isToday && <Btn size="sm" onClick={()=>setViewDate(todayStr())}>Today</Btn>}
         </div>
@@ -13885,9 +13946,7 @@ function EnterpriseCreatePkgForm({ onSave, onCancel }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div>
           <label style={labelStyle}>Service Category</label>
-          <select value={serviceCategory} onChange={e => setServiceCategory(e.target.value)} style={inputStyle}>
-            <option>Boarding</option><option>Daycare</option><option>Day Boarding</option><option>Grooming</option>
-          </select>
+          <CustomSelect value={serviceCategory} onChange={v=>setServiceCategory(v)} options={["Boarding","Daycare","Day Boarding","Grooming"].map(o=>({value:o,label:o}))}/>
         </div>
         <div>
           <label style={labelStyle}>Service Name *</label>
@@ -13918,10 +13977,7 @@ function EnterpriseCreatePkgForm({ onSave, onCancel }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div>
           <label style={labelStyle}>Expiration</label>
-          <select value={expirationType} onChange={e => setExpirationType(e.target.value)} style={inputStyle}>
-            <option value="relative">Days from purchase</option>
-            <option value="none">No expiration</option>
-          </select>
+          <CustomSelect value={expirationType} onChange={v=>setExpirationType(v)} options={[{value:"relative",label:"Days from purchase"},{value:"none",label:"No expiration"}]}/>
         </div>
         {expirationType === "relative" && <div><label style={labelStyle}>Days</label><input type="number" value={expirationDays} onChange={e => setExpirationDays(parseInt(e.target.value) || 90)} style={inputStyle} min="1" /></div>}
       </div>
@@ -14675,19 +14731,13 @@ function DiscountForm({ discount, referralSources, onSave, onCancel }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div>
           <label style={labelStyle}>Type</label>
-          <select value={type} onChange={e => setType(e.target.value)} style={inputStyle}>
-            <option value="percentage">Percentage (%)</option>
-            <option value="fixed">Fixed Amount ($)</option>
-          </select>
+          <CustomSelect value={type} onChange={v=>setType(v)} options={[{value:"percentage",label:"Percentage (%)"},{value:"fixed",label:"Fixed Amount ($)"}]}/>
         </div>
         <div><label style={labelStyle}>{type === "percentage" ? "Discount %" : "Discount $"}</label><input type="number" value={value} onChange={e => setValue(parseFloat(e.target.value) || 0)} style={inputStyle} min="0" /></div>
       </div>
       <div>
         <label style={labelStyle}>Referral Source</label>
-        <select value={referralSourceId} onChange={e => setReferralSourceId(e.target.value)} style={inputStyle}>
-          <option value="">Any / No specific source</option>
-          {referralSources.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-        </select>
+        <CustomSelect value={referralSourceId} onChange={v=>setReferralSourceId(v)} options={[{value:"",label:"Any / No specific source"},...referralSources.map(r=>({value:r.id,label:r.name}))]}/>
       </div>
       <div>
         <label style={labelStyle}>Applies to Lodging Types</label>
@@ -15312,7 +15362,7 @@ function SettingsPage({ data, save, profile }) {
               <div style={{ display: "flex", gap: 8, marginBottom: 20, alignItems: "flex-end" }}>
                 <div style={{ flex: "0 0 160px" }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4 }}>Date</div>
-                  <input type="date" value={newClosedDate} onChange={e => setNewClosedDate(e.target.value)} style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit" }} />
+                  <MiniDatePicker value={newClosedDate} onChange={v=>setNewClosedDate(v)}/>
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4 }}>Label (optional)</div>
@@ -16271,11 +16321,10 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                               return (
                                 <div key={vId + "edit"} style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
                                   <span style={{ fontSize: 11, color: C.textSec, minWidth: 120 }}>{vId.replace(/_/g, " ")}</span>
-                                  <input type="date" value={curDate} style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.border}`, fontFamily: "inherit" }}
-                                    onChange={(e) => {
+                                  <MiniDatePicker value={curDate} onChange={(v) => {
                                       const newDogs = [...dogs];
                                       const idx = newDogs.findIndex(d => d.id === v.dog.id);
-                                      if (idx >= 0) { newDogs[idx] = { ...newDogs[idx], fields: { ...newDogs[idx].fields, [vId]: e.target.value } }; setDogs(newDogs); }
+                                      if (idx >= 0) { newDogs[idx] = { ...newDogs[idx], fields: { ...newDogs[idx].fields, [vId]: v } }; setDogs(newDogs); }
                                     }} />
                                   {curDate && <span style={{ fontSize: 10, color: v.status.expired?.includes(vId) ? C.dan : C.suc, fontWeight: 600 }}>{v.status.expired?.includes(vId) ? "Expired" : "Valid"}</span>}
                                 </div>
@@ -16958,8 +17007,8 @@ function PaymentFormModal({ onClose, onSave, reservation, client, existingPaymen
         {reservation && <div style={{ fontSize: 13, color: C.textMut }}>Reservation: {reservation.roomType} ({new Date(reservation.checkIn).toLocaleDateString()} – {new Date(reservation.checkOut).toLocaleDateString()})</div>}
         <div><label style={labelS}>Amount ($)</label><input type="number" step="0.01" value={amt} onChange={e => { setAmt(e.target.value); setErr(""); }} placeholder="0.00" style={inputS} /></div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <div><label style={labelS}>Type</label><select value={type} onChange={e => setType(e.target.value)} style={inputS}><option value="payment">Payment</option><option value="deposit">Deposit</option><option value="tip">Tip</option><option value="refund">Refund</option></select></div>
-          <div><label style={labelS}>Method</label><select value={method} onChange={e => setMethod(e.target.value)} style={inputS}><option value="card">Card</option><option value="cash">Cash</option><option value="check">Check</option></select></div>
+          <div><label style={labelS}>Type</label><CustomSelect value={type} onChange={v=>setType(v)} options={[{value:"payment",label:"Payment"},{value:"deposit",label:"Deposit"},{value:"tip",label:"Tip"},{value:"refund",label:"Refund"}]}/></div>
+          <div><label style={labelS}>Method</label><CustomSelect value={method} onChange={v=>setMethod(v)} options={[{value:"card",label:"Card"},{value:"cash",label:"Cash"},{value:"check",label:"Check"}]}/></div>
         </div>
         {method === "card" && <div><label style={labelS}>Card Last 4</label><input maxLength={4} value={card4} onChange={e => setCard4(e.target.value.replace(/\D/g, "").slice(0, 4))} placeholder="0000" style={inputS} /></div>}
         <div><label style={labelS}>Tip ($)</label><input type="number" step="0.01" value={tip} onChange={e => setTip(e.target.value)} placeholder="0.00" style={inputS} /></div>
@@ -17075,9 +17124,7 @@ function PaymentsPage({ data, save, nav, profile }) {
             <input data-shortcut-search="1" placeholder="Search by client..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputS, paddingLeft: 34 }} />
           </div>
           {[["Type", typeF, setTypeF, ["all","payment","deposit","tip","refund"]], ["Method", methodF, setMethodF, ["all","card","cash","check"]], ["Status", statusF, setStatusF, ["all","completed","pending","refunded","failed"]]].map(([lbl, val, set, opts]) => (
-            <select key={lbl} value={val} onChange={e => set(e.target.value)} style={{ padding: "10px 12px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 13, color: C.text, background: C.surface }}>
-              {opts.map(o => <option key={o} value={o}>{o === "all" ? `All ${lbl}s` : o.charAt(0).toUpperCase() + o.slice(1)}</option>)}
-            </select>
+            <CustomSelect key={lbl} value={val} onChange={v=>set(v)} options={opts.map(o=>({value:o,label:o==="all"?`All ${lbl}s`:o.charAt(0).toUpperCase()+o.slice(1)}))} small style={{width:130}}/>
           ))}
         </div>
 
@@ -17486,11 +17533,11 @@ function ReportsPage({ data, save, nav, profile }) {
               <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>From</span>
-                  <input type="date" value={rangeFrom} onChange={e => setRangeFrom(e.target.value)} style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", outline: "none" }}/>
+                  <MiniDatePicker value={rangeFrom} onChange={v=>setRangeFrom(v)}/>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>To</span>
-                  <input type="date" value={rangeTo} onChange={e => setRangeTo(e.target.value)} style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", outline: "none" }}/>
+                  <MiniDatePicker value={rangeTo} onChange={v=>setRangeTo(v)}/>
                 </div>
                 <div style={{ fontSize: 11, color: C.textMut, fontStyle: "italic" }}>Accrual basis — only completed activities within the date range are counted</div>
               </div>
@@ -17575,11 +17622,11 @@ function ReportsPage({ data, save, nav, profile }) {
               <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>From</span>
-                  <input type="date" value={rangeFrom} onChange={e => setRangeFrom(e.target.value)} style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", outline: "none" }}/>
+                  <MiniDatePicker value={rangeFrom} onChange={v=>setRangeFrom(v)}/>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
                   <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>To</span>
-                  <input type="date" value={rangeTo} onChange={e => setRangeTo(e.target.value)} style={{ border: "none", background: "transparent", fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", outline: "none" }}/>
+                  <MiniDatePicker value={rangeTo} onChange={v=>setRangeTo(v)}/>
                 </div>
                 <div style={{ fontSize: 11, color: C.textMut, fontStyle: "italic" }}>
                   Accrual Revenue = Room Count × Room Price ± Multi-Dog Factor + Ancillary Services − Discounts − Refunds
