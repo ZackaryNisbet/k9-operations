@@ -1462,16 +1462,23 @@ function generateDemoData() {
       const bord = vc ? addD(today,ri(30,240)) : addD(today,ri(-120,-1));
       const dhpp = vc ? addD(today,ri(30,365)) : addD(today,ri(-180,-1));
       const flu = srand()>0.3 ? (vc ? addD(today,ri(30,300)) : addD(today,ri(-90,-1))) : "";
-      // Assign classification tags based on weight + eval outcome
-      // Every dog gets an eval tag (they've been evaluated) + one classification tag
-      const tags = ["tag_eval"];
-      const isPrivatePlay = srand() > 0.85; // ~15% are private play
-      if (isPrivatePlay) {
-        tags.push("tag_pp");
-      } else if (w < 35) {
-        tags.push("tag_sp"); // Small Playgroup
+      // Assign EXACTLY ONE classification tag per dog.
+      // ~20% are new dogs (tag_eval only, no prior stays or eval forms).
+      // ~80% are classified dogs with exactly one of: tag_lp, tag_sp, tag_pp.
+      // Classified dogs MUST have a prior eval form + prior reservation.
+      const isNewDog = srand() > 0.80; // ~20% are brand new / awaiting eval
+      let tags;
+      if (isNewDog) {
+        tags = ["tag_eval"];
       } else {
-        tags.push("tag_lp"); // Large Playgroup
+        const isPrivatePlay = srand() > 0.85; // ~15% of classified dogs are private play
+        if (isPrivatePlay) {
+          tags = ["tag_pp"];
+        } else if (w < 35) {
+          tags = ["tag_sp"]; // Small Playgroup
+        } else {
+          tags = ["tag_lp"]; // Large Playgroup
+        }
       }
       const meds = [];
       if (srand()>0.8) meds.push({
@@ -1503,6 +1510,10 @@ function generateDemoData() {
     }
   }
 
+  // Separate eval-only dogs (new, no prior stays) from classified dogs
+  const evalOnlyDogIds = new Set(dogs.filter(d => d.tags.length === 1 && d.tags[0] === "tag_eval").map(d => d.id));
+  const classifiedDogs = dogs.filter(d => !evalOnlyDogIds.has(d.id));
+
   const reservations = [];
   let rIdx = 1;
   const occ = {};
@@ -1522,7 +1533,7 @@ function generateDemoData() {
   const usedDogs = new Set();
   let occToday = 0;
 
-  // Active boarding (~50% of 48 = 24 rooms)
+  // Active boarding (~50% of 48 = 24 rooms) — any dog (eval dogs can be on their first stay)
   for (const {type,room} of allRms) {
     if (occToday >= 24) break;
     const avail = dogs.filter(d => !usedDogs.has(d.id));
@@ -1544,7 +1555,7 @@ function generateDemoData() {
     occToday++;
   }
 
-  // Upcoming boarding (next 1-14 days)
+  // Upcoming boarding (next 1-14 days) — any dog (eval dogs can have upcoming stays)
   for (let i=0;i<30;i++){
     const avail=dogs.filter(d=>!usedDogs.has(d.id));
     if(!avail.length) break;
@@ -1563,9 +1574,9 @@ function generateDemoData() {
     });
   }
 
-  // Past boarding (checked out last 30 days)
+  // Past boarding (checked out last 30 days) — only classified dogs
   for (let i=0;i<40;i++){
-    const avail=dogs.filter(d=>!usedDogs.has(d.id));
+    const avail=classifiedDogs.filter(d=>!usedDogs.has(d.id));
     if(!avail.length) break;
     const dog=rp(avail);
     const ed=ri(1,30),sl=ri(1,7);
@@ -1582,8 +1593,8 @@ function generateDemoData() {
     });
   }
 
-  // Today's daycare (~18 dogs)
-  const dcDogs = dogs.filter(d => !usedDogs.has(d.id)).slice(0,18);
+  // Today's daycare (~18 dogs) — only classified dogs (eval dogs can't do daycare without being evaluated)
+  const dcDogs = classifiedDogs.filter(d => !usedDogs.has(d.id)).slice(0,18);
   for (const dog of dcDogs) {
     usedDogs.add(dog.id);
     const sm = parseInt(dog.fields.weight)<35;
@@ -1598,9 +1609,9 @@ function generateDemoData() {
     });
   }
 
-  // Past daycare (last 30 days)
+  // Past daycare (last 30 days) — only classified dogs
   for (let i=0;i<60;i++){
-    const dog=rp(dogs);
+    const dog=rp(classifiedDogs);
     const da=ri(1,30);
     const dt=addD(today,-da);
     const sm=parseInt(dog.fields.weight)<35;
@@ -1613,9 +1624,10 @@ function generateDemoData() {
     });
   }
 
-  // Tours & Evaluations
+  // Tours — eval-only dogs get tours (they're new, may be touring)
+  const evalOnlyArr = dogs.filter(d => evalOnlyDogIds.has(d.id));
   for (let i=0;i<5;i++){
-    const dog=rp(dogs);
+    const dog = evalOnlyArr.length > 0 ? rp(evalOnlyArr) : rp(dogs);
     const dt = i<2 ? today : addD(today,ri(1,7));
     reservations.push({
       id:"r"+(rIdx++), clientId:dog.clientId, dogId:dog.id, type:"tour",
@@ -1626,12 +1638,13 @@ function generateDemoData() {
       notes:""
     });
   }
+  // Upcoming evaluations — only eval-only dogs (they haven't been evaluated yet)
   for (let i=0;i<5;i++){
-    const dog=rp(dogs);
+    const dog = evalOnlyArr.length > 0 ? rp(evalOnlyArr) : rp(dogs);
     const dt = i<2 ? today : addD(today,ri(1,5));
     reservations.push({
       id:"r"+(rIdx++), clientId:dog.clientId, dogId:dog.id, type:"evaluation",
-      evalResult:rp(["pending","passed_group","passed_private","pending"]),
+      evalResult:"pending",
       checkIn:dt, checkOut:dt,
       checkInTime:rp(["09:00","10:00","11:00"]),
       checkOutTime:rp(["10:00","11:00","12:00"]),
@@ -1640,19 +1653,61 @@ function generateDemoData() {
     });
   }
 
-  // Generate evaluation records for ALL dogs so tags are backed by eval history
+  // Generate evaluation records ONLY for classified dogs (lp/sp/pp) — NOT eval-only dogs.
+  // Classified dogs MUST have a prior eval + at least one prior reservation to support their classification.
   const evalRecords = [];
-  dogs.forEach(dog => {
+  const dogsWithReservations = new Set(reservations.map(r => r.dogId));
+
+  classifiedDogs.forEach(dog => {
     const hasPP = (dog.tags || []).includes("tag_pp");
     const hasLP = (dog.tags || []).includes("tag_lp");
     const hasSP = (dog.tags || []).includes("tag_sp");
-    const evalDate = addD(today, -ri(7, 90)); // eval happened in the past
+    const evalDate = addD(today, -ri(30, 180)); // eval happened well in the past
+
+    // If this classified dog has NO reservation yet, create a past one so their profile shows history
+    if (!dogsWithReservations.has(dog.id)) {
+      const pastDate = addD(evalDate, ri(1, 14)); // a stay shortly after their eval
+      const pastEnd = addD(pastDate, ri(1, 4));
+      const sm = parseInt(dog.fields.weight) < 35;
+      if (srand() > 0.5) {
+        // Past boarding stay
+        const rt = rp(Object.keys(ROOMS)), rm = rp(ROOMS[rt]);
+        reservations.push({
+          id: "r" + (rIdx++), clientId: dog.clientId, dogId: dog.id, type: "boarding",
+          roomType: rt, room: rm, checkIn: pastDate, checkOut: pastEnd,
+          checkInTime: rp(["07:00","08:00","09:00"]),
+          checkOutTime: rp(["10:00","11:00","12:00"]),
+          status: "checked-out", notes: ""
+        });
+      } else {
+        // Past daycare visit
+        reservations.push({
+          id: "r" + (rIdx++), clientId: dog.clientId, dogId: dog.id, type: "daycare",
+          daycareSize: sm ? "small" : "large", checkIn: pastDate, checkOut: pastDate,
+          checkInTime: rp(["06:30","07:00","07:30","08:00"]),
+          checkOutTime: rp(["17:00","17:30","18:00"]),
+          status: "checked-out", notes: ""
+        });
+      }
+    }
+
+    // Create the eval reservation that this eval form is tied to
+    const evalResId = "r" + (rIdx++);
+    reservations.push({
+      id: evalResId, clientId: dog.clientId, dogId: dog.id, type: "evaluation",
+      evalResult: hasPP ? "passed_private" : "passed_group",
+      checkIn: evalDate, checkOut: evalDate,
+      checkInTime: rp(["09:00","10:00","11:00"]),
+      checkOutTime: rp(["10:00","11:00","12:00"]),
+      status: "checked-out", notes: ""
+    });
+
     const result = hasPP ? "yellow" : "green"; // yellow = private play, green = passed group
     evalRecords.push({
       id: "eval_" + dog.id,
       dogId: dog.id,
       clientId: dog.clientId,
-      reservationId: "",
+      reservationId: evalResId,
       date: evalDate,
       evaluatorName: rp(["Casey M.","Hayden T.","Jessica R.","Carlos G.","Amanda K."]),
       evalType: "initial",
