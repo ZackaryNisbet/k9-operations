@@ -2010,16 +2010,17 @@ function Btn({children,variant="primary",size="md",onClick,disabled,style={},ico
   return <button onClick={onClick} disabled={disabled} style={{...base,...sz[size],...vr[variant],...style}}>{icon&&icon}{children}</button>;
 }
 
-function Inp({label,value,onChange,type="text",placeholder,required,style={},options,rows,autoFocus}) {
+function Inp({label,value,onChange,type="text",placeholder,required,style={},options,rows,autoFocus,disabled}) {
   const ls={display:"block",fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"};
-  const is={width:"100%",padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:14,fontFamily:"inherit",color:C.text,background:C.surface,outline:"none",transition:"border 0.15s",boxSizing:"border-box",...style};
+  const dis=disabled?{opacity:0.55,pointerEvents:"none",background:C.bg}:{};
+  const is={width:"100%",padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:14,fontFamily:"inherit",color:C.text,background:C.surface,outline:"none",transition:"border 0.15s",boxSizing:"border-box",...style,...dis};
   if(type==="select") {
     const opts = (options||[]).map(o => typeof o === "string" ? { value: o, label: o } : o);
-    return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<select value={value||""} onChange={e=>onChange(e.target.value)} style={{...is,appearance:"none",backgroundImage:`url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236B7280' fill='none' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")`,backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center"}}><option value="">Select...</option>{opts.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select></label>;
+    return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<select value={value||""} onChange={e=>onChange(e.target.value)} disabled={disabled} style={{...is,appearance:"none",backgroundImage:`url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236B7280' fill='none' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")`,backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center"}}><option value="">Select...</option>{opts.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select></label>;
   }
-  if(type==="checkbox") return <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}><div onClick={()=>onChange(!value)} style={{width:22,height:22,borderRadius:6,border:`2px solid ${value?C.pri:C.border}`,background:value?C.pri:"#fff",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s",cursor:"pointer",flexShrink:0,color:"#fff"}}>{value&&<I.Check/>}</div><span style={{fontSize:14,color:C.text}}>{label}</span></label>;
-  if(type==="textarea") return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<textarea value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows||3} style={{...is,resize:"vertical",minHeight:70}} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/></label>;
-  return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<input type={type} value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} style={is} autoFocus={autoFocus} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/></label>;
+  if(type==="checkbox") return <label style={{display:"flex",alignItems:"center",gap:10,cursor:disabled?"default":"pointer",...(disabled?{opacity:0.55,pointerEvents:"none"}:{})}}><div onClick={()=>{if(!disabled)onChange(!value);}} style={{width:22,height:22,borderRadius:6,border:`2px solid ${value?C.pri:C.border}`,background:value?C.pri:"#fff",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s",cursor:disabled?"default":"pointer",flexShrink:0,color:"#fff"}}>{value&&<I.Check/>}</div><span style={{fontSize:14,color:C.text}}>{label}</span></label>;
+  if(type==="textarea") return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<textarea value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows||3} disabled={disabled} style={{...is,resize:"vertical",minHeight:70}} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/></label>;
+  return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<input type={type} value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} disabled={disabled} style={is} autoFocus={autoFocus} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/></label>;
 }
 
 function Card({children,style={},onClick,hoverable}) {
@@ -2410,6 +2411,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     }
   }, [activityLog]);
 
+  const isReadOnly = reservation.status === "checked-out" || reservation.status === "cancelled";
   const BATH_OPTS = data.bathTypeOptions || ["Standard","Hypo","Medicated","Whitening"];
   const profileFeedingSchedules = dog.fields.feedingSchedules ?? [];
   const profileMedicationSchedules = dog.fields.medicationSchedules ?? [];
@@ -2964,8 +2966,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                   <CheckItem ok={!!(ecName&&ecPhone)} label="Emergency Contact" expandKey="ec"
                     detail={ecName ? ecName : "Not on file"}>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      <Inp label="Contact Name" value={ecName} onChange={setEcName}/>
-                      <Inp label="Contact Phone" type="tel" value={ecPhone} onChange={setEcPhone}/>
+                      <Inp label="Contact Name" value={ecName} onChange={setEcName} disabled={isReadOnly}/>
+                      <Inp label="Contact Phone" type="tel" value={ecPhone} onChange={setEcPhone} disabled={isReadOnly}/>
                     </div>
                   </CheckItem>
                   <CheckItem ok={allAgrSigned} label="Agreements" expandKey="agr"
@@ -3013,28 +3015,34 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             );
           })()}
 
+          {/* Read-only banner for completed reservations */}
+          {isReadOnly && <div style={{padding:"10px 14px",borderRadius:8,background:C.bg,border:`1.5px solid ${C.border}`,marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            <span style={{fontSize:12,fontWeight:600,color:C.textMut}}>This reservation is complete. All details are read-only.</span>
+          </div>}
+
           {/* Section: Dates */}
           {secHeader("Reservation Dates")}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12}}>
-            <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn}/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
-            <Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime}/>
-            <div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut}/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
-            <Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/>
+            <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn} disabled={isReadOnly}/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
+            <Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime} disabled={isReadOnly}/>
+            <div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} disabled={isReadOnly}/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
+            <Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime} disabled={isReadOnly}/>
           </div>
 
           {/* Section: Check-In Requirements (boarding only) */}
           {isBoarding && <>
             {secHeader(isCheckInMode ? "Check-In Requirements" : "Stay Details")}
             <div style={{padding:"16px 18px",borderRadius:12,border:`1.5px solid ${isCheckInMode?C.acc:C.border}`,background:isCheckInMode?C.accLt+"20":C.bg}}>
-              <Inp label={<>Parent Destination {isCheckInMode && <span style={{color:C.dan}}>*</span>}</>} value={parentDest} onChange={v=>{setParentDest(v);setErrors({...errors,parentDestination:undefined});}} placeholder="Where is the parent going during this stay?"/>
+              <Inp label={<>Parent Destination {isCheckInMode && <span style={{color:C.dan}}>*</span>}</>} value={parentDest} onChange={v=>{setParentDest(v);setErrors({...errors,parentDestination:undefined});}} placeholder="Where is the parent going during this stay?" disabled={isReadOnly}/>
               {errMsg("parentDestination")}
               <div style={{marginTop:12}}>
-                <Inp label={<>Belongings from Home {isCheckInMode && <span style={{color:C.dan}}>*</span>}</>} type="textarea" rows={2} value={belongings} onChange={v=>{setBelongings(v);setErrors({...errors,belongings:undefined});}} placeholder="List items brought from home (bed, toys, food, etc.)"/>
+                <Inp label={<>Belongings from Home {isCheckInMode && <span style={{color:C.dan}}>*</span>}</>} type="textarea" rows={2} value={belongings} onChange={v=>{setBelongings(v);setErrors({...errors,belongings:undefined});}} placeholder="List items brought from home (bed, toys, food, etc.)" disabled={isReadOnly}/>
                 {errMsg("belongings")}
               </div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginTop:12}}>
-                <Inp label="Has your pet been fed today?" value={fedToday} onChange={setFedToday} placeholder="Yes / No / Details"/>
-                <Inp label="Has your pet had medications today?" value={medsToday} onChange={setMedsToday} placeholder="Yes / No / Details"/>
+                <Inp label="Has your pet been fed today?" value={fedToday} onChange={setFedToday} placeholder="Yes / No / Details" disabled={isReadOnly}/>
+                <Inp label="Has your pet had medications today?" value={medsToday} onChange={setMedsToday} placeholder="Yes / No / Details" disabled={isReadOnly}/>
               </div>
             </div>
           </>}
@@ -3043,11 +3051,11 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           {secHeader("Care Instructions")}
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
             <div>
-              <FeedingScheduleEditor schedules={feedingSchedules} onChange={setFeedingSchedules} data={data}/>
+              <FeedingScheduleEditor schedules={feedingSchedules} onChange={setFeedingSchedules} data={data} readOnly={isReadOnly}/>
               {profileHint(summarizeFeeding(profileFeedingSchedules), feedingChanged)}
             </div>
             <div>
-              <MedicationScheduleEditor schedules={medicationSchedules} onChange={setMedicationSchedules} data={data}/>
+              <MedicationScheduleEditor schedules={medicationSchedules} onChange={setMedicationSchedules} data={data} readOnly={isReadOnly}/>
               {profileHint(summarizeMeds(profileMedicationSchedules), medsChanged)}
             </div>
             <div>
@@ -3056,7 +3064,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                 {BATH_OPTS.map(opt=>{
                   const sel=bathType===opt;
                   const isProfile=profileBath===opt;
-                  return <button key={opt} onClick={()=>setBathType(opt)} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:12,fontWeight:sel?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",display:"flex",alignItems:"center",gap:4}}>
+                  return <button key={opt} onClick={()=>{if(!isReadOnly)setBathType(opt);}} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:12,fontWeight:sel?700:500,cursor:isReadOnly?"default":"pointer",fontFamily:"inherit",transition:"all 0.15s",display:"flex",alignItems:"center",gap:4,...(isReadOnly?{opacity:0.55,pointerEvents:"none"}:{})}}>
                     {sel&&<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                     {opt}{isProfile&&<span style={{fontSize:9,color:C.acc,fontWeight:700,marginLeft:2}}>(Profile)</span>}
                   </button>;
@@ -3068,17 +3076,17 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
           {/* Section: Notes */}
           {secHeader("Notes")}
-          <Inp type="textarea" rows={2} value={notes} onChange={setNotes} placeholder="Special instructions for this stay..."/>
+          <Inp type="textarea" rows={2} value={notes} onChange={setNotes} placeholder="Special instructions for this stay..." disabled={isReadOnly}/>
 
           {/* Section: Discount */}
           {secHeader("Discount")}
           <div style={{display:"flex",gap:12,alignItems:"flex-end"}}>
             <div style={{flex:"0 0 140px"}}>
-              <Inp label="Discount Type" type="select" value={discountType} onChange={v => { setDiscountType(v); if (v === "none") setDiscountValue(0); }} options={["none","percent","flat"]}/>
+              <Inp label="Discount Type" type="select" value={discountType} onChange={v => { setDiscountType(v); if (v === "none") setDiscountValue(0); }} options={["none","percent","flat"]} disabled={isReadOnly}/>
             </div>
             {discountType !== "none" && (
               <div style={{flex:"0 0 120px"}}>
-                <Inp label={discountType === "percent" ? "Percent Off" : "Amount Off ($)"} type="number" value={discountValue} onChange={v => setDiscountValue(Math.max(0, parseFloat(v) || 0))}/>
+                <Inp label={discountType === "percent" ? "Percent Off" : "Amount Off ($)"} type="number" value={discountValue} onChange={v => setDiscountValue(Math.max(0, parseFloat(v) || 0))} disabled={isReadOnly}/>
               </div>
             )}
             {discountType !== "none" && discountValue > 0 && <div style={{fontSize:12,fontWeight:600,color:C.suc,paddingBottom:10}}>Discount applied</div>}
@@ -3396,13 +3404,13 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           </button>
         )}
         <Btn variant="secondary" onClick={onClose}>Close</Btn>
-        {isCheckInMode ? (
+        {!isReadOnly && (isCheckInMode ? (
           <Btn variant="success" onClick={()=>handleSave(true, false)} icon={<I.LogIn/>}>Check In</Btn>
         ) : isCheckOutMode ? (
           <Btn variant="accent" onClick={()=>handleSave(false, true)} icon={<I.LogOut/>}>Check Out</Btn>
         ) : (
           <Btn onClick={()=>handleSave(false, false)}>Save Changes</Btn>
-        )}
+        ))}
       </div>
 
       {/* Cancel Reservation Confirmation */}
@@ -6931,7 +6939,7 @@ function BreedSearch({ value, onChange, breeds, autoFocus }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // FEEDING SCHEDULE EDITOR
 // ═══════════════════════════════════════════════════════════════════════════
-function FeedingScheduleEditor({ schedules, onChange, data }) {
+function FeedingScheduleEditor({ schedules, onChange, data, readOnly }) {
   const [showModal, setShowModal] = useState(false);
   const [editIdx, setEditIdx] = useState(-1);
   const timeOpts = data.feedingTimeOptions || DEF_FEEDING_TIME_OPTIONS;
@@ -6967,15 +6975,15 @@ function FeedingScheduleEditor({ schedules, onChange, data }) {
                   {[s.amount && s.unit ? `${s.amount} ${s.unit}` : s.amount, s.foodType].filter(Boolean).join(" · ") || "No details"}
                 </div>
               </div>
-              <button onClick={() => openEdit(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 4 }}><I.Edit /></button>
-              <button onClick={() => remove(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Trash /></button>
+              {!readOnly && <button onClick={() => openEdit(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 4 }}><I.Edit /></button>}
+              {!readOnly && <button onClick={() => remove(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Trash /></button>}
             </div>
           ))}
         </div>
       )}
-      <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, border: `2px dashed ${C.border}`, background: "transparent", cursor: "pointer", color: C.pri, fontWeight: 600, fontSize: 12, fontFamily: "inherit", width: "100%", justifyContent: "center" }}>
+      {!readOnly && <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, border: `2px dashed ${C.border}`, background: "transparent", cursor: "pointer", color: C.pri, fontWeight: 600, fontSize: 12, fontFamily: "inherit", width: "100%", justifyContent: "center" }}>
         <I.Plus /> Add Feeding Schedule
-      </button>
+      </button>}
 
       {/* Modal */}
       {showModal && (
@@ -7016,7 +7024,7 @@ function FeedingScheduleEditor({ schedules, onChange, data }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // MEDICATION SCHEDULE EDITOR
 // ═══════════════════════════════════════════════════════════════════════════
-function MedicationScheduleEditor({ schedules, onChange, data }) {
+function MedicationScheduleEditor({ schedules, onChange, data, readOnly }) {
   const [showModal, setShowModal] = useState(false);
   const [editIdx, setEditIdx] = useState(-1);
   const timeOpts = data.medicationTimeOptions || DEF_MEDICATION_TIME_OPTIONS;
@@ -7059,15 +7067,15 @@ function MedicationScheduleEditor({ schedules, onChange, data }) {
                   {[(s.times || []).join(", ") || s.time, s.amount && s.unit ? `${s.amount} ${s.unit}` : s.amount].filter(Boolean).join(" · ") || "No details"}
                 </div>
               </div>
-              <button onClick={() => openEdit(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 4 }}><I.Edit /></button>
-              <button onClick={() => remove(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Trash /></button>
+              {!readOnly && <button onClick={() => openEdit(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 4 }}><I.Edit /></button>}
+              {!readOnly && <button onClick={() => remove(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Trash /></button>}
             </div>
           ))}
         </div>
       )}
-      <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, border: `2px dashed ${C.border}`, background: "transparent", cursor: "pointer", color: C.pri, fontWeight: 600, fontSize: 12, fontFamily: "inherit", width: "100%", justifyContent: "center" }}>
+      {!readOnly && <button onClick={openAdd} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 10, border: `2px dashed ${C.border}`, background: "transparent", cursor: "pointer", color: C.pri, fontWeight: 600, fontSize: 12, fontFamily: "inherit", width: "100%", justifyContent: "center" }}>
         <I.Plus /> Add Medication Schedule
-      </button>
+      </button>}
 
       {showModal && (
         <Modal title={editIdx >= 0 ? "Edit Medication Schedule" : "Add Medication Schedule"} onClose={() => setShowModal(false)}>
