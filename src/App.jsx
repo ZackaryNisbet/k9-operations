@@ -2023,6 +2023,79 @@ function Inp({label,value,onChange,type="text",placeholder,required,style={},opt
   return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<input type={type} value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} disabled={disabled} style={is} autoFocus={autoFocus} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/></label>;
 }
 
+// Discount picker dropdown — shows configured discounts from Settings
+function DiscountPicker({ discounts, onSelect }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => { if (!open) return; const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [open]);
+  if (discounts.length === 0) return null;
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
+      <button onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", color: C.pri, fontSize: 12, fontWeight: 700, fontFamily: "inherit", transition: "all 0.15s" }} onMouseEnter={e => e.currentTarget.style.borderColor = C.pri} onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>
+        Add Discount
+      </button>
+      {open && (
+        <div style={{ position: "absolute", bottom: "100%", left: 0, marginBottom: 6, zIndex: 100, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.15)", padding: 8, minWidth: 260, maxHeight: 240, overflowY: "auto" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", padding: "6px 10px" }}>Available Discounts</div>
+          {discounts.map(d => (
+            <button key={d.id} onClick={() => { onSelect(d); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderRadius: 10, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.1s" }} onMouseEnter={e => e.currentTarget.style.background = C.bg} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{d.name}</div>
+                {d.lodgingTypes && d.lodgingTypes.length > 0 && <div style={{ fontSize: 10, color: C.textMut, marginTop: 1 }}>{d.lodgingTypes.join(", ")}</div>}
+              </div>
+              <span style={{ fontSize: 14, fontWeight: 800, color: C.suc, whiteSpace: "nowrap" }}>{d.type === "percentage" ? `${d.value}%` : `$${d.value}`}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Custom styled calendar date picker — matches dashboard calendar appearance
+function CalendarPicker({ label, value, onChange, required, disabled, min, max, extraContent }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const parsed = value ? new Date(value + "T12:00:00") : new Date();
+  const [vMonth, setVMonth] = useState(parsed.getMonth());
+  const [vYear, setVYear] = useState(parsed.getFullYear());
+  useEffect(() => { if (!open) return; const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [open]);
+  useEffect(() => { if (value) { const d = new Date(value + "T12:00:00"); setVMonth(d.getMonth()); setVYear(d.getFullYear()); } }, [open]);
+  const days = useMemo(() => { const first = new Date(vYear, vMonth, 1); const sd = first.getDay(); const dim = new Date(vYear, vMonth + 1, 0).getDate(); const c = []; for (let i = 0; i < sd; i++) c.push(null); for (let d = 1; d <= dim; d++) c.push(d); return c; }, [vMonth, vYear]);
+  const ml = new Date(vYear, vMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const prev = () => { if (vMonth === 0) { setVMonth(11); setVYear(y => y - 1); } else setVMonth(m => m - 1); };
+  const next = () => { if (vMonth === 11) { setVMonth(0); setVYear(y => y + 1); } else setVMonth(m => m + 1); };
+  const pick = (day) => { const m = String(vMonth + 1).padStart(2, "0"); const d = String(day).padStart(2, "0"); onChange(`${vYear}-${m}-${d}`); setOpen(false); };
+  const display = value ? new Date(value + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+  const td = new Date().toISOString().slice(0, 10);
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, letterSpacing: "0.03em", textTransform: "uppercase" }}>{label}{required && <span style={{ color: C.dan }}> *</span>}</div>
+      <button onClick={() => { if (!disabled) setOpen(!open); }} style={{ width: "100%", padding: "10px 14px", border: `1.5px solid ${open ? C.pri : C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit", color: value ? C.text : C.textMut, background: disabled ? C.bg : C.surface, cursor: disabled ? "default" : "pointer", textAlign: "left", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "border 0.15s", outline: "none", ...(disabled ? { opacity: 0.55, pointerEvents: "none" } : {}) }}>
+        <span>{display || "Select date…"}</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      </button>
+      {extraContent}
+      {open && (
+        <div style={{ position: "absolute", top: "100%", left: 0, marginTop: 6, zIndex: 100, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.15)", padding: 16, width: 280 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <button onClick={prev} style={{ width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, fontFamily: "inherit", padding: 0 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+            <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{ml}</span>
+            <button onClick={next} style={{ width: 28, height: 28, borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: C.textSec, fontFamily: "inherit", padding: 0 }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", marginBottom: 4 }}>{["Su","Mo","Tu","We","Th","Fr","Sa"].map(d => <span key={d} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, padding: "4px 0", textTransform: "uppercase" }}>{d}</span>)}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", gap: 2 }}>
+            {days.map((day, i) => { if (day === null) return <div key={`e${i}`} />; const m = String(vMonth + 1).padStart(2, "0"); const d = String(day).padStart(2, "0"); const ds = `${vYear}-${m}-${d}`; const isSel = ds === value; const isToday = ds === td; const isDis = (min && ds < min) || (max && ds > max); return (
+              <button key={i} onClick={() => !isDis && pick(day)} style={{ width: 34, height: 34, borderRadius: 10, border: isSel ? `2px solid ${C.pri}` : isToday ? `2px solid ${C.acc}` : "2px solid transparent", background: isSel ? C.priLt : "transparent", color: isDis ? C.border : isSel ? C.pri : isToday ? C.acc : C.text, fontSize: 13, fontWeight: isSel || isToday ? 700 : 500, cursor: isDis ? "default" : "pointer", fontFamily: "inherit", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto", opacity: isDis ? 0.35 : 1, transition: "all 0.1s" }} onMouseEnter={e => { if (!isSel && !isDis) e.currentTarget.style.background = C.bg; }} onMouseLeave={e => { if (!isSel && !isDis) e.currentTarget.style.background = "transparent"; }}>{day}</button>
+            ); })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Card({children,style={},onClick,hoverable}) {
   const [h,setH]=useState(false);
   return <div onClick={onClick} onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)} style={{background:C.surface,borderRadius:14,border:`1px solid ${h&&hoverable?C.priL:C.border}`,padding:20,transition:"all 0.2s",cursor:onClick?"pointer":"default",transform:h&&hoverable?"translateY(-1px)":"none",boxShadow:h&&hoverable?"0 4px 12px rgba(0,0,0,0.06)":"0 1px 3px rgba(0,0,0,0.02)",...style}}>{children}</div>;
@@ -7024,7 +7097,7 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // MEDICATION SCHEDULE EDITOR
 // ═══════════════════════════════════════════════════════════════════════════
-function MedicationScheduleEditor({ schedules, onChange, data, readOnly }) {
+function MedicationScheduleEditor({ schedules, onChange, data, readOnly, checkIn, checkOut }) {
   const [showModal, setShowModal] = useState(false);
   const [editIdx, setEditIdx] = useState(-1);
   const timeOpts = data.medicationTimeOptions || DEF_MEDICATION_TIME_OPTIONS;
@@ -7032,7 +7105,7 @@ function MedicationScheduleEditor({ schedules, onChange, data, readOnly }) {
   const nameOpts = data.medicationNameOptions || DEF_MEDICATION_NAME_OPTIONS;
   const instrOpts = data.medicationInstructionOptions || DEF_MEDICATION_INSTRUCTION_OPTIONS;
 
-  const blank = { id: gid(), times: [], amount: "", unit: "", name: "", instruction: "", notes: "" };
+  const blank = { id: gid(), times: [], amount: "", unit: "", name: "", instruction: "", notes: "", dateMode: "every_day", customDates: [] };
   const [draft, setDraft] = useState(blank);
 
   const openAdd = () => { setDraft({ ...blank, id: gid() }); setEditIdx(-1); setShowModal(true); };
@@ -7040,7 +7113,7 @@ function MedicationScheduleEditor({ schedules, onChange, data, readOnly }) {
     const s = schedules[idx];
     // Migrate legacy single `time` string to `times` array
     const times = s.times || (s.time ? [s.time] : []);
-    setDraft({ ...s, times, instruction: s.instruction || s.notes || "" });
+    setDraft({ ...s, times, instruction: s.instruction || s.notes || "", dateMode: s.dateMode || "every_day", customDates: s.customDates || [] });
     setEditIdx(idx);
     setShowModal(true);
   };
@@ -7054,6 +7127,17 @@ function MedicationScheduleEditor({ schedules, onChange, data, readOnly }) {
 
   const toggleTime = (t) => setDraft(d => ({ ...d, times: d.times.includes(t) ? d.times.filter(x => x !== t) : [...d.times, t] }));
 
+  // Build list of all dates in the reservation range for the custom date picker
+  const stayDates = useMemo(() => {
+    if (!checkIn || !checkOut) return [];
+    const dates = [];
+    let cur = checkIn;
+    while (cur <= checkOut) { dates.push(cur); cur = addDays(cur, 1); }
+    return dates;
+  }, [checkIn, checkOut]);
+
+  const toggleCustomDate = (d) => setDraft(prev => ({ ...prev, customDates: prev.customDates.includes(d) ? prev.customDates.filter(x => x !== d) : [...prev.customDates, d].sort() }));
+
   return (
     <div>
       <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8, letterSpacing: "0.03em", textTransform: "uppercase" }}>Medication Schedules</div>
@@ -7066,6 +7150,7 @@ function MedicationScheduleEditor({ schedules, onChange, data, readOnly }) {
                 <div style={{ fontSize: 12, color: C.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {[(s.times || []).join(", ") || s.time, s.amount && s.unit ? `${s.amount} ${s.unit}` : s.amount].filter(Boolean).join(" · ") || "No details"}
                 </div>
+                {s.dateMode === "custom" && s.customDates && s.customDates.length > 0 && <div style={{ fontSize: 10, color: C.pri, fontWeight: 600, marginTop: 2 }}>Custom: {s.customDates.map(d => new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})).join(", ")}</div>}
               </div>
               {!readOnly && <button onClick={() => openEdit(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 4 }}><I.Edit /></button>}
               {!readOnly && <button onClick={() => remove(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Trash /></button>}
@@ -7080,6 +7165,29 @@ function MedicationScheduleEditor({ schedules, onChange, data, readOnly }) {
       {showModal && (
         <Modal title={editIdx >= 0 ? "Edit Medication Schedule" : "Add Medication Schedule"} onClose={() => setShowModal(false)}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Date range selector */}
+            {stayDates.length > 1 && <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.03em" }}>Applicable Days</div>
+              <div style={{ display: "flex", gap: 8, marginBottom: draft.dateMode === "custom" ? 10 : 0 }}>
+                {[{v:"every_day",l:"Every Day"},{v:"custom",l:"Custom Dates"}].map(opt => {
+                  const sel = draft.dateMode === opt.v;
+                  return <button key={opt.v} onClick={() => setDraft(d => ({ ...d, dateMode: opt.v, customDates: opt.v === "every_day" ? [] : d.customDates }))} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, border: `2px solid ${sel ? C.pri : C.border}`, background: sel ? C.priLt : C.surface, color: sel ? C.pri : C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                    {sel && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}{opt.l}
+                  </button>;
+                })}
+              </div>
+              {draft.dateMode === "custom" && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {stayDates.map(d => {
+                    const sel = draft.customDates.includes(d);
+                    const dayLabel = new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+                    return <button key={d} onClick={() => toggleCustomDate(d)} style={{ padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${sel ? C.pri : C.border}`, background: sel ? C.priLt : C.surface, color: sel ? C.pri : C.textSec, fontSize: 12, fontWeight: sel ? 700 : 500, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
+                      {sel && <span style={{marginRight:4}}>✓</span>}{dayLabel}
+                    </button>;
+                  })}
+                </div>
+              )}
+            </div>}
             {/* Time multi-select pills — matches feeding schedule structure */}
             <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.03em" }}>Time <span style={{ color: C.dan }}>*</span></div>
@@ -7803,12 +7911,15 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
 
         {/* Dates & Times — before room selection so availability is based on chosen dates */}
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,marginTop:20}}>
-          <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn} required/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{checkIn&&(data.closedDates||[]).some(cd=>cd.date===checkIn)&&<div style={{fontSize:11,fontWeight:700,color:C.dan,marginTop:2}}>Resort closed: {(data.closedDates||[]).find(cd=>cd.date===checkIn)?.label||"Closed"}</div>}{errors.checkIn&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkIn}</div>}</div>
+          <CalendarPicker label="Check-In Date" value={checkIn} onChange={setCheckIn} required extraContent={<>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{checkIn&&(data.closedDates||[]).some(cd=>cd.date===checkIn)&&<div style={{fontSize:11,fontWeight:700,color:C.dan,marginTop:2}}>Resort closed: {(data.closedDates||[]).find(cd=>cd.date===checkIn)?.label||"Closed"}</div>}{errors.checkIn&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkIn}</div>}</>}/>
           <div><Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime}/></div>
           {(type==="boarding"||type==="dayboarding")&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>{type==="dayboarding"?"Day boarding: drop-off & pick-up during regular operating hours — 7 AM – 7 PM Mon–Fri, 9 AM – 5:30 PM Sat–Sun.":"Boarding drop-off hours are from 9 AM – 5:30 PM, 7 days a week."}</div></div>}
-          {type==="boarding"&&<div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} required/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{checkOut&&(data.closedDates||[]).some(cd=>cd.date===checkOut)&&<div style={{fontSize:11,fontWeight:700,color:C.dan,marginTop:2}}>Resort closed: {(data.closedDates||[]).find(cd=>cd.date===checkOut)?.label||"Closed"}</div>}{errors.checkOut&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkOut}</div>}</div>}
+          {type==="boarding"&&<CalendarPicker label="Check-Out Date" value={checkOut} onChange={setCheckOut} required min={checkIn} extraContent={<>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{checkIn&&checkOut&&<div style={{fontSize:11,fontWeight:600,color:C.textSec,marginTop:2}}>Nights: {countNights(checkIn,checkOut)}</div>}{checkOut&&(data.closedDates||[]).some(cd=>cd.date===checkOut)&&<div style={{fontSize:11,fontWeight:700,color:C.dan,marginTop:2}}>Resort closed: {(data.closedDates||[]).find(cd=>cd.date===checkOut)?.label||"Closed"}</div>}{errors.checkOut&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors.checkOut}</div>}</>}/>}
           {type==="boarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
           {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>Boarding pick-up hours start at 9 AM. Check-out time is 12:30 PM. Extended checkout to 5:30 PM available 7 days a week for a half-day daycare fee ({`$${((data.pricing||DEF_PRICING).daycareRates?.halfDay||30).toFixed(2)}`}).</div></div>}
+          {type==="boarding"&&<div style={{gridColumn:"1/-1",margin:"-8px 0 -4px"}}><div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`}}>
+            <strong style={{color:C.text}}>Bathing Policy:</strong> K9 Resorts brand standard requires all dogs boarding 2 or more nights receive a bath before going home.{countNights(checkIn,checkOut)>=2?" A bath type selection will appear in each dog's care section below.":""}
+          </div></div>}
           {type==="dayboarding"&&<div><Inp label="Pick-Up Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
           {type!=="boarding"&&type!=="dayboarding"&&<div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime}/></div>}
         </div>
@@ -8370,7 +8481,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                       </div>
                       <div>
                         {medsChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
-                        <MedicationScheduleEditor schedules={care.medicationSchedules || []} onChange={v=>updateCare(did,"medicationSchedules",v)} data={data}/>
+                        <MedicationScheduleEditor schedules={care.medicationSchedules || []} onChange={v=>updateCare(did,"medicationSchedules",v)} data={data} checkIn={checkIn} checkOut={checkOut}/>
                       </div>
                       {type==="boarding"&&countNights(checkIn,checkOut)>=2&&<div>
                         <div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`,marginBottom:8}}>
@@ -8428,44 +8539,37 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         )}
         <div style={{marginTop:16}}><Inp label="General Notes" type="textarea" value={notes} onChange={setNotes} placeholder="Special instructions for this stay..."/></div>
 
-        {/* Discount */}
-        {livePricing && livePricing.total > 0 && (
-          <div style={{marginTop:16}}>
-            <div style={{fontSize:11,fontWeight:700,color:C.textMut,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:8}}>Discount</div>
-            <div style={{display:"flex",gap:12,alignItems:"flex-end"}}>
-              <div style={{flex:"0 0 140px"}}>
-                <Inp label="Type" type="select" value={resDiscountType} onChange={v => { setResDiscountType(v); if (v === "none") setResDiscountValue(0); }} options={["none","percent","flat"]}/>
-              </div>
-              {resDiscountType !== "none" && (
-                <div style={{flex:"0 0 120px"}}>
-                  <Inp label={resDiscountType === "percent" ? "% Off" : "$ Off"} type="number" value={resDiscountValue} onChange={v => setResDiscountValue(Math.max(0, parseFloat(v) || 0))}/>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Itemized Receipt */}
+        {/* Itemized Receipt with integrated discount */}
         {livePricing && livePricing.lineItems.length > 0 && (
           <div style={{ marginTop: 20 }}>
             <ItemizedReceipt pricingResult={livePricing} />
-            {resDiscountType !== "none" && resDiscountValue > 0 && (() => {
+            {/* Add Discount — uses configured discounts from Settings */}
+            {livePricing.total > 0 && (() => {
+              const configuredDiscounts = (data.discounts || []).filter(d => d.active !== false);
+              const [showDiscDrop, setShowDiscDrop] = [resDiscountType !== "none", (v) => { if (!v) { setResDiscountType("none"); setResDiscountValue(0); } }];
+              const hasDiscount = resDiscountType !== "none" && resDiscountValue > 0;
               let disc = 0;
-              if (resDiscountType === "percent") disc = Math.round(livePricing.total * (resDiscountValue / 100) * 100) / 100;
-              else disc = Math.min(resDiscountValue, livePricing.total);
-              const adjTotal = Math.max(0, Math.round((livePricing.total - disc) * 100) / 100);
-              return (
-                <div style={{marginTop:8}}>
-                  <div style={{display:"flex",justifyContent:"space-between",padding:"8px 20px",background:C.sucLt,borderRadius:8,border:`1px solid ${C.suc}25`}}>
-                    <span style={{fontSize:13,fontWeight:600,color:C.suc}}>Discount ({resDiscountType === "percent" ? `${resDiscountValue}%` : `$${resDiscountValue.toFixed(2)}`})</span>
-                    <span style={{fontSize:13,fontWeight:700,color:C.suc}}>-${disc.toFixed(2)}</span>
+              if (hasDiscount) { if (resDiscountType === "percent") disc = Math.round(livePricing.total * (resDiscountValue / 100) * 100) / 100; else disc = Math.min(resDiscountValue, livePricing.total); }
+              const adjTotal = hasDiscount ? Math.max(0, Math.round((livePricing.total - disc) * 100) / 100) : livePricing.total;
+              return (<div style={{marginTop:8}}>
+                {hasDiscount && (<>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 20px",background:C.sucLt,borderRadius:8,border:`1px solid ${C.suc}25`}}>
+                    <span style={{fontSize:13,fontWeight:600,color:C.suc}}>Discount ({resDiscountType === "percent" ? `${resDiscountValue}%` : `$${Number(resDiscountValue).toFixed(2)}`})</span>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:13,fontWeight:700,color:C.suc}}>-${disc.toFixed(2)}</span>
+                      <button onClick={() => { setResDiscountType("none"); setResDiscountValue(0); }} style={{background:"none",border:"none",cursor:"pointer",color:C.suc,padding:2,display:"flex"}}><I.X/></button>
+                    </div>
                   </div>
                   <div style={{display:"flex",justifyContent:"space-between",padding:"8px 20px",marginTop:4}}>
                     <span style={{fontSize:15,fontWeight:800,color:C.text}}>Adjusted Total</span>
                     <span style={{fontSize:15,fontWeight:800,color:C.text}}>${adjTotal.toFixed(2)}</span>
                   </div>
-                </div>
-              );
+                </>)}
+                {!hasDiscount && configuredDiscounts.length > 0 && (<DiscountPicker discounts={configuredDiscounts} onSelect={(d) => {
+                  setResDiscountType(d.type === "percentage" ? "percent" : "flat");
+                  setResDiscountValue(d.value);
+                }}/>)}
+              </div>);
             })()}
           </div>
         )}
