@@ -5529,6 +5529,7 @@ function ClientsPage({ data, nav }) {
   const [showFilterPanel, setShowFilterPanel] = useState(false);
   const [showExplainer, setShowExplainer] = useState(false);
   const [filterDraft, setFilterDraft] = useState([{ field: '', op: '', value: '' }]);
+  const [hoveredDogId, setHoveredDogId] = useState(null);
 
   // Pre-compute client stats including post-eval and post-tour metrics
   const clientStats = useMemo(() => {
@@ -5679,7 +5680,7 @@ function ClientsPage({ data, nav }) {
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: panelFilters.length > 0 ? 8 : 16 }}>
         <div style={{ position: "relative", flex: 1 }}>
           <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.textMut }}><I.Search /></div>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clients, dogs, phone, email \u2014 or use filters like: last_name: Vance && days_since > 30"
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder={"Search clients, dogs, phone, email \u2014 or use filters like: last_name: Vance && days_since > 30"}
             style={{ width: "100%", padding: "12px 14px 12px 42px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" }}
             onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
         </div>
@@ -5770,7 +5771,7 @@ function ClientsPage({ data, nav }) {
           <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>Available Fields</div>
           <div style={{ paddingLeft: 12, marginBottom: 10, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 24px" }}>
             {CLIENT_FILTER_FIELDS.map(f => (
-              <div key={f.key} style={{ fontSize: 11 }}><span style={{ fontWeight: 700, color: C.pri, fontFamily: "monospace" }}>{f.key}</span> \u2014 {f.label}</div>
+              <div key={f.key} style={{ fontSize: 11 }}><span style={{ fontWeight: 700, color: C.pri, fontFamily: "monospace" }}>{f.key}</span> {"\u2014"} {f.label}</div>
             ))}
           </div>
           <div style={{ fontWeight: 700, color: C.text, marginBottom: 2 }}>Operators</div>
@@ -5830,10 +5831,16 @@ function ClientsPage({ data, nav }) {
                       <td style={tdStyle}>{client.fields.first_name || "\u2014"}</td>
                       <td style={{ ...tdStyle, fontSize: 12 }}>{fmtPhone(client.fields.phone)}</td>
                       <td style={{ ...tdStyle, fontSize: 12, color: C.textSec, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>{client.fields.email || "\u2014"}</td>
-                      <td style={{ ...tdStyle, textAlign: "center", position: "relative" }} title={s.dogNames && s.dogNames.length > 0 ? s.dogNames.join("\n") : ""}>
-                        <span style={{ cursor: "default", position: "relative" }}>
-                          <Badge>{s.dogCount || 0}</Badge>
-                        </span>
+                      <td style={{ ...tdStyle, textAlign: "center", position: "relative" }}
+                        onMouseEnter={() => s.dogNames && s.dogNames.length > 0 && setHoveredDogId(client.id)}
+                        onMouseLeave={() => setHoveredDogId(null)}>
+                        <Badge>{s.dogCount || 0}</Badge>
+                        {hoveredDogId === client.id && s.dogNames && s.dogNames.length > 0 && (
+                          <div style={{ position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)", marginBottom: 6, background: C.text, color: "#fff", padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", zIndex: 50, boxShadow: "0 4px 16px rgba(0,0,0,0.18)", pointerEvents: "none", lineHeight: 1.6 }}>
+                            {s.dogNames.map((name, di) => <div key={di} style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 5, height: 5, borderRadius: 3, background: C.acc, flexShrink: 0 }} />{name}</div>)}
+                            <div style={{ position: "absolute", top: "100%", left: "50%", transform: "translateX(-50%)", width: 0, height: 0, borderLeft: "6px solid transparent", borderRight: "6px solid transparent", borderTop: `6px solid ${C.text}` }} />
+                          </div>
+                        )}
                       </td>
                       <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: s.totalRes > 0 ? C.text : C.textMut }}>{s.totalRes || 0}</td>
                       <td style={tdStyle}>
