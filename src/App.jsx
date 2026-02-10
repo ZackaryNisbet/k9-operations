@@ -1462,9 +1462,17 @@ function generateDemoData() {
       const bord = vc ? addD(today,ri(30,240)) : addD(today,ri(-120,-1));
       const dhpp = vc ? addD(today,ri(30,365)) : addD(today,ri(-180,-1));
       const flu = srand()>0.3 ? (vc ? addD(today,ri(30,300)) : addD(today,ri(-90,-1))) : "";
-      const tags = [];
-      if (srand()>0.8) tags.push("tag_pp");
-      if (srand()>0.85) tags.push("tag_eval");
+      // Assign classification tags based on weight + eval outcome
+      // Every dog gets an eval tag (they've been evaluated) + one classification tag
+      const tags = ["tag_eval"];
+      const isPrivatePlay = srand() > 0.85; // ~15% are private play
+      if (isPrivatePlay) {
+        tags.push("tag_pp");
+      } else if (w < 35) {
+        tags.push("tag_sp"); // Small Playgroup
+      } else {
+        tags.push("tag_lp"); // Large Playgroup
+      }
       const meds = [];
       if (srand()>0.8) meds.push({
         time: rp(["8:00 AM","Morning","Morning & Evening","With meals"]),
@@ -1632,6 +1640,34 @@ function generateDemoData() {
     });
   }
 
+  // Generate evaluation records for ALL dogs so tags are backed by eval history
+  const evalRecords = [];
+  dogs.forEach(dog => {
+    const hasPP = (dog.tags || []).includes("tag_pp");
+    const hasLP = (dog.tags || []).includes("tag_lp");
+    const hasSP = (dog.tags || []).includes("tag_sp");
+    const evalDate = addD(today, -ri(7, 90)); // eval happened in the past
+    const result = hasPP ? "yellow" : "green"; // yellow = private play, green = passed group
+    evalRecords.push({
+      id: "eval_" + dog.id,
+      dogId: dog.id,
+      clientId: dog.clientId,
+      reservationId: "",
+      date: evalDate,
+      evaluatorName: rp(["Casey M.","Hayden T.","Jessica R.","Carlos G.","Amanda K."]),
+      evalType: "initial",
+      hasExperience: !hasPP,
+      answers: {},
+      subtotals: {},
+      totalScore: hasPP ? ri(12, 18) : ri(22, 30),
+      maxScore: 30,
+      result,
+      notes: hasPP ? "Dog reactive with other dogs; private play recommended" : (hasLP ? "Great with large playgroup; confident and social" : "Great with small playgroup; gentle and social"),
+      locked: true,
+      createdAt: new Date(evalDate + "T12:00:00").toISOString(),
+    });
+  });
+
   // EOD Entries (30 days of history)
   const eodEntries = [];
   const SECS=["sales","csr_checklist","alerts","team_notes","leads","tours","meds","birthdays","ice_cream","extra_play","baths","day_boarders","evaluations","small_daycare_notes","large_daycare_notes","boarding_notes","social_media","picture_requests","building_supplies","other"];
@@ -1781,6 +1817,7 @@ function generateDemoData() {
     hotkeySettings: { enabled: false, showHints: false },
     rooms: ROOMS,
     crmEntries: [],
+    evaluations: evalRecords,
     eodEntries,
     eodTemplate: DEF_EOD_TEMPLATE,
     dailyOps,
@@ -1824,6 +1861,37 @@ function generateDemoData() {
 }
 
 const DEMO = generateDemoData();
+
+// Structural defaults for new locations — everything EXCEPT demo data (clients/dogs/reservations)
+const NEW_LOCATION_DEFAULTS = {
+  clients: [], dogs: [], reservations: [], messages: [], teamMembers: [],
+  packages: [], packageSales: [], crmEntries: [], eodEntries: [], dailyOps: [],
+  evaluations: [], onlineBookings: [], payments: [], auditLog: [], closedDates: [],
+  pendingInvites: [],
+  clientFields: DEF_CLIENT_FIELDS, dogFields: DEF_DOG_FIELDS,
+  agreements: DEF_AGREEMENTS, dogTags: DEF_DOG_TAGS,
+  requiredVaccines: DEF_REQUIRED_VACCINES,
+  facilitySettings: { largeDogDaycareSF: 3600, smallDogDaycareSF: 2400 },
+  hotkeySettings: { enabled: false, showHints: false },
+  rooms: { "Luxury Suite":["101","102","103","104","105","106"], "Executive Room":["201","202","203","204","205","206","207","208","209","210","211","212","213","214","215"], "Double Compartment":["DC1","DC2","DC3","DC4","DC5","DC6","DC7","DC8","DC9"], "Single Compartment":["SC1","SC2","SC3","SC4","SC5","SC6","SC7","SC8","SC9","SC10","SC11","SC12","SC13","SC14","SC15","SC16","SC17","SC18"] },
+  pricing: { ...DEF_PRICING },
+  eodTemplate: DEF_EOD_TEMPLATE,
+  breedOptions: DEF_BREED_OPTIONS,
+  feedingTimeOptions: DEF_FEEDING_TIME_OPTIONS,
+  feedingUnitOptions: DEF_FEEDING_UNIT_OPTIONS,
+  foodTypeOptions: DEF_FOOD_TYPE_OPTIONS,
+  feedingInstructionOptions: DEF_FEEDING_INSTRUCTION_OPTIONS,
+  medicationUnitOptions: DEF_MEDICATION_UNIT_OPTIONS,
+  bathTypeOptions: DEF_BATH_TYPE_OPTIONS,
+  messageTemplates: [
+    { id: "mt1", name: "Booking Confirmation", body: "Hi {clientName}! Your reservation for {dogName} has been confirmed. Check-in: {checkInDate}, Check-out: {checkOutDate}. Room: {roomType}. Total: ${totalPrice}. See you soon!", active: true },
+    { id: "mt2", name: "Check-in Reminder", body: "Hi {clientName}! Just a reminder that {dogName} is scheduled for check-in tomorrow ({checkInDate}). Please arrive between 7-10 AM. Don't forget vaccination records!", active: true },
+    { id: "mt3", name: "Ready for Pickup", body: "Hi {clientName}! {dogName} is all ready for pickup! We had a great time with them. You can pick up anytime before 6 PM today.", active: true },
+    { id: "mt4", name: "Thank You", body: "Thank you for choosing K9 Resorts, {clientName}! We loved having {dogName} stay with us. We'd appreciate a review if you have a moment. See you next time!", active: true },
+  ],
+  roles: DEFAULT_ROLES,
+  _initialized: true,
+};
 
 // ─── Reusable Components ────────────────────────────────────────────────────
 class ErrorBoundary extends React.Component {
@@ -3410,6 +3478,18 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     if (m) { let h = parseInt(m[1]); const min = m[2]; const ap = h >= 12 ? "PM" : "AM"; if (h > 12) h -= 12; if (h === 0) h = 12; return `${h}:${min} ${ap}`; }
     return tl;
   };
+  const fmtTimeTwoLine = (t) => {
+    const tl = (t || "").trim();
+    if (!tl) return { label: "—", sub: "" };
+    // Handle format like "AM (6:00 am)" or "Noon (12:00 pm)" or "PM (6:00 pm)"
+    const paren = tl.match(/^([A-Za-z]+)\s*\(([^)]+)\)/);
+    if (paren) return { label: paren[1].toUpperCase(), sub: paren[2].trim() };
+    // Handle raw HH:MM (24h)
+    const m = tl.match(/^(\d{1,2}):(\d{2})$/);
+    if (m) { let h = parseInt(m[1]); const min = m[2]; const ap = h >= 12 ? "PM" : "AM"; if (h > 12) h -= 12; if (h === 0) h = 12; return { label: ap, sub: `${h}:${min} ${ap.toLowerCase()}` }; }
+    // Fallback: treat entire string as label (e.g., "End of Day", "Any")
+    return { label: tl, sub: "" };
+  };
 
   const allActivities = useMemo(() => {
     const today = todayStr();
@@ -3469,6 +3549,39 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     }
     return rows;
   }, [allActivities, actTypeFilter, actTimeFilter, actSearch]);
+
+  // Bulk action helpers (lifted to Dashboard level for access from filter bar)
+  const pendingActivities = filteredActivities.filter(r => !r.logEntry?.administered);
+  const executeBulkMark = async () => {
+    if (pendingActivities.length === 0 || bulkAnimating) return;
+    setBulkAnimating(true);
+    setBulkAnimatedIds(new Set());
+    const today = todayStr();
+    const actStaffName = profile?.full_name || "Staff";
+    let updatedReservations = [...data.reservations];
+    pendingActivities.forEach(row => {
+      const logKey = `${today}|${row.colKey}`;
+      const logData = { administered: true, by: actStaffName, at: new Date().toISOString() };
+      if (row.type === "feeding") logData.consumption = "100%";
+      updatedReservations = updatedReservations.map(r => r.id === row.reservationId ? { ...r, activityLog: { ...(r.activityLog || {}), [logKey]: { ...(r.activityLog || {})[logKey], ...logData } } } : r);
+    });
+    save({ ...data, reservations: updatedReservations });
+    for (let i = 0; i < pendingActivities.length; i++) {
+      setBulkAnimatedIds(prev => new Set([...prev, pendingActivities[i].id]));
+      if (i < pendingActivities.length - 1) await new Promise(r => setTimeout(r, 80));
+    }
+    setTimeout(() => { setBulkAnimating(false); setBulkAnimatedIds(new Set()); }, 600);
+  };
+  const bulkResetAll = () => {
+    const today = todayStr();
+    let updatedReservations = [...data.reservations];
+    filteredActivities.forEach(row => {
+      if (!row.logEntry?.administered) return;
+      const logKey = `${today}|${row.colKey}`;
+      updatedReservations = updatedReservations.map(r => r.id === row.reservationId ? { ...r, activityLog: { ...(r.activityLog || {}), [logKey]: { administered: false, by: "", at: "" } } } : r);
+    });
+    save({ ...data, reservations: updatedReservations });
+  };
 
   const updateActivityLog = (reservationId, colKey, updates) => {
     const logKey = `${todayStr()}|${colKey}`;
@@ -4188,6 +4301,20 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                         </button>
                       );
                     })}
+                    {/* Bulk Action divider + controls */}
+                    <div style={{ width: 1, height: 20, background: C.border, margin: "0 4px", flexShrink: 0 }}/>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+                      <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, letterSpacing: "0.04em", whiteSpace: "nowrap" }}>BULK</span>
+                    </div>
+                    <button onClick={executeBulkMark} disabled={pendingActivities.length === 0 || bulkAnimating} style={{ padding: "4px 10px", borderRadius: 8, border: "none", background: pendingActivities.length > 0 ? (bulkAnimating ? C.suc : C.pri) : C.border, color: pendingActivities.length > 0 ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: pendingActivities.length > 0 && !bulkAnimating ? "pointer" : "default", fontFamily: "inherit", whiteSpace: "nowrap", transition: "all 0.15s" }}
+                      title={`Mark ${pendingActivities.length} pending items as complete`}>
+                      {bulkAnimating ? "Marking..." : `Mark ${pendingActivities.length}`}
+                    </button>
+                    <button onClick={bulkResetAll} style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}
+                      title="Reset all completed items">
+                      Reset
+                    </button>
                   </>
                 ) : (
                   <>
@@ -4312,115 +4439,13 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                 const cfg = t === "feeding" ? { bg: C.pri, label: "Feeding" } : t === "medication" ? { bg: C.acc, label: "Meds" } : { bg: C.info, label: "Bath" };
                 return <span style={{display:"inline-flex",alignItems:"center",gap:3,fontSize:10,fontWeight:700,color:"#fff",background:cfg.bg,padding:"2px 8px",borderRadius:6,whiteSpace:"nowrap"}}>{cfg.label}</span>;
               };
-              const pendingCount = filteredActivities.filter(r => !r.logEntry?.administered).length;
-
-              // Filter activities by bulk selectors
-              const getBulkTargets = () => {
-                return filteredActivities.filter(row => {
-                  if (row.logEntry?.administered) return false;
-                  // Time filter
-                  if (bulkTime !== "all") {
-                    const s = parseTimeSort(row.time);
-                    if (bulkTime === "am" && s >= 11) return false;
-                    if (bulkTime === "noon" && (s < 11 || s >= 14)) return false;
-                    if (bulkTime === "pm" && s < 14) return false;
-                  }
-                  // Type filter
-                  if (bulkType !== "all" && row.type !== bulkType) return false;
-                  return true;
-                });
-              };
-              const bulkTargets = getBulkTargets();
-
-              const executeBulkAction = async () => {
-                if (bulkTargets.length === 0 || bulkAnimating) return;
-                setBulkAnimating(true);
-                setBulkAnimatedIds(new Set());
-                const today = todayStr();
-                // Build ONE merged reservations array with all updates applied
-                let updatedReservations = [...data.reservations];
-                bulkTargets.forEach(row => {
-                  const logKey = `${today}|${row.colKey}`;
-                  const logData = { administered: true, by: actStaffName, at: new Date().toISOString() };
-                  if (row.type === "feeding") logData.consumption = "100%";
-                  updatedReservations = updatedReservations.map(r => r.id === row.reservationId ? { ...r, activityLog: { ...(r.activityLog || {}), [logKey]: { ...(r.activityLog || {})[logKey], ...logData } } } : r);
-                });
-                // Save all changes in one batch
-                save({ ...data, reservations: updatedReservations });
-                // Run cascade animation visually
-                for (let i = 0; i < bulkTargets.length; i++) {
-                  setBulkAnimatedIds(prev => new Set([...prev, bulkTargets[i].id]));
-                  if (i < bulkTargets.length - 1) await new Promise(r => setTimeout(r, 80));
-                }
-                setTimeout(() => { setBulkAnimating(false); setBulkAnimatedIds(new Set()); }, 600);
-              };
-
-              const bulkClearAll = () => {
-                const today = todayStr();
-                let updatedReservations = [...data.reservations];
-                filteredActivities.forEach(row => {
-                  if (!row.logEntry?.administered) return;
-                  const logKey = `${today}|${row.colKey}`;
-                  updatedReservations = updatedReservations.map(r => r.id === row.reservationId ? { ...r, activityLog: { ...(r.activityLog || {}), [logKey]: { administered: false, by: "", at: "" } } } : r);
-                });
-                save({ ...data, reservations: updatedReservations });
-              };
+              const pendingCount = pendingActivities.length;
 
               const timePills = [["all","All"],["am","AM"],["noon","Noon"],["pm","PM"]];
               const typePills = [["all","All"],["feeding","Feeding"],["medication","Meds"],["bathing","Bath"]];
 
               return (
                 <>
-                  {/* Bulk action bar — redesigned */}
-                  {filteredActivities.length > 0 && (
-                    <div style={{ padding: "10px 14px", background: `linear-gradient(135deg, ${C.pri}08, ${C.acc}06)`, borderBottom: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-                      {/* Label */}
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: C.pri, letterSpacing: "0.02em" }}>BULK ACTION</span>
-                      </div>
-
-                      {/* Separator */}
-                      <div style={{ width: 1, height: 24, background: C.border }} />
-
-                      {/* Time pills */}
-                      <div style={{ display: "flex", gap: 2, background: C.surface, borderRadius: 8, padding: 2, border: `1px solid ${C.borderLight}` }}>
-                        {timePills.map(([val, label]) => (
-                          <button key={val} onClick={() => setBulkTime(val)} style={{ padding: "4px 12px", borderRadius: 6, border: "none", background: bulkTime === val ? C.pri : "transparent", color: bulkTime === val ? "#fff" : C.textSec, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>{label}</button>
-                        ))}
-                      </div>
-
-                      {/* Type pills */}
-                      <div style={{ display: "flex", gap: 2, background: C.surface, borderRadius: 8, padding: 2, border: `1px solid ${C.borderLight}` }}>
-                        {typePills.map(([val, label]) => {
-                          const typeColor = val === "feeding" ? C.pri : val === "medication" ? C.acc : val === "bathing" ? "#0891B2" : C.pri;
-                          return (
-                            <button key={val} onClick={() => setBulkType(val)} style={{ padding: "4px 12px", borderRadius: 6, border: "none", background: bulkType === val ? typeColor : "transparent", color: bulkType === val ? "#fff" : C.textSec, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>{label}</button>
-                          );
-                        })}
-                      </div>
-
-                      {/* Separator */}
-                      <div style={{ width: 1, height: 24, background: C.border }} />
-
-                      {/* Execute button */}
-                      <button onClick={executeBulkAction} disabled={bulkTargets.length === 0 || bulkAnimating} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 16px", borderRadius: 8, border: "none", background: bulkTargets.length > 0 ? (bulkAnimating ? C.suc : C.pri) : C.border, color: bulkTargets.length > 0 ? "#fff" : C.textMut, fontSize: 12, fontWeight: 700, cursor: bulkTargets.length > 0 && !bulkAnimating ? "pointer" : "default", fontFamily: "inherit", transition: "all 0.2s", boxShadow: bulkTargets.length > 0 ? `0 2px 8px ${C.pri}30` : "none" }}>
-                        {bulkAnimating ? (
-                          <><svg width="14" height="14" viewBox="0 0 24 24" style={{ animation: "spin 1s linear infinite" }}><circle cx="12" cy="12" r="10" stroke="#fff" strokeWidth="3" fill="none" strokeDasharray="30 70" /></svg> Marking...</>
-                        ) : (
-                          <><I.Check /> Mark {bulkTargets.length} Complete</>
-                        )}
-                      </button>
-
-                      {/* Clear all (secondary) */}
-                      <button onClick={bulkClearAll} style={{ padding: "6px 10px", borderRadius: 6, border: "none", background: "transparent", color: C.textMut, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} title="Clear all checked items">
-                        Reset
-                      </button>
-
-                      {/* Pending count */}
-                      <span style={{ fontSize: 11, color: C.textMut, marginLeft: "auto" }}>{pendingCount} pending</span>
-                    </div>
-                  )}
                   <div style={{ display: "grid", gridTemplateColumns: actGrid, padding: "10px 12px", background: C.bg, borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", alignItems: "center" }}>
                     <div>Time</div>
                     <div>Dog / Client</div>
@@ -4452,8 +4477,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                             onMouseEnter={e => { if (!administered) e.currentTarget.style.background = C.surfaceHover; }}
                             onMouseLeave={e => { e.currentTarget.style.background = administered ? C.suc + "08" : "transparent"; }}>
                             {/* Time */}
-                            <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>
-                              {fmtTimeLabel(row.time)}
+                            <div style={{ fontVariantNumeric: "tabular-nums" }}>
+                              {(() => { const t = fmtTimeTwoLine(row.time); return (<><div style={{ fontSize: 13, fontWeight: 700, color: C.text, lineHeight: 1.1 }}>{t.label}</div>{t.sub && <div style={{ fontSize: 10, color: C.textMut, lineHeight: 1.2 }}>{t.sub}</div>}</>); })()}
                             </div>
                             {/* Dog + Client */}
                             <div style={{ minWidth: 0 }}>
@@ -13074,9 +13099,13 @@ function EnterpriseLocationsPage({ data, save, nav, profile, handleLocationChang
     if (!deleteConfirm || deleting) return;
     setDeleting(true);
     try {
-      const { error } = await supabase.from('locations').delete().eq('id', deleteConfirm.id);
+      const { data: result, error } = await supabase.rpc('delete_location', {
+        p_location_id: deleteConfirm.id
+      });
       if (error) {
         addGlobalToast({ message: `Failed to delete: ${error.message}`, type: 'error' });
+      } else if (result && !result.success) {
+        addGlobalToast({ message: result.message || 'Failed to delete location', type: 'error' });
       } else {
         addGlobalToast({ message: `"${deleteConfirm.name}" has been deleted.` });
         if (refreshLocations) await refreshLocations();
@@ -17676,6 +17705,13 @@ export default function App() {
       save(DEMO);
     }
   }, [loading, rawData, locationId, isEmpty, loadError]);
+  // Auto-initialize new locations that have {_initialized:true} but no real config
+  useEffect(() => {
+    if (rawData && rawData._initialized && !rawData.dogTags && !rawData.rooms) {
+      console.log('[K9] Seeding new location with structural defaults');
+      save({ ...NEW_LOCATION_DEFAULTS, ...rawData });
+    }
+  }, [rawData?._initialized, rawData?.dogTags]);
   // Auto-initialize roles system for existing data that predates the permissions feature
   useEffect(() => { if (data && !data.roles) { save({ ...data, roles: DEFAULT_ROLES }); } }, [data?.roles]);
 

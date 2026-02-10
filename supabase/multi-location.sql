@@ -326,3 +326,44 @@ BEGIN
   RETURN jsonb_build_object('success', true, 'bookingId', booking_id);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+-- ============================================================
+-- 11. delete_location: Safely deletes a location and all
+--     associated data. Owner-only. Cannot delete your current
+--     active location.
+-- ============================================================
+CREATE OR REPLACE FUNCTION delete_location(p_location_id UUID)
+RETURNS JSONB AS $$
+DECLARE
+  user_loc UUID;
+  loc_name TEXT;
+BEGIN
+  -- Only owners can delete locations
+  IF NOT EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin')) THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Only owners can delete locations');
+  END IF;
+
+  -- Get the user's current active location
+  SELECT location_id INTO user_loc FROM profiles WHERE id = auth.uid();
+
+  -- Cannot delete your currently active location
+  IF user_loc = p_location_id THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Cannot delete your currently active location. Switch to another location first.');
+  END IF;
+
+  -- Verify location exists
+  SELECT name INTO loc_name FROM locations WHERE id = p_location_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Location not found');
+  END IF;
+
+  -- Reassign any users on this location to the caller's location
+  UPDATE profiles SET location_id = user_loc WHERE location_id = p_location_id;
+
+  -- Delete the location (cascades to location_data if FK exists)
+  DELETE FROM locations WHERE id = p_location_id;
+
+  RETURN jsonb_build_object('success', true, 'name', loc_name);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
