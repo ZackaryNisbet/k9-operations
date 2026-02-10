@@ -1,3 +1,7 @@
+// © 2026 K9 Operations LLC. All Rights Reserved.
+// Proprietary and Confidential. Unauthorized copying, modification,
+// distribution, or use of this software is strictly prohibited.
+
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import { AuthProvider, useAuth } from './AuthProvider';
@@ -80,6 +84,7 @@ function Root() {
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 24, fontWeight: 800, color: '#003462', fontFamily: "'Canela', Georgia, serif" }}>K9 Operations</div>
           <div style={{ fontSize: 13, color: '#6B7280', marginTop: 8 }}>Loading...</div>
+          <div style={{ fontSize: 9, color: '#D1D5DB', marginTop: 16 }}>&copy; 2026 K9 Operations LLC</div>
         </div>
       </div>
     );
@@ -136,6 +141,7 @@ function Root() {
           )}
 
           <p style={{ textAlign: 'center', fontSize: 12, color: '#9CA3AF', marginTop: 20 }}>Signed in as {user.email}</p>
+          <p style={{ textAlign: 'center', fontSize: 9, color: '#D1D5DB', marginTop: 12 }}>&copy; 2026 K9 Operations LLC. All Rights Reserved.</p>
         </div>
       </div>
     );
@@ -148,6 +154,7 @@ function Root() {
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 24, fontWeight: 800, color: '#003462', fontFamily: "'Canela', Georgia, serif" }}>K9 Operations</div>
           <div style={{ fontSize: 13, color: '#6B7280', marginTop: 8 }}>Setting up your account...</div>
+          <div style={{ fontSize: 9, color: '#D1D5DB', marginTop: 16 }}>&copy; 2026 K9 Operations LLC</div>
         </div>
       </div>
     );
@@ -199,6 +206,7 @@ function Root() {
           </div>
           <p style={{ fontSize: 12, color: '#9CA3AF', marginTop: 20 }}>Signed in as {user.email}</p>
           {claimDebug && <p style={{ fontSize: 11, color: '#D1D5DB', marginTop: 8 }}>Debug: {claimDebug}</p>}
+          <p style={{ textAlign: 'center', fontSize: 9, color: '#D1D5DB', marginTop: 12 }}>&copy; 2026 K9 Operations LLC. All Rights Reserved.</p>
         </div>
       </div>
     );

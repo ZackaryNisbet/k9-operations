@@ -1,3 +1,7 @@
+// © 2026 K9 Operations LLC. All Rights Reserved.
+// Proprietary and Confidential. Unauthorized copying, modification,
+// distribution, or use of this software is strictly prohibited.
+
 import { useState } from 'react';
 import { useAuth } from './AuthProvider';
 
@@ -152,8 +156,9 @@ export default function Login() {
           </>
         )}
 
-        <div style={{ textAlign: 'center', marginTop: 24, fontSize: 12, color: C.textMut }}>
-          K9 Operations v1.0 &middot; K9 Operations LLC
+        <div style={{ textAlign: 'center', marginTop: 24, fontSize: 11, color: C.textMut }}>
+          K9 Operations v1.0<br/>
+          <span style={{ fontSize: 10, opacity: 0.7 }}>&copy; 2026 K9 Operations LLC. All Rights Reserved.</span>
         </div>
       </div>
     </div>
