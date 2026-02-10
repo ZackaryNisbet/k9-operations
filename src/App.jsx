@@ -17826,40 +17826,95 @@ export default function App() {
   // Auto-initialize roles system for existing data that predates the permissions feature
   useEffect(() => { if (data && !data.roles) { save({ ...data, roles: DEFAULT_ROLES }); } }, [data?.roles]);
 
-  // ═══ Auto-migration: ensure every dog has exactly ONE tag ═══
-  // Fixes data from older versions where dogs might have no tags, multiple tags, or stale combos.
+  // ═══ Auto-migration: ensure every dog has exactly ONE tag + proper eval/reservation support ═══
+  // Classified dogs (LP/SP/PP) MUST have: a locked eval form + at least one prior reservation.
+  // Eval dogs MUST NOT have eval forms or prior completed stays.
+  const [migrationRan, setMigrationRan] = useState(false);
   useEffect(() => {
-    if (!data || !data.dogs || data.dogs.length === 0) return;
-    const VALID_CLASS_TAGS = new Set(["tag_eval", "tag_lp", "tag_sp", "tag_pp"]);
-    const dogsNeedingFix = data.dogs.filter(d => {
-      const classTags = (d.tags || []).filter(t => VALID_CLASS_TAGS.has(t));
-      return classTags.length !== 1; // should have exactly 1 classification tag
+    if (!data || !data.dogs || data.dogs.length === 0 || migrationRan) return;
+    const VALID = new Set(["tag_eval", "tag_lp", "tag_sp", "tag_pp"]);
+    const today = new Date().toISOString().slice(0, 10);
+    const addDays = (base, n) => { const d = new Date(base + "T12:00:00"); d.setDate(d.getDate() + n); return d.toISOString().split("T")[0]; };
+
+    // Check: does ANY dog need fixing? (wrong tag count OR classified dog missing eval)
+    const evalSet = new Set((data.evaluations || []).filter(e => e.locked).map(e => e.dogId));
+    const needsFix = data.dogs.some(d => {
+      const ct = (d.tags || []).filter(t => VALID.has(t));
+      if (ct.length !== 1) return true; // wrong tag count
+      const tag = ct[0];
+      if (tag !== "tag_eval" && !evalSet.has(d.id)) return true; // classified but no eval
+      return false;
     });
-    if (dogsNeedingFix.length === 0) return;
-    console.log(`[K9] Auto-migration: fixing tags on ${dogsNeedingFix.length} dogs`);
-    const hasEval = (dogId) => (data.evaluations || []).some(e => e.dogId === dogId && e.locked);
-    const hasPastRes = (dogId) => (data.reservations || []).some(r => r.dogId === dogId && r.status === "checked-out");
+    if (!needsFix) return;
+    setMigrationRan(true);
+    console.log("[K9] Auto-migration: fixing tags + eval records for all dogs");
+
+    let newEvals = [...(data.evaluations || [])];
+    let newRes = [...(data.reservations || [])];
+    let rIdx = newRes.length + 5000; // high offset to avoid ID collision
+
     const fixedDogs = data.dogs.map(d => {
-      const classTags = (d.tags || []).filter(t => VALID_CLASS_TAGS.has(t));
-      if (classTags.length === 1) return d; // already correct
-      // Determine correct single tag based on history + weight
+      const ct = (d.tags || []).filter(t => VALID.has(t));
       const w = parseInt(d.fields?.weight) || 40;
-      const evalOnFile = hasEval(d.id);
-      const hadPriorStay = hasPastRes(d.id);
-      let newTag;
-      if (!evalOnFile && !hadPriorStay) {
-        newTag = "tag_eval"; // new dog, no history
-      } else if ((d.tags || []).includes("tag_pp")) {
-        newTag = "tag_pp"; // preserve existing PP classification
-      } else if (w < 35) {
-        newTag = "tag_sp";
+      const hasPP = (d.tags || []).includes("tag_pp");
+
+      // Determine the correct single tag
+      let tag;
+      if (ct.length === 1) {
+        tag = ct[0]; // already has exactly one — keep it
       } else {
-        newTag = "tag_lp";
+        // Assign based on weight; preserve PP if it was set
+        if (hasPP) tag = "tag_pp";
+        else if (w < 35) tag = "tag_sp";
+        else tag = "tag_lp";
       }
-      return { ...d, tags: [newTag] };
+
+      // For classified dogs (LP/SP/PP): ensure eval record + prior reservation exist
+      if (tag !== "tag_eval") {
+        const hasLockedEval = newEvals.some(e => e.dogId === d.id && e.locked);
+        if (!hasLockedEval) {
+          const evalDate = addDays(today, -(30 + Math.floor(Math.random() * 150)));
+          const isPP = tag === "tag_pp";
+          const evalResId = "r_mig_" + (rIdx++);
+          // Create the evaluation reservation
+          newRes.push({
+            id: evalResId, clientId: d.clientId, dogId: d.id, type: "evaluation",
+            evalResult: isPP ? "passed_private" : "passed_group",
+            checkIn: evalDate, checkOut: evalDate,
+            checkInTime: "10:00", checkOutTime: "11:00",
+            status: "checked-out", notes: ""
+          });
+          // Create the locked evaluation form
+          newEvals.push({
+            id: "eval_mig_" + d.id, dogId: d.id, clientId: d.clientId,
+            reservationId: evalResId, date: evalDate,
+            evaluatorName: "Staff", evalType: "initial",
+            hasExperience: !isPP, answers: {}, subtotals: {},
+            totalScore: isPP ? 15 : 26, maxScore: 30,
+            result: isPP ? "yellow" : "green",
+            notes: isPP ? "Reactive with other dogs; private play recommended" : "Great in group play; social and friendly",
+            locked: true, createdAt: new Date(evalDate + "T12:00:00").toISOString(),
+          });
+        }
+        // Ensure at least one prior completed reservation exists
+        const hasPrior = newRes.some(r => r.dogId === d.id && r.status === "checked-out" && r.type !== "evaluation");
+        if (!hasPrior) {
+          const stayDate = addDays(today, -(14 + Math.floor(Math.random() * 60)));
+          const sm = w < 35;
+          newRes.push({
+            id: "r_mig_" + (rIdx++), clientId: d.clientId, dogId: d.id, type: "daycare",
+            daycareSize: sm ? "small" : "large", checkIn: stayDate, checkOut: stayDate,
+            checkInTime: "07:00", checkOutTime: "17:00",
+            status: "checked-out", notes: ""
+          });
+        }
+      }
+
+      return { ...d, tags: [tag] };
     });
-    save({ ...data, dogs: fixedDogs });
-  }, [data?.dogs?.length]);
+
+    save({ ...data, dogs: fixedDogs, evaluations: newEvals, reservations: newRes });
+  }, [data?.dogs?.length, migrationRan]);
 
   // ═══ Dynamic Locations (loaded from Supabase) ═══
   const [dbLocations, setDbLocations] = useState([]);
