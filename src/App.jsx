@@ -4770,10 +4770,14 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                             onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
                             onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}>
                             {showCheckIn && <Btn size="sm" variant="success" onClick={() => handleCheckIn(res.id)} icon={<I.LogIn/>}>In</Btn>}
-                            {showCheckOut && ((res.type === "evaluation" && !hasCompletedEval(data, res)) || ((res.type === "boarding" || res.type === "dayboarding") && res.needsEval && !hasCompletedEval(data, res))) && (
-                              <Btn size="sm" variant="warning" onClick={() => nav("evaluation-form", { reservationId: res.id })} icon={<I.Clipboard/>}>Eval</Btn>
-                            )}
-                            {showCheckOut && (res.type === "boarding" || res.type === "dayboarding" || (res.type === "evaluation" && hasCompletedEval(data, res)) || (res.type !== "evaluation" && res.type !== "boarding" && res.type !== "dayboarding")) && (
+                            {showCheckOut && (() => {
+                              const dogHasEvalTag = dog && (dog.tags || []).includes("tag_eval");
+                              const isEvalRes = res.type === "evaluation";
+                              const evalDone = hasCompletedEval(data, res);
+                              const needsEvalBtn = (isEvalRes && !evalDone) || (dogHasEvalTag && !evalDone) || ((res.type === "boarding" || res.type === "dayboarding") && res.needsEval && !evalDone);
+                              return needsEvalBtn ? <Btn size="sm" variant="warning" onClick={() => nav("evaluation-form", { reservationId: res.id })} icon={<I.Clipboard/>}>Eval</Btn> : null;
+                            })()}
+                            {showCheckOut && (
                               <Btn size="sm" variant="accent" onClick={() => handleCheckOut(res.id)} icon={<I.LogOut/>}>Out</Btn>
                             )}
                             {activeTab === "checkedout" && <Badge color="default" size="sm">Done</Badge>}
