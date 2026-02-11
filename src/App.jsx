@@ -8309,8 +8309,9 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight 
   const [draft, setDraft] = useState(blank);
   const [bbOverride, setBbOverride] = useState(false); // true when user manually overrides amount
 
-  // Blue Buffalo chart matching
-  const bbChart = BB_CHART[draft.foodType] || null;
+  // Blue Buffalo chart matching (support old names for backward compat)
+  const BB_NAME_MAP = { "Blue Buffalo Chicken": "Blue Buffalo GI Vet-Grade (Chicken)", "Blue Buffalo Salmon": "Blue Buffalo HF Vet-Grade (Salmon)" };
+  const bbChart = BB_CHART[draft.foodType] || BB_CHART[BB_NAME_MAP[draft.foodType]] || null;
   const bbMatch = bbChart && dogWeight ? bbChart.find(r => dogWeight >= r.min && dogWeight <= r.max) : null;
 
   // Auto-calc helper: given matched row + number of feedings, compute per-feeding qty
@@ -8331,7 +8332,7 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight 
 
   // When foodType changes to Blue Buffalo AND user hasn't overridden, auto-set amount
   const updateFoodType = (v) => {
-    const newChart = BB_CHART[v] || null;
+    const newChart = BB_CHART[v] || BB_CHART[BB_NAME_MAP[v]] || null;
     const newMatch = newChart && dogWeight ? newChart.find(r => dogWeight >= r.min && dogWeight <= r.max) : null;
     setBbOverride(false);
     if (newMatch && draft.times.length > 0) {
@@ -8356,7 +8357,7 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight 
     setDraft(d => {
       const newTimes = d.times.includes(t) ? d.times.filter(x => x !== t) : [...d.times, t];
       // Auto-recalc if Blue Buffalo selected and not overridden
-      const chart = BB_CHART[d.foodType] || null;
+      const chart = BB_CHART[d.foodType] || BB_CHART[BB_NAME_MAP[d.foodType]] || null;
       const match = chart && dogWeight ? chart.find(r => dogWeight >= r.min && dogWeight <= r.max) : null;
       if (match && newTimes.length > 0 && !bbOverride) {
         const autoAmt = calcAutoQty(match, newTimes.length);
@@ -16964,7 +16965,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
   const [checkIn, setCheckIn] = useState(todayStr());
   const [checkOut, setCheckOut] = useState(todayStr());
   const [checkInTime, setCheckInTime] = useState("09:00");
-  const [checkOutTime, setCheckOutTime] = useState("11:00");
+  const [checkOutTime, setCheckOutTime] = useState("12:30");
   const [notes, setNotes] = useState("");
 
   // Auto-set daycare size from first dog's weight
@@ -19853,6 +19854,31 @@ export default function App() {
     });
     save({ ...data, clients: migratedClients });
   }, [data?.clients?.length, lifecycleMigRan]);
+
+  // ═══ Auto-migration: rename old Blue Buffalo food types ═══
+  const [bbMigRan, setBbMigRan] = useState(false);
+  useEffect(() => {
+    if (!data || bbMigRan) return;
+    const OLD_TO_NEW = { "Blue Buffalo Chicken": "Blue Buffalo GI Vet-Grade (Chicken)", "Blue Buffalo Salmon": "Blue Buffalo HF Vet-Grade (Salmon)" };
+    const renameFT = (v) => OLD_TO_NEW[v] || v;
+    // Check if migration needed
+    const hasOldOpts = (data.foodTypeOptions || []).some(f => OLD_TO_NEW[f]);
+    const hasOldDogFeeds = (data.dogs || []).some(d => (d.fields?.feedingSchedules || []).some(s => OLD_TO_NEW[s.foodType]));
+    const hasOldResFeeds = (data.reservations || []).some(r => (r.careOverrides?.feedingSchedules || []).some(s => OLD_TO_NEW[s.foodType]));
+    const hasOldPricing = data.pricing?.addOns && (OLD_TO_NEW["Blue Buffalo Chicken"] in (data.pricing?.addOns || {}) || OLD_TO_NEW["Blue Buffalo Salmon"] in (data.pricing?.addOns || {}));
+    if (!hasOldOpts && !hasOldDogFeeds && !hasOldResFeeds) return;
+    setBbMigRan(true);
+    console.log("[K9] Auto-migration: renaming Blue Buffalo food types");
+    const migrated = { ...data };
+    if (hasOldOpts) migrated.foodTypeOptions = (data.foodTypeOptions || []).map(renameFT);
+    if (hasOldDogFeeds) migrated.dogs = data.dogs.map(d => ({
+      ...d, fields: { ...d.fields, feedingSchedules: (d.fields?.feedingSchedules || []).map(s => s.foodType && OLD_TO_NEW[s.foodType] ? { ...s, foodType: renameFT(s.foodType) } : s) }
+    }));
+    if (hasOldResFeeds) migrated.reservations = (data.reservations || []).map(r => r.careOverrides?.feedingSchedules?.some(s => OLD_TO_NEW[s.foodType]) ? {
+      ...r, careOverrides: { ...r.careOverrides, feedingSchedules: r.careOverrides.feedingSchedules.map(s => s.foodType && OLD_TO_NEW[s.foodType] ? { ...s, foodType: renameFT(s.foodType) } : s) }
+    } : r);
+    save(migrated);
+  }, [data?.foodTypeOptions, data?.dogs?.length, bbMigRan]);
 
   // ═══ Dynamic Locations (loaded from Supabase) ═══
   const [dbLocations, setDbLocations] = useState([]);
