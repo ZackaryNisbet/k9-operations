@@ -194,9 +194,10 @@ export default async function handler(request) {
     const subject = formData.get('subject') || '';
     const envelope = formData.get('envelope') || '{}';
 
-    // ── Verify this is from Ignite ──
+    // ── Verify this is from Ignite (or allowed forwarder) ──
     const isIgnite = from.includes('leads.idigitalstrategies.com')
       || from.includes('ignitevisibility')
+      || from.includes('lphik9.com')
       || (subject && subject.toLowerCase().includes('new web form'));
 
     if (!isIgnite) {
