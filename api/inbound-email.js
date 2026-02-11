@@ -29,10 +29,16 @@ function parseIgniteText(rawText) {
   if (sourceMatch) fields.source = cleanText(sourceMatch[1]);
 
   // All known Ignite labels in order, with their field keys
+  // Covers both web form leads AND phone call leads
   const labels = [
     { label: 'First Name', key: 'firstName' },
     { label: 'Last Name', key: 'lastName' },
     { label: 'Phone Number', key: 'phone' },
+    { label: 'Caller Number', key: 'phone' },
+    { label: 'Caller Name', key: 'callerName' },
+    { label: 'Tracking Number', key: 'trackingNumber' },
+    { label: 'Call Duration', key: 'callDuration' },
+    { label: 'Call Status', key: 'callStatus' },
     { label: 'Zip Code', key: 'zip' },
     { label: 'Reason for Contact', key: 'reason' },
     { label: 'Lead ID', key: 'leadId' },
@@ -46,7 +52,7 @@ function parseIgniteText(rawText) {
 
   // Build a mega-regex that finds any known label
   const allLabelPattern = labels.map(l => l.label).join('|')
-    + '|Email Address|How can we help you\\??|Time|Browser|Device|Country|Zip|Is this lead';
+    + '|Email Address|How can we help you\\??|Time|Browser|Device|Country|Zip|Is this lead|Call Recording|Ring-?to';
 
   // For each label, find it in the text and extract value up to the next label
   for (const { label, key } of labels) {
@@ -81,6 +87,17 @@ function parseIgniteText(rawText) {
   const helpMatch = text.match(/How can we help you\??\s*([\s\S]+?)(?=Lead\s*ID|Is this lead|$)/i);
   if (helpMatch && helpMatch[1]) {
     fields.message = cleanText(helpMatch[1]);
+  }
+
+  // Extract call recording URL (phone call leads)
+  const recMatch = text.match(/Call\s*Recording[:\s]*(https?:\/\/\S+)/i);
+  if (recMatch) fields.callRecordingUrl = recMatch[1].replace(/[>\]\)]+$/, '');
+
+  // For phone call leads: if we have callerName but no firstName, split it
+  if (fields.callerName && !fields.firstName) {
+    const nameParts = fields.callerName.trim().split(/\s+/);
+    fields.firstName = nameParts[0] || '';
+    fields.lastName = nameParts.slice(1).join(' ') || '';
   }
 
   // Extract Ignite profile ID from any embedded URL
@@ -124,6 +141,11 @@ function parseIgniteHTML(html) {
     'last name': 'lastName',
     'email address': 'email',
     'phone number': 'phone',
+    'caller number': 'phone',
+    'caller name': 'callerName',
+    'tracking number': 'trackingNumber',
+    'call duration': 'callDuration',
+    'call status': 'callStatus',
     'zip code': 'zip',
     'zip': 'zip',
     'reason for contact': 'reason',
@@ -204,10 +226,12 @@ export default async function handler(request) {
 
     // ── Verify this is from Ignite (or allowed forwarder) ──
     console.log(`[K9] from=${from} | subj=${subject} | to=${to}`);
+    const subjectLower = (subject || '').toLowerCase();
     const isIgnite = from.includes('leads.idigitalstrategies.com')
       || from.includes('ignitevisibility')
       || from.includes('lphik9.com')
-      || (subject && subject.toLowerCase().includes('new web form'));
+      || subjectLower.includes('new web form')
+      || subjectLower.includes('new phone call');
 
     if (!isIgnite) {
       console.log(`[K9] REJECTED sender`);
