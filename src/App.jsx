@@ -1132,34 +1132,60 @@ function getOpsCountLabel(data, item, date) {
 
 // ─── Default Field Configs ──────────────────────────────────────────────────
 const DEF_CLIENT_FIELDS = [
-  { id:"phone",name:"Phone Number",type:"tel",required:true,isKey:true,locked:true,order:0 },
-  { id:"first_name",name:"First Name",type:"text",required:true,locked:false,order:1 },
-  { id:"last_name",name:"Last Name",type:"text",required:true,locked:false,order:2 },
-  { id:"email",name:"Email",type:"email",required:false,locked:false,order:3 },
-  { id:"address",name:"Address",type:"text",required:false,locked:false,order:4 },
-  { id:"emergency_contact",name:"Emergency Contact",type:"text",required:false,locked:false,order:5 },
-  { id:"emergency_phone",name:"Emergency Phone",type:"tel",required:false,locked:false,order:6 },
-  { id:"vet_name",name:"Veterinarian Name",type:"text",required:false,locked:false,order:7 },
-  { id:"vet_phone",name:"Veterinarian Phone",type:"tel",required:false,locked:false,order:8 },
-  { id:"notes",name:"Notes",type:"textarea",required:false,locked:false,order:9 },
-  { id:"referral_source",name:"Referral Source",type:"select",required:false,locked:false,order:10,options:["Friend/Family","Google","Social Media","Website","Walk-In","Vet Referral","Other"] },
+  { id:"phone",name:"Phone Number",type:"tel",requiredFor:["create"],isKey:true,locked:true,order:0 },
+  { id:"first_name",name:"First Name",type:"text",requiredFor:["tour"],locked:false,order:1 },
+  { id:"last_name",name:"Last Name",type:"text",requiredFor:["tour"],locked:false,order:2 },
+  { id:"email",name:"Email",type:"email",requiredFor:["eval"],locked:false,order:3 },
+  { id:"address",name:"Address",type:"text",requiredFor:[],locked:false,order:4 },
+  { id:"emergency_contact",name:"Emergency Contact",type:"text",requiredFor:[],locked:false,order:5 },
+  { id:"emergency_phone",name:"Emergency Phone",type:"tel",requiredFor:[],locked:false,order:6 },
+  { id:"vet_name",name:"Veterinarian Name",type:"text",requiredFor:[],locked:false,order:7 },
+  { id:"vet_phone",name:"Veterinarian Phone",type:"tel",requiredFor:[],locked:false,order:8 },
+  { id:"notes",name:"Notes",type:"textarea",requiredFor:[],locked:false,order:9 },
+  { id:"referral_source",name:"Referral Source",type:"select",requiredFor:[],locked:false,order:10,options:["Friend/Family","Google","Social Media","Website","Walk-In","Vet Referral","Other"] },
 ];
 
 const DEF_DOG_FIELDS = [
-  { id:"name",name:"Dog Name",type:"text",required:true,locked:true,order:0 },
-  { id:"breed",name:"Breed",type:"text",required:true,locked:true,order:1 },
-  { id:"weight",name:"Weight (lbs)",type:"number",required:false,locked:false,order:2 },
-  { id:"dob",name:"Date of Birth",type:"date",required:false,locked:false,order:3 },
-  { id:"sex",name:"Sex",type:"select",options:["Male","Female"],required:false,locked:true,order:4 },
-  { id:"spayed_neutered",name:"Spayed/Neutered",type:"select",options:["Neutered","Spayed","Intact"],required:false,locked:true,order:5 },
-  { id:"color",name:"Color/Markings",type:"text",required:false,locked:false,order:6 },
-  { id:"bath_type",name:"Preferred Bath Type",type:"select",options:["Standard","Hypo","Medicated","Whitening"],required:false,locked:true,order:7 },
-  { id:"temperament",name:"Temperament Notes",type:"textarea",required:false,locked:false,order:8 },
-  { id:"rabies_exp",name:"Rabies Expiration",type:"date",required:false,locked:false,order:9 },
-  { id:"bordetella_exp",name:"Bordetella Expiration",type:"date",required:false,locked:false,order:10 },
-  { id:"dhpp_exp",name:"DHPP Expiration",type:"date",required:false,locked:false,order:11 },
-  { id:"canine_flu_exp",name:"Canine Influenza Exp.",type:"date",required:false,locked:false,order:12 },
+  { id:"name",name:"Dog Name",type:"text",requiredFor:["tour"],locked:true,order:0 },
+  { id:"breed",name:"Breed",type:"text",requiredFor:["eval"],locked:true,order:1 },
+  { id:"weight",name:"Weight (lbs)",type:"number",requiredFor:["reservation"],locked:false,order:2 },
+  { id:"dob",name:"Date of Birth",type:"date",requiredFor:[],locked:false,order:3 },
+  { id:"sex",name:"Sex",type:"select",options:["Male","Female"],requiredFor:["reservation"],locked:true,order:4 },
+  { id:"spayed_neutered",name:"Spayed/Neutered",type:"select",options:["Neutered","Spayed","Intact"],requiredFor:["reservation"],locked:true,order:5 },
+  { id:"color",name:"Color/Markings",type:"text",requiredFor:[],locked:false,order:6 },
+  { id:"bath_type",name:"Preferred Bath Type",type:"select",options:["Standard","Hypo","Medicated","Whitening"],requiredFor:[],locked:true,order:7 },
+  { id:"temperament",name:"Temperament Notes",type:"textarea",requiredFor:[],locked:false,order:8 },
+  { id:"rabies_exp",name:"Rabies Expiration",type:"date",requiredFor:["reservation"],locked:false,order:9 },
+  { id:"bordetella_exp",name:"Bordetella Expiration",type:"date",requiredFor:["reservation"],locked:false,order:10 },
+  { id:"dhpp_exp",name:"DHPP Expiration",type:"date",requiredFor:["reservation"],locked:false,order:11 },
+  { id:"canine_flu_exp",name:"Canine Influenza Exp.",type:"date",requiredFor:["reservation"],locked:false,order:12 },
 ];
+
+// ─── Required Fields Matrix Helpers ─────────────────────────────────────────
+const ACTION_LEVELS = ["create", "tour", "eval", "reservation"];
+const ACTION_LABELS = { create: "Create Record", tour: "Book Tour", eval: "Book Eval", reservation: "Book Reservation" };
+
+function isFieldRequired(field, action) {
+  const rf = field.requiredFor || (field.required ? ["create"] : []);
+  if (rf.length === 0) return false;
+  const minLevel = Math.min(...rf.map(a => ACTION_LEVELS.indexOf(a)).filter(i => i >= 0));
+  return ACTION_LEVELS.indexOf(action) >= minLevel;
+}
+
+function validateFields(dataFields, values, action) {
+  const errs = {};
+  dataFields.forEach(f => {
+    if (isFieldRequired(f, action) && !values[f.id]) errs[f.id] = "Required";
+  });
+  return errs;
+}
+
+function migrateFieldsToMatrix(fields) {
+  return fields.map(f => {
+    if (f.requiredFor) return f;
+    return { ...f, requiredFor: f.required ? ["create"] : [] };
+  });
+}
 
 // Default agreements
 const DEF_AGREEMENTS = [
@@ -7039,7 +7065,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
       {/* Edit Modal */}
       {editing&&<Modal title="Edit Client" onClose={()=>setEditing(false)} wide>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-          {data.clientFields.filter(f=>f.type!=="textarea").map(f=>(<div key={f.id} style={f.type==="checkbox"?{display:"flex",alignItems:"end"}:{}}><Inp label={f.name} type={f.type} value={editFields[f.id]||""} onChange={v=>setEditFields({...editFields,[f.id]:v})} required={f.required} options={f.options}/></div>))}
+          {data.clientFields.filter(f=>f.type!=="textarea").map(f=>(<div key={f.id} style={f.type==="checkbox"?{display:"flex",alignItems:"end"}:{}}><Inp label={f.name} type={f.type} value={editFields[f.id]||""} onChange={v=>setEditFields({...editFields,[f.id]:v})} required={isFieldRequired(f,"create")} options={f.options}/></div>))}
         </div>
         {data.clientFields.filter(f=>f.type==="textarea").map(f=>(<div key={f.id} style={{marginTop:16}}><Inp label={f.name} type="textarea" value={editFields[f.id]||""} onChange={v=>setEditFields({...editFields,[f.id]:v})}/></div>))}
         <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:24}}><Btn variant="secondary" onClick={()=>setEditing(false)}>Cancel</Btn><Btn onClick={saveEdit}>Save</Btn></div>
@@ -8107,8 +8133,7 @@ function NewClientPage({ data, save, nav, prefill, addGlobalToast }) {
   });
   const [errors, setErrors] = useState({});
   const handleSave = async () => {
-    const errs={};
-    data.clientFields.forEach(f=>{if(f.required&&!fields[f.id])errs[f.id]="Required";});
+    const errs=validateFields(data.clientFields, fields, "create");
     if(fields.phone){const ex=data.clients.find(c=>c.fields.phone===(fields.phone||"").replace(/\D/g,""));if(ex)errs.phone="Phone already exists";}
     if(Object.keys(errs).length>0){setErrors(errs);return;}
     const nc={id:gid(),fields:{...fields,phone:(fields.phone||"").replace(/\D/g,"")},createdAt:todayStr(),agreements:{}};
@@ -8123,7 +8148,7 @@ function NewClientPage({ data, save, nav, prefill, addGlobalToast }) {
       <h1 style={{margin:"0 0 24px",fontSize:26,fontWeight:800,color:C.text}}>New Client</h1>
       <Card style={{padding:28}}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-          {data.clientFields.filter(f=>f.type!=="textarea").map(f=>(<div key={f.id}><Inp label={f.name} type={f.type} value={fields[f.id]||""} onChange={v=>{setFields({...fields,[f.id]:v});setErrors({...errors,[f.id]:undefined});}} required={f.required} placeholder={f.isKey?"Primary key - must be unique":""} options={f.options}/>{errors[f.id]&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors[f.id]}</div>}</div>))}
+          {data.clientFields.filter(f=>f.type!=="textarea").map(f=>(<div key={f.id}><Inp label={f.name} type={f.type} value={fields[f.id]||""} onChange={v=>{setFields({...fields,[f.id]:v});setErrors({...errors,[f.id]:undefined});}} required={isFieldRequired(f,"create")} placeholder={f.isKey?"Primary key - must be unique":""} options={f.options}/>{errors[f.id]&&<div style={{color:C.dan,fontSize:12,marginTop:4,fontWeight:600}}>{errors[f.id]}</div>}</div>))}
         </div>
         {data.clientFields.filter(f=>f.type==="textarea").map(f=>(<div key={f.id} style={{marginTop:16}}><Inp label={f.name} type="textarea" value={fields[f.id]||""} onChange={v=>setFields({...fields,[f.id]:v})}/></div>))}
         <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:28}}><Btn variant="secondary" onClick={()=>nav("clients")}>Cancel</Btn><Btn onClick={handleSave}>Create Client</Btn></div>
@@ -8440,7 +8465,7 @@ function MedicationScheduleEditor({ schedules, onChange, data, readOnly, checkIn
 }
 
 // Helper: renders dog form fields with special handling for breed, sex, spay/neuter, bath, feeding, meds
-function DogFormFields({ fields, dogFields, data, errors, onChange, feedingSchedules, onFeedingChange, medSchedules, onMedChange, autoFocusBreed }) {
+function DogFormFields({ fields, dogFields, data, errors, onChange, feedingSchedules, onFeedingChange, medSchedules, onMedChange, autoFocusBreed, action }) {
   const sex = fields.sex || "";
   const spayLabel = sex === "Female" ? "Spayed / Intact" : sex === "Male" ? "Neutered / Intact" : "Spayed/Neutered";
   const spayOpts = sex === "Female" ? ["Spayed", "Intact"] : sex === "Male" ? ["Neutered", "Intact"] : ["Neutered", "Spayed", "Intact"];
@@ -8455,7 +8480,7 @@ function DogFormFields({ fields, dogFields, data, errors, onChange, feedingSched
         {dogFields.filter(f => f.type !== "textarea" && !SPECIAL.has(f.id)).map(f => (
           <div key={f.id} style={f.type === "checkbox" ? { display: "flex", alignItems: "end" } : {}}>
             {f.id === "breed" ? null : (
-              <Inp label={f.name} type={f.type} value={fields[f.id] || ""} onChange={v => onChange(f.id, v)} required={f.required} options={f.options} />
+              <Inp label={f.name} type={f.type} value={fields[f.id] || ""} onChange={v => onChange(f.id, v)} required={isFieldRequired(f, action || "reservation")} options={f.options} />
             )}
             {errors[f.id] && <div style={{ color: C.dan, fontSize: 12, marginTop: 4, fontWeight: 600 }}>{errors[f.id]}</div>}
           </div>
@@ -8508,8 +8533,7 @@ function NewDogPage({ data, save, clientId, nav }) {
   const updateField = (fid, v) => { setFields(prev => ({ ...prev, [fid]: v })); setErrors(prev => ({ ...prev, [fid]: undefined })); };
 
   const handleSave = async () => {
-    const errs={};
-    data.dogFields.forEach(f=>{if(f.required&&!fields[f.id])errs[f.id]="Required";});
+    const errs=validateFields(data.dogFields, fields, "reservation");
     if(Object.keys(errs).length>0){setErrors(errs);return;}
     const nd={id:gid(),clientId,fields:{...fields, feedingSchedules, medicationSchedules: medSchedules},tags};
     await save({...data,dogs:[...data.dogs,nd]});
@@ -8520,7 +8544,7 @@ function NewDogPage({ data, save, clientId, nav }) {
       <button onClick={()=>nav("client-detail",{clientId})} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.textSec,fontSize:14,fontWeight:600,padding:0,marginBottom:20,fontFamily:"inherit"}}><I.Back/> Back to {client.fields.first_name}</button>
       <h1 style={{margin:"0 0 24px",fontSize:26,fontWeight:800,color:C.text}}>Add Dog</h1>
       <Card style={{padding:28}}>
-        <DogFormFields fields={fields} dogFields={data.dogFields} data={data} errors={errors} onChange={updateField}
+        <DogFormFields fields={fields} dogFields={data.dogFields} data={data} errors={errors} onChange={updateField} action="reservation"
           feedingSchedules={feedingSchedules} onFeedingChange={setFeedingSchedules}
           medSchedules={medSchedules} onMedChange={setMedSchedules} />
         <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:28}}><Btn variant="secondary" onClick={()=>nav("client-detail",{clientId})}>Cancel</Btn><Btn onClick={handleSave}>Add Dog</Btn></div>
@@ -15675,18 +15699,44 @@ function SettingsPage({ data, save, profile }) {
     await save({ ...data, rooms: { ...rooms, [rt]: updated } });
   };
 
-  const fields = tab === "client" ? data.clientFields : tab === "dog" ? data.dogFields : [];
-  const fieldKey = tab === "client" ? "clientFields" : "dogFields";
-
-  const handleAddField = async () => {
+  // Required Fields matrix helpers
+  const [addFieldTarget, setAddFieldTarget] = useState("client"); // which section gets the new field
+  const handleAddFieldMatrix = async (targetKey) => {
     if (!newField.name.trim()) return;
     const id = newField.name.toLowerCase().replace(/[^a-z0-9]/g,"_")+"_"+gid().slice(0,4);
-    const f = { id, name:newField.name.trim(), type:newField.type, required:newField.required, locked:false, order:fields.length, ...(newField.type==="select"?{options:newField.options.split(",").map(o=>o.trim()).filter(Boolean)}:{}) };
-    await save({...data,[fieldKey]:[...fields,f]});
+    const targetFields = targetKey === "clientFields" ? data.clientFields : data.dogFields;
+    const f = { id, name:newField.name.trim(), type:newField.type, requiredFor:[], locked:false, order:targetFields.length, ...(newField.type==="select"?{options:newField.options.split(",").map(o=>o.trim()).filter(Boolean)}:{}) };
+    await save({...data,[targetKey]:[...targetFields,f]});
     setNewField({name:"",type:"text",required:false,options:""});setShowAdd(false);
   };
-  const toggleReq = async (fid) => { await save({...data,[fieldKey]:fields.map(f=>f.id===fid?{...f,required:!f.required}:f)}); };
-  const removeField = async (fid) => { await save({...data,[fieldKey]:fields.filter(f=>f.id!==fid)}); };
+  const toggleFieldLevel = async (fieldKey, fid, level) => {
+    const fieldArr = data[fieldKey];
+    const updated = fieldArr.map(f => {
+      if (f.id !== fid) return f;
+      // Phone at create is locked
+      if (f.isKey && level === "create") return f;
+      const rf = [...(f.requiredFor || [])];
+      const levelIdx = ACTION_LEVELS.indexOf(level);
+      const isActive = rf.includes(level);
+      if (isActive) {
+        // Uncheck this level and all higher levels
+        const newRf = rf.filter(l => ACTION_LEVELS.indexOf(l) < levelIdx);
+        return { ...f, requiredFor: newRf };
+      } else {
+        // Check this level and all lower levels
+        const newRf = [...new Set([...rf, ...ACTION_LEVELS.filter((_, i) => i <= levelIdx)])];
+        return { ...f, requiredFor: newRf };
+      }
+    });
+    await save({...data, [fieldKey]: updated});
+  };
+  const removeFieldMatrix = async (fieldKey, fid) => {
+    await save({...data, [fieldKey]: data[fieldKey].filter(f => f.id !== fid)});
+  };
+
+  // Legacy compat — keep old references working if tab is "client" or "dog"
+  const fields = tab === "client" ? data.clientFields : tab === "dog" ? data.dogFields : [];
+  const fieldKey = tab === "client" ? "clientFields" : "dogFields";
 
   const handleAddTag = async () => {
     if (!newTag.name.trim()) return;
@@ -15721,8 +15771,7 @@ function SettingsPage({ data, save, profile }) {
   // Settings sections for grouped list view
   const settingsSections = [
     { label: "Sales", items: [
-      { id: "client", label: "Client Fields", desc: "Manage client profile fields and requirements", keywords: "client fields phone email name required" },
-      { id: "dog", label: "Dog Fields", desc: "Manage dog profile fields like breed, weight, vaccines", keywords: "dog fields breed weight name required" },
+      { id: "fields", label: "Required Fields", desc: "Configure which fields are required at each lifecycle stage", keywords: "required fields client dog matrix create tour eval reservation phone email name" },
       { id: "tags", label: "Dog Tags", desc: "Create color-coded tags for daycare, private play, etc.", keywords: "tags labels categories private play daycare" },
       { id: "vaccines", label: "Vaccines", desc: "Configure required vaccinations and expiration tracking", keywords: "vaccines rabies bordetella dhpp flu required" },
       { id: "agreements", label: "Agreements", desc: "Manage boarding and daycare agreement documents", keywords: "agreements contracts waivers liability boarding" },
@@ -15758,7 +15807,7 @@ function SettingsPage({ data, save, profile }) {
   ];
   // Map settings tab IDs → required permission keys
   const SETTINGS_PERM_MAP = {
-    client:"edit_fields",dog:"edit_fields",tags:"edit_tags_config",vaccines:"edit_vaccines_config",
+    fields:"edit_fields",client:"edit_fields",dog:"edit_fields",tags:"edit_tags_config",vaccines:"edit_vaccines_config",
     agreements:"edit_agreements",pricing:"edit_pricing",packages:"edit_pricing",discounts:"edit_pricing",dropdowns:"edit_dropdowns",
     eod:"edit_eod_template","daily-ops":"edit_ops_template",
     facility:"edit_facility",rooms:"edit_rooms","closed-dates":"edit_facility",policies:"edit_vaccines_config",
@@ -16386,16 +16435,61 @@ function SettingsPage({ data, save, profile }) {
 
           <div style={{ textAlign: "center", fontSize: 11, color: C.textMut, padding: "8px 0" }}>&copy; 2026 K9 Operations LLC. All Rights Reserved.</div>
         </div>
-      ) : (
-        /* Fields Tab */
-        <Card style={{padding:0,overflow:"hidden"}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 100px 80px 60px 48px",padding:"12px 20px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:11,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.05em"}}><div>Field</div><div>Type</div><div style={{textAlign:"center"}}>Req</div><div style={{textAlign:"center"}}>Key</div><div/></div>
-          {fields.map(f=>(<div key={f.id} style={{display:"grid",gridTemplateColumns:"1fr 100px 80px 60px 48px",padding:"12px 20px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center"}}><div style={{fontSize:14,fontWeight:600,color:C.text}}>{f.name}</div><div><Badge>{f.type}</Badge></div><div style={{textAlign:"center"}}><button onClick={()=>!f.locked&&toggleReq(f.id)} style={{width:20,height:20,borderRadius:5,border:`2px solid ${f.required?C.pri:C.border}`,background:f.required?C.pri:"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:f.locked?"not-allowed":"pointer",opacity:f.locked?0.5:1,color:"#fff"}}>{f.required&&<I.Check/>}</button></div><div style={{textAlign:"center"}}>{f.isKey&&<Badge color="accent">KEY</Badge>}</div><div style={{textAlign:"center"}}>{!f.locked&&<button onClick={()=>removeField(f.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,padding:4,borderRadius:6}}><I.Trash/></button>}</div></div>))}
-          <div style={{padding:"14px 20px"}}>
-            {showAdd?(<div style={{display:"flex",gap:10,alignItems:"flex-end",flexWrap:"wrap"}}><div style={{flex:1,minWidth:160}}><Inp label="Field Name" value={newField.name} onChange={v=>setNewField({...newField,name:v})} placeholder="e.g. Middle Name"/></div><div style={{width:130}}><Inp label="Type" type="select" value={newField.type} onChange={v=>setNewField({...newField,type:v})} options={["text","number","email","tel","date","select","checkbox","textarea"]}/></div>{newField.type==="select"&&<div style={{flex:1,minWidth:160}}><Inp label="Options (comma sep)" value={newField.options} onChange={v=>setNewField({...newField,options:v})} placeholder="A, B, C"/></div>}<div style={{display:"flex",alignItems:"center",gap:8,paddingBottom:2}}><Inp type="checkbox" label="Required" value={newField.required} onChange={v=>setNewField({...newField,required:v})}/></div><Btn size="sm" onClick={handleAddField}>Add</Btn><Btn size="sm" variant="ghost" onClick={()=>setShowAdd(false)}>Cancel</Btn></div>):(<Btn variant="ghost" size="sm" onClick={()=>setShowAdd(true)} icon={<I.Plus/>}>Add Custom Field</Btn>)}
+      ) : (tab === "fields" || tab === "client" || tab === "dog") ? (
+        /* Required Fields Matrix */
+        <div>
+          <div style={{marginBottom:16}}>
+            <p style={{margin:0,fontSize:13,color:C.textSec,lineHeight:1.5}}>Configure which fields are required at each stage. Each level includes all requirements from previous levels. Phone is always required.</p>
           </div>
-        </Card>
-      )}
+          {[{label:"Client Fields",key:"clientFields",fields:data.clientFields},{label:"Dog Fields",key:"dogFields",fields:data.dogFields}].map(section=>{
+            const colW = "1fr 70px 58px 52px 46px 62px 42px 36px";
+            return (
+            <Card key={section.key} style={{padding:0,overflow:"hidden",marginBottom:16}}>
+              <div style={{padding:"14px 20px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>
+                <div style={{fontSize:13,fontWeight:800,color:C.text,textTransform:"uppercase",letterSpacing:"0.06em"}}>{section.label}</div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:colW,padding:"10px 20px",borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",alignItems:"center"}}>
+                <div>Field</div><div>Type</div>
+                {ACTION_LEVELS.map(lvl=>(<div key={lvl} style={{textAlign:"center"}} title={ACTION_LABELS[lvl]}>{lvl==="reservation"?"Res":lvl==="create"?"Create":lvl==="tour"?"Tour":"Eval"}</div>))}
+                <div style={{textAlign:"center"}}>Key</div><div/>
+              </div>
+              {section.fields.map(f=>{
+                const rf = f.requiredFor || [];
+                return (
+                <div key={f.id} style={{display:"grid",gridTemplateColumns:colW,padding:"10px 20px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center"}}>
+                  <div style={{fontSize:13,fontWeight:600,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{f.name}</div>
+                  <div><Badge>{f.type}</Badge></div>
+                  {ACTION_LEVELS.map(lvl=>{
+                    const isActive = rf.includes(lvl);
+                    const minLevel = rf.length > 0 ? Math.min(...rf.map(a=>ACTION_LEVELS.indexOf(a)).filter(i=>i>=0)) : 999;
+                    const isInherited = !isActive && ACTION_LEVELS.indexOf(lvl) > minLevel && minLevel < 999;
+                    const isLocked = f.isKey && lvl === "create";
+                    const filled = isActive || isInherited;
+                    return (
+                      <div key={lvl} style={{textAlign:"center"}}>
+                        <button onClick={()=>!isLocked&&toggleFieldLevel(section.key,f.id,lvl)} title={`${filled?"Remove from":"Require at"} ${ACTION_LABELS[lvl]}`}
+                          style={{width:18,height:18,borderRadius:9,border:`2px solid ${filled?C.pri:C.border}`,background:filled?(isInherited?C.priLt:C.pri):"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:isLocked?"not-allowed":"pointer",opacity:isLocked?0.6:1,padding:0,transition:"all 0.15s"}}>
+                          {filled&&<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={isInherited?C.pri:"#fff"} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                        </button>
+                      </div>
+                    );
+                  })}
+                  <div style={{textAlign:"center"}}>{f.isKey&&<Badge color="accent">KEY</Badge>}</div>
+                  <div style={{textAlign:"center"}}>{!f.locked&&<button onClick={()=>removeFieldMatrix(section.key,f.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,padding:2,borderRadius:6}}><I.Trash/></button>}</div>
+                </div>
+                );
+              })}
+              <div style={{padding:"14px 20px"}}>
+                {showAdd&&addFieldTarget===section.key?(<div style={{display:"flex",gap:10,alignItems:"flex-end",flexWrap:"wrap"}}><div style={{flex:1,minWidth:160}}><Inp label="Field Name" value={newField.name} onChange={v=>setNewField({...newField,name:v})} placeholder="e.g. Middle Name"/></div><div style={{width:130}}><Inp label="Type" type="select" value={newField.type} onChange={v=>setNewField({...newField,type:v})} options={["text","number","email","tel","date","select","checkbox","textarea"]}/></div>{newField.type==="select"&&<div style={{flex:1,minWidth:160}}><Inp label="Options (comma sep)" value={newField.options} onChange={v=>setNewField({...newField,options:v})} placeholder="A, B, C"/></div>}<Btn size="sm" onClick={()=>handleAddFieldMatrix(section.key)}>Add</Btn><Btn size="sm" variant="ghost" onClick={()=>setShowAdd(false)}>Cancel</Btn></div>):(<Btn variant="ghost" size="sm" onClick={()=>{setAddFieldTarget(section.key);setShowAdd(true);}} icon={<I.Plus/>}>Add Custom Field</Btn>)}
+              </div>
+            </Card>
+            );
+          })}
+          <div style={{padding:"12px 16px",borderRadius:10,background:C.priLt,border:`1.5px solid ${C.pri}20`}}>
+            <div style={{fontSize:12,color:C.text,lineHeight:1.5}}><strong>How it works:</strong> Each level inherits all requirements from previous levels. A field required at "Tour" is also required for "Eval" and "Reservation". Checking a higher level auto-checks all lower levels.</div>
+          </div>
+        </div>
+      ) : null}
 
     </div>
   );
@@ -16580,6 +16674,9 @@ function NewOverlay({ data, nav, onClose }) {
 // UNIFIED NEW PAGE (Client + Dog + Reservation — all in one)
 // ═══════════════════════════════════════════════════════════════════════════
 function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
+  // Action level: determines which fields are required
+  const [selectedAction, setSelectedAction] = useState(null); // null → show picker; "create"|"tour"|"eval"|"reservation"
+
   // Phase tracking: "client" → "dog" → "reservation"
   const [phase, setPhase] = useState("client");
 
@@ -16689,8 +16786,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
 
   // Continue from client to dog+reservation
   const continueFromClient = () => {
-    const errs = {};
-    data.clientFields.forEach(f => { if (f.required && !clientFields[f.id]) errs[f.id] = "Required"; });
+    const errs = validateFields(data.clientFields, clientFields, selectedAction || "create");
     if (clientFields.phone) {
       const ex = data.clients.find(c => c.fields.phone === (clientFields.phone || "").replace(/\D/g, ""));
       if (ex) errs.phone = "Phone already exists — use search to find this client";
@@ -16739,7 +16835,8 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
     // Validate dogs
     const dErrs = {};
     dogs.forEach((dog, i) => {
-      data.dogFields.forEach(f => { if (f.required && !dog.fields[f.id]) dErrs[`${i}_${f.id}`] = "Required"; });
+      const dogValidation = validateFields(data.dogFields, dog.fields, selectedAction || "reservation");
+      Object.entries(dogValidation).forEach(([k, v]) => { dErrs[`${i}_${k}`] = v; });
     });
     if (Object.keys(dErrs).length > 0) { setDogErrors(dErrs); return; }
 
@@ -16802,13 +16899,13 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
   // Create client + dogs only (skip reservation)
   const handleCreateClientOnly = async () => {
     // Validate client fields
-    const cErrs = {};
-    data.clientFields.forEach(f => { if (f.required && !clientFields[f.id]) cErrs[f.id] = "Required"; });
+    const cErrs = validateFields(data.clientFields, clientFields, "create");
     if (Object.keys(cErrs).length > 0) { setClientErrors(cErrs); return; }
     // Validate dogs
     const dErrs = {};
     dogs.forEach((dog, i) => {
-      data.dogFields.forEach(f => { if (f.required && !dog.fields[f.id]) dErrs[`${i}_${f.id}`] = "Required"; });
+      const dogValidation = validateFields(data.dogFields, dog.fields, "create");
+      Object.entries(dogValidation).forEach(([k, v]) => { dErrs[`${i}_${k}`] = v; });
     });
     if (Object.keys(dErrs).length > 0) { setDogErrors(dErrs); return; }
     // Create client
@@ -16843,13 +16940,45 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
     </div>
   );
 
+  const actionPickerOpts = [
+    { key: "tour", icon: "🏠", label: "Tour", desc: "Book a facility tour" },
+    { key: "eval", icon: "🐾", label: "Evaluation", desc: "Book a temperament eval" },
+    { key: "reservation", icon: "📋", label: "Reservation", desc: "Book boarding, daycare, etc." },
+    { key: "create", icon: "❓", label: "Not Sure Yet", desc: "Just create a record" },
+  ];
+
   return (
     <div>
       <button onClick={() => nav("dashboard")} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: C.textSec, fontSize: 14, fontWeight: 600, padding: 0, marginBottom: 20, fontFamily: "inherit" }}><I.Back /> Back</button>
-      <h1 style={{ margin: "0 0 6px", fontSize: 28, fontWeight: 800, color: C.text }}>New Client & Reservation</h1>
-      <p style={{ margin: "0 0 28px", fontSize: 14, color: C.textSec, lineHeight: 1.5 }}>Set up a new client, add their dog(s), and book their first reservation — all in one go.</p>
+      <h1 style={{ margin: "0 0 6px", fontSize: 28, fontWeight: 800, color: C.text }}>New Client{selectedAction && selectedAction !== "create" ? " & Reservation" : ""}</h1>
+      <p style={{ margin: "0 0 28px", fontSize: 14, color: C.textSec, lineHeight: 1.5 }}>
+        {!selectedAction ? "What are we booking today? This determines which fields are required." : selectedAction === "create" ? "Create a client record with minimal information. You can book a reservation later." : "Set up a new client, add their dog(s), and book their first reservation — all in one go."}
+      </p>
+
+      {/* ACTION PICKER */}
+      {!selectedAction && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 28 }}>
+          {actionPickerOpts.map(opt => (
+            <button key={opt.key} onClick={() => {
+              setSelectedAction(opt.key);
+              if (opt.key === "tour") setType("tour");
+              else if (opt.key === "eval") setType("evaluation");
+              else if (opt.key === "reservation") setType("boarding");
+            }} style={{ display: "flex", alignItems: "center", gap: 14, padding: "20px 22px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "all 0.15s" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = C.priLt; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.surface; }}>
+              <div style={{ fontSize: 28 }}>{opt.icon}</div>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{opt.label}</div>
+                <div style={{ fontSize: 12, color: C.textSec }}>{opt.desc}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* STEP 1: Client Info */}
+      {selectedAction && (<>
       <div style={sectionStyle(1, "Client Info", phase === "client" || phase === "reservation")}>
         {stepBadge(1, "Client Information", phase === "reservation", phase === "client")}
         {phase === "client" ? (
@@ -16857,7 +16986,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               {data.clientFields.filter(f => f.type !== "textarea").map(f => (
                 <div key={f.id}>
-                  <Inp label={f.name} type={f.type} value={clientFields[f.id] || ""} onChange={v => { setClientFields({ ...clientFields, [f.id]: v }); setClientErrors({ ...clientErrors, [f.id]: undefined }); }} required={f.required} options={f.options} autoFocus={f.id === autoFocusId} />
+                  <Inp label={f.name} type={f.type} value={clientFields[f.id] || ""} onChange={v => { setClientFields({ ...clientFields, [f.id]: v }); setClientErrors({ ...clientErrors, [f.id]: undefined }); }} required={isFieldRequired(f, selectedAction || "create")} options={f.options} autoFocus={f.id === autoFocusId} />
                   {clientErrors[f.id] && <div style={{ color: C.dan, fontSize: 12, marginTop: 4, fontWeight: 600 }}>{clientErrors[f.id]}</div>}
                 </div>
               ))}
@@ -16868,7 +16997,11 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
               </div>
             ))}
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
-              <Btn onClick={continueFromClient}>Continue to Dogs & Reservation →</Btn>
+              {selectedAction === "create" ? (
+                <Btn onClick={handleCreateClientOnly}>Create Client Record</Btn>
+              ) : (
+                <Btn onClick={continueFromClient}>Continue to Dogs & Reservation →</Btn>
+              )}
             </div>
           </>
         ) : (
@@ -16924,7 +17057,8 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                   feedingSchedules={dog.fields.feedingSchedules || []}
                   onFeedingChange={fs => updateDogField(idx, "feedingSchedules", fs)}
                   medSchedules={dog.fields.medicationSchedules || []}
-                  onMedChange={ms => updateDogField(idx, "medicationSchedules", ms)} />
+                  onMedChange={ms => updateDogField(idx, "medicationSchedules", ms)}
+                  action={selectedAction || "reservation"} />
               </div>
             ))}
             <button onClick={addDog} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderRadius: 10, border: `2px dashed ${C.border}`, background: "transparent", cursor: "pointer", color: C.pri, fontWeight: 600, fontSize: 13, fontFamily: "inherit", width: "100%", justifyContent: "center", transition: "all 0.15s" }}>
@@ -17137,6 +17271,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
           </div>
         </>
       )}
+      </>)}
     </div>
   );
 }
@@ -19332,6 +19467,9 @@ export default function App() {
     };
     // Ensure core tag definitions always exist (can't operate without them)
     if (!merged.dogTags || merged.dogTags.length === 0) merged.dogTags = DEF_DOG_TAGS;
+    // Migrate old boolean required → requiredFor matrix
+    merged.clientFields = migrateFieldsToMatrix(merged.clientFields);
+    merged.dogFields = migrateFieldsToMatrix(merged.dogFields);
     return merged;
   })() : null;
   useEffect(() => {
