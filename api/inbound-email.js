@@ -195,36 +195,27 @@ export default async function handler(request) {
     const envelope = formData.get('envelope') || '{}';
 
     // ── Verify this is from Ignite ──
-    // TODO: Re-enable sender check after testing
-    // const isIgnite = from.includes('leads.idigitalstrategies.com')
-    //   || from.includes('ignitevisibility')
-    //   || (subject && subject.toLowerCase().includes('new web form'));
-    //
-    // if (!isIgnite) {
-    //   console.log(`[K9 Inbound] Skipping non-Ignite email from: ${from}`);
-    //   return ok({ status: 'skipped', reason: 'not_ignite', from });
-    // }
-    console.log(`[K9 Inbound] TEST MODE — accepting email from: ${from}, subject: ${subject}`);
-    console.log(`[K9 Inbound] TEXT length: ${(text||'').length}, HTML length: ${(html||'').length}`);
-    console.log(`[K9 Inbound] TEXT preview (first 2000 chars): ${(text || '').slice(0, 2000)}`);
+    const isIgnite = from.includes('leads.idigitalstrategies.com')
+      || from.includes('ignitevisibility')
+      || (subject && subject.toLowerCase().includes('new web form'));
+
+    if (!isIgnite) {
+      return ok({ status: 'skipped', reason: 'not_ignite', from });
+    }
 
     // ── Parse the email ──
     // Try text first (cleaner), fall back to HTML
     let fields = parseIgniteText(text);
-    console.log(`[K9 Inbound] Text parse result: ${JSON.stringify(fields)}`);
 
     // If text parsing didn't get key fields, try HTML
     if (!fields.firstName && !fields.email) {
       const htmlFields = parseIgniteHTML(html);
-      console.log(`[K9 Inbound] HTML parse result: ${JSON.stringify(htmlFields)}`);
       fields = { ...htmlFields, ...fields }; // text fields take priority
     }
 
-    // If still no useful fields, log more context
+    // If still no useful fields, skip
     if (!fields.firstName && !fields.lastName && !fields.email && !fields.phone) {
-      console.log('[K9 Inbound] No fields parsed from email body');
-      console.log(`[K9 Inbound] Full TEXT dump: ${(text || '').slice(0, 5000)}`);
-      return ok({ status: 'skipped', reason: 'no_fields_parsed', textLength: (text||'').length, htmlLength: (html||'').length });
+      return ok({ status: 'skipped', reason: 'no_fields_parsed' });
     }
 
     // ── Extract "to" email for location mapping ──
@@ -235,7 +226,7 @@ export default async function handler(request) {
       if (env.to && env.to.length > 0) toEmail = env.to[0];
     } catch (_) { /* use the to field */ }
 
-    console.log(`[K9 Inbound] Processing Ignite lead: ${fields.firstName} ${fields.lastName} → ${toEmail}`);
+    // Processing lead for location mapping
 
     // ── Call Supabase RPC ──
     const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -260,8 +251,6 @@ export default async function handler(request) {
     });
 
     const result = await rpcResponse.json();
-    console.log(`[K9 Inbound] RPC result:`, JSON.stringify(result));
-
     return ok(result);
   } catch (err) {
     console.error('[K9 Inbound] Error processing email:', err);
