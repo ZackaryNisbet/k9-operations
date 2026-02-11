@@ -5391,7 +5391,7 @@ const LC_FILTER_FIELDS = [
   { section:"Services", key:"tours", label:"Tours", type:"number", ops:["=",">=","<=",">","<"] },
   { section:"Services", key:"postTour", label:"Post-Tour Appts", type:"number", ops:["=",">=","<=",">","<"] },
   { section:"Lifecycle", key:"stage", label:"Stage", type:"select", ops:["is","isNot"], options:["conversion","active","retention","cold"] },
-  { section:"Lifecycle", key:"source", label:"Source", type:"select", ops:["is","isNot"], options:["eval","tour","manual",""] },
+  { section:"Lifecycle", key:"source", label:"Source", type:"select", ops:["is","isNot"], options:["eval","tour","manual","ignite",""] },
   { section:"Lifecycle", key:"followUp", label:"Follow-Up", type:"followUpStatus", ops:["overdue","today","thisWeek","hasDate","noDate"] },
 ];
 const LC_OP_LABELS = {"contains":"contains","equals":"equals","starts":"starts with","empty":"is empty","notEmpty":"not empty","=":"=",">=":"≥","<=":"≤",">":">","<":"<","after":"after","before":"before","inLastDays":"in last X days","has":"has","missing":"doesn't have","is":"is","isNot":"is not","overdue":"overdue","today":"today","thisWeek":"this week","hasDate":"has date","noDate":"no date"};
@@ -5738,6 +5738,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         const src = getClientSource(c);
         if (sourceFilter.has("eval") && src.hasEval) return true;
         if (sourceFilter.has("tour") && src.hasTour) return true;
+        if (sourceFilter.has("ignite") && c.lifecycle?.conversion?.source === "ignite") return true;
         return false;
       });
     }
@@ -6081,7 +6082,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             {/* Filter pills area */}
             <div style={{display:"flex",gap:4,marginLeft:8,flexShrink:0}}>
               {activeTab === "conversion" && <>
-                {[{id:"eval",label:"Eval",color:C.acc},{id:"tour",label:"Tour",color:C.info}].map(f => {
+                {[{id:"eval",label:"Eval",color:C.acc},{id:"tour",label:"Tour",color:C.info},{id:"ignite",label:"Ignite",color:"#F97316"}].map(f => {
                   const on = sourceFilter.has(f.id);
                   return <button key={f.id} onClick={()=>toggleSourceFilter(f.id)} style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on?f.color:C.border}`,background:on?f.color:"transparent",color:on?"#fff":C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{f.label}</button>;
                 })}
@@ -6390,10 +6391,10 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               {(() => {
                 const c = data.clients.find(cl => cl.id === logPopover.clientId);
                 const src = c?.lifecycle?.conversion?.source;
-                const isEvalTour = src === "eval" || src === "tour";
+                const isHighIntent = src === "eval" || src === "tour" || src === "ignite";
                 const addD = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0,10); };
-                const recDate = isEvalTour ? addD(1) : addD(2);
-                const recHint = isEvalTour ? "Recommended: +1 day (post eval/tour). Use a further date if the client gave a specific callback date." : "Recommended: +2 days (standard follow-up). Use +1 day for high-intent leads or a further date if the client gave a specific callback date.";
+                const recDate = isHighIntent ? addD(1) : addD(2);
+                const recHint = isHighIntent ? "Recommended: +1 day (high-intent lead). Use a further date if the client gave a specific callback date." : "Recommended: +2 days (standard follow-up). Use +1 day for high-intent leads or a further date if the client gave a specific callback date.";
                 return <MiniDatePicker value={logDate} onChange={setLogDate} recommendedDate={recDate} recommendedHint={recHint} />;
               })()}
             </div>
