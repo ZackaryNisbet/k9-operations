@@ -713,6 +713,7 @@ const PERMISSION_CATEGORIES = [
   { key:"clients", label:"Client Management", permissions:[
     {key:"create_client",label:"Create Client",desc:"Add new client profiles"},
     {key:"edit_client",label:"Edit Client",desc:"Modify client information and agreements"},
+    {key:"edit_lifecycle_banners",label:"Edit Lifecycle Banners",desc:"Edit the explainer text banners on the Customer Lifecycle page"},
   ]},
   { key:"dogs", label:"Dog Management", permissions:[
     {key:"create_dog",label:"Create Dog",desc:"Add new dog profiles"},
@@ -783,7 +784,7 @@ const DEFAULT_ROLES = [
     permissions: buildPerms({
       view_dashboard:true,view_calendar:true,view_clients:true,view_client_detail:true,view_dog_detail:true,
       view_crm:true,view_messages:true,view_payments:true,view_daily_ops:true,view_eod:true,view_ai:true,view_settings:true,
-      create_client:true,edit_client:true,create_dog:true,edit_dog:true,edit_vaccines:true,edit_feeding:true,edit_medications:true,edit_dog_tags:true,
+      create_client:true,edit_client:true,edit_lifecycle_banners:true,create_dog:true,edit_dog:true,edit_vaccines:true,edit_feeding:true,edit_medications:true,edit_dog_tags:true,
       create_reservation:true,check_in:true,check_out:true,cancel_reservation:true,
       view_payment_history:true,collect_payment:true,issue_refund:true,
       edit_daily_ops:true,lock_daily_ops:true,edit_eod:true,lock_eod:true,
@@ -5458,6 +5459,14 @@ function parseNLFilter(query) {
   return { filters, descriptions };
 }
 
+const DEFAULT_LIFECYCLE_BANNERS = {
+  conversion: "Leads auto-feed here after an Eval or Tour with no booking (+1 day follow-up). Log each outreach attempt, set the next follow-up date, and mark leads as Cold when they stop responding.",
+  active: "Active customers have a booking history and either have an upcoming reservation or visited recently. Clients move here automatically when they book or pay for the first time.",
+  retention: "Clients lapse here when they have no upcoming reservation and haven't visited within the configurable threshold (see Settings → Resort Policies). Booking a new appointment automatically moves them back to Active.",
+  cold: "Leads or lapsed clients you've manually marked as Cold. Click Revive to re-engage — you'll be prompted to log a note and set a new follow-up, and the client will return to Conversion or Retention based on their history.",
+  all: "Aggregate view of every client record regardless of lifecycle stage. Use the search bar or column headers to sort and find any client quickly.",
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENTS PAGE — Customer Lifecycle
 // ═══════════════════════════════════════════════════════════════════════════
@@ -5478,6 +5487,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
   const [hoveredDogCount, setHoveredDogCount] = useState(null);
   const [expandedDogs, setExpandedDogs] = useState(new Set());
   const [showExtraCols, setShowExtraCols] = useState(false);
+  const [editingBanner, setEditingBanner] = useState(null); // which tab's banner is being edited
+  const [bannerDraft, setBannerDraft] = useState("");
   const logBtnRef = useRef({});
   const colToggleRef = useRef(null);
 
@@ -5991,14 +6002,56 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
           })}
         </div>
 
-        {/* Explainer Banner — per-tab */}
-        <div style={{padding:"12px 18px",borderBottom:`1px solid ${C.borderLight}`,background:`linear-gradient(135deg, ${C.priLt||C.pri+"08"}40, ${C.surface})`,fontSize:12,lineHeight:1.6,color:C.textSec}}>
-          {activeTab === "conversion" && <>Leads auto-feed here after an Eval or Tour with no booking (+1 day follow-up). Log each outreach attempt, set the next follow-up date, and mark leads as Cold when they stop responding.</>}
-          {activeTab === "active" && <>Active customers have a booking history and either have an upcoming reservation or visited recently. Clients move here automatically when they book or pay for the first time.</>}
-          {activeTab === "retention" && <>Clients lapse here when they have no upcoming reservation and haven't visited in <strong>{dcThresh} days</strong> (primarily daycare) or <strong>{bdThresh} days</strong> (primarily boarding). These thresholds are configurable in Settings → Resort Policies. Booking a new appointment automatically moves them back to Active.</>}
-          {activeTab === "cold" && <>Leads or lapsed clients you've manually marked as Cold. Click <strong>Revive</strong> to re-engage — you'll be prompted to log a note and set a new follow-up, and the client will return to Conversion or Retention based on their history.</>}
-          {activeTab === "all" && <>Aggregate view of every client record regardless of lifecycle stage. Use the search bar or column headers to sort and find any client quickly.</>}
-        </div>
+        {/* Explainer Banner — per-tab, editable */}
+        {(() => {
+          const banners = data.lifecycleExplainers || {};
+          const txt = banners[activeTab] || DEFAULT_LIFECYCLE_BANNERS[activeTab] || "";
+          const canEdit = hasPermission(profile, data, "edit_lifecycle_banners");
+          const isEditing = editingBanner === activeTab;
+          return (
+            <div style={{padding:"10px 18px",borderBottom:`1px solid ${C.borderLight}`,background:`linear-gradient(135deg, ${C.priLt||C.pri+"08"}40, ${C.surface})`,fontSize:12,lineHeight:1.6,color:C.textSec,position:"relative"}}>
+              {isEditing ? (
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  <textarea value={bannerDraft} onChange={e => setBannerDraft(e.target.value)} autoFocus
+                    style={{width:"100%",minHeight:72,padding:"8px 10px",border:`1.5px solid ${C.pri}`,borderRadius:6,fontSize:12,lineHeight:1.6,fontFamily:"inherit",color:C.text,background:"#fff",resize:"vertical",outline:"none",boxSizing:"border-box"}}
+                    placeholder="Enter banner text for this tab…" />
+                  <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                    <button onClick={() => setEditingBanner(null)} style={{padding:"5px 14px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,fontSize:11,fontWeight:600,color:C.textSec,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+                    <button onClick={async () => {
+                      const updated = { ...(data.lifecycleExplainers || {}), [activeTab]: bannerDraft.trim() || DEFAULT_LIFECYCLE_BANNERS[activeTab] };
+                      await save({ ...data, lifecycleExplainers: updated });
+                      setEditingBanner(null);
+                      addGlobalToast?.({ message: "Banner updated" });
+                    }} style={{padding:"5px 14px",border:"none",borderRadius:6,background:C.pri,fontSize:11,fontWeight:600,color:"#fff",cursor:"pointer",fontFamily:"inherit"}}>Save</button>
+                    {banners[activeTab] && (
+                      <button onClick={async () => {
+                        const updated = { ...(data.lifecycleExplainers || {}) };
+                        delete updated[activeTab];
+                        await save({ ...data, lifecycleExplainers: updated });
+                        setEditingBanner(null);
+                        setBannerDraft("");
+                        addGlobalToast?.({ message: "Banner reset to default" });
+                      }} style={{padding:"5px 14px",border:`1px solid ${C.dan}30`,borderRadius:6,background:`${C.dan}08`,fontSize:11,fontWeight:600,color:C.dan,cursor:"pointer",fontFamily:"inherit"}}>Reset Default</button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                  <div style={{flex:1,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{txt}</div>
+                  {canEdit && (
+                    <button onClick={() => { setEditingBanner(activeTab); setBannerDraft(txt); }}
+                      title="Edit banner text"
+                      style={{flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",width:26,height:26,border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",color:C.textSec,transition:"all 0.15s",marginTop:-1}}
+                      onMouseEnter={e => { e.currentTarget.style.background = C.surfaceHover; e.currentTarget.style.color = C.pri; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = C.surface; e.currentTarget.style.color = C.textSec; }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ═══ TABLE HEADER + ROWS ═══ */}
         {activeTab === "conversion" && (() => {
