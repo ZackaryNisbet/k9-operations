@@ -14,104 +14,74 @@ function cleanText(str) {
     .trim();
 }
 
-// ─── Parse Ignite fields from plain text ───────────────────────────
-// Handles both direct Ignite emails AND forwarded ones.
-// Flexible matching: label can be followed by colon, tab, or 2+ spaces.
+// ─── Parse Ignite fields using label-to-label extraction ───────────
+// Works for BOTH multi-line (direct) and single-line (forwarded) formats.
+// Finds each known label in the text and extracts the value between it
+// and the next known label.
 function parseIgniteText(rawText) {
   const fields = {};
   if (!rawText) return fields;
 
   const text = cleanText(rawText);
-  const lines = text.split('\n');
-  let collectingMessage = false;
-  let messageLines = [];
 
-  // Map of label patterns → field keys
-  const fieldPatterns = [
-    { pattern: /^First\s*Name/i, key: 'firstName' },
-    { pattern: /^Last\s*Name/i, key: 'lastName' },
-    { pattern: /^Email\s*(?:Address)?/i, key: 'email' },
-    { pattern: /^Phone\s*(?:Number)?/i, key: 'phone' },
-    { pattern: /^Zip\s*(?:Code)?/i, key: 'zip' },
-    { pattern: /^Reason\s*(?:for\s*Contact)?/i, key: 'reason' },
-    { pattern: /^Profile/i, key: 'profile' },
-    { pattern: /^City/i, key: 'city' },
-    { pattern: /^State/i, key: 'state' },
-    { pattern: /^Lead\s*ID/i, key: 'leadId' },
-    { pattern: /^Form\s*Name/i, key: 'formName' },
-    { pattern: /^Lead\s*Page/i, key: 'leadPage' },
-    { pattern: /^Landing\s*Page/i, key: 'landingPage' },
-  ];
-
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (!trimmed) { if (collectingMessage) messageLines.push(''); continue; }
-
-    // Stop collecting message when we hit known fields
-    if (collectingMessage && /^(Lead\s*ID|Is this lead)/i.test(trimmed)) {
-      collectingMessage = false;
-      fields.message = messageLines.join('\n').trim();
-    }
-
-    if (collectingMessage) {
-      messageLines.push(trimmed);
-      continue;
-    }
-
-    // Try each field pattern
-    let matched = false;
-    for (const { pattern, key } of fieldPatterns) {
-      const labelMatch = trimmed.match(pattern);
-      if (labelMatch) {
-        // Extract value: everything after the label, separated by colon, tab, or 2+ spaces
-        const afterLabel = trimmed.slice(labelMatch[0].length);
-        const valueMatch = afterLabel.match(/^[\s:.\t]+(.+)/);
-        if (valueMatch) {
-          const val = cleanText(valueMatch[1]);
-          // Don't overwrite if we already have a value (first match wins)
-          // But for email, take the one that looks like an email
-          if (key === 'email') {
-            const emailExtract = val.match(/[\w.+-]+@[\w.-]+\.\w+/);
-            if (emailExtract && !fields[key]) fields[key] = emailExtract[0];
-          } else if (!fields[key] && val) {
-            fields[key] = val;
-          }
-          matched = true;
-          break;
-        }
-        // Value might be on the NEXT line
-        if (i + 1 < lines.length) {
-          const nextLine = lines[i + 1].trim();
-          if (nextLine && !/^(First|Last|Email|Phone|Zip|Reason|Profile|City|State|Lead|Form|Landing|How can|Is this|Time|Browser|Device|Country)/i.test(nextLine)) {
-            if (key === 'email') {
-              const emailExtract = nextLine.match(/[\w.+-]+@[\w.-]+\.\w+/);
-              if (emailExtract && !fields[key]) fields[key] = emailExtract[0];
-            } else if (!fields[key]) {
-              fields[key] = cleanText(nextLine);
-            }
-            i++; // skip next line since we consumed it
-            matched = true;
-            break;
-          }
-        }
-      }
-    }
-
-    // Handle "How can we help you?" (multiline)
-    if (!matched && /^How can\s*(we\s*)?help/i.test(trimmed)) {
-      const inlineVal = trimmed.replace(/^How can\s*(we\s*)?help\s*(you)?\??\s*[:.\t]?\s*/i, '').trim();
-      if (inlineVal) messageLines.push(cleanText(inlineVal));
-      collectingMessage = true;
-    }
-  }
-
-  if (collectingMessage && messageLines.length > 0) {
-    fields.message = messageLines.join('\n').trim();
-  }
-
-  // Extract source: "This lead came from google organic."
+  // Extract source first (before we manipulate text)
   const sourceMatch = text.match(/This lead came from\s+(.+?)[\.\n\r]/i);
   if (sourceMatch) fields.source = cleanText(sourceMatch[1]);
+
+  // All known Ignite labels in order, with their field keys
+  const labels = [
+    { label: 'First Name', key: 'firstName' },
+    { label: 'Last Name', key: 'lastName' },
+    { label: 'Phone Number', key: 'phone' },
+    { label: 'Zip Code', key: 'zip' },
+    { label: 'Reason for Contact', key: 'reason' },
+    { label: 'Lead ID', key: 'leadId' },
+    { label: 'Form Name', key: 'formName' },
+    { label: 'Profile', key: 'profile' },
+    { label: 'City', key: 'city' },
+    { label: 'State', key: 'state' },
+    { label: 'Lead Page', key: 'leadPage' },
+    { label: 'Landing Page', key: 'landingPage' },
+  ];
+
+  // Build a mega-regex that finds any known label
+  const allLabelPattern = labels.map(l => l.label).join('|')
+    + '|Email Address|How can we help you\\??|Time|Browser|Device|Country|Zip|Is this lead';
+
+  // For each label, find it in the text and extract value up to the next label
+  for (const { label, key } of labels) {
+    // Build regex: label followed by value, ending at next known label or newline
+    const regex = new RegExp(
+      label + '[\\s:.\t]+([\\s\\S]+?)(?=' + allLabelPattern + '|$)',
+      'i'
+    );
+    const match = text.match(regex);
+    if (match && match[1]) {
+      let val = cleanText(match[1]);
+      // Remove trailing URLs in parentheses: "value ( https://... )"
+      val = val.replace(/\s*\([^)]*https?:\/\/[^)]*\)\s*/g, ' ').trim();
+      // Remove standalone URLs
+      val = val.replace(/https?:\/\/\S+/g, '').trim();
+      if (val && !fields[key]) fields[key] = val;
+    }
+  }
+
+  // Handle Email Address separately (appears twice in Ignite emails)
+  const emailRegex = /Email\s*Address[\s:.\t]+([\s\S]+?)(?=Phone|Form|First|Last|How can|Lead|Time|Browser|Device|Country|Zip|City|State|Profile|Landing|Is this|$)/gi;
+  let emailMatch;
+  while ((emailMatch = emailRegex.exec(text)) !== null) {
+    const chunk = emailMatch[1];
+    const extracted = chunk.match(/[\w.+-]+@[\w.-]+\.\w+/);
+    if (extracted && !fields.email) {
+      fields.email = extracted[0];
+    }
+  }
+
+  // Handle "How can we help you?" — value goes until "Lead ID" or end
+  const helpMatch = text.match(/How can we help you\??\s*([\s\S]+?)(?=Lead\s*ID|Is this lead|$)/i);
+  if (helpMatch && helpMatch[1]) {
+    fields.message = cleanText(helpMatch[1]);
+  }
 
   return fields;
 }
