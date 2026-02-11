@@ -1180,10 +1180,18 @@ function validateFields(dataFields, values, action) {
   return errs;
 }
 
-function migrateFieldsToMatrix(fields) {
+function migrateFieldsToMatrix(fields, defaults) {
+  // Build lookup from defaults for known fields
+  const defMap = {};
+  (defaults || []).forEach(d => { defMap[d.id] = d.requiredFor || []; });
   return fields.map(f => {
     if (f.requiredFor) return f;
-    return { ...f, requiredFor: f.required ? ["create"] : [] };
+    // For known fields, use the new default requiredFor level
+    if (defMap[f.id] && defMap[f.id].length > 0) {
+      return { ...f, requiredFor: defMap[f.id], required: undefined };
+    }
+    // Unknown custom fields: old required:true → create
+    return { ...f, requiredFor: f.required ? ["create"] : [], required: undefined };
   });
 }
 
@@ -15715,17 +15723,22 @@ function SettingsPage({ data, save, profile }) {
       if (f.id !== fid) return f;
       // Phone at create is locked
       if (f.isKey && level === "create") return f;
-      const rf = [...(f.requiredFor || [])];
+      const rf = f.requiredFor || [];
       const levelIdx = ACTION_LEVELS.indexOf(level);
-      const isActive = rf.includes(level);
-      if (isActive) {
-        // Uncheck this level and all higher levels
-        const newRf = rf.filter(l => ACTION_LEVELS.indexOf(l) < levelIdx);
-        return { ...f, requiredFor: newRf };
+      // Find current minimum level (the only stored value)
+      const curMin = rf.length > 0 ? Math.min(...rf.map(a => ACTION_LEVELS.indexOf(a)).filter(i => i >= 0)) : -1;
+      const isActiveOrInherited = curMin >= 0 && levelIdx >= curMin;
+      if (isActiveOrInherited) {
+        if (levelIdx === curMin) {
+          // Clicking the exact minimum level — toggle it off entirely
+          return { ...f, requiredFor: [] };
+        } else {
+          // Clicking a higher level that's inherited — raise the minimum to this level
+          return { ...f, requiredFor: [level] };
+        }
       } else {
-        // Check this level and all lower levels
-        const newRf = [...new Set([...rf, ...ACTION_LEVELS.filter((_, i) => i <= levelIdx)])];
-        return { ...f, requiredFor: newRf };
+        // Clicking a lower level or enabling for the first time — set as new minimum
+        return { ...f, requiredFor: [level] };
       }
     });
     await save({...data, [fieldKey]: updated});
@@ -16467,7 +16480,7 @@ function SettingsPage({ data, save, profile }) {
                     const filled = isActive || isInherited;
                     return (
                       <div key={lvl} style={{textAlign:"center"}}>
-                        <button onClick={()=>!isLocked&&toggleFieldLevel(section.key,f.id,lvl)} title={`${filled?"Remove from":"Require at"} ${ACTION_LABELS[lvl]}`}
+                        <button onClick={()=>!isLocked&&toggleFieldLevel(section.key,f.id,lvl)} title={isLocked?"Phone is always required":(isActive?`Remove requirement from ${ACTION_LABELS[lvl]}`:(isInherited?`Raise minimum to ${ACTION_LABELS[lvl]}`:`Require starting at ${ACTION_LABELS[lvl]}`))}
                           style={{width:18,height:18,borderRadius:9,border:`2px solid ${filled?C.pri:C.border}`,background:filled?(isInherited?C.priLt:C.pri):"#fff",display:"inline-flex",alignItems:"center",justifyContent:"center",cursor:isLocked?"not-allowed":"pointer",opacity:isLocked?0.6:1,padding:0,transition:"all 0.15s"}}>
                           {filled&&<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={isInherited?C.pri:"#fff"} strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                         </button>
@@ -19468,8 +19481,8 @@ export default function App() {
     // Ensure core tag definitions always exist (can't operate without them)
     if (!merged.dogTags || merged.dogTags.length === 0) merged.dogTags = DEF_DOG_TAGS;
     // Migrate old boolean required → requiredFor matrix
-    merged.clientFields = migrateFieldsToMatrix(merged.clientFields);
-    merged.dogFields = migrateFieldsToMatrix(merged.dogFields);
+    merged.clientFields = migrateFieldsToMatrix(merged.clientFields, DEF_CLIENT_FIELDS);
+    merged.dogFields = migrateFieldsToMatrix(merged.dogFields, DEF_DOG_FIELDS);
     return merged;
   })() : null;
   useEffect(() => {
