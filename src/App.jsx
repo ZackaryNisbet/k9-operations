@@ -65,7 +65,7 @@ const K9_LOCATIONS = [
 const PAGE_SLUGS = {
   dashboard:"dashboard", reservations:"lodging", clients:"lifecycle", "client-detail":"client", "dog-detail":"dog",
   "new-client":"new-client", "new-dog":"new-dog", "new-reservation":"new-reservation", "unified-new":"new",
-  crm:"crm", messages:"messages", payments:"payments", operations:"operations",
+  messages:"messages", payments:"payments", operations:"operations",
   "ops-opening":"ops/opening", "ops-fe":"ops/front-end", "ops-be":"ops/back-end", "ops-rooms":"ops/rooms",
   "ops-pictures":"ops/pictures", "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
   eod:"eod", ai:"ai", settings:"settings", "evaluation-form":"evaluation", "online-bookings":"bookings",
@@ -681,7 +681,7 @@ const PERMISSION_CATEGORIES = [
     {key:"view_clients",label:"Clients",desc:"Search and view client list"},
     {key:"view_client_detail",label:"Client Detail",desc:"View individual client profiles"},
     {key:"view_dog_detail",label:"Dog Detail",desc:"View individual dog profiles"},
-    {key:"view_crm",label:"CRM",desc:"Access tours and evaluations tracking"},
+
     {key:"view_messages",label:"Messages",desc:"Access SMS message center"},
     {key:"view_payments",label:"Payments",desc:"View payment ledger and history"},
     {key:"view_daily_ops",label:"Daily Ops",desc:"View daily operation checklists"},
@@ -717,10 +717,6 @@ const PERMISSION_CATEGORIES = [
     {key:"lock_daily_ops",label:"Lock Checklists",desc:"Lock/unlock completed checklists"},
     {key:"edit_eod",label:"Edit EOD Reports",desc:"Write and modify end-of-day reports"},
     {key:"lock_eod",label:"Lock EOD Reports",desc:"Lock/unlock completed EOD reports"},
-  ]},
-  { key:"crm", label:"CRM & Evaluations", permissions:[
-    {key:"edit_tours",label:"Edit Tours",desc:"Modify tour CRM records and follow-ups"},
-    {key:"edit_evaluations",label:"Edit Evaluations",desc:"Modify evaluation results and follow-ups"},
   ]},
   { key:"messages", label:"Messaging", permissions:[
     {key:"view_message_threads",label:"View Messages",desc:"Read SMS message threads"},
@@ -1263,11 +1259,11 @@ const EVAL_RESULTS = ["pending","passed_group","passed_private"];
 
 // ─── Default Hotkey Bindings ─────────────────────────────────────────────────
 const DEF_HOTKEY_BINDINGS = {
-  dashboard: "d", lodging: "l", clients: "c", crm: "r",
+  dashboard: "d", lodging: "l", clients: "c",
   newReservation: "n", settings: "s", ai: "a", quickDaycare: "q", search: "/",
 };
 const HOTKEY_LABELS = {
-  dashboard: "Dashboard", lodging: "Lodging Calendar", clients: "Clients", crm: "CRM",
+  dashboard: "Dashboard", lodging: "Lodging Calendar", clients: "Clients",
   newReservation: "New Reservation", settings: "Settings", ai: "AI Command", quickDaycare: "Quick Check-In", search: "Search",
 };
 
@@ -2280,7 +2276,7 @@ function getRoleColor(profile, data) {
 // NAV_PERM_MAP: maps sidebar nav IDs to required view permissions
 const NAV_PERM_MAP = {
   dashboard:"view_dashboard", reservations:"view_calendar", clients:"view_clients",
-  crm:"view_crm", messages:"view_messages", payments:"view_payments",
+  messages:"view_messages", payments:"view_payments",
   operations:"view_daily_ops", "daily-ops":"view_daily_ops", eod:"view_eod", ai:"view_ai", settings:"view_settings", lms:"view_dashboard",
 };
 
@@ -2761,18 +2757,6 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     const doCheckOut = pendingAction === "checkout";
     const merged = doCheckIn ? { ...updatedRes, status: "checked-in" } : doCheckOut ? { ...updatedRes, status: "checked-out" } : updatedRes;
     newData.reservations = newData.reservations.map(r => r.id === reservation.id ? merged : r);
-    // CRM auto-creation for boarding check-in
-    if (doCheckIn) {
-      const crm = newData.crmEntries || [];
-      const alreadyExists = crm.some(e => e.reservationId === reservation.id);
-      if (!alreadyExists) {
-        const cn = `${client.fields.first_name || ""} ${client.fields.last_name || ""}`.trim();
-        const hasPriorBoarding = data.reservations.some(r => r.id !== reservation.id && r.type === "boarding" && r.clientId === reservation.clientId && r.dogId === reservation.dogId && (r.status === "checked-out" || r.status === "checked-in"));
-        if (!hasPriorBoarding) {
-          newData.crmEntries = [...crm, { id: "crm_" + gid(), reservationId: reservation.id, tab: "first_time_boarder", clientName: cn, dogName: dog.fields.name, phone: client.fields.phone || "", resStart: reservation.checkIn, resEnd: reservation.checkOut, textBefore: false, initialBefore: "", duringStay: "", initialDuring: "", atCheckout: "", toolBox: "", outcome: "", initialCheckout: "", followUp1: "", outcomeFU1: "", initialFU1: "", sendCard: false, giftInCard: "", results: "", comments: "", createdAt: todayStr() }];
-        }
-      }
-    }
     await save(newData);
     setShowConflict(false);
     onClose();
@@ -4010,25 +3994,6 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
       }
     }
     const newData = { ...data, reservations: data.reservations.map(r => r.id === rid ? { ...r, status: "checked-in" } : r) };
-    if (res) {
-      const client = data.clients.find(c => c.id === res.clientId);
-      const dog = data.dogs.find(d => d.id === res.dogId);
-      const cn = client ? `${client.fields.first_name || ""} ${client.fields.last_name || ""}`.trim() : "Unknown";
-      const cp = client ? (client.fields.phone || "") : "";
-      const ce = client ? (client.fields.email || "") : "";
-      const dogName = dog ? dog.fields.name : "?";
-      const crm = newData.crmEntries || [];
-      const alreadyExists = crm.some(e => e.reservationId === rid);
-      if (!alreadyExists) {
-        let entry = null;
-        if (res.type === "evaluation") {
-          entry = { id: "crm_" + gid(), reservationId: rid, tab: "evaluations", clientName: cn, dogName, phone: cp, email: ce, date: res.checkIn, passOrFail: "", feedback: "", textDuringEval: false, initialEval: "", atCheckout: "", toolBox: "", outcome: "", initialCheckout: "", followUp1: "", initialFU1: "", outcomeFU1: "", sendCard: false, giftInCard: "", results: "", comments: "", createdAt: todayStr() };
-        } else if (res.type === "tour") {
-          entry = { id: "crm_" + gid(), reservationId: rid, tab: "tours", clientName: cn, dogName, phone: cp, tourDate: res.checkIn, walkInOrScheduled: "", interestedIn: "", atCheckout: "", toolBox: "", outcome: "", credit48: false, initialCredit: "", followUp1: "", outcomeFU1: "", usedOrRemoved: "", initialFU1: "", sendCard: false, giftInCard: "", results: "", comments: "", createdAt: todayStr() };
-        }
-        if (entry) newData.crmEntries = [...crm, entry];
-      }
-    }
     // Audit log for direct check-in
     newData.auditLog = [...(newData.auditLog || []), buildAuditEntry(rid, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"}], profile)];
     await save(newData);
@@ -11038,444 +11003,6 @@ function DailyOpsPage({ data, save, sub, nav, profile }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// CRM PAGE
-// ═══════════════════════════════════════════════════════════════════════════
-function CRMPage({ data, save, nav, profile }) {
-  const [activeTab, setActiveTab] = useState("evaluations");
-  const crm = data.crmEntries || [];
-
-  const tabs = [
-    { id: "digital", label: "Digital" },
-    { id: "at_risk", label: "At Risk" },
-    { id: "evaluations", label: "Evaluations" },
-    { id: "first_time_boarder", label: "1st Time Boarder" },
-    { id: "tours", label: "Tours" },
-  ];
-
-  // Get user initials for auto-fill
-  const userInitials = profile ? (profile.full_name || profile.email || "").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0,2) : "";
-  const todayShort = fmtDateShort(todayStr());
-
-  const updateEntry = async (entryId, field, value) => {
-    const updated = crm.map(e => e.id === entryId ? { ...e, [field]: value } : e);
-    await save({ ...data, crmEntries: updated });
-  };
-
-  // Enhanced update: auto-fill initials/date when checkbox fields toggled on
-  const updateEntryWithAutoFill = async (entryId, field, value, initialField) => {
-    const updates = { [field]: value };
-    if (value === true && initialField) {
-      updates[initialField] = `${userInitials} ${todayShort}`;
-    }
-    const updated = crm.map(e => e.id === entryId ? { ...e, ...updates } : e);
-    await save({ ...data, crmEntries: updated });
-  };
-
-  const deleteEntry = async (entryId) => {
-    await save({ ...data, crmEntries: crm.filter(e => e.id !== entryId) });
-  };
-
-  // Auto-sync eval pass/fail from evaluation forms
-  const getAutoPassFail = (entry) => {
-    if (entry.tab !== "evaluations" || !entry.reservationId) return entry.passOrFail || "";
-    const evalForm = (data.evaluations || []).find(ev => ev.reservationId === entry.reservationId && ev.locked);
-    if (!evalForm) return entry.passOrFail || "";
-    const dog = data.dogs.find(d => d.id === (data.reservations.find(r => r.id === entry.reservationId) || {}).dogId);
-    const weight = dog ? parseInt(dog.fields.weight) || 0 : 0;
-    const size = weight >= 35 ? "Lg" : "Sm";
-    if (evalForm.result === "green") return `Pass - ${size}`;
-    if (evalForm.result === "red") return `Fail - ${size}`;
-    return entry.passOrFail || "";
-  };
-
-  // Editable cell helper
-  const ECell = ({ entry, field, width, type, options, autoFillInitial }) => {
-    if (type === "checkbox") {
-      return (
-        <div style={{ width, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <input type="checkbox" checked={!!entry[field]} onChange={e => autoFillInitial ? updateEntryWithAutoFill(entry.id, field, e.target.checked, autoFillInitial) : updateEntry(entry.id, field, e.target.checked)} style={{ width: 16, height: 16, cursor: "pointer" }} />
-        </div>
-      );
-    }
-    if (type === "select") {
-      return (
-        <div style={{ width }}>
-          <CustomSelect value={entry[field]||""} onChange={v=>updateEntry(entry.id,field,v)} options={options.map(o=>({value:o,label:o}))} placeholder="—" small/>
-        </div>
-      );
-    }
-    return (
-      <div style={{ width }}>
-        <input value={entry[field] || ""} onChange={e => updateEntry(entry.id, field, e.target.value)} style={{ width: "100%", border: "none", background: "transparent", fontSize: 12, fontFamily: "inherit", color: C.text, padding: "2px 0", outline: "none" }} placeholder="—" />
-      </div>
-    );
-  };
-
-  // Column header
-  const ColH = ({ children, width, sub }) => (
-    <div style={{ width, flexShrink: 0, padding: "8px 6px", fontSize: 10, fontWeight: 700, color: C.pri, textTransform: "uppercase", letterSpacing: "0.04em", borderRight: `1px solid ${C.borderLight}`, background: C.priLt, lineHeight: 1.3 }}>
-      {children}
-      {sub && <div style={{ fontSize: 9, fontWeight: 500, color: C.textMut, textTransform: "none", letterSpacing: 0, marginTop: 1 }}>{sub}</div>}
-    </div>
-  );
-
-  // Row cell wrapper
-  const RCell = ({ children, width }) => (
-    <div style={{ width, flexShrink: 0, padding: "6px 6px", fontSize: 12, color: C.text, borderRight: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", overflow: "hidden" }}>
-      {children}
-    </div>
-  );
-
-  const entries = crm.filter(e => e.tab === activeTab);
-
-  // Conversion rate stats
-  const evalEntries = crm.filter(e => e.tab === "evaluations");
-  const tourEntries = crm.filter(e => e.tab === "tours");
-  const evalConverted = evalEntries.filter(e => e.results === "Converted").length;
-  const evalConvRate = evalEntries.length > 0 ? Math.round((evalConverted / evalEntries.length) * 100) : 0;
-  const tourConverted = tourEntries.filter(e => e.results === "Converted").length;
-  const tourConvRate = tourEntries.length > 0 ? Math.round((tourConverted / tourEntries.length) * 100) : 0;
-
-  const OUTCOME_OPTS = ["Converted", "Did not convert", "Left Voicemail", "Other - see notes"];
-  const PASS_OPTS = ["Pass - Sm", "Pass - Lg", "Fail - Sm", "Fail - Lg"];
-  const FEEDBACK_OPTS = ["Passed with flying colors", "Successful with staff support", "Nervous at first - came around", "Struggled", "Failed"];
-  const CHECKOUT_OPTS = ["Purchased Package", "Made Daycare Reservation", "Made Boarding Reservation", "Scheduled Eval", "Did Not Convert"];
-  const INTERESTED_OPTS = ["Daycare", "Boarding", "Both", "General Info"];
-  const TOUR_CHECKOUT_OPTS = ["Scheduled Eval", "Did not convert", "Purchased Package"];
-  const RESULTS_OPTS = ["Converted", "Did not convert", "Did not convert yet", "Pending"];
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-        <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>CRM</h1>
-      </div>
-
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, borderBottom: `2px solid ${C.border}` }}>
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
-            padding: "10px 18px", fontSize: 13, fontWeight: activeTab === t.id ? 700 : 500,
-            color: activeTab === t.id ? C.pri : C.textSec, background: "transparent", border: "none",
-            borderBottom: activeTab === t.id ? `2.5px solid ${C.pri}` : "2.5px solid transparent",
-            cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", marginBottom: -2,
-          }}>
-            {t.label}
-            {(t.id === "evaluations" || t.id === "first_time_boarder" || t.id === "tours") && (
-              <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, color: activeTab === t.id ? C.pri : C.textMut, background: activeTab === t.id ? C.priLt : C.surfaceHover, padding: "1px 6px", borderRadius: 8 }}>
-                {crm.filter(e => e.tab === t.id).length}
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
-
-      {/* Digital Tab */}
-      {activeTab === "digital" && (
-        <Card style={{ padding: 0 }}>
-          <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>Digital Leads</div>
-            <div style={{ fontSize: 12, color: C.textMut }}>Scorpion / Website / Calls</div>
-          </div>
-          {/* Column headers preview */}
-          <div style={{ overflowX: "auto" }}>
-            <div style={{ display: "flex", minWidth: 1800 }}>
-              <ColH width={130}>Client Name</ColH>
-              <ColH width={100}>Dog Name/Type</ColH>
-              <ColH width={120}>Phone Number</ColH>
-              <ColH width={140}>Email</ColH>
-              <ColH width={100}>Interested In</ColH>
-              <ColH width={80}>Contact Time</ColH>
-              <ColH width={90}>Date</ColH>
-              <ColH width={200}>Notes</ColH>
-              <ColH width={100} sub="Follow-up 1">Day 1</ColH>
-              <ColH width={110}>Outcome</ColH>
-              <ColH width={120}>Account + Credit</ColH>
-              <ColH width={80}>Initial/Date</ColH>
-              <ColH width={100} sub="Follow-up 2">Day 3</ColH>
-              <ColH width={90}>Outcome</ColH>
-              <ColH width={80}>Initial/Date</ColH>
-              <ColH width={100}>No Answer Email</ColH>
-              <ColH width={80}>Initial/Date</ColH>
-              <ColH width={110}>Results</ColH>
-              <ColH width={140}>Comments</ColH>
-            </div>
-          </div>
-          <div style={{ padding: "40px 24px", textAlign: "center" }}>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "16px 28px", borderRadius: 12, background: `linear-gradient(135deg, ${C.priLt}, ${C.surface})`, border: `1.5px solid ${C.pri}30` }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8L12 14.6l-4.9 3.6 1.9-5.8L4 8.8h6.1z"/></svg>
-              <div style={{ textAlign: "left" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.pri }}>AI Features Coming Soon</div>
-                <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>Automated import from Ignite coming soon.</div>
-              </div>
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {/* At Risk Tab */}
-      {activeTab === "at_risk" && (
-        <Card style={{ padding: 0 }}>
-          <div style={{ padding: "20px 24px", borderBottom: `1px solid ${C.border}` }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>At Risk Clients</div>
-            <div style={{ fontSize: 12, color: C.textMut }}>Clients who haven't booked recently and may need follow-up</div>
-          </div>
-          <div style={{ overflowX: "auto" }}>
-            <div style={{ display: "flex", minWidth: 1600 }}>
-              <ColH width={130}>Client Name</ColH>
-              <ColH width={100}>Dog(s) Name</ColH>
-              <ColH width={100}>Last Res. Date</ColH>
-              <ColH width={100}>Last Res. Type</ColH>
-              <ColH width={70}>Severity</ColH>
-              <ColH width={120} sub="Follow-up 1">Text</ColH>
-              <ColH width={80}>Offer</ColH>
-              <ColH width={90}>Outcome</ColH>
-              <ColH width={80}>Initial/Date</ColH>
-              <ColH width={120} sub="Follow-up 2">Send Card</ColH>
-              <ColH width={80}>Gift in Card</ColH>
-              <ColH width={80}>Initial/Date</ColH>
-              <ColH width={90}>Outcome</ColH>
-              <ColH width={90}>Next Res.</ColH>
-              <ColH width={200}>Notes</ColH>
-            </div>
-          </div>
-          <div style={{ padding: "40px 24px", textAlign: "center" }}>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 10, padding: "16px 28px", borderRadius: 12, background: `linear-gradient(135deg, ${C.acc}10, ${C.surface})`, border: `1.5px solid ${C.acc}30` }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              <div style={{ textAlign: "left" }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: C.acc }}>Not Yet Configured</div>
-                <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>At-risk detection rules have not been set up yet. This tab will auto-populate once configured.</div>
-              </div>
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {/* Evaluations Tab */}
-      {activeTab === "evaluations" && (
-        <Card style={{ padding: 0 }}>
-          <div style={{ padding: "14px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Evaluations</div>
-              <div style={{ fontSize: 12, color: C.textMut }}>Auto-populated when a dog is checked in for an evaluation</div>
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:16}}>
-              <div style={{display:"flex",alignItems:"center",gap:6}}>
-                <span style={{fontSize:11,color:C.textMut,fontWeight:600}}>Conversion:</span>
-                <span style={{fontSize:14,fontWeight:800,color:evalConvRate >= 70 ? C.suc : evalConvRate >= 40 ? C.warn : C.dan}}>{evalConvRate}%</span>
-                <span style={{fontSize:11,color:C.textMut}}>({evalConverted}/{evalEntries.length})</span>
-              </div>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{entries.length} total</span>
-            </div>
-          </div>
-          <div style={{ overflowX: "auto" }}>
-            <div style={{ minWidth: 2200 }}>
-              {/* Header */}
-              <div style={{ display: "flex", position: "sticky", top: 0, zIndex: 2 }}>
-                <ColH width={130}>Client Name</ColH>
-                <ColH width={90}>Dog Name</ColH>
-                <ColH width={110}>Phone</ColH>
-                <ColH width={90}>Pass/Fail</ColH>
-                <ColH width={160}>Feedback @ Pick-up</ColH>
-                <ColH width={90}>Date</ColH>
-                <ColH width={90} sub="During Eval">Text</ColH>
-                <ColH width={80}>Initial/Date</ColH>
-                <ColH width={140}>At Checkout</ColH>
-                <ColH width={80}>Tool Box</ColH>
-                <ColH width={100}>Outcome</ColH>
-                <ColH width={80}>Initial/Date</ColH>
-                <ColH width={140} sub="Follow-up 1">Next Day</ColH>
-                <ColH width={80}>Initial/Date</ColH>
-                <ColH width={100}>Outcome</ColH>
-                <ColH width={100} sub="Follow-up 2">Send Card</ColH>
-                <ColH width={80}>Gift in Card</ColH>
-                <ColH width={110}>Results</ColH>
-                <ColH width={150}>Comments</ColH>
-                <ColH width={40}></ColH>
-              </div>
-              {/* Rows */}
-              {entries.length === 0 ? (
-                <div style={{ padding: "30px 24px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No evaluations yet. When you check in a dog for an evaluation on the Dashboard, it will appear here automatically.</div>
-              ) : entries.map(e => {
-                const autoPassFail = getAutoPassFail(e);
-                const hasEvalForm = e.reservationId && (data.evaluations || []).some(ev => ev.reservationId === e.reservationId && ev.locked);
-                return (
-                <div key={e.id} style={{ display: "flex", borderBottom: `1px solid ${C.borderLight}`, minHeight: 38, alignItems: "stretch" }}>
-                  <RCell width={130}><span style={{ fontWeight: 600, cursor: "pointer", color: C.pri }} onClick={() => { const c = data.clients.find(cl => `${cl.fields.first_name} ${cl.fields.last_name}`.trim() === e.clientName); if (c) nav("client-detail", { clientId: c.id }); }}>{e.clientName}</span></RCell>
-                  <RCell width={90}>{e.dogName}</RCell>
-                  <RCell width={110}>{e.phone}</RCell>
-                  <RCell width={90}>
-                    {hasEvalForm ? (
-                      <span style={{ fontSize: 12, fontWeight: 700, color: autoPassFail.startsWith("Pass") ? C.suc : autoPassFail.startsWith("Fail") ? C.dan : C.textMut, cursor: "pointer", textDecoration: "underline" }}
-                        onClick={() => nav("evaluation-form", { reservationId: e.reservationId })}
-                        title="View evaluation form">{autoPassFail || "—"}</span>
-                    ) : <ECell entry={e} field="passOrFail" width={80} type="select" options={PASS_OPTS} />}
-                  </RCell>
-                  <RCell width={160}><ECell entry={e} field="feedback" width={150} type="select" options={FEEDBACK_OPTS} /></RCell>
-                  <RCell width={90}>{e.date ? fmtDateShort(e.date) : "—"}</RCell>
-                  <RCell width={90}><ECell entry={e} field="textDuringEval" width={30} type="checkbox" autoFillInitial="initialEval" /></RCell>
-                  <RCell width={80}><ECell entry={e} field="initialEval" width={70} /></RCell>
-                  <RCell width={140}><ECell entry={e} field="atCheckout" width={130} type="select" options={CHECKOUT_OPTS} /></RCell>
-                  <RCell width={80}><ECell entry={e} field="toolBox" width={70} /></RCell>
-                  <RCell width={100}><ECell entry={e} field="outcome" width={90} type="select" options={OUTCOME_OPTS} /></RCell>
-                  <RCell width={80}><ECell entry={e} field="initialCheckout" width={70} /></RCell>
-                  <RCell width={140}><ECell entry={e} field="followUp1" width={130} /></RCell>
-                  <RCell width={80}><ECell entry={e} field="initialFU1" width={70} /></RCell>
-                  <RCell width={100}><ECell entry={e} field="outcomeFU1" width={90} type="select" options={OUTCOME_OPTS} /></RCell>
-                  <RCell width={100}><ECell entry={e} field="sendCard" width={30} type="checkbox" /></RCell>
-                  <RCell width={80}><ECell entry={e} field="giftInCard" width={70} /></RCell>
-                  <RCell width={110}><ECell entry={e} field="results" width={100} type="select" options={RESULTS_OPTS} /></RCell>
-                  <RCell width={150}><ECell entry={e} field="comments" width={140} /></RCell>
-                  <RCell width={40}><button onClick={() => deleteEntry(e.id)} style={{ border: "none", background: "transparent", color: C.textMut, cursor: "pointer", fontSize: 14, fontFamily: "inherit", padding: 2 }} title="Delete">×</button></RCell>
-                </div>
-                );
-              })}
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {/* 1st Time Boarder Tab */}
-      {activeTab === "first_time_boarder" && (
-        <Card style={{ padding: 0 }}>
-          <div style={{ padding: "14px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>1st Time Boarders</div>
-              <div style={{ fontSize: 12, color: C.textMut }}>Auto-populated when a dog is checked in for their first boarding stay</div>
-            </div>
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{entries.length} total</span>
-          </div>
-          <div style={{ overflowX: "auto" }}>
-            <div style={{ minWidth: 2200 }}>
-              <div style={{ display: "flex", position: "sticky", top: 0, zIndex: 2 }}>
-                <ColH width={130}>Client Name</ColH>
-                <ColH width={90}>Dog Name</ColH>
-                <ColH width={110}>Phone</ColH>
-                <ColH width={90}>Res. Start</ColH>
-                <ColH width={90}>Res. End</ColH>
-                <ColH width={90} sub="B4 Stay">Text</ColH>
-                <ColH width={80}>Initial/Date</ColH>
-                <ColH width={140}>During Stay/Text</ColH>
-                <ColH width={80}>Initial/Date</ColH>
-                <ColH width={130}>At Checkout</ColH>
-                <ColH width={80}>Tool Box</ColH>
-                <ColH width={100}>Outcome</ColH>
-                <ColH width={80}>Initial/Date</ColH>
-                <ColH width={130} sub="Follow-up 1">Day 3</ColH>
-                <ColH width={90}>Outcome</ColH>
-                <ColH width={80}>Initial/Date</ColH>
-                <ColH width={100} sub="Follow-up 2">Send Card</ColH>
-                <ColH width={80}>Gift in Card</ColH>
-                <ColH width={100}>Results</ColH>
-                <ColH width={150}>Comments</ColH>
-                <ColH width={40}></ColH>
-              </div>
-              {entries.length === 0 ? (
-                <div style={{ padding: "30px 24px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No first-time boarders yet. When a dog is checked in for their very first boarding stay, it will appear here automatically.</div>
-              ) : entries.map(e => (
-                <div key={e.id} style={{ display: "flex", borderBottom: `1px solid ${C.borderLight}`, minHeight: 38, alignItems: "stretch" }}>
-                  <RCell width={130}><span style={{ fontWeight: 600, cursor: "pointer", color: C.pri }} onClick={() => { const c = data.clients.find(cl => `${cl.fields.first_name} ${cl.fields.last_name}`.trim() === e.clientName); if (c) nav("client-detail", { clientId: c.id }); }}>{e.clientName}</span></RCell>
-                  <RCell width={90}>{e.dogName}</RCell>
-                  <RCell width={110}>{e.phone}</RCell>
-                  <RCell width={90}>{e.resStart ? fmtDateShort(e.resStart) : "—"}</RCell>
-                  <RCell width={90}>{e.resEnd ? fmtDateShort(e.resEnd) : "—"}</RCell>
-                  <RCell width={90}><ECell entry={e} field="textBefore" width={30} type="checkbox" autoFillInitial="initialBefore" /></RCell>
-                  <RCell width={80}><ECell entry={e} field="initialBefore" width={70} /></RCell>
-                  <RCell width={140}><ECell entry={e} field="duringStay" width={130} /></RCell>
-                  <RCell width={80}><ECell entry={e} field="initialDuring" width={70} /></RCell>
-                  <RCell width={130}><ECell entry={e} field="atCheckout" width={120} /></RCell>
-                  <RCell width={80}><ECell entry={e} field="toolBox" width={70} /></RCell>
-                  <RCell width={100}><ECell entry={e} field="outcome" width={90} type="select" options={OUTCOME_OPTS} /></RCell>
-                  <RCell width={80}><ECell entry={e} field="initialCheckout" width={70} /></RCell>
-                  <RCell width={130}><ECell entry={e} field="followUp1" width={120} /></RCell>
-                  <RCell width={90}><ECell entry={e} field="outcomeFU1" width={80} type="select" options={OUTCOME_OPTS} /></RCell>
-                  <RCell width={80}><ECell entry={e} field="initialFU1" width={70} /></RCell>
-                  <RCell width={100}><ECell entry={e} field="sendCard" width={30} type="checkbox" /></RCell>
-                  <RCell width={80}><ECell entry={e} field="giftInCard" width={70} /></RCell>
-                  <RCell width={100}><ECell entry={e} field="results" width={90} type="select" options={RESULTS_OPTS} /></RCell>
-                  <RCell width={150}><ECell entry={e} field="comments" width={140} /></RCell>
-                  <RCell width={40}><button onClick={() => deleteEntry(e.id)} style={{ border: "none", background: "transparent", color: C.textMut, cursor: "pointer", fontSize: 14, fontFamily: "inherit", padding: 2 }} title="Delete">×</button></RCell>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {/* Tours Tab */}
-      {activeTab === "tours" && (
-        <Card style={{ padding: 0 }}>
-          <div style={{ padding: "14px 24px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Tours</div>
-              <div style={{ fontSize: 12, color: C.textMut }}>Auto-populated when a client is checked in for a tour</div>
-            </div>
-            <div style={{display:"flex",alignItems:"center",gap:16}}>
-              <div style={{display:"flex",alignItems:"center",gap:6}}>
-                <span style={{fontSize:11,color:C.textMut,fontWeight:600}}>Conversion:</span>
-                <span style={{fontSize:14,fontWeight:800,color:tourConvRate >= 70 ? C.suc : tourConvRate >= 40 ? C.warn : C.dan}}>{tourConvRate}%</span>
-                <span style={{fontSize:11,color:C.textMut}}>({tourConverted}/{tourEntries.length})</span>
-              </div>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{entries.length} total</span>
-            </div>
-          </div>
-          <div style={{ overflowX: "auto" }}>
-            <div style={{ minWidth: 2200 }}>
-              <div style={{ display: "flex", position: "sticky", top: 0, zIndex: 2 }}>
-                <ColH width={130}>Client Name</ColH>
-                <ColH width={90}>Dog Name</ColH>
-                <ColH width={110}>Phone</ColH>
-                <ColH width={90}>Tour Date</ColH>
-                <ColH width={110}>Walk-In/Sched.</ColH>
-                <ColH width={100}>Interested In</ColH>
-                <ColH width={130}>At Checkout</ColH>
-                <ColH width={80}>Tool Box</ColH>
-                <ColH width={100}>Outcome</ColH>
-                <ColH width={100}>$50 Credit 48hrs</ColH>
-                <ColH width={80}>Initial/Date</ColH>
-                <ColH width={130} sub="Follow-up 1">Day 2 Text</ColH>
-                <ColH width={90}>Outcome</ColH>
-                <ColH width={100}>Used/Removed</ColH>
-                <ColH width={80}>Initial/Date</ColH>
-                <ColH width={100} sub="Follow-up 2">Send Card</ColH>
-                <ColH width={80}>Gift in Card</ColH>
-                <ColH width={100}>Results</ColH>
-                <ColH width={150}>Comments</ColH>
-                <ColH width={40}></ColH>
-              </div>
-              {entries.length === 0 ? (
-                <div style={{ padding: "30px 24px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No tours yet. When a client is checked in for a tour on the Dashboard, it will appear here automatically.</div>
-              ) : entries.map(e => (
-                <div key={e.id} style={{ display: "flex", borderBottom: `1px solid ${C.borderLight}`, minHeight: 38, alignItems: "stretch" }}>
-                  <RCell width={130}><span style={{ fontWeight: 600, cursor: "pointer", color: C.pri }} onClick={() => { const c = data.clients.find(cl => `${cl.fields.first_name} ${cl.fields.last_name}`.trim() === e.clientName); if (c) nav("client-detail", { clientId: c.id }); }}>{e.clientName}</span></RCell>
-                  <RCell width={90}>{e.dogName}</RCell>
-                  <RCell width={110}>{e.phone}</RCell>
-                  <RCell width={90}>{e.tourDate ? fmtDateShort(e.tourDate) : "—"}</RCell>
-                  <RCell width={110}><ECell entry={e} field="walkInOrScheduled" width={100} type="select" options={["Walk-In", "Scheduled"]} /></RCell>
-                  <RCell width={100}><ECell entry={e} field="interestedIn" width={90} type="select" options={INTERESTED_OPTS} /></RCell>
-                  <RCell width={130}><ECell entry={e} field="atCheckout" width={120} type="select" options={TOUR_CHECKOUT_OPTS} /></RCell>
-                  <RCell width={80}><ECell entry={e} field="toolBox" width={70} /></RCell>
-                  <RCell width={100}><ECell entry={e} field="outcome" width={90} type="select" options={OUTCOME_OPTS} /></RCell>
-                  <RCell width={100}><ECell entry={e} field="credit48" width={30} type="checkbox" /></RCell>
-                  <RCell width={80}><ECell entry={e} field="initialCredit" width={70} /></RCell>
-                  <RCell width={130}><ECell entry={e} field="followUp1" width={120} /></RCell>
-                  <RCell width={90}><ECell entry={e} field="outcomeFU1" width={80} type="select" options={OUTCOME_OPTS} /></RCell>
-                  <RCell width={100}><ECell entry={e} field="usedOrRemoved" width={90} /></RCell>
-                  <RCell width={80}><ECell entry={e} field="initialFU1" width={70} /></RCell>
-                  <RCell width={100}><ECell entry={e} field="sendCard" width={30} type="checkbox" /></RCell>
-                  <RCell width={80}><ECell entry={e} field="giftInCard" width={70} /></RCell>
-                  <RCell width={100}><ECell entry={e} field="results" width={90} type="select" options={RESULTS_OPTS} /></RCell>
-                  <RCell width={150}><ECell entry={e} field="comments" width={140} /></RCell>
-                  <RCell width={40}><button onClick={() => deleteEntry(e.id)} style={{ border: "none", background: "transparent", color: C.textMut, cursor: "pointer", fontSize: 14, fontFamily: "inherit", padding: 2 }} title="Delete">×</button></RCell>
-                </div>
-              ))}
-            </div>
-          </div>
-        </Card>
-      )}
-    </div>
-  );
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AGREEMENTS PAGE (standalone management)
@@ -19681,7 +19208,7 @@ export default function App() {
     }
   }, [allLocations, refreshProfile]);
 
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard","clients","reservations","crm","messages","payments","reports","operations","eod","ops-opening","ops-forms","ops-closing","ai","settings","enterprise-locations","enterprise-operations"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard","clients","reservations","messages","payments","reports","operations","eod","ops-opening","ops-forms","ops-closing","ai","settings","enterprise-locations","enterprise-operations"]), []);
   const nav = useCallback((pg, prms = {}) => {
     setPage(pg); setParams(prms); setMobileMenuOpen(false);
     if (TOP_LEVEL_PAGES.has(pg)) {
@@ -19730,7 +19257,7 @@ export default function App() {
       // Number keys 1-9 → navigate to sidebar tabs
       const num = parseInt(e.key);
       if (num >= 1 && num <= 9) {
-        const flatNav = ["dashboard","reservations","clients","crm","messages","payments","ops-opening","eod","ai","settings"];
+        const flatNav = ["dashboard","reservations","clients","messages","payments","ops-opening","eod","ai","settings"];
         if (num <= flatNav.length) { e.preventDefault(); nav(flatNav[num - 1]); return; }
       }
 
@@ -19738,7 +19265,7 @@ export default function App() {
       if (k === b.dashboard) { e.preventDefault(); nav("dashboard"); }
       else if (k === b.lodging) { e.preventDefault(); nav("reservations"); }
       else if (k === b.clients) { e.preventDefault(); nav("clients"); }
-      else if (k === b.crm) { e.preventDefault(); nav("crm"); }
+
       else if (k === b.newReservation) { e.preventDefault(); setShowNewOverlay(true); }
       else if (k === b.settings) { e.preventDefault(); nav("settings"); }
       else if (k === b.ai) { e.preventDefault(); nav("ai"); }
@@ -19764,7 +19291,7 @@ export default function App() {
       case "dashboard": return "Dashboard";
       case "clients": return "Clients";
       case "reservations": return "Reservations";
-      case "crm": return "CRM";
+
       case "messages": return "Messages";
       case "payments": return "Payments";
       case "operations": return "Operations";
@@ -19820,8 +19347,7 @@ export default function App() {
       { id:"reservations",label:"Lodging Calendar",icon:<I.Calendar/>,hotkey:"2" },
       { id:"online-bookings",label:"Online Bookings",icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> },
       { id:"clients",label:"Customer Lifecycle",icon:<I.Users/>,hotkey:"3" },
-      { id:"crm",label:"CRM",icon:<I.BarChart/>,hotkey:"4" },
-      { id:"messages",label:"Messages",icon:<I.MessageSquare/>,hotkey:"5" },
+      { id:"messages",label:"Messages",icon:<I.MessageSquare/>,hotkey:"4" },
     ]},
     { label:null, items:[
       { id:"operations",label:"Operations",icon:<I.Clipboard/>,hotkey:"6" },
@@ -19847,7 +19373,7 @@ export default function App() {
   // Flat list for lookups
   const navItems = navSections.flatMap(s => s.items);
   const isOpsPage = page.startsWith("ops-");
-  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","online-bookings","crm","messages","reports","settings","ai","lms"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog","questionnaire"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
+  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","online-bookings","messages","reports","settings","ai","lms"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog","questionnaire"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
 
   function renderPage() {
     // Enterprise pages — gated to owner/enterprise_admin
@@ -19879,7 +19405,7 @@ export default function App() {
       case "unified-new": return <UnifiedNewPage data={data} save={save} nav={nav} prefill={params.prefill} profile={profile} addGlobalToast={addGlobalToast}/>;
       case "evaluation-form": return hp("edit_evaluations") ? <EvaluationFormPage data={data} save={save} reservationId={params.reservationId} nav={nav} profile={profile}/> : denied;
       case "eod": return hp("view_eod") ? <EODPage data={data} save={save} nav={nav} profile={profile}/> : denied;
-      case "crm": return hp("view_crm") ? <CRMPage data={data} save={save} nav={nav} profile={profile}/> : denied;
+
       case "messages": return hp("view_messages") ? <MessagesPage data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "payments": return hp("view_payments") ? <PaymentsPage data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "reports": return hp("view_payments") ? <ReportsPage data={data} save={save} nav={nav} profile={profile}/> : denied;
