@@ -145,14 +145,16 @@ export default async function handler(request) {
     const envelope = formData.get('envelope') || '{}';
 
     // ── Verify this is from Ignite ──
-    const isIgnite = from.includes('leads.idigitalstrategies.com')
-      || from.includes('ignitevisibility')
-      || (subject && subject.toLowerCase().includes('new web form'));
-
-    if (!isIgnite) {
-      console.log(`[K9 Inbound] Skipping non-Ignite email from: ${from}`);
-      return ok({ status: 'skipped', reason: 'not_ignite', from });
-    }
+    // TODO: Re-enable sender check after testing
+    // const isIgnite = from.includes('leads.idigitalstrategies.com')
+    //   || from.includes('ignitevisibility')
+    //   || (subject && subject.toLowerCase().includes('new web form'));
+    //
+    // if (!isIgnite) {
+    //   console.log(`[K9 Inbound] Skipping non-Ignite email from: ${from}`);
+    //   return ok({ status: 'skipped', reason: 'not_ignite', from });
+    // }
+    console.log(`[K9 Inbound] TEST MODE — accepting email from: ${from}, subject: ${subject}`);
 
     // ── Parse the email ──
     // Try text first (cleaner), fall back to HTML
