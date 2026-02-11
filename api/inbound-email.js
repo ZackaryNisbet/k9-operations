@@ -203,27 +203,32 @@ export default async function handler(request) {
     const envelope = formData.get('envelope') || '{}';
 
     // ── Verify this is from Ignite (or allowed forwarder) ──
+    console.log(`[K9] from=${from} | subj=${subject} | to=${to}`);
     const isIgnite = from.includes('leads.idigitalstrategies.com')
       || from.includes('ignitevisibility')
       || from.includes('lphik9.com')
       || (subject && subject.toLowerCase().includes('new web form'));
 
     if (!isIgnite) {
+      console.log(`[K9] REJECTED sender`);
       return ok({ status: 'skipped', reason: 'not_ignite', from });
     }
 
     // ── Parse the email ──
     // Try text first (cleaner), fall back to HTML
     let fields = parseIgniteText(text);
+    console.log(`[K9] text parsed: ${Object.keys(fields).join(',')}`);
 
     // If text parsing didn't get key fields, try HTML
     if (!fields.firstName && !fields.email) {
       const htmlFields = parseIgniteHTML(html);
       fields = { ...htmlFields, ...fields }; // text fields take priority
+      console.log(`[K9] html fallback: ${Object.keys(fields).join(',')}`);
     }
 
     // If still no useful fields, skip
     if (!fields.firstName && !fields.lastName && !fields.email && !fields.phone) {
+      console.log(`[K9] NO FIELDS — text len=${(text||'').length}, html len=${(html||'').length}`);
       return ok({ status: 'skipped', reason: 'no_fields_parsed' });
     }
 
@@ -235,14 +240,14 @@ export default async function handler(request) {
       if (env.to && env.to.length > 0) toEmail = env.to[0];
     } catch (_) { /* use the to field */ }
 
-    // Processing lead for location mapping
+    console.log(`[K9] lead=${fields.firstName} ${fields.lastName} → ${toEmail} | profileId=${fields.igniteProfileId||'none'} | leadId=${fields.leadId||'none'}`);
 
     // ── Call Supabase RPC ──
     const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
     if (!supabaseUrl || !supabaseKey) {
-      console.error('[K9 Inbound] Missing Supabase env vars');
+      console.error('[K9] Missing Supabase env vars');
       return ok({ status: 'error', reason: 'missing_config' });
     }
 
@@ -260,6 +265,7 @@ export default async function handler(request) {
     });
 
     const result = await rpcResponse.json();
+    console.log(`[K9] RPC: ${JSON.stringify(result)}`);
     return ok(result);
   } catch (err) {
     console.error('[K9 Inbound] Error processing email:', err);
