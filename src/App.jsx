@@ -3330,7 +3330,12 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           {secHeader("Care Instructions")}
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
             <div>
-              <FeedingScheduleEditor schedules={feedingSchedules} onChange={setFeedingSchedules} data={data} readOnly={isReadOnly} dogWeight={parseFloat(dog.fields.weight) || 0}/>
+              <FeedingScheduleEditor schedules={feedingSchedules} onChange={setFeedingSchedules} data={data} readOnly={isReadOnly} dogWeight={parseFloat(dog.fields.weight) || 0} dogName={dog.fields.name} dogId={dog.id} onWeightUpdate={(wt, reason) => {
+                const now = new Date().toISOString().slice(0,10);
+                const logEntry = { date: now, weight: wt, reason, by: profile?.name || "Staff" };
+                const updatedDogs = data.dogs.map(d => d.id === dog.id ? { ...d, fields: { ...d.fields, weight: String(wt), weightLastUpdated: now, weightLog: [...(d.fields.weightLog || []), logEntry] } } : d);
+                save({ ...data, dogs: updatedDogs });
+              }}/>
               {profileHint(summarizeFeeding(profileFeedingSchedules), feedingChanged)}
             </div>
             <div>
@@ -7811,6 +7816,32 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
             </div>
           </div>
         )}
+
+        {/* Weight Log */}
+        {((dog.fields.weightLog || []).length > 0 || dog.fields.weight) && (
+          <div style={{marginTop:16}}>
+            <div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:8}}>Weight History</div>
+            <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}>
+              <span style={{fontSize:22,fontWeight:800,color:C.text}}>{dog.fields.weight || "?"} lbs</span>
+              {dog.fields.weightLastUpdated && <span style={{fontSize:11,color:C.textMut}}>Last updated: {fmtDate(dog.fields.weightLastUpdated)}</span>}
+            </div>
+            {(dog.fields.weightLog || []).length > 0 && (
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {[...(dog.fields.weightLog || [])].reverse().slice(0, 10).map((entry, i) => (
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 12px",background:i===0?C.priLt:C.bg,borderRadius:8,border:`1px solid ${i===0?C.pri+"30":C.borderLight}`}}>
+                    <span style={{fontSize:12,fontWeight:600,color:C.text}}>{entry.weight} lbs</span>
+                    <span style={{fontSize:11,color:C.textSec}}>{fmtDate(entry.date)}</span>
+                    <span style={{fontSize:10,color:entry.reason==="updated"?C.pri:entry.reason==="confirmed"?C.suc:C.acc,fontWeight:600,textTransform:"uppercase"}}>
+                      {entry.reason === "updated" ? "Weight Changed" : entry.reason === "confirmed" ? "Confirmed" : entry.reason === "unsure" ? "Owner Unsure" : entry.reason}
+                    </span>
+                    {entry.by && <span style={{fontSize:10,color:C.textMut,marginLeft:"auto"}}>by {entry.by}</span>}
+                  </div>
+                ))}
+                {(dog.fields.weightLog || []).length > 10 && <div style={{fontSize:11,color:C.textMut,textAlign:"center",padding:4}}>+ {(dog.fields.weightLog || []).length - 10} older entries</div>}
+              </div>
+            )}
+          </div>
+        )}
       </Card>
 
       {/* Vaccines */}
@@ -7982,7 +8013,11 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
             ))}
           </div>
         </div>
-        <DogFormFields fields={editFields} dogFields={data.dogFields} data={data} errors={{}} onChange={(id,v)=>setEditFields({...editFields,[id]:v})} feedingSchedules={editFeedingSchedules} onFeedingChange={setEditFeedingSchedules} medSchedules={editMedSchedules} onMedChange={setEditMedSchedules} />
+        <DogFormFields fields={editFields} dogFields={data.dogFields} data={data} errors={{}} onChange={(id,v)=>setEditFields({...editFields,[id]:v})} feedingSchedules={editFeedingSchedules} onFeedingChange={setEditFeedingSchedules} medSchedules={editMedSchedules} onMedChange={setEditMedSchedules} dogId={dogId} onWeightUpdate={(wt, reason) => {
+          const now = new Date().toISOString().slice(0,10);
+          const logEntry = { date: now, weight: wt, reason, by: "Staff" };
+          setEditFields(f => ({ ...f, weight: String(wt), weightLastUpdated: now, weightLog: [...(f.weightLog || []), logEntry] }));
+        }} />
         <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:24}}><Btn variant="secondary" onClick={()=>setEditing(false)}>Cancel</Btn><Btn onClick={saveEdit}>Save</Btn></div>
       </Modal>}
     </div>
@@ -8278,26 +8313,27 @@ function BreedSearch({ value, onChange, breeds, autoFocus }) {
 // Blue Buffalo weight-based feeding charts (cups per day)
 const BB_CHART = {
   "Blue Buffalo GI Vet-Grade (Chicken)": [
-    { range: "Up to 15 lbs", min: 0, max: 15, cups: "1/2 - 1 1/4", low: 0.5, high: 1.25 },
-    { range: "16-25 lbs", min: 16, max: 25, cups: "1 1/4 - 1 3/4", low: 1.25, high: 1.75 },
-    { range: "26-40 lbs", min: 26, max: 40, cups: "1 1/2 - 2 3/4", low: 1.5, high: 2.75 },
-    { range: "41-60 lbs", min: 41, max: 60, cups: "2 3/4 - 3 1/2", low: 2.75, high: 3.5 },
-    { range: "61-80 lbs", min: 61, max: 80, cups: "3 1/2 - 4 1/2", low: 3.5, high: 4.5 },
-    { range: "81-100 lbs", min: 81, max: 100, cups: "4 1/2 - 5 1/2", low: 4.5, high: 5.5 },
-    { range: "Over 100 lbs", min: 101, max: 9999, cups: "5 1/4 + 1/2 per 20 lbs", low: 5.25, high: 6.5 },
+    { range: "Up to 15 lbs", min: 0, max: 15, cups: "0.5 - 1.25", low: 0.5, high: 1.25 },
+    { range: "16-25 lbs", min: 16, max: 25, cups: "1.25 - 1.75", low: 1.25, high: 1.75 },
+    { range: "26-40 lbs", min: 26, max: 40, cups: "1.5 - 2.75", low: 1.5, high: 2.75 },
+    { range: "41-60 lbs", min: 41, max: 60, cups: "2.75 - 3.5", low: 2.75, high: 3.5 },
+    { range: "61-80 lbs", min: 61, max: 80, cups: "3.5 - 4.5", low: 3.5, high: 4.5 },
+    { range: "81-100 lbs", min: 81, max: 100, cups: "4.5 - 5.5", low: 4.5, high: 5.5 },
+    { range: "Over 100 lbs", min: 101, max: 9999, cups: "5.25 + 0.5 per 20 lbs", low: 5.25, high: 6.5 },
   ],
   "Blue Buffalo HF Vet-Grade (Salmon)": [
-    { range: "Up to 15 lbs", min: 0, max: 15, cups: "1/2 - 1 1/4", low: 0.5, high: 1.25 },
-    { range: "16-25 lbs", min: 16, max: 25, cups: "1 1/4 - 1 3/4", low: 1.25, high: 1.75 },
-    { range: "26-40 lbs", min: 26, max: 40, cups: "1 1/4 - 2 1/2", low: 1.25, high: 2.5 },
-    { range: "41-60 lbs", min: 41, max: 60, cups: "2 1/2 - 3 1/2", low: 2.5, high: 3.5 },
-    { range: "61-80 lbs", min: 61, max: 80, cups: "3 1/2 - 4 1/2", low: 3.5, high: 4.5 },
-    { range: "81-100 lbs", min: 81, max: 100, cups: "4 1/2 - 5 1/2", low: 4.5, high: 5.5 },
-    { range: "Over 100 lbs", min: 101, max: 9999, cups: "5 1/4 + 1/2 per 20 lbs", low: 5.25, high: 6.5 },
+    { range: "Up to 15 lbs", min: 0, max: 15, cups: "0.5 - 1.25", low: 0.5, high: 1.25 },
+    { range: "16-25 lbs", min: 16, max: 25, cups: "1.25 - 1.75", low: 1.25, high: 1.75 },
+    { range: "26-40 lbs", min: 26, max: 40, cups: "1.25 - 2.5", low: 1.25, high: 2.5 },
+    { range: "41-60 lbs", min: 41, max: 60, cups: "2.5 - 3.5", low: 2.5, high: 3.5 },
+    { range: "61-80 lbs", min: 61, max: 80, cups: "3.5 - 4.5", low: 3.5, high: 4.5 },
+    { range: "81-100 lbs", min: 81, max: 100, cups: "4.5 - 5.5", low: 4.5, high: 5.5 },
+    { range: "Over 100 lbs", min: 101, max: 9999, cups: "5.25 + 0.5 per 20 lbs", low: 5.25, high: 6.5 },
   ],
 };
+const BB_KEYS = Object.keys(BB_CHART); // ["Blue Buffalo GI Vet-Grade (Chicken)", "Blue Buffalo HF Vet-Grade (Salmon)"]
 
-function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight }) {
+function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight, dogName, dogId, onWeightUpdate }) {
   const [showModal, setShowModal] = useState(false);
   const [editIdx, setEditIdx] = useState(-1);
   const timeOpts = data.feedingTimeOptions || DEF_FEEDING_TIME_OPTIONS;
@@ -8309,32 +8345,37 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight 
   const [draft, setDraft] = useState(blank);
   const [bbOverride, setBbOverride] = useState(false); // true when user manually overrides amount
 
+  // Weight confirmation state
+  const [weightConfirm, setWeightConfirm] = useState(null); // null | "yes" | "no" | "unsure"
+  const [weightInput, setWeightInput] = useState("");
+
   // Blue Buffalo chart matching (support old names for backward compat)
   const BB_NAME_MAP = { "Blue Buffalo Chicken": "Blue Buffalo GI Vet-Grade (Chicken)", "Blue Buffalo Salmon": "Blue Buffalo HF Vet-Grade (Salmon)" };
+  const isBB = (ft) => !!BB_CHART[ft] || !!BB_CHART[BB_NAME_MAP[ft]];
   const bbChart = BB_CHART[draft.foodType] || BB_CHART[BB_NAME_MAP[draft.foodType]] || null;
-  const bbMatch = bbChart && dogWeight ? bbChart.find(r => dogWeight >= r.min && dogWeight <= r.max) : null;
+  // Use confirmed weight if "No" was chosen
+  const effectiveWeight = weightConfirm === "no" && weightInput ? parseFloat(weightInput) || dogWeight : dogWeight;
+  const bbMatch = bbChart && effectiveWeight ? bbChart.find(r => effectiveWeight >= r.min && effectiveWeight <= r.max) : null;
 
   // Auto-calc helper: given matched row + number of feedings, compute per-feeding qty
   const calcAutoQty = (match, numTimes) => {
     if (!match || !numTimes) return "";
     const mid = (match.low + match.high) / 2;
     const perFeeding = mid / numTimes;
-    // Round to nearest 1/4 cup
+    // Round to nearest 0.25 cup, return as decimal
     const rounded = Math.round(perFeeding * 4) / 4;
-    // Format as fraction string
-    const whole = Math.floor(rounded);
-    const frac = rounded - whole;
-    const fracStr = frac === 0.25 ? "1/4" : frac === 0.5 ? "1/2" : frac === 0.75 ? "3/4" : "";
-    if (whole === 0 && fracStr) return fracStr;
-    if (fracStr) return `${whole} ${fracStr}`;
-    return `${rounded}`;
+    return rounded % 1 === 0 ? `${rounded}` : `${rounded}`;
   };
 
   // When foodType changes to Blue Buffalo AND user hasn't overridden, auto-set amount
   const updateFoodType = (v) => {
     const newChart = BB_CHART[v] || BB_CHART[BB_NAME_MAP[v]] || null;
-    const newMatch = newChart && dogWeight ? newChart.find(r => dogWeight >= r.min && dogWeight <= r.max) : null;
+    const wt = weightConfirm === "no" && weightInput ? parseFloat(weightInput) || dogWeight : dogWeight;
+    const newMatch = newChart && wt ? newChart.find(r => wt >= r.min && wt <= r.max) : null;
     setBbOverride(false);
+    // Reset weight confirmation when switching food type
+    setWeightConfirm(null);
+    setWeightInput("");
     if (newMatch && draft.times.length > 0) {
       const autoAmt = calcAutoQty(newMatch, draft.times.length);
       setDraft(d => ({ ...d, foodType: v, amount: autoAmt, unit: d.unit || "cups" }));
@@ -8343,8 +8384,8 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight 
     }
   };
 
-  const openAdd = () => { setDraft({ ...blank, id: gid() }); setEditIdx(-1); setBbOverride(false); setShowModal(true); };
-  const openEdit = (idx) => { setDraft({ ...schedules[idx] }); setEditIdx(idx); setBbOverride(true); setShowModal(true); };
+  const openAdd = () => { setDraft({ ...blank, id: gid() }); setEditIdx(-1); setBbOverride(false); setWeightConfirm(null); setWeightInput(""); setShowModal(true); };
+  const openEdit = (idx) => { setDraft({ ...schedules[idx] }); setEditIdx(idx); setBbOverride(true); setWeightConfirm(null); setWeightInput(""); setShowModal(true); };
   const saveDraft = () => {
     if (draft.times.length === 0) return;
     const updated = editIdx >= 0 ? schedules.map((s, i) => i === editIdx ? draft : s) : [...schedules, draft];
@@ -8358,7 +8399,8 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight 
       const newTimes = d.times.includes(t) ? d.times.filter(x => x !== t) : [...d.times, t];
       // Auto-recalc if Blue Buffalo selected and not overridden
       const chart = BB_CHART[d.foodType] || BB_CHART[BB_NAME_MAP[d.foodType]] || null;
-      const match = chart && dogWeight ? chart.find(r => dogWeight >= r.min && dogWeight <= r.max) : null;
+      const wt = weightConfirm === "no" && weightInput ? parseFloat(weightInput) || dogWeight : dogWeight;
+      const match = chart && wt ? chart.find(r => wt >= r.min && wt <= r.max) : null;
       if (match && newTimes.length > 0 && !bbOverride) {
         const autoAmt = calcAutoQty(match, newTimes.length);
         return { ...d, times: newTimes, amount: autoAmt, unit: d.unit || "cups" };
@@ -8409,36 +8451,102 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight 
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <Inp label="Amount" value={draft.amount} onChange={v => { if (bbChart) setBbOverride(true); setDraft({ ...draft, amount: v }); }} placeholder="e.g. 1/2" />
+              <Inp label="Amount" value={draft.amount} onChange={v => { if (bbChart) setBbOverride(true); setDraft({ ...draft, amount: v }); }} placeholder="e.g. 1.5" />
               <Inp label="Unit" type="select" value={draft.unit} onChange={v => setDraft({ ...draft, unit: v })} options={unitOpts} />
             </div>
             <Inp label="Food Type" type="select" value={draft.foodType} onChange={updateFoodType} options={foodTypeOpts} />
-            {/* Blue Buffalo Weight Feeding Chart */}
-            {bbChart && (
+            {/* Weight Confirmation Question — shown when Blue Buffalo selected */}
+            {isBB(draft.foodType) && (
+              <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 10, padding: "12px 16px", background: C.bg }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 2 }}>
+                  Is {dogName || "this dog"} still {dogWeight || "?"} lbs?
+                </div>
+                <div style={{ fontSize: 10, color: C.textMut, marginBottom: 10 }}>
+                  {(() => {
+                    const dog = dogId && data.dogs ? data.dogs.find(d => d.id === dogId) : null;
+                    const lastUpd = dog?.fields?.weightLastUpdated;
+                    return lastUpd ? `Weight last updated: ${fmtDate(lastUpd)}` : "Weight last updated: unknown";
+                  })()}
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  {[{ key: "yes", label: "Yes" }, { key: "no", label: "No, it is" }, { key: "unsure", label: "Not Sure" }].map(opt => {
+                    const sel = weightConfirm === opt.key;
+                    return (
+                      <button key={opt.key} onClick={() => {
+                        setWeightConfirm(opt.key);
+                        if (opt.key === "yes" && onWeightUpdate) {
+                          // Update last-updated date (weight stays the same)
+                          onWeightUpdate(dogWeight, "confirmed");
+                        }
+                        if (opt.key === "unsure" && onWeightUpdate) {
+                          onWeightUpdate(dogWeight, "unsure");
+                        }
+                        if (opt.key !== "no") setWeightInput("");
+                      }} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "5px 12px", borderRadius: 8, border: `2px solid ${sel ? C.pri : C.border}`, background: sel ? C.priLt : C.surface, color: sel ? C.pri : C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                  {weightConfirm === "no" && (
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <input type="number" value={weightInput} onChange={e => setWeightInput(e.target.value)} onBlur={() => {
+                        const newWt = parseFloat(weightInput);
+                        if (newWt && newWt > 0 && onWeightUpdate) {
+                          onWeightUpdate(newWt, "updated");
+                          // Recalc auto-qty with new weight
+                          const chart = BB_CHART[draft.foodType] || BB_CHART[BB_NAME_MAP[draft.foodType]] || null;
+                          const match = chart ? chart.find(r => newWt >= r.min && newWt <= r.max) : null;
+                          if (match && draft.times.length > 0 && !bbOverride) {
+                            setDraft(d => ({ ...d, amount: calcAutoQty(match, d.times.length), unit: d.unit || "cups" }));
+                          }
+                        }
+                      }} placeholder="lbs" style={{ width: 70, padding: "5px 8px", borderRadius: 8, border: `2px solid ${C.pri}`, fontSize: 12, fontFamily: "inherit", outline: "none", textAlign: "center" }} autoFocus />
+                      <span style={{ fontSize: 12, color: C.textSec }}>lbs</span>
+                    </div>
+                  )}
+                </div>
+                {weightConfirm === "yes" && <div style={{ fontSize: 11, color: C.suc, fontWeight: 600, marginTop: 6 }}>Weight confirmed. Last updated date refreshed.</div>}
+                {weightConfirm === "unsure" && <div style={{ fontSize: 11, color: C.acc, fontWeight: 600, marginTop: 6 }}>Using {dogWeight} lbs (owner unsure). Logged for reference.</div>}
+                {weightConfirm === "no" && weightInput && <div style={{ fontSize: 11, color: C.pri, fontWeight: 600, marginTop: 6 }}>Updated weight to {weightInput} lbs. Feeding chart adjusted.</div>}
+              </div>
+            )}
+            {/* Blue Buffalo Weight Feeding Chart — always shows BOTH columns */}
+            {isBB(draft.foodType) && (
               <div style={{ border: `1.5px solid ${C.pri}30`, borderRadius: 10, overflow: "hidden", background: C.bg }}>
                 <div style={{ padding: "8px 14px", background: C.priLt, borderBottom: `1px solid ${C.pri}20`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: C.pri }}>Blue Buffalo Weight Feeding Chart</span>
-                  {dogWeight ? <span style={{ fontSize: 11, color: C.textSec }}>Dog weight: {dogWeight} lbs</span> : <span style={{ fontSize: 11, color: C.acc, fontWeight: 600 }}>No weight on file</span>}
+                  {effectiveWeight ? <span style={{ fontSize: 11, color: C.textSec }}>Dog weight: {effectiveWeight} lbs</span> : <span style={{ fontSize: 11, color: C.acc, fontWeight: 600 }}>No weight on file</span>}
                 </div>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: C.surface }}>
-                      <th style={{ textAlign: "left", padding: "6px 12px", fontWeight: 700, color: C.textSec, fontSize: 11, borderBottom: `1px solid ${C.border}` }}>Weight Range</th>
-                      <th style={{ textAlign: "center", padding: "6px 12px", fontWeight: 700, color: C.textSec, fontSize: 11, borderBottom: `1px solid ${C.border}` }}>Cups / Day</th>
+                      <th style={{ textAlign: "left", padding: "6px 10px", fontWeight: 700, color: C.textSec, fontSize: 10, borderBottom: `1px solid ${C.border}` }}>Weight</th>
+                      {BB_KEYS.map(k => {
+                        const shortLabel = k.includes("Chicken") ? "GI Chicken" : "HF Salmon";
+                        const isSelCol = (draft.foodType === k) || (BB_NAME_MAP[draft.foodType] === k);
+                        return <th key={k} style={{ textAlign: "center", padding: "6px 10px", fontWeight: 700, color: isSelCol ? C.pri : C.textMut, fontSize: 10, borderBottom: `1px solid ${C.border}`, background: isSelCol ? C.pri + "08" : "transparent" }}>{shortLabel} (cups/day)</th>;
+                      })}
                     </tr>
                   </thead>
                   <tbody>
-                    {bbChart.map((row, ri) => {
-                      const isMatch = bbMatch && row.range === bbMatch.range;
+                    {BB_CHART[BB_KEYS[0]].map((_, ri) => {
+                      const rowMatch = effectiveWeight ? (effectiveWeight >= BB_CHART[BB_KEYS[0]][ri].min && effectiveWeight <= BB_CHART[BB_KEYS[0]][ri].max) : false;
                       return (
-                        <tr key={ri} style={{ background: isMatch ? C.pri + "18" : ri % 2 === 0 ? "transparent" : C.bg, transition: "background 0.15s" }}>
-                          <td style={{ padding: "7px 12px", fontWeight: isMatch ? 700 : 500, color: isMatch ? C.pri : C.text, borderBottom: `1px solid ${C.borderLight}` }}>
-                            {row.range}
+                        <tr key={ri} style={{ background: rowMatch ? C.pri + "08" : ri % 2 === 0 ? "transparent" : C.bg, transition: "background 0.15s" }}>
+                          <td style={{ padding: "6px 10px", fontWeight: rowMatch ? 700 : 500, color: rowMatch ? C.pri : C.text, borderBottom: `1px solid ${C.borderLight}`, fontSize: 11, whiteSpace: "nowrap" }}>
+                            {BB_CHART[BB_KEYS[0]][ri].range}
                           </td>
-                          <td style={{ padding: "7px 12px", textAlign: "center", fontWeight: isMatch ? 700 : 500, color: isMatch ? C.pri : C.text, borderBottom: `1px solid ${C.borderLight}`, position: "relative" }}>
-                            {row.cups}
-                            {isMatch && <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 800, color: "#fff", background: C.suc, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Recommended</span>}
-                          </td>
+                          {BB_KEYS.map(k => {
+                            const isSelCol = (draft.foodType === k) || (BB_NAME_MAP[draft.foodType] === k);
+                            const cellRow = BB_CHART[k][ri];
+                            const isHighlight = rowMatch && isSelCol;
+                            return (
+                              <td key={k} style={{ padding: "6px 10px", textAlign: "center", fontWeight: isHighlight ? 700 : rowMatch ? 600 : 500, color: isHighlight ? C.pri : isSelCol ? C.text : C.textMut, borderBottom: `1px solid ${C.borderLight}`, background: isHighlight ? C.pri + "18" : isSelCol ? C.pri + "06" : "transparent", position: "relative", fontSize: 11 }}>
+                                {cellRow.cups}
+                                {isHighlight && <span style={{ marginLeft: 6, fontSize: 8, fontWeight: 800, color: "#fff", background: C.suc, padding: "1px 5px", borderRadius: 4, textTransform: "uppercase", letterSpacing: "0.04em", verticalAlign: "middle" }}>Rec</span>}
+                              </td>
+                            );
+                          })}
                         </tr>
                       );
                     })}
@@ -8451,7 +8559,7 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight 
                 )}
                 {bbOverride && bbMatch && (
                   <div style={{ padding: "8px 14px", borderTop: `1px solid ${C.acc}30`, background: C.acc + "10", fontSize: 11, color: C.acc, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span>Manual override active — recommended: {calcAutoQty(bbMatch, draft.times.length || 1)} {draft.unit || "cups"} per feeding</span>
+                    <span>Manual override — rec: {calcAutoQty(bbMatch, draft.times.length || 1)} {draft.unit || "cups"}/feeding</span>
                     <button onClick={() => { setBbOverride(false); if (draft.times.length > 0) setDraft(d => ({ ...d, amount: calcAutoQty(bbMatch, d.times.length), unit: d.unit || "cups" })); }} style={{ border: "none", background: C.acc, color: "#fff", padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Reset to Auto</button>
                   </div>
                 )}
@@ -8637,7 +8745,7 @@ function MedicationScheduleEditor({ schedules, onChange, data, readOnly, checkIn
 }
 
 // Helper: renders dog form fields with special handling for breed, sex, spay/neuter, bath, feeding, meds
-function DogFormFields({ fields, dogFields, data, errors, onChange, feedingSchedules, onFeedingChange, medSchedules, onMedChange, autoFocusBreed, action }) {
+function DogFormFields({ fields, dogFields, data, errors, onChange, feedingSchedules, onFeedingChange, medSchedules, onMedChange, autoFocusBreed, action, dogId, onWeightUpdate }) {
   const sex = fields.sex || "";
   const spayLabel = sex === "Female" ? "Spayed / Intact" : sex === "Male" ? "Neutered / Intact" : "Spayed/Neutered";
   const spayOpts = sex === "Female" ? ["Spayed", "Intact"] : sex === "Male" ? ["Neutered", "Intact"] : ["Neutered", "Spayed", "Intact"];
@@ -8679,7 +8787,7 @@ function DogFormFields({ fields, dogFields, data, errors, onChange, feedingSched
       ))}
       {/* Feeding schedules */}
       <div style={{ marginTop: 16 }}>
-        <FeedingScheduleEditor schedules={feedingSchedules} onChange={onFeedingChange} data={data} dogWeight={parseFloat(fields.weight) || 0} />
+        <FeedingScheduleEditor schedules={feedingSchedules} onChange={onFeedingChange} data={data} dogWeight={parseFloat(fields.weight) || 0} dogName={fields.name || ""} dogId={dogId} onWeightUpdate={onWeightUpdate} />
       </div>
       {/* Medication schedules */}
       <div style={{ marginTop: 16 }}>
@@ -8718,7 +8826,10 @@ function NewDogPage({ data, save, clientId, nav }) {
       <Card style={{padding:28}}>
         <DogFormFields fields={fields} dogFields={data.dogFields} data={data} errors={errors} onChange={updateField} action="reservation"
           feedingSchedules={feedingSchedules} onFeedingChange={setFeedingSchedules}
-          medSchedules={medSchedules} onMedChange={setMedSchedules} />
+          medSchedules={medSchedules} onMedChange={setMedSchedules} onWeightUpdate={(wt) => {
+            updateField("weight", String(wt));
+            updateField("weightLastUpdated", new Date().toISOString().slice(0,10));
+          }} />
         <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:28}}><Btn variant="secondary" onClick={()=>nav("client-detail",{clientId})}>Cancel</Btn><Btn onClick={handleSave}>Add Dog</Btn></div>
       </Card>
     </div>
@@ -9927,7 +10038,12 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                     <div style={{display:"flex",flexDirection:"column",gap:12}}>
                       <div>
                         {feedingChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
-                        <FeedingScheduleEditor schedules={care.feedingSchedules || []} onChange={v=>updateCare(did,"feedingSchedules",v)} data={data} dogWeight={parseFloat(dog.fields.weight) || 0}/>
+                        <FeedingScheduleEditor schedules={care.feedingSchedules || []} onChange={v=>updateCare(did,"feedingSchedules",v)} data={data} dogWeight={parseFloat(dog.fields.weight) || 0} dogName={dog.fields.name} dogId={dog.id} onWeightUpdate={(wt, reason) => {
+                          const now = new Date().toISOString().slice(0,10);
+                          const logEntry = { date: now, weight: wt, reason, by: profile?.name || "Staff" };
+                          const updatedDogs = data.dogs.map(d => d.id === dog.id ? { ...d, fields: { ...d.fields, weight: String(wt), weightLastUpdated: now, weightLog: [...(d.fields.weightLog || []), logEntry] } } : d);
+                          save({ ...data, dogs: updatedDogs });
+                        }}/>
                       </div>
                       <div>
                         {medsChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
@@ -17306,7 +17422,11 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                   onFeedingChange={fs => updateDogField(idx, "feedingSchedules", fs)}
                   medSchedules={dog.fields.medicationSchedules || []}
                   onMedChange={ms => updateDogField(idx, "medicationSchedules", ms)}
-                  action={selectedAction || "reservation"} />
+                  action={selectedAction || "reservation"}
+                  onWeightUpdate={(wt) => {
+                    updateDogField(idx, "weight", String(wt));
+                    updateDogField(idx, "weightLastUpdated", new Date().toISOString().slice(0,10));
+                  }} />
               </div>
             ))}
             <button onClick={addDog} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderRadius: 10, border: `2px dashed ${C.border}`, background: "transparent", cursor: "pointer", color: C.pri, fontWeight: 600, fontSize: 13, fontFamily: "inherit", width: "100%", justifyContent: "center", transition: "all 0.15s" }}>
