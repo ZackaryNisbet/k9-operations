@@ -4,21 +4,51 @@
 
 export const config = { runtime: 'edge' };
 
-// ─── Parse Ignite email from plain text ────────────────────────────
-function parseIgniteText(text) {
-  const fields = {};
-  if (!text) return fields;
+// ─── Clean text: strip Outlook artifacts ───────────────────────────
+function cleanText(str) {
+  return (str || '')
+    .replace(/\*/g, '')           // Outlook bold markers
+    .replace(/\r/g, '')           // carriage returns
+    .replace(/\u00a0/g, ' ')      // non-breaking spaces
+    .replace(/\u200b/g, '')       // zero-width spaces
+    .trim();
+}
 
+// ─── Parse Ignite fields from plain text ───────────────────────────
+// Handles both direct Ignite emails AND forwarded ones.
+// Flexible matching: label can be followed by colon, tab, or 2+ spaces.
+function parseIgniteText(rawText) {
+  const fields = {};
+  if (!rawText) return fields;
+
+  const text = cleanText(rawText);
   const lines = text.split('\n');
   let collectingMessage = false;
   let messageLines = [];
+
+  // Map of label patterns → field keys
+  const fieldPatterns = [
+    { pattern: /^First\s*Name/i, key: 'firstName' },
+    { pattern: /^Last\s*Name/i, key: 'lastName' },
+    { pattern: /^Email\s*(?:Address)?/i, key: 'email' },
+    { pattern: /^Phone\s*(?:Number)?/i, key: 'phone' },
+    { pattern: /^Zip\s*(?:Code)?/i, key: 'zip' },
+    { pattern: /^Reason\s*(?:for\s*Contact)?/i, key: 'reason' },
+    { pattern: /^Profile/i, key: 'profile' },
+    { pattern: /^City/i, key: 'city' },
+    { pattern: /^State/i, key: 'state' },
+    { pattern: /^Lead\s*ID/i, key: 'leadId' },
+    { pattern: /^Form\s*Name/i, key: 'formName' },
+    { pattern: /^Lead\s*Page/i, key: 'leadPage' },
+    { pattern: /^Landing\s*Page/i, key: 'landingPage' },
+  ];
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
     if (!trimmed) { if (collectingMessage) messageLines.push(''); continue; }
 
-    // Stop collecting message when we hit the next field
-    if (collectingMessage && /^(Lead ID|Is this lead)/i.test(trimmed)) {
+    // Stop collecting message when we hit known fields
+    if (collectingMessage && /^(Lead\s*ID|Is this lead)/i.test(trimmed)) {
       collectingMessage = false;
       fields.message = messageLines.join('\n').trim();
     }
@@ -28,24 +58,49 @@ function parseIgniteText(text) {
       continue;
     }
 
-    let m;
-    if ((m = trimmed.match(/^First\s*Name\s*[:.\t]\s*(.+)/i))) fields.firstName = m[1].trim();
-    else if ((m = trimmed.match(/^Last\s*Name\s*[:.\t]\s*(.+)/i))) fields.lastName = m[1].trim();
-    else if ((m = trimmed.match(/^Email\s*(?:Address)?\s*[:.\t]\s*(.+)/i))) fields.email = m[1].trim();
-    else if ((m = trimmed.match(/^Phone\s*(?:Number)?\s*[:.\t]\s*(.+)/i))) fields.phone = m[1].trim();
-    else if ((m = trimmed.match(/^Zip\s*(?:Code)?\s*[:.\t]\s*(.+)/i))) fields.zip = m[1].trim();
-    else if ((m = trimmed.match(/^Reason\s*(?:for\s*Contact)?\s*[:.\t]\s*(.+)/i))) fields.reason = m[1].trim();
-    else if ((m = trimmed.match(/^Profile\s*[:.\t]\s*(.+)/i))) fields.profile = m[1].trim();
-    else if ((m = trimmed.match(/^City\s*[:.\t]\s*(.+)/i))) fields.city = m[1].trim();
-    else if ((m = trimmed.match(/^State\s*[:.\t]\s*(.+)/i))) fields.state = m[1].trim();
-    else if ((m = trimmed.match(/^Lead\s*ID\s*[:.\t]\s*(.+)/i))) fields.leadId = m[1].trim();
-    else if ((m = trimmed.match(/^Form\s*Name\s*[:.\t]\s*(.+)/i))) fields.formName = m[1].trim();
-    else if ((m = trimmed.match(/^Lead\s*Page\s*[:.\t]\s*(.+)/i))) fields.leadPage = m[1].trim();
-    else if ((m = trimmed.match(/^Landing\s*Page\s*[:.\t]\s*(.+)/i))) fields.landingPage = m[1].trim();
-    else if (/^How can\s*(we\s*)?help/i.test(trimmed)) {
-      // Value might be on same line or next line(s)
+    // Try each field pattern
+    let matched = false;
+    for (const { pattern, key } of fieldPatterns) {
+      const labelMatch = trimmed.match(pattern);
+      if (labelMatch) {
+        // Extract value: everything after the label, separated by colon, tab, or 2+ spaces
+        const afterLabel = trimmed.slice(labelMatch[0].length);
+        const valueMatch = afterLabel.match(/^[\s:.\t]+(.+)/);
+        if (valueMatch) {
+          const val = cleanText(valueMatch[1]);
+          // Don't overwrite if we already have a value (first match wins)
+          // But for email, take the one that looks like an email
+          if (key === 'email') {
+            const emailExtract = val.match(/[\w.+-]+@[\w.-]+\.\w+/);
+            if (emailExtract && !fields[key]) fields[key] = emailExtract[0];
+          } else if (!fields[key] && val) {
+            fields[key] = val;
+          }
+          matched = true;
+          break;
+        }
+        // Value might be on the NEXT line
+        if (i + 1 < lines.length) {
+          const nextLine = lines[i + 1].trim();
+          if (nextLine && !/^(First|Last|Email|Phone|Zip|Reason|Profile|City|State|Lead|Form|Landing|How can|Is this|Time|Browser|Device|Country)/i.test(nextLine)) {
+            if (key === 'email') {
+              const emailExtract = nextLine.match(/[\w.+-]+@[\w.-]+\.\w+/);
+              if (emailExtract && !fields[key]) fields[key] = emailExtract[0];
+            } else if (!fields[key]) {
+              fields[key] = cleanText(nextLine);
+            }
+            i++; // skip next line since we consumed it
+            matched = true;
+            break;
+          }
+        }
+      }
+    }
+
+    // Handle "How can we help you?" (multiline)
+    if (!matched && /^How can\s*(we\s*)?help/i.test(trimmed)) {
       const inlineVal = trimmed.replace(/^How can\s*(we\s*)?help\s*(you)?\??\s*[:.\t]?\s*/i, '').trim();
-      if (inlineVal) messageLines.push(inlineVal);
+      if (inlineVal) messageLines.push(cleanText(inlineVal));
       collectingMessage = true;
     }
   }
@@ -56,7 +111,7 @@ function parseIgniteText(text) {
 
   // Extract source: "This lead came from google organic."
   const sourceMatch = text.match(/This lead came from\s+(.+?)[\.\n\r]/i);
-  if (sourceMatch) fields.source = sourceMatch[1].trim();
+  if (sourceMatch) fields.source = cleanText(sourceMatch[1]);
 
   return fields;
 }
@@ -65,7 +120,7 @@ function parseIgniteText(text) {
 function parseIgniteHTML(html) {
   if (!html) return {};
 
-  // Strategy: strip HTML tags to get plain text, then use text parser
+  // Strategy: strip HTML tags to get structured text, then parse
   const text = html
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/tr>/gi, '\n')
@@ -73,8 +128,10 @@ function parseIgniteHTML(html) {
     .replace(/<\/th>/gi, '\t')
     .replace(/<\/p>/gi, '\n')
     .replace(/<\/div>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<img[^>]*>/gi, '')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
@@ -84,36 +141,59 @@ function parseIgniteHTML(html) {
     .replace(/\t+/g, '\t')
     .replace(/[ ]+/g, ' ');
 
-  // Parse the stripped text
+  // Parse the stripped text using tab-separated approach
   const fields = {};
   const lines = text.split('\n');
 
+  const fieldMap = {
+    'first name': 'firstName',
+    'last name': 'lastName',
+    'email address': 'email',
+    'phone number': 'phone',
+    'zip code': 'zip',
+    'zip': 'zip',
+    'reason for contact': 'reason',
+    'profile': 'profile',
+    'city': 'city',
+    'state': 'state',
+    'lead id': 'leadId',
+    'form name': 'formName',
+    'lead page': 'leadPage',
+    'landing page': 'landingPage',
+  };
+
   for (const line of lines) {
+    // Try tab-separated first
     const parts = line.split('\t').map(p => p.trim()).filter(Boolean);
     if (parts.length >= 2) {
-      const key = parts[0].toLowerCase().replace(/\s+/g, ' ');
-      const value = parts.slice(1).join(' ').trim();
+      const key = parts[0].toLowerCase().replace(/\s+/g, ' ').replace(/[*:]/g, '');
+      const value = cleanText(parts.slice(1).join(' '));
 
-      if (key === 'first name') fields.firstName = value;
-      else if (key === 'last name') fields.lastName = value;
-      else if (key === 'email address') fields.email = value;
-      else if (key === 'phone number') fields.phone = value;
-      else if (key === 'zip code' || key === 'zip') fields.zip = value;
-      else if (key === 'reason for contact') fields.reason = value;
-      else if (key.includes('how can') && key.includes('help')) fields.message = value;
-      else if (key === 'profile') fields.profile = value;
-      else if (key === 'city') fields.city = value;
-      else if (key === 'state') fields.state = value;
-      else if (key === 'lead id') fields.leadId = value;
-      else if (key === 'form name') fields.formName = value;
-      else if (key === 'lead page') fields.leadPage = value;
-      else if (key === 'landing page') fields.landingPage = value;
+      if (key.includes('how can') && key.includes('help')) {
+        if (!fields.message) fields.message = value;
+      } else if (fieldMap[key] && !fields[fieldMap[key]]) {
+        if (fieldMap[key] === 'email') {
+          const emailExtract = value.match(/[\w.+-]+@[\w.-]+\.\w+/);
+          if (emailExtract) fields.email = emailExtract[0];
+        } else {
+          fields[fieldMap[key]] = value;
+        }
+      }
     }
   }
 
-  // Extract source from HTML
+  // Also run the text parser on the stripped HTML for extra coverage
+  const textFields = parseIgniteText(text);
+  for (const [k, v] of Object.entries(textFields)) {
+    if (!fields[k] && v) fields[k] = v;
+  }
+
+  // Extract source from HTML (handles <strong>bold</strong> formatting)
   const sourceMatch = html.match(/This lead came from\s+(?:<[^>]*>)*\s*([^<.]+)/i);
-  if (sourceMatch) fields.source = sourceMatch[1].trim();
+  if (sourceMatch) {
+    const src = cleanText(sourceMatch[1]);
+    if (!fields.source && src) fields.source = src;
+  }
 
   return fields;
 }
@@ -155,8 +235,8 @@ export default async function handler(request) {
     //   return ok({ status: 'skipped', reason: 'not_ignite', from });
     // }
     console.log(`[K9 Inbound] TEST MODE — accepting email from: ${from}, subject: ${subject}`);
-    console.log(`[K9 Inbound] TEXT preview (first 1000 chars): ${(text || '').slice(0, 1000)}`);
-    console.log(`[K9 Inbound] HTML preview (first 1000 chars): ${(html || '').slice(0, 1000)}`);
+    console.log(`[K9 Inbound] TEXT length: ${(text||'').length}, HTML length: ${(html||'').length}`);
+    console.log(`[K9 Inbound] TEXT preview (first 2000 chars): ${(text || '').slice(0, 2000)}`);
 
     // ── Parse the email ──
     // Try text first (cleaner), fall back to HTML
@@ -170,9 +250,10 @@ export default async function handler(request) {
       fields = { ...htmlFields, ...fields }; // text fields take priority
     }
 
-    // If still no useful fields, try extracting from envelope/to
+    // If still no useful fields, log more context
     if (!fields.firstName && !fields.lastName && !fields.email && !fields.phone) {
       console.log('[K9 Inbound] No fields parsed from email body');
+      console.log(`[K9 Inbound] Full TEXT dump: ${(text || '').slice(0, 5000)}`);
       return ok({ status: 'skipped', reason: 'no_fields_parsed', textLength: (text||'').length, htmlLength: (html||'').length });
     }
 
