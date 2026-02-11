@@ -1354,8 +1354,8 @@ const DEF_PRICING = {
   foodTypePricing: {
     "Food From Home - Bagged": 3,
     "Food From Home - Unbagged": 5,
-    "Blue Buffalo Chicken": 0,
-    "Blue Buffalo Salmon": 0,
+    "Blue Buffalo GI Vet-Grade (Chicken)": 0,
+    "Blue Buffalo HF Vet-Grade (Salmon)": 0,
   },
   // Medication per-serving pricing
   medPricing: {
@@ -1436,7 +1436,7 @@ const DEF_BREED_OPTIONS = [
 
 const DEF_FEEDING_TIME_OPTIONS = ["AM (6:00 am)","Noon (12:00 pm)","PM (6:00 pm)"];
 const DEF_FEEDING_UNIT_OPTIONS = ["Cup","1/2 Cup","1/4 Cup","Scoop","Tablespoon","Can","Piece"];
-const DEF_FOOD_TYPE_OPTIONS = ["Food From Home - Bagged","Food From Home - Unbagged","Blue Buffalo Chicken","Blue Buffalo Salmon"];
+const DEF_FOOD_TYPE_OPTIONS = ["Food From Home - Bagged","Food From Home - Unbagged","Blue Buffalo GI Vet-Grade (Chicken)","Blue Buffalo HF Vet-Grade (Salmon)"];
 const DEF_FOOD_SOURCE_OPTIONS = ["From Home","Resort Provided","Prescription"];
 const DEF_FEEDING_INSTRUCTION_OPTIONS = ["Regular","Slow Feeder","Hand Fed","Elevated Bowl","Separate from Others"];
 const DEF_MEDICATION_UNIT_OPTIONS = ["Tablet","Capsule","mL","Pump","Drop","Scoop"];
@@ -1556,7 +1556,7 @@ function generateDemoData() {
             times: srand()>0.3 ? ["AM (6:00 am)","PM (6:00 pm)"] : ["AM (6:00 am)","Noon (12:00 pm)","PM (6:00 pm)"],
             amount: w<35 ? rp(["1","0.5","0.75"]) : rp(["2","2.5","3","1.5"]),
             unit:"Cup",
-            foodType: rp(["Food From Home - Bagged","Food From Home - Unbagged","Blue Buffalo Chicken","Blue Buffalo Salmon"]),
+            foodType: rp(["Food From Home - Bagged","Food From Home - Unbagged","Blue Buffalo GI Vet-Grade (Chicken)","Blue Buffalo HF Vet-Grade (Salmon)"]),
             instruction: rp(["Regular","Regular","Regular","Slow Feeder","Elevated Bowl","Separate from Others"]),
             notes: srand()>0.85 ? rp(["Eats too fast","Picky eater","No chicken","Grain-free only",""]) : ""
           }],
@@ -2147,7 +2147,7 @@ function MiniDatePicker({ value, onChange, style: extraStyle, min, max, disabled
         style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${open ? C.pri : C.border}`, fontSize: 11, fontFamily: "inherit", color: value ? C.text : C.textMut, background: disabled ? C.bg : C.surface, cursor: disabled ? "default" : "pointer", display: "inline-flex", alignItems: "center", gap: 5, transition: "border 0.15s", outline: "none", fontWeight: 600, whiteSpace: "nowrap", ...(disabled ? { opacity: 0.55, pointerEvents: "none" } : {}) }}>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
         {display || (placeholder || "Pick date")}
-        {value && !disabled && <span onClick={(e) => { e.stopPropagation(); onChange(""); }} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, borderRadius: 7, background: C.bg, color: C.textMut, fontSize: 10, cursor: "pointer", lineHeight: 1, flexShrink: 0, marginLeft: 2 }} onMouseEnter={e => { e.currentTarget.style.background = C.danLt; e.currentTarget.style.color = C.dan; }} onMouseLeave={e => { e.currentTarget.style.background = C.bg; e.currentTarget.style.color = C.textMut; }}>{"\u00d7"}</span>}
+        {value && !disabled && <span onClick={(e) => { e.stopPropagation(); onChange(""); }} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, borderRadius: 7, background: C.bg, color: C.textMut, fontSize: 10, cursor: "pointer", lineHeight: 1, flexShrink: 0, marginLeft: 2 }} onMouseEnter={e => { e.currentTarget.style.background = C.danLt; e.currentTarget.style.color = C.dan; }} onMouseLeave={e => { e.currentTarget.style.background = C.bg; e.currentTarget.style.color = C.textMut; }}>×</span>}
       </button>
       {open && (
         <div style={{ position: "absolute", top: "100%", left: 0, marginTop: 4, zIndex: 200, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 8px 30px rgba(0,0,0,0.15)", padding: 14, width: 260 }}>
@@ -2260,7 +2260,7 @@ function CalendarPicker({ label, value, onChange, required, disabled, min, max, 
     <div ref={ref} style={{ position: "relative" }}>
       <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, letterSpacing: "0.03em", textTransform: "uppercase" }}>{label}{required && <span style={{ color: C.dan }}> *</span>}</div>
       <button onClick={() => { if (!disabled) setOpen(!open); }} style={{ width: "100%", padding: "10px 14px", border: `1.5px solid ${open ? C.pri : C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit", color: value ? C.text : C.textMut, background: disabled ? C.bg : C.surface, cursor: disabled ? "default" : "pointer", textAlign: "left", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "border 0.15s", outline: "none", ...(disabled ? { opacity: 0.55, pointerEvents: "none" } : {}) }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>{display || "Select date\u2026"}{value && !disabled && <span onClick={(e) => { e.stopPropagation(); onChange(""); }} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 9, background: C.bg, color: C.textMut, fontSize: 12, cursor: "pointer", lineHeight: 1, flexShrink: 0 }} onMouseEnter={e => { e.currentTarget.style.background = C.danLt; e.currentTarget.style.color = C.dan; }} onMouseLeave={e => { e.currentTarget.style.background = C.bg; e.currentTarget.style.color = C.textMut; }}>\u00d7</span>}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>{display || "Select date\u2026"}{value && !disabled && <span onClick={(e) => { e.stopPropagation(); onChange(""); }} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 9, background: C.bg, color: C.textMut, fontSize: 12, cursor: "pointer", lineHeight: 1, flexShrink: 0 }} onMouseEnter={e => { e.currentTarget.style.background = C.danLt; e.currentTarget.style.color = C.dan; }} onMouseLeave={e => { e.currentTarget.style.background = C.bg; e.currentTarget.style.color = C.textMut; }}>×</span>}</span>
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
       </button>
       {extraContent}
@@ -2641,7 +2641,7 @@ function buildAuditEntry(reservationId, action, details, profile) {
 // ═══════════════════════════════════════════════════════════════════════════
 // BOARDING PREVIEW / CHECK-IN MODAL
 // ═══════════════════════════════════════════════════════════════════════════
-function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheckOutMode, onClose, onSave, data, save, profile }) {
+function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheckOutMode, onClose, onSave, data, save, profile, nav }) {
   // Profile defaults
   const profileFeeding = summarizeFeeding(dog.fields.feedingSchedules) || "";
   const profileMeds = summarizeMeds(dog.fields.medicationSchedules) || "";
@@ -2661,6 +2661,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   const [feedingSchedules, setFeedingSchedules] = useState(reservation.careOverrides?.feedingSchedules ?? dog.fields.feedingSchedules ?? []);
   const [medicationSchedules, setMedicationSchedules] = useState(reservation.careOverrides?.medicationSchedules ?? dog.fields.medicationSchedules ?? []);
   const [bathType, setBathType] = useState(reservation.careOverrides?.bath_type ?? profileBath);
+  const [postBathReturn, setPostBathReturn] = useState(reservation.careOverrides?.postBathReturn || "");
   const [ecName, setEcName] = useState(reservation.emergencyContactOverride?.name ?? clientEcName);
   const [ecPhone, setEcPhone] = useState(reservation.emergencyContactOverride?.phone ?? clientEcPhone);
   const [notes, setNotes] = useState(reservation.notes || "");
@@ -2708,6 +2709,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     careOverrides: {
       feedingSchedules, medicationSchedules,
       bath_type: bathType,
+      postBathReturn,
       feeding: summarizeFeeding(feedingSchedules),
       medications: summarizeMeds(medicationSchedules)
     },
@@ -2894,7 +2896,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         label: "Bathing",
         type: "bathing",
         detail: bathType,
-        notes: "",
+        notes: postBathReturn ? `After bath: ${postBathReturn}` : "",
         activeDays: days.map((_, i) => i === days.length - 1),
       });
     }
@@ -3157,9 +3159,9 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     <Modal title={isCheckInMode ? `Check In: ${dog.fields.name}` : isCheckOutMode ? `Check Out: ${dog.fields.name}` : `${isBoarding ? "Boarding" : "Daycare"} Reservation: ${dog.fields.name}`} onClose={onClose} fullWidth>
       {/* Header info bar */}
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:16}}>
-        <span style={{fontSize:16,fontWeight:800,color:C.text}}>{dog.fields.name}</span>
+        <span onClick={() => { if (nav) { onClose(); nav("dog-detail", { clientId: client.id, dogId: dog.id }); } }} style={{fontSize:16,fontWeight:800,color:C.pri,cursor:"pointer",textDecoration:"underline",textDecorationColor:C.pri+"40",textUnderlineOffset:2}} onMouseEnter={e => e.currentTarget.style.textDecorationColor = C.pri} onMouseLeave={e => e.currentTarget.style.textDecorationColor = C.pri+"40"}>{dog.fields.name}</span>
         <Badge color="default" size="sm">{dog.fields.breed}</Badge>
-        <span style={{fontSize:13,color:C.textSec}}>owned by <strong>{client.fields.first_name} {client.fields.last_name}</strong></span>
+        <span style={{fontSize:13,color:C.textSec}}>owned by <strong onClick={() => { if (nav) { onClose(); nav("client-detail", { clientId: client.id }); } }} style={{color:C.pri,cursor:"pointer",textDecoration:"underline",textDecorationColor:C.pri+"40",textUnderlineOffset:2}} onMouseEnter={e => e.currentTarget.style.textDecorationColor = C.pri} onMouseLeave={e => e.currentTarget.style.textDecorationColor = C.pri+"40"}>{client.fields.first_name} {client.fields.last_name}</strong></span>
         <div style={{marginLeft:"auto",display:"flex",gap:6}}>
           <Badge color={reservation.status==="checked-in"?"success":reservation.status==="upcoming"?"info":"default"}>{reservation.status==="checked-in"?"Checked In":reservation.status==="upcoming"?"Upcoming":"Checked Out"}</Badge>
           {reservation.roomType && <Badge color="primary">{reservation.roomType} · Room {reservation.room}</Badge>}
@@ -3328,7 +3330,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           {secHeader("Care Instructions")}
           <div style={{display:"flex",flexDirection:"column",gap:12}}>
             <div>
-              <FeedingScheduleEditor schedules={feedingSchedules} onChange={setFeedingSchedules} data={data} readOnly={isReadOnly}/>
+              <FeedingScheduleEditor schedules={feedingSchedules} onChange={setFeedingSchedules} data={data} readOnly={isReadOnly} dogWeight={parseFloat(dog.fields.weight) || 0}/>
               {profileHint(summarizeFeeding(profileFeedingSchedules), feedingChanged)}
             </div>
             <div>
@@ -3351,6 +3353,22 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                 })}
               </div>
               {profileHint(profileBath, bathChanged)}
+              {/* Post-bath return option for non-Private Play dogs */}
+              {bathType && !(dog.tags || []).includes("tag_pp") && (
+                <div style={{marginTop:12}}>
+                  <div style={{fontSize:11,fontWeight:600,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:6}}>After Bath on Checkout Day</div>
+                  <div style={{fontSize:11,color:C.textMut,marginBottom:6}}>Where should we return {dog.fields.name} after their bath?</div>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    {["Return to Group","Return to Room"].map(opt=>{
+                      const sel=postBathReturn===opt;
+                      return <button key={opt} onClick={()=>{if(!isReadOnly)setPostBathReturn(sel?"":opt);}} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:12,fontWeight:sel?700:500,cursor:isReadOnly?"default":"pointer",fontFamily:"inherit",transition:"all 0.15s",display:"flex",alignItems:"center",gap:4,...(isReadOnly?{opacity:0.55,pointerEvents:"none"}:{})}}>
+                        {sel&&<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                        {opt}
+                      </button>;
+                    })}
+                  </div>
+                </div>
+              )}
             </div>}
           </div>
 
@@ -3539,9 +3557,9 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                       <th style={{padding:"10px 12px",textAlign:"left",fontWeight:700,color:C.text,position:"sticky",left:0,background:C.surface,zIndex:1,minWidth:110}}>Date</th>
                       {cols.map(col => (
                         <th key={col.key} style={{padding:"10px 12px",textAlign:"center",fontWeight:700,color:C.text,minWidth:140}}>
-                          <div>{col.label}</div>
-                          {col.detail && <div style={{fontSize:10,fontWeight:500,color:C.textSec,marginTop:2}}>{col.detail}</div>}
-                          {col.instruction && <div style={{fontSize:10,fontWeight:500,color:C.textMut,marginTop:1}}>{col.instruction}</div>}
+                          <div>{String(col.label || "")}</div>
+                          {col.detail && <div style={{fontSize:10,fontWeight:500,color:C.textSec,marginTop:2}}>{typeof col.detail === "object" ? JSON.stringify(col.detail) : String(col.detail)}</div>}
+                          {col.instruction && <div style={{fontSize:10,fontWeight:500,color:C.textMut,marginTop:1}}>{typeof col.instruction === "object" ? JSON.stringify(col.instruction) : String(col.instruction)}</div>}
                         </th>
                       ))}
                     </tr>
@@ -3599,7 +3617,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                                     </div>
                                   </div>
                                 )}
-                                {col.notes && <div style={{fontSize:9,fontStyle:"italic",color:C.textMut,marginTop:3}}>{col.notes}</div>}
+                                {col.notes && <div style={{fontSize:9,fontStyle:"italic",color:C.textMut,marginTop:3}}>{typeof col.notes === "object" ? JSON.stringify(col.notes) : String(col.notes)}</div>}
                               </td>
                             );
                           })}
@@ -3631,20 +3649,25 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                     </div>
                     {log.details.length > 0 && (
                       <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                        {log.details.map((d, di) => (
+                        {log.details.map((d, di) => {
+                          const renderVal = (v) => v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+                          const oldStr = renderVal(d.oldVal);
+                          const newStr = renderVal(d.newVal);
+                          return (
                           <div key={di} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,paddingLeft:4}}>
-                            <span style={{color:C.textMut,fontWeight:500,minWidth:90}}>{d.field}</span>
-                            {d.oldVal != null && d.oldVal !== "" && (
-                              <span style={{color:C.dan,textDecoration:"line-through",opacity:0.7}}>{d.oldVal}</span>
+                            <span style={{color:C.textMut,fontWeight:500,minWidth:90}}>{renderVal(d.field)}</span>
+                            {oldStr !== "" && (
+                              <span style={{color:C.dan,textDecoration:"line-through",opacity:0.7}}>{oldStr}</span>
                             )}
-                            {d.oldVal != null && d.oldVal !== "" && d.newVal != null && d.newVal !== "" && (
+                            {oldStr !== "" && newStr !== "" && (
                               <span style={{color:C.textMut}}>→</span>
                             )}
-                            {d.newVal != null && d.newVal !== "" && (
-                              <span style={{color:C.suc,fontWeight:600}}>{d.newVal}</span>
+                            {newStr !== "" && (
+                              <span style={{color:C.suc,fontWeight:600}}>{newStr}</span>
                             )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -3890,7 +3913,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
 
       if (bath && res.checkOut === today) {
         const colKey = "bathing";
-        rows.push({ ...base, id: `${res.id}_${colKey}`, type: "bathing", colKey, time: "End of Day", label: "Bath", detail: bath, instruction: "", notes: "", logEntry: log[`${today}|${colKey}`] || {} });
+        const postBathRet = res.careOverrides?.postBathReturn || "";
+        rows.push({ ...base, id: `${res.id}_${colKey}`, type: "bathing", colKey, time: "End of Day", label: "Bath", detail: bath, instruction: postBathRet ? `After bath: ${postBathRet}` : "", notes: "", postBathReturn: postBathRet, logEntry: log[`${today}|${colKey}`] || {} });
       }
     });
     rows.sort((a, b) => parseTimeSort(a.time) - parseTimeSort(b.time));
@@ -4750,6 +4774,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                   const weight = r.dog?.fields.weight ? `${r.dog.fields.weight} lbs` : "";
                   const co = r.checkOutTime ? fmtTimeLabel(r.checkOutTime) : "TBD";
                   const administered = r.logEntry?.administered;
+                  const postBath = r.postBathReturn || "";
                   return `<tr style="${administered ? "background:#e8f5e9;" : ""}">
                     <td style="padding:10px 12px;border-bottom:1px solid #ddd;font-weight:700;">${dName}</td>
                     <td style="padding:10px 12px;border-bottom:1px solid #ddd;">${cLast}</td>
@@ -4757,6 +4782,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                     <td style="padding:10px 12px;border-bottom:1px solid #ddd;">${weight}</td>
                     <td style="padding:10px 12px;border-bottom:1px solid #ddd;">${r.room || "—"}</td>
                     <td style="padding:10px 12px;border-bottom:1px solid #ddd;font-weight:700;">${r.detail || "Standard"}</td>
+                    <td style="padding:10px 12px;border-bottom:1px solid #ddd;font-weight:600;color:${postBath === "Return to Group" ? "#2e7d32" : postBath === "Return to Room" ? "#e65100" : "#666"};">${postBath || "—"}</td>
                     <td style="padding:10px 12px;border-bottom:1px solid #ddd;font-weight:700;">${co}</td>
                     <td style="padding:10px 12px;border-bottom:1px solid #ddd;text-align:center;">${administered ? "✓" : "☐"}</td>
                   </tr>`;
@@ -4775,7 +4801,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                   <h1>K9 Resorts — Bath Schedule</h1>
                   <h2>${today} · ${bathRows.length} bath${bathRows.length !== 1 ? "s" : ""} scheduled</h2>
                   <table>
-                    <thead><tr><th>Dog</th><th>Owner</th><th>Breed</th><th>Weight</th><th>Room</th><th>Bath Type</th><th>Departs</th><th style="text-align:center">Done</th></tr></thead>
+                    <thead><tr><th>Dog</th><th>Owner</th><th>Breed</th><th>Weight</th><th>Room</th><th>Bath Type</th><th>After Bath</th><th>Departs</th><th style="text-align:center">Done</th></tr></thead>
                     <tbody>${rows}</tbody>
                   </table>
                   <div class="summary">
@@ -4792,7 +4818,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               return (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: `1px solid ${C.borderLight}`, background: C.surface }}>
                   <div style={{ fontSize: 12, color: C.textSec }}>
-                    <span style={{ fontWeight: 700, color: C.text }}>{bathRows.length}</span> bath{bathRows.length !== 1 ? "es" : ""} scheduled today · <span style={{ fontWeight: 700, color: C.suc }}>{bathRows.filter(r => r.logEntry?.administered).length}</span> done
+                    <span style={{ fontWeight: 700, color: C.text }}>{bathRows.length}</span> bath{bathRows.length !== 1 ? "s" : ""} scheduled today · <span style={{ fontWeight: 700, color: C.suc }}>{bathRows.filter(r => r.logEntry?.administered).length}</span> done
                   </div>
                   <button onClick={printBathSchedule} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.pri}`, background: C.priLt, color: C.pri, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
@@ -4977,11 +5003,11 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                 >
                   {/* Col 1: Client (spans all dog rows) */}
                   <div style={{ minWidth: 0, display: "flex", flexDirection: "column", justifyContent: "center", minHeight: resCount > 1 ? resCount * 52 : "auto" }}>
-                    <div onClick={(e) => { e.stopPropagation(); nav("client-detail", { clientId: group.clientId }); }} style={{ cursor: "pointer" }}
-                      onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
-                      onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                        <Hl><span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{cn(group.clientId)}</span></Hl>
+                    <div>
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); nav("client-detail", { clientId: group.clientId }); }}
+                        onMouseEnter={e => { e.currentTarget.querySelector("[data-hl]")&&(e.currentTarget.querySelector("[data-hl]").style.textDecoration="underline"); const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
+                        onMouseLeave={e => { e.currentTarget.querySelector("[data-hl]")&&(e.currentTarget.querySelector("[data-hl]").style.textDecoration="none"); const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}>
+                        <Hl><span data-hl style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{cn(group.clientId)}</span></Hl>
                         {client && <AgreementIcons client={client} agreements={data.agreements} />}
                       </div>
                       <div style={{ fontSize: 11, color: C.textSec, fontVariantNumeric: "tabular-nums" }}>{fmtPhone(client?.fields.phone)}</div>
@@ -5001,11 +5027,11 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                       return (
                         <div key={res.id} onClick={() => setBoardingPreviewId(res.id)} style={{ display: "grid", gridTemplateColumns: "minmax(120px,1.6fr) minmax(58px,0.55fr) minmax(80px,1fr) minmax(68px,0.7fr) minmax(62px,0.6fr) minmax(68px,0.7fr) minmax(62px,0.6fr) minmax(50px,0.8fr) minmax(44px,0.45fr)", alignItems: "center", minHeight: 40, cursor: "pointer" }}>
                           {/* Dog info */}
-                          <div style={{ minWidth: 0 }} onClick={(e) => { e.stopPropagation(); if (dog) nav("dog-detail", { clientId: res.clientId, dogId: res.dogId }); }}
-                            onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
-                            onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }} >
-                            <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", cursor: "pointer" }}>
-                              <Hl><span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{dn(res.dogId)}</span></Hl>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, flexWrap: "wrap", cursor: "pointer" }} onClick={(e) => { e.stopPropagation(); if (dog) nav("dog-detail", { clientId: res.clientId, dogId: res.dogId }); }}
+                              onMouseEnter={e => { e.currentTarget.querySelector("[data-hl]")&&(e.currentTarget.querySelector("[data-hl]").style.textDecoration="underline"); const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
+                              onMouseLeave={e => { e.currentTarget.querySelector("[data-hl]")&&(e.currentTarget.querySelector("[data-hl]").style.textDecoration="none"); const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}>
+                              <Hl><span data-hl style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{dn(res.dogId)}</span></Hl>
                               {dog && <DogPicHover dog={dog} size={20} />}
                               {dog && <VaxIcon dog={dog} requiredVaccines={data.requiredVaccines} policies={data.resortPolicies} />}
                               {dog && <DogTagChips dog={dog} dogTags={data.dogTags} size="sm" />}
@@ -5044,33 +5070,32 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                             {res.actualCheckOutTime && <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>actual: {new Date(res.actualCheckOutTime).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>}
                           </div>
                           {/* Add-Ons */}
-                          <div style={{ position: "relative" }} onClick={e => e.stopPropagation()}
-                            onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
-                            onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}>
+                          <div style={{ position: "relative" }}>
                             {res.type !== "tour" ? (() => {
                               const resAddOns = res.addOns || [];
                               return (
                                 <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", minHeight: 24 }}
-                                  onMouseEnter={e => { const b = e.currentTarget.querySelector("[data-addon-plus]"); if (b) b.style.opacity = "1"; }}
-                                  onMouseLeave={e => { const b = e.currentTarget.querySelector("[data-addon-plus]"); if (b) b.style.opacity = resAddOns.length > 0 ? "0.6" : "0"; }}>
+                                  onMouseEnter={e => { const b = e.currentTarget.querySelector("[data-addon-plus]"); if (b) { b.style.opacity = "1"; b.style.pointerEvents = "auto"; } }}
+                                  onMouseLeave={e => { const b = e.currentTarget.querySelector("[data-addon-plus]"); if (b) { b.style.opacity = resAddOns.length > 0 ? "0.6" : "0"; b.style.pointerEvents = resAddOns.length > 0 ? "auto" : "none"; } }}>
                                   {resAddOns.map(a => (
                                     <span key={a} style={{ fontSize: 9, background: C.priO, color: C.pri, padding: "1px 6px", borderRadius: 8, fontWeight: 600, whiteSpace: "nowrap" }}>{a}</span>
                                   ))}
                                   <span data-addon-plus
                                     onClick={(e) => {
+                                      e.stopPropagation();
                                       const rect = e.currentTarget.getBoundingClientRect();
                                       setAddOnPopup(prev => prev?.resId === res.id ? null : { resId: res.id, x: rect.left, y: rect.bottom + 4 });
                                     }}
-                                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: "50%", border: `1.5px dashed ${C.border}`, color: C.textMut, fontSize: 14, cursor: "pointer", opacity: resAddOns.length > 0 ? 0.6 : 0, transition: "opacity 0.15s" }}
+                                    onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
+                                    onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}
+                                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: "50%", border: `1.5px dashed ${C.border}`, color: C.textMut, fontSize: 14, cursor: "pointer", opacity: resAddOns.length > 0 ? 0.6 : 0, pointerEvents: resAddOns.length > 0 ? "auto" : "none", transition: "opacity 0.15s" }}
                                   >+</span>
                                 </div>
                               );
                             })() : null}
                           </div>
                           {/* Action */}
-                          <div style={{ textAlign: "right" }} onClick={e => e.stopPropagation()}
-                            onMouseEnter={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = "transparent"; }}
-                            onMouseLeave={e => { const r = e.currentTarget.closest("[data-row]"); if (r) r.style.background = C.surfaceHover; }}>
+                          <div style={{ textAlign: "right" }} onClick={e => e.stopPropagation()}>
                             {showCheckIn && <Btn size="sm" variant="success" onClick={() => handleCheckIn(res.id)} icon={<I.LogIn/>}>In</Btn>}
                             {showCheckOut && (() => {
                               const dogHasEvalTag = dog && (dog.tags || []).includes("tag_eval");
@@ -5351,7 +5376,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
             }
             setBoardingPreviewId(null);
           }}
-          data={data} save={save} profile={profile}
+          data={data} save={save} profile={profile} nav={nav}
         />;
       })()}
 
@@ -6022,6 +6047,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   };
 
   // ── Follow-up cell renderer ──
+  const [expandedFollowUp, setExpandedFollowUp] = useState(new Set());
   const renderFollowUp = (client, tab) => {
     const fu = client.lifecycle?.[tab]?.followUpDate;
     if (!fu) return <span style={{color:C.textMut,fontSize:11}}>—</span>;
@@ -6030,14 +6056,23 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     const d = new Date(fu + "T12:00:00");
     const mmddyy = `${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}/${String(d.getFullYear()).slice(-2)}`;
     const dow = d.toLocaleDateString("en-US",{weekday:"long"});
+    const isExpFu = expandedFollowUp.has(client.id);
+    const toggleFu = (e) => { e.stopPropagation(); setExpandedFollowUp(prev => { const n = new Set(prev); if (n.has(client.id)) n.delete(client.id); else n.add(client.id); return n; }); };
     return (
-      <div style={{display:"flex",alignItems:"center",gap:6}}>
-        <div style={{lineHeight:1.3}}>
-          <div style={{fontSize:12,fontWeight:600,color:isOverdue?C.dan:isToday?C.suc:C.text}}>{mmddyy}</div>
-          <div style={{fontSize:10,color:isOverdue?C.dan:isToday?C.suc:C.textSec,fontWeight:500}}>{dow}</div>
+      <div>
+        <div onClick={toggleFu} style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+          <div style={{lineHeight:1.3}}>
+            <div style={{fontSize:12,fontWeight:600,color:isOverdue?C.dan:isToday?C.suc:C.text}}>{mmddyy}</div>
+            <div style={{fontSize:10,color:isOverdue?C.dan:isToday?C.suc:C.textSec,fontWeight:500}}>{dow}</div>
+          </div>
+          {isOverdue && <span style={{fontSize:9,fontWeight:800,color:C.dan,background:`${C.dan}15`,padding:"1px 5px",borderRadius:4}}>OVERDUE</span>}
+          {isToday && <span style={{fontSize:9,fontWeight:800,color:C.suc,background:`${C.suc}15`,padding:"1px 5px",borderRadius:4}}>TODAY</span>}
         </div>
-        {isOverdue && <span style={{fontSize:9,fontWeight:800,color:C.dan,background:`${C.dan}15`,padding:"1px 5px",borderRadius:4}}>OVERDUE</span>}
-        {isToday && <span style={{fontSize:9,fontWeight:800,color:C.suc,background:`${C.suc}15`,padding:"1px 5px",borderRadius:4}}>TODAY</span>}
+        {isExpFu && client.createdAt && (
+          <div style={{marginTop:4,padding:"3px 6px",borderRadius:4,background:C.bg,border:`1px solid ${C.borderLight}`,fontSize:10,color:C.textSec}}>
+            <span style={{fontWeight:600}}>Created:</span> {fmtDate(client.createdAt.split("T")[0] || client.createdAt)}
+          </div>
+        )}
       </div>
     );
   };
@@ -6109,9 +6144,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Grid templates per tab ──
   const getGrid = () => {
-    if (activeTab === "conversion") return "minmax(120px,1.5fr) 60px minmax(100px,1.2fr) minmax(90px,1fr) minmax(100px,1.5fr) 100px 60px";
-    if (activeTab === "retention") return "minmax(110px,1.3fr) 50px minmax(90px,1fr) minmax(85px,0.9fr) minmax(90px,1.3fr) 90px minmax(70px,0.8fr) minmax(65px,0.7fr) 55px 55px";
-    if (activeTab === "cold") return "minmax(120px,1.5fr) 60px minmax(100px,1.2fr) minmax(90px,1fr) minmax(120px,1.5fr) 70px";
+    if (activeTab === "conversion") return "minmax(120px,1.5fr) minmax(80px,1fr) 60px minmax(100px,1.2fr) minmax(90px,1fr) minmax(100px,1.5fr) 100px 60px";
+    if (activeTab === "retention") return "minmax(110px,1.3fr) minmax(80px,1fr) 50px minmax(90px,1fr) minmax(85px,0.9fr) minmax(90px,1.3fr) 90px minmax(70px,0.8fr) minmax(65px,0.7fr) 55px 55px";
+    if (activeTab === "cold") return "minmax(120px,1.5fr) minmax(80px,1fr) 60px minmax(100px,1.2fr) minmax(90px,1fr) minmax(120px,1.5fr) 70px";
     // Active / All
     const base = "minmax(80px,1fr) minmax(80px,1fr) minmax(80px,0.8fr) 50px";
     const dataCols = shownDataCols.map(k => {
@@ -6261,6 +6296,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           return <>
             <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
               <div style={colHeaderStyle("name")} onClick={()=>handleSort("name")}>Client <SortIcon col="name"/></div>
+              <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
               <div style={colHeaderStyle("dogCount")} onClick={()=>handleSort("dogCount")}>Dogs <SortIcon col="dogCount"/></div>
               <div>Source</div>
               <div style={colHeaderStyle("followUp")} onClick={()=>handleSort("followUp")}>Follow-Up <SortIcon col="followUp"/></div>
@@ -6278,6 +6314,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                   <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center",fontSize:12,transition:"background 0.1s"}}
                     onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <div>{renderName(c)}</div>
+                    <div style={{fontSize:11}}>{fmtPhone(c.fields.phone)}</div>
                     <div>{renderDogCount(c)}</div>
                     <div>{renderSource(c)}</div>
                     <div>{renderFollowUp(c, "conversion")}</div>
@@ -6369,6 +6406,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           return <>
             <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
               <div style={colHeaderStyle("name")} onClick={()=>handleSort("name")}>Client <SortIcon col="name"/></div>
+              <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
               <div style={colHeaderStyle("dogCount")} onClick={()=>handleSort("dogCount")}>Dogs <SortIcon col="dogCount"/></div>
               <div>Source</div>
               <div style={colHeaderStyle("followUp")} onClick={()=>handleSort("followUp")}>Follow-Up <SortIcon col="followUp"/></div>
@@ -6390,6 +6428,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                   <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center",fontSize:12,transition:"background 0.1s"}}
                     onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <div>{renderName(c)}</div>
+                    <div style={{fontSize:11}}>{fmtPhone(c.fields.phone)}</div>
                     <div>{renderDogCount(c)}</div>
                     <div>{renderSource(c)}</div>
                     <div>{renderFollowUp(c, "retention")}</div>
@@ -6423,6 +6462,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           return <>
             <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
               <div style={colHeaderStyle("name")} onClick={()=>handleSort("name")}>Client <SortIcon col="name"/></div>
+              <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
               <div style={colHeaderStyle("dogCount")} onClick={()=>handleSort("dogCount")}>Dogs <SortIcon col="dogCount"/></div>
               <div>Source</div>
               <div style={colHeaderStyle("coldDate")} onClick={()=>handleSort("coldDate")}>Date Cold <SortIcon col="coldDate"/></div>
@@ -6439,6 +6479,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                   <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center",fontSize:12,transition:"background 0.1s"}}
                     onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
                     <div>{renderName(c)}</div>
+                    <div style={{fontSize:11}}>{fmtPhone(c.fields.phone)}</div>
                     <div>{renderDogCount(c)}</div>
                     <div>{renderSource(c)}</div>
                     <div style={{fontSize:11}}>{c.lifecycle?.coldDate ? fmtDate(c.lifecycle.coldDate) : "—"}</div>
@@ -7139,7 +7180,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             }
             setBoardingPreviewId(null);
           }}
-          data={data} save={save} profile={profile}
+          data={data} save={save} profile={profile} nav={nav}
         />;
       })()}
 
@@ -8234,7 +8275,29 @@ function BreedSearch({ value, onChange, breeds, autoFocus }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // FEEDING SCHEDULE EDITOR
 // ═══════════════════════════════════════════════════════════════════════════
-function FeedingScheduleEditor({ schedules, onChange, data, readOnly }) {
+// Blue Buffalo weight-based feeding charts (cups per day)
+const BB_CHART = {
+  "Blue Buffalo GI Vet-Grade (Chicken)": [
+    { range: "Up to 15 lbs", min: 0, max: 15, cups: "1/2 - 1 1/4", low: 0.5, high: 1.25 },
+    { range: "16-25 lbs", min: 16, max: 25, cups: "1 1/4 - 1 3/4", low: 1.25, high: 1.75 },
+    { range: "26-40 lbs", min: 26, max: 40, cups: "1 1/2 - 2 3/4", low: 1.5, high: 2.75 },
+    { range: "41-60 lbs", min: 41, max: 60, cups: "2 3/4 - 3 1/2", low: 2.75, high: 3.5 },
+    { range: "61-80 lbs", min: 61, max: 80, cups: "3 1/2 - 4 1/2", low: 3.5, high: 4.5 },
+    { range: "81-100 lbs", min: 81, max: 100, cups: "4 1/2 - 5 1/2", low: 4.5, high: 5.5 },
+    { range: "Over 100 lbs", min: 101, max: 9999, cups: "5 1/4 + 1/2 per 20 lbs", low: 5.25, high: 6.5 },
+  ],
+  "Blue Buffalo HF Vet-Grade (Salmon)": [
+    { range: "Up to 15 lbs", min: 0, max: 15, cups: "1/2 - 1 1/4", low: 0.5, high: 1.25 },
+    { range: "16-25 lbs", min: 16, max: 25, cups: "1 1/4 - 1 3/4", low: 1.25, high: 1.75 },
+    { range: "26-40 lbs", min: 26, max: 40, cups: "1 1/4 - 2 1/2", low: 1.25, high: 2.5 },
+    { range: "41-60 lbs", min: 41, max: 60, cups: "2 1/2 - 3 1/2", low: 2.5, high: 3.5 },
+    { range: "61-80 lbs", min: 61, max: 80, cups: "3 1/2 - 4 1/2", low: 3.5, high: 4.5 },
+    { range: "81-100 lbs", min: 81, max: 100, cups: "4 1/2 - 5 1/2", low: 4.5, high: 5.5 },
+    { range: "Over 100 lbs", min: 101, max: 9999, cups: "5 1/4 + 1/2 per 20 lbs", low: 5.25, high: 6.5 },
+  ],
+};
+
+function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight }) {
   const [showModal, setShowModal] = useState(false);
   const [editIdx, setEditIdx] = useState(-1);
   const timeOpts = data.feedingTimeOptions || DEF_FEEDING_TIME_OPTIONS;
@@ -8244,9 +8307,43 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly }) {
 
   const blank = { id: gid(), times: [], amount: "", unit: "", foodType: "", instruction: "", notes: "" };
   const [draft, setDraft] = useState(blank);
+  const [bbOverride, setBbOverride] = useState(false); // true when user manually overrides amount
 
-  const openAdd = () => { setDraft({ ...blank, id: gid() }); setEditIdx(-1); setShowModal(true); };
-  const openEdit = (idx) => { setDraft({ ...schedules[idx] }); setEditIdx(idx); setShowModal(true); };
+  // Blue Buffalo chart matching
+  const bbChart = BB_CHART[draft.foodType] || null;
+  const bbMatch = bbChart && dogWeight ? bbChart.find(r => dogWeight >= r.min && dogWeight <= r.max) : null;
+
+  // Auto-calc helper: given matched row + number of feedings, compute per-feeding qty
+  const calcAutoQty = (match, numTimes) => {
+    if (!match || !numTimes) return "";
+    const mid = (match.low + match.high) / 2;
+    const perFeeding = mid / numTimes;
+    // Round to nearest 1/4 cup
+    const rounded = Math.round(perFeeding * 4) / 4;
+    // Format as fraction string
+    const whole = Math.floor(rounded);
+    const frac = rounded - whole;
+    const fracStr = frac === 0.25 ? "1/4" : frac === 0.5 ? "1/2" : frac === 0.75 ? "3/4" : "";
+    if (whole === 0 && fracStr) return fracStr;
+    if (fracStr) return `${whole} ${fracStr}`;
+    return `${rounded}`;
+  };
+
+  // When foodType changes to Blue Buffalo AND user hasn't overridden, auto-set amount
+  const updateFoodType = (v) => {
+    const newChart = BB_CHART[v] || null;
+    const newMatch = newChart && dogWeight ? newChart.find(r => dogWeight >= r.min && dogWeight <= r.max) : null;
+    setBbOverride(false);
+    if (newMatch && draft.times.length > 0) {
+      const autoAmt = calcAutoQty(newMatch, draft.times.length);
+      setDraft(d => ({ ...d, foodType: v, amount: autoAmt, unit: d.unit || "cups" }));
+    } else {
+      setDraft(d => ({ ...d, foodType: v }));
+    }
+  };
+
+  const openAdd = () => { setDraft({ ...blank, id: gid() }); setEditIdx(-1); setBbOverride(false); setShowModal(true); };
+  const openEdit = (idx) => { setDraft({ ...schedules[idx] }); setEditIdx(idx); setBbOverride(true); setShowModal(true); };
   const saveDraft = () => {
     if (draft.times.length === 0) return;
     const updated = editIdx >= 0 ? schedules.map((s, i) => i === editIdx ? draft : s) : [...schedules, draft];
@@ -8255,7 +8352,19 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly }) {
   };
   const remove = (idx) => onChange(schedules.filter((_, i) => i !== idx));
 
-  const toggleTime = (t) => setDraft(d => ({ ...d, times: d.times.includes(t) ? d.times.filter(x => x !== t) : [...d.times, t] }));
+  const toggleTime = (t) => {
+    setDraft(d => {
+      const newTimes = d.times.includes(t) ? d.times.filter(x => x !== t) : [...d.times, t];
+      // Auto-recalc if Blue Buffalo selected and not overridden
+      const chart = BB_CHART[d.foodType] || null;
+      const match = chart && dogWeight ? chart.find(r => dogWeight >= r.min && dogWeight <= r.max) : null;
+      if (match && newTimes.length > 0 && !bbOverride) {
+        const autoAmt = calcAutoQty(match, newTimes.length);
+        return { ...d, times: newTimes, amount: autoAmt, unit: d.unit || "cups" };
+      }
+      return { ...d, times: newTimes };
+    });
+  };
 
   return (
     <div>
@@ -8299,10 +8408,54 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly }) {
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              <Inp label="Amount" value={draft.amount} onChange={v => setDraft({ ...draft, amount: v })} placeholder="e.g. 1/2" />
+              <Inp label="Amount" value={draft.amount} onChange={v => { if (bbChart) setBbOverride(true); setDraft({ ...draft, amount: v }); }} placeholder="e.g. 1/2" />
               <Inp label="Unit" type="select" value={draft.unit} onChange={v => setDraft({ ...draft, unit: v })} options={unitOpts} />
             </div>
-            <Inp label="Food Type" type="select" value={draft.foodType} onChange={v => setDraft({ ...draft, foodType: v })} options={foodTypeOpts} />
+            <Inp label="Food Type" type="select" value={draft.foodType} onChange={updateFoodType} options={foodTypeOpts} />
+            {/* Blue Buffalo Weight Feeding Chart */}
+            {bbChart && (
+              <div style={{ border: `1.5px solid ${C.pri}30`, borderRadius: 10, overflow: "hidden", background: C.bg }}>
+                <div style={{ padding: "8px 14px", background: C.priLt, borderBottom: `1px solid ${C.pri}20`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.pri }}>Blue Buffalo Weight Feeding Chart</span>
+                  {dogWeight ? <span style={{ fontSize: 11, color: C.textSec }}>Dog weight: {dogWeight} lbs</span> : <span style={{ fontSize: 11, color: C.acc, fontWeight: 600 }}>No weight on file</span>}
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: C.surface }}>
+                      <th style={{ textAlign: "left", padding: "6px 12px", fontWeight: 700, color: C.textSec, fontSize: 11, borderBottom: `1px solid ${C.border}` }}>Weight Range</th>
+                      <th style={{ textAlign: "center", padding: "6px 12px", fontWeight: 700, color: C.textSec, fontSize: 11, borderBottom: `1px solid ${C.border}` }}>Cups / Day</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bbChart.map((row, ri) => {
+                      const isMatch = bbMatch && row.range === bbMatch.range;
+                      return (
+                        <tr key={ri} style={{ background: isMatch ? C.pri + "18" : ri % 2 === 0 ? "transparent" : C.bg, transition: "background 0.15s" }}>
+                          <td style={{ padding: "7px 12px", fontWeight: isMatch ? 700 : 500, color: isMatch ? C.pri : C.text, borderBottom: `1px solid ${C.borderLight}` }}>
+                            {row.range}
+                          </td>
+                          <td style={{ padding: "7px 12px", textAlign: "center", fontWeight: isMatch ? 700 : 500, color: isMatch ? C.pri : C.text, borderBottom: `1px solid ${C.borderLight}`, position: "relative" }}>
+                            {row.cups}
+                            {isMatch && <span style={{ marginLeft: 8, fontSize: 9, fontWeight: 800, color: "#fff", background: C.suc, padding: "1px 6px", borderRadius: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Recommended</span>}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {bbMatch && draft.times.length > 0 && !bbOverride && (
+                  <div style={{ padding: "8px 14px", borderTop: `1px solid ${C.pri}20`, background: C.suc + "10", fontSize: 11, color: C.textSec }}>
+                    Auto-calculated: <strong style={{ color: C.text }}>{draft.amount} {draft.unit || "cups"}</strong> per feeding ({draft.times.length} feeding{draft.times.length > 1 ? "s" : ""}/day, ~{((bbMatch.low + bbMatch.high) / 2).toFixed(1)} cups/day total)
+                  </div>
+                )}
+                {bbOverride && bbMatch && (
+                  <div style={{ padding: "8px 14px", borderTop: `1px solid ${C.acc}30`, background: C.acc + "10", fontSize: 11, color: C.acc, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span>Manual override active — recommended: {calcAutoQty(bbMatch, draft.times.length || 1)} {draft.unit || "cups"} per feeding</span>
+                    <button onClick={() => { setBbOverride(false); if (draft.times.length > 0) setDraft(d => ({ ...d, amount: calcAutoQty(bbMatch, d.times.length), unit: d.unit || "cups" })); }} style={{ border: "none", background: C.acc, color: "#fff", padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Reset to Auto</button>
+                  </div>
+                )}
+              </div>
+            )}
             <Inp label="Feeding Instruction" type="select" value={draft.instruction} onChange={v => setDraft({ ...draft, instruction: v })} options={instrOpts} />
             <Inp label="Feeding Notes" value={draft.notes} onChange={v => setDraft({ ...draft, notes: v })} placeholder="Any special notes…" />
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 4 }}>
@@ -8525,7 +8678,7 @@ function DogFormFields({ fields, dogFields, data, errors, onChange, feedingSched
       ))}
       {/* Feeding schedules */}
       <div style={{ marginTop: 16 }}>
-        <FeedingScheduleEditor schedules={feedingSchedules} onChange={onFeedingChange} data={data} />
+        <FeedingScheduleEditor schedules={feedingSchedules} onChange={onFeedingChange} data={data} dogWeight={parseFloat(fields.weight) || 0} />
       </div>
       {/* Medication schedules */}
       <div style={{ marginTop: 16 }}>
@@ -8583,7 +8736,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   const [checkIn, setCheckIn] = useState(todayStr());
   const [checkOut, setCheckOut] = useState(addDays(todayStr(), 1));
   const [checkInTime, setCheckInTime] = useState("09:00");
-  const [checkOutTime, setCheckOutTime] = useState("11:00");
+  const [checkOutTime, setCheckOutTime] = useState("12:30");
   const [notes, setNotes] = useState("");
   const [parentDestination, setParentDestination] = useState("");
   const [resDiscountType, setResDiscountType] = useState("none"); // "none", "percent", "flat"
@@ -8885,6 +9038,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           // Legacy text fields for backward compat with check-in modal
           feeding: summarizeFeeding((careFields[did] || {}).feedingSchedules || []),
           medications: summarizeMeds((careFields[did] || {}).medicationSchedules || []),
+          ...(dogAddOns[did]?.selectedBath ? { bath_type: dogAddOns[did].selectedBath } : {}),
+          ...(dogAddOns[did]?.postBathReturn ? { postBathReturn: dogAddOns[did].postBathReturn } : {}),
         },
         selectedAddOns: (dogAddOns[did]?.selectedAddOns || []),
         pricing: resPricing,
@@ -9047,6 +9202,17 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
       });
       // Append manual add-ons for each dog
       selectedDogs.forEach(did => appendAddOns(combined, did));
+      // Late checkout fee: if checkout time is after 12:30 PM, add half-day daycare fee per dog
+      if (checkOutTime && checkOutTime > "12:30") {
+        const halfDayRate = (data.pricing || DEF_PRICING).daycareRates?.halfDay || 30;
+        selectedDogs.forEach(did => {
+          const dog = data.dogs.find(d => d.id === did);
+          const dogName = dog ? (dog.fields.name || "Dog") : "Dog";
+          combined.lineItems.push({ label: `Late Checkout Fee — ${dogName}`, rate: halfDayRate, qty: 1, total: halfDayRate, isAddon: true, isLateCheckout: true });
+          combined.subtotal += halfDayRate;
+          combined.total += halfDayRate;
+        });
+      }
       combined.subtotal = Math.round(combined.subtotal * 100) / 100;
       combined.discountTotal = Math.round(combined.discountTotal * 100) / 100;
       combined.total = Math.round(combined.total * 100) / 100;
@@ -9065,12 +9231,22 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
     });
     // Append manual add-ons
     appendAddOns(result, did);
+    // Late checkout fee for single dog boarding
+    if (type === "boarding" && checkOutTime && checkOutTime > "12:30") {
+      const halfDayRate = (data.pricing || DEF_PRICING).daycareRates?.halfDay || 30;
+      const dogName = dog ? (dog.fields.name || "Dog") : "Dog";
+      result.lineItems.push({ label: `Late Checkout Fee — ${dogName}`, rate: halfDayRate, qty: 1, total: halfDayRate, isAddon: true, isLateCheckout: true });
+      result.subtotal += halfDayRate;
+      result.total += halfDayRate;
+      result.deposit = Math.round(result.subtotal * (result.depositPercent / 100) * 100) / 100;
+      result.balance = Math.round((result.total - result.deposit) * 100) / 100;
+    }
     return result;
   }, [type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, selectedDogs.join(","), data.pricing, perDogMode, JSON.stringify(perDogConfig), JSON.stringify(dogAddOns)]);
 
   return (
     <div>
-      <button onClick={()=>nav(preClientId?"client-detail":"dashboard",preClientId?{clientId:preClientId}:{})} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.textSec,fontSize:14,fontWeight:600,padding:0,marginBottom:20,fontFamily:"inherit"}}><I.Back/> Back</button>
+      <button onClick={()=>nav("dashboard")} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.textSec,fontSize:14,fontWeight:600,padding:0,marginBottom:20,fontFamily:"inherit"}}><I.Back/> Back to Dashboard</button>
       <h1 style={{margin:"0 0 24px",fontSize:26,fontWeight:800,color:C.text}}>Book Reservation</h1>
       <Card style={{padding:28}}>
         {/* Client & Type */}
@@ -9138,6 +9314,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
               </div>
             )}
             {errors.clientId&&<div style={{color:C.dan,fontSize:12,fontWeight:600,marginTop:4}}>{errors.clientId}</div>}
+            {clientId && <button onClick={() => nav("client-detail", { clientId })} style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 6, padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.pri}30`, background: C.priLt, color: C.pri, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }} onMouseEnter={e => { e.currentTarget.style.background = C.pri; e.currentTarget.style.color = "#fff"; }} onMouseLeave={e => { e.currentTarget.style.background = C.priLt; e.currentTarget.style.color = C.pri; }}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> Profile</button>}
           </div>
           <div>
             <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"}}>Type</div>
@@ -9184,7 +9361,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                 const noRooms = avail && avail.available === 0 && avail.total > 0;
                 return (
                 <button key={rt} onClick={()=>setRoomType(rt)}
-                  style={{padding:"10px 18px",borderRadius:10,border:`2px solid ${roomType===rt?C.pri:noRooms?C.dan+"60":C.border}`,background:roomType===rt?C.priLt:C.surface,color:roomType===rt?C.pri:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+                  style={{padding:"10px 18px",borderRadius:10,border:`2px solid ${roomType===rt?C.pri:noRooms?C.dan+"60":C.border}`,background:roomType===rt?C.priLt:C.surface,color:roomType===rt?C.pri:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"border-color 0.15s, background 0.15s, color 0.15s",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
                   <span>{rt}</span>
                   {avail && avail.total > 0 && <span style={{fontSize:10,fontWeight:500,color:noRooms?C.dan:roomType===rt?C.pri:C.textMut}}>{avail.available}/{avail.total} remaining</span>}
                 </button>
@@ -9749,7 +9926,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                     <div style={{display:"flex",flexDirection:"column",gap:12}}>
                       <div>
                         {feedingChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
-                        <FeedingScheduleEditor schedules={care.feedingSchedules || []} onChange={v=>updateCare(did,"feedingSchedules",v)} data={data}/>
+                        <FeedingScheduleEditor schedules={care.feedingSchedules || []} onChange={v=>updateCare(did,"feedingSchedules",v)} data={data} dogWeight={parseFloat(dog.fields.weight) || 0}/>
                       </div>
                       <div>
                         {medsChanged && <div style={{fontSize:10,fontWeight:700,color:C.acc,marginBottom:2}}>Modified from profile</div>}
@@ -9776,6 +9953,25 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                             </button>;
                           })}
                         </div>
+                        {/* Post-bath return option for non-Private Play dogs */}
+                        {!(dog.tags || []).includes("tag_pp") && (dogAddOns[did]?.selectedBath) && (() => {
+                          const postBathReturn = dogAddOns[did]?.postBathReturn || "";
+                          return (
+                            <div style={{marginTop:12}}>
+                              <div style={{fontSize:11,fontWeight:600,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:6}}>After Bath on Checkout Day <span style={{color:C.dan}}>*</span></div>
+                              <div style={{fontSize:11,color:C.textMut,marginBottom:6}}>Where should we return {dog.fields.name} after their bath?</div>
+                              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                                {[{v:"Return to Group",icon:"👥"},{v:"Return to Room",icon:"🏠"}].map(opt=>{
+                                  const sel = postBathReturn === opt.v;
+                                  return <button key={opt.v} onClick={()=>setDogAddOns(prev=>({...prev,[did]:{...prev[did],postBathReturn:sel?"":opt.v}}))} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:12,fontWeight:sel?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",display:"flex",alignItems:"center",gap:4}}>
+                                    {sel&&<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                                    {opt.icon} {opt.v}
+                                  </button>;
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>}
                     </div>
                     {/* Add-Ons */}
@@ -9810,6 +10006,26 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           <div style={{marginTop:16}}><Inp label="Where are they going? (Parent destination)" value={parentDestination} onChange={setParentDestination} placeholder="e.g. Vacation in Florida, Business trip to NYC..."/></div>
         )}
         <div style={{marginTop:16}}><Inp label="General Notes" type="textarea" value={notes} onChange={setNotes} placeholder="Special instructions for this stay..."/></div>
+
+        {/* Late Checkout Notice */}
+        {type === "boarding" && checkOutTime && checkOutTime > "12:30" && selectedDogs.length > 0 && (() => {
+          const halfDayRate = (data.pricing || DEF_PRICING).daycareRates?.halfDay || 30;
+          const totalFee = halfDayRate * selectedDogs.length;
+          return (
+            <div style={{marginTop:16,padding:"14px 18px",borderRadius:10,border:`1.5px solid ${C.acc}`,background:C.acc+"08"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span style={{fontSize:14,fontWeight:700,color:C.acc}}>Late Checkout Fee Applied</span>
+              </div>
+              <div style={{fontSize:12,color:C.textSec,lineHeight:1.6}}>
+                K9 Resorts' standard check-out time is <strong style={{color:C.text}}>12:30 PM</strong>. Your selected check-out time of <strong style={{color:C.text}}>{(() => { const [h,m] = checkOutTime.split(":"); const hr = parseInt(h); const ampm = hr >= 12 ? "PM" : "AM"; const hr12 = hr === 0 ? 12 : hr > 12 ? hr - 12 : hr; return `${hr12}:${m} ${ampm}`; })()}</strong> qualifies as a late checkout, which incurs a half-day daycare fee of <strong style={{color:C.text}}>${halfDayRate.toFixed(2)}</strong> per dog.
+              </div>
+              <div style={{fontSize:13,fontWeight:700,color:C.acc,marginTop:6}}>
+                Total late checkout fee: ${totalFee.toFixed(2)} ({selectedDogs.length} dog{selectedDogs.length > 1 ? "s" : ""} × ${halfDayRate.toFixed(2)})
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Itemized Receipt with integrated discount */}
         {livePricing && livePricing.lineItems.length > 0 && (
@@ -10069,9 +10285,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
         const rowEl = el && el.closest ? el.closest("[data-room-row]") : null;
         if (rowEl) {
           const tRoom = rowEl.dataset.roomRow;
-          const tType = roomTypeOf(tRoom);
-          const origType = roomTypeOf(s.origRoom);
-          s.targetRoom = (tType && tType === origType) ? tRoom : s.origRoom;
+          if (tRoom) s.targetRoom = tRoom;
         }
       }
       interRef.current = { ...s };
@@ -10100,8 +10314,9 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
       if (ci === s.origCI && co === s.origCO && tRoom === s.origRoom) return;
       if (hasConflict(s.resId, tRoom, ci, co)) return;
 
-      // Save
-      await save({ ...data, reservations: data.reservations.map(r => r.id === s.resId ? { ...r, checkIn: ci, checkOut: co, room: tRoom } : r) });
+      // Save — update roomType if moving across room types
+      const newRoomType = roomTypeOf(tRoom) || s.origRes.roomType;
+      await save({ ...data, reservations: data.reservations.map(r => r.id === s.resId ? { ...r, checkIn: ci, checkOut: co, room: tRoom, roomType: newRoomType } : r) });
 
       // Toast
       const dogName = dn(s.origRes.dogId);
@@ -10133,11 +10348,20 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
     for (const rt of ROOM_TYPES) {
       const rooms = allRooms[rt] || [];
       if (rooms.length === 0) continue;
-      const resOfType = data.reservations.filter(r => r.type === "boarding" && r.roomType === rt && r.status !== "checked-out");
+      // Include all active reservations for packing, but only move upcoming ones
+      const resOfType = data.reservations.filter(r => r.type === "boarding" && r.roomType === rt && r.status !== "checked-out" && r.status !== "cancelled");
       const sorted = [...resOfType].sort((a, b) => a.checkIn.localeCompare(b.checkIn) || a.checkOut.localeCompare(b.checkOut));
       const latestCO = {};
       rooms.forEach(rm => { latestCO[rm] = "1900-01-01"; });
+      // First, lock checked-in reservations to their current rooms
       for (const res of sorted) {
+        if (res.status === "checked-in") {
+          latestCO[res.room] = res.checkOut > latestCO[res.room] ? res.checkOut : latestCO[res.room];
+        }
+      }
+      // Then pack only upcoming reservations around the locked ones
+      for (const res of sorted) {
+        if (res.status === "checked-in") continue; // skip — already locked in place
         let bestRoom = null, bestCO = null;
         for (const rm of rooms) {
           if (latestCO[rm] <= res.checkIn) {
@@ -10682,7 +10906,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
             }
             setBoardingPreviewId(null);
           }}
-          data={data} save={save} profile={profile}
+          data={data} save={save} profile={profile} nav={nav}
         />;
       })()}
 
@@ -15689,6 +15913,8 @@ function SettingsPage({ data, save, profile }) {
   const [showAddTag, setShowAddTag] = useState(false);
   const [newTag, setNewTag] = useState({ name: "", colorIdx: 0 });
   const [editingTagColor, setEditingTagColor] = useState(null); // tag id being color-edited
+  const [editingTagName, setEditingTagName] = useState(null); // tag id being name-edited
+  const [editingTagNameVal, setEditingTagNameVal] = useState("");
   const [resetConfirm, setResetConfirm] = useState(false);
 
   // Facility settings
@@ -16358,11 +16584,17 @@ function SettingsPage({ data, save, profile }) {
             </div>
             {data.dogTags.map(tag => {
               const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
-              const abbr = tag.name.split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 2);
+              const words = tag.name.split(/\s+/);
+              const abbr = words.length > 1 ? words.map(w => w[0]).join("").toUpperCase().slice(0, 2) : tag.name.toUpperCase().slice(0, 4);
               const isEditingColor = editingTagColor === tag.id;
+              const isEditingName = editingTagName === tag.id;
               return (
                 <div key={tag.id} style={{ display: "grid", gridTemplateColumns: "1fr 100px 80px 48px", padding: "12px 20px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center" }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{tag.name}</div>
+                  <div>{isEditingName ? (
+                    <input value={editingTagNameVal} onChange={e => setEditingTagNameVal(e.target.value)} onBlur={() => { if (editingTagNameVal.trim() && editingTagNameVal.trim() !== tag.name) { const updated = data.dogTags.map(t => t.id === tag.id ? { ...t, name: editingTagNameVal.trim() } : t); save({ ...data, dogTags: updated }); } setEditingTagName(null); }} onKeyDown={e => { if (e.key === "Enter") e.target.blur(); if (e.key === "Escape") { setEditingTagName(null); } }} autoFocus style={{ fontSize: 14, fontWeight: 600, color: C.text, border: `1.5px solid ${C.pri}`, borderRadius: 6, padding: "4px 8px", width: "100%", fontFamily: "inherit", outline: "none", background: C.surface }} />
+                  ) : (
+                    <span onClick={() => { setEditingTagName(tag.id); setEditingTagNameVal(tag.name); }} style={{ fontSize: 14, fontWeight: 600, color: C.text, cursor: "pointer", borderBottom: `1px dashed ${C.border}`, paddingBottom: 1 }} title="Click to edit">{tag.name}</span>
+                  )}</div>
                   <div style={{ position: "relative" }}>
                     <button onClick={() => setEditingTagColor(isEditingColor ? null : tag.id)} style={{ width: 24, height: 24, borderRadius: 6, background: tc.bg, border: `2px solid ${tc.text}`, cursor: "pointer", display: "inline-block", padding: 0 }} title={`Color: ${tc.name} — click to change`} />
                     {isEditingColor && (
