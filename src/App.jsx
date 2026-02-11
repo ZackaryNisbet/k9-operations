@@ -5880,13 +5880,24 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           <span key={i} style={{display:"inline-flex",alignItems:"center"}}>
             {i > 0 && <span style={{margin:"0 3px",color:C.textMut,fontSize:9}}>→</span>}
             {p.type === "ignite" ? (
-              <button
-                onClick={(e) => { e.stopPropagation(); setExpandedIgnite(prev => { const n=new Set(prev); if(n.has(client.id))n.delete(client.id);else n.add(client.id); return n; }); }}
-                style={{display:"inline-flex",alignItems:"center",gap:3,fontWeight:700,color:"#F97316",cursor:"pointer",background:igniteExpanded?`#F9731610`:"transparent",border:`1px solid ${igniteExpanded?"#F9731640":"transparent"}`,borderRadius:6,padding:"2px 7px",fontFamily:"inherit",fontSize:11,transition:"all 0.15s"}}
-              >
-                Ignite
-                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" style={{transform:igniteExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s"}}><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
+              <span style={{display:"inline-flex",alignItems:"center",gap:1,background:igniteExpanded?`#F9731610`:"transparent",border:`1px solid ${igniteExpanded?"#F9731640":"transparent"}`,borderRadius:6,padding:"2px 4px 2px 7px",transition:"all 0.15s"}}>
+                {client.igniteData?.igniteProfileId && client.igniteData?.leadId ? (
+                  <a href={`https://leads.idigitalstrategies.com/profile/${client.igniteData.igniteProfileId}/leads?lid=${client.igniteData.leadId}`} target="_blank" rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    style={{fontWeight:700,color:"#F97316",textDecoration:"none",fontSize:11}}
+                    onMouseEnter={e=>e.currentTarget.style.textDecoration="underline"}
+                    onMouseLeave={e=>e.currentTarget.style.textDecoration="none"}>
+                    Ignite ↗
+                  </a>
+                ) : (
+                  <span style={{fontWeight:700,color:"#F97316",fontSize:11}}>Ignite</span>
+                )}
+                <button
+                  onClick={(e) => { e.stopPropagation(); setExpandedIgnite(prev => { const n=new Set(prev); if(n.has(client.id))n.delete(client.id);else n.add(client.id); return n; }); }}
+                  style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:16,height:16,background:"transparent",border:"none",cursor:"pointer",padding:0,color:"#F97316",fontFamily:"inherit"}}>
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" style={{transform:igniteExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s"}}><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+              </span>
             ) : p.type === "eval" || p.type === "tour" ? (
               <span
                 style={{fontWeight:700,color:p.type==="eval"?C.acc:C.info,cursor:"pointer",position:"relative"}}
@@ -6265,6 +6276,16 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                             </div>
                           ))}
                         </div>
+                        {igd.igniteProfileId && igd.leadId && (
+                          <div style={{marginTop:10,paddingTop:8,borderTop:"1px solid #F9731630"}}>
+                            <a href={`https://leads.idigitalstrategies.com/profile/${igd.igniteProfileId}/leads?lid=${igd.leadId}`} target="_blank" rel="noopener noreferrer"
+                              style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:"#F97316",textDecoration:"none",padding:"4px 10px",borderRadius:6,border:"1px solid #F9731640",background:"white"}}
+                              onMouseEnter={e=>e.currentTarget.style.background="#FFF7ED"}
+                              onMouseLeave={e=>e.currentTarget.style.background="white"}>
+                              View in Ignite Dashboard ↗
+                            </a>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
