@@ -5614,6 +5614,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [hoveredSource, setHoveredSource] = useState(null);
   const [hoveredDogCount, setHoveredDogCount] = useState(null);
   const [expandedDogs, setExpandedDogs] = useState(new Set());
+  const [expandedIgnite, setExpandedIgnite] = useState(new Set());
   const [showExtraCols, setShowExtraCols] = useState(false);
   const [editingBanner, setEditingBanner] = useState(null); // which tab's banner is being edited
   const [bannerDraft, setBannerDraft] = useState("");
@@ -5865,17 +5866,28 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   // ── Source cell renderer ──
   const renderSource = (client) => {
     const src = getClientSource(client);
+    const isIgnite = client.lifecycle?.conversion?.source === "ignite";
     const parts = [];
-    if (src.base) parts.push({ label: src.base, type: "base" });
+    if (isIgnite) parts.push({ label: "Ignite", type: "ignite" });
+    if (src.base && (!isIgnite || src.base !== "Ignite")) parts.push({ label: src.base, type: "base" });
     if (src.hasEval) parts.push({ label: "Eval", type: "eval", res: src.evalRes });
     if (src.hasTour) parts.push({ label: "Tour", type: "tour", res: src.tourRes });
     if (parts.length === 0) return <span style={{color:C.textMut}}>—</span>;
+    const igniteExpanded = expandedIgnite.has(client.id);
     return (
       <div style={{display:"flex",alignItems:"center",gap:0,flexWrap:"wrap",fontSize:11}}>
         {parts.map((p, i) => (
           <span key={i} style={{display:"inline-flex",alignItems:"center"}}>
             {i > 0 && <span style={{margin:"0 3px",color:C.textMut,fontSize:9}}>→</span>}
-            {p.type === "eval" || p.type === "tour" ? (
+            {p.type === "ignite" ? (
+              <button
+                onClick={(e) => { e.stopPropagation(); setExpandedIgnite(prev => { const n=new Set(prev); if(n.has(client.id))n.delete(client.id);else n.add(client.id); return n; }); }}
+                style={{display:"inline-flex",alignItems:"center",gap:3,fontWeight:700,color:"#F97316",cursor:"pointer",background:igniteExpanded?`#F9731610`:"transparent",border:`1px solid ${igniteExpanded?"#F9731640":"transparent"}`,borderRadius:6,padding:"2px 7px",fontFamily:"inherit",fontSize:11,transition:"all 0.15s"}}
+              >
+                Ignite
+                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" style={{transform:igniteExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s"}}><polyline points="6 9 12 15 18 9"/></svg>
+              </button>
+            ) : p.type === "eval" || p.type === "tour" ? (
               <span
                 style={{fontWeight:700,color:p.type==="eval"?C.acc:C.info,cursor:"pointer",position:"relative"}}
                 onMouseEnter={() => setHoveredSource(`${client.id}_${p.type}`)}
@@ -5978,7 +5990,13 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   // ── Notes cell (shows last log note with date prefix) ──
   const renderNotes = (client, tab) => {
     const updates = client.lifecycle?.[tab]?.updates || [];
-    if (updates.length === 0) return <span style={{color:C.textMut,fontSize:11}}>—</span>;
+    if (updates.length === 0) {
+      // For Ignite leads with no updates yet, show the received date from notes field
+      if (client.lifecycle?.conversion?.source === "ignite" && client.fields?.notes) {
+        return <span style={{fontSize:11,color:"#F97316",fontWeight:600,whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.4}}>{client.fields.notes}</span>;
+      }
+      return <span style={{color:C.textMut,fontSize:11}}>—</span>;
+    }
     const last = updates[0]; // most recent
     const dateStr = last.loggedAt ? new Date(last.loggedAt).toLocaleDateString("en-US",{month:"numeric",day:"numeric",year:"2-digit"}) : "";
     return <span style={{fontSize:11,color:C.text,whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.4}}>{dateStr ? `${dateStr}: ` : ""}{last.notes}</span>;
@@ -6213,6 +6231,43 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                     <div>{renderColdBtn(c)}</div>
                   </div>
                   {renderDogDetails(c)}
+                  {expandedIgnite.has(c.id) && c.igniteData && (() => {
+                    const igd = c.igniteData;
+                    const fields = [
+                      { label: "Source", val: igd.source },
+                      { label: "First Name", val: igd.firstName },
+                      { label: "Last Name", val: igd.lastName },
+                      { label: "Email", val: igd.email },
+                      { label: "Phone", val: igd.phone },
+                      { label: "Zip Code", val: igd.zip },
+                      { label: "City", val: igd.city },
+                      { label: "State", val: igd.state },
+                      { label: "Reason for Contact", val: igd.reason },
+                      { label: "Message", val: igd.message },
+                      { label: "Profile", val: igd.profile },
+                      { label: "Form Name", val: igd.formName },
+                      { label: "Lead ID", val: igd.leadId },
+                      { label: "Lead Page", val: igd.leadPage },
+                      { label: "Landing Page", val: igd.landingPage },
+                    ].filter(f => f.val);
+                    return (
+                      <div style={{padding:"12px 20px 12px 28px",background:`#FFF7ED`,borderBottom:`1px solid ${C.borderLight}`,borderLeft:"3px solid #F97316"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="#F97316" stroke="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                          <span style={{fontSize:12,fontWeight:700,color:"#F97316"}}>Ignite Lead Data</span>
+                          <span style={{fontSize:10,color:C.textSec,fontWeight:500}}>Received {c.createdAt ? new Date(c.createdAt + "T12:00:00").toLocaleDateString("en-US",{month:"numeric",day:"numeric",year:"2-digit"}) : "—"}</span>
+                        </div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px 24px"}}>
+                          {fields.map((f, i) => (
+                            <div key={i} style={{display:"flex",gap:6,fontSize:11,lineHeight:1.5}}>
+                              <span style={{fontWeight:700,color:C.textSec,minWidth:110,flexShrink:0}}>{f.label}:</span>
+                              <span style={{color:C.text,wordBreak:"break-word"}}>{f.val}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {isExp && updates.length > 0 && (
                     <div style={{padding:"12px 20px",background:C.bg,borderBottom:`1px solid ${C.borderLight}`,borderLeft:`3px solid ${C.acc}`}}>
                       {updates.map(u => (
