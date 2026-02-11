@@ -2072,7 +2072,7 @@ function CustomSelect({ value, onChange, options, placeholder, disabled, style: 
 }
 
 // ─── Mini Date Picker — compact inline date picker with calendar popup ───
-function MiniDatePicker({ value, onChange, style: extraStyle, min, max, disabled, placeholder }) {
+function MiniDatePicker({ value, onChange, style: extraStyle, min, max, disabled, placeholder, recommendedDate, recommendedHint }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState("days");
   const ref = useRef(null);
@@ -2128,10 +2128,11 @@ function MiniDatePicker({ value, onChange, style: extraStyle, min, max, disabled
           {view === "days" && <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", marginBottom: 2 }}>{["Su","Mo","Tu","We","Th","Fr","Sa"].map(d => <span key={d} style={{ fontSize: 9, fontWeight: 700, color: C.textMut, padding: "2px 0" }}>{d}</span>)}</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", textAlign: "center", gap: 1 }}>
-            {days.map((day, i) => { if (day === null) return <div key={`e${i}`} />; const m = String(vMonth + 1).padStart(2, "0"); const d = String(day).padStart(2, "0"); const ds = `${vYear}-${m}-${d}`; const isSel = ds === value; const isToday = ds === td; const isDis = (min && ds < min) || (max && ds > max); return (
-              <button key={i} onClick={() => !isDis && pick(day)} style={{ width: 30, height: 30, borderRadius: 8, border: isSel ? `2px solid ${C.pri}` : isToday ? `1.5px solid ${C.acc}` : "1.5px solid transparent", background: isSel ? C.priLt : "transparent", color: isDis ? C.border : isSel ? C.pri : isToday ? C.acc : C.text, fontSize: 12, fontWeight: isSel || isToday ? 700 : 500, cursor: isDis ? "default" : "pointer", fontFamily: "inherit", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto", opacity: isDis ? 0.35 : 1 }} onMouseEnter={e => { if (!isSel && !isDis) e.currentTarget.style.background = C.bg; }} onMouseLeave={e => { if (!isSel && !isDis) e.currentTarget.style.background = "transparent"; }}>{day}</button>
+            {days.map((day, i) => { if (day === null) return <div key={`e${i}`} />; const m = String(vMonth + 1).padStart(2, "0"); const d = String(day).padStart(2, "0"); const ds = `${vYear}-${m}-${d}`; const isSel = ds === value; const isToday = ds === td; const isRec = ds === recommendedDate; const isDis = (min && ds < min) || (max && ds > max); return (
+              <button key={i} onClick={() => !isDis && pick(day)} style={{ width: 30, height: 30, borderRadius: 8, border: isSel ? `2px solid ${C.pri}` : isRec ? `2px solid ${C.suc}` : isToday ? `1.5px solid ${C.acc}` : "1.5px solid transparent", background: isSel ? C.priLt : isRec ? `${C.suc}12` : "transparent", color: isDis ? C.border : isSel ? C.pri : isRec ? C.suc : isToday ? C.acc : C.text, fontSize: 12, fontWeight: isSel || isToday || isRec ? 700 : 500, cursor: isDis ? "default" : "pointer", fontFamily: "inherit", padding: 0, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto", opacity: isDis ? 0.35 : 1 }} onMouseEnter={e => { if (!isSel && !isDis) e.currentTarget.style.background = isRec ? `${C.suc}20` : C.bg; }} onMouseLeave={e => { if (!isSel && !isDis) e.currentTarget.style.background = isRec ? `${C.suc}12` : "transparent"; }}>{day}</button>
             ); })}
           </div>
+          {recommendedHint && <div style={{marginTop:8,padding:"6px 10px",borderRadius:8,background:`${C.suc}10`,border:`1px solid ${C.suc}30`,fontSize:10,color:C.suc,fontWeight:600,lineHeight:1.4}}>{recommendedHint}</div>}
           </>}
         </div>
       )}
@@ -5370,6 +5371,94 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// NATURAL LANGUAGE FILTER PARSER
+// ═══════════════════════════════════════════════════════════════════════════
+function parseNLFilter(query) {
+  const q = query.toLowerCase().trim();
+  if (!q || q.length < 4) return null;
+
+  // If the query looks like a plain name/phone search, skip NL parsing
+  if (/^[a-z]{1,20}$/.test(q)) return null; // single word, probably a name
+  if (/^\d{3,}$/.test(q.replace(/\D/g, "")) && q.replace(/\D/g, "").length <= 11) return null; // phone number
+
+  const filters = [];
+  const descriptions = [];
+  const parseNum = (s) => { const clean = s.replace(/[$,]/g, ""); if (/k$/i.test(clean)) return parseFloat(clean) * 1000; return parseFloat(clean); };
+
+  // ── SPENT / REVENUE ──
+  let m;
+  if ((m = q.match(/spent\s+(?:more|over|above|greater)\s+(?:than\s+)?\$?([\d,.]+k?)/i))) {
+    const v = parseNum(m[1]); filters.push((c, s) => (s.totalSpent || 0) > v); descriptions.push(`spent > $${v.toLocaleString()}`);
+  } else if ((m = q.match(/spent\s+(?:less|under|below|fewer)\s+(?:than\s+)?\$?([\d,.]+k?)/i))) {
+    const v = parseNum(m[1]); filters.push((c, s) => (s.totalSpent || 0) < v); descriptions.push(`spent < $${v.toLocaleString()}`);
+  } else if ((m = q.match(/(?:spent|spend|revenue|total)\s*(?:>=?|at\s+least)\s*\$?([\d,.]+k?)/i))) {
+    const v = parseNum(m[1]); filters.push((c, s) => (s.totalSpent || 0) >= v); descriptions.push(`spent >= $${v.toLocaleString()}`);
+  } else if ((m = q.match(/(?:high|big|top)\s*(?:spend|value)/i))) {
+    filters.push((c, s) => (s.totalSpent || 0) >= 1000); descriptions.push("high spenders ($1,000+)");
+  } else if ((m = q.match(/(?:no|zero|0)\s+(?:spend|spent|revenue)/i))) {
+    filters.push((c, s) => (s.totalSpent || 0) === 0); descriptions.push("$0 spent");
+  }
+
+  // ── DOGS ──
+  if ((m = q.match(/(?:more|over|above|greater)\s+(?:than\s+)?(\d+)\s*(?:dogs?|pups?|pets?)/i)) || (m = q.match(/(\d+)\+\s*(?:dogs?|pups?|pets?)/i))) {
+    const v = parseInt(m[1]); filters.push((c, s) => (s.dogCount || 0) > v); descriptions.push(`> ${v} dogs`);
+  } else if ((m = q.match(/(?:less|under|fewer)\s+(?:than\s+)?(\d+)\s*(?:dogs?|pups?|pets?)/i))) {
+    const v = parseInt(m[1]); filters.push((c, s) => (s.dogCount || 0) < v); descriptions.push(`< ${v} dogs`);
+  } else if ((m = q.match(/(\d+)\s*(?:or\s+more|plus)\s*(?:dogs?|pups?|pets?)/i)) || (m = q.match(/(?:at\s+least)\s+(\d+)\s*(?:dogs?|pups?|pets?)/i))) {
+    const v = parseInt(m[1]); filters.push((c, s) => (s.dogCount || 0) >= v); descriptions.push(`>= ${v} dogs`);
+  } else if ((m = q.match(/(?:multiple|several|many)\s*(?:dogs?|pups?|pets?)/i))) {
+    filters.push((c, s) => (s.dogCount || 0) >= 2); descriptions.push("2+ dogs");
+  }
+
+  // ── DAYS SINCE LAST VISIT ──
+  if ((m = q.match(/(?:hasn't|haven't|not|hasn.t|haven.t)\s+(?:visited|come|been|booked)\s+(?:in|for)\s+(\d+)\s*(?:days?)/i)) || (m = q.match(/(?:last\s+visit|visited)\s+(?:more|over)\s+(?:than\s+)?(\d+)\s*(?:days?\s+ago|days?)/i)) || (m = q.match(/(?:inactive|lapsed|absent)\s+(?:for\s+)?(\d+)\s*(?:\+\s*)?(?:days?)/i)) || (m = q.match(/(\d+)\+?\s*(?:days?\s+(?:since|inactive|without|no\s+visit))/i))) {
+    const v = parseInt(m[1]); filters.push((c, s) => (s.daysSinceLast ?? 9999) >= v); descriptions.push(`${v}+ days since last visit`);
+  } else if ((m = q.match(/visited\s+(?:in\s+(?:the\s+)?)?(?:last|past|recent)\s+(\d+)\s*(?:days?)/i)) || (m = q.match(/(?:active|visited|came)\s+(?:within|in)\s+(\d+)\s*(?:days?)/i)) || (m = q.match(/(?:last|past|recent)\s+(\d+)\s*(?:days?)/i))) {
+    const v = parseInt(m[1]); filters.push((c, s) => s.daysSinceLast != null && s.daysSinceLast <= v); descriptions.push(`visited in last ${v} days`);
+  } else if (q.match(/never\s+(?:visited|booked|came)/i)) {
+    filters.push((c, s) => s.daysSinceLast == null && (s.totalRes || 0) === 0); descriptions.push("never visited");
+  }
+
+  // ── RESERVATIONS / APPOINTMENTS ──
+  if ((m = q.match(/(?:more|over|above)\s+(?:than\s+)?(\d+)\s*(?:reservations?|appointments?|appts?|bookings?|visits?|res)/i))) {
+    const v = parseInt(m[1]); filters.push((c, s) => (s.totalRes || 0) > v); descriptions.push(`> ${v} reservations`);
+  } else if ((m = q.match(/(?:at\s+least|minimum|min)\s+(\d+)\s*(?:reservations?|appointments?|appts?|bookings?|visits?|res)/i))) {
+    const v = parseInt(m[1]); filters.push((c, s) => (s.totalRes || 0) >= v); descriptions.push(`>= ${v} reservations`);
+  } else if ((m = q.match(/(?:less|under|fewer)\s+(?:than\s+)?(\d+)\s*(?:reservations?|appointments?|appts?|bookings?|visits?|res)/i))) {
+    const v = parseInt(m[1]); filters.push((c, s) => (s.totalRes || 0) < v); descriptions.push(`< ${v} reservations`);
+  }
+
+  // ── SERVICE TYPE ──
+  if (q.match(/(?:daycare|dc)\s*(?:client|customer|only)/i) || q.match(/(?:primarily|mostly|mainly)\s+(?:daycare|dc)/i)) {
+    filters.push((c, s) => (s.daycareCount || 0) > 0 && (s.daycareCount || 0) >= (s.boardingCount || 0)); descriptions.push("primarily daycare");
+  } else if (q.match(/(?:boarding|board|bd)\s*(?:client|customer|only)/i) || q.match(/(?:primarily|mostly|mainly)\s+(?:boarding|board)/i)) {
+    filters.push((c, s) => (s.boardingCount || 0) > 0 && (s.boardingCount || 0) >= (s.daycareCount || 0)); descriptions.push("primarily boarding");
+  } else if (q.match(/(?:has|have|did|done|completed)\s+(?:an?\s+)?(?:eval|evaluation)/i) || q.match(/eval\s+(?:client|customer|done|completed)/i)) {
+    filters.push((c, s) => (s.evalCount || 0) > 0); descriptions.push("has eval");
+  } else if (q.match(/(?:has|have|did|done|completed)\s+(?:an?\s+)?tour/i) || q.match(/tour\s+(?:client|customer|done|completed)/i)) {
+    filters.push((c, s) => (s.tourCount || 0) > 0); descriptions.push("has tour");
+  }
+
+  // ── UPCOMING ──
+  if (q.match(/(?:no|without|missing|0)\s+(?:upcoming|future|scheduled|next)\s*(?:reservations?|appointments?|appts?|bookings?|res)?/i) || q.match(/(?:nothing|none)\s+(?:upcoming|scheduled|booked)/i)) {
+    filters.push((c, s) => !s.nextRes); descriptions.push("no upcoming reservation");
+  } else if (q.match(/(?:has|have|with)\s+(?:an?\s+)?(?:upcoming|future|scheduled|next)\s*(?:reservations?|appointments?|appts?|bookings?|res)?/i)) {
+    filters.push((c, s) => !!s.nextRes); descriptions.push("has upcoming reservation");
+  }
+
+  // ── POST-EVAL / POST-TOUR ──
+  if ((m = q.match(/(?:no|0|zero)\s+(?:post[\s-]?eval|appointments?\s+after\s+eval)/i))) {
+    filters.push((c, s) => (s.postEvalAppts || 0) === 0 && (s.evalCount || 0) > 0); descriptions.push("eval with no follow-up appts");
+  }
+  if ((m = q.match(/(?:no|0|zero)\s+(?:post[\s-]?tour|appointments?\s+after\s+tour)/i))) {
+    filters.push((c, s) => (s.postTourAppts || 0) === 0 && (s.tourCount || 0) > 0); descriptions.push("tour with no follow-up appts");
+  }
+
+  if (filters.length === 0) return null;
+  return { filters, descriptions };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // CLIENTS PAGE — Customer Lifecycle
 // ═══════════════════════════════════════════════════════════════════════════
 function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
@@ -5387,6 +5476,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
   const [showColumnToggle, setShowColumnToggle] = useState(false);
   const [hoveredSource, setHoveredSource] = useState(null);
   const [hoveredDogCount, setHoveredDogCount] = useState(null);
+  const [expandedDogs, setExpandedDogs] = useState(new Set());
+  const [showExtraCols, setShowExtraCols] = useState(false);
   const logBtnRef = useRef({});
   const colToggleRef = useRef(null);
 
@@ -5474,12 +5565,20 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
     return { base, hasEval, evalRes, hasTour: !!tourRes, tourRes };
   }, [data.evaluations, data.reservations]);
 
+  // ── NL filter parsing ──
+  const nlFilter = useMemo(() => {
+    if (activeTab !== "active" && activeTab !== "all") return null;
+    return parseNLFilter(search);
+  }, [search, activeTab]);
+
   // ── Filtered & sorted client lists ──
   const tabLists = useMemo(() => {
     const sq = search.toLowerCase().trim();
     const sqDigits = sq.replace(/\D/g, "");
     let all = data.clients;
-    if (sq) {
+    // If NL filter is active on active/all, skip text search for those tabs (apply NL in activeList)
+    const isNL = nlFilter && (activeTab === "active" || activeTab === "all");
+    if (sq && !isNL) {
       all = all.filter(c => {
         const fn = `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.toLowerCase();
         const ph = (c.fields.phone || "").replace(/\D/g, "");
@@ -5492,11 +5591,18 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
     const ret = all.filter(c => clientTabMap[c.id]?.isRetention);
     const cold = all.filter(c => clientTabMap[c.id]?.isCold);
     return { conversion: conv, active, retention: ret, cold, all };
-  }, [data.clients, search, clientTabMap, clientStats]);
+  }, [data.clients, search, clientTabMap, clientStats, nlFilter, activeTab]);
 
-  // ── Apply sub-filters (source filter for Conversion, overdue toggle) ──
+  // ── Apply sub-filters (source filter for Conversion, overdue toggle, NL filter) ──
   const activeList = useMemo(() => {
     let list = tabLists[activeTab] || [];
+    // NL filter (Active/All tabs)
+    if (nlFilter && (activeTab === "active" || activeTab === "all")) {
+      list = list.filter(c => {
+        const s = clientStats[c.id] || {};
+        return nlFilter.filters.every(fn => fn(c, s));
+      });
+    }
     // Source filter (Conversion tab only)
     if (activeTab === "conversion" && sourceFilter.size > 0) {
       list = list.filter(c => {
@@ -5581,6 +5687,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
   };
 
   const markCold = async (clientId) => {
+    const prevClient = data.clients.find(c => c.id === clientId);
+    const prevLifecycle = prevClient ? JSON.parse(JSON.stringify(prevClient.lifecycle || {})) : {};
+    const prevEvents = prevClient ? [...(prevClient.lifecycleEvents || [])] : [];
     const newClients = data.clients.map(c => {
       if (c.id !== clientId) return c;
       return {
@@ -5590,7 +5699,18 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
       };
     });
     await save({ ...data, clients: newClients });
-    addGlobalToast?.({ message: "Client marked as cold" });
+    addGlobalToast?.({
+      message: "Client marked as cold",
+      actionLabel: "Undo",
+      onAction: async () => {
+        const undoClients = data.clients.map(c => {
+          if (c.id !== clientId) return c;
+          return { ...c, lifecycle: prevLifecycle, lifecycleEvents: prevEvents };
+        });
+        await save({ ...data, clients: undoClients });
+        addGlobalToast?.({ message: "Undo successful — client restored" });
+      }
+    });
   };
 
   // ── Tab config ──
@@ -5604,12 +5724,13 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
 
   // ── Toggleable columns for Active/All tabs ──
   const toggleCols = [
-    { key: "daycare", label: "Daycare" }, { key: "boarding", label: "Board" },
-    { key: "eval", label: "Eval" }, { key: "postEval", label: "Post-Eval" },
-    { key: "tours", label: "Tours" }, { key: "postTour", label: "Post-Tour" },
+    { key: "daycare", label: "DC" }, { key: "boarding", label: "BD" },
+    { key: "eval", label: "Eval" }, { key: "postEval", label: "P-Eval" },
+    { key: "tours", label: "Tours" }, { key: "postTour", label: "P-Tour" },
   ];
-  const allDataCols = ["totalRes","lastRes","daysSince","daycare","boarding","eval","postEval","tours","postTour","totalSpent","nextRes"];
-  const shownDataCols = allDataCols.filter(k => visibleColumns.has(k) || !toggleCols.some(t => t.key === k));
+  const baseCols = ["totalRes","lastRes","daysSince","totalSpent","nextRes"];
+  const extraCols = ["daycare","boarding","eval","postEval","tours","postTour"];
+  const shownDataCols = showExtraCols ? [...baseCols.slice(0,3), ...extraCols, ...baseCols.slice(3)] : baseCols;
 
   // ── Source cell renderer ──
   const renderSource = (client) => {
@@ -5661,20 +5782,45 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
     );
   };
 
-  // ── Dog count cell with hover ──
+  // ── Dog count cell (clickable accordion trigger) ──
   const renderDogCount = (client) => {
     const s = clientStats[client.id] || {};
+    const dogs = data.dogs.filter(d => d.clientId === client.id);
+    const isExp = expandedDogs.has(client.id);
     return (
-      <span style={{position:"relative",cursor:"default"}}
-        onMouseEnter={() => setHoveredDogCount(client.id)}
-        onMouseLeave={() => setHoveredDogCount(null)}>
+      <button onClick={(e) => { e.stopPropagation(); setExpandedDogs(prev => { const n=new Set(prev); if(n.has(client.id))n.delete(client.id);else n.add(client.id); return n; }); }}
+        style={{display:"inline-flex",alignItems:"center",gap:4,background:isExp?`${C.pri}10`:"transparent",border:`1px solid ${isExp?C.pri+"40":"transparent"}`,borderRadius:6,padding:"2px 8px",cursor:dogs.length>0?"pointer":"default",fontFamily:"inherit",fontSize:12,fontWeight:700,color:isExp?C.pri:C.text,transition:"all 0.15s"}}>
         {s.dogCount || 0}
-        {hoveredDogCount === client.id && s.dogNames && s.dogNames.length > 0 && (
-          <div style={{position:"absolute",top:"100%",left:0,zIndex:999,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:8,padding:"8px 12px",minWidth:120,boxShadow:"0 4px 12px rgba(0,0,0,0.10)"}}>
-            {s.dogNames.map((n,i) => <div key={i} style={{fontSize:11,color:C.text,fontWeight:600,padding:"2px 0"}}>{n}</div>)}
-          </div>
-        )}
-      </span>
+        {dogs.length > 0 && <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" style={{transform:isExp?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s"}}><polyline points="6 9 12 15 18 9"/></svg>}
+      </button>
+    );
+  };
+
+  // ── Dog detail row (accordion expansion) ──
+  const renderDogDetails = (client) => {
+    if (!expandedDogs.has(client.id)) return null;
+    const dogs = data.dogs.filter(d => d.clientId === client.id);
+    if (dogs.length === 0) return null;
+    const calcAge = (dob) => { if (!dob) return "—"; const b=new Date(dob+"T00:00:00"),now=new Date(); let y=now.getFullYear()-b.getFullYear(),m=now.getMonth()-b.getMonth(); if(m<0){y--;m+=12;} return y>0?`${y}y ${m}m`:`${m}m`; };
+    return (
+      <div style={{padding:"10px 20px 10px 28px",background:C.bg,borderBottom:`1px solid ${C.borderLight}`,borderLeft:`3px solid ${C.pri}`}}>
+        {dogs.map(dog => {
+          const f = dog.fields || {};
+          const sn = f.spayed_neutered || "Unknown";
+          return (
+            <div key={dog.id} style={{display:"grid",gridTemplateColumns:"1.5fr 1.2fr 0.8fr 0.8fr 1fr",gap:10,padding:"6px 0",borderBottom:`1px solid ${C.borderLight}`,fontSize:11,alignItems:"center"}}>
+              <div><span style={{fontWeight:700,color:C.text}}>{f.name || "Unknown"}</span></div>
+              <div style={{color:C.textSec}}>{f.breed || "—"}</div>
+              <div style={{color:C.textSec}}>{calcAge(f.dob)}</div>
+              <div style={{color:C.textSec}}>{f.weight ? `${f.weight} lbs` : "—"}</div>
+              <div><span style={{fontSize:10,fontWeight:600,padding:"2px 6px",borderRadius:4,background:sn==="Neutered"||sn==="Spayed"?`${C.suc}15`:`${C.acc}15`,color:sn==="Neutered"||sn==="Spayed"?C.suc:C.acc}}>{sn}</span></div>
+            </div>
+          );
+        })}
+        <div style={{display:"grid",gridTemplateColumns:"1.5fr 1.2fr 0.8fr 0.8fr 1fr",gap:10,padding:"4px 0 0",fontSize:9,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.05em"}}>
+          <div>Name</div><div>Breed</div><div>Age</div><div>Weight</div><div>S/N</div>
+        </div>
+      </div>
     );
   };
 
@@ -5684,20 +5830,28 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
     if (!fu) return <span style={{color:C.textMut,fontSize:11}}>—</span>;
     const isOverdue = fu < today;
     const isToday = fu === today;
+    const d = new Date(fu + "T12:00:00");
+    const mmddyy = `${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}/${String(d.getFullYear()).slice(-2)}`;
+    const dow = d.toLocaleDateString("en-US",{weekday:"long"});
     return (
       <div style={{display:"flex",alignItems:"center",gap:6}}>
-        <span style={{fontSize:12,fontWeight:600,color:isOverdue?C.dan:isToday?C.suc:C.text}}>{fmtDate(fu)}</span>
+        <div style={{lineHeight:1.3}}>
+          <div style={{fontSize:12,fontWeight:600,color:isOverdue?C.dan:isToday?C.suc:C.text}}>{mmddyy}</div>
+          <div style={{fontSize:10,color:isOverdue?C.dan:isToday?C.suc:C.textSec,fontWeight:500}}>{dow}</div>
+        </div>
         {isOverdue && <span style={{fontSize:9,fontWeight:800,color:C.dan,background:`${C.dan}15`,padding:"1px 5px",borderRadius:4}}>OVERDUE</span>}
         {isToday && <span style={{fontSize:9,fontWeight:800,color:C.suc,background:`${C.suc}15`,padding:"1px 5px",borderRadius:4}}>TODAY</span>}
       </div>
     );
   };
 
-  // ── Notes cell ──
+  // ── Notes cell (shows last log note with date prefix) ──
   const renderNotes = (client, tab) => {
-    const notes = client.lifecycle?.[tab]?.notes || "";
-    if (!notes) return <span style={{color:C.textMut,fontSize:11}}>—</span>;
-    return <span style={{fontSize:11,color:C.text,whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.4}}>{notes}</span>;
+    const updates = client.lifecycle?.[tab]?.updates || [];
+    if (updates.length === 0) return <span style={{color:C.textMut,fontSize:11}}>—</span>;
+    const last = updates[0]; // most recent
+    const dateStr = last.loggedAt ? new Date(last.loggedAt).toLocaleDateString("en-US",{month:"numeric",day:"numeric",year:"2-digit"}) : "";
+    return <span style={{fontSize:11,color:C.text,whiteSpace:"pre-wrap",wordBreak:"break-word",lineHeight:1.4}}>{dateStr ? `${dateStr}: ` : ""}{last.notes}</span>;
   };
 
   // ── Updates/Log cell ──
@@ -5779,29 +5933,48 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
       {/* Main Card */}
       <Card style={{padding:0,overflow:"hidden"}}>
         {/* Search Bar */}
-        <div style={{display:"flex",alignItems:"center",padding:"0 16px",borderBottom:`1.5px solid ${C.borderLight}`,background:C.bg,transition:"border-color 0.15s"}}
+        <div style={{borderBottom:`1.5px solid ${C.borderLight}`,background:C.bg,transition:"border-color 0.15s"}}
           onFocus={e=>e.currentTarget.style.borderBottomColor=C.pri} onBlur={e=>e.currentTarget.style.borderBottomColor=C.borderLight}>
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={search?C.pri:C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search by client name, dog name, or phone…" className="no-focus-ring"
-            style={{border:"none",outline:"none",background:"transparent",fontSize:13,fontWeight:500,color:C.text,padding:"12px 10px",width:"100%",fontFamily:"inherit"}} />
-          {search && <button onClick={()=>setSearch("")} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
-          {/* Filter pills area */}
-          <div style={{display:"flex",gap:4,marginLeft:8,flexShrink:0}}>
-            {activeTab === "conversion" && <>
-              {[{id:"eval",label:"Eval",color:C.acc},{id:"tour",label:"Tour",color:C.info}].map(f => {
-                const on = sourceFilter.has(f.id);
-                return <button key={f.id} onClick={()=>toggleSourceFilter(f.id)} style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on?f.color:C.border}`,background:on?f.color:"transparent",color:on?"#fff":C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{f.label}</button>;
-              })}
-              {sourceFilter.size > 0 && <button onClick={()=>setSourceFilter(new Set())} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:"0 2px",display:"flex",alignItems:"center"}} title="Clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
-              <div style={{width:1,height:20,background:C.border,margin:"0 4px",flexShrink:0}} />
-            </>}
-            {(activeTab === "conversion" || activeTab === "retention") && (
-              <button onClick={()=>setShowOverdueOnly(v=>!v)}
-                style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${showOverdueOnly?C.dan:C.border}`,background:showOverdueOnly?`${C.dan}12`:"transparent",color:showOverdueOnly?C.dan:C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>
-                Overdue
-              </button>
+          <div style={{display:"flex",alignItems:"center",padding:"0 16px"}}>
+            {nlFilter ? (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.suc} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            ) : (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={search?C.pri:C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             )}
+            <input value={search} onChange={e=>setSearch(e.target.value)}
+              placeholder={(activeTab === "active" || activeTab === "all") ? 'Try "spent more than 5k" or "hasn\'t visited in 90 days"…' : "Search by client name, dog name, or phone…"}
+              className="no-focus-ring"
+              style={{border:"none",outline:"none",background:"transparent",fontSize:13,fontWeight:500,color:C.text,padding:"12px 10px",width:"100%",fontFamily:"inherit"}} />
+            {search && <button onClick={()=>setSearch("")} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+            {/* Filter pills area */}
+            <div style={{display:"flex",gap:4,marginLeft:8,flexShrink:0}}>
+              {activeTab === "conversion" && <>
+                {[{id:"eval",label:"Eval",color:C.acc},{id:"tour",label:"Tour",color:C.info}].map(f => {
+                  const on = sourceFilter.has(f.id);
+                  return <button key={f.id} onClick={()=>toggleSourceFilter(f.id)} style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on?f.color:C.border}`,background:on?f.color:"transparent",color:on?"#fff":C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{f.label}</button>;
+                })}
+                {sourceFilter.size > 0 && <button onClick={()=>setSourceFilter(new Set())} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:"0 2px",display:"flex",alignItems:"center"}} title="Clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+                <div style={{width:1,height:20,background:C.border,margin:"0 4px",flexShrink:0}} />
+              </>}
+              {(activeTab === "conversion" || activeTab === "retention") && (
+                <button onClick={()=>setShowOverdueOnly(v=>!v)}
+                  style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${showOverdueOnly?C.dan:C.border}`,background:showOverdueOnly?`${C.dan}12`:"transparent",color:showOverdueOnly?C.dan:C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>
+                  Overdue
+                </button>
+              )}
+            </div>
           </div>
+          {/* NL Filter badge */}
+          {nlFilter && (
+            <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 16px 8px",borderTop:`1px solid ${C.borderLight}`}}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={C.suc} strokeWidth="2.5" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              <span style={{fontSize:11,fontWeight:600,color:C.suc}}>Smart filter:</span>
+              {nlFilter.descriptions.map((d, i) => (
+                <span key={i} style={{fontSize:11,fontWeight:600,color:C.text,background:`${C.suc}12`,border:`1px solid ${C.suc}30`,padding:"2px 8px",borderRadius:6}}>{d}</span>
+              ))}
+              <span style={{fontSize:11,color:C.textMut,marginLeft:4}}>{activeList.length} result{activeList.length !== 1 ? "s" : ""}</span>
+            </div>
+          )}
         </div>
 
         {/* Tab Pills */}
@@ -5818,9 +5991,13 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
           })}
         </div>
 
-        {/* Explainer Banner */}
+        {/* Explainer Banner — per-tab */}
         <div style={{padding:"12px 18px",borderBottom:`1px solid ${C.borderLight}`,background:`linear-gradient(135deg, ${C.priLt||C.pri+"08"}40, ${C.surface})`,fontSize:12,lineHeight:1.6,color:C.textSec}}>
-          Clients auto-feed into <strong>Conversion</strong> after an Eval or Tour with no booking (+1 day follow-up). Log outreach to track and set the next follow-up. Clients lapse into <strong>Retention</strong> after {dcThresh}/{bdThresh} days of inactivity (configurable in Settings).
+          {activeTab === "conversion" && <>Leads auto-feed here after an Eval or Tour with no booking (+1 day follow-up). Log each outreach attempt, set the next follow-up date, and mark leads as Cold when they stop responding.</>}
+          {activeTab === "active" && <>Active customers have a booking history and either have an upcoming reservation or visited recently. Clients move here automatically when they book or pay for the first time.</>}
+          {activeTab === "retention" && <>Clients lapse here when they have no upcoming reservation and haven't visited in <strong>{dcThresh} days</strong> (primarily daycare) or <strong>{bdThresh} days</strong> (primarily boarding). These thresholds are configurable in Settings → Resort Policies. Booking a new appointment automatically moves them back to Active.</>}
+          {activeTab === "cold" && <>Leads or lapsed clients you've manually marked as Cold. Click <strong>Revive</strong> to re-engage — you'll be prompted to log a note and set a new follow-up, and the client will return to Conversion or Retention based on their history.</>}
+          {activeTab === "all" && <>Aggregate view of every client record regardless of lifecycle stage. Use the search bar or column headers to sort and find any client quickly.</>}
         </div>
 
         {/* ═══ TABLE HEADER + ROWS ═══ */}
@@ -5853,6 +6030,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
                     <div>{renderUpdatesLog(c, "conversion")}</div>
                     <div>{renderColdBtn(c)}</div>
                   </div>
+                  {renderDogDetails(c)}
                   {isExp && updates.length > 0 && (
                     <div style={{padding:"12px 20px",background:C.bg,borderBottom:`1px solid ${C.borderLight}`,borderLeft:`3px solid ${C.acc}`}}>
                       {updates.map(u => (
@@ -5906,6 +6084,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
                     <div style={{fontSize:11,fontWeight:600}}>{s.totalRes||0}</div>
                     <div>{renderColdBtn(c)}</div>
                   </div>
+                  {renderDogDetails(c)}
                   {isExp && updates.length > 0 && (
                     <div style={{padding:"12px 20px",background:C.bg,borderBottom:`1px solid ${C.borderLight}`,borderLeft:`3px solid ${C.acc}`}}>
                       {updates.map(u => (
@@ -5940,14 +6119,17 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
               const fromTab = c.lifecycle?.coldFrom || "conversion";
               const lastUpdate = c.lifecycle?.[fromTab]?.updates?.[0];
               return (
-                <div key={c.id} style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center",fontSize:12,transition:"background 0.1s"}}
-                  onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                  <div>{renderName(c)}</div>
-                  <div>{renderDogCount(c)}</div>
-                  <div>{renderSource(c)}</div>
-                  <div style={{fontSize:11}}>{c.lifecycle?.coldDate ? fmtDate(c.lifecycle.coldDate) : "—"}</div>
-                  <div style={{fontSize:11,color:C.text,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{lastUpdate?.notes || <span style={{color:C.textMut}}>—</span>}</div>
-                  <div>{renderReviveBtn(c)}</div>
+                <div key={c.id}>
+                  <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center",fontSize:12,transition:"background 0.1s"}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div>{renderName(c)}</div>
+                    <div>{renderDogCount(c)}</div>
+                    <div>{renderSource(c)}</div>
+                    <div style={{fontSize:11}}>{c.lifecycle?.coldDate ? fmtDate(c.lifecycle.coldDate) : "—"}</div>
+                    <div style={{fontSize:11,color:C.text,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{lastUpdate?.notes || <span style={{color:C.textMut}}>—</span>}</div>
+                    <div>{renderReviveBtn(c)}</div>
+                  </div>
+                  {renderDogDetails(c)}
                 </div>
               );
             })}
@@ -5966,57 +6148,47 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
                 const labels = {totalRes:"Res",lastRes:"Last Res",daysSince:"Days",daycare:"DC",boarding:"BD",eval:"Eval",postEval:"P-Eval",tours:"Tours",postTour:"P-Tour",totalSpent:"Spent",nextRes:"Next"};
                 return <div key={k} style={colHeaderStyle(k)} onClick={()=>handleSort(k)}>{labels[k]||k} <SortIcon col={k}/></div>;
               })}
-              {/* Column toggle gear */}
-              <div style={{position:"relative"}} ref={colToggleRef}>
-                <button onClick={(e) => { e.stopPropagation(); setShowColumnToggle(v=>!v); }}
-                  style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}} title="Toggle columns">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-                </button>
-                {showColumnToggle && (
-                  <div style={{position:"absolute",top:"100%",right:0,zIndex:999,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:10,padding:"10px 14px",minWidth:160,boxShadow:"0 4px 16px rgba(0,0,0,0.10)"}}>
-                    <div style={{fontSize:11,fontWeight:700,color:C.textMut,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.04em"}}>Show Columns</div>
-                    {toggleCols.map(tc => (
-                      <label key={tc.key} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 0",cursor:"pointer",fontSize:12,color:C.text}}>
-                        <input type="checkbox" checked={visibleColumns.has(tc.key)} onChange={() => setVisibleColumns(prev => { const n=new Set(prev); if(n.has(tc.key))n.delete(tc.key);else n.add(tc.key); return n; })} style={{accentColor:C.pri}} />
-                        {tc.label}
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </div>
+              {/* Column toggle — simple on/off */}
+              <button onClick={(e) => { e.stopPropagation(); setShowExtraCols(v=>!v); }}
+                style={{padding:"3px 8px",borderRadius:6,border:`1.5px solid ${showExtraCols?C.pri:C.border}`,background:showExtraCols?C.priLt:"transparent",color:showExtraCols?C.pri:C.textMut,fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",transition:"all 0.2s",textTransform:"uppercase",letterSpacing:"0.04em"}}>
+                {showExtraCols ? "Less" : "More"}
+              </button>
             </div>
             {activeList.length === 0 ? (
               <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No clients{search?" matching search":""}</div></div>
             ) : activeList.map(c => {
               const s = clientStats[c.id] || {};
               return (
-                <div key={c.id} style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center",fontSize:12,transition:"background 0.1s"}}
-                  onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                  <div><span onClick={()=>nav("client-detail",{clientId:c.id})} style={{fontWeight:700,color:C.pri,cursor:"pointer",fontSize:12}} onMouseEnter={e=>e.currentTarget.style.textDecoration="underline"} onMouseLeave={e=>e.currentTarget.style.textDecoration="none"}>{c.fields.last_name||""}</span></div>
-                  <div style={{color:C.text}}>{c.fields.first_name||""}</div>
-                  <div style={{fontSize:11,color:C.textSec}}>{fmtPhone?.(c.fields.phone)||c.fields.phone||""}</div>
-                  <div>{renderDogCount(c)}</div>
-                  {shownDataCols.map(k => {
-                    switch(k) {
-                      case "totalRes": return <div key={k} style={{fontSize:11,fontWeight:600}}>{s.totalRes||0}</div>;
-                      case "lastRes": return <div key={k} style={{fontSize:11}}>{s.lastRes ? fmtDate(s.lastRes.checkIn) : <span style={{color:C.textMut}}>—</span>}</div>;
-                      case "daysSince": {
-                        const d = s.daysSinceLast;
-                        const col = d==null?C.textMut:d>180?C.dan:d>90?C.acc:d>60?C.text:C.suc;
-                        return <div key={k} style={{fontSize:11,fontWeight:700,color:col}}>{d!=null?d:"—"}</div>;
+                <div key={c.id}>
+                  <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center",fontSize:12,transition:"background 0.1s"}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div><span onClick={()=>nav("client-detail",{clientId:c.id})} style={{fontWeight:700,color:C.pri,cursor:"pointer",fontSize:12}} onMouseEnter={e=>e.currentTarget.style.textDecoration="underline"} onMouseLeave={e=>e.currentTarget.style.textDecoration="none"}>{c.fields.last_name||""}</span></div>
+                    <div style={{color:C.text}}>{c.fields.first_name||""}</div>
+                    <div style={{fontSize:11,color:C.textSec}}>{fmtPhone?.(c.fields.phone)||c.fields.phone||""}</div>
+                    <div>{renderDogCount(c)}</div>
+                    {shownDataCols.map(k => {
+                      switch(k) {
+                        case "totalRes": return <div key={k} style={{fontSize:11,fontWeight:600}}>{s.totalRes||0}</div>;
+                        case "lastRes": return <div key={k} style={{fontSize:11}}>{s.lastRes ? fmtDate(s.lastRes.checkIn) : <span style={{color:C.textMut}}>—</span>}</div>;
+                        case "daysSince": {
+                          const d = s.daysSinceLast;
+                          const col = d==null?C.textMut:d>180?C.dan:d>90?C.acc:d>60?C.text:C.suc;
+                          return <div key={k} style={{fontSize:11,fontWeight:700,color:col}}>{d!=null?d:"—"}</div>;
+                        }
+                        case "daycare": return <div key={k} style={{fontSize:11}}>{s.daycareCount||0}</div>;
+                        case "boarding": return <div key={k} style={{fontSize:11}}>{s.boardingCount||0}</div>;
+                        case "eval": return <div key={k} style={{fontSize:11}}>{s.evalCount||0}</div>;
+                        case "postEval": return <div key={k} style={{fontSize:11}}>{s.postEvalAppts||0}</div>;
+                        case "tours": return <div key={k} style={{fontSize:11}}>{s.tourCount||0}</div>;
+                        case "postTour": return <div key={k} style={{fontSize:11}}>{s.postTourAppts||0}</div>;
+                        case "totalSpent": return <div key={k} style={{fontSize:11,fontWeight:600}}>${(s.totalSpent||0).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0})}</div>;
+                        case "nextRes": return <div key={k} style={{fontSize:11}}>{s.nextRes ? fmtDate(s.nextRes.checkIn) : <span style={{color:C.textMut}}>—</span>}</div>;
+                        default: return <div key={k}></div>;
                       }
-                      case "daycare": return <div key={k} style={{fontSize:11}}>{s.daycareCount||0}</div>;
-                      case "boarding": return <div key={k} style={{fontSize:11}}>{s.boardingCount||0}</div>;
-                      case "eval": return <div key={k} style={{fontSize:11}}>{s.evalCount||0}</div>;
-                      case "postEval": return <div key={k} style={{fontSize:11}}>{s.postEvalAppts||0}</div>;
-                      case "tours": return <div key={k} style={{fontSize:11}}>{s.tourCount||0}</div>;
-                      case "postTour": return <div key={k} style={{fontSize:11}}>{s.postTourAppts||0}</div>;
-                      case "totalSpent": return <div key={k} style={{fontSize:11,fontWeight:600}}>${(s.totalSpent||0).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0})}</div>;
-                      case "nextRes": return <div key={k} style={{fontSize:11}}>{s.nextRes ? fmtDate(s.nextRes.checkIn) : <span style={{color:C.textMut}}>—</span>}</div>;
-                      default: return <div key={k}></div>;
-                    }
-                  })}
-                  <div></div>
+                    })}
+                    <div></div>
+                  </div>
+                  {renderDogDetails(c)}
                 </div>
               );
             })}
@@ -6034,7 +6206,15 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
               onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border} autoFocus />
             <div style={{marginBottom:10}}>
               <div style={{fontSize:11,fontWeight:700,color:C.textSec,marginBottom:4}}>Next Follow-Up Date *</div>
-              <MiniDatePicker value={logDate} onChange={setLogDate} />
+              {(() => {
+                const c = data.clients.find(cl => cl.id === logPopover.clientId);
+                const src = c?.lifecycle?.conversion?.source;
+                const isEvalTour = src === "eval" || src === "tour";
+                const addD = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0,10); };
+                const recDate = isEvalTour ? addD(1) : addD(2);
+                const recHint = isEvalTour ? "Recommended: +1 day (post eval/tour). Use a further date if the client gave a specific callback date." : "Recommended: +2 days (standard follow-up). Use +1 day for high-intent leads or a further date if the client gave a specific callback date.";
+                return <MiniDatePicker value={logDate} onChange={setLogDate} recommendedDate={recDate} recommendedHint={recHint} />;
+              })()}
             </div>
             <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
               <Btn size="sm" variant="ghost" onClick={()=>{setLogPopover(null);setLogNotes("");setLogDate("");}}>Cancel</Btn>
