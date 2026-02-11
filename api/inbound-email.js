@@ -83,6 +83,10 @@ function parseIgniteText(rawText) {
     fields.message = cleanText(helpMatch[1]);
   }
 
+  // Extract Ignite profile ID from any embedded URL
+  const profileUrlMatch = text.match(/leads\.idigitalstrategies\.com\/profile\/(\d+)/i);
+  if (profileUrlMatch) fields.igniteProfileId = profileUrlMatch[1];
+
   return fields;
 }
 
@@ -164,6 +168,10 @@ function parseIgniteHTML(html) {
     const src = cleanText(sourceMatch[1]);
     if (!fields.source && src) fields.source = src;
   }
+
+  // Extract Ignite profile ID from HTML links (e.g., "View All Lead Details" button)
+  const profileLinkMatch = html.match(/leads\.idigitalstrategies\.com\/profile\/(\d+)/i);
+  if (profileLinkMatch && !fields.igniteProfileId) fields.igniteProfileId = profileLinkMatch[1];
 
   return fields;
 }
