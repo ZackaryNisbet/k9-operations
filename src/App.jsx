@@ -63,7 +63,7 @@ const K9_LOCATIONS = [
 
 // ─── URL Routing ────────────────────────────────────────────────────────────
 const PAGE_SLUGS = {
-  dashboard:"dashboard", reservations:"lodging", clients:"clients", "client-detail":"client", "dog-detail":"dog",
+  dashboard:"dashboard", reservations:"lodging", clients:"lifecycle", "client-detail":"client", "dog-detail":"dog",
   "new-client":"new-client", "new-dog":"new-dog", "new-reservation":"new-reservation", "unified-new":"new",
   crm:"crm", messages:"messages", payments:"payments", operations:"operations",
   "ops-opening":"ops/opening", "ops-fe":"ops/front-end", "ops-be":"ops/back-end", "ops-rooms":"ops/rooms",
@@ -5353,6 +5353,10 @@ const CLIENT_FILTER_FIELDS = [
   { key: 'post_tour', label: 'Appts After Tour', type: 'number', shortLabel: 'Post-Tour' },
   { key: 'total_spent', label: 'Total Spent ($)', type: 'number', shortLabel: 'Spent' },
   { key: 'next_res', label: 'Next Reservation', type: 'date', shortLabel: 'Next Res' },
+  { key: 'conv_notes', label: 'Conversion Notes', type: 'text', shortLabel: 'Conv Notes' },
+  { key: 'conv_followup', label: 'Conversion Follow-Up', type: 'date', shortLabel: 'Conv FU' },
+  { key: 'ret_notes', label: 'Retention Notes', type: 'text', shortLabel: 'Ret Notes' },
+  { key: 'ret_followup', label: 'Retention Follow-Up', type: 'date', shortLabel: 'Ret FU' },
 ];
 
 const CLIENT_FILTER_OPS = {
@@ -5399,6 +5403,10 @@ const CLIENT_FIELD_ALIASES = {
   'post_tour': 'post_tour', 'after_tour': 'post_tour', 'posttour': 'post_tour',
   'total_spent': 'total_spent', 'spent': 'total_spent',
   'next_res': 'next_res', 'next_reservation': 'next_res', 'next': 'next_res', 'upcoming': 'next_res',
+  'conv_notes': 'conv_notes', 'conversion_notes': 'conv_notes',
+  'conv_followup': 'conv_followup', 'conversion_followup': 'conv_followup',
+  'ret_notes': 'ret_notes', 'retention_notes': 'ret_notes',
+  'ret_followup': 'ret_followup', 'retention_followup': 'ret_followup',
 };
 
 function parseClientFilters(searchStr) {
@@ -5474,6 +5482,10 @@ function applyClientFilter(client, filter, stats) {
     case 'post_tour': rawVal = s.postTourAppts; break;
     case 'total_spent': rawVal = s.totalSpent; break;
     case 'next_res': rawVal = s.nextRes ? s.nextRes.checkIn : null; break;
+    case 'conv_notes': rawVal = (client.lifecycle?.conversion?.notes || ''); break;
+    case 'conv_followup': rawVal = client.lifecycle?.conversion?.followUpDate || null; break;
+    case 'ret_notes': rawVal = (client.lifecycle?.retention?.notes || ''); break;
+    case 'ret_followup': rawVal = client.lifecycle?.retention?.followUpDate || null; break;
     default: return true;
   }
   if (op === 'is_blank') return rawVal === null || rawVal === undefined || rawVal === '' || rawVal === 0;
@@ -5521,7 +5533,7 @@ function applyClientFilter(client, filter, stats) {
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENTS PAGE
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientsPage({ data, nav }) {
+function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState("last_name");
   const [sortDir, setSortDir] = useState("asc");
@@ -5530,6 +5542,12 @@ function ClientsPage({ data, nav }) {
   const [showExplainer, setShowExplainer] = useState(false);
   const [filterDraft, setFilterDraft] = useState([{ field: '', op: '', value: '' }]);
   const [hoveredDogId, setHoveredDogId] = useState(null);
+  // Lifecycle tab state
+  const [activeTab, setActiveTab] = useState("total");
+  const [editingNotes, setEditingNotes] = useState(null);
+  const [editNotesText, setEditNotesText] = useState("");
+  const [expandedUpdates, setExpandedUpdates] = useState(new Set());
+  const [tabAnim, setTabAnim] = useState(false);
 
   // Pre-compute client stats including post-eval and post-tour metrics
   const clientStats = useMemo(() => {
@@ -5547,14 +5565,12 @@ function ClientsPage({ data, nav }) {
       const totalSpent = cRes.reduce((s, r) => s + ((r.pricing && r.pricing.total) || 0), 0);
       const daysSinceLast = lastRes ? Math.round((new Date(todayStr()+"T12:00:00") - new Date(lastRes.checkIn+"T12:00:00")) / 86400000) : null;
       const dogNames = dogs.map(d => d.fields.name || "Unknown");
-      // Post-eval: count all appointments after client's FIRST evaluation
       let postEvalAppts = 0;
       const evalsSorted = cRes.filter(r => r.type === "evaluation").sort((a, b) => a.checkIn.localeCompare(b.checkIn));
       if (evalsSorted.length > 0) {
         const firstEvalDate = evalsSorted[0].checkIn;
         postEvalAppts = cRes.filter(r => r.checkIn > firstEvalDate).length;
       }
-      // Post-tour: count all appointments after client's FIRST tour
       let postTourAppts = 0;
       const toursSorted = cRes.filter(r => r.type === "tour").sort((a, b) => a.checkIn.localeCompare(b.checkIn));
       if (toursSorted.length > 0) {
@@ -5566,12 +5582,66 @@ function ClientsPage({ data, nav }) {
     return map;
   }, [data.clients, data.reservations, data.dogs]);
 
+  // Compute tab membership for each client
+  const clientTabMap = useMemo(() => {
+    const map = {};
+    data.clients.forEach(c => {
+      const s = clientStats[c.id] || {};
+      const hasSpent = (s.totalSpent || 0) > 0;
+      const hasUpcoming = !!s.nextRes;
+      const totalRes = s.totalRes || 0;
+      const daysSince = s.daysSinceLast;
+
+      // Conversion: $0 spent AND no upcoming reservations
+      const isConversion = !hasSpent && !hasUpcoming;
+
+      // Retention: has past visits, no upcoming, meets lapse threshold
+      let isRetention = false;
+      if (hasSpent && !hasUpcoming && totalRes > 0 && daysSince != null) {
+        const dcPct = totalRes > 0 ? ((s.daycareCount || 0) / totalRes) : 0;
+        const bdPct = totalRes > 0 ? ((s.boardingCount || 0) / totalRes) : 0;
+        if (bdPct > 0.5 && daysSince >= 180) isRetention = true;
+        else if (dcPct >= 0.5 && daysSince >= 90) isRetention = true;
+        else if (dcPct < 0.5 && bdPct < 0.5 && daysSince >= 90) isRetention = true;
+      }
+
+      // Total: has spent AND not in retention
+      const isTotal = hasSpent && !isRetention;
+
+      map[c.id] = { isConversion, isTotal, isRetention };
+    });
+    return map;
+  }, [data.clients, clientStats]);
+
+  // Lifecycle event tracking — log transitions
+  const prevTabMapRef = useRef(null);
+  useEffect(() => {
+    if (!prevTabMapRef.current || !save) { prevTabMapRef.current = clientTabMap; return; }
+    const prev = prevTabMapRef.current;
+    let changed = false;
+    const updatedClients = data.clients.map(c => {
+      const oldM = prev[c.id];
+      const newM = clientTabMap[c.id];
+      if (!oldM || !newM) return c;
+      let event = null;
+      if (oldM.isConversion && newM.isTotal) event = { event: "converted", date: todayStr(), details: "Moved to Total Customers (first booking/payment)" };
+      else if (oldM.isTotal && newM.isRetention) event = { event: "lapsed", date: todayStr(), details: "Moved to Retention (lapsed client)" };
+      else if (oldM.isRetention && newM.isTotal) event = { event: "retained", date: todayStr(), details: "Returned to Total Customers (re-engaged)" };
+      if (event) {
+        changed = true;
+        return { ...c, lifecycleEvents: [...(c.lifecycleEvents || []), event] };
+      }
+      return c;
+    });
+    prevTabMapRef.current = clientTabMap;
+    if (changed) save({ ...data, clients: updatedClients });
+  }, [clientTabMap]);
+
   // Filter pipeline: parse inline search + combine with panel filters
   const filtered = useMemo(() => {
     let list = data.clients;
     const { filters: inlineFilters, plainText } = parseClientFilters(search);
     const allFilters = [...inlineFilters, ...panelFilters];
-    // Plain text fuzzy search
     if (plainText.trim()) {
       const q = plainText.toLowerCase();
       const sq = q.replace(/\D/g, "");
@@ -5582,13 +5652,11 @@ function ClientsPage({ data, nav }) {
         return fn.includes(q) || dogNames.includes(q) || (c.fields.email || "").toLowerCase().includes(q) || (sq && ph.includes(sq));
       });
     }
-    // Apply structured filters
     for (const filter of allFilters) {
       if (filter.field && filter.op && (filter.value || filter.op === 'is_blank' || filter.op === 'is_not_blank')) {
         list = list.filter(c => applyClientFilter(c, filter, clientStats[c.id]));
       }
     }
-    // Sort
     list = [...list].sort((a, b) => {
       let va, vb;
       const sa = clientStats[a.id] || {}, sb = clientStats[b.id] || {};
@@ -5609,6 +5677,14 @@ function ClientsPage({ data, nav }) {
         case "totalSpent": va = sa.totalSpent || 0; vb = sb.totalSpent || 0; break;
         case "lastRes": va = sa.lastRes ? sa.lastRes.checkIn : ""; vb = sb.lastRes ? sb.lastRes.checkIn : ""; break;
         case "nextRes": va = sa.nextRes ? sa.nextRes.checkIn : "zzzz"; vb = sb.nextRes ? sb.nextRes.checkIn : "zzzz"; break;
+        case "followUpDate":
+          va = (a.lifecycle?.[activeTab === "conversion" ? "conversion" : "retention"]?.followUpDate || "zzzz");
+          vb = (b.lifecycle?.[activeTab === "conversion" ? "conversion" : "retention"]?.followUpDate || "zzzz");
+          break;
+        case "updateCount":
+          va = (a.lifecycle?.[activeTab === "conversion" ? "conversion" : "retention"]?.updates?.length || 0);
+          vb = (b.lifecycle?.[activeTab === "conversion" ? "conversion" : "retention"]?.updates?.length || 0);
+          break;
         default: va = (a.fields.last_name || "").toLowerCase(); vb = (b.fields.last_name || "").toLowerCase();
       }
       if (va < vb) return sortDir === "asc" ? -1 : 1;
@@ -5616,7 +5692,22 @@ function ClientsPage({ data, nav }) {
       return 0;
     });
     return list;
-  }, [data.clients, search, panelFilters, sortCol, sortDir, clientStats]);
+  }, [data.clients, search, panelFilters, sortCol, sortDir, clientStats, activeTab]);
+
+  // Tab-filtered lists
+  const tabLists = useMemo(() => {
+    const conv = [], tot = [], ret = [];
+    for (const c of filtered) {
+      const m = clientTabMap[c.id];
+      if (!m) continue;
+      if (m.isConversion) conv.push(c);
+      if (m.isTotal) tot.push(c);
+      if (m.isRetention) ret.push(c);
+    }
+    return { conversion: conv, total: tot, retention: ret };
+  }, [filtered, clientTabMap]);
+
+  const tabData = activeTab === "conversion" ? tabLists.conversion : activeTab === "retention" ? tabLists.retention : tabLists.total;
 
   const toggleSort = (col) => {
     if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
@@ -5666,18 +5757,110 @@ function ClientsPage({ data, nav }) {
   };
   const filterInputStyle = { padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none" };
 
+  // Lifecycle inline editing handlers
+  const lcKey = activeTab === "conversion" ? "conversion" : "retention";
+
+  const startEditNotes = (client) => {
+    setEditingNotes(client.id);
+    setEditNotesText(client.lifecycle?.[lcKey]?.notes || "");
+  };
+  const saveNotes = async (clientId) => {
+    const newClients = data.clients.map(c => {
+      if (c.id !== clientId) return c;
+      const lc = { ...(c.lifecycle || { conversion: { notes: "", followUpDate: "", updates: [] }, retention: { notes: "", followUpDate: "", updates: [] } }) };
+      lc[lcKey] = { ...(lc[lcKey] || {}), notes: editNotesText };
+      return { ...c, lifecycle: lc };
+    });
+    await save({ ...data, clients: newClients });
+    setEditingNotes(null);
+  };
+
+  const saveFollowUpDate = async (clientId, newDate) => {
+    const newClients = data.clients.map(c => {
+      if (c.id !== clientId) return c;
+      const lc = { ...(c.lifecycle || { conversion: { notes: "", followUpDate: "", updates: [] }, retention: { notes: "", followUpDate: "", updates: [] } }) };
+      lc[lcKey] = { ...(lc[lcKey] || {}), followUpDate: newDate };
+      return { ...c, lifecycle: lc };
+    });
+    await save({ ...data, clients: newClients });
+  };
+
+  const logUpdate = async (clientId) => {
+    const client = data.clients.find(c => c.id === clientId);
+    if (!client) return;
+    const lc = client.lifecycle?.[lcKey];
+    if (!lc?.notes && !lc?.followUpDate) {
+      if (addGlobalToast) addGlobalToast({ message: "Add notes or a follow-up date before logging" });
+      return;
+    }
+    const newEntry = {
+      id: gid(),
+      notes: lc?.notes || "",
+      followUpDate: lc?.followUpDate || "",
+      loggedBy: profile?.full_name || profile?.email || "Staff",
+      loggedAt: new Date().toISOString(),
+    };
+    const newClients = data.clients.map(c => {
+      if (c.id !== clientId) return c;
+      const lifecycle = { ...(c.lifecycle || { conversion: { notes: "", followUpDate: "", updates: [] }, retention: { notes: "", followUpDate: "", updates: [] } }) };
+      lifecycle[lcKey] = {
+        notes: "",
+        followUpDate: "",
+        updates: [newEntry, ...(lifecycle[lcKey]?.updates || [])],
+      };
+      return { ...c, lifecycle };
+    });
+    await save({ ...data, clients: newClients });
+    if (addGlobalToast) addGlobalToast({ message: "Follow-up logged successfully" });
+  };
+
+  const toggleExpanded = (clientId) => {
+    setExpandedUpdates(prev => {
+      const next = new Set(prev);
+      if (next.has(clientId)) next.delete(clientId); else next.add(clientId);
+      return next;
+    });
+  };
+
+  const getFollowUpColor = (dateStr) => {
+    if (!dateStr) return C.textMut;
+    const today = todayStr();
+    if (dateStr === today) return C.suc;
+    if (dateStr > today) return C.text;
+    return C.dan;
+  };
+
+  // Tab switch with animation
+  const switchTab = (tab) => {
+    if (tab === activeTab) return;
+    setTabAnim(true);
+    setTimeout(() => {
+      setActiveTab(tab);
+      setEditingNotes(null);
+      setExpandedUpdates(new Set());
+      setTimeout(() => setTabAnim(false), 30);
+    }, 150);
+  };
+
+  // Tab definitions
+  const TAB_DEFS = [
+    { key: "conversion", label: "Conversion", count: tabLists.conversion.length, color: C.acc },
+    { key: "total", label: "Total Customers", count: tabLists.total.length, color: C.pri },
+    { key: "retention", label: "Retention", count: tabLists.retention.length, color: C.dan },
+  ];
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text }}>Clients</h1>
-          <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>{data.clients.length} total client{data.clients.length !== 1 ? "s" : ""}{panelFilters.length > 0 || search.trim() ? ` \xB7 ${filtered.length} shown` : ""}</div>
+          <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text }}>Customer Lifecycle</h1>
+          <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>{data.clients.length} total client{data.clients.length !== 1 ? "s" : ""}{panelFilters.length > 0 || search.trim() ? ` \xB7 ${tabData.length} shown` : ""}</div>
         </div>
         <Btn onClick={() => nav("new-client")} icon={<I.Plus />}>New Client</Btn>
       </div>
 
       {/* Search bar with filter and explainer buttons */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: panelFilters.length > 0 ? 8 : 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: panelFilters.length > 0 ? 8 : 12 }}>
         <div style={{ position: "relative", flex: 1 }}>
           <div style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: C.textMut }}><I.Search /></div>
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder={"Search clients, dogs, phone, email \u2014 or use filters like: last_name: Smith && days_since > 30"}
@@ -5789,92 +5972,287 @@ function ClientsPage({ data, nav }) {
         </div>
       )}
 
-      {filtered.length === 0 ? (
-        <Card style={{ textAlign: "center", padding: 48 }}>
-          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>{search || panelFilters.length > 0 ? "No clients found" : "No clients yet"}</div>
-          <div style={{ fontSize: 14, color: C.textSec, marginBottom: 16 }}>{search || panelFilters.length > 0 ? "Try different search terms or filters" : "Add your first client"}</div>
-          {!search && panelFilters.length === 0 && <Btn onClick={() => nav("new-client")} icon={<I.Plus />}>Add Client</Btn>}
-        </Card>
-      ) : (
-        <Card style={{ padding: 0, overflow: "hidden" }}>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1500 }}>
-              <thead>
-                <tr style={{ borderBottom: `1.5px solid ${C.border}`, background: C.bg }}>
-                  <th style={{ ...thStyle("last_name"), textAlign: "left", paddingLeft: 16 }} onClick={() => toggleSort("last_name")}>Last Name{sortIcon("last_name")}</th>
-                  <th style={{ ...thStyle("first_name"), textAlign: "left" }} onClick={() => toggleSort("first_name")}>First Name{sortIcon("first_name")}</th>
-                  <th style={{ ...thStyle("phone"), textAlign: "left" }} onClick={() => toggleSort("phone")}>Phone{sortIcon("phone")}</th>
-                  <th style={{ ...thStyle("email"), textAlign: "left" }} onClick={() => toggleSort("email")}>Email{sortIcon("email")}</th>
-                  <th style={{ ...thStyle("dogs"), textAlign: "center" }} onClick={() => toggleSort("dogs")}>Dogs{sortIcon("dogs")}</th>
-                  <th style={{ ...thStyle("totalRes"), textAlign: "center" }} onClick={() => toggleSort("totalRes")}>Total Res{sortIcon("totalRes")}</th>
-                  <th style={{ ...thStyle("lastRes"), textAlign: "left" }} onClick={() => toggleSort("lastRes")}>Last Res{sortIcon("lastRes")}</th>
-                  <th style={{ ...thStyle("daysSince"), textAlign: "center" }} onClick={() => toggleSort("daysSince")}>Days Since{sortIcon("daysSince")}</th>
-                  <th style={{ ...thStyle("daycare"), textAlign: "center" }} onClick={() => toggleSort("daycare")}>Daycare{sortIcon("daycare")}</th>
-                  <th style={{ ...thStyle("boarding"), textAlign: "center" }} onClick={() => toggleSort("boarding")}>Board{sortIcon("boarding")}</th>
-                  <th style={{ ...thStyle("evals"), textAlign: "center" }} onClick={() => toggleSort("evals")}>Eval{sortIcon("evals")}</th>
-                  <th style={{ ...thStyle("postEval"), textAlign: "center" }} onClick={() => toggleSort("postEval")}>Post-Eval{sortIcon("postEval")}</th>
-                  <th style={{ ...thStyle("tours"), textAlign: "center" }} onClick={() => toggleSort("tours")}>Tour{sortIcon("tours")}</th>
-                  <th style={{ ...thStyle("postTour"), textAlign: "center" }} onClick={() => toggleSort("postTour")}>Post-Tour{sortIcon("postTour")}</th>
-                  <th style={{ ...thStyle("totalSpent"), textAlign: "right" }} onClick={() => toggleSort("totalSpent")}>Total Spent{sortIcon("totalSpent")}</th>
-                  <th style={{ ...thStyle("nextRes"), textAlign: "left" }} onClick={() => toggleSort("nextRes")}>Next Res{sortIcon("nextRes")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(client => {
-                  const s = clientStats[client.id] || {};
-                  return (
-                    <tr key={client.id} onClick={() => nav("client-detail", { clientId: client.id })}
-                      style={{ borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer", transition: "background 0.1s" }}
-                      onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
-                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                      <td style={{ ...tdStyle, fontWeight: 700, paddingLeft: 16 }}>{client.fields.last_name || "\u2014"}</td>
-                      <td style={tdStyle}>{client.fields.first_name || "\u2014"}</td>
-                      <td style={{ ...tdStyle, fontSize: 12 }}>{fmtPhone(client.fields.phone)}</td>
-                      <td style={{ ...tdStyle, fontSize: 12, color: C.textSec, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>{client.fields.email || "\u2014"}</td>
-                      <td style={{ ...tdStyle, textAlign: "center", position: "relative" }}
-                        onMouseEnter={() => s.dogNames && s.dogNames.length > 0 && setHoveredDogId(client.id)}
-                        onMouseLeave={() => setHoveredDogId(null)}>
-                        <Badge>{s.dogCount || 0}</Badge>
-                        {hoveredDogId === client.id && s.dogNames && s.dogNames.length > 0 && (
-                          <div style={{ position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)", marginBottom: 6, background: C.text, color: "#fff", padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", zIndex: 50, boxShadow: "0 4px 16px rgba(0,0,0,0.18)", pointerEvents: "none", lineHeight: 1.6 }}>
-                            {s.dogNames.map((name, di) => <div key={di} style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 5, height: 5, borderRadius: 3, background: C.acc, flexShrink: 0 }} />{name}</div>)}
-                            <div style={{ position: "absolute", top: "100%", left: "50%", transform: "translateX(-50%)", width: 0, height: 0, borderLeft: "6px solid transparent", borderRight: "6px solid transparent", borderTop: `6px solid ${C.text}` }} />
-                          </div>
+      {/* Tab buttons */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16 }}>
+        {TAB_DEFS.map(tab => {
+          const isActive = activeTab === tab.key;
+          return (
+            <button key={tab.key} onClick={() => switchTab(tab.key)}
+              style={{
+                padding: "8px 18px", borderRadius: 10,
+                border: `1.5px solid ${isActive ? C.pri : C.border}`,
+                background: isActive ? C.priLt : "transparent",
+                color: isActive ? C.pri : C.text,
+                fontSize: 13, fontWeight: 700, cursor: "pointer",
+                transition: "all 0.2s ease", display: "flex", alignItems: "center", gap: 8,
+                fontFamily: "inherit",
+              }}
+              onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = C.bg; }}
+              onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}>
+              {tab.label}
+              <span style={{
+                display: "inline-flex", alignItems: "center", justifyContent: "center",
+                minWidth: 22, height: 22, borderRadius: 11, padding: "0 6px",
+                background: isActive ? C.pri : C.bg,
+                color: isActive ? "#fff" : C.textSec,
+                fontSize: 11, fontWeight: 700, transition: "all 0.2s",
+              }}>{tab.count}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Table content with tab animation */}
+      <div style={{ opacity: tabAnim ? 0 : 1, transform: tabAnim ? "translateY(6px)" : "translateY(0)", transition: "opacity 0.15s ease, transform 0.15s ease" }}>
+        {tabData.length === 0 ? (
+          <Card style={{ textAlign: "center", padding: 48 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+              {search || panelFilters.length > 0 ? "No clients found" : activeTab === "conversion" ? "No leads in Conversion" : activeTab === "retention" ? "No clients in Retention" : "No paying customers yet"}
+            </div>
+            <div style={{ fontSize: 14, color: C.textSec, marginBottom: 16 }}>
+              {search || panelFilters.length > 0 ? "Try different search terms or filters" : activeTab === "conversion" ? "New clients with no reservations or payments will appear here" : activeTab === "retention" ? "Lapsed clients who haven't visited in 90+ days will appear here" : "Clients who have made a booking or payment will appear here"}
+            </div>
+            {!search && panelFilters.length === 0 && activeTab !== "retention" && <Btn onClick={() => nav("new-client")} icon={<I.Plus />}>Add Client</Btn>}
+          </Card>
+        ) : activeTab === "total" ? (
+          /* ═══ TOTAL CUSTOMERS TAB — same columns as original Clients page ═══ */
+          <Card style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1500 }}>
+                <thead>
+                  <tr style={{ borderBottom: `1.5px solid ${C.border}`, background: C.bg }}>
+                    <th style={{ ...thStyle("last_name"), textAlign: "left", paddingLeft: 16 }} onClick={() => toggleSort("last_name")}>Last Name{sortIcon("last_name")}</th>
+                    <th style={{ ...thStyle("first_name"), textAlign: "left" }} onClick={() => toggleSort("first_name")}>First Name{sortIcon("first_name")}</th>
+                    <th style={{ ...thStyle("phone"), textAlign: "left" }} onClick={() => toggleSort("phone")}>Phone{sortIcon("phone")}</th>
+                    <th style={{ ...thStyle("email"), textAlign: "left" }} onClick={() => toggleSort("email")}>Email{sortIcon("email")}</th>
+                    <th style={{ ...thStyle("dogs"), textAlign: "center" }} onClick={() => toggleSort("dogs")}>Dogs{sortIcon("dogs")}</th>
+                    <th style={{ ...thStyle("totalRes"), textAlign: "center" }} onClick={() => toggleSort("totalRes")}>Total Res{sortIcon("totalRes")}</th>
+                    <th style={{ ...thStyle("lastRes"), textAlign: "left" }} onClick={() => toggleSort("lastRes")}>Last Res{sortIcon("lastRes")}</th>
+                    <th style={{ ...thStyle("daysSince"), textAlign: "center" }} onClick={() => toggleSort("daysSince")}>Days Since{sortIcon("daysSince")}</th>
+                    <th style={{ ...thStyle("daycare"), textAlign: "center" }} onClick={() => toggleSort("daycare")}>Daycare{sortIcon("daycare")}</th>
+                    <th style={{ ...thStyle("boarding"), textAlign: "center" }} onClick={() => toggleSort("boarding")}>Board{sortIcon("boarding")}</th>
+                    <th style={{ ...thStyle("evals"), textAlign: "center" }} onClick={() => toggleSort("evals")}>Eval{sortIcon("evals")}</th>
+                    <th style={{ ...thStyle("postEval"), textAlign: "center" }} onClick={() => toggleSort("postEval")}>Post-Eval{sortIcon("postEval")}</th>
+                    <th style={{ ...thStyle("tours"), textAlign: "center" }} onClick={() => toggleSort("tours")}>Tour{sortIcon("tours")}</th>
+                    <th style={{ ...thStyle("postTour"), textAlign: "center" }} onClick={() => toggleSort("postTour")}>Post-Tour{sortIcon("postTour")}</th>
+                    <th style={{ ...thStyle("totalSpent"), textAlign: "right" }} onClick={() => toggleSort("totalSpent")}>Total Spent{sortIcon("totalSpent")}</th>
+                    <th style={{ ...thStyle("nextRes"), textAlign: "left" }} onClick={() => toggleSort("nextRes")}>Next Res{sortIcon("nextRes")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tabData.map(client => {
+                    const s = clientStats[client.id] || {};
+                    return (
+                      <tr key={client.id} onClick={() => nav("client-detail", { clientId: client.id })}
+                        style={{ borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer", transition: "background 0.1s" }}
+                        onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td style={{ ...tdStyle, fontWeight: 700, paddingLeft: 16 }}>{client.fields.last_name || "\u2014"}</td>
+                        <td style={tdStyle}>{client.fields.first_name || "\u2014"}</td>
+                        <td style={{ ...tdStyle, fontSize: 12 }}>{fmtPhone(client.fields.phone)}</td>
+                        <td style={{ ...tdStyle, fontSize: 12, color: C.textSec, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>{client.fields.email || "\u2014"}</td>
+                        <td style={{ ...tdStyle, textAlign: "center", position: "relative" }}
+                          onMouseEnter={() => s.dogNames && s.dogNames.length > 0 && setHoveredDogId(client.id)}
+                          onMouseLeave={() => setHoveredDogId(null)}>
+                          <Badge>{s.dogCount || 0}</Badge>
+                          {hoveredDogId === client.id && s.dogNames && s.dogNames.length > 0 && (
+                            <div style={{ position: "absolute", bottom: "100%", left: "50%", transform: "translateX(-50%)", marginBottom: 6, background: C.text, color: "#fff", padding: "8px 14px", borderRadius: 10, fontSize: 12, fontWeight: 600, whiteSpace: "nowrap", zIndex: 50, boxShadow: "0 4px 16px rgba(0,0,0,0.18)", pointerEvents: "none", lineHeight: 1.6 }}>
+                              {s.dogNames.map((name, di) => <div key={di} style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 5, height: 5, borderRadius: 3, background: C.acc, flexShrink: 0 }} />{name}</div>)}
+                              <div style={{ position: "absolute", top: "100%", left: "50%", transform: "translateX(-50%)", width: 0, height: 0, borderLeft: "6px solid transparent", borderRight: "6px solid transparent", borderTop: `6px solid ${C.text}` }} />
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: s.totalRes > 0 ? C.text : C.textMut }}>{s.totalRes || 0}</td>
+                        <td style={tdStyle}>
+                          {s.lastRes ? (
+                            <div>
+                              <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDateShort(s.lastRes.checkIn)}</span>
+                              <span style={{ display: "inline-block", marginLeft: 6, padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: typeColor(s.lastRes.type) + "18", color: typeColor(s.lastRes.type) }}>{typeLabel(s.lastRes.type)}</span>
+                            </div>
+                          ) : <span style={{ color: C.textMut, fontSize: 12 }}>{"\u2014"}</span>}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.daysSinceLast != null ? (s.daysSinceLast > 90 ? C.dan : s.daysSinceLast > 30 ? C.warn : C.suc) : C.textMut }}>{s.daysSinceLast != null ? s.daysSinceLast : "\u2014"}</td>
+                        <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.daycareCount ? C.suc : C.textMut }}>{s.daycareCount || 0}</td>
+                        <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.boardingCount ? C.pri : C.textMut }}>{s.boardingCount || 0}</td>
+                        <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.evalCount ? C.warn : C.textMut }}>{s.evalCount || 0}</td>
+                        <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.postEvalAppts ? C.suc : C.textMut }}>{s.postEvalAppts || 0}</td>
+                        <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.tourCount ? C.acc : C.textMut }}>{s.tourCount || 0}</td>
+                        <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.postTourAppts ? C.suc : C.textMut }}>{s.postTourAppts || 0}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: s.totalSpent > 0 ? C.text : C.textMut }}>{s.totalSpent > 0 ? `$${s.totalSpent.toFixed(2)}` : "\u2014"}</td>
+                        <td style={tdStyle}>
+                          {s.nextRes ? (
+                            <div>
+                              <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDateShort(s.nextRes.checkIn)}</span>
+                              <span style={{ display: "inline-block", marginLeft: 6, padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: typeColor(s.nextRes.type) + "18", color: typeColor(s.nextRes.type) }}>{typeLabel(s.nextRes.type)}</span>
+                            </div>
+                          ) : <span style={{ color: C.textMut, fontSize: 12 }}>{"\u2014"}</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        ) : (
+          /* ═══ CONVERSION / RETENTION TAB ═══ */
+          <Card style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: activeTab === "retention" ? 1300 : 1000 }}>
+                <thead>
+                  <tr style={{ borderBottom: `1.5px solid ${C.border}`, background: C.bg }}>
+                    <th style={{ ...thStyle("last_name"), textAlign: "left", paddingLeft: 16 }} onClick={() => toggleSort("last_name")}>Last Name{sortIcon("last_name")}</th>
+                    <th style={{ ...thStyle("first_name"), textAlign: "left" }} onClick={() => toggleSort("first_name")}>First Name{sortIcon("first_name")}</th>
+                    <th style={{ ...thStyle("phone"), textAlign: "left" }} onClick={() => toggleSort("phone")}>Phone{sortIcon("phone")}</th>
+                    <th style={{ ...thStyle("email"), textAlign: "left" }} onClick={() => toggleSort("email")}>Email{sortIcon("email")}</th>
+                    {activeTab === "retention" && <>
+                      <th style={{ ...thStyle("lastRes"), textAlign: "left" }} onClick={() => toggleSort("lastRes")}>Last Res{sortIcon("lastRes")}</th>
+                      <th style={{ ...thStyle("totalSpent"), textAlign: "right" }} onClick={() => toggleSort("totalSpent")}>Total Paid{sortIcon("totalSpent")}</th>
+                      <th style={{ ...thStyle("totalRes"), textAlign: "center" }} onClick={() => toggleSort("totalRes")}>Total Appts{sortIcon("totalRes")}</th>
+                    </>}
+                    <th style={{ ...thStyle("notes"), textAlign: "left", minWidth: 160 }}>Notes</th>
+                    <th style={{ ...thStyle("followUpDate"), textAlign: "left", minWidth: 130 }} onClick={() => toggleSort("followUpDate")}>Follow-Up{sortIcon("followUpDate")}</th>
+                    <th style={{ ...thStyle("updateCount"), textAlign: "center", minWidth: 130 }} onClick={() => toggleSort("updateCount")}>Updates{sortIcon("updateCount")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tabData.map(client => {
+                    const s = clientStats[client.id] || {};
+                    const lc = client.lifecycle?.[lcKey] || {};
+                    const updateCount = lc.updates?.length || 0;
+                    const isExpanded = expandedUpdates.has(client.id);
+                    return (
+                      <React.Fragment key={client.id}>
+                        <tr style={{ borderBottom: isExpanded ? "none" : `1px solid ${C.borderLight}`, transition: "background 0.1s" }}
+                          onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          {/* Name cells — clickable to navigate */}
+                          <td style={{ ...tdStyle, fontWeight: 700, paddingLeft: 16, cursor: "pointer", textDecoration: "none" }}
+                            onClick={() => nav("client-detail", { clientId: client.id })}
+                            onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"}
+                            onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>
+                            {client.fields.last_name || "\u2014"}
+                          </td>
+                          <td style={{ ...tdStyle, cursor: "pointer" }}
+                            onClick={() => nav("client-detail", { clientId: client.id })}
+                            onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"}
+                            onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>
+                            {client.fields.first_name || "\u2014"}
+                          </td>
+                          <td style={{ ...tdStyle, fontSize: 12 }}>{fmtPhone(client.fields.phone)}</td>
+                          <td style={{ ...tdStyle, fontSize: 12, color: C.textSec, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>{client.fields.email || "\u2014"}</td>
+                          {/* Retention-only extra columns */}
+                          {activeTab === "retention" && <>
+                            <td style={tdStyle}>
+                              {s.lastRes ? (
+                                <div>
+                                  <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDateShort(s.lastRes.checkIn)}</span>
+                                  <span style={{ display: "inline-block", marginLeft: 6, padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: typeColor(s.lastRes.type) + "18", color: typeColor(s.lastRes.type) }}>{typeLabel(s.lastRes.type)}</span>
+                                </div>
+                              ) : <span style={{ color: C.textMut, fontSize: 12 }}>{"\u2014"}</span>}
+                            </td>
+                            <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: s.totalSpent > 0 ? C.text : C.textMut }}>{s.totalSpent > 0 ? `$${s.totalSpent.toFixed(2)}` : "\u2014"}</td>
+                            <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: s.totalRes > 0 ? C.text : C.textMut }}>{s.totalRes || 0}</td>
+                          </>}
+                          {/* Notes — inline editable */}
+                          <td style={{ ...tdStyle, maxWidth: 200 }} onClick={e => e.stopPropagation()}>
+                            {editingNotes === client.id ? (
+                              <input autoFocus value={editNotesText} onChange={e => setEditNotesText(e.target.value)}
+                                onBlur={() => saveNotes(client.id)}
+                                onKeyDown={e => { if (e.key === "Enter") saveNotes(client.id); if (e.key === "Escape") setEditingNotes(null); }}
+                                style={{ padding: "5px 8px", borderRadius: 6, border: `1.5px solid ${C.pri}`, fontSize: 13, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none", width: "100%", maxWidth: 200, boxSizing: "border-box" }}
+                                placeholder="Add notes..." />
+                            ) : (
+                              <span onClick={() => startEditNotes(client)}
+                                style={{ cursor: "pointer", color: lc.notes ? C.text : C.textMut, fontSize: 13, padding: "4px 8px", borderRadius: 6, transition: "background 0.15s", display: "inline-block", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                                onMouseEnter={e => e.currentTarget.style.background = C.bg}
+                                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                                title={lc.notes || "Click to add notes"}>
+                                {lc.notes ? (lc.notes.length > 30 ? lc.notes.substring(0, 30) + "..." : lc.notes) : "Click to add"}
+                              </span>
+                            )}
+                          </td>
+                          {/* Follow-Up Date — inline MiniDatePicker */}
+                          <td style={{ ...tdStyle }} onClick={e => e.stopPropagation()}>
+                            <MiniDatePicker
+                              value={lc.followUpDate || ""}
+                              onChange={newDate => saveFollowUpDate(client.id, newDate)}
+                              style={{ display: "inline-block" }}
+                            />
+                            {lc.followUpDate && (
+                              <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: getFollowUpColor(lc.followUpDate) }}>
+                                {lc.followUpDate === todayStr() ? "TODAY" : lc.followUpDate < todayStr() ? "OVERDUE" : ""}
+                              </span>
+                            )}
+                          </td>
+                          {/* Updates — count badge + Log button */}
+                          <td style={{ ...tdStyle, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                              <span onClick={() => updateCount > 0 && toggleExpanded(client.id)}
+                                style={{
+                                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                                  minWidth: 24, height: 24, borderRadius: 12, cursor: updateCount > 0 ? "pointer" : "default",
+                                  background: updateCount > 0 ? C.acc : C.bg,
+                                  color: updateCount > 0 ? "#fff" : C.textMut,
+                                  fontSize: 11, fontWeight: 700, transition: "all 0.15s",
+                                }}
+                                title={`${updateCount} logged update${updateCount !== 1 ? "s" : ""}`}>
+                                {updateCount}
+                              </span>
+                              <button onClick={() => logUpdate(client.id)}
+                                style={{
+                                  padding: "4px 10px", borderRadius: 6,
+                                  border: `1px solid ${C.pri}30`, background: C.priLt,
+                                  color: C.pri, fontSize: 11, fontWeight: 700,
+                                  cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+                                }}
+                                onMouseEnter={e => { e.currentTarget.style.background = C.pri; e.currentTarget.style.color = "#fff"; }}
+                                onMouseLeave={e => { e.currentTarget.style.background = C.priLt; e.currentTarget.style.color = C.pri; }}>
+                                Log
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                        {/* Expanded update history accordion */}
+                        {isExpanded && updateCount > 0 && (
+                          <tr>
+                            <td colSpan={activeTab === "retention" ? 10 : 7} style={{ padding: 0, background: C.bg }}>
+                              <div style={{ padding: "12px 20px 12px 32px", borderLeft: `3px solid ${C.acc}`, marginLeft: 12, marginBottom: 4 }}>
+                                <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 10 }}>Follow-Up History</div>
+                                {lc.updates.map((u, ui) => (
+                                  <div key={u.id} style={{
+                                    marginBottom: ui === lc.updates.length - 1 ? 0 : 12,
+                                    paddingBottom: ui === lc.updates.length - 1 ? 0 : 12,
+                                    borderBottom: ui === lc.updates.length - 1 ? "none" : `1px solid ${C.borderLight}`,
+                                  }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: C.pri, marginBottom: 4 }}>
+                                      {u.loggedBy} {"\u2014"} {new Date(u.loggedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} at {new Date(u.loggedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                                    </div>
+                                    {u.notes && (
+                                      <div style={{ fontSize: 12, color: C.textSec, marginBottom: 4 }}>
+                                        <span style={{ fontWeight: 600, color: C.text }}>Notes: </span>{u.notes}
+                                      </div>
+                                    )}
+                                    {u.followUpDate && (
+                                      <div style={{ fontSize: 12, color: C.textSec }}>
+                                        <span style={{ fontWeight: 600, color: C.text }}>Follow-up was: </span>{fmtDateShort(u.followUpDate)}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
                         )}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 700, color: s.totalRes > 0 ? C.text : C.textMut }}>{s.totalRes || 0}</td>
-                      <td style={tdStyle}>
-                        {s.lastRes ? (
-                          <div>
-                            <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDateShort(s.lastRes.checkIn)}</span>
-                            <span style={{ display: "inline-block", marginLeft: 6, padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: typeColor(s.lastRes.type) + "18", color: typeColor(s.lastRes.type) }}>{typeLabel(s.lastRes.type)}</span>
-                          </div>
-                        ) : <span style={{ color: C.textMut, fontSize: 12 }}>{"\u2014"}</span>}
-                      </td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.daysSinceLast != null ? (s.daysSinceLast > 90 ? C.dan : s.daysSinceLast > 30 ? C.warn : C.suc) : C.textMut }}>{s.daysSinceLast != null ? s.daysSinceLast : "\u2014"}</td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.daycareCount ? C.suc : C.textMut }}>{s.daycareCount || 0}</td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.boardingCount ? C.pri : C.textMut }}>{s.boardingCount || 0}</td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.evalCount ? C.warn : C.textMut }}>{s.evalCount || 0}</td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.postEvalAppts ? C.suc : C.textMut }}>{s.postEvalAppts || 0}</td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.tourCount ? C.acc : C.textMut }}>{s.tourCount || 0}</td>
-                      <td style={{ ...tdStyle, textAlign: "center", fontWeight: 600, color: s.postTourAppts ? C.suc : C.textMut }}>{s.postTourAppts || 0}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: s.totalSpent > 0 ? C.text : C.textMut }}>{s.totalSpent > 0 ? `$${s.totalSpent.toFixed(2)}` : "\u2014"}</td>
-                      <td style={tdStyle}>
-                        {s.nextRes ? (
-                          <div>
-                            <span style={{ fontSize: 12, fontWeight: 600 }}>{fmtDateShort(s.nextRes.checkIn)}</span>
-                            <span style={{ display: "inline-block", marginLeft: 6, padding: "1px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700, background: typeColor(s.nextRes.type) + "18", color: typeColor(s.nextRes.type) }}>{typeLabel(s.nextRes.type)}</span>
-                          </div>
-                        ) : <span style={{ color: C.textMut, fontSize: 12 }}>{"\u2014"}</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }
@@ -19167,6 +19545,30 @@ export default function App() {
     save({ ...data, dogs: fixedDogs, evaluations: newEvals, reservations: newRes });
   }, [data?.dogs?.length, migrationRan]);
 
+  // ═══ Auto-migration: add lifecycle tracking to clients ═══
+  const [lifecycleMigRan, setLifecycleMigRan] = useState(false);
+  useEffect(() => {
+    if (!data || !data.clients || data.clients.length === 0 || lifecycleMigRan) return;
+    const needsMigration = data.clients.some(c => !c.lifecycle);
+    if (!needsMigration) return;
+    setLifecycleMigRan(true);
+    console.log("[K9] Auto-migration: adding lifecycle structure to clients");
+    const addDays = (base, n) => { const d = new Date((base || todayStr()) + "T12:00:00"); d.setDate(d.getDate() + n); return d.toISOString().split("T")[0]; };
+    const migratedClients = data.clients.map(c => {
+      if (c.lifecycle) return c;
+      const defaultFollowUp = addDays(c.createdAt, 2);
+      return {
+        ...c,
+        lifecycle: {
+          conversion: { notes: "", followUpDate: defaultFollowUp, updates: [] },
+          retention: { notes: "", followUpDate: "", updates: [] },
+        },
+        lifecycleEvents: c.lifecycleEvents || [{ event: "created", date: c.createdAt || todayStr(), details: "Client record created" }],
+      };
+    });
+    save({ ...data, clients: migratedClients });
+  }, [data?.clients?.length, lifecycleMigRan]);
+
   // ═══ Dynamic Locations (loaded from Supabase) ═══
   const [dbLocations, setDbLocations] = useState([]);
   const [locationsLoading, setLocationsLoading] = useState(true);
@@ -19417,7 +19819,7 @@ export default function App() {
       { id:"dashboard",label:"Dashboard",icon:<I.Dashboard/>,hotkey:"1" },
       { id:"reservations",label:"Lodging Calendar",icon:<I.Calendar/>,hotkey:"2" },
       { id:"online-bookings",label:"Online Bookings",icon:<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg> },
-      { id:"clients",label:"Clients",icon:<I.Users/>,hotkey:"3" },
+      { id:"clients",label:"Customer Lifecycle",icon:<I.Users/>,hotkey:"3" },
       { id:"crm",label:"CRM",icon:<I.BarChart/>,hotkey:"4" },
       { id:"messages",label:"Messages",icon:<I.MessageSquare/>,hotkey:"5" },
     ]},
@@ -19465,7 +19867,7 @@ export default function App() {
     switch(page) {
       case "operations": return hp("view_daily_ops") ? <OperationsHub data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "dashboard": return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
-      case "clients": return hp("view_clients") ? <ClientsPage data={data} nav={nav} profile={profile}/> : denied;
+      case "clients": return hp("view_clients") ? <ClientsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast}/> : denied;
       case "client-detail": return hp("view_client_detail") ? <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile} openReservationId={params.openReservation}/> : denied;
       case "new-client": return hp("create_client") ? <NewClientPage data={data} save={save} nav={nav} prefill={params.prefill} addGlobalToast={addGlobalToast}/> : denied;
       case "dog-detail": return hp("view_dog_detail") ? <DogDetailPage data={data} save={save} clientId={params.clientId} dogId={params.dogId} nav={nav} profile={profile}/> : denied;
