@@ -20,7 +20,6 @@ DECLARE
   new_client JSONB;
   new_id TEXT;
   today TEXT;
-  tomorrow TEXT;
   lead_log JSONB;
 BEGIN
   -- ────────────────────────────────────────────────────────
@@ -155,7 +154,6 @@ BEGIN
   -- ────────────────────────────────────────────────────────
   new_id := substr(md5(random()::text || clock_timestamp()::text), 1, 9);
   today := to_char(NOW() AT TIME ZONE 'America/New_York', 'YYYY-MM-DD');
-  tomorrow := to_char((NOW() AT TIME ZONE 'America/New_York') + INTERVAL '1 day', 'YYYY-MM-DD');
 
   -- Build notes from Ignite fields
   new_client := jsonb_build_object(
@@ -165,25 +163,16 @@ BEGIN
       'last_name', COALESCE(p_fields->>'lastName', ''),
       'email', COALESCE(p_fields->>'email', ''),
       'phone', client_phone,
-      'notes', concat_ws(E'\n',
-        'Ignite Lead (' || COALESCE(p_fields->>'source', 'unknown source') || ')',
-        CASE WHEN COALESCE(p_fields->>'reason', '') != ''
-          THEN 'Reason: ' || (p_fields->>'reason') END,
-        CASE WHEN COALESCE(p_fields->>'message', '') != ''
-          THEN 'Message: ' || (p_fields->>'message') END,
-        CASE WHEN COALESCE(p_fields->>'zip', '') != ''
-          THEN 'Zip: ' || (p_fields->>'zip') END,
-        CASE WHEN COALESCE(p_fields->>'city', '') != '' OR COALESCE(p_fields->>'state', '') != ''
-          THEN 'Location: ' || COALESCE(p_fields->>'city', '') || ', ' || COALESCE(p_fields->>'state', '') END
-      ),
+      'notes', 'Received ' || to_char(NOW() AT TIME ZONE 'America/New_York', 'MM/DD/YY'),
       'referral_source', 'Ignite'
     ),
     'createdAt', today,
     'agreements', '{}'::jsonb,
+    'igniteData', p_fields,
     'lifecycle', jsonb_build_object(
       'conversion', jsonb_build_object(
         'notes', '',
-        'followUpDate', tomorrow,
+        'followUpDate', today,
         'updates', '[]'::jsonb,
         'source', 'ignite',
         'sourceDate', today,
