@@ -6248,8 +6248,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                       { label: "Source", val: igd.source },
                       { label: "First Name", val: igd.firstName },
                       { label: "Last Name", val: igd.lastName },
+                      { label: "Caller Name", val: igd.callerName },
                       { label: "Email", val: igd.email },
                       { label: "Phone", val: igd.phone },
+                      { label: "Tracking Number", val: igd.trackingNumber },
+                      { label: "Call Duration", val: igd.callDuration },
+                      { label: "Call Status", val: igd.callStatus },
                       { label: "Zip Code", val: igd.zip },
                       { label: "City", val: igd.city },
                       { label: "State", val: igd.state },
@@ -6276,14 +6280,24 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                             </div>
                           ))}
                         </div>
-                        {igd.igniteProfileId && igd.leadId && (
-                          <div style={{marginTop:10,paddingTop:8,borderTop:"1px solid #F9731630"}}>
-                            <a href={`https://leads.idigitalstrategies.com/profile/${igd.igniteProfileId}/leads?lid=${igd.leadId}`} target="_blank" rel="noopener noreferrer"
-                              style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:"#F97316",textDecoration:"none",padding:"4px 10px",borderRadius:6,border:"1px solid #F9731640",background:"white"}}
-                              onMouseEnter={e=>e.currentTarget.style.background="#FFF7ED"}
-                              onMouseLeave={e=>e.currentTarget.style.background="white"}>
-                              View in Ignite Dashboard ↗
-                            </a>
+                        {(igd.igniteProfileId && igd.leadId || igd.callRecordingUrl) && (
+                          <div style={{marginTop:10,paddingTop:8,borderTop:"1px solid #F9731630",display:"flex",gap:8,flexWrap:"wrap"}}>
+                            {igd.igniteProfileId && igd.leadId && (
+                              <a href={`https://leads.idigitalstrategies.com/profile/${igd.igniteProfileId}/leads?lid=${igd.leadId}`} target="_blank" rel="noopener noreferrer"
+                                style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:"#F97316",textDecoration:"none",padding:"4px 10px",borderRadius:6,border:"1px solid #F9731640",background:"white"}}
+                                onMouseEnter={e=>e.currentTarget.style.background="#FFF7ED"}
+                                onMouseLeave={e=>e.currentTarget.style.background="white"}>
+                                View in Ignite Dashboard ↗
+                              </a>
+                            )}
+                            {igd.callRecordingUrl && (
+                              <a href={igd.callRecordingUrl} target="_blank" rel="noopener noreferrer"
+                                style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:C.pri,textDecoration:"none",padding:"4px 10px",borderRadius:6,border:`1px solid ${C.pri}40`,background:"white"}}
+                                onMouseEnter={e=>e.currentTarget.style.background=`${C.pri}08`}
+                                onMouseLeave={e=>e.currentTarget.style.background="white"}>
+                                🎧 Listen to Call Recording ↗
+                              </a>
+                            )}
                           </div>
                         )}
                       </div>
