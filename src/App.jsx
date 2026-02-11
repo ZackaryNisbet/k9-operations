@@ -5372,91 +5372,219 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NATURAL LANGUAGE FILTER PARSER
+// STRUCTURED FILTER DEFINITIONS
 // ═══════════════════════════════════════════════════════════════════════════
-function parseNLFilter(query) {
-  const q = query.toLowerCase().trim();
-  if (!q || q.length < 4) return null;
+const LC_FILTER_FIELDS = [
+  { section:"Client Info", key:"firstName", label:"First Name", type:"text", ops:["contains","equals","starts","empty","notEmpty"] },
+  { section:"Client Info", key:"lastName", label:"Last Name", type:"text", ops:["contains","equals","starts","empty","notEmpty"] },
+  { section:"Client Info", key:"phone", label:"Phone", type:"text", ops:["contains","equals","empty","notEmpty"] },
+  { section:"Client Info", key:"dogCount", label:"Dogs", type:"number", ops:["=",">=","<=",">","<"] },
+  { section:"Activity", key:"totalRes", label:"Total Reservations", type:"number", ops:["=",">=","<=",">","<"] },
+  { section:"Activity", key:"lastRes", label:"Last Visit", type:"date", ops:["after","before","inLastDays"] },
+  { section:"Activity", key:"daysSince", label:"Days Since Visit", type:"number", ops:[">=","<=",">","<","="] },
+  { section:"Activity", key:"totalSpent", label:"Total Spent ($)", type:"currency", ops:[">=","<=",">","<","="] },
+  { section:"Activity", key:"nextRes", label:"Next Reservation", type:"presence", ops:["has","missing"] },
+  { section:"Services", key:"daycare", label:"Daycare Visits", type:"number", ops:["=",">=","<=",">","<"] },
+  { section:"Services", key:"boarding", label:"Boarding Visits", type:"number", ops:["=",">=","<=",">","<"] },
+  { section:"Services", key:"eval", label:"Evaluations", type:"number", ops:["=",">=","<=",">","<"] },
+  { section:"Services", key:"postEval", label:"Post-Eval Appts", type:"number", ops:["=",">=","<=",">","<"] },
+  { section:"Services", key:"tours", label:"Tours", type:"number", ops:["=",">=","<=",">","<"] },
+  { section:"Services", key:"postTour", label:"Post-Tour Appts", type:"number", ops:["=",">=","<=",">","<"] },
+  { section:"Lifecycle", key:"stage", label:"Stage", type:"select", ops:["is","isNot"], options:["conversion","active","retention","cold"] },
+  { section:"Lifecycle", key:"source", label:"Source", type:"select", ops:["is","isNot"], options:["eval","tour","manual",""] },
+  { section:"Lifecycle", key:"followUp", label:"Follow-Up", type:"followUpStatus", ops:["overdue","today","thisWeek","hasDate","noDate"] },
+];
+const LC_OP_LABELS = {"contains":"contains","equals":"equals","starts":"starts with","empty":"is empty","notEmpty":"not empty","=":"=",">=":"≥","<=":"≤",">":">","<":"<","after":"after","before":"before","inLastDays":"in last X days","has":"has","missing":"doesn't have","is":"is","isNot":"is not","overdue":"overdue","today":"today","thisWeek":"this week","hasDate":"has date","noDate":"no date"};
 
-  // If the query looks like a plain name/phone search, skip NL parsing
-  if (/^[a-z]{1,20}$/.test(q)) return null; // single word, probably a name
-  if (/^\d{3,}$/.test(q.replace(/\D/g, "")) && q.replace(/\D/g, "").length <= 11) return null; // phone number
+function applyStructuredFilters(clients, stats, tabMap, filters) {
+  const keys = Object.keys(filters);
+  if (keys.length === 0) return clients;
+  const today = todayStr();
+  const weekAhead = (() => { const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().split("T")[0]; })();
+  return clients.filter(c => {
+    const s = stats[c.id] || {};
+    const tm = tabMap[c.id] || {};
+    return keys.every(k => {
+      const f = filters[k];
+      if (!f || (f.val === "" && f.op !== "empty" && f.op !== "notEmpty" && f.op !== "has" && f.op !== "missing" && f.op !== "overdue" && f.op !== "today" && f.op !== "thisWeek" && f.op !== "hasDate" && f.op !== "noDate")) return true;
+      const op = f.op, val = f.val;
+      // Text fields
+      if (k === "firstName") { const v = (c.fields.first_name || "").toLowerCase(); const q = (val||"").toLowerCase(); if (op==="contains") return v.includes(q); if (op==="equals") return v===q; if (op==="starts") return v.startsWith(q); if (op==="empty") return !v; if (op==="notEmpty") return !!v; }
+      if (k === "lastName") { const v = (c.fields.last_name || "").toLowerCase(); const q = (val||"").toLowerCase(); if (op==="contains") return v.includes(q); if (op==="equals") return v===q; if (op==="starts") return v.startsWith(q); if (op==="empty") return !v; if (op==="notEmpty") return !!v; }
+      if (k === "phone") { const v = (c.fields.phone || "").replace(/\D/g,""); const q = (val||"").replace(/\D/g,""); if (op==="contains") return v.includes(q); if (op==="equals") return v===q; if (op==="empty") return !v; if (op==="notEmpty") return !!v; }
+      // Number fields
+      const numMap = {dogCount:s.dogCount||0,totalRes:s.totalRes||0,daysSince:s.daysSinceLast,totalSpent:s.totalSpent||0,daycare:s.daycareCount||0,boarding:s.boardingCount||0,eval:s.evalCount||0,postEval:s.postEvalAppts||0,tours:s.tourCount||0,postTour:s.postTourAppts||0};
+      if (k in numMap) {
+        let nv = numMap[k]; const nq = parseFloat(val);
+        if (nv === null || nv === undefined) nv = k === "daysSince" ? null : 0;
+        if (k === "daysSince" && nv === null) return op === "<" || op === "<=" ? false : op === ">" || op === ">=" ? true : false;
+        if (isNaN(nq)) return true;
+        if (op==="=") return nv===nq; if (op===">=") return nv>=nq; if (op==="<=") return nv<=nq; if (op===">") return nv>nq; if (op==="<") return nv<nq;
+      }
+      // Date field (last visit)
+      if (k === "lastRes") {
+        const d = s.lastRes?.checkIn || "";
+        if (op==="after") return d && d > val; if (op==="before") return d && d < val;
+        if (op==="inLastDays") { if (!d) return false; const diff = Math.floor((new Date(today+"T12:00:00") - new Date(d+"T12:00:00"))/(86400000)); return diff <= parseInt(val); }
+      }
+      // Presence (next reservation)
+      if (k === "nextRes") { if (op==="has") return !!s.nextRes; if (op==="missing") return !s.nextRes; }
+      // Select (stage)
+      if (k === "stage") {
+        const stg = tm.isCold ? "cold" : tm.isRetention ? "retention" : tm.isActive ? "active" : tm.isConversion ? "conversion" : "unknown";
+        if (op==="is") return stg === val; if (op==="isNot") return stg !== val;
+      }
+      // Select (source)
+      if (k === "source") {
+        const src = c.lifecycle?.conversion?.source || "";
+        if (op==="is") return src === val; if (op==="isNot") return src !== val;
+      }
+      // Follow-up status
+      if (k === "followUp") {
+        const fu = c.lifecycle?.conversion?.followUpDate || c.lifecycle?.retention?.followUpDate || "";
+        if (op==="overdue") return fu && fu < today;
+        if (op==="today") return fu === today;
+        if (op==="thisWeek") return fu && fu >= today && fu <= weekAhead;
+        if (op==="hasDate") return !!fu;
+        if (op==="noDate") return !fu;
+      }
+      return true;
+    });
+  });
+}
 
-  const filters = [];
-  const descriptions = [];
-  const parseNum = (s) => { const clean = s.replace(/[$,]/g, ""); if (/k$/i.test(clean)) return parseFloat(clean) * 1000; return parseFloat(clean); };
+// ── Quick Filter Presets ──
+const LC_QUICK_PRESETS = [
+  { label: "Overdue", icon: "⏰", filters: { followUp: { op: "overdue", val: "" } } },
+  { label: "No Upcoming", icon: "📭", filters: { nextRes: { op: "missing", val: "" } } },
+  { label: "High Spend", icon: "💰", filters: { totalSpent: { op: ">=", val: "1000" } } },
+  { label: "Never Visited", icon: "🆕", filters: { totalRes: { op: "=", val: "0" } } },
+];
 
-  // ── SPENT / REVENUE ──
-  let m;
-  if ((m = q.match(/spent\s+(?:more|over|above|greater)\s+(?:than\s+)?\$?([\d,.]+k?)/i))) {
-    const v = parseNum(m[1]); filters.push((c, s) => (s.totalSpent || 0) > v); descriptions.push(`spent > $${v.toLocaleString()}`);
-  } else if ((m = q.match(/spent\s+(?:less|under|below|fewer)\s+(?:than\s+)?\$?([\d,.]+k?)/i))) {
-    const v = parseNum(m[1]); filters.push((c, s) => (s.totalSpent || 0) < v); descriptions.push(`spent < $${v.toLocaleString()}`);
-  } else if ((m = q.match(/(?:spent|spend|revenue|total)\s*(?:>=?|at\s+least)\s*\$?([\d,.]+k?)/i))) {
-    const v = parseNum(m[1]); filters.push((c, s) => (s.totalSpent || 0) >= v); descriptions.push(`spent >= $${v.toLocaleString()}`);
-  } else if ((m = q.match(/(?:high|big|top)\s*(?:spend|value)/i))) {
-    filters.push((c, s) => (s.totalSpent || 0) >= 1000); descriptions.push("high spenders ($1,000+)");
-  } else if ((m = q.match(/(?:no|zero|0)\s+(?:spend|spent|revenue)/i))) {
-    filters.push((c, s) => (s.totalSpent || 0) === 0); descriptions.push("$0 spent");
-  }
+// ═══════════════════════════════════════════════════════════════════════════
+// LIFECYCLE FILTER PANEL (renders inside sidebar)
+// ═══════════════════════════════════════════════════════════════════════════
+function LifecycleFilterPanel({ filters, onChange, onClose }) {
+  const [debounceTimers] = useState({});
+  const activeCount = Object.keys(filters).length;
 
-  // ── DOGS ──
-  if ((m = q.match(/(?:more|over|above|greater)\s+(?:than\s+)?(\d+)\s*(?:dogs?|pups?|pets?)/i)) || (m = q.match(/(\d+)\+\s*(?:dogs?|pups?|pets?)/i))) {
-    const v = parseInt(m[1]); filters.push((c, s) => (s.dogCount || 0) > v); descriptions.push(`> ${v} dogs`);
-  } else if ((m = q.match(/(?:less|under|fewer)\s+(?:than\s+)?(\d+)\s*(?:dogs?|pups?|pets?)/i))) {
-    const v = parseInt(m[1]); filters.push((c, s) => (s.dogCount || 0) < v); descriptions.push(`< ${v} dogs`);
-  } else if ((m = q.match(/(\d+)\s*(?:or\s+more|plus)\s*(?:dogs?|pups?|pets?)/i)) || (m = q.match(/(?:at\s+least)\s+(\d+)\s*(?:dogs?|pups?|pets?)/i))) {
-    const v = parseInt(m[1]); filters.push((c, s) => (s.dogCount || 0) >= v); descriptions.push(`>= ${v} dogs`);
-  } else if ((m = q.match(/(?:multiple|several|many)\s*(?:dogs?|pups?|pets?)/i))) {
-    filters.push((c, s) => (s.dogCount || 0) >= 2); descriptions.push("2+ dogs");
-  }
+  const setFilter = (key, op, val) => {
+    const n = { ...filters };
+    if (val === "" && op !== "empty" && op !== "notEmpty" && op !== "has" && op !== "missing" && op !== "overdue" && op !== "today" && op !== "thisWeek" && op !== "hasDate" && op !== "noDate") {
+      delete n[key];
+    } else {
+      n[key] = { op, val };
+    }
+    onChange(n);
+  };
 
-  // ── DAYS SINCE LAST VISIT ──
-  if ((m = q.match(/(?:hasn't|haven't|not|hasn.t|haven.t)\s+(?:visited|come|been|booked)\s+(?:in|for)\s+(\d+)\s*(?:days?)/i)) || (m = q.match(/(?:last\s+visit|visited)\s+(?:more|over)\s+(?:than\s+)?(\d+)\s*(?:days?\s+ago|days?)/i)) || (m = q.match(/(?:inactive|lapsed|absent)\s+(?:for\s+)?(\d+)\s*(?:\+\s*)?(?:days?)/i)) || (m = q.match(/(\d+)\+?\s*(?:days?\s+(?:since|inactive|without|no\s+visit))/i))) {
-    const v = parseInt(m[1]); filters.push((c, s) => (s.daysSinceLast ?? 9999) >= v); descriptions.push(`${v}+ days since last visit`);
-  } else if ((m = q.match(/visited\s+(?:in\s+(?:the\s+)?)?(?:last|past|recent)\s+(\d+)\s*(?:days?)/i)) || (m = q.match(/(?:active|visited|came)\s+(?:within|in)\s+(\d+)\s*(?:days?)/i)) || (m = q.match(/(?:last|past|recent)\s+(\d+)\s*(?:days?)/i))) {
-    const v = parseInt(m[1]); filters.push((c, s) => s.daysSinceLast != null && s.daysSinceLast <= v); descriptions.push(`visited in last ${v} days`);
-  } else if (q.match(/never\s+(?:visited|booked|came)/i)) {
-    filters.push((c, s) => s.daysSinceLast == null && (s.totalRes || 0) === 0); descriptions.push("never visited");
-  }
+  const setFilterDebounced = (key, op, val) => {
+    if (debounceTimers[key]) clearTimeout(debounceTimers[key]);
+    debounceTimers[key] = setTimeout(() => setFilter(key, op, val), 300);
+  };
 
-  // ── RESERVATIONS / APPOINTMENTS ──
-  if ((m = q.match(/(?:more|over|above)\s+(?:than\s+)?(\d+)\s*(?:reservations?|appointments?|appts?|bookings?|visits?|res)/i))) {
-    const v = parseInt(m[1]); filters.push((c, s) => (s.totalRes || 0) > v); descriptions.push(`> ${v} reservations`);
-  } else if ((m = q.match(/(?:at\s+least|minimum|min)\s+(\d+)\s*(?:reservations?|appointments?|appts?|bookings?|visits?|res)/i))) {
-    const v = parseInt(m[1]); filters.push((c, s) => (s.totalRes || 0) >= v); descriptions.push(`>= ${v} reservations`);
-  } else if ((m = q.match(/(?:less|under|fewer)\s+(?:than\s+)?(\d+)\s*(?:reservations?|appointments?|appts?|bookings?|visits?|res)/i))) {
-    const v = parseInt(m[1]); filters.push((c, s) => (s.totalRes || 0) < v); descriptions.push(`< ${v} reservations`);
-  }
+  const clearFilter = (key) => { const n = { ...filters }; delete n[key]; onChange(n); };
+  const clearAll = () => onChange({});
 
-  // ── SERVICE TYPE ──
-  if (q.match(/(?:daycare|dc)\s*(?:client|customer|only)/i) || q.match(/(?:primarily|mostly|mainly)\s+(?:daycare|dc)/i)) {
-    filters.push((c, s) => (s.daycareCount || 0) > 0 && (s.daycareCount || 0) >= (s.boardingCount || 0)); descriptions.push("primarily daycare");
-  } else if (q.match(/(?:boarding|board|bd)\s*(?:client|customer|only)/i) || q.match(/(?:primarily|mostly|mainly)\s+(?:boarding|board)/i)) {
-    filters.push((c, s) => (s.boardingCount || 0) > 0 && (s.boardingCount || 0) >= (s.daycareCount || 0)); descriptions.push("primarily boarding");
-  } else if (q.match(/(?:has|have|did|done|completed)\s+(?:an?\s+)?(?:eval|evaluation)/i) || q.match(/eval\s+(?:client|customer|done|completed)/i)) {
-    filters.push((c, s) => (s.evalCount || 0) > 0); descriptions.push("has eval");
-  } else if (q.match(/(?:has|have|did|done|completed)\s+(?:an?\s+)?tour/i) || q.match(/tour\s+(?:client|customer|done|completed)/i)) {
-    filters.push((c, s) => (s.tourCount || 0) > 0); descriptions.push("has tour");
-  }
+  const applyPreset = (preset) => {
+    const keys = Object.keys(preset.filters);
+    const isActive = keys.every(k => filters[k] && filters[k].op === preset.filters[k].op);
+    if (isActive) {
+      const n = { ...filters };
+      keys.forEach(k => delete n[k]);
+      onChange(n);
+    } else {
+      onChange({ ...filters, ...preset.filters });
+    }
+  };
 
-  // ── UPCOMING ──
-  if (q.match(/(?:no|without|missing|0)\s+(?:upcoming|future|scheduled|next)\s*(?:reservations?|appointments?|appts?|bookings?|res)?/i) || q.match(/(?:nothing|none)\s+(?:upcoming|scheduled|booked)/i)) {
-    filters.push((c, s) => !s.nextRes); descriptions.push("no upcoming reservation");
-  } else if (q.match(/(?:has|have|with)\s+(?:an?\s+)?(?:upcoming|future|scheduled|next)\s*(?:reservations?|appointments?|appts?|bookings?|res)?/i)) {
-    filters.push((c, s) => !!s.nextRes); descriptions.push("has upcoming reservation");
-  }
+  const sections = LC_FILTER_FIELDS.reduce((acc, f) => {
+    if (!acc[f.section]) acc[f.section] = [];
+    acc[f.section].push(f);
+    return acc;
+  }, {});
 
-  // ── POST-EVAL / POST-TOUR ──
-  if ((m = q.match(/(?:no|0|zero)\s+(?:post[\s-]?eval|appointments?\s+after\s+eval)/i))) {
-    filters.push((c, s) => (s.postEvalAppts || 0) === 0 && (s.evalCount || 0) > 0); descriptions.push("eval with no follow-up appts");
-  }
-  if ((m = q.match(/(?:no|0|zero)\s+(?:post[\s-]?tour|appointments?\s+after\s+tour)/i))) {
-    filters.push((c, s) => (s.postTourAppts || 0) === 0 && (s.tourCount || 0) > 0); descriptions.push("tour with no follow-up appts");
-  }
+  const renderField = (field) => {
+    const f = filters[field.key];
+    const hasVal = !!f;
+    const curOp = f?.op || field.ops[0];
+    const curVal = f?.val ?? "";
+    const noValueTypes = ["presence", "followUpStatus"];
+    const needsValue = !noValueTypes.includes(field.type);
 
-  if (filters.length === 0) return null;
-  return { filters, descriptions };
+    return (
+      <div key={field.key} style={{padding:"6px 8px",borderRadius:6,borderLeft:hasVal?`3px solid ${C.suc}`:"3px solid transparent",background:hasVal?`${C.suc}06`:"transparent",transition:"all 0.15s"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+          <span style={{fontSize:11,fontWeight:600,color:hasVal?C.text:C.textSec}}>{field.label}</span>
+          {hasVal && <button onClick={()=>clearFilter(field.key)} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:0,display:"flex",lineHeight:1}} title="Clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+        </div>
+        <div style={{display:"flex",gap:4}}>
+          <select value={curOp} onChange={e => {
+            const newOp = e.target.value;
+            if (!needsValue || newOp === "empty" || newOp === "notEmpty") { setFilter(field.key, newOp, ""); }
+            else if (hasVal) { setFilter(field.key, newOp, curVal); }
+          }} style={{width:needsValue?72:"100%",padding:"4px 2px",border:`1px solid ${hasVal?C.suc+"50":C.borderLight}`,borderRadius:4,fontSize:10,fontFamily:"inherit",background:C.surface,color:C.text,cursor:"pointer",flexShrink:0}}>
+            {field.ops.map(op => <option key={op} value={op}>{LC_OP_LABELS[op]||op}</option>)}
+          </select>
+          {needsValue && curOp !== "empty" && curOp !== "notEmpty" && (
+            field.type === "select" ? (
+              <select value={curVal} onChange={e => setFilter(field.key, curOp, e.target.value)} style={{flex:1,padding:"4px 4px",border:`1px solid ${hasVal?C.suc+"50":C.borderLight}`,borderRadius:4,fontSize:10,fontFamily:"inherit",background:C.surface,color:C.text,cursor:"pointer"}}>
+                <option value="">Select…</option>
+                {(field.options||[]).map(o => <option key={o} value={o}>{o || "(none)"}</option>)}
+              </select>
+            ) : field.type === "date" && curOp !== "inLastDays" ? (
+              <input type="date" defaultValue={curVal} onChange={e => setFilter(field.key, curOp, e.target.value)} style={{flex:1,padding:"4px 4px",border:`1px solid ${hasVal?C.suc+"50":C.borderLight}`,borderRadius:4,fontSize:10,fontFamily:"inherit",background:C.surface,color:C.text}} />
+            ) : (
+              <input type={field.type==="text"?"text":"number"} defaultValue={curVal}
+                placeholder={field.type==="currency"?"$0":field.type==="date"?"days":"0"}
+                onChange={e => { const v=e.target.value; if(field.type==="text"){setFilterDebounced(field.key,curOp,v);}else{setFilter(field.key,curOp,v);} }}
+                style={{flex:1,padding:"4px 6px",border:`1px solid ${hasVal?C.suc+"50":C.borderLight}`,borderRadius:4,fontSize:10,fontFamily:"inherit",background:C.surface,color:C.text,minWidth:0}} />
+            )
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
+      <div style={{padding:"16px 14px 12px",borderBottom:`1px solid ${C.borderLight}`,flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            <span style={{fontSize:14,fontWeight:800,color:C.text}}>Filters</span>
+            {activeCount > 0 && <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minWidth:20,height:20,padding:"0 6px",borderRadius:10,fontSize:11,fontWeight:800,background:C.pri,color:"#fff"}}>{activeCount}</span>}
+          </div>
+          <button onClick={onClose} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:4,display:"flex",borderRadius:4}}
+            onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        {activeCount > 0 && <button onClick={clearAll} style={{width:"100%",padding:"5px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,fontSize:10,fontWeight:600,color:C.textSec,cursor:"pointer",fontFamily:"inherit"}}>Clear All Filters</button>}
+      </div>
+      <div style={{padding:"10px 14px 6px",borderBottom:`1px solid ${C.borderLight}`,flexShrink:0}}>
+        <div style={{fontSize:9,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Quick Filters</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+          {LC_QUICK_PRESETS.map(p => {
+            const keys = Object.keys(p.filters);
+            const isOn = keys.every(k => filters[k] && filters[k].op === p.filters[k].op);
+            return <button key={p.label} onClick={()=>applyPreset(p)} style={{padding:"4px 8px",borderRadius:6,border:`1.5px solid ${isOn?C.pri:C.border}`,background:isOn?C.priLt:"transparent",color:isOn?C.pri:C.textSec,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{p.icon} {p.label}</button>;
+          })}
+        </div>
+      </div>
+      <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
+        {Object.entries(sections).map(([section, fields]) => (
+          <div key={section} style={{marginBottom:12}}>
+            <div style={{fontSize:9,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"4px 4px 6px"}}>{section}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:2}}>{fields.map(renderField)}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{padding:"10px 14px",borderTop:`1px solid ${C.borderLight}`,flexShrink:0,textAlign:"center"}}>
+        <button onClick={onClose} style={{width:"100%",padding:"8px 12px",border:"none",borderRadius:6,background:C.pri,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Done</button>
+      </div>
+    </div>
+  );
 }
 
 const DEFAULT_LIFECYCLE_BANNERS = {
@@ -5470,7 +5598,7 @@ const DEFAULT_LIFECYCLE_BANNERS = {
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENTS PAGE — Customer Lifecycle
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
+function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setLcFilters, setLcFilterOpen }) {
   const [activeTab, setActiveTab] = useState("conversion");
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState(null);
@@ -5576,20 +5704,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
     return { base, hasEval, evalRes, hasTour: !!tourRes, tourRes };
   }, [data.evaluations, data.reservations]);
 
-  // ── NL filter parsing ──
-  const nlFilter = useMemo(() => {
-    if (activeTab !== "active" && activeTab !== "all") return null;
-    return parseNLFilter(search);
-  }, [search, activeTab]);
-
   // ── Filtered & sorted client lists ──
   const tabLists = useMemo(() => {
     const sq = search.toLowerCase().trim();
     const sqDigits = sq.replace(/\D/g, "");
     let all = data.clients;
-    // If NL filter is active on active/all, skip text search for those tabs (apply NL in activeList)
-    const isNL = nlFilter && (activeTab === "active" || activeTab === "all");
-    if (sq && !isNL) {
+    if (sq) {
       all = all.filter(c => {
         const fn = `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.toLowerCase();
         const ph = (c.fields.phone || "").replace(/\D/g, "");
@@ -5602,17 +5722,15 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
     const ret = all.filter(c => clientTabMap[c.id]?.isRetention);
     const cold = all.filter(c => clientTabMap[c.id]?.isCold);
     return { conversion: conv, active, retention: ret, cold, all };
-  }, [data.clients, search, clientTabMap, clientStats, nlFilter, activeTab]);
+  }, [data.clients, search, clientTabMap, clientStats, activeTab]);
 
-  // ── Apply sub-filters (source filter for Conversion, overdue toggle, NL filter) ──
+  // ── Apply sub-filters (structured filters, source filter, overdue toggle) ──
+  const activeFilterCount = Object.keys(lcFilters).length;
   const activeList = useMemo(() => {
     let list = tabLists[activeTab] || [];
-    // NL filter (Active/All tabs)
-    if (nlFilter && (activeTab === "active" || activeTab === "all")) {
-      list = list.filter(c => {
-        const s = clientStats[c.id] || {};
-        return nlFilter.filters.every(fn => fn(c, s));
-      });
+    // Structured filters
+    if (activeFilterCount > 0) {
+      list = applyStructuredFilters(list, clientStats, clientTabMap, lcFilters);
     }
     // Source filter (Conversion tab only)
     if (activeTab === "conversion" && sourceFilter.size > 0) {
@@ -5661,7 +5779,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
       });
     }
     return list;
-  }, [tabLists, activeTab, sourceFilter, showOverdueOnly, sortCol, sortDir, clientStats, getClientSource]);
+  }, [tabLists, activeTab, sourceFilter, showOverdueOnly, sortCol, sortDir, clientStats, getClientSource, lcFilters, activeFilterCount, clientTabMap]);
 
   // ── Handlers ──
   const handleSort = (col) => { if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(col); setSortDir("asc"); } };
@@ -5938,7 +6056,14 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
           <h1 style={{margin:0,fontSize:24,fontWeight:800,color:C.text,letterSpacing:"-0.02em"}}>Customer Lifecycle</h1>
           <p style={{margin:"4px 0 0",fontSize:13,color:C.textSec}}>{data.clients.length} total clients{search?` — ${activeList.length} shown`:""}</p>
         </div>
-        <Btn onClick={() => nav("new-client")}>+ New Client</Btn>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button onClick={() => setLcFilterOpen(v => !v)}
+            style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:8,border:`1.5px solid ${activeFilterCount>0?C.pri:C.border}`,background:activeFilterCount>0?C.priLt:"transparent",color:activeFilterCount>0?C.pri:C.textSec,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            Filter{activeFilterCount>0 && <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minWidth:18,height:18,padding:"0 5px",borderRadius:9,fontSize:10,fontWeight:800,background:C.pri,color:"#fff"}}>{activeFilterCount}</span>}
+          </button>
+          <Btn onClick={() => nav("new-client")}>+ New Client</Btn>
+        </div>
       </div>
 
       {/* Main Card */}
@@ -5947,13 +6072,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
         <div style={{borderBottom:`1.5px solid ${C.borderLight}`,background:C.bg,transition:"border-color 0.15s"}}
           onFocus={e=>e.currentTarget.style.borderBottomColor=C.pri} onBlur={e=>e.currentTarget.style.borderBottomColor=C.borderLight}>
           <div style={{display:"flex",alignItems:"center",padding:"0 16px"}}>
-            {nlFilter ? (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={C.suc} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-            ) : (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={search?C.pri:C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            )}
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={search?C.pri:C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input value={search} onChange={e=>setSearch(e.target.value)}
-              placeholder={(activeTab === "active" || activeTab === "all") ? 'Try "spent more than 5k" or "hasn\'t visited in 90 days"…' : "Search by client name, dog name, or phone…"}
+              placeholder="Search by client name, dog name, or phone…"
               className="no-focus-ring"
               style={{border:"none",outline:"none",background:"transparent",fontSize:13,fontWeight:500,color:C.text,padding:"12px 10px",width:"100%",fontFamily:"inherit"}} />
             {search && <button onClick={()=>setSearch("")} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
@@ -5975,15 +6096,22 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast }) {
               )}
             </div>
           </div>
-          {/* NL Filter badge */}
-          {nlFilter && (
-            <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 16px 8px",borderTop:`1px solid ${C.borderLight}`}}>
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={C.suc} strokeWidth="2.5" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-              <span style={{fontSize:11,fontWeight:600,color:C.suc}}>Smart filter:</span>
-              {nlFilter.descriptions.map((d, i) => (
-                <span key={i} style={{fontSize:11,fontWeight:600,color:C.text,background:`${C.suc}12`,border:`1px solid ${C.suc}30`,padding:"2px 8px",borderRadius:6}}>{d}</span>
-              ))}
-              <span style={{fontSize:11,color:C.textMut,marginLeft:4}}>{activeList.length} result{activeList.length !== 1 ? "s" : ""}</span>
+          {/* Active structured filter summary */}
+          {activeFilterCount > 0 && (
+            <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 16px 8px",borderTop:`1px solid ${C.borderLight}`,flexWrap:"wrap"}}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              <span style={{fontSize:11,fontWeight:600,color:C.pri}}>{activeFilterCount} filter{activeFilterCount!==1?"s":""}:</span>
+              {Object.entries(lcFilters).map(([k, f]) => {
+                const fd = LC_FILTER_FIELDS.find(x => x.key === k);
+                return (
+                  <span key={k} style={{fontSize:11,fontWeight:600,color:C.text,background:`${C.pri}10`,border:`1px solid ${C.pri}25`,padding:"2px 8px",borderRadius:6,display:"inline-flex",alignItems:"center",gap:4}}>
+                    {fd?.label} {LC_OP_LABELS[f.op]||f.op} {f.val !== "" ? (fd?.type==="currency"?"$":"")+f.val : ""}
+                    <button onClick={()=>{ const n={...lcFilters}; delete n[k]; setLcFilters(n); }} style={{border:"none",background:"none",cursor:"pointer",color:C.pri,padding:0,display:"flex",lineHeight:1}}><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                  </span>
+                );
+              })}
+              <button onClick={()=>setLcFilters({})} style={{fontSize:10,fontWeight:600,color:C.textMut,border:"none",background:"none",cursor:"pointer",fontFamily:"inherit",textDecoration:"underline",marginLeft:4}}>Clear all</button>
+              <span style={{fontSize:11,color:C.textMut,marginLeft:"auto"}}>{activeList.length} result{activeList.length !== 1 ? "s" : ""}</span>
             </div>
           )}
         </div>
@@ -19287,6 +19415,9 @@ export default function App() {
   const [page, setPage] = useState(() => initRoute.locSlug === "enterprise" ? initRoute.page : initRoute.page);
   const [params, setParams] = useState(() => initRoute.params);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [lcFilterOpen, setLcFilterOpen] = useState(false);
+  const [lcFilters, setLcFilters] = useState({});
+  useEffect(() => { if (page !== "clients" && lcFilterOpen) setLcFilterOpen(false); }, [page, lcFilterOpen]);
   const [navTooltip, setNavTooltip] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [opsExpanded, setOpsExpanded] = useState(false);
@@ -19547,7 +19678,7 @@ export default function App() {
     switch(page) {
       case "operations": return hp("view_daily_ops") ? <OperationsHub data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "dashboard": return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
-      case "clients": return hp("view_clients") ? <ClientsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast}/> : denied;
+      case "clients": return hp("view_clients") ? <ClientsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} lcFilters={lcFilters} setLcFilters={setLcFilters} setLcFilterOpen={setLcFilterOpen}/> : denied;
       case "client-detail": return hp("view_client_detail") ? <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile} openReservationId={params.openReservation}/> : denied;
       case "new-client": return hp("create_client") ? <NewClientPage data={data} save={save} nav={nav} prefill={params.prefill} addGlobalToast={addGlobalToast}/> : denied;
       case "dog-detail": return hp("view_dog_detail") ? <DogDetailPage data={data} save={save} clientId={params.clientId} dogId={params.dogId} nav={nav} profile={profile}/> : denied;
@@ -19597,7 +19728,13 @@ export default function App() {
       `}</style>
 
       {/* Sidebar Desktop */}
-      <div className="sidebar-d" style={{width:sidebarOpen?240:68,background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,display:"flex",flexDirection:"column",transition:"width 0.25s ease",overflow:"hidden",flexShrink:0}}>
+      {(() => {
+        const filterMode = lcFilterOpen && page === "clients";
+        return (
+      <div className="sidebar-d" style={{width:filterMode?240:(sidebarOpen?240:68),background:filterMode?C.surface:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,display:"flex",flexDirection:"column",transition:"width 0.25s ease, background 0.25s ease",overflow:"hidden",flexShrink:0,borderRight:filterMode?`1px solid ${C.border}`:"none"}}>
+        {filterMode ? (
+          <LifecycleFilterPanel filters={lcFilters} onChange={setLcFilters} onClose={() => setLcFilterOpen(false)} />
+        ) : (<>
         <div style={{padding:sidebarOpen?"22px 18px 18px":"22px 0 18px",display:"flex",alignItems:"center",justifyContent:sidebarOpen?"flex-start":"center",gap:12}}>
           <div style={{flexShrink:0}}>{sidebarOpen ? <K9Logo size={38}/> : <K9LogoMini size={34}/>}</div>
           {sidebarOpen&&<div><div style={{fontSize:16,fontWeight:700,color:C.acc,whiteSpace:"nowrap",fontFamily:"'Canela', Georgia, serif",letterSpacing:"0.02em"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div>}
@@ -19630,7 +19767,10 @@ export default function App() {
           <button onClick={()=>setSidebarOpen(!sidebarOpen)} style={{width:"100%",padding:"7px 0",border:"none",borderRadius:8,background:"rgba(175,141,84,0.08)",color:"rgba(175,141,84,0.5)",cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{sidebarOpen?"‹ Collapse":"›"}</button>
           {sidebarOpen && <div style={{textAlign:"center",fontSize:9,color:"rgba(255,255,255,0.5)",marginTop:4,lineHeight:1.4}}>&copy; 2026 K9 Operations LLC<br/>All Rights Reserved</div>}
         </div>
+        </>)}
       </div>
+        );
+      })()}
 
       {/* Sidebar Tooltip */}
       {navTooltip && !sidebarOpen && <div style={{position:"fixed",top:navTooltip.top,left:navTooltip.left,transform:"translateY(-50%)",background:"#1a2940",color:"#fff",padding:"6px 12px",borderRadius:6,fontSize:12,fontWeight:600,whiteSpace:"nowrap",pointerEvents:"none",zIndex:9999,boxShadow:"0 4px 12px rgba(0,0,0,0.25)"}}>{navTooltip.label}</div>}
