@@ -280,6 +280,27 @@ const getDogAgeCompliance = (dog, policies, reservations) => {
   return { ok: false, age: ageYears, reason: `Dog is ${ageYears} years old (max: ${maxAge})` };
 };
 
+// Spay/neuter compliance: intact dogs ≥10 months with group-play tags must be Private Play
+const getSpayNeuterCompliance = (dog) => {
+  const sn = dog.fields?.spayed_neutered;
+  const isFixed = sn === "Neutered" || sn === "Spayed";
+  if (isFixed) return { ok: true, status: sn };
+  // Intact or unknown — check age
+  const dob = dog.fields?.dob;
+  if (!dob) return { ok: true, status: sn || "Unknown" };
+  const b = new Date(dob + "T00:00:00"), now = new Date();
+  let months = (now.getFullYear() - b.getFullYear()) * 12 + (now.getMonth() - b.getMonth());
+  if (now.getDate() < b.getDate()) months--;
+  if (months < 10) return { ok: true, status: "Intact", ageMonths: months };
+  // ≥10 months and intact — check tags
+  const tags = dog.tags || [];
+  const hasGroupTag = tags.includes("tag_eval") || tags.includes("tag_lp") || tags.includes("tag_sp");
+  const hasPrivateTag = tags.includes("tag_pp");
+  if (hasPrivateTag) return { ok: true, status: "Intact", ageMonths: months, privatePlay: true };
+  if (hasGroupTag) return { ok: false, status: "Intact", ageMonths: months, reason: "Intact dog \u226510 months must be Private Play" };
+  return { ok: true, status: sn || "Intact", ageMonths: months };
+};
+
 // Dog age from dob
 const calcAge = (dob) => {
   if (!dob) return null;
@@ -2698,6 +2719,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       }
       const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
       if (!ageStatus.ok) errs.compliance_age = ageStatus.reason || "Dog does not meet age requirements";
+      const snStatus = getSpayNeuterCompliance(dog);
+      if (!snStatus.ok) errs.compliance_spay = snStatus.reason || "Intact dog must be Private Play";
       if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     }
     // Agreement gate for ALL reservation types (not just boarding)
@@ -3113,6 +3136,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             const reqAgrs = agreements.filter(a=>a.required!==false);
             const vaxStatus = getVaxStatus(dog, data.requiredVaccines, data.resortPolicies);
             const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
+            const snStatus = getSpayNeuterCompliance(dog);
             const allAgrSigned = reqAgrs.every(a=>agrSigned(client,a.id));
             const CheckItem = ({ok,warn,label,detail,expandKey,children})=>(
               <div style={{flex:1,minWidth:140}}>
@@ -3204,6 +3228,17 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                         <span style={{color:C.textMut}}>Age not set</span>
                       )}
                       <div style={{fontSize:10,color:C.textMut,marginTop:4}}>Max age: {(data.resortPolicies||{}).maxDogAge||13} years. Grandfathered after {(data.resortPolicies||{}).grandfatherVisitThreshold||10} visits.</div>
+                    </div>
+                  </CheckItem>
+                  <CheckItem ok={snStatus.ok} label="Spay/Neuter" expandKey="sn"
+                    detail={snStatus.ok?(snStatus.status==="Neutered"||snStatus.status==="Spayed"?snStatus.status:(snStatus.privatePlay?"Intact (Private Play)":snStatus.status||"N/A")):`Intact — ${snStatus.reason}`}>
+                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                      <span style={{color:snStatus.ok?C.suc:C.dan,fontSize:11}}>
+                        {snStatus.status==="Neutered"||snStatus.status==="Spayed"?`${snStatus.status}`:`Intact${snStatus.ageMonths!=null?` (${snStatus.ageMonths} months old)`:""}`}
+                        {snStatus.privatePlay&&" — Private Play assigned"}
+                        {!snStatus.ok&&` — ${snStatus.reason}`}
+                      </span>
+                      <div style={{fontSize:10,color:C.textMut,marginTop:2}}>Intact dogs 10+ months old must be assigned to Private Play.</div>
                     </div>
                   </CheckItem>
                 </div>
@@ -5057,7 +5092,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                 const reqAgrs = agreements.filter(a=>a.required!==false);
                 const agrOk = reqAgrs.every(a=>agrSigned(client,a.id));
                 const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
-                const allGreen = vaxStatus.ok && ecOk && agrOk && ageStatus.ok;
+                const snStatus = getSpayNeuterCompliance(dog);
+                const allGreen = vaxStatus.ok && ecOk && agrOk && ageStatus.ok && snStatus.ok;
                 const checks = [
                   { ok: vaxStatus.ok, label: "Vaccines", expandKey: "vax",
                     detail: vaxStatus.ok ? "Up to date" : `${[...(vaxStatus.expired||[]),...(vaxStatus.missing||[])].length} issue(s)`,
@@ -5116,6 +5152,17 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                         {ageStatus.age} years old{ageStatus.grandfathered&&` (Grandfathered — ${ageStatus.visitCount||0} visits)`}{!ageStatus.ok&&!ageStatus.grandfathered&&` — ${ageStatus.reason}`}
                       </span> : <span style={{color:C.textMut,fontSize:11}}>Age not set</span>}
                       <div style={{fontSize:9,color:C.textMut,marginTop:2}}>Max age: {(data.resortPolicies||{}).maxDogAge||13} years. Grandfathered after {(data.resortPolicies||{}).grandfatherVisitThreshold||10} visits.</div>
+                    </div>
+                  },
+                  { ok: snStatus.ok, label: "Spay/Neuter", expandKey: "sn",
+                    detail: snStatus.ok?(snStatus.status==="Neutered"||snStatus.status==="Spayed"?snStatus.status:(snStatus.privatePlay?"Intact (PP)":snStatus.status||"N/A")):`Intact — ${snStatus.reason||"Must be Private Play"}`,
+                    children: <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                      <span style={{color:snStatus.ok?C.suc:C.dan,fontSize:11}}>
+                        {snStatus.status==="Neutered"||snStatus.status==="Spayed"?snStatus.status:`Intact${snStatus.ageMonths!=null?` (${snStatus.ageMonths} months old)`:""}`}
+                        {snStatus.privatePlay&&" — Private Play assigned"}
+                        {!snStatus.ok&&` — ${snStatus.reason}`}
+                      </span>
+                      <div style={{fontSize:9,color:C.textMut,marginTop:2}}>Intact dogs 10+ months old must be assigned to Private Play.</div>
                     </div>
                   },
                 ];
@@ -9241,6 +9288,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           const allAgrSigned = reqAgrs.every(a=>agrSigned(client,a.id));
           const ageResults = dogs.map(dog=>({dog,status:getDogAgeCompliance(dog,data.resortPolicies,data.reservations)}));
           const allAgeOk = ageResults.every(a=>a.status.ok);
+          const snResults = dogs.map(dog=>({dog,status:getSpayNeuterCompliance(dog)}));
+          const allSnOk = snResults.every(s=>s.status.ok);
           const CheckItem = ({ok,warn,label,detail,expandKey,children})=>(
             <div style={{flex:1,minWidth:140}}>
               <button onClick={()=>setComplianceExpand(prev=>prev===expandKey?null:expandKey)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${ok?C.suc+"60":warn?C.acc+"60":C.dan+"60"}`,background:ok?C.suc+"12":warn?C.acc+"12":C.dan+"12",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
@@ -9344,6 +9393,22 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                       </div>
                     ))}
                     <div style={{fontSize:10,color:C.textMut,marginTop:4}}>Max age: {(data.resortPolicies||{}).maxDogAge||13} years. Grandfathered after {(data.resortPolicies||{}).grandfatherVisitThreshold||10} visits.</div>
+                  </div>
+                </CheckItem>
+                <CheckItem ok={allSnOk} label="Spay/Neuter" expandKey="sn"
+                  detail={allSnOk?snResults.map(s=>`${s.dog.fields.name}: ${s.status.status==="Neutered"||s.status.status==="Spayed"?s.status.status:(s.status.privatePlay?"Intact (PP)":s.status.status||"N/A")}`).join(", ")||"N/A":snResults.filter(s=>!s.status.ok).map(s=>`${s.dog.fields.name}: Intact`).join(", ")}>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {snResults.map(s=>(
+                      <div key={s.dog.id} style={{fontSize:12}}>
+                        <span style={{fontWeight:700,color:C.text}}>{s.dog.fields.name}</span>
+                        <span style={{color:s.status.ok?C.suc:C.dan,marginLeft:8}}>
+                          {s.status.status==="Neutered"||s.status.status==="Spayed"?s.status.status:`Intact${s.status.ageMonths!=null?` (${s.status.ageMonths}mo)`:""}`}
+                          {s.status.privatePlay&&" — Private Play"}
+                          {!s.status.ok&&` — ${s.status.reason}`}
+                        </span>
+                      </div>
+                    ))}
+                    <div style={{fontSize:10,color:C.textMut,marginTop:4}}>Intact dogs 10+ months old must be assigned to Private Play.</div>
                   </div>
                 </CheckItem>
               </div>
@@ -16654,6 +16719,8 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
               const allAgrSigned = false;
               const ageResults = dogs.map(dog => ({ dog, status: getDogAgeCompliance(dog, data.resortPolicies, data.reservations) }));
               const allAgeOk = ageResults.every(a => a.status.ok);
+              const snResults = dogs.map(dog => ({ dog, status: getSpayNeuterCompliance(dog) }));
+              const allSnOk = snResults.every(s => s.status.ok);
               const renderCI = (ok, warn, label, detail, expandKey, children) => (
                 <div key={expandKey} style={{ flex: 1, minWidth: 140 }}>
                   <button onClick={() => setComplianceExpand(prev => prev === expandKey ? null : expandKey)} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${ok ? C.suc + "60" : warn ? C.acc + "60" : C.dan + "60"}`, background: ok ? C.suc + "12" : warn ? C.acc + "12" : C.dan + "12", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
@@ -16743,6 +16810,24 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                           </div>
                         ))}
                         <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>Max age: {(data.resortPolicies || {}).maxDogAge || 13} years.</div>
+                      </div>
+                    )}
+                    {renderCI(allSnOk, false, "Spay/Neuter",
+                      allSnOk ? snResults.map(s => `${s.dog.fields.name || "Dog"}: ${s.status.status === "Neutered" || s.status.status === "Spayed" ? s.status.status : (s.status.privatePlay ? "Intact (PP)" : s.status.status || "N/A")}`).join(", ") || "N/A"
+                        : snResults.filter(s => !s.status.ok).map(s => `${s.dog.fields.name || "Dog"}: Intact`).join(", "),
+                      "sn",
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {snResults.map((s, si) => (
+                          <div key={si} style={{ fontSize: 12 }}>
+                            <span style={{ fontWeight: 700, color: C.text }}>{s.dog.fields.name || `Dog ${si + 1}`}</span>
+                            <span style={{ color: s.status.ok ? C.suc : C.dan, marginLeft: 8 }}>
+                              {s.status.status === "Neutered" || s.status.status === "Spayed" ? s.status.status : `Intact${s.status.ageMonths != null ? ` (${s.status.ageMonths}mo)` : ""}`}
+                              {s.status.privatePlay && " — Private Play"}
+                              {!s.status.ok && ` — ${s.status.reason}`}
+                            </span>
+                          </div>
+                        ))}
+                        <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>Intact dogs 10+ months old must be assigned to Private Play.</div>
                       </div>
                     )}
                   </div>
