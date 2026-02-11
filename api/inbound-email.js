@@ -155,21 +155,25 @@ export default async function handler(request) {
     //   return ok({ status: 'skipped', reason: 'not_ignite', from });
     // }
     console.log(`[K9 Inbound] TEST MODE — accepting email from: ${from}, subject: ${subject}`);
+    console.log(`[K9 Inbound] TEXT preview (first 1000 chars): ${(text || '').slice(0, 1000)}`);
+    console.log(`[K9 Inbound] HTML preview (first 1000 chars): ${(html || '').slice(0, 1000)}`);
 
     // ── Parse the email ──
     // Try text first (cleaner), fall back to HTML
     let fields = parseIgniteText(text);
+    console.log(`[K9 Inbound] Text parse result: ${JSON.stringify(fields)}`);
 
     // If text parsing didn't get key fields, try HTML
     if (!fields.firstName && !fields.email) {
       const htmlFields = parseIgniteHTML(html);
+      console.log(`[K9 Inbound] HTML parse result: ${JSON.stringify(htmlFields)}`);
       fields = { ...htmlFields, ...fields }; // text fields take priority
     }
 
     // If still no useful fields, try extracting from envelope/to
     if (!fields.firstName && !fields.lastName && !fields.email && !fields.phone) {
       console.log('[K9 Inbound] No fields parsed from email body');
-      return ok({ status: 'skipped', reason: 'no_fields_parsed' });
+      return ok({ status: 'skipped', reason: 'no_fields_parsed', textLength: (text||'').length, htmlLength: (html||'').length });
     }
 
     // ── Extract "to" email for location mapping ──
