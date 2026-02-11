@@ -3139,14 +3139,14 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             const snStatus = getSpayNeuterCompliance(dog);
             const allAgrSigned = reqAgrs.every(a=>agrSigned(client,a.id));
             const CheckItem = ({ok,warn,label,detail,expandKey,children})=>(
-              <div style={{flex:1,minWidth:140}}>
+              <div style={{flex:"1 1 0",minWidth:0}}>
                 <button onClick={()=>setComplianceExpand(prev=>prev===expandKey?null:expandKey)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${ok?C.suc+"60":warn?C.acc+"60":C.dan+"60"}`,background:ok?C.suc+"12":warn?C.acc+"12":C.dan+"12",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
                   <div style={{display:"flex",alignItems:"center",gap:6}}>
                     <span style={{fontSize:14}}>{ok?"✓":warn?"⚠":"✗"}</span>
                     <span style={{fontSize:12,fontWeight:700,color:ok?C.suc:warn?C.acc:C.dan}}>{label}</span>
                     <span style={{fontSize:9,color:C.textMut,marginLeft:"auto"}}>{complianceExpand===expandKey?"▲":"▼"}</span>
                   </div>
-                  <div style={{fontSize:10,color:C.textSec,marginTop:2}}>{detail}</div>
+                  <div style={{fontSize:10,color:C.textSec,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{detail}</div>
                 </button>
                 {complianceExpand===expandKey&&children&&<div style={{marginTop:6,padding:"10px 12px",borderRadius:8,border:`1px solid ${C.border}`,background:C.surface}}>{children}</div>}
               </div>
@@ -3154,7 +3154,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             return (
               <div style={{marginBottom:20}}>
                 <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Reservation Compliance</div>
-                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                <div style={{display:"flex",gap:8,flexWrap:"nowrap"}}>
                   <CheckItem ok={vaxStatus.ok} label="Vaccines" expandKey="vax"
                     detail={vaxStatus.ok?"All up to date":`${[...vaxStatus.expired,...vaxStatus.missing].length} issue${[...vaxStatus.expired,...vaxStatus.missing].length>1?"s":""}`}>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -5201,7 +5201,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                         <I.LogIn style={{width:14,height:14}}/> Day Boarding
                       </button>
                     </div>
-                    <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:6}}>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
                       {checks.map((ck,ci)=>{
                         const expKey=`${r.dogId}|${ck.expandKey}`;
                         const isExp=dcCompExpand===expKey;
@@ -9291,14 +9291,14 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           const snResults = dogs.map(dog=>({dog,status:getSpayNeuterCompliance(dog)}));
           const allSnOk = snResults.every(s=>s.status.ok);
           const CheckItem = ({ok,warn,label,detail,expandKey,children})=>(
-            <div style={{flex:1,minWidth:140}}>
+            <div style={{flex:"1 1 0",minWidth:0}}>
               <button onClick={()=>setComplianceExpand(prev=>prev===expandKey?null:expandKey)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${ok?C.suc+"60":warn?C.acc+"60":C.dan+"60"}`,background:ok?C.suc+"12":warn?C.acc+"12":C.dan+"12",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
                 <div style={{display:"flex",alignItems:"center",gap:6}}>
                   <span style={{fontSize:14}}>{ok?"✓":warn?"⚠":"✗"}</span>
                   <span style={{fontSize:12,fontWeight:700,color:ok?C.suc:warn?C.acc:C.dan}}>{label}</span>
                   <span style={{fontSize:9,color:C.textMut,marginLeft:"auto"}}>{complianceExpand===expandKey?"▲":"▼"}</span>
                 </div>
-                <div style={{fontSize:10,color:C.textSec,marginTop:2}}>{detail}</div>
+                <div style={{fontSize:10,color:C.textSec,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{detail}</div>
               </button>
               {complianceExpand===expandKey&&children&&<div style={{marginTop:6,padding:"10px 12px",borderRadius:8,border:`1px solid ${C.border}`,background:C.surface}}>{children}</div>}
             </div>
@@ -9306,7 +9306,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           return (
             <div style={{marginTop:20}}>
               <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Reservation Compliance</div>
-              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+              <div style={{display:"flex",gap:8,flexWrap:"nowrap"}}>
                 <CheckItem ok={allVaxOk} label="Vaccines" expandKey="vax"
                   detail={allVaxOk?"All up to date":vaxResults.filter(v=>!v.status.ok).map(v=>`${v.dog.fields.name}: ${[...v.status.expired,...v.status.missing].length} issue${[...v.status.expired,...v.status.missing].length>1?"s":""}`).join(", ")}>
                   <div style={{display:"flex",flexDirection:"column",gap:6}}>
@@ -16722,14 +16722,14 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
               const snResults = dogs.map(dog => ({ dog, status: getSpayNeuterCompliance(dog) }));
               const allSnOk = snResults.every(s => s.status.ok);
               const renderCI = (ok, warn, label, detail, expandKey, children) => (
-                <div key={expandKey} style={{ flex: 1, minWidth: 140 }}>
+                <div key={expandKey} style={{ flex: "1 1 0", minWidth: 0 }}>
                   <button onClick={() => setComplianceExpand(prev => prev === expandKey ? null : expandKey)} style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${ok ? C.suc + "60" : warn ? C.acc + "60" : C.dan + "60"}`, background: ok ? C.suc + "12" : warn ? C.acc + "12" : C.dan + "12", cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                       <span style={{ fontSize: 14 }}>{ok ? "✓" : warn ? "⚠" : "✗"}</span>
                       <span style={{ fontSize: 12, fontWeight: 700, color: ok ? C.suc : warn ? C.acc : C.dan }}>{label}</span>
                       <span style={{ fontSize: 9, color: C.textMut, marginLeft: "auto" }}>{complianceExpand === expandKey ? "▲" : "▼"}</span>
                     </div>
-                    <div style={{ fontSize: 10, color: C.textSec, marginTop: 2 }}>{detail}</div>
+                    <div style={{ fontSize: 10, color: C.textSec, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{detail}</div>
                   </button>
                   {complianceExpand === expandKey && children && <div style={{ marginTop: 6, padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface }}>{children}</div>}
                 </div>
@@ -16737,7 +16737,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
               return (
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8, letterSpacing: "0.03em", textTransform: "uppercase" }}>Reservation Compliance</div>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "nowrap" }}>
                     {renderCI(allVaxOk, false, "Vaccines", allVaxOk ? "All up to date" : vaxResults.filter(v => !v.status.ok).map(v => `${v.dog.fields.name || "Dog"}: ${[...v.status.expired, ...v.status.missing].length} issue${[...v.status.expired, ...v.status.missing].length > 1 ? "s" : ""}`).join(", "), "vax",
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {vaxResults.map((v, vi) => (
