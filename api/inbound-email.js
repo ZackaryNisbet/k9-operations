@@ -250,10 +250,10 @@ export default async function handler(request) {
       console.log(`[K9] html fallback: ${Object.keys(fields).join(',')}`);
     }
 
-    // If still no useful fields, skip
-    if (!fields.firstName && !fields.lastName && !fields.email && !fields.phone) {
-      console.log(`[K9] NO FIELDS — text len=${(text||'').length}, html len=${(html||'').length}`);
-      return ok({ status: 'skipped', reason: 'no_fields_parsed' });
+    // Phone is the minimum required field — reject if missing
+    if (!fields.phone) {
+      console.log(`[K9] NO PHONE — text len=${(text||'').length}, html len=${(html||'').length}`);
+      return ok({ status: 'skipped', reason: 'no_phone_parsed' });
     }
 
     // ── Extract "to" email for location mapping ──
