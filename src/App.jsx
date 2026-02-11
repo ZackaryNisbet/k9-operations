@@ -1185,13 +1185,23 @@ function migrateFieldsToMatrix(fields, defaults) {
   const defMap = {};
   (defaults || []).forEach(d => { defMap[d.id] = d.requiredFor || []; });
   return fields.map(f => {
-    if (f.requiredFor) return f;
-    // For known fields, use the new default requiredFor level
-    if (defMap[f.id] && defMap[f.id].length > 0) {
-      return { ...f, requiredFor: defMap[f.id], required: undefined };
+    // If field still has old `required` boolean, it needs migration
+    if (typeof f.required === "boolean" || !f.requiredFor) {
+      if (defMap[f.id] && defMap[f.id].length > 0) {
+        const { required, ...rest } = f;
+        return { ...rest, requiredFor: defMap[f.id] };
+      }
+      const { required, ...rest } = f;
+      return { ...rest, requiredFor: f.required ? ["create"] : (f.requiredFor || []) };
     }
-    // Unknown custom fields: old required:true → create
-    return { ...f, requiredFor: f.required ? ["create"] : [], required: undefined };
+    // Already migrated correctly (has requiredFor, no required boolean) — but fix
+    // fields that were migrated with old cumulative logic (e.g. ["create","tour"] → ["tour"])
+    if (f.requiredFor && f.requiredFor.length > 1 && defMap[f.id]) {
+      // Keep only the minimum level (which is the actual requirement)
+      const minIdx = Math.min(...f.requiredFor.map(a => ACTION_LEVELS.indexOf(a)).filter(i => i >= 0));
+      return { ...f, requiredFor: [ACTION_LEVELS[minIdx]] };
+    }
+    return f;
   });
 }
 
@@ -16451,8 +16461,8 @@ function SettingsPage({ data, save, profile }) {
       ) : (tab === "fields" || tab === "client" || tab === "dog") ? (
         /* Required Fields Matrix */
         <div>
-          <div style={{marginBottom:16}}>
-            <p style={{margin:0,fontSize:13,color:C.textSec,lineHeight:1.5}}>Configure which fields are required at each stage. Each level includes all requirements from previous levels. Phone is always required.</p>
+          <div style={{padding:"12px 16px",borderRadius:10,background:C.priLt,border:`1.5px solid ${C.pri}20`,marginBottom:16}}>
+            <div style={{fontSize:12,color:C.text,lineHeight:1.5}}><strong>How it works:</strong> Click the level at which a field first becomes required. Higher levels automatically inherit it. For example, a field set at "Tour" is also required for "Eval" and "Reservation" — but not for "Create Record". Phone is always required.</div>
           </div>
           {[{label:"Client Fields",key:"clientFields",fields:data.clientFields},{label:"Dog Fields",key:"dogFields",fields:data.dogFields}].map(section=>{
             const colW = "1fr 70px 58px 52px 46px 62px 42px 36px";
@@ -16498,9 +16508,6 @@ function SettingsPage({ data, save, profile }) {
             </Card>
             );
           })}
-          <div style={{padding:"12px 16px",borderRadius:10,background:C.priLt,border:`1.5px solid ${C.pri}20`}}>
-            <div style={{fontSize:12,color:C.text,lineHeight:1.5}}><strong>How it works:</strong> Each level inherits all requirements from previous levels. A field required at "Tour" is also required for "Eval" and "Reservation". Checking a higher level auto-checks all lower levels.</div>
-          </div>
         </div>
       ) : null}
 
@@ -16911,20 +16918,15 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
 
   // Create client + dogs only (skip reservation)
   const handleCreateClientOnly = async () => {
-    // Validate client fields
-    const cErrs = validateFields(data.clientFields, clientFields, "create");
+    // Validate client fields at the selected action level
+    const actionLevel = selectedAction || "create";
+    const cErrs = validateFields(data.clientFields, clientFields, actionLevel);
     if (Object.keys(cErrs).length > 0) { setClientErrors(cErrs); return; }
-    // Validate dogs
-    const dErrs = {};
-    dogs.forEach((dog, i) => {
-      const dogValidation = validateFields(data.dogFields, dog.fields, "create");
-      Object.entries(dogValidation).forEach(([k, v]) => { dErrs[`${i}_${k}`] = v; });
-    });
-    if (Object.keys(dErrs).length > 0) { setDogErrors(dErrs); return; }
     // Create client
     const newClient = { id: gid(), fields: { ...clientFields, phone: (clientFields.phone || "").replace(/\D/g, "") }, createdAt: todayStr(), agreements: {} };
-    // Create dogs
-    const newDogs = dogs.map(d => ({ id: d.id, clientId: newClient.id, fields: { ...d.fields }, tags: d.tags }));
+    // Only create dogs if they have meaningful data (at least a name)
+    const dogsWithData = dogs.filter(d => d.fields && d.fields.name && d.fields.name.trim());
+    const newDogs = dogsWithData.map(d => ({ id: d.id, clientId: newClient.id, fields: { ...d.fields }, tags: d.tags }));
     await save({
       ...data,
       clients: [...data.clients, newClient],
