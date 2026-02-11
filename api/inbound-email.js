@@ -227,11 +227,15 @@ export default async function handler(request) {
     // ── Verify this is from Ignite (or allowed forwarder) ──
     console.log(`[K9] from=${from} | subj=${subject} | to=${to}`);
     const subjectLower = (subject || '').toLowerCase();
+    const bodyMention = (text + html).toLowerCase();
     const isIgnite = from.includes('leads.idigitalstrategies.com')
       || from.includes('ignitevisibility')
       || from.includes('lphik9.com')
+      || from.includes('k9resorts.com')
       || subjectLower.includes('new web form')
-      || subjectLower.includes('new phone call');
+      || subjectLower.includes('new phone call')
+      // Forwarded Ignite emails — the body contains the original Ignite sender
+      || bodyMention.includes('leads.idigitalstrategies.com');
 
     if (!isIgnite) {
       console.log(`[K9] REJECTED sender`);
