@@ -15077,9 +15077,16 @@ function EnterpriseLocationsPage({ data, save, nav, profile, handleLocationChang
             <div><Badge color="success" size="sm">Active</Badge></div>
             <div style={{display:"flex",gap:6}}>
               <button onClick={()=>{ handleLocationChange(loc.id); }} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${C.border}`,background:"transparent",color:C.pri,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Open</button>
+              {(loc.slug === "demo" || loc.name === "Demo") ? (
+                <span style={{padding:"4px 10px",borderRadius:6,background:`${C.pri}10`,color:C.pri,fontSize:10,fontWeight:700,display:"flex",alignItems:"center",gap:4}} title="Demo location is protected">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  Protected
+                </span>
+              ) : (
               <button onClick={()=> setDeleteConfirm(loc)} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${C.dan}30`,background:"transparent",color:C.dan,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center"}} title="Delete location">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
               </button>
+              )}
             </div>
           </div>
         ))}

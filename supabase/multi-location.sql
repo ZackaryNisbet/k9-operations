@@ -364,6 +364,11 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'message', 'Location not found');
   END IF;
 
+  -- Protect the Demo location from deletion
+  IF lower(loc_name) = 'demo' OR EXISTS (SELECT 1 FROM locations WHERE id = p_location_id AND slug = 'demo') THEN
+    RETURN jsonb_build_object('success', false, 'message', 'The Demo location is protected and cannot be deleted.');
+  END IF;
+
   -- Reassign any users on this location to the caller's location
   UPDATE profiles SET location_id = user_loc WHERE location_id = p_location_id;
 
