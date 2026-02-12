@@ -3762,7 +3762,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             <Btn variant="secondary" onClick={()=>setShowCancelConfirm(false)}>Keep Reservation</Btn>
             <Btn variant="danger" onClick={async ()=>{
               const cancelAudit = buildAuditEntry(reservation.id, "Cancelled Reservation", [{field:"Status",oldVal:reservation.status==="checked-in"?"Checked In":"Upcoming",newVal:"Cancelled"}], profile);
-              await save({...data, auditLog:[...(data.auditLog||[]),cancelAudit], reservations: data.reservations.map(r => r.id === reservation.id ? {...r, status:"cancelled"} : r)});
+              await save({...data, auditLog:[...(data.auditLog||[]),cancelAudit], reservations: data.reservations.map(r => r.id === reservation.id ? {...r, status:"cancelled", cancelledAt:new Date().toISOString(), cancelledBy:profile?(profile.full_name||profile.email||"Staff"):"Staff"} : r)});
               setShowCancelConfirm(false);
               onClose();
             }} icon={<I.Trash/>}>Cancel Reservation</Btn>
@@ -4050,6 +4050,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
       checkOutTime: "", status: "checked-in", notes: "",
       actualCheckInTime: nowISO,
       checkedInBy: profile ? (profile.full_name || profile.email || "Staff") : "Staff",
+      bookingSource: "walk-in",
+      createdAt: nowISO,
       careOverrides: {},
       pricing: calcReservationPricing({
         type: resType, checkIn: vd, checkOut: vd,
@@ -4116,7 +4118,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
         }
       }
     }
-    const newData = { ...data, reservations: data.reservations.map(r => r.id === rid ? { ...r, status: "checked-in" } : r) };
+    const newData = { ...data, reservations: data.reservations.map(r => r.id === rid ? { ...r, status: "checked-in", actualCheckInTime: new Date().toISOString(), checkedInBy: profile ? (profile.full_name || profile.email || "Staff") : "Staff" } : r) };
     // Audit log for direct check-in
     newData.auditLog = [...(newData.auditLog || []), buildAuditEntry(rid, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"}], profile)];
     await save(newData);
@@ -4151,7 +4153,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
       const evalResultVal = existingEval.result === "green" ? "passed_group" : "pending";
       const origRes = res ? { ...res } : null;
       const evalCoAudit = buildAuditEntry(rid, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"},{field:"Eval Result",oldVal:"Pending",newVal:evalResultVal==="passed_group"?"Passed Group":"Pending"}], profile);
-      await save({...data, auditLog:[...(data.auditLog||[]),evalCoAudit], reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out",evalResult:evalResultVal}:r)});
+      await save({...data, auditLog:[...(data.auditLog||[]),evalCoAudit], reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out",evalResult:evalResultVal,actualCheckOutTime:new Date().toISOString(),checkedOutBy:profile?(profile.full_name||profile.email||"Staff"):"Staff"}:r)});
       if (origRes) {
         const dog = data.dogs.find(d => d.id === origRes.dogId);
         addDashToast({ dogName: dog ? dog.fields.name : "?", action: "checked out", oldVal: "Checked In", newVal: "Checked Out", undoRes: origRes });
@@ -4160,7 +4162,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     }
     const origRes = res ? { ...res } : null;
     const coAudit = buildAuditEntry(rid, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"}], profile);
-    const coSaveData = {...data, auditLog:[...(data.auditLog||[]),coAudit], reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out"}:r)};
+    const coSaveData = {...data, auditLog:[...(data.auditLog||[]),coAudit], reservations:data.reservations.map(r=>r.id===rid?{...r,status:"checked-out",actualCheckOutTime:new Date().toISOString(),checkedOutBy:profile?(profile.full_name||profile.email||"Staff"):"Staff"}:r)};
     // ── Auto-feed to Conversion from Tour checkout ──
     if (res && res.type === "tour" && res.clientId) {
       const tourClient = data.clients.find(c => c.id === res.clientId);
@@ -9387,6 +9389,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         ...(isSecondInRoom ? {isSecondDogSameRoom: true} : {}),
         ...(resDiscountType !== "none" && resDiscountValue > 0 ? { discountType: resDiscountType, discountValue: resDiscountValue } : {}),
         ...(saveMode === "save-only" ? { noDeposit: true } : {}),
+        bookingSource: "phone",
+        createdAt: new Date().toISOString(),
       };
     });
 
@@ -15478,6 +15482,8 @@ function OnlineBookingsPage({ data, save, nav, profile, addGlobalToast, allLocat
       notes: `[Online Booking ${booking.id}] ${booking.notes || ""}`.trim(),
       ...(isBoarding && booking.pricing ? { pricing: booking.pricing } : {}),
       careOverrides: isBoarding ? { bath_type: booking.dog?.bathType || "", feeding: booking.dog?.feedingNotes || "", medications: booking.dog?.medicationNotes || "" } : {},
+      bookingSource: "online",
+      createdAt: new Date().toISOString(),
     };
     // Save everything
     const updated = (data.onlineBookings || []).map(b => b.id === booking.id ? { ...b, status: "accepted", processedAt: new Date().toISOString() } : b);
@@ -17633,6 +17639,8 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
         checkInTime, checkOutTime, status: "upcoming", notes,
         careOverrides: {},
         pricing: resPricing,
+        bookingSource: "phone",
+        createdAt: new Date().toISOString(),
       };
     });
 
@@ -18830,38 +18838,1207 @@ function PaymentsPage({ data, save, nav, profile }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// REPORTS PAGE — Settings-style hub with Payments, Resort Volume, Accrual Revenue
+// REUSABLE REPORT COMPONENTS — DataTable, KPICard, Charts
+// ═══════════════════════════════════════════════════════════════════════════
+
+
+/**
+ * DataTable Component
+ * Displays tabular data with search, column filtering, sorting, and pagination
+ */
+function DataTable({ columns, rows, pageSize = 50, onRowClick }) {
+  const [search, setSearch] = useState('');
+  const [filters, setFilters] = useState({});
+  const [sortKey, setSortKey] = useState(null);
+  const [sortDir, setSortDir] = useState('asc');
+  const [currentPage, setCurrentPage] = useState(0);
+  const [hoveredRowIdx, setHoveredRowIdx] = useState(null);
+
+  // Reset pagination when search/filters change
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [search, filters]);
+
+  // Filter and sort data
+  const processedRows = useMemo(() => {
+    let filtered = rows.filter(row => {
+      // Global search across all columns
+      if (search) {
+        const searchLower = search.toLowerCase();
+        const matches = columns.some(col => {
+          const value = col.render ? col.render(row) : row[col.key];
+          const strValue = String(value).toLowerCase();
+          return strValue.includes(searchLower);
+        });
+        if (!matches) return false;
+      }
+
+      // Apply column filters
+      for (const [key, filterValue] of Object.entries(filters)) {
+        if (filterValue && row[key] !== filterValue) {
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // Sort
+    if (sortKey) {
+      const col = columns.find(c => c.key === sortKey);
+      const isAsc = sortDir === 'asc';
+      filtered.sort((a, b) => {
+        const aVal = col.raw ? col.raw(a) : a[sortKey];
+        const bVal = col.raw ? col.raw(b) : b[sortKey];
+
+        if (typeof aVal === 'number' && typeof bVal === 'number') {
+          return isAsc ? aVal - bVal : bVal - aVal;
+        }
+
+        const aStr = String(aVal || '').toLowerCase();
+        const bStr = String(bVal || '').toLowerCase();
+        return isAsc ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
+      });
+    }
+
+    return filtered;
+  }, [rows, search, filters, sortKey, sortDir, columns]);
+
+  const totalCount = rows.length;
+  const filteredCount = processedRows.length;
+  const pageStart = currentPage * pageSize;
+  const pageEnd = Math.min(pageStart + pageSize, filteredCount);
+  const pageRows = processedRows.slice(pageStart, pageEnd);
+  const totalPages = Math.ceil(filteredCount / pageSize);
+
+  const handleSort = (key) => {
+    if (sortKey === key) {
+      setSortDir(sortDir === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
+
+  const handleFilterChange = (key, value) => {
+    setFilters(prev => ({
+      ...prev,
+      [key]: value === '' ? undefined : value
+    }));
+  };
+
+  return (
+    <div style={{ fontFamily: "'GT Eesti', sans-serif", padding: '20px 0' }}>
+      {/* Search Bar */}
+      <div style={{ marginBottom: '16px', display: 'flex', gap: '12px' }}>
+        <input
+          type="text"
+          placeholder="Search..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{
+            flex: 1,
+            padding: '10px 12px',
+            borderRadius: '8px',
+            border: `1.5px solid #ccc`,
+            fontSize: '13px',
+            fontFamily: "'GT Eesti', sans-serif"
+          }}
+        />
+      </div>
+
+      {/* Column Filters */}
+      <div style={{ marginBottom: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        {columns.map(col => col.filterOptions ? (
+          <select
+            key={col.key}
+            value={filters[col.key] || ''}
+            onChange={e => handleFilterChange(col.key, e.target.value)}
+            style={{
+              padding: '8px 10px',
+              borderRadius: '6px',
+              border: `1px solid #ddd`,
+              fontSize: '12px',
+              fontFamily: "'GT Eesti', sans-serif",
+              cursor: 'pointer'
+            }}
+          >
+            <option value="">All {col.label}</option>
+            {col.filterOptions.map(opt => (
+              <option key={opt} value={opt}>{opt}</option>
+            ))}
+          </select>
+        ) : null)}
+      </div>
+
+      {/* Row Count */}
+      <div style={{ marginBottom: '12px', fontSize: '12px', color: C.textMut }}>
+        {filteredCount === totalCount
+          ? `${filteredCount} records`
+          : `${filteredCount} of ${totalCount} records`
+        }
+      </div>
+
+      {/* Table */}
+      {filteredCount === 0 ? (
+        <div style={{
+          textAlign: 'center',
+          padding: '40px 20px',
+          color: C.textMut,
+          fontSize: '13px'
+        }}>
+          No records found
+        </div>
+      ) : (
+        <>
+          <div style={{
+            overflowX: 'auto',
+            borderRadius: '14px',
+            border: `1.5px solid ${C.border}`
+          }}>
+            <table style={{
+              width: '100%',
+              borderCollapse: 'collapse',
+              backgroundColor: C.surface,
+              fontSize: '12px',
+              fontFamily: "'GT Eesti', sans-serif"
+            }}>
+              <thead>
+                <tr style={{
+                  backgroundColor: C.bg,
+                  position: 'sticky',
+                  top: 0,
+                  zIndex: 10
+                }}>
+                  {columns.map(col => (
+                    <th
+                      key={col.key}
+                      onClick={() => col.sortable !== false && handleSort(col.key)}
+                      style={{
+                        padding: '12px 16px',
+                        textAlign: col.align || 'left',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.04em',
+                        color: C.text,
+                        cursor: col.sortable !== false ? 'pointer' : 'default',
+                        userSelect: 'none',
+                        maxWidth: col.maxWidth,
+                        whiteSpace: col.nowrap !== false ? 'nowrap' : 'normal',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        borderBottom: `1.5px solid ${C.border}`
+                      }}
+                    >
+                      {col.label}
+                      {col.sortable !== false && sortKey === col.key && (
+                        <span style={{ marginLeft: '6px' }}>
+                          {sortDir === 'asc' ? '▲' : '▼'}
+                        </span>
+                      )}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((row, idx) => (
+                  <tr
+                    key={idx}
+                    onClick={() => onRowClick && onRowClick(row)}
+                    onMouseEnter={() => setHoveredRowIdx(idx)}
+                    onMouseLeave={() => setHoveredRowIdx(null)}
+                    style={{
+                      backgroundColor: hoveredRowIdx === idx ? C.priLt : 'transparent',
+                      cursor: onRowClick ? 'pointer' : 'default',
+                      transition: 'background-color 0.15s',
+                      borderBottom: `1px solid ${C.borderLight}`
+                    }}
+                  >
+                    {columns.map(col => (
+                      <td
+                        key={col.key}
+                        style={{
+                          padding: '12px 16px',
+                          textAlign: col.align || 'left',
+                          whiteSpace: col.nowrap !== false ? 'nowrap' : 'normal',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          maxWidth: col.maxWidth,
+                          color: C.text
+                        }}
+                      >
+                        {col.render ? col.render(row) : row[col.key]}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Pagination */}
+          <div style={{
+            marginTop: '16px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            fontSize: '12px',
+            color: C.text
+          }}>
+            <span>
+              Showing {filteredCount > 0 ? pageStart + 1 : 0}-{pageEnd} of {filteredCount}
+            </span>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
+                disabled={currentPage === 0}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  border: `1px solid ${C.border}`,
+                  backgroundColor: C.surface,
+                  cursor: currentPage === 0 ? 'not-allowed' : 'pointer',
+                  opacity: currentPage === 0 ? 0.5 : 1,
+                  fontFamily: "'GT Eesti', sans-serif",
+                  fontSize: '12px'
+                }}
+              >
+                Prev
+              </button>
+              <span style={{ padding: '6px 12px' }}>
+                Page {totalPages > 0 ? currentPage + 1 : 0} of {totalPages}
+              </span>
+              <button
+                onClick={() => setCurrentPage(Math.min(totalPages - 1, currentPage + 1))}
+                disabled={currentPage >= totalPages - 1}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: '6px',
+                  border: `1px solid ${C.border}`,
+                  backgroundColor: C.surface,
+                  cursor: currentPage >= totalPages - 1 ? 'not-allowed' : 'pointer',
+                  opacity: currentPage >= totalPages - 1 ? 0.5 : 1,
+                  fontFamily: "'GT Eesti', sans-serif",
+                  fontSize: '12px'
+                }}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * KPICard Component
+ * Displays a key performance indicator with optional trend
+ */
+function KPICard({ label, value, prefix, suffix, trend, trendLabel, color }) {
+  const displayColor = color || C.pri;
+  const trendIsPositive = trend >= 0;
+
+  return (
+    <div style={{
+      padding: '24px 20px',
+      borderRadius: '16px',
+      border: `1.5px solid ${C.border}`,
+      backgroundColor: C.surface,
+      fontFamily: "'GT Eesti', sans-serif"
+    }}>
+      <div style={{
+        fontSize: '12px',
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+        color: C.textSec,
+        marginBottom: '12px'
+      }}>
+        {label}
+      </div>
+
+      <div style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: '8px',
+        marginBottom: trend ? '12px' : 0
+      }}>
+        {prefix && (
+          <span style={{ fontSize: '20px', color: C.textSec }}>
+            {prefix}
+          </span>
+        )}
+        <div style={{
+          fontSize: '32px',
+          fontWeight: 800,
+          color: displayColor
+        }}>
+          {value}
+        </div>
+        {suffix && (
+          <span style={{ fontSize: '16px', color: C.textSec }}>
+            {suffix}
+          </span>
+        )}
+      </div>
+
+      {trend !== undefined && (
+        <div style={{
+          fontSize: '13px',
+          color: trendIsPositive ? C.suc : C.dan,
+          fontWeight: 600
+        }}>
+          <span style={{ marginRight: '4px' }}>
+            {trendIsPositive ? '↑' : '↓'}
+          </span>
+          {Math.abs(trend)}% {trendLabel}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * SVGLineChart Component
+ * Renders a line chart with area fill and grid
+ */
+function SVGLineChart({ data, width = 600, height = 200, color = C.pri, yPrefix }) {
+  const padding = { top: 20, right: 20, bottom: 30, left: 55 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+
+  if (!data || data.length === 0) {
+    return <svg width={width} height={height} />;
+  }
+
+  const yValues = data.map(d => d.y);
+  const yMin = 0;
+  const yMax = Math.max(...yValues);
+  const yRange = yMax - yMin || 1;
+
+  const xStep = chartWidth / (data.length - 1 || 1);
+  const yScale = chartHeight / yRange;
+
+  const formatYValue = (val) => {
+    if (val >= 1000) return (val / 1000).toFixed(1) + 'k';
+    return Math.round(val);
+  };
+
+  // Generate path for line
+  const pathPoints = data.map((d, i) => {
+    const x = padding.left + i * xStep;
+    const y = padding.top + chartHeight - (d.y - yMin) * yScale;
+    return [x, y];
+  });
+
+  const linePath = pathPoints.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p[0]} ${p[1]}`).join(' ');
+
+  // Area path
+  const areaPath = `${linePath} L ${padding.left + chartWidth} ${padding.top + chartHeight} L ${padding.left} ${padding.top + chartHeight} Z`;
+
+  // Y-axis grid lines and ticks
+  const yTicks = 5;
+  const gridLines = [];
+  for (let i = 0; i <= yTicks; i++) {
+    const ratio = i / yTicks;
+    const yPos = padding.top + chartHeight - ratio * chartHeight;
+    const val = yMin + ratio * yRange;
+    gridLines.push({
+      y: yPos,
+      label: formatYValue(val)
+    });
+  }
+
+  // X-axis labels (show ~7 evenly spaced)
+  const xLabelCount = Math.min(7, data.length);
+  const xLabelStep = Math.ceil(data.length / xLabelCount);
+  const xLabels = [];
+  for (let i = 0; i < data.length; i += xLabelStep) {
+    const x = padding.left + i * xStep;
+    xLabels.push({
+      x,
+      label: data[i].x,
+      idx: i
+    });
+  }
+
+  return (
+    <svg width={width} height={height} style={{ fontFamily: "'GT Eesti', sans-serif" }}>
+      {/* Y-axis grid lines */}
+      {gridLines.map((line, i) => (
+        <g key={`grid-${i}`}>
+          <line
+            x1={padding.left}
+            y1={line.y}
+            x2={width - padding.right}
+            y2={line.y}
+            stroke="#e5e5e5"
+            strokeWidth="1"
+            strokeDasharray="3,2"
+          />
+          <text
+            x={padding.left - 10}
+            y={line.y + 4}
+            textAnchor="end"
+            fontSize="11"
+            fill={C.textMut}
+          >
+            {yPrefix}{line.label}
+          </text>
+        </g>
+      ))}
+
+      {/* Area fill */}
+      <path
+        d={areaPath}
+        fill={color + '15'}
+        stroke="none"
+      />
+
+      {/* Line */}
+      <path
+        d={linePath}
+        stroke={color}
+        strokeWidth="2.5"
+        fill="none"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+
+      {/* Data points */}
+      {pathPoints.map((p, i) => (
+        <circle
+          key={`dot-${i}`}
+          cx={p[0]}
+          cy={p[1]}
+          r="3"
+          fill={color}
+        />
+      ))}
+
+      {/* X-axis labels */}
+      {xLabels.map((label, i) => (
+        <text
+          key={`xlabel-${i}`}
+          x={label.x}
+          y={height - 8}
+          textAnchor="middle"
+          fontSize="11"
+          fill={C.textMut}
+        >
+          {label.label}
+        </text>
+      ))}
+
+      {/* Axes */}
+      <line
+        x1={padding.left}
+        y1={padding.top}
+        x2={padding.left}
+        y2={height - padding.bottom}
+        stroke={C.border}
+        strokeWidth="1.5"
+      />
+      <line
+        x1={padding.left}
+        y1={height - padding.bottom}
+        x2={width - padding.right}
+        y2={height - padding.bottom}
+        stroke={C.border}
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+/**
+ * SVGBarChart Component
+ * Renders a vertical bar chart with grid and labels
+ */
+function SVGBarChart({ data, width = 600, height = 220, color = C.pri }) {
+  const padding = { top: 20, right: 20, bottom: 50, left: 55 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+
+  if (!data || data.length === 0) {
+    return <svg width={width} height={height} />;
+  }
+
+  const values = data.map(d => d.value);
+  const yMax = Math.max(...values);
+  const yRange = yMax || 1;
+  const yScale = chartHeight / yRange;
+
+  const barWidth = Math.max(15, Math.floor(chartWidth / data.length * 0.7));
+  const barSpacing = chartWidth / data.length;
+
+  // Y-axis grid lines and ticks
+  const yTicks = 5;
+  const gridLines = [];
+  for (let i = 0; i <= yTicks; i++) {
+    const ratio = i / yTicks;
+    const yPos = padding.top + chartHeight - ratio * chartHeight;
+    const val = ratio * yRange;
+    gridLines.push({
+      y: yPos,
+      label: Math.round(val)
+    });
+  }
+
+  const shouldRotateLabels = data.length > 10;
+
+  return (
+    <svg width={width} height={height} style={{ fontFamily: "'GT Eesti', sans-serif" }}>
+      {/* Y-axis grid lines */}
+      {gridLines.map((line, i) => (
+        <g key={`grid-${i}`}>
+          <line
+            x1={padding.left}
+            y1={line.y}
+            x2={width - padding.right}
+            y2={line.y}
+            stroke="#e5e5e5"
+            strokeWidth="1"
+            strokeDasharray="3,2"
+          />
+          <text
+            x={padding.left - 10}
+            y={line.y + 4}
+            textAnchor="end"
+            fontSize="11"
+            fill={C.textMut}
+          >
+            {line.label}
+          </text>
+        </g>
+      ))}
+
+      {/* Bars */}
+      {data.map((item, i) => {
+        const xCenter = padding.left + i * barSpacing + barSpacing / 2;
+        const barHeight = (item.value / yRange) * chartHeight;
+        const yStart = padding.top + chartHeight - barHeight;
+
+        return (
+          <g key={`bar-${i}`}>
+            <rect
+              x={xCenter - barWidth / 2}
+              y={yStart}
+              width={barWidth}
+              height={barHeight}
+              fill={item.color || color}
+              rx="3"
+              ry="3"
+            />
+            {/* Value label above bar */}
+            <text
+              x={xCenter}
+              y={yStart - 8}
+              textAnchor="middle"
+              fontSize="11"
+              fontWeight="600"
+              fill={C.text}
+            >
+              {Math.round(item.value)}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* X-axis labels */}
+      {data.map((item, i) => {
+        const xCenter = padding.left + i * barSpacing + barSpacing / 2;
+
+        return (
+          <text
+            key={`xlabel-${i}`}
+            x={xCenter}
+            y={height - padding.bottom + 25}
+            textAnchor="middle"
+            fontSize="11"
+            fill={C.textMut}
+            transform={shouldRotateLabels ? `rotate(-45 ${xCenter} ${height - padding.bottom + 25})` : undefined}
+          >
+            {item.label}
+          </text>
+        );
+      })}
+
+      {/* Axes */}
+      <line
+        x1={padding.left}
+        y1={padding.top}
+        x2={padding.left}
+        y2={height - padding.bottom}
+        stroke={C.border}
+        strokeWidth="1.5"
+      />
+      <line
+        x1={padding.left}
+        y1={height - padding.bottom}
+        x2={width - padding.right}
+        y2={height - padding.bottom}
+        stroke={C.border}
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+/**
+ * SVGDonutChart Component
+ * Renders a donut chart with legend
+ */
+function SVGDonutChart({ segments, size = 200, innerRadius = 60 }) {
+  const outerRadius = size / 2;
+
+  if (!segments || segments.length === 0) {
+    return <div />;
+  }
+
+  const total = segments.reduce((sum, s) => sum + s.value, 0);
+
+  // Calculate arc paths
+  const arcs = [];
+  let currentAngle = -Math.PI / 2;
+
+  segments.forEach(segment => {
+    const sliceAngle = (segment.value / total) * 2 * Math.PI;
+    const startAngle = currentAngle;
+    const endAngle = currentAngle + sliceAngle;
+
+    const x1 = outerRadius + outerRadius * Math.cos(startAngle);
+    const y1 = outerRadius + outerRadius * Math.sin(startAngle);
+    const x2 = outerRadius + outerRadius * Math.cos(endAngle);
+    const y2 = outerRadius + outerRadius * Math.sin(endAngle);
+
+    const ix1 = outerRadius + innerRadius * Math.cos(startAngle);
+    const iy1 = outerRadius + innerRadius * Math.sin(startAngle);
+    const ix2 = outerRadius + innerRadius * Math.cos(endAngle);
+    const iy2 = outerRadius + innerRadius * Math.sin(endAngle);
+
+    const largeArc = sliceAngle > Math.PI ? 1 : 0;
+
+    const path = `M ${ix1} ${iy1} L ${x1} ${y1} A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${ix1} ${iy1} Z`;
+
+    arcs.push({
+      path,
+      segment,
+      percentage: ((segment.value / total) * 100).toFixed(1)
+    });
+
+    currentAngle = endAngle;
+  });
+
+  return (
+    <div style={{
+      display: 'flex',
+      gap: '40px',
+      alignItems: 'center',
+      fontFamily: "'GT Eesti', sans-serif"
+    }}>
+      {/* Donut SVG */}
+      <svg width={size} height={size} style={{ flexShrink: 0 }}>
+        {/* Arcs */}
+        {arcs.map((arc, i) => (
+          <path
+            key={`arc-${i}`}
+            d={arc.path}
+            fill={arc.segment.color}
+            stroke={C.surface}
+            strokeWidth="2"
+          />
+        ))}
+
+        {/* Center text */}
+        <text
+          x={outerRadius}
+          y={outerRadius - 5}
+          textAnchor="middle"
+          fontSize="18"
+          fontWeight="800"
+          fill={C.pri}
+        >
+          {total}
+        </text>
+        <text
+          x={outerRadius}
+          y={outerRadius + 15}
+          textAnchor="middle"
+          fontSize="12"
+          fill={C.textMut}
+        >
+          Total
+        </text>
+      </svg>
+
+      {/* Legend */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        {arcs.map((arc, i) => (
+          <div key={`legend-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div
+              style={{
+                width: '12px',
+                height: '12px',
+                borderRadius: '50%',
+                backgroundColor: arc.segment.color,
+                flexShrink: 0
+              }}
+            />
+            <div style={{ fontSize: '12px', color: C.text }}>
+              <div style={{ fontWeight: 600 }}>{arc.segment.label}</div>
+              <div style={{ fontSize: '11px', color: C.textMut }}>
+                {arc.segment.value} ({arc.percentage}%)
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * SVGHeatmap Component
+ * Renders a 2D heatmap with color intensity based on values
+ */
+function SVGHeatmap({ data, rowLabels, colLabels, width = 600, height = 300 }) {
+  if (!data || data.length === 0) {
+    return <svg width={width} height={height} />;
+  }
+
+  const rows = data.length;
+  const cols = data[0].length;
+
+  const padding = { top: 30, right: 20, bottom: 20, left: 120 };
+  const cellWidth = (width - padding.left - padding.right) / cols;
+  const cellHeight = (height - padding.top - padding.bottom) / rows;
+
+  // Find max value for color scaling
+  const allValues = data.flat();
+  const maxVal = Math.max(...allValues);
+
+  const getOpacity = (val) => {
+    return Math.min(0.95, Math.max(0.1, val / (maxVal || 1)));
+  };
+
+  return (
+    <svg width={width} height={height} style={{ fontFamily: "'GT Eesti', sans-serif" }}>
+      {/* Cells */}
+      {data.map((row, rowIdx) => (
+        row.map((val, colIdx) => {
+          const x = padding.left + colIdx * cellWidth;
+          const y = padding.top + rowIdx * cellHeight;
+          const opacity = getOpacity(val);
+
+          return (
+            <g key={`cell-${rowIdx}-${colIdx}`}>
+              <rect
+                x={x}
+                y={y}
+                width={cellWidth}
+                height={cellHeight}
+                fill={C.pri}
+                opacity={opacity}
+                stroke={C.borderLight}
+                strokeWidth="0.5"
+                rx="4"
+                ry="4"
+              />
+              <text
+                x={x + cellWidth / 2}
+                y={y + cellHeight / 2 + 4}
+                textAnchor="middle"
+                fontSize="11"
+                fill={opacity > 0.6 ? C.surface : C.text}
+                fontWeight="600"
+              >
+                {Math.round(val)}
+              </text>
+            </g>
+          );
+        })
+      ))}
+
+      {/* Row labels */}
+      {rowLabels && rowLabels.map((label, idx) => (
+        <text
+          key={`rowlabel-${idx}`}
+          x={padding.left - 10}
+          y={padding.top + idx * cellHeight + cellHeight / 2 + 4}
+          textAnchor="end"
+          fontSize="11"
+          fill={C.text}
+        >
+          {label}
+        </text>
+      ))}
+
+      {/* Column labels */}
+      {colLabels && colLabels.map((label, idx) => (
+        <text
+          key={`collabel-${idx}`}
+          x={padding.left + idx * cellWidth + cellWidth / 2}
+          y={padding.top - 8}
+          textAnchor="middle"
+          fontSize="11"
+          fill={C.text}
+        >
+          {label}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
+/**
+ * SVGFunnel Component
+ * Renders a funnel chart showing conversion through stages
+ */
+function SVGFunnel({ stages, width = 400, height = 280 }) {
+  if (!stages || stages.length === 0) {
+    return <svg width={width} height={height} />;
+  }
+
+  const padding = { top: 20, right: 20, bottom: 20, left: 20 };
+  const chartWidth = width - padding.left - padding.right;
+  const chartHeight = height - padding.top - padding.bottom;
+  const stageHeight = chartHeight / stages.length;
+
+  const maxValue = Math.max(...stages.map(s => s.value));
+
+  return (
+    <svg width={width} height={height} style={{ fontFamily: "'GT Eesti', sans-serif" }}>
+      {stages.map((stage, idx) => {
+        const topWidth = (chartWidth * stage.value) / maxValue;
+        const nextValue = stages[idx + 1] ? stages[idx + 1].value : 0;
+        const bottomWidth = (chartWidth * nextValue) / maxValue;
+
+        const x1 = padding.left + (chartWidth - topWidth) / 2;
+        const x2 = padding.left + (chartWidth - bottomWidth) / 2;
+        const y1 = padding.top + idx * stageHeight;
+        const y2 = y1 + stageHeight;
+
+        const opacity = 1 - (idx * 0.15);
+        const stageColor = stage.color || C.pri;
+
+        // Calculate conversion % from previous stage
+        const prevValue = idx > 0 ? stages[idx - 1].value : stage.value;
+        const conversionPct = ((stage.value / prevValue) * 100).toFixed(1);
+
+        return (
+          <g key={`stage-${idx}`}>
+            {/* Trapezoid */}
+            <polygon
+              points={`${x1},${y1} ${x1 + topWidth},${y1} ${x2 + bottomWidth},${y2} ${x2},${y2}`}
+              fill={stageColor}
+              opacity={opacity}
+              stroke={C.border}
+              strokeWidth="1"
+            />
+
+            {/* Label */}
+            <text
+              x={padding.left + chartWidth / 2}
+              y={y1 + stageHeight / 2 - 10}
+              textAnchor="middle"
+              fontSize="12"
+              fontWeight="600"
+              fill={opacity > 0.5 ? C.surface : C.text}
+            >
+              {stage.label}
+            </text>
+
+            {/* Value */}
+            <text
+              x={padding.left + chartWidth / 2}
+              y={y1 + stageHeight / 2 + 8}
+              textAnchor="middle"
+              fontSize="13"
+              fontWeight="700"
+              fill={opacity > 0.5 ? C.surface : C.text}
+            >
+              {stage.value}
+            </text>
+
+            {/* Conversion % */}
+            {idx > 0 && (
+              <text
+                x={padding.left + chartWidth / 2}
+                y={y1 + stageHeight / 2 + 22}
+                textAnchor="middle"
+                fontSize="10"
+                fill={opacity > 0.5 ? C.surface : C.textMut}
+              >
+                {conversionPct}%
+              </text>
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REPORTS PAGE — Entities + Analytics two-layer reporting suite
 // ═══════════════════════════════════════════════════════════════════════════
 function ReportsPage({ data, save, nav, profile }) {
-  const [tab, setTab] = useState(null);
+  const [section, setSection] = useState("entities"); // "entities" | "analytics"
+  const [activeReport, setActiveReport] = useState(null);
   const [reportsSearch, setReportsSearch] = useState("");
 
-  // ── Date range state (shared by volume & revenue reports) ──
   const today = new Date().toISOString().split("T")[0];
   const def30 = addDays(today, -30);
   const [rangeFrom, setRangeFrom] = useState(def30);
   const [rangeTo, setRangeTo] = useState(today);
 
-  // ── Report sections ──
-  const reportSections = [
-    { label: "Financial", items: [
-      { id: "payments", label: "Payments", desc: "View transaction history, record payments, and manage refunds", keywords: "payments transactions money refund deposit" },
-      { id: "accrual-revenue", label: "Accrual Revenue", desc: "Daily revenue recognized at time of service completion, not transaction", keywords: "accrual revenue daily income recognized earned" },
-    ]},
-    { label: "Operations", items: [
-      { id: "resort-volume", label: "Resort Volume", desc: "Evaluations, tours, daycare, and overnight rooms — accrual-based", keywords: "volume evaluations tours daycare boarding rooms occupancy" },
-    ]},
-  ];
+  // ═══ LOCAL HELPERS ═══
+  const fmtD = (dateStr) => {
+    if (!dateStr) return "";
+    const dt = new Date(dateStr + "T00:00:00");
+    return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" });
+  };
 
-  const allCategories = reportSections.flatMap(s => s.items);
-  const sq = reportsSearch.trim().toLowerCase();
-  const filteredSections = sq
-    ? [{ label: null, items: allCategories.filter(c => c.label.toLowerCase().includes(sq) || c.desc.toLowerCase().includes(sq) || c.keywords.includes(sq)) }]
-    : reportSections;
+  const fmtTime = (t) => {
+    if (!t) return "";
+    const [h, m] = t.split(":").map(Number);
+    const ampm = h >= 12 ? "PM" : "AM";
+    const h12 = h % 12 || 12;
+    return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+  };
 
-  // ════════════════════════════════════════════════════════════════════
-  // ACCRUAL HELPERS — used by both Volume and Revenue reports
-  // ════════════════════════════════════════════════════════════════════
+  const fmtISO = (iso) => {
+    if (!iso) return "";
+    const [dateStr] = iso.split("T");
+    return fmtD(dateStr);
+  };
+
+  const fmt$ = (v) => {
+    if (typeof v !== "number") return "$0.00";
+    return `$${Math.abs(v).toFixed(2)}`;
+  };
+
+  const statusBadge = (status, style = {}) => {
+    let color = C.textMut, bg = C.bg;
+    if (status === "upcoming") { color = C.info; bg = C.info + "14"; }
+    else if (status === "checked-in") { color = C.suc; bg = C.suc + "14"; }
+    else if (status === "checked-out") { color = C.text; bg = C.bg; }
+    else if (status === "cancelled") { color = C.dan; bg = C.dan + "14"; }
+    return (
+      <div style={{ display: "inline-block", padding: "4px 10px", borderRadius: 6, background: bg, color, fontSize: 11, fontWeight: 600, textTransform: "capitalize", ...style }}>
+        {status || "—"}
+      </div>
+    );
+  };
+
+  // ═══ DATA LOOKUP HELPERS ═══
+  const allDogs = data.dogs || [];
+  const allClients = data.clients || [];
+  const allRes = data.reservations || [];
+  const allEvals = data.evaluations || [];
+  const allPayments = data.payments || [];
+
+  const getDog = (id) => allDogs.find(d => d.id === id);
+  const getClient = (id) => allClients.find(c => c.id === id);
+
+  // ═══ ENTITY DATA BUILDERS ═══
+  const overnightData = useMemo(() => {
+    return (allRes || [])
+      .filter(r => r.type === "boarding" && r.status !== "cancelled")
+      .map(r => {
+        const dog = getDog(r.dogId);
+        const client = getClient(r.clientId);
+        const nights = countNights(r.checkIn, r.checkOut);
+        return {
+          id: r.id,
+          idShort: (r.id || "").slice(-6),
+          dogName: dog?.fields?.name || "—",
+          clientFirst: client?.fields?.first_name || "—",
+          clientLast: client?.fields?.last_name || "—",
+          phone: client?.fields?.phone || "—",
+          roomType: r.roomType || "—",
+          room: r.room || "—",
+          checkInDate: r.checkIn || "—",
+          scheduledCheckInTime: r.checkInTime || "—",
+          actualCheckInTime: r.actualCheckInTime || "—",
+          checkOutDate: r.checkOut || "—",
+          scheduledCheckOutTime: r.checkOutTime || "—",
+          actualCheckOutTime: r.actualCheckOutTime || "—",
+          nights,
+          status: r.status || "upcoming",
+          bookingSource: r.bookingSource || "—",
+          total: r.pricing?.total || 0,
+          notes: r.notes || "—",
+        };
+      });
+  }, [allRes, allDogs, allClients]);
+
+  const daycareData = useMemo(() => {
+    return (allRes || [])
+      .filter(r => r.type === "daycare" && r.status !== "cancelled")
+      .map(r => {
+        const dog = getDog(r.dogId);
+        const client = getClient(r.clientId);
+        const hours = countHours(r.checkInTime, r.checkOutTime);
+        const isHalf = hours < 5;
+        return {
+          id: r.id,
+          idShort: (r.id || "").slice(-6),
+          dogName: dog?.fields?.name || "—",
+          clientFirst: client?.fields?.first_name || "—",
+          clientLast: client?.fields?.last_name || "—",
+          phone: client?.fields?.phone || "—",
+          visitDate: r.checkIn || "—",
+          checkInTime: r.checkInTime || "—",
+          checkOutTime: r.checkOutTime || "—",
+          hours,
+          dayType: isHalf ? "Half" : "Full",
+          size: r.daycareSize || "—",
+          status: r.status || "upcoming",
+          bookingSource: r.bookingSource || "—",
+          total: r.pricing?.total || 0,
+          notes: r.notes || "—",
+        };
+      });
+  }, [allRes, allDogs, allClients]);
+
+  const evaluationData = useMemo(() => {
+    return (allEvals || []).map(e => {
+      const dog = getDog(e.dogId);
+      const res = (allRes || []).find(r => r.dogId === e.dogId && r.type === "evaluation");
+      const client = res ? getClient(res.clientId) : null;
+      const score = e.score || 0;
+      const maxScore = e.maxScore || 100;
+      const scorePercent = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+      return {
+        id: e.id,
+        idShort: (e.id || "").slice(-6),
+        dogName: dog?.fields?.name || "—",
+        clientFirst: client?.fields?.first_name || "—",
+        clientLast: client?.fields?.last_name || "—",
+        phone: client?.fields?.phone || "—",
+        evalDate: e.evalDate || e.createdAt?.split("T")[0] || "—",
+        evaluator: e.evaluatorName || "—",
+        score,
+        maxScore,
+        scorePercent,
+        result: e.result || "—",
+        breed: dog?.fields?.breed || "—",
+        weight: dog?.fields?.weight || "—",
+        notes: e.notes || "—",
+      };
+    });
+  }, [allEvals, allDogs, allRes, allClients]);
+
+  const toursData = useMemo(() => {
+    return (allRes || [])
+      .filter(r => r.type === "tour" && r.status !== "cancelled")
+      .map(r => {
+        const dog = r.dogId ? getDog(r.dogId) : null;
+        const client = getClient(r.clientId);
+        return {
+          id: r.id,
+          idShort: (r.id || "").slice(-6),
+          dogName: dog?.fields?.name || "—",
+          clientFirst: client?.fields?.first_name || "—",
+          clientLast: client?.fields?.last_name || "—",
+          phone: client?.fields?.phone || "—",
+          tourDate: r.checkIn || "—",
+          tourTime: r.checkInTime || "—",
+          status: r.status || "upcoming",
+          bookingSource: r.bookingSource || "—",
+          notes: r.notes || "—",
+        };
+      });
+  }, [allRes, allDogs, allClients]);
+
+  const dayboardingData = useMemo(() => {
+    return (allRes || [])
+      .filter(r => r.type === "dayboarding" && r.status !== "cancelled")
+      .map(r => {
+        const dog = getDog(r.dogId);
+        const client = getClient(r.clientId);
+        return {
+          id: r.id,
+          idShort: (r.id || "").slice(-6),
+          dogName: dog?.fields?.name || "—",
+          clientFirst: client?.fields?.first_name || "—",
+          clientLast: client?.fields?.last_name || "—",
+          phone: client?.fields?.phone || "—",
+          visitDate: r.checkIn || "—",
+          checkInTime: r.checkInTime || "—",
+          checkOutTime: r.checkOutTime || "—",
+          status: r.status || "upcoming",
+          total: r.pricing?.total || 0,
+          notes: r.notes || "—",
+        };
+      });
+  }, [allRes, allDogs, allClients]);
+
+  const cancellationsData = useMemo(() => {
+    return (allRes || [])
+      .filter(r => r.status === "cancelled")
+      .map(r => {
+        const dog = getDog(r.dogId);
+        const client = getClient(r.clientId);
+        const daysBeforeService = r.checkIn ? Math.floor((new Date(r.checkIn + "T00:00:00") - new Date()) / 86400000) : 0;
+        return {
+          id: r.id,
+          idShort: (r.id || "").slice(-6),
+          serviceType: r.type || "—",
+          dogName: dog?.fields?.name || "—",
+          clientName: client ? `${client.fields?.first_name || ""} ${client.fields?.last_name || ""}`.trim() : "—",
+          phone: client?.fields?.phone || "—",
+          originalCheckIn: r.checkIn || "—",
+          originalCheckOut: r.checkOut || "—",
+          cancelledAt: r.cancelledAt?.split("T")[0] || "—",
+          cancelledBy: r.cancelledBy || "—",
+          daysBeforeService,
+          notes: r.notes || "—",
+        };
+      });
+  }, [allRes, allDogs, allClients]);
+
+  const clientDirectoryData = useMemo(() => {
+    return (allClients || []).map(c => {
+      const clientRes = (allRes || []).filter(r => r.clientId === c.id && r.status !== "cancelled");
+      const totalVisits = clientRes.length;
+      const totalBoardingNights = clientRes
+        .filter(r => r.type === "boarding")
+        .reduce((sum, r) => sum + countNights(r.checkIn, r.checkOut), 0);
+      const totalDaycareDays = clientRes.filter(r => r.type === "daycare").length;
+      const totalSpent = clientRes.reduce((sum, r) => sum + (r.pricing?.total || 0), 0);
+      const clientDogs = (allDogs || []).filter(d => d.clientId === c.id).length;
+      const lastRes = clientRes.sort((a, b) => new Date(b.checkIn || 0) - new Date(a.checkIn || 0))[0];
+      const lastVisitDate = lastRes?.checkIn || null;
+      const daysSinceLastVisit = lastVisitDate ? Math.floor((new Date() - new Date(lastVisitDate + "T00:00:00")) / 86400000) : null;
+      const isActive = daysSinceLastVisit !== null && daysSinceLastVisit <= 90;
+      return {
+        id: c.id,
+        idShort: (c.id || "").slice(-6),
+        firstName: c.fields?.first_name || "—",
+        lastName: c.fields?.last_name || "—",
+        phone: c.fields?.phone || "—",
+        email: c.fields?.email || "—",
+        registeredAt: c.createdAt?.split("T")[0] || "—",
+        lastVisitDate: lastVisitDate || "—",
+        daysSinceLastVisit: daysSinceLastVisit !== null ? daysSinceLastVisit : "—",
+        totalVisits,
+        totalBoardingNights,
+        totalDaycareDays,
+        totalSpent,
+        dogsCount: clientDogs,
+        referralSource: c.fields?.referral_source || "—",
+        isActive,
+      };
+    });
+  }, [allClients, allRes, allDogs]);
+
+  // ═══ EXISTING buildAccrualData (COPY FROM EXISTING CODE) ═══
   const buildAccrualData = useMemo(() => {
     const from = rangeFrom, to = rangeTo;
     if (!from || !to) return { days: [], totals: {} };
@@ -18879,39 +20056,29 @@ function ReportsPage({ data, save, nav, profile }) {
     const ftp = { ...DEF_PRICING.foodTypePricing, ...(pricing.foodTypePricing || {}) };
     const mp = { ...DEF_PRICING.medPricing, ...(pricing.medPricing || {}) };
 
-    // Build each day in range
     const days = [];
     let cur = from;
     while (cur <= to) { days.push(cur); cur = addDays(cur, 1); }
 
-    // Per-day accumulators
     const dayData = {};
     days.forEach(d => { dayData[d] = { roomRevenue: 0, multiDogAdj: 0, feedingRevenue: 0, medRevenue: 0, addOnRevenue: 0, discountAdj: 0, evalRevenue: 0, tourRevenue: 0, daycareRevenue: 0, dayboardingRevenue: 0, totalRevenue: 0, roomsSold: 0, evalCount: 0, tourCount: 0, daycareCount: 0, refunds: 0 }; });
 
-    // Process each reservation
     reservations.forEach(res => {
       if (res.status === "cancelled") return;
 
       const dog = (data.dogs || []).find(d => d.id === res.dogId);
       const fields = dog ? dog.fields : {};
 
-      // ─── BOARDING (accrual per night) ─────────────────────────────
       if (res.type === "boarding" && res.checkIn && res.checkOut) {
-        // Only count nights that are actually completed (checked-in or checked-out, and day is in the past or today)
         const resStart = res.checkIn;
         const resEnd = res.checkOut;
-        // A night is "completed" when the guest has stayed through that night.
-        // Night N = the night starting on date N. It's completed when the following morning arrives.
-        // So for accrual, we count date D as a completed night if D >= resStart AND D < resEnd AND D < today (or D <= today if checked-out)
         const isActive = res.status === "checked-in" || res.status === "checked-out";
         if (!isActive && res.status !== "upcoming") return;
-        // For upcoming reservations that haven't started yet, skip entirely
         if (res.status === "upcoming" && resStart > today) return;
 
         const totalNights = countNights(resStart, resEnd);
         if (totalNights <= 0) return;
 
-        // Per-night room rate (handle room segments)
         const getNightRate = (nightDate) => {
           if (res.roomSegments && res.roomSegments.length > 0) {
             const seg = res.roomSegments.find(s => nightDate >= s.startDate && nightDate < s.endDate);
@@ -18920,13 +20087,10 @@ function ReportsPage({ data, save, nav, profile }) {
           return boardingRates[res.roomType] || 0;
         };
 
-        // Multi-dog discount factor
         const multiDogFactor = res.isSecondDogSameRoom ? (1 - multiDogDiscount / 100) : 1;
 
-        // Manual discount: spread evenly across nights
         let manualDiscountPerNight = 0;
         if (res.discountType === "percent" && res.discountValue > 0) {
-          // Calculate total room cost first to get per-night discount
           let totalRoom = 0;
           let nd = resStart;
           while (nd < resEnd) { totalRoom += getNightRate(nd) * multiDogFactor; nd = addDays(nd, 1); }
@@ -18936,11 +20100,8 @@ function ReportsPage({ data, save, nav, profile }) {
           manualDiscountPerNight = totalNights > 0 ? res.discountValue / totalNights : 0;
         }
 
-        // Iterate each night of the stay
         let nightDate = resStart;
         while (nightDate < resEnd) {
-          // Is this night completed? For checked-out: all nights count up to resEnd.
-          // For checked-in: only nights up to and including yesterday (today's night hasn't been completed yet).
           const nightCompleted = res.status === "checked-out" ? true : (nightDate < today);
           if (nightCompleted && nightDate >= from && nightDate <= to) {
             const dd = dayData[nightDate];
@@ -18948,7 +20109,7 @@ function ReportsPage({ data, save, nav, profile }) {
               const rate = getNightRate(nightDate);
               const roomRev = rate * multiDogFactor;
               dd.roomRevenue += rate;
-              dd.multiDogAdj += rate - roomRev; // negative if discount
+              dd.multiDogAdj += rate - roomRev;
               dd.discountAdj += manualDiscountPerNight;
               dd.roomsSold += 1;
             }
@@ -18956,7 +20117,6 @@ function ReportsPage({ data, save, nav, profile }) {
           nightDate = addDays(nightDate, 1);
         }
 
-        // Feeding revenue: accrued per day the dog is present
         const feeds = (res.careOverrides?.feedingSchedules || fields.feedingSchedules || []);
         if (feeds.length > 0) {
           const feedsByTime = { am: [], noon: [], pm: [] };
@@ -18970,9 +20130,7 @@ function ReportsPage({ data, save, nav, profile }) {
           });
           const ciHour = res.checkInTime ? parseInt(res.checkInTime.split(":")[0]) : 9;
           const coHour = res.checkOutTime ? parseInt(res.checkOutTime.split(":")[0]) : 11;
-          // Build day dates from checkIn to checkOut
           let feedDay = resStart;
-          let dayIdx = 0;
           const lastDay = resEnd;
           while (feedDay <= lastDay) {
             const dayCompleted = res.status === "checked-out" ? true : (feedDay < today);
@@ -18988,11 +20146,9 @@ function ReportsPage({ data, save, nav, profile }) {
               if (dayCost > 0 && dayData[feedDay]) dayData[feedDay].feedingRevenue += dayCost;
             }
             feedDay = addDays(feedDay, 1);
-            dayIdx++;
           }
         }
 
-        // Medication revenue: accrued per day
         const meds = (res.careOverrides?.medicationSchedules || fields.medicationSchedules || []);
         if (meds.length > 0) {
           const medsByTime = { am: [], noon: [], pm: [] };
@@ -19026,16 +20182,13 @@ function ReportsPage({ data, save, nav, profile }) {
           }
         }
 
-        // Add-on revenue (bath, extras): recognized on checkout day
         const addOns = res.selectedAddOns || [];
-        // Also include bath from careOverrides if 2+ nights
         const bathType = res.careOverrides?.bath_type || "";
         if (bathType && totalNights >= 2) {
           const bKey = `${bathType} Bath`;
           if (!addOns.includes(bKey)) addOns.push(bKey);
         }
         if (addOns.length > 0) {
-          // Recognize add-ons on checkout date (last day of stay)
           const recognitionDate = res.status === "checked-out" ? addDays(resEnd, -1) : null;
           if (recognitionDate && recognitionDate >= from && recognitionDate <= to && dayData[recognitionDate]) {
             addOns.forEach(addon => {
@@ -19046,7 +20199,6 @@ function ReportsPage({ data, save, nav, profile }) {
         }
       }
 
-      // ─── DAYCARE ─────────────────────────────────────────────────
       else if (res.type === "daycare" && res.checkIn) {
         const isCompleted = res.status === "checked-out" || (res.status === "checked-in" && res.checkIn < today);
         if (isCompleted && res.checkIn >= from && res.checkIn <= to) {
@@ -19061,7 +20213,6 @@ function ReportsPage({ data, save, nav, profile }) {
         }
       }
 
-      // ─── DAY BOARDING ────────────────────────────────────────────
       else if (res.type === "dayboarding" && res.checkIn) {
         const isCompleted = res.status === "checked-out" || (res.status === "checked-in" && res.checkIn < today);
         if (isCompleted && res.checkIn >= from && res.checkIn <= to) {
@@ -19072,7 +20223,6 @@ function ReportsPage({ data, save, nav, profile }) {
         }
       }
 
-      // ─── EVALUATION ──────────────────────────────────────────────
       else if (res.type === "evaluation" && res.checkIn) {
         const isCompleted = res.status === "checked-out";
         if (isCompleted && res.checkIn >= from && res.checkIn <= to) {
@@ -19084,7 +20234,6 @@ function ReportsPage({ data, save, nav, profile }) {
         }
       }
 
-      // ─── TOUR ────────────────────────────────────────────────────
       else if (res.type === "tour" && res.checkIn) {
         const isCompleted = res.status === "checked-out";
         if (isCompleted && res.checkIn >= from && res.checkIn <= to) {
@@ -19097,7 +20246,6 @@ function ReportsPage({ data, save, nav, profile }) {
       }
     });
 
-    // Refunds: check payments
     (data.payments || []).forEach(pmt => {
       if (pmt.type === "refund" && pmt.status === "completed" && pmt.timestamp) {
         const pmtDate = pmt.timestamp.split("T")[0];
@@ -19107,7 +20255,6 @@ function ReportsPage({ data, save, nav, profile }) {
       }
     });
 
-    // Calculate total revenue per day
     days.forEach(d => {
       const dd = dayData[d];
       dd.totalRevenue = dd.roomRevenue - dd.multiDogAdj - dd.discountAdj
@@ -19116,7 +20263,6 @@ function ReportsPage({ data, save, nav, profile }) {
         - dd.refunds;
     });
 
-    // Aggregate totals
     const totals = { roomRevenue: 0, multiDogAdj: 0, feedingRevenue: 0, medRevenue: 0, addOnRevenue: 0, discountAdj: 0, evalRevenue: 0, tourRevenue: 0, daycareRevenue: 0, dayboardingRevenue: 0, totalRevenue: 0, roomsSold: 0, evalCount: 0, tourCount: 0, daycareCount: 0, refunds: 0 };
     days.forEach(d => {
       const dd = dayData[d];
@@ -19129,27 +20275,716 @@ function ReportsPage({ data, save, nav, profile }) {
   const fmt = (v) => `$${Math.abs(v).toFixed(2)}`;
   const fmtK = (v) => v >= 1000 ? `$${(v/1000).toFixed(1)}k` : fmt(v);
 
-  // ════════════════════════════════════════════════════════════════════
-  // TAB CONTENT RENDERING
-  // ════════════════════════════════════════════════════════════════════
-  if (tab) {
+  // ═══ ANALYTICS DATA BUILDERS ═══
+  const hourlyVolumeData = useMemo(() => {
+    const checkinsByHour = {};
+    const checkoutsByHour = {};
+    const occupancyByHour = {};
+
+    for (let h = 7; h <= 19; h++) {
+      const hkey = `${String(h).padStart(2, "0")}:00`;
+      checkinsByHour[hkey] = 0;
+      checkoutsByHour[hkey] = 0;
+      occupancyByHour[hkey] = 0;
+    }
+
+    const relevantRes = (allRes || []).filter(r =>
+      (r.type === "boarding" || r.type === "daycare" || r.type === "dayboarding") &&
+      r.checkIn >= rangeFrom && r.checkIn <= rangeTo &&
+      r.actualCheckInTime
+    );
+
+    relevantRes.forEach(r => {
+      const ciHour = r.actualCheckInTime ? r.actualCheckInTime.substring(0, 2) : null;
+      const coHour = r.actualCheckOutTime ? r.actualCheckOutTime.substring(0, 2) : null;
+
+      if (ciHour) {
+        const hkey = `${String(Math.min(19, Math.max(7, parseInt(ciHour)))).padStart(2, "0")}:00`;
+        checkinsByHour[hkey] = (checkinsByHour[hkey] || 0) + 1;
+      }
+      if (coHour) {
+        const hkey = `${String(Math.min(19, Math.max(7, parseInt(coHour)))).padStart(2, "0")}:00`;
+        checkoutsByHour[hkey] = (checkoutsByHour[hkey] || 0) + 1;
+      }
+    });
+
+    return { checkinsByHour, checkoutsByHour };
+  }, [allRes, rangeFrom, rangeTo]);
+
+  const occupancyData = useMemo(() => {
+    const byDay = {};
+    const byRoomType = {};
+    const byDOW = { "Mon": 0, "Tue": 0, "Wed": 0, "Thu": 0, "Fri": 0, "Sat": 0, "Sun": 0 };
+    const byDOWCount = { "Mon": 0, "Tue": 0, "Wed": 0, "Thu": 0, "Fri": 0, "Sat": 0, "Sun": 0 };
+
+    ["Luxury Suite", "Executive Room", "Double Compartment", "Single Compartment"].forEach(rt => {
+      byRoomType[rt] = 0;
+    });
+
+    let cur = rangeFrom;
+    while (cur <= rangeTo) {
+      const occupied = (allRes || []).filter(r =>
+        r.type === "boarding" &&
+        r.checkIn <= cur && r.checkOut > cur &&
+        (r.status === "checked-in" || r.status === "checked-out")
+      ).length;
+
+      byDay[cur] = Math.round((occupied / 48) * 100);
+
+      const dt = new Date(cur + "T12:00:00");
+      const dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dt.getDay()];
+      byDOW[dow] += byDay[cur];
+      byDOWCount[dow] += 1;
+
+      cur = addDays(cur, 1);
+    }
+
+    Object.keys(byDOW).forEach(k => {
+      if (byDOWCount[k] > 0) byDOW[k] = Math.round(byDOW[k] / byDOWCount[k]);
+    });
+
+    return { byDay, byRoomType, byDOW };
+  }, [allRes, rangeFrom, rangeTo]);
+
+  const revenueData = useMemo(() => {
+    const { days, dayData, totals } = buildAccrualData;
+    const byType = {
+      "Boarding": totals.roomRevenue,
+      "Daycare": totals.daycareRevenue,
+      "Day Boarding": totals.dayboardingRevenue,
+      "Evaluation": totals.evalRevenue,
+      "Tour": totals.tourRevenue,
+      "Add-Ons": totals.addOnRevenue,
+      "Feeding": totals.feedingRevenue,
+      "Medication": totals.medRevenue,
+    };
+    return { byType, days, dayData, totals };
+  }, [buildAccrualData]);
+
+  const bookingPaceData = useMemo(() => {
+    const bySource = { "online": 0, "walk-in": 0, "phone": 0 };
+    const leadTimes = { "0-1": 0, "2-7": 0, "8-14": 0, "15-30": 0, "30+": 0 };
+
+    (allRes || [])
+      .filter(r => r.status !== "cancelled" && r.createdAt && r.checkIn)
+      .forEach(r => {
+        const source = r.bookingSource || "phone";
+        if (bySource.hasOwnProperty(source)) bySource[source]++;
+
+        const createdDate = new Date(r.createdAt.split("T")[0] + "T00:00:00");
+        const checkInDate = new Date(r.checkIn + "T00:00:00");
+        const leadDays = Math.floor((checkInDate - createdDate) / 86400000);
+
+        if (leadDays <= 1) leadTimes["0-1"]++;
+        else if (leadDays <= 7) leadTimes["2-7"]++;
+        else if (leadDays <= 14) leadTimes["8-14"]++;
+        else if (leadDays <= 30) leadTimes["15-30"]++;
+        else leadTimes["30+"]++;
+      });
+
+    return { bySource, leadTimes };
+  }, [allRes]);
+
+  const clientIntelligenceData = useMemo(() => {
+    const allClientMetrics = clientDirectoryData;
+    const newThisPeriod = (allClients || []).filter(c => {
+      const createdDate = c.createdAt?.split("T")[0];
+      return createdDate && createdDate >= rangeFrom && createdDate <= rangeTo;
+    }).length;
+
+    const atRisk = allClientMetrics.filter(m => m.daysSinceLastVisit !== "—" && m.daysSinceLastVisit >= 60 && m.daysSinceLastVisit < 90).length;
+    const churned = allClientMetrics.filter(m => m.daysSinceLastVisit !== "—" && m.daysSinceLastVisit >= 90).length;
+
+    return { total: (allClients || []).length, newThisPeriod, atRisk, churned };
+  }, [clientDirectoryData, allClients, rangeFrom, rangeTo]);
+
+  const evalConversionData = useMemo(() => {
+    const tours = (allRes || []).filter(r => r.type === "tour" && r.status === "checked-out").length;
+    const evals = (allEvals || []).length;
+    const firstBookings = (allClients || []).length;
+    const repeats = (allClients || []).filter(c => {
+      const visitsForClient = (allRes || []).filter(r => r.clientId === c.id && r.status !== "cancelled").length;
+      return visitsForClient > 1;
+    }).length;
+
+    return { tours, evals, firstBookings, repeats };
+  }, [allRes, allEvals, allClients]);
+
+  // ═══ MENU DEFINITIONS ═══
+  const entityItems = [
+    { id: "overnight", label: "Overnight Stays", desc: "Boarding reservations with full detail" },
+    { id: "daycare", label: "Daycare Visits", desc: "Daily daycare appointments" },
+    { id: "evaluations", label: "Evaluations", desc: "All dog evaluations completed" },
+    { id: "tours", label: "Tours", desc: "Facility tours given" },
+    { id: "dayboarding", label: "Day Boarding", desc: "Day boarding visits" },
+    { id: "cancellations", label: "Cancellations", desc: "Cancelled reservations" },
+    { id: "clients", label: "Client Directory", desc: "All clients with aggregated metrics" },
+  ];
+
+  const analyticsItems = [
+    { id: "hourly-volume", label: "Hourly Volume", desc: "Check-in/check-out patterns by hour" },
+    { id: "occupancy", label: "Occupancy Dashboard", desc: "Room utilization and hotel KPIs" },
+    { id: "revenue", label: "Revenue Breakdown", desc: "Financial performance analysis" },
+    { id: "booking-pace", label: "Booking Pace", desc: "Booking patterns and lead times" },
+    { id: "client-intel", label: "Client Intelligence", desc: "Customer behavior and retention" },
+    { id: "eval-funnel", label: "Eval Conversion", desc: "Tour-to-booking conversion funnel" },
+    { id: "payments", label: "Payments", desc: "View transaction history and records" },
+    { id: "resort-volume", label: "Resort Volume", desc: "Evaluations, tours, daycare, rooms" },
+    { id: "accrual-revenue", label: "Accrual Revenue", desc: "Daily accrual-based revenue" },
+  ];
+
+  const sq = reportsSearch.trim().toLowerCase();
+  const entityFiltered = entityItems.filter(i => i.label.toLowerCase().includes(sq) || i.desc.toLowerCase().includes(sq));
+  const analyticsFiltered = analyticsItems.filter(i => i.label.toLowerCase().includes(sq) || i.desc.toLowerCase().includes(sq));
+
+  // ═══ RENDER: ACTIVE REPORT ═══
+  if (activeReport) {
+    const allItems = [...entityItems, ...analyticsItems];
+    const item = allItems.find(i => i.id === activeReport);
+    const isEntity = entityItems.some(i => i.id === activeReport);
+
     return (
       <div>
-        {/* Tab header with back navigation */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-          <button onClick={() => setTab(null)} style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.pri, padding: "6px 0" }}>
+          <button onClick={() => setActiveReport(null)} style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.pri, padding: "6px 0" }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
             Reports
           </button>
           <span style={{ color: C.textMut, fontSize: 13 }}>/</span>
-          <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{(allCategories.find(c => c.id === tab) || {}).label}</span>
+          <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{item?.label}</span>
         </div>
 
-        {/* ── PAYMENTS TAB (delegate to existing PaymentsPage) ── */}
-        {tab === "payments" && <PaymentsPage data={data} save={save} nav={nav} profile={profile}/>}
+        {/* Date range controls for analytics (not for entities or payments) */}
+        {!isEntity && activeReport !== "payments" && (
+          <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>From</span>
+              <MiniDatePicker value={rangeFrom} onChange={setRangeFrom}/>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>To</span>
+              <MiniDatePicker value={rangeTo} onChange={setRangeTo}/>
+            </div>
+          </div>
+        )}
 
-        {/* ── RESORT VOLUME REPORT ── */}
-        {tab === "resort-volume" && (() => {
+        {/* ENTITY TABLES */}
+        {activeReport === "overnight" && (
+          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Overnight Stays ({overnightData.length})</span>
+            </div>
+            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>ID</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Phone</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Room</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Check-In</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Check-Out</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Nights</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Status</th>
+                    <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overnightData.map(r => (
+                    <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace", whiteSpace: "nowrap" }}>{r.idShort}</td>
+                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.dogName}</td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>{r.clientFirst} {r.clientLast}</td>
+                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.phone}</td>
+                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.roomType} {r.room}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.checkInDate)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.checkOutDate)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{r.nights}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center" }}>{statusBadge(r.status)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.text }}>{fmt$(r.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeReport === "daycare" && (
+          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daycare Visits ({daycareData.length})</span>
+            </div>
+            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>ID</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Phone</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Date</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Hours</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Type</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Size</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Status</th>
+                    <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {daycareData.map(r => (
+                    <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
+                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.dogName}</td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>{r.clientFirst} {r.clientLast}</td>
+                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.phone}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.visitDate)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{r.hours.toFixed(1)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, fontWeight: 600, color: C.text }}>{r.dayType}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.text }}>{r.size}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center" }}>{statusBadge(r.status)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.text }}>{fmt$(r.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeReport === "evaluations" && (
+          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Evaluations ({evaluationData.length})</span>
+            </div>
+            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>ID</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Date</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Evaluator</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Score</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>%</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Result</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Breed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {evaluationData.map(r => {
+                    let resultColor = C.textMut;
+                    if (r.result === "green") resultColor = C.suc;
+                    else if (r.result === "yellow") resultColor = C.warn;
+                    else if (r.result === "red") resultColor = C.dan;
+
+                    return (
+                      <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                        <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
+                        <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.dogName}</td>
+                        <td style={{ padding: "8px 12px", color: C.text }}>{r.clientFirst} {r.clientLast}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.evalDate)}</td>
+                        <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.evaluator}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{r.score}/{r.maxScore}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{r.scorePercent}%</td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", color: resultColor, fontWeight: 600, textTransform: "capitalize" }}>{r.result}</td>
+                        <td style={{ padding: "8px 12px", fontSize: 11, color: C.text }}>{r.breed}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeReport === "tours" && (
+          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Tours ({toursData.length})</span>
+            </div>
+            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>ID</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Phone</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Date</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Time</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Status</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {toursData.map(r => (
+                    <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>{r.clientFirst} {r.clientLast}</td>
+                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.phone}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.tourDate)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.text }}>{fmtTime(r.tourTime)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center" }}>{statusBadge(r.status)}</td>
+                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.text, textTransform: "capitalize" }}>{r.bookingSource}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeReport === "dayboarding" && (
+          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Day Boarding ({dayboardingData.length})</span>
+            </div>
+            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>ID</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Phone</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Date</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Check-In</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Check-Out</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Status</th>
+                    <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dayboardingData.map(r => (
+                    <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
+                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.dogName}</td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>{r.clientFirst} {r.clientLast}</td>
+                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.phone}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.visitDate)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.text }}>{fmtTime(r.checkInTime)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.text }}>{fmtTime(r.checkOutTime)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center" }}>{statusBadge(r.status)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.text }}>{fmt$(r.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeReport === "cancellations" && (
+          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Cancellations ({cancellationsData.length})</span>
+            </div>
+            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>ID</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Service</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Original Date</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Cancelled</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Days Before</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Cancelled By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cancellationsData.map(r => (
+                    <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
+                      <td style={{ padding: "8px 12px", fontSize: 11, fontWeight: 600, color: C.text, textTransform: "capitalize" }}>{r.serviceType}</td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>{r.dogName}</td>
+                      <td style={{ padding: "8px 12px", color: C.text }}>{r.clientName}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.originalCheckIn)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.dan, fontWeight: 600 }}>{fmtD(r.cancelledAt)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: r.daysBeforeService > 7 ? C.suc : r.daysBeforeService > 0 ? C.warn : C.dan }}>{r.daysBeforeService}</td>
+                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.cancelledBy}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeReport === "clients" && (
+          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Client Directory ({clientDirectoryData.length})</span>
+            </div>
+            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Name</th>
+                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Phone</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Registered</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Last Visit</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Days Inactive</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Total Visits</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Boarding Nights</th>
+                    <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Total Spent</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Dogs</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Active</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {clientDirectoryData.map(c => (
+                    <tr key={c.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{c.firstName} {c.lastName}</td>
+                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{c.phone}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(c.registeredAt)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{c.lastVisitDate === "—" ? "—" : fmtD(c.lastVisitDate)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: typeof c.daysSinceLastVisit === "number" ? (c.daysSinceLastVisit > 90 ? C.dan : c.daysSinceLastVisit > 60 ? C.warn : C.text) : C.textMut }}>{typeof c.daysSinceLastVisit === "number" ? c.daysSinceLastVisit : "—"}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{c.totalVisits}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{c.totalBoardingNights}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.text }}>{fmt$(c.totalSpent)}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{c.dogsCount}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", color: c.isActive ? C.suc : C.textMut, fontWeight: 600 }}>{c.isActive ? "Yes" : "No"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ANALYTICS: Hourly Volume */}
+        {activeReport === "hourly-volume" && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Peak Hour</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, letterSpacing: "-0.02em" }}>
+                  {Object.entries(hourlyVolumeData.checkinsByHour)
+                    .reduce((max, [h, v]) => v > max.v ? { h, v } : max, { h: "—", v: 0 })
+                    .h}
+                </div>
+              </div>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Avg Check-Ins/Hour</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.suc, letterSpacing: "-0.02em" }}>
+                  {(Object.values(hourlyVolumeData.checkinsByHour).reduce((a, b) => a + b, 0) / Object.keys(hourlyVolumeData.checkinsByHour).length).toFixed(1)}
+                </div>
+              </div>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Avg Check-Outs/Hour</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.dan, letterSpacing: "-0.02em" }}>
+                  {(Object.values(hourlyVolumeData.checkoutsByHour).reduce((a, b) => a + b, 0) / Object.keys(hourlyVolumeData.checkoutsByHour).length).toFixed(1)}
+                </div>
+              </div>
+            </div>
+            <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface, padding: "16px 20px" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Hourly Activity (7 AM - 7 PM)</div>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 180, overflowX: "auto" }}>
+                {Object.entries(hourlyVolumeData.checkinsByHour).map(([h, v]) => (
+                  <div key={h} style={{ flex: "1 0 20px", minWidth: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    <div style={{ fontSize: 9, color: C.textMut, height: 20, display: "flex", alignItems: "center" }}>
+                      {v > 0 ? v : ""}
+                    </div>
+                    <div style={{ width: "100%", height: Math.max(2, (v / Math.max(...Object.values(hourlyVolumeData.checkinsByHour))) * 120), background: C.pri, borderRadius: "2px 2px 0 0", transition: "height 0.2s" }} />
+                    <div style={{ fontSize: 9, fontWeight: 600, color: C.textSec, whiteSpace: "nowrap" }}>{h}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ANALYTICS: Occupancy */}
+        {activeReport === "occupancy" && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Avg Occupancy</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, letterSpacing: "-0.02em" }}>
+                  {Math.round(Object.values(occupancyData.byDay).reduce((a, b) => a + b, 0) / Math.max(1, Object.values(occupancyData.byDay).length))}%
+                </div>
+              </div>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Busiest Day</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.suc, letterSpacing: "-0.02em" }}>
+                  {Object.entries(occupancyData.byDOW).reduce((max, [d, v]) => v > max.v ? { d, v } : max, { d: "—", v: 0 }).d}
+                </div>
+              </div>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Slowest Day</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.warn, letterSpacing: "-0.02em" }}>
+                  {Object.entries(occupancyData.byDOW).reduce((min, [d, v]) => v < min.v && v > 0 ? { d, v } : min, { d: "—", v: 100 }).d}
+                </div>
+              </div>
+            </div>
+            <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface, padding: "16px 20px" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Occupancy by Day of Week</div>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 12, height: 160, justifyContent: "space-around", padding: "0 8px" }}>
+                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(d => (
+                  <div key={d} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                    <div style={{ width: "100%", height: Math.max(2, (occupancyData.byDOW[d] / 100) * 100), background: C.pri, borderRadius: "4px 4px 0 0", transition: "height 0.2s" }} />
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{occupancyData.byDOW[d]}%</div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec }}>{d}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ANALYTICS: Revenue */}
+        {activeReport === "revenue" && (
+          <div>
+            <div style={{ padding: "20px", border: `1.5px solid ${C.pri}30`, borderRadius: 12, background: `linear-gradient(135deg, ${C.pri}12, ${C.pri}06)`, marginBottom: 24 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, textTransform: "uppercase" }}>Total Revenue</div>
+              <div style={{ fontSize: 36, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>{fmt$(revenueData.totals.totalRevenue)}</div>
+              <div style={{ fontSize: 12, color: C.textMut, marginTop: 6 }}>
+                {revenueData.days.length} days · Avg {fmt$(revenueData.days.length > 0 ? revenueData.totals.totalRevenue / revenueData.days.length : 0)}/day
+              </div>
+            </div>
+            <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface, padding: "16px 20px" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Revenue by Service Type</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {Object.entries(revenueData.byType)
+                  .filter(([_, v]) => v > 0)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([type, value]) => {
+                    const pct = revenueData.totals.totalRevenue > 0 ? Math.round((value / revenueData.totals.totalRevenue) * 100) : 0;
+                    return (
+                      <div key={type} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                        <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: C.text }}>{type}</div>
+                        <div style={{ width: 60, height: 6, background: C.bg, borderRadius: 3, overflow: "hidden" }}>
+                          <div style={{ width: `${pct}%`, height: "100%", background: C.pri, transition: "width 0.2s" }} />
+                        </div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, textAlign: "right", minWidth: 70 }}>{fmt$(value)}</div>
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ANALYTICS: Booking Pace */}
+        {activeReport === "booking-pace" && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Avg Lead Time</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, letterSpacing: "-0.02em" }}>
+                  {(() => {
+                    let totalDays = 0, count = 0;
+                    const allLeadTimes = Object.values(bookingPaceData.leadTimes).reduce((a, b) => a + b, 0);
+                    if (allLeadTimes > 0) {
+                      totalDays = (bookingPaceData.leadTimes["0-1"] * 0.5 + bookingPaceData.leadTimes["2-7"] * 4 + bookingPaceData.leadTimes["8-14"] * 11 + bookingPaceData.leadTimes["15-30"] * 22 + bookingPaceData.leadTimes["30+"] * 45);
+                      count = allLeadTimes;
+                      return Math.round(totalDays / count);
+                    }
+                    return "—";
+                  })()}
+                </div>
+              </div>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Online Bookings</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.info, letterSpacing: "-0.02em" }}>
+                  {(() => {
+                    const total = Object.values(bookingPaceData.bySource).reduce((a, b) => a + b, 0);
+                    return total > 0 ? Math.round((bookingPaceData.bySource.online / total) * 100) : 0;
+                  })()}%
+                </div>
+              </div>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Walk-In %</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.suc, letterSpacing: "-0.02em" }}>
+                  {(() => {
+                    const total = Object.values(bookingPaceData.bySource).reduce((a, b) => a + b, 0);
+                    return total > 0 ? Math.round((bookingPaceData.bySource["walk-in"] / total) * 100) : 0;
+                  })()}%
+                </div>
+              </div>
+            </div>
+            <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface, padding: "16px 20px" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Booking Lead Time Distribution</div>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 140, justifyContent: "space-around", padding: "0 8px" }}>
+                {["0-1", "2-7", "8-14", "15-30", "30+"].map(range => {
+                  const val = bookingPaceData.leadTimes[range];
+                  const maxVal = Math.max(...Object.values(bookingPaceData.leadTimes));
+                  return (
+                    <div key={range} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                      <div style={{ width: "100%", height: maxVal > 0 ? (val / maxVal) * 100 : 2, background: C.pri, borderRadius: "3px 3px 0 0", transition: "height 0.2s", minHeight: 2 }} />
+                      <div style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{val}</div>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: C.textSec, textAlign: "center" }}>{range} days</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ANALYTICS: Client Intelligence */}
+        {activeReport === "client-intel" && (
+          <div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Total Clients</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, letterSpacing: "-0.02em" }}>{clientIntelligenceData.total}</div>
+              </div>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>New This Period</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.suc, letterSpacing: "-0.02em" }}>{clientIntelligenceData.newThisPeriod}</div>
+              </div>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>At-Risk (60-90 days)</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.warn, letterSpacing: "-0.02em" }}>{clientIntelligenceData.atRisk}</div>
+              </div>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Churned (90+ days)</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.dan, letterSpacing: "-0.02em" }}>{clientIntelligenceData.churned}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ANALYTICS: Eval Conversion */}
+        {activeReport === "eval-funnel" && (
+          <div>
+            <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface, padding: "20px" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 20 }}>Conversion Funnel</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {[
+                  { label: "Tours Given", value: evalConversionData.tours, color: C.info },
+                  { label: "Evaluations Completed", value: evalConversionData.evals, color: C.acc },
+                  { label: "First Bookings", value: evalConversionData.firstBookings, color: C.suc },
+                  { label: "Repeat Customers", value: evalConversionData.repeats, color: C.pri },
+                ].map((stage, idx) => {
+                  const maxVal = evalConversionData.tours || 1;
+                  const pctWidth = (stage.value / maxVal) * 100;
+                  return (
+                    <div key={stage.label} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: C.text, minWidth: 150 }}>{stage.label}</div>
+                      <div style={{ flex: 1, height: 32, background: C.bg, borderRadius: 6, overflow: "hidden" }}>
+                        <div style={{ width: `${pctWidth}%`, height: "100%", background: stage.color, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 8, transition: "width 0.2s" }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "white" }}>{stage.value}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PAYMENTS TAB */}
+        {activeReport === "payments" && <PaymentsPage data={data} save={save} nav={nav} profile={profile}/>}
+
+        {/* RESORT VOLUME TAB (existing code) */}
+        {activeReport === "resort-volume" && (() => {
           const { totals } = buildAccrualData;
           const cards = [
             { label: "Evaluations Completed", value: totals.evalCount, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>, color: C.acc },
@@ -19160,20 +20995,6 @@ function ReportsPage({ data, save, nav, profile }) {
 
           return (
             <div>
-              {/* Date range controls */}
-              <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>From</span>
-                  <MiniDatePicker value={rangeFrom} onChange={v=>setRangeFrom(v)}/>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>To</span>
-                  <MiniDatePicker value={rangeTo} onChange={v=>setRangeTo(v)}/>
-                </div>
-                <div style={{ fontSize: 11, color: C.textMut, fontStyle: "italic" }}>Accrual basis — only completed activities within the date range are counted</div>
-              </div>
-
-              {/* Volume cards */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16, marginBottom: 32 }}>
                 {cards.map(c => (
                   <div key={c.label} style={{ padding: "24px 20px", borderRadius: 16, border: `1.5px solid ${C.border}`, background: C.surface, display: "flex", flexDirection: "column", gap: 12 }}>
@@ -19186,7 +21007,6 @@ function ReportsPage({ data, save, nav, profile }) {
                 ))}
               </div>
 
-              {/* Daily breakdown table */}
               <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
                 <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
                   <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daily Breakdown</span>
@@ -19227,8 +21047,8 @@ function ReportsPage({ data, save, nav, profile }) {
           );
         })()}
 
-        {/* ── ACCRUAL REVENUE REPORT ── */}
-        {tab === "accrual-revenue" && (() => {
+        {/* ACCRUAL REVENUE TAB (existing code) */}
+        {activeReport === "accrual-revenue" && (() => {
           const { days, dayData, totals } = buildAccrualData;
           const summaryRows = [
             { label: "Room Revenue", value: totals.roomRevenue, color: C.pri },
@@ -19244,27 +21064,10 @@ function ReportsPage({ data, save, nav, profile }) {
             { label: "Refunds", value: -totals.refunds, color: C.dan, isNeg: true },
           ].filter(r => Math.abs(r.value) > 0.005);
 
-          // Bar chart: daily totals
           const maxRev = Math.max(1, ...days.map(d => Math.max(0, dayData[d].totalRevenue)));
 
           return (
             <div>
-              {/* Date range controls */}
-              <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>From</span>
-                  <MiniDatePicker value={rangeFrom} onChange={v=>setRangeFrom(v)}/>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>To</span>
-                  <MiniDatePicker value={rangeTo} onChange={v=>setRangeTo(v)}/>
-                </div>
-                <div style={{ fontSize: 11, color: C.textMut, fontStyle: "italic" }}>
-                  Accrual Revenue = Room Count × Room Price ± Multi-Dog Factor + Ancillary Services − Discounts − Refunds
-                </div>
-              </div>
-
-              {/* Total revenue card */}
               <div style={{ padding: "28px 24px", borderRadius: 16, background: `linear-gradient(135deg, ${C.pri}12, ${C.pri}06)`, border: `1.5px solid ${C.pri}30`, marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Total Accrual Revenue</div>
@@ -19273,9 +21076,7 @@ function ReportsPage({ data, save, nav, profile }) {
                 </div>
               </div>
 
-              {/* Revenue breakdown */}
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
-                {/* Summary card */}
                 <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
                   <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
                     <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Revenue Breakdown</span>
@@ -19294,7 +21095,6 @@ function ReportsPage({ data, save, nav, profile }) {
                   </div>
                 </div>
 
-                {/* Mini bar chart */}
                 <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
                   <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
                     <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daily Revenue</span>
@@ -19313,7 +21113,6 @@ function ReportsPage({ data, save, nav, profile }) {
                 </div>
               </div>
 
-              {/* Daily detail table */}
               <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
                 <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
                   <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daily Accrual Detail</span>
@@ -19373,14 +21172,36 @@ function ReportsPage({ data, save, nav, profile }) {
     );
   }
 
-  // ════════════════════════════════════════════════════════════════════
-  // LIST VIEW (no tab selected) — mirrors Settings layout exactly
-  // ════════════════════════════════════════════════════════════════════
+  // ═══ HUB VIEW ═══
   return (
     <div>
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ margin: "0 0 4px", fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>Reports</h2>
-        <p style={{ margin: 0, fontSize: 14, color: C.textSec }}>Financial reports, operational analytics, and performance insights</p>
+        <p style={{ margin: 0, fontSize: 14, color: C.textSec }}>Raw data tables and analytical reports</p>
+      </div>
+
+      {/* Section toggle: Entities | Analytics */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, background: C.bg, padding: 4, borderRadius: 10, width: "fit-content", border: `1.5px solid ${C.border}` }}>
+        {["entities", "analytics"].map(s => (
+          <button
+            key={s}
+            onClick={() => setSection(s)}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 8,
+              border: "none",
+              background: section === s ? C.pri : "transparent",
+              color: section === s ? "white" : C.text,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              transition: "all 0.15s",
+            }}
+          >
+            {s === "entities" ? "Entities" : "Analytics"}
+          </button>
+        ))}
       </div>
 
       {/* Search */}
@@ -19388,38 +21209,63 @@ function ReportsPage({ data, save, nav, profile }) {
         <div style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", color: C.textMut, display: "flex" }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </div>
-        <input value={reportsSearch} onChange={e => setReportsSearch(e.target.value)} placeholder="Search reports…"
+        <input
+          value={reportsSearch}
+          onChange={e => setReportsSearch(e.target.value)}
+          placeholder="Search reports…"
           style={{ width: "100%", padding: "14px 16px 14px 46px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 15, fontWeight: 500, color: C.text, fontFamily: "'GT Eesti', sans-serif", outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" }}
-          onFocus={e => { e.target.style.borderColor = C.pri; }} onBlur={e => { e.target.style.borderColor = C.border; }} />
-        {reportsSearch && <button onClick={() => setReportsSearch("")} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", color: C.textMut, display: "flex", padding: 4 }}><I.X /></button>}
+          onFocus={e => { e.target.style.borderColor = C.pri; }}
+          onBlur={e => { e.target.style.borderColor = C.border; }}
+        />
+        {reportsSearch && (
+          <button
+            onClick={() => setReportsSearch("")}
+            style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", color: C.textMut, display: "flex", padding: 4 }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        )}
       </div>
 
-      {/* Sectioned category grid */}
-      {filteredSections.map((sec, si) => {
-        if (sec.items.length === 0) return null;
-        return (
-          <div key={sec.label || si} style={{ marginBottom: sec.label ? 28 : 16 }}>
-            {sec.label && <div style={{ fontSize: 11, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, paddingLeft: 4 }}>{sec.label}</div>}
-            {!sec.label && si > 0 && <div style={{ borderTop: `1.5px solid ${C.border}`, marginBottom: 16, marginTop: 4 }} />}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
-              {sec.items.map(cat => (
-                <button key={cat.id} onClick={() => { setTab(cat.id); setReportsSearch(""); }}
-                  style={{ display: "flex", alignItems: "center", gap: 16, padding: "18px 20px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "all 0.15s", width: "100%" }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = C.priLt; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.surface; }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 2 }}>{cat.label}</div>
-                    <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.4 }}>{cat.desc}</div>
-                  </div>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, opacity: 0.4 }}><polyline points="9 18 15 12 9 6"/></svg>
-                </button>
-              ))}
+      {/* Grid of report cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+        {(section === "entities" ? entityFiltered : analyticsFiltered).map(item => (
+          <button
+            key={item.id}
+            onClick={() => { setActiveReport(item.id); setReportsSearch(""); }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 16,
+              padding: "18px 20px",
+              borderRadius: 14,
+              border: `1.5px solid ${C.border}`,
+              background: C.surface,
+              cursor: "pointer",
+              fontFamily: "inherit",
+              textAlign: "left",
+              transition: "all 0.15s",
+              width: "100%",
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = C.pri;
+              e.currentTarget.style.background = C.priLt;
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = C.border;
+              e.currentTarget.style.background = C.surface;
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 2 }}>{item.label}</div>
+              <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.4 }}>{item.desc}</div>
             </div>
-          </div>
-        );
-      })}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, opacity: 0.4 }}><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
+        ))}
+      </div>
 
-      {allCategories.length > 0 && filteredSections.every(s => s.items.length === 0) && (
+      {(section === "entities" ? entityFiltered : analyticsFiltered).length === 0 && (
         <div style={{ textAlign: "center", padding: "48px 24px", color: C.textMut }}>
           <div style={{ fontSize: 32, marginBottom: 8 }}>🔍</div>
           <div style={{ fontSize: 15, fontWeight: 600 }}>No reports found</div>
@@ -19429,6 +21275,7 @@ function ReportsPage({ data, save, nav, profile }) {
     </div>
   );
 }
+
 
 function AIPage({ data, save, nav }) {
   const [messages, setMessages] = useState([]);
