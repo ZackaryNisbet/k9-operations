@@ -16630,6 +16630,7 @@ function PackageReportsTab({ data }) {
 // ═══════════════════════════════════════════════════════════════════════════
 function SettingsPage({ data, save, profile, nav, settingsTab }) {
   const [tab, setTab] = useState(settingsTab || null);
+  useEffect(() => { setTab(settingsTab || null); }, [settingsTab]);
   const [settingsSearch, setSettingsSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [newClosedDate, setNewClosedDate] = useState("");
