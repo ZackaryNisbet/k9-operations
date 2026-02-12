@@ -5814,6 +5814,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         if (sourceFilter.has("eval") && src.hasEval) return true;
         if (sourceFilter.has("tour") && src.hasTour) return true;
         if (sourceFilter.has("ignite") && c.lifecycle?.conversion?.source === "ignite") return true;
+        if (sourceFilter.has("online") && (c.fields?.referral_source === "Online Booking" || c.lifecycle?.conversion?.source === "online_booking")) return true;
         return false;
       });
     }
@@ -5938,12 +5939,29 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const shownDataCols = showExtraCols ? [...baseCols.slice(0,3), ...extraCols, ...baseCols.slice(3)] : baseCols;
 
   // ── Source cell renderer ──
+  // Booking drafts state (for Online Booking source accordion)
+  const [bookingDrafts, setBookingDrafts] = useState([]);
+  const [draftsLoaded, setDraftsLoaded] = useState(false);
+  const [expandedDraft, setExpandedDraft] = useState(null);
+
+  // Load booking drafts when Online Booking filter is active or when conversion tab is shown
+  useEffect(() => {
+    if (activeTab === "conversion" && !draftsLoaded && locationSlug) {
+      supabase.rpc("get_booking_drafts", { p_location_slug: locationSlug }).then(({ data: d }) => {
+        if (d) setBookingDrafts(Array.isArray(d) ? d : []);
+        setDraftsLoaded(true);
+      }).catch(() => setDraftsLoaded(true));
+    }
+  }, [activeTab, draftsLoaded, locationSlug]);
+
   const renderSource = (client) => {
     const src = getClientSource(client);
     const isIgnite = client.lifecycle?.conversion?.source === "ignite";
+    const isOnline = client.fields?.referral_source === "Online Booking" || client.lifecycle?.conversion?.source === "online_booking";
     const parts = [];
     if (isIgnite) parts.push({ label: "Ignite", type: "ignite" });
-    if (src.base && (!isIgnite || src.base !== "Ignite")) parts.push({ label: src.base, type: "base" });
+    if (isOnline) parts.push({ label: "Online Booking", type: "online" });
+    if (src.base && (!isIgnite || src.base !== "Ignite") && src.base !== "Online Booking") parts.push({ label: src.base, type: "base" });
     if (src.hasEval) parts.push({ label: "Eval", type: "eval", res: src.evalRes });
     if (src.hasTour) parts.push({ label: "Tour", type: "tour", res: src.tourRes });
     if (parts.length === 0) return <span style={{color:C.textMut}}>—</span>;
@@ -5970,6 +5988,15 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                   onClick={(e) => { e.stopPropagation(); setExpandedIgnite(prev => { const n=new Set(prev); if(n.has(client.id))n.delete(client.id);else n.add(client.id); return n; }); }}
                   style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:16,height:16,background:"transparent",border:"none",cursor:"pointer",padding:0,color:"#F97316",fontFamily:"inherit"}}>
                   <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" style={{transform:igniteExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s"}}><polyline points="6 9 12 15 18 9"/></svg>
+                </button>
+              </span>
+            ) : p.type === "online" ? (
+              <span style={{display:"inline-flex",alignItems:"center",gap:1,background:expandedDraft===client.id?`${C.pri}10`:"transparent",border:`1px solid ${expandedDraft===client.id?C.pri+"40":"transparent"}`,borderRadius:6,padding:"2px 4px 2px 7px",transition:"all 0.15s"}}>
+                <span style={{fontWeight:700,color:C.pri,fontSize:11}}>Online</span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setExpandedDraft(prev => prev === client.id ? null : client.id); }}
+                  style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:16,height:16,background:"transparent",border:"none",cursor:"pointer",padding:0,color:C.pri,fontFamily:"inherit"}}>
+                  <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" style={{transform:expandedDraft===client.id?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s"}}><polyline points="6 9 12 15 18 9"/></svg>
                 </button>
               </span>
             ) : p.type === "eval" || p.type === "tour" ? (
@@ -6195,7 +6222,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             {/* Filter pills area */}
             <div style={{display:"flex",gap:4,marginLeft:8,flexShrink:0}}>
               {activeTab === "conversion" && <>
-                {[{id:"eval",label:"Eval",color:C.acc},{id:"tour",label:"Tour",color:C.info},{id:"ignite",label:"Ignite",color:"#F97316"}].map(f => {
+                {[{id:"eval",label:"Eval",color:C.acc},{id:"tour",label:"Tour",color:C.info},{id:"ignite",label:"Ignite",color:"#F97316"},{id:"online",label:"Online Booking",color:C.pri}].map(f => {
                   const on = sourceFilter.has(f.id);
                   return <button key={f.id} onClick={()=>toggleSourceFilter(f.id)} style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on?f.color:C.border}`,background:on?f.color:"transparent",color:on?"#fff":C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{f.label}</button>;
                 })}
@@ -6384,6 +6411,54 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                                 🎧 Listen to Call Recording ↗
                               </a>
                             )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+                  {expandedDraft === c.id && (() => {
+                    const draft = bookingDrafts.find(d => {
+                      const cd = d.client_data || {};
+                      return (cd.phone && cd.phone === c.fields?.phone) || (cd.email && cd.email === c.fields?.email);
+                    });
+                    if (!draft) return (
+                      <div style={{padding:"12px 20px 12px 28px",background:`${C.pri}06`,borderBottom:`1px solid ${C.borderLight}`,borderLeft:`3px solid ${C.pri}`}}>
+                        <span style={{fontSize:12,color:C.textMut}}>No booking draft data found for this customer.</span>
+                      </div>
+                    );
+                    const timeline = Array.isArray(draft.step_timeline) ? draft.step_timeline : [];
+                    const stepNames = { splash:"Landing Page", avail_step_0:"Service Selection", avail_step_1:"Date Selection", avail_step_2:"Room / Time Selection", avail_step_3:"Room Recommendation", reg_step_0:"Client Info", reg_step_1:"Dog Info", reg_step_2:"Vaccine Records", reg_step_3:"Feeding & Care", reg_step_4:"Stay Details", reg_step_5:"Review & Book", confirmation:"Confirmed" };
+                    return (
+                      <div style={{padding:"12px 20px 12px 28px",background:`${C.pri}06`,borderBottom:`1px solid ${C.borderLight}`,borderLeft:`3px solid ${C.pri}`}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                          <span style={{fontSize:12,fontWeight:700,color:C.pri}}>Online Booking Journey</span>
+                          <span style={{fontSize:11,fontWeight:700,color:C.pri,background:`${C.pri}15`,padding:"2px 8px",borderRadius:8}}>{draft.completion_pct || 0}% complete</span>
+                          <span style={{fontSize:10,color:C.textSec,fontWeight:500}}>Last activity {new Date(draft.updated_at).toLocaleDateString("en-US",{month:"numeric",day:"numeric",year:"2-digit"})} {new Date(draft.updated_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
+                        </div>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:4,alignItems:"center"}}>
+                          {timeline.filter(s => s.step !== "splash").map((s, i) => {
+                            const name = stepNames[s.step] || s.step;
+                            const dur = s.duration || 0;
+                            const durLabel = dur < 60 ? `${dur}s` : `${Math.floor(dur/60)}m ${dur%60}s`;
+                            const filtered = timeline.filter(st => st.step !== "splash");
+                            const isLast = i === filtered.length - 1;
+                            return (
+                              <React.Fragment key={i}>
+                                <span style={{fontSize:11,fontWeight:600,color:C.text,background:C.surface,border:`1px solid ${C.borderLight}`,borderRadius:8,padding:"4px 10px",display:"inline-flex",alignItems:"center",gap:4}}>
+                                  {name}
+                                  <span style={{fontSize:10,color:C.textMut,fontWeight:500}}>({durLabel})</span>
+                                </span>
+                                {!isLast && <span style={{color:C.textMut,fontSize:10}}>→</span>}
+                                {isLast && !s.exitedAt && <span style={{fontSize:10,color:C.dan,fontWeight:600,marginLeft:4}}>stopped / closed tab</span>}
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
+                        {draft.booking_data && (draft.booking_data.checkIn || draft.booking_data.tourDate) && (
+                          <div style={{marginTop:8,fontSize:11,color:C.textSec}}>
+                            {draft.service_type === "tour" ? `Tour: ${draft.booking_data.tourDate} at ${draft.booking_data.tourTime || "—"}`
+                              : `Dates: ${draft.booking_data.checkIn || "—"} – ${draft.booking_data.checkOut || "—"}${draft.booking_data.selectedRoom ? ` · Room: ${draft.booking_data.selectedRoom}` : ""}`}
                           </div>
                         )}
                       </div>
@@ -15284,10 +15359,31 @@ function OnlineBookingsPage({ data, save, nav, profile, addGlobalToast, allLocat
               {b.status === "accepted" && <span style={{ padding: "2px 8px", borderRadius: 4, background: C.suc + "15", color: C.suc, fontSize: 10, fontWeight: 700 }}>Accepted</span>}
               {b.status === "declined" && <span style={{ padding: "2px 8px", borderRadius: 4, background: C.err + "15", color: C.err, fontSize: 10, fontWeight: 700 }}>Declined</span>}
             </div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>{b.client?.firstName} {b.client?.lastName}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>
+              {b.status === "accepted" && b.clientId ? (
+                <span style={{ color: C.pri, cursor: "pointer", textDecoration: "none", borderBottom: `1px dashed ${C.pri}40` }}
+                  onClick={() => navigateTo("clientDetail", { clientId: b.clientId })}
+                  onMouseEnter={e => e.target.style.borderBottomColor = C.pri}
+                  onMouseLeave={e => e.target.style.borderBottomColor = C.pri + "40"}>
+                  {b.client?.firstName} {b.client?.lastName}
+                </span>
+              ) : (
+                <>{b.client?.firstName} {b.client?.lastName}</>
+              )}
+            </div>
             <div style={{ fontSize: 13, color: C.textSec, marginBottom: 2 }}>{b.client?.phone} · {b.client?.email}</div>
             <div style={{ fontSize: 13, color: C.text, marginTop: 8 }}>
-              <strong>Dog:</strong> {b.dog?.name} ({b.dog?.breed}{b.dog?.weight ? `, ${b.dog.weight} lbs` : ""})
+              <strong>Dog:</strong>{" "}
+              {b.status === "accepted" && b.dogId ? (
+                <span style={{ color: C.pri, cursor: "pointer", borderBottom: `1px dashed ${C.pri}40` }}
+                  onClick={() => navigateTo("dogDetail", { dogId: b.dogId })}
+                  onMouseEnter={e => e.target.style.borderBottomColor = C.pri}
+                  onMouseLeave={e => e.target.style.borderBottomColor = C.pri + "40"}>
+                  {b.dog?.name} ({b.dog?.breed}{b.dog?.weight ? `, ${b.dog.weight} lbs` : ""})
+                </span>
+              ) : (
+                <>{b.dog?.name} ({b.dog?.breed}{b.dog?.weight ? `, ${b.dog.weight} lbs` : ""})</>
+              )}
             </div>
             <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>
               {isBoarding ? (
@@ -15337,6 +15433,9 @@ function OnlineBookingsPage({ data, save, nav, profile, addGlobalToast, allLocat
             <span style={{ fontSize: 12, color: C.textMut }}>Booking page:</span>
             <code style={{ fontSize: 12, padding: "4px 10px", borderRadius: 6, background: C.bg, border: `1px solid ${C.borderLight}`, color: C.pri, fontWeight: 600 }}>{bookingUrl}</code>
             <button onClick={() => { navigator.clipboard.writeText(bookingUrl); if (addGlobalToast) addGlobalToast("Link copied!", "success"); }} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: C.surface, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", color: C.textSec }}>Copy</button>
+            <button onClick={() => window.open(bookingUrl, "_blank")} title="Open booking page" style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.border}`, background: C.surface, cursor: "pointer", display: "flex", alignItems: "center" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            </button>
           </div>
         )}
       </div>
@@ -16158,6 +16257,7 @@ function SettingsPage({ data, save, profile }) {
       { id: "rooms", label: "Rooms", desc: "Configure room numbers for each boarding room type", keywords: "rooms boarding luxury executive double single compartment" },
       { id: "closed-dates", label: "Closed Dates", desc: "Holidays and dates closed to the public — no check-ins or check-outs", keywords: "closed dates holidays christmas thanksgiving new year memorial labor easter july 4 blackout" },
       { id: "policies", label: "Resort Policies", desc: "Vaccine grace periods, age limits, grandfathering rules", keywords: "policies compliance vaccines grace period age limit grandfather senior" },
+      { id: "booking-settings", label: "Online Booking", desc: "Tour scheduling, daycare capacity, and self-booking page settings", keywords: "booking online tour daycare capacity self-service concurrent scheduling" },
     ]},
     { label: "Administration", items: [
       { id: "team", label: "Team Management", desc: "View, invite, and manage team members and roles", keywords: "team users staff members invite roles owner manager admin" },
@@ -16176,7 +16276,7 @@ function SettingsPage({ data, save, profile }) {
     fields:"edit_fields",client:"edit_fields",dog:"edit_fields",tags:"edit_tags_config",vaccines:"edit_vaccines_config",
     agreements:"edit_agreements",pricing:"edit_pricing",packages:"edit_pricing",discounts:"edit_pricing",dropdowns:"edit_dropdowns",
     eod:"edit_eod_template","daily-ops":"edit_ops_template",
-    facility:"edit_facility",rooms:"edit_rooms","closed-dates":"edit_facility",policies:"edit_vaccines_config",
+    facility:"edit_facility",rooms:"edit_rooms","closed-dates":"edit_facility",policies:"edit_vaccines_config","booking-settings":"edit_facility",
     team:"manage_team",roles:"manage_roles",reset:"reset_data",
   };
   const hp = (k) => hasPermission(profile, data, k);
@@ -16748,7 +16848,61 @@ function SettingsPage({ data, save, profile }) {
             </div>
           </Card>
         </div>
-      ) : tab === "legal" ? (
+      ) : tab === "booking-settings" ? (() => {
+        const bkSettings = data.settings || {};
+        const tourSet = bkSettings.tourSettings || { allowConcurrent: false, duration: 30 };
+        const dcCap = bkSettings.daycareCapacity || { small: 15, large: 20, total: 35 };
+        const updateBkSetting = async (section, key, val) => {
+          const existing = bkSettings[section] || {};
+          await save({ ...data, settings: { ...bkSettings, [section]: { ...existing, [key]: val } } });
+        };
+        return (
+          <div style={{display:"flex",flexDirection:"column",gap:16}}>
+            <Card style={{ padding: "24px 28px" }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Tour Scheduling</div>
+              <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>Control how facility tours are booked through the online booking page.</p>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginBottom:20}}>
+                <div>
+                  <Inp label="Tour Duration (minutes)" type="number" value={tourSet.duration} onChange={v => updateBkSetting("tourSettings", "duration", parseInt(v) || 30)} />
+                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>How long each tour appointment lasts. Affects available time slot calculations.</div>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                  <div style={{fontSize:13,fontWeight:600,color:C.text}}>Allow Concurrent Tours</div>
+                  <div style={{display:"flex",alignItems:"center",gap:12}}>
+                    <button onClick={()=>updateBkSetting("tourSettings","allowConcurrent",!tourSet.allowConcurrent)} style={{padding:"6px 16px",borderRadius:8,border:`1.5px solid ${tourSet.allowConcurrent?C.suc:C.border}`,background:tourSet.allowConcurrent?C.suc:C.surface,color:tourSet.allowConcurrent?"#fff":C.textSec,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{tourSet.allowConcurrent?"Allowed":"Not Allowed"}</button>
+                  </div>
+                  <div style={{fontSize:11,color:C.textMut}}>When off, only one tour can be booked per time slot. When on, multiple tours can overlap.</div>
+                </div>
+              </div>
+              <div style={{padding:"10px 16px",borderRadius:8,background:C.bg,border:`1px solid ${C.border}`}}>
+                <div style={{fontSize:12,color:C.textSec}}>Tour booking hours: <strong>9:00 AM – 4:30 PM</strong> daily in {tourSet.duration}-minute intervals</div>
+              </div>
+            </Card>
+
+            <Card style={{ padding: "24px 28px" }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Daycare Capacity</div>
+              <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>Set daily capacity limits for daycare bookings. When capacity is reached, the online booking page will show the day as unavailable.</p>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:20}}>
+                <div>
+                  <Inp label="Small Dogs (under 35 lbs)" type="number" value={dcCap.small} onChange={v => updateBkSetting("daycareCapacity", "small", parseInt(v) || 0)} />
+                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Maximum small dogs per day</div>
+                </div>
+                <div>
+                  <Inp label="Large Dogs (35+ lbs)" type="number" value={dcCap.large} onChange={v => updateBkSetting("daycareCapacity", "large", parseInt(v) || 0)} />
+                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Maximum large dogs per day</div>
+                </div>
+                <div>
+                  <Inp label="Total Daily Cap" type="number" value={dcCap.total} onChange={v => updateBkSetting("daycareCapacity", "total", parseInt(v) || 0)} />
+                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Hard maximum regardless of size split</div>
+                </div>
+              </div>
+              <div style={{marginTop:16,padding:"10px 16px",borderRadius:8,background:C.bg,border:`1px solid ${C.border}`}}>
+                <div style={{fontSize:12,color:C.textSec}}>Current capacity: up to <strong>{dcCap.small}</strong> small + <strong>{dcCap.large}</strong> large dogs, max <strong>{dcCap.total}</strong> total per day</div>
+              </div>
+            </Card>
+          </div>
+        );
+      })() : tab === "legal" ? (
         <div style={{display:"flex",flexDirection:"column",gap:20}}>
           <Card style={{ padding: "28px 32px" }}>
             <div style={{ fontSize: 18, fontWeight: 800, color: C.text, marginBottom: 4 }}>Terms of Service</div>
