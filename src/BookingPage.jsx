@@ -63,10 +63,10 @@ const HERO_IMAGES = [
 ];
 
 const ROOM_IMAGES = {
-  'Luxury Suite': '/rooms/luxury.jpg',
-  'Executive Room': '/rooms/executive.jpg',
-  'Double Compartment': '/rooms/double.jpg',
-  'Single Compartment': '/rooms/single.jpg',
+  'Luxury Suite': '/rooms/luxury.jpg?v=2',
+  'Executive Room': '/rooms/executive.jpg?v=2',
+  'Double Compartment': '/rooms/double.jpg?v=2',
+  'Single Compartment': '/rooms/single.jpg?v=2',
 };
 
 const ROOM_INFO = {
