@@ -25,7 +25,7 @@ const TOS_SECTIONS = [
   { t: "11. Indemnification", b: "You agree to indemnify K9 Operations LLC against claims arising from your use of the Service, violation of these Terms, or your operation of a pet care facility." },
   { t: "12. Governing Law", b: "These Terms are governed by New Jersey law. Disputes shall be resolved in Burlington County, NJ courts." },
   { t: "13. Changes to Terms", b: "We will provide at least 30 days notice for material changes. Continued use constitutes acceptance of modified Terms." },
-  { t: "14. Contact", b: "Questions? Contact us at support@k9operations.com" },
+  { t: "14. Contact", b: "Questions? Contact us at zack.nisbet@k9operations.com" },
 ];
 
 const PRIVACY_SECTIONS = [
@@ -34,12 +34,12 @@ const PRIVACY_SECTIONS = [
   { t: "3. How We Share Your Information", b: "We do not sell, rent, or trade your personal information. We share data only with service providers (Supabase for database hosting, Vercel for application hosting, payment processors), when required by law, or in connection with a business transfer." },
   { t: "4. Data Security", b: "All data is encrypted at rest (AES-256) and in transit (TLS 1.2+). We use role-based access controls and hashed passwords. We do not store credit card numbers or sensitive payment credentials." },
   { t: "5. Data Retention", b: "We retain data while your account is active. After termination, you have 30 days to export your data. Customer Data is deleted within 90 days of the export period, unless retention is required by law." },
-  { t: "6. Your Rights", b: "You may request access to, correction of, or deletion of your personal information. You may request data export in CSV or JSON format. You may opt out of marketing communications at any time. Contact support@k9operations.com to exercise these rights." },
+  { t: "6. Your Rights", b: "You may request access to, correction of, or deletion of your personal information. You may request data export in CSV or JSON format. You may opt out of marketing communications at any time. Contact zack.nisbet@k9operations.com to exercise these rights." },
   { t: "7. Children's Privacy", b: "The Service is not directed to children under 13. We do not knowingly collect personal information from children under 13." },
   { t: "8. Third-Party Services", b: "This Privacy Policy does not apply to third-party services accessed through the platform. We encourage you to review their privacy policies." },
   { t: "9. State-Specific Disclosures", b: "California residents may have additional rights under CCPA/CPRA, including the right to know, delete, and opt out of data sales (we do not sell data). New Jersey residents have the right to access and correct their information and receive breach notifications." },
   { t: "10. Changes to This Policy", b: "We provide at least 30 days notice for material changes. Continued use constitutes acceptance." },
-  { t: "11. Contact", b: "Questions about privacy? Email support@k9operations.com with \"Privacy\" in the subject line." },
+  { t: "11. Contact", b: "Questions about privacy? Email zack.nisbet@k9operations.com with \"Privacy\" in the subject line." },
 ];
 
 function LegalModal({ type, onClose }) {
@@ -78,14 +78,12 @@ function LegalModal({ type, onClose }) {
 }
 
 export default function Login() {
-  const { signIn, signUp, resetPassword } = useAuth();
-  const [mode, setMode] = useState('login'); // 'login', 'signup', or 'forgot'
+  const { signIn, resetPassword } = useAuth();
+  const [mode, setMode] = useState('login'); // 'login' or 'forgot'
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [signupSuccess, setSignupSuccess] = useState(false);
   const [resetSent, setResetSent] = useState(false);
   const [legalModal, setLegalModal] = useState(null); // 'tos' or 'privacy'
 
@@ -103,16 +101,8 @@ export default function Login() {
       return;
     }
 
-    if (mode === 'login') {
-      const { error } = await signIn(email, password);
-      if (error) setError(error.message);
-    } else {
-      if (!fullName.trim()) { setError('Full name is required'); setLoading(false); return; }
-      if (password.length < 6) { setError('Password must be at least 6 characters'); setLoading(false); return; }
-      const { error } = await signUp(email, password, fullName);
-      if (error) setError(error.message);
-      else setSignupSuccess(true);
-    }
+    const { error } = await signIn(email, password);
+    if (error) setError(error.message);
     setLoading(false);
   };
 
@@ -147,18 +137,7 @@ export default function Login() {
           <div style={{ fontSize: 11, color: C.acc, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 4 }}>Luxury Pet Hotel Management</div>
         </div>
 
-        {signupSuccess ? (
-          <div style={{ textAlign: 'center', padding: '20px 0' }}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>&#9993;</div>
-            <h3 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700, color: C.text }}>Check your email</h3>
-            <p style={{ fontSize: 14, color: C.textMut, lineHeight: 1.6, margin: 0 }}>
-              We sent a confirmation link to <strong>{email}</strong>. Click it to activate your account, then come back here to sign in.
-            </p>
-            <button onClick={() => { setMode('login'); setSignupSuccess(false); }} style={{ marginTop: 20, padding: '10px 24px', background: C.pri, color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
-              Back to Sign In
-            </button>
-          </div>
-        ) : resetSent ? (
+        {resetSent ? (
           <div style={{ textAlign: 'center', padding: '20px 0' }}>
             <div style={{ fontSize: 48, marginBottom: 16 }}>&#9993;</div>
             <h3 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700, color: C.text }}>Reset link sent</h3>
@@ -171,18 +150,6 @@ export default function Login() {
           </div>
         ) : (
           <>
-            {/* Tabs — only show for login/signup, not forgot */}
-            {mode !== 'forgot' && (
-              <div style={{ display: 'flex', marginBottom: 24, background: C.bg, borderRadius: 10, padding: 4 }}>
-                {['login', 'signup'].map(m => (
-                  <button key={m} onClick={() => { setMode(m); setError(''); }}
-                    style={{ flex: 1, padding: '10px 0', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: mode === m ? C.surface : 'transparent', color: mode === m ? C.pri : C.textMut, boxShadow: mode === m ? '0 1px 3px rgba(0,0,0,0.08)' : 'none', transition: 'all 0.2s' }}>
-                    {m === 'login' ? 'Sign In' : 'Create Account'}
-                  </button>
-                ))}
-              </div>
-            )}
-
             {mode === 'forgot' && (
               <div style={{ marginBottom: 20 }}>
                 <h3 style={{ margin: '0 0 6px', fontSize: 18, fontWeight: 700, color: C.text }}>Reset your password</h3>
@@ -193,20 +160,14 @@ export default function Login() {
             )}
 
             <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              {mode === 'signup' && (
-                <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 }}>Full Name</label>
-                  <input type="text" value={fullName} onChange={e => setFullName(e.target.value)} placeholder="e.g. Skyler Brooks" style={inputStyle} autoComplete="name" />
-                </div>
-              )}
               <div>
                 <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 }}>Email</label>
-                <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@k9resorts.com" style={inputStyle} autoComplete="email" required />
+                <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="" style={inputStyle} autoComplete="email" required />
               </div>
               {mode !== 'forgot' && (
                 <div>
                   <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 }}>Password</label>
-                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password" style={inputStyle} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} required />
+                  <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter your password" style={inputStyle} autoComplete="current-password" required />
                 </div>
               )}
 
@@ -214,7 +175,7 @@ export default function Login() {
 
               <button type="submit" disabled={loading}
                 style={{ width: '100%', padding: '13px', background: loading ? C.textMut : C.pri, color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: loading ? 'default' : 'pointer', fontFamily: 'inherit', marginTop: 4, transition: 'background 0.2s' }}>
-                {loading ? 'Please wait...' : mode === 'forgot' ? 'Send Reset Link' : mode === 'login' ? 'Sign In' : 'Create Account'}
+                {loading ? 'Please wait...' : mode === 'forgot' ? 'Send Reset Link' : 'Sign In'}
               </button>
             </form>
 
@@ -239,7 +200,6 @@ export default function Login() {
         )}
 
         <div style={{ textAlign: 'center', marginTop: 24, fontSize: 11, color: C.textMut }}>
-          K9 Operations v1.0<br/>
           <span style={{ fontSize: 10, opacity: 0.7 }}>&copy; 2026 K9 Operations LLC. All Rights Reserved.</span>
           <div style={{ marginTop: 6, display: 'flex', justifyContent: 'center', gap: 12 }}>
             <button onClick={() => setLegalModal('tos')} style={linkBtn}>Terms of Service</button>
