@@ -624,7 +624,7 @@ export default function BookingPage() {
       dog_data: serviceType !== 'tour' ? dog : {},
       booking_data: { checkIn, checkOut, selectedRoom, tourDate, tourTime, feedingChoice, medChoice },
     };
-    supabase.rpc('upsert_booking_draft', { p_draft: draft }).catch(() => {});
+    try { supabase.rpc('upsert_booking_draft', { p_draft: draft }); } catch (_) {}
   }, [slug, sessionId, serviceType, currentStepLabel, client, dog, checkIn, checkOut, selectedRoom, tourDate, tourTime, feedingChoice, medChoice]);
 
   // Trigger debounced sync on registration field changes
