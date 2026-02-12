@@ -131,8 +131,8 @@ body{font-family:'GT Eesti',system-ui,-apple-system,sans-serif;background:${B.bg
 
 /* Parallax hero */
 .bk-hero{position:relative;height:100vh;overflow:hidden;display:flex;align-items:center;justify-content:center}
-.bk-hero-bg{position:absolute;inset:0;background-size:cover;background-position:center;transition:opacity 1.5s ease}
-.bk-hero-overlay{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,52,98,.45) 0%,rgba(0,52,98,.85) 100%)}
+.bk-hero-bg{position:absolute;inset:0;background-size:cover;background-position:center;transition:opacity 1.5s ease;pointer-events:none}
+.bk-hero-overlay{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,52,98,.45) 0%,rgba(0,52,98,.85) 100%);pointer-events:none}
 
 /* Scroll reveal */
 .bk-reveal{opacity:0;transform:translateY(50px);transition:all .9s cubic-bezier(.16,1,.3,1)}.bk-reveal.visible{opacity:1;transform:none}
@@ -406,7 +406,7 @@ export default function BookingPage() {
     setTransDir(dir);
     setCurrentPage(page);
     setPageHistory(h => [...h, page]);
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    window.scrollTo(0, 0);
   }, []);
 
   const goBack = useCallback(() => {
@@ -415,7 +415,7 @@ export default function BookingPage() {
     setTransDir('right');
     setCurrentPage(prev);
     setPageHistory(h => h.slice(0, -1));
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    window.scrollTo(0, 0);
   }, [pageHistory]);
 
   // Pricing computation
@@ -540,20 +540,20 @@ export default function BookingPage() {
 
           {/* Three CTAs */}
           <div className="bk-fade-up bk-fade-up-d3" style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <div className="bk-cta-card" onClick={() => navigateTo('availability', 'left')}>
+            <button className="bk-cta-card" style={{ border: 'none', font: 'inherit', color: 'inherit', textAlign: 'left' }} onClick={() => { setCurrentPage('availability'); window.scrollTo(0,0); }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
                 <Icons.Calendar size={22} />
                 <span style={{ fontSize: 18, fontWeight: 700, color: '#fff' }}>View Availability</span>
               </div>
-              <p style={{ fontSize: 14, color: 'rgba(255,255,255,.7)', marginBottom: 12, lineHeight: 1.5 }}>
+              <p style={{ fontSize: 14, color: 'rgba(255,255,255,.7)', marginBottom: 12, lineHeight: 1.5, margin: 0 }}>
                 Have dates in mind? See what's open and book your stay.
               </p>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: B.gold, fontSize: 14, fontWeight: 600 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: B.gold, fontSize: 14, fontWeight: 600, marginTop: 12 }}>
                 Check Availability <Icons.Arrow size={16} color={B.gold} />
               </div>
-            </div>
+            </button>
 
-            <div className="bk-cta-card" onClick={() => navigateTo('account', 'left')}>
+            <button className="bk-cta-card" style={{ border: 'none', font: 'inherit', color: 'inherit', textAlign: 'left' }} onClick={() => { setCurrentPage('account'); window.scrollTo(0,0); }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
                 <Icons.User size={22} />
                 <span style={{ fontSize: 18, fontWeight: 700, color: '#fff' }}>Your Account</span>
@@ -564,9 +564,9 @@ export default function BookingPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: B.gold, fontSize: 14, fontWeight: 600 }}>
                 Access Account <Icons.Arrow size={16} color={B.gold} />
               </div>
-            </div>
+            </button>
 
-            <div className="bk-cta-card" onClick={() => learnRef.current?.scrollIntoView({ behavior: 'smooth' })}>
+            <button className="bk-cta-card" style={{ border: 'none', font: 'inherit', color: 'inherit', textAlign: 'left' }} onClick={() => learnRef.current?.scrollIntoView({ behavior: 'smooth' })}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
                 <Icons.Sparkle size={22} />
                 <span style={{ fontSize: 18, fontWeight: 700, color: '#fff' }}>Why K9 Resorts?</span>
@@ -577,7 +577,7 @@ export default function BookingPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: B.gold, fontSize: 14, fontWeight: 600 }}>
                 Learn More <Icons.Arrow dir="down" size={16} color={B.gold} />
               </div>
-            </div>
+            </button>
           </div>
         </div>
 
@@ -695,7 +695,7 @@ export default function BookingPage() {
         <p style={{ color: 'rgba(255,255,255,.7)', fontSize: 16, maxWidth: 500, margin: '0 auto 30px', lineHeight: 1.6 }}>
           Give your pup the 5-star experience they deserve.
         </p>
-        <button className="bk-btn bk-btn-primary" onClick={() => navigateTo('availability', 'left')}>
+        <button className="bk-btn bk-btn-primary" onClick={() => { setCurrentPage('availability'); window.scrollTo(0,0); }}>
           Check Availability <Icons.Arrow size={18} />
         </button>
         <div style={{ marginTop: 40, fontSize: 11, color: 'rgba(255,255,255,.3)' }}>© 2026 K9 Resorts Luxury Pet Hotel. All Rights Reserved.</div>
@@ -1402,8 +1402,12 @@ export default function BookingPage() {
   };
 
   return (
-    <div key={currentPage} className="bk-fade-in" style={{ minHeight: '100vh' }}>
-      {renderCurrentPage()}
+    <div style={{ minHeight: '100vh' }}>
+      {currentPage === 'splash' && renderSplash()}
+      {currentPage === 'availability' && renderAvailability()}
+      {currentPage === 'register' && renderRegistration()}
+      {currentPage === 'confirmation' && renderConfirmation()}
+      {currentPage === 'account' && renderAccount()}
     </div>
   );
 }
