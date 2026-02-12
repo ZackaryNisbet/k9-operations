@@ -130,6 +130,19 @@ export default function Login() {
       <div style={{ width: '100%', maxWidth: 420, background: C.surface, borderRadius: 20, padding: '40px 36px', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="56" height="56" style={{ display: 'block', margin: '0 auto 14px' }}>
+            <defs><linearGradient id="nxG" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stopColor="#C4A46A"/><stop offset="100%" stopColor="#AF8D54"/></linearGradient></defs>
+            <g transform="translate(50,50)">
+              <line x1="0" y1="0" x2="-22" y2="-24" stroke={C.pri} strokeWidth="2" opacity="0.25"/>
+              <line x1="0" y1="0" x2="26" y2="-16" stroke={C.pri} strokeWidth="2" opacity="0.25"/>
+              <line x1="0" y1="0" x2="2" y2="28" stroke={C.pri} strokeWidth="2" opacity="0.25"/>
+              <circle cx="0" cy="0" r="16" fill="url(#nxG)"/>
+              <circle cx="0" cy="0" r="6" fill={C.pri} opacity="0.2"/>
+              <circle cx="-22" cy="-24" r="9" fill={C.pri}/>
+              <circle cx="26" cy="-16" r="9" fill={C.pri}/>
+              <circle cx="2" cy="28" r="9" fill={C.pri}/>
+            </g>
+          </svg>
           <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, fontFamily: "'Canela', Georgia, serif", letterSpacing: '0.02em' }}>K9 Operations</div>
           <div style={{ fontSize: 11, color: C.acc, fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 4 }}>Luxury Pet Hotel Management</div>
         </div>
