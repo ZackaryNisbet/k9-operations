@@ -117,7 +117,7 @@ export default function Login() {
 
   return (
     <div style={{ minHeight: '100vh', background: `linear-gradient(135deg, ${C.pri} 0%, #001a33 100%)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'GT Eesti', -apple-system, sans-serif", padding: 20 }}>
-      <div style={{ width: '100%', maxWidth: 420, background: C.surface, borderRadius: 20, padding: '40px 36px', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+      <div style={{ width: '100%', maxWidth: 420, background: C.surface, borderRadius: 20, padding: '40px 36px', boxShadow: '0 20px 60px rgba(0,0,0,0.4)', border: '1px solid rgba(0,0,0,0.08)', outline: 'none' }}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="56" height="56" style={{ display: 'block', margin: '0 auto 14px' }}>
