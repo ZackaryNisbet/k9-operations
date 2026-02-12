@@ -22663,11 +22663,10 @@ export default function App() {
   const [currentLocation, setCurrentLocation] = useState(() => {
     try {
       const v = localStorage.getItem("k9_location");
-      if (v === "enterprise") return v;
-      // Accept stored UUIDs — they'll be validated once locations load
       if (v) return v;
     } catch {}
-    return "enterprise";
+    // Default new users to demo view (first non-enterprise location)
+    return dbLocations.length > 0 ? dbLocations[0].id : "demo";
   });
   const initRoute = useMemo(() => parseUrl(window.location.pathname, null), []);
   const [page, setPage] = useState(() => initRoute.locSlug === "enterprise" ? initRoute.page : initRoute.page);
