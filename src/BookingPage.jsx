@@ -214,10 +214,11 @@ function fmtDate(d) {
 function fmtCurrency(n) { return '$' + (n || 0).toFixed(2); }
 
 function getAvailableCount(roomType, rooms, checkIn, checkOut, reservations) {
-  const rmArr = Array.isArray(rooms) ? rooms : [];
-  const resArr = Array.isArray(reservations) ? reservations : [];
-  const total = rmArr.filter(r => r.type === roomType).length;
+  // rooms is { "Luxury Suite": ["101","102",...], ... } — index by roomType key
+  const roomList = Array.isArray(rooms?.[roomType]) ? rooms[roomType] : [];
+  const total = roomList.length;
   if (!checkIn || !checkOut) return total;
+  const resArr = Array.isArray(reservations) ? reservations : [];
   const booked = resArr.filter(r => {
     if (r.type !== 'boarding' || r.roomType !== roomType) return false;
     if (r.status === 'cancelled' || r.status === 'checked-out') return false;
@@ -514,9 +515,6 @@ export default function BookingPage() {
   );
 
   const loc = locationData;
-  // Normalize rooms & reservations — Supabase may return objects instead of arrays
-  if (loc && loc.rooms && !Array.isArray(loc.rooms)) loc.rooms = Object.values(loc.rooms);
-  if (loc && loc.reservations && !Array.isArray(loc.reservations)) loc.reservations = Object.values(loc.reservations);
   const locName = loc?.location_name || 'K9 Resorts';
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -727,7 +725,8 @@ export default function BookingPage() {
   const renderAvailability = () => {
     const totalRoomCounts = {};
     ROOM_ORDER.forEach(rt => {
-      totalRoomCounts[rt] = (Array.isArray(loc?.rooms) ? loc.rooms : []).filter(r => r.type === rt).length;
+      // rooms is { "Luxury Suite": ["101","102",...], ... }
+      totalRoomCounts[rt] = Array.isArray(loc?.rooms?.[rt]) ? loc.rooms[rt].length : 0;
     });
     const availCounts = {};
     ROOM_ORDER.forEach(rt => {
