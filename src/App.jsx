@@ -2185,6 +2185,14 @@ function MiniDatePicker({ value, onChange, style: extraStyle, min, max, disabled
   );
 }
 
+// Format raw digits into (xxx) xxx-xxxx
+function fmtPhoneInput(val) {
+  const d = (val || '').replace(/\D/g, '').slice(0, 10);
+  if (d.length === 0) return '';
+  if (d.length <= 3) return `(${d}`;
+  if (d.length <= 6) return `(${d.slice(0,3)}) ${d.slice(3)}`;
+  return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+}
 function Inp({label,value,onChange,type="text",placeholder,required,style={},options,rows,autoFocus,disabled}) {
   const ls={display:"block",fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"};
   const dis=disabled?{opacity:0.55,pointerEvents:"none",background:C.bg}:{};
@@ -2198,6 +2206,11 @@ function Inp({label,value,onChange,type="text",placeholder,required,style={},opt
   }
   if(type==="checkbox") return <label style={{display:"flex",alignItems:"center",gap:10,cursor:disabled?"default":"pointer",...(disabled?{opacity:0.55,pointerEvents:"none"}:{})}}><div onClick={()=>{if(!disabled)onChange(!value);}} style={{width:22,height:22,borderRadius:6,border:`2px solid ${value?C.pri:C.border}`,background:value?C.pri:"#fff",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.15s",cursor:disabled?"default":"pointer",flexShrink:0,color:"#fff"}}>{value&&<I.Check/>}</div><span style={{fontSize:14,color:C.text}}>{label}</span></label>;
   if(type==="textarea") return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<textarea value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows||3} disabled={disabled} style={{...is,resize:"vertical",minHeight:70}} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/></label>;
+  if(type==="tel") {
+    const phoneDisplay = fmtPhoneInput(value);
+    const handleTelChange = (e) => { const raw = e.target.value.replace(/\D/g, '').slice(0, 10); onChange(raw); };
+    return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<input type="tel" value={phoneDisplay} onChange={handleTelChange} placeholder={placeholder||"(555) 123-4567"} disabled={disabled} style={is} autoFocus={autoFocus} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border} maxLength={14}/></label>;
+  }
   return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<input type={type} value={value||""} onChange={e=>onChange(e.target.value)} placeholder={placeholder} disabled={disabled} style={is} autoFocus={autoFocus} onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border}/></label>;
 }
 
@@ -5254,13 +5267,36 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                   },
                   { ok: snStatus.ok, label: "Spay/Neuter", expandKey: "sn",
                     detail: snStatus.ok?(snStatus.status==="Neutered"||snStatus.status==="Spayed"?snStatus.status:(snStatus.privatePlay?"Intact (PP)":snStatus.status||"N/A")):`Intact — ${snStatus.reason||"Must be Private Play"}`,
-                    children: <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    children: <div style={{display:"flex",flexDirection:"column",gap:6}}>
                       <span style={{color:snStatus.ok?C.suc:C.dan,fontSize:11}}>
                         {snStatus.status==="Neutered"||snStatus.status==="Spayed"?snStatus.status:`Intact${snStatus.ageMonths!=null?` (${snStatus.ageMonths} months old)`:""}`}
                         {snStatus.privatePlay&&" — Private Play assigned"}
                         {!snStatus.ok&&` — ${snStatus.reason}`}
                       </span>
-                      <div style={{fontSize:9,color:C.textMut,marginTop:2}}>Intact dogs 10+ months old must be assigned to Private Play.</div>
+                      <div style={{fontSize:9,color:C.textMut}}>Intact dogs 10+ months old must be assigned to Private Play.</div>
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2}}>
+                        <span style={{fontSize:10,color:C.textSec,fontWeight:600,minWidth:50}}>Status</span>
+                        <select value={dog.fields?.spayed_neutered||""} style={{flex:1,fontSize:11,padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontFamily:"inherit",outline:"none",cursor:"pointer"}}
+                          onChange={async(e)=>{await save({...data,dogs:data.dogs.map(d=>d.id===dog.id?{...d,fields:{...d.fields,spayed_neutered:e.target.value}}:d)});}}>
+                          <option value="">Unknown</option>
+                          <option value="Neutered">Neutered</option>
+                          <option value="Spayed">Spayed</option>
+                          <option value="Intact">Intact</option>
+                        </select>
+                      </div>
+                      {!snStatus.ok && (
+                        <button onClick={async()=>{
+                          const curTags = dog.tags || [];
+                          if (!curTags.includes("tag_pp")) {
+                            const newTags = [...curTags.filter(t => t !== "tag_eval" && t !== "tag_lp" && t !== "tag_sp"), "tag_pp"];
+                            await save({...data, dogs: data.dogs.map(d => d.id === dog.id ? {...d, tags: newTags} : d)});
+                          }
+                        }} style={{padding:"6px 12px",borderRadius:6,border:`1.5px solid ${C.pri}`,background:`${C.pri}08`,color:C.pri,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",width:"fit-content"}}
+                          onMouseEnter={e=>{e.currentTarget.style.background=C.pri;e.currentTarget.style.color="#fff";}}
+                          onMouseLeave={e=>{e.currentTarget.style.background=`${C.pri}08`;e.currentTarget.style.color=C.pri;}}>
+                          Assign Private Play
+                        </button>
+                      )}
                     </div>
                   },
                 ];
@@ -5284,18 +5320,34 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                     </div>
                     {r.alreadyIn && <Badge color="success" size="sm">Already In</Badge>}
                   </div>
-                  {!r.alreadyIn && (<>
+                  {!r.alreadyIn && (() => {
+                    // Compliance rules: check which validations apply per appointment type
+                    const cRules = data.complianceRules || {};
+                    const isCheckRequired = (checkId, apptType) => {
+                      const rule = cRules[checkId];
+                      if (!rule || rule.appliesTo === "all") return true;
+                      if (rule.appliesTo === "none") return false;
+                      if (rule.appliesTo === "custom") return (rule.apptTypes || []).includes(apptType);
+                      return true;
+                    };
+                    const dcGreen = [
+                      {id:"vaccines",ok:vaxStatus.ok},{id:"emergency_contact",ok:ecOk},{id:"agreements",ok:agrOk},{id:"dog_age",ok:ageStatus.ok},{id:"spay_neuter",ok:snStatus.ok}
+                    ].every(c => !isCheckRequired(c.id, "group_daycare") || c.ok);
+                    const dbGreen = [
+                      {id:"vaccines",ok:vaxStatus.ok},{id:"emergency_contact",ok:ecOk},{id:"agreements",ok:agrOk},{id:"dog_age",ok:ageStatus.ok},{id:"spay_neuter",ok:snStatus.ok}
+                    ].every(c => !isCheckRequired(c.id, "dayboarding") || c.ok);
+                    return <>
                     <div style={{display:"flex",gap:8,marginBottom:8}}>
-                      <button onClick={()=>{if(allGreen)quickDCCheckIn(r.clientId, r.dogId, "daycare");}} disabled={!allGreen}
-                        style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 12px",borderRadius:10,border:`1.5px solid ${allGreen?C.suc+"30":C.border}`,background:allGreen?`${C.suc}08`:C.bg,color:allGreen?C.suc:C.textMut,fontSize:13,fontWeight:700,cursor:allGreen?"pointer":"not-allowed",fontFamily:"inherit",transition:"all 0.15s",opacity:allGreen?1:0.5}}
-                        onMouseEnter={e=>{if(allGreen){e.currentTarget.style.background=C.suc;e.currentTarget.style.color="#fff";e.currentTarget.style.borderColor=C.suc;}}}
-                        onMouseLeave={e=>{if(allGreen){e.currentTarget.style.background=`${C.suc}08`;e.currentTarget.style.color=C.suc;e.currentTarget.style.borderColor=`${C.suc}30`;}}}>
+                      <button onClick={()=>{if(dcGreen)quickDCCheckIn(r.clientId, r.dogId, "daycare");}} disabled={!dcGreen}
+                        style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 12px",borderRadius:10,border:`1.5px solid ${dcGreen?C.suc+"30":C.border}`,background:dcGreen?`${C.suc}08`:C.bg,color:dcGreen?C.suc:C.textMut,fontSize:13,fontWeight:700,cursor:dcGreen?"pointer":"not-allowed",fontFamily:"inherit",transition:"all 0.15s",opacity:dcGreen?1:0.5}}
+                        onMouseEnter={e=>{if(dcGreen){e.currentTarget.style.background=C.suc;e.currentTarget.style.color="#fff";e.currentTarget.style.borderColor=C.suc;}}}
+                        onMouseLeave={e=>{if(dcGreen){e.currentTarget.style.background=`${C.suc}08`;e.currentTarget.style.color=C.suc;e.currentTarget.style.borderColor=`${C.suc}30`;}}}>
                         <I.LogIn style={{width:14,height:14}}/> Daycare
                       </button>
-                      <button onClick={()=>{if(allGreen)quickDCCheckIn(r.clientId, r.dogId, "dayboarding");}} disabled={!allGreen}
-                        style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 12px",borderRadius:10,border:`1.5px solid ${allGreen?C.pri+"30":C.border}`,background:allGreen?`${C.pri}08`:C.bg,color:allGreen?C.pri:C.textMut,fontSize:13,fontWeight:700,cursor:allGreen?"pointer":"not-allowed",fontFamily:"inherit",transition:"all 0.15s",opacity:allGreen?1:0.5}}
-                        onMouseEnter={e=>{if(allGreen){e.currentTarget.style.background=C.pri;e.currentTarget.style.color="#fff";e.currentTarget.style.borderColor=C.pri;}}}
-                        onMouseLeave={e=>{if(allGreen){e.currentTarget.style.background=`${C.pri}08`;e.currentTarget.style.color=C.pri;e.currentTarget.style.borderColor=`${C.pri}30`;}}}>
+                      <button onClick={()=>{if(dbGreen)quickDCCheckIn(r.clientId, r.dogId, "dayboarding");}} disabled={!dbGreen}
+                        style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",gap:6,padding:"9px 12px",borderRadius:10,border:`1.5px solid ${dbGreen?C.pri+"30":C.border}`,background:dbGreen?`${C.pri}08`:C.bg,color:dbGreen?C.pri:C.textMut,fontSize:13,fontWeight:700,cursor:dbGreen?"pointer":"not-allowed",fontFamily:"inherit",transition:"all 0.15s",opacity:dbGreen?1:0.5}}
+                        onMouseEnter={e=>{if(dbGreen){e.currentTarget.style.background=C.pri;e.currentTarget.style.color="#fff";e.currentTarget.style.borderColor=C.pri;}}}
+                        onMouseLeave={e=>{if(dbGreen){e.currentTarget.style.background=`${C.pri}08`;e.currentTarget.style.color=C.pri;e.currentTarget.style.borderColor=`${C.pri}30`;}}}>
                         <I.LogIn style={{width:14,height:14}}/> Day Boarding
                       </button>
                     </div>
@@ -5318,7 +5370,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                         );
                       })}
                     </div>
-                  </>)}
+                  </>;
+                  })()}
                 </div>
                 );
               });
@@ -6240,6 +6293,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                   Overdue
                 </button>
               )}
+              {(activeTab === "active" || activeTab === "all") && (
+                <button onClick={(e) => { e.stopPropagation(); setShowExtraCols(v=>!v); }}
+                  style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${showExtraCols?C.pri:C.border}`,background:showExtraCols?C.priLt:"transparent",color:showExtraCols?C.pri:C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",transition:"all 0.2s",textTransform:"uppercase",letterSpacing:"0.04em"}}>
+                  {showExtraCols ? "Less Columns" : "More Columns"}
+                </button>
+              )}
             </div>
           </div>
           {/* Active structured filter summary */}
@@ -6684,11 +6743,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                 const labels = {totalRes:"Res",lastRes:"Last Res",daysSince:"Days",daycare:"DC",boarding:"BD",eval:"Eval",postEval:"P-Eval",tours:"Tours",postTour:"P-Tour",totalSpent:"Spent",nextRes:"Next"};
                 return <div key={k} style={colHeaderStyle(k)} onClick={()=>handleSort(k)}>{labels[k]||k} <SortIcon col={k}/></div>;
               })}
-              {/* Column toggle — simple on/off */}
-              <button onClick={(e) => { e.stopPropagation(); setShowExtraCols(v=>!v); }}
-                style={{padding:"3px 8px",borderRadius:6,border:`1.5px solid ${showExtraCols?C.pri:C.border}`,background:showExtraCols?C.priLt:"transparent",color:showExtraCols?C.pri:C.textMut,fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",transition:"all 0.2s",textTransform:"uppercase",letterSpacing:"0.04em"}}>
-                {showExtraCols ? "Less" : "More"}
-              </button>
+              {/* Column toggle moved to search bar */}
             </div>
             {activeList.length === 0 ? (
               <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No clients{search?" matching search":""}</div></div>
@@ -16356,6 +16411,7 @@ function SettingsPage({ data, save, profile }) {
       { id: "rooms", label: "Rooms", desc: "Configure room numbers for each boarding room type", keywords: "rooms boarding luxury executive double single compartment" },
       { id: "closed-dates", label: "Closed Dates", desc: "Holidays and dates closed to the public — no check-ins or check-outs", keywords: "closed dates holidays christmas thanksgiving new year memorial labor easter july 4 blackout" },
       { id: "policies", label: "Resort Policies", desc: "Vaccine grace periods, age limits, grandfathering rules", keywords: "policies compliance vaccines grace period age limit grandfather senior" },
+      { id: "compliance-rules", label: "Compliance Rules", desc: "Configure which compliance checks apply to each appointment type", keywords: "compliance spay neuter intact group play private play daycare boarding check-in rules" },
       { id: "booking-settings", label: "Online Booking", desc: "Tour scheduling, daycare capacity, and self-booking page settings", keywords: "booking online tour daycare capacity self-service concurrent scheduling" },
     ]},
     { label: "Administration", items: [
@@ -16375,7 +16431,7 @@ function SettingsPage({ data, save, profile }) {
     fields:"edit_fields",client:"edit_fields",dog:"edit_fields",tags:"edit_tags_config",vaccines:"edit_vaccines_config",
     agreements:"edit_agreements",pricing:"edit_pricing",packages:"edit_pricing",discounts:"edit_pricing",dropdowns:"edit_dropdowns",
     eod:"edit_eod_template","daily-ops":"edit_ops_template",
-    facility:"edit_facility",rooms:"edit_rooms","closed-dates":"edit_facility",policies:"edit_vaccines_config","booking-settings":"edit_facility",
+    facility:"edit_facility",rooms:"edit_rooms","closed-dates":"edit_facility",policies:"edit_vaccines_config","compliance-rules":"edit_vaccines_config","booking-settings":"edit_facility",
     team:"manage_team",roles:"manage_roles",reset:"reset_data",
   };
   const hp = (k) => hasPermission(profile, data, k);
@@ -16947,7 +17003,90 @@ function SettingsPage({ data, save, profile }) {
             </div>
           </Card>
         </div>
-      ) : tab === "booking-settings" ? (() => {
+      ) : tab === "compliance-rules" ? (() => {
+        const compRules = data.complianceRules || {};
+        // Default: all checks apply to all appointment types
+        const CHECKS = [
+          { id: "vaccines", label: "Vaccines", desc: "Required vaccinations must be current" },
+          { id: "emergency_contact", label: "Emergency Contact", desc: "Emergency contact name and phone on file" },
+          { id: "agreements", label: "Agreements", desc: "All required agreements must be signed" },
+          { id: "dog_age", label: "Dog Age", desc: "Dog must meet age requirements" },
+          { id: "spay_neuter", label: "Spay / Neuter", desc: "Intact dogs 10+ months must be Private Play only" },
+        ];
+        const APPT_TYPES = [
+          { id: "group_daycare", label: "Group Daycare", desc: "Daycare in group play yards" },
+          { id: "private_play", label: "Private Play", desc: "Solo or private play sessions" },
+          { id: "dayboarding", label: "Day Boarding", desc: "Daytime boarding in a private room" },
+          { id: "overnight", label: "Overnight Boarding", desc: "Overnight stays in boarding rooms" },
+        ];
+        const isRequired = (checkId, apptType) => {
+          const rule = compRules[checkId];
+          if (!rule) return true; // default: required for all
+          if (rule.appliesTo === "all") return true;
+          if (rule.appliesTo === "none") return false;
+          if (rule.appliesTo === "custom") return (rule.apptTypes || []).includes(apptType);
+          return true;
+        };
+        const updateRule = async (checkId, appliesTo, apptTypes) => {
+          const updated = { ...compRules, [checkId]: { appliesTo, apptTypes: apptTypes || [] } };
+          await save({ ...data, complianceRules: updated });
+        };
+        return (
+          <div style={{display:"flex",flexDirection:"column",gap:16}}>
+            <Card style={{ padding: "24px 28px" }}>
+              <h3 style={{margin:"0 0 4px",fontSize:17,fontWeight:700,color:C.text}}>Compliance Check Rules</h3>
+              <p style={{margin:"0 0 20px",fontSize:13,color:C.textSec}}>Control which compliance checks are required for each appointment type. For example, the Spay/Neuter check may only apply to Group Daycare, not Day Boarding.</p>
+              <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                {CHECKS.map(ck => {
+                  const rule = compRules[ck.id] || { appliesTo: "all" };
+                  return (
+                    <div key={ck.id} style={{border:`1.5px solid ${C.border}`,borderRadius:12,padding:"16px 20px",background:C.surface}}>
+                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                        <div>
+                          <div style={{fontSize:14,fontWeight:700,color:C.text}}>{ck.label}</div>
+                          <div style={{fontSize:12,color:C.textSec}}>{ck.desc}</div>
+                        </div>
+                        <select value={rule.appliesTo || "all"} onChange={e => updateRule(ck.id, e.target.value, rule.apptTypes)}
+                          style={{padding:"6px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:12,fontWeight:600,fontFamily:"inherit",color:C.text,cursor:"pointer",background:C.surface}}>
+                          <option value="all">Required for All</option>
+                          <option value="custom">Custom per Appointment</option>
+                          <option value="none">Disabled</option>
+                        </select>
+                      </div>
+                      {rule.appliesTo === "custom" && (
+                        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginTop:10,paddingTop:12,borderTop:`1px solid ${C.borderLight}`}}>
+                          {APPT_TYPES.map(at => {
+                            const on = (rule.apptTypes || []).includes(at.id);
+                            return (
+                              <button key={at.id} onClick={() => {
+                                const cur = rule.apptTypes || [];
+                                const next = on ? cur.filter(t => t !== at.id) : [...cur, at.id];
+                                updateRule(ck.id, "custom", next);
+                              }}
+                                style={{padding:"10px 12px",borderRadius:8,border:`1.5px solid ${on ? C.pri : C.border}`,background:on ? `${C.pri}10` : "transparent",color:on ? C.pri : C.textMut,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",textAlign:"center",transition:"all 0.15s"}}>
+                                <div style={{fontWeight:700}}>{at.label}</div>
+                                <div style={{fontSize:10,marginTop:2,opacity:0.7}}>{on ? "Required" : "Not required"}</div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </Card>
+            <Card style={{ padding: "24px 28px" }}>
+              <h3 style={{margin:"0 0 4px",fontSize:17,fontWeight:700,color:C.text}}>How Compliance Rules Work</h3>
+              <div style={{fontSize:13,color:C.textSec,lineHeight:1.7}}>
+                <p style={{margin:"0 0 8px"}}>Each compliance check can be set to "Required for All," "Custom per Appointment," or "Disabled."</p>
+                <p style={{margin:"0 0 8px"}}><strong>Example:</strong> If Spay/Neuter is set to Custom and only "Group Daycare" is selected, then an intact dog over 10 months will be blocked from Group Daycare check-in but can still check in for Day Boarding or Overnight Boarding.</p>
+                <p style={{margin:0}}>When a check is "Disabled," it will still display on the check-in card but won't block the check-in button.</p>
+              </div>
+            </Card>
+          </div>
+        );
+      })() : tab === "booking-settings" ? (() => {
         const bkSettings = data.settings || {};
         const tourSet = bkSettings.tourSettings || { allowConcurrent: false, duration: 30 };
         const dcCap = bkSettings.daycareCapacity || { small: 15, large: 20, total: 35 };
@@ -20603,32 +20742,36 @@ export default function App() {
         .nav-tip{position:relative;} .nav-tip::after{content:attr(data-tip);position:absolute;left:calc(100% + 12px);top:50%;transform:translateY(-50%);background:#1a2940;color:#fff;padding:5px 10px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity 0.15s;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.2);} .nav-tip:hover::after{opacity:1;}
       `}</style>
 
-      {/* Sidebar Desktop */}
+      {/* Sidebar Desktop — always collapsed, expands on hover */}
       {(() => {
         const filterMode = lcFilterOpen && page === "clients";
+        const sbExpanded = filterMode || sidebarOpen;
         return (
-      <div className="sidebar-d" style={{width:filterMode?240:(sidebarOpen?240:68),background:filterMode?C.surface:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,display:"flex",flexDirection:"column",transition:"width 0.25s ease, background 0.25s ease",overflow:"hidden",flexShrink:0,borderRight:filterMode?`1px solid ${C.border}`:"none"}}>
+      <div className="sidebar-d"
+        onMouseEnter={()=>{if(!filterMode)setSidebarOpen(true);}}
+        onMouseLeave={()=>{if(!filterMode)setSidebarOpen(false);}}
+        style={{width:filterMode?240:(sbExpanded?240:68),background:filterMode?C.surface:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,display:"flex",flexDirection:"column",transition:"width 0.15s cubic-bezier(0.4,0,0.2,1), background 0.15s ease",overflow:"hidden",flexShrink:0,borderRight:filterMode?`1px solid ${C.border}`:"none",zIndex:50}}>
         {filterMode ? (
           <LifecycleFilterPanel filters={lcFilters} onChange={setLcFilters} onClose={() => setLcFilterOpen(false)} />
         ) : (<>
-        <div style={{padding:sidebarOpen?"22px 18px 18px":"22px 0 18px",display:"flex",alignItems:"center",justifyContent:sidebarOpen?"flex-start":"center",gap:12}}>
-          <div style={{flexShrink:0}}>{sidebarOpen ? <K9Logo size={38}/> : <K9LogoMini size={34}/>}</div>
-          {sidebarOpen&&<div><div style={{fontSize:16,fontWeight:700,color:C.acc,whiteSpace:"nowrap",fontFamily:"'Canela', Georgia, serif",letterSpacing:"0.02em"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div>}
+        <div style={{padding:sbExpanded?"22px 18px 18px":"22px 0 18px",display:"flex",alignItems:"center",justifyContent:sbExpanded?"flex-start":"center",gap:12,transition:"padding 0.15s ease"}}>
+          <div style={{flexShrink:0}}>{sbExpanded ? <K9Logo size={38}/> : <K9LogoMini size={34}/>}</div>
+          {sbExpanded&&<div><div style={{fontSize:16,fontWeight:700,color:C.acc,whiteSpace:"nowrap",fontFamily:"'Canela', Georgia, serif",letterSpacing:"0.02em"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div>}
         </div>
         <div style={{margin:"0 16px 14px",height:1,background:"rgba(175,141,84,0.15)"}}/>
-        <LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={!sidebarOpen} allLocations={allLocations} profile={profile} />
-        <nav style={{flex:1,padding:sidebarOpen?"0 10px":"0 8px",overflowY:"auto"}}>
+        <LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={!sbExpanded} allLocations={allLocations} profile={profile} />
+        <nav style={{flex:1,padding:sbExpanded?"0 10px":"0 8px",overflowY:"auto"}}>
           {navSections.map((sec, si) => (
             <div key={si}>
-              {sec.label && sidebarOpen && <div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}
-              {!sec.label && si > 0 && <div style={{margin:sidebarOpen?"10px 14px":"10px 4px",height:1,background:"rgba(175,141,84,0.12)"}}/>}
+              {sec.label && sbExpanded && <div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}
+              {!sec.label && si > 0 && <div style={{margin:sbExpanded?"10px 14px":"10px 4px",height:1,background:"rgba(175,141,84,0.12)"}}/>}
               {sec.items.filter(item => { const perm = NAV_PERM_MAP[item.id]; return !perm || hasPermission(profile, data, perm); }).map(item=>{const act=activeNav===item.id;const hasKids=!!item.children;
                 return(<div key={item.id}>
-                  <button onMouseEnter={!sidebarOpen?(e)=>{const r=e.currentTarget.getBoundingClientRect();setNavTooltip({label:item.label,top:r.top+r.height/2,left:r.right+10});}:undefined} onMouseLeave={!sidebarOpen?()=>setNavTooltip(null):undefined} onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:sidebarOpen?(item.indent?"8px 14px 8px 28px":"10px 14px"):"10px 0",justifyContent:sidebarOpen?"flex-start":"center",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap",position:"relative"}}>
-                    <span style={{flexShrink:0}}>{item.icon}</span>{sidebarOpen&&<><span style={{flex:1,textAlign:"left"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'GT Eesti',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
+                  <button onMouseEnter={!sbExpanded?(e)=>{const r=e.currentTarget.getBoundingClientRect();setNavTooltip({label:item.label,top:r.top+r.height/2,left:r.right+10});}:undefined} onMouseLeave={!sbExpanded?()=>setNavTooltip(null):undefined} onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:sbExpanded?(item.indent?"8px 14px 8px 28px":"10px 14px"):"10px 0",justifyContent:sbExpanded?"flex-start":"center",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"all 0.12s",whiteSpace:"nowrap",position:"relative"}}>
+                    <span style={{flexShrink:0}}>{item.icon}</span>{sbExpanded&&<><span style={{flex:1,textAlign:"left"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'GT Eesti',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.15s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
                   </button>
-                  {hasKids&&opsExpanded&&sidebarOpen&&<div style={{marginLeft:20,marginBottom:4}}>
-                    {item.children.map(ch=>{const chAct=page===ch.id;return(<button key={ch.id} onClick={()=>nav(ch.id)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 12px",border:"none",borderRadius:8,background:chAct?"rgba(175,141,84,0.12)":"transparent",color:chAct?C.acc:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:chAct?600:400,cursor:"pointer",marginBottom:1,fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>
+                  {hasKids&&opsExpanded&&sbExpanded&&<div style={{marginLeft:20,marginBottom:4}}>
+                    {item.children.map(ch=>{const chAct=page===ch.id;return(<button key={ch.id} onClick={()=>nav(ch.id)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 12px",border:"none",borderRadius:8,background:chAct?"rgba(175,141,84,0.12)":"transparent",color:chAct?C.acc:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:chAct?600:400,cursor:"pointer",marginBottom:1,fontFamily:"inherit",transition:"all 0.12s",whiteSpace:"nowrap"}}>
                       <span style={{width:4,height:4,borderRadius:2,background:chAct?C.acc:"rgba(255,255,255,0.2)",flexShrink:0}}/>{ch.label}
                     </button>);})}
                   </div>}
@@ -20638,17 +20781,16 @@ export default function App() {
           ))}
         </nav>
         <div style={{padding:"14px 10px",display:"flex",flexDirection:"column",gap:6}}>
-          {sidebarOpen && <div style={{padding:"0 4px 4px",fontSize:11,color:"rgba(175,141,84,0.4)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{profile?.full_name || profile?.email}</div>}
-          <button onClick={signOut} style={{width:"100%",padding:"7px 0",border:"none",borderRadius:8,background:"rgba(239,68,68,0.12)",color:"rgba(255,150,150,0.8)",cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:500}}>{sidebarOpen?"Sign Out":"⏻"}</button>
-          <button onClick={()=>setSidebarOpen(!sidebarOpen)} style={{width:"100%",padding:"7px 0",border:"none",borderRadius:8,background:"rgba(175,141,84,0.08)",color:"rgba(175,141,84,0.5)",cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{sidebarOpen?"‹ Collapse":"›"}</button>
-          {sidebarOpen && <div style={{textAlign:"center",fontSize:9,color:"rgba(255,255,255,0.5)",marginTop:4,lineHeight:1.4}}>&copy; 2026 K9 Operations LLC<br/>All Rights Reserved</div>}
+          {sbExpanded && <div style={{padding:"0 4px 4px",fontSize:11,color:"rgba(175,141,84,0.4)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{profile?.full_name || profile?.email}</div>}
+          <button onClick={signOut} style={{width:"100%",padding:"7px 0",border:"none",borderRadius:8,background:"rgba(239,68,68,0.12)",color:"rgba(255,150,150,0.8)",cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:500}}>{sbExpanded?"Sign Out":"⏻"}</button>
+          {sbExpanded && <div style={{textAlign:"center",fontSize:9,color:"rgba(255,255,255,0.5)",marginTop:4,lineHeight:1.4}}>&copy; 2026 K9 Operations LLC<br/>All Rights Reserved</div>}
         </div>
         </>)}
       </div>
         );
       })()}
 
-      {/* Sidebar Tooltip */}
+      {/* Sidebar Tooltip — only visible when collapsed (not hovered) */}
       {navTooltip && !sidebarOpen && <div style={{position:"fixed",top:navTooltip.top,left:navTooltip.left,transform:"translateY(-50%)",background:"#1a2940",color:"#fff",padding:"6px 12px",borderRadius:6,fontSize:12,fontWeight:600,whiteSpace:"nowrap",pointerEvents:"none",zIndex:9999,boxShadow:"0 4px 12px rgba(0,0,0,0.25)"}}>{navTooltip.label}</div>}
 
       {/* Mobile Header */}
