@@ -5946,13 +5946,13 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // Load booking drafts when Online Booking filter is active or when conversion tab is shown
   useEffect(() => {
-    if (activeTab === "conversion" && !draftsLoaded && locationSlug) {
-      supabase.rpc("get_booking_drafts", { p_location_slug: locationSlug }).then(({ data: d }) => {
+    if (activeTab === "conversion" && !draftsLoaded && currentLoc?.slug) {
+      supabase.rpc("get_booking_drafts", { p_location_slug: currentLoc.slug }).then(({ data: d }) => {
         if (d) setBookingDrafts(Array.isArray(d) ? d : []);
         setDraftsLoaded(true);
       }).catch(() => setDraftsLoaded(true));
     }
-  }, [activeTab, draftsLoaded, locationSlug]);
+  }, [activeTab, draftsLoaded, currentLoc?.slug]);
 
   const renderSource = (client) => {
     const src = getClientSource(client);
