@@ -328,7 +328,31 @@ function QuestionTransition({ questionKey, children }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // INPUT COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════
+// Format raw digits into (xxx) xxx-xxxx
+function formatPhoneDisplay(val) {
+  const d = (val || '').replace(/\D/g, '').slice(0, 10);
+  if (d.length === 0) return '';
+  if (d.length <= 3) return `(${d}`;
+  if (d.length <= 6) return `(${d.slice(0,3)}) ${d.slice(3)}`;
+  return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
+}
+
 function BkInput({ label, required, ...props }) {
+  // Phone mask: strip non-digits, format as (xxx) xxx-xxxx
+  if (props.type === 'tel') {
+    const handlePhoneChange = (e) => {
+      const raw = e.target.value.replace(/\D/g, '').slice(0, 10);
+      // Create a synthetic event-like object with the raw digits
+      props.onChange?.({ target: { value: raw } });
+    };
+    const displayVal = formatPhoneDisplay(props.value);
+    return (
+      <div>
+        {label && <label className="bk-label">{label}{required && <span style={{ color: B.err }}> *</span>}</label>}
+        <input className="bk-input" {...props} type="tel" value={displayVal} onChange={handlePhoneChange} placeholder={props.placeholder || '(555) 123-4567'} maxLength={14} />
+      </div>
+    );
+  }
   return (
     <div>
       {label && <label className="bk-label">{label}{required && <span style={{ color: B.err }}> *</span>}</label>}
@@ -1417,22 +1441,22 @@ export default function BookingPage() {
                 <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 28, color: B.navy, marginBottom: 6 }}>Tell us about yourself</h2>
                 <p style={{ color: B.textSec, fontSize: 15, marginBottom: 28 }}>We'll use this to set up your account.</p>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                  <BkInput label="First Name" required value={client.firstName} onChange={e => setClient({ ...client, firstName: e.target.value })} />
-                  <BkInput label="Last Name" required value={client.lastName} onChange={e => setClient({ ...client, lastName: e.target.value })} />
+                  <BkInput label="First Name" required value={client.firstName} onChange={e => setClient({ ...client, firstName: e.target.value })} placeholder="Jane" />
+                  <BkInput label="Last Name" required value={client.lastName} onChange={e => setClient({ ...client, lastName: e.target.value })} placeholder="Vance" />
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
                   <BkInput label="Phone Number" required type="tel" value={client.phone} onChange={e => setClient({ ...client, phone: e.target.value })} />
-                  <BkInput label="Email" required type="email" value={client.email} onChange={e => setClient({ ...client, email: e.target.value })} />
+                  <BkInput label="Email" required type="email" value={client.email} onChange={e => setClient({ ...client, email: e.target.value })} placeholder="jane@email.com" />
                 </div>
                 <div style={{ marginBottom: 16 }}>
-                  <BkInput label="Address" required value={client.address} onChange={e => setClient({ ...client, address: e.target.value })} />
+                  <BkInput label="Address" required value={client.address} onChange={e => setClient({ ...client, address: e.target.value })} placeholder="123 Main St, Ellis Vance, CT 06901" />
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                  <BkInput label="Emergency Contact" required value={client.emergencyContact} onChange={e => setClient({ ...client, emergencyContact: e.target.value })} />
+                  <BkInput label="Emergency Contact" required value={client.emergencyContact} onChange={e => setClient({ ...client, emergencyContact: e.target.value })} placeholder="John Vance" />
                   <BkInput label="Emergency Phone" required type="tel" value={client.emergencyPhone} onChange={e => setClient({ ...client, emergencyPhone: e.target.value })} />
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                  <BkInput label="Veterinarian Name" required value={client.vetName} onChange={e => setClient({ ...client, vetName: e.target.value })} />
+                  <BkInput label="Veterinarian Name" required value={client.vetName} onChange={e => setClient({ ...client, vetName: e.target.value })} placeholder="Dr. Johnson, ABC Vet" />
                   <BkInput label="Vet Phone" required type="tel" value={client.vetPhone} onChange={e => setClient({ ...client, vetPhone: e.target.value })} />
                 </div>
                 <div style={{ marginBottom: 16 }}>
@@ -1456,11 +1480,11 @@ export default function BookingPage() {
                 <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 28, color: B.navy, marginBottom: 6 }}>Tell us about your dog</h2>
                 <p style={{ color: B.textSec, fontSize: 15, marginBottom: 28 }}>Help us get to know your furry family member.</p>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                  <BkInput label="Dog's Name" required value={dog.name} onChange={e => setDog({ ...dog, name: e.target.value })} />
-                  <BkInput label="Breed" required value={dog.breed} onChange={e => setDog({ ...dog, breed: e.target.value })} />
+                  <BkInput label="Dog's Name" required value={dog.name} onChange={e => setDog({ ...dog, name: e.target.value })} placeholder="Buddy" />
+                  <BkInput label="Breed" required value={dog.breed} onChange={e => setDog({ ...dog, breed: e.target.value })} placeholder="Golden Retriever" />
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
-                  <BkInput label="Weight (lbs)" type="number" value={dog.weight || dogWeight} onChange={e => setDog({ ...dog, weight: e.target.value })} />
+                  <BkInput label="Weight (lbs)" type="number" value={dog.weight || dogWeight} onChange={e => setDog({ ...dog, weight: e.target.value })} placeholder="65" />
                   <BkSelect label="Sex" options={['Male', 'Female']} value={dog.sex} onChange={e => setDog({ ...dog, sex: e.target.value })} />
                   <BkSelect label="Spayed/Neutered" options={dog.sex === 'Male' ? ['Neutered', 'Intact'] : ['Spayed', 'Intact']} value={dog.spayedNeutered} onChange={e => setDog({ ...dog, spayedNeutered: e.target.value })} />
                 </div>
