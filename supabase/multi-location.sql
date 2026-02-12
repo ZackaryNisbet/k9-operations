@@ -402,7 +402,7 @@ CREATE POLICY "Allow public update on booking_drafts" ON booking_drafts FOR UPDA
 DROP POLICY IF EXISTS "Allow authenticated read on booking_drafts" ON booking_drafts;
 CREATE POLICY "Allow authenticated read on booking_drafts" ON booking_drafts FOR SELECT USING (auth.role() = 'authenticated');
 
--- Upsert RPC (no auth required)
+-- Upsert RPC (no auth required — callable by anon role from public booking page)
 CREATE OR REPLACE FUNCTION upsert_booking_draft(p_draft JSONB)
 RETURNS JSONB AS $$
 BEGIN
@@ -433,6 +433,10 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+-- Ensure anon and authenticated roles can call the upsert function
+GRANT EXECUTE ON FUNCTION upsert_booking_draft(JSONB) TO anon;
+GRANT EXECUTE ON FUNCTION upsert_booking_draft(JSONB) TO authenticated;
+
 -- Create unique index on session_id for upsert
 CREATE UNIQUE INDEX IF NOT EXISTS booking_drafts_session_id_idx ON booking_drafts (session_id);
 
@@ -448,6 +452,9 @@ BEGIN
   ), '[]'::jsonb);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Ensure authenticated role can call the get function
+GRANT EXECUTE ON FUNCTION get_booking_drafts(TEXT) TO authenticated;
 
 
 -- ============================================================

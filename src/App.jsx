@@ -5944,15 +5944,20 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [draftsLoaded, setDraftsLoaded] = useState(false);
   const [expandedDraft, setExpandedDraft] = useState(null);
 
-  // Load booking drafts when Online Booking filter is active or when conversion tab is shown
+  // Load booking drafts when conversion tab is shown — refresh each time tab is opened
   useEffect(() => {
-    if (activeTab === "conversion" && !draftsLoaded && locationSlug) {
-      supabase.rpc("get_booking_drafts", { p_location_slug: locationSlug }).then(({ data: d }) => {
-        if (d) setBookingDrafts(Array.isArray(d) ? d : []);
-        setDraftsLoaded(true);
-      }).catch(() => setDraftsLoaded(true));
+    if (activeTab === "conversion" && locationSlug) {
+      setDraftsLoaded(false);
+      supabase.rpc("get_booking_drafts", { p_location_slug: locationSlug }).then(
+        ({ data: d, error: e }) => {
+          if (e) { console.log("get_booking_drafts error:", e.message); setDraftsLoaded(true); return; }
+          if (d) setBookingDrafts(Array.isArray(d) ? d : []);
+          setDraftsLoaded(true);
+        },
+        () => setDraftsLoaded(true) // network error
+      );
     }
-  }, [activeTab, draftsLoaded, locationSlug]);
+  }, [activeTab, locationSlug]);
 
   const renderSource = (client) => {
     const src = getClientSource(client);
@@ -6478,6 +6483,100 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                 </div>
               );
             })}
+            {/* ── Standalone booking draft entries (visitors not yet in system) ── */}
+            {bookingDrafts.length > 0 && (() => {
+              // Find drafts that don't match any existing client
+              const clientPhones = new Set(data.clients.map(c => (c.fields?.phone || "").replace(/\D/g, "")).filter(Boolean));
+              const clientEmails = new Set(data.clients.map(c => (c.fields?.email || "").toLowerCase()).filter(Boolean));
+              const unmatchedDrafts = bookingDrafts.filter(d => {
+                const cd = d.client_data || {};
+                const dPhone = (cd.phone || "").replace(/\D/g, "");
+                const dEmail = (cd.email || "").toLowerCase();
+                const matchesClient = (dPhone && clientPhones.has(dPhone)) || (dEmail && clientEmails.has(dEmail));
+                return !matchesClient;
+              });
+              // If "online" source filter is active but no other filter, show unmatched drafts
+              // If any source filter is active that ISN'T "online", hide them
+              if (sourceFilter.size > 0 && !sourceFilter.has("online")) return null;
+              if (unmatchedDrafts.length === 0) return null;
+              const stepNames = { splash:"Landing Page", avail_step_0:"Service Selection", avail_step_1:"Date Selection", avail_step_2:"Room / Time Selection", avail_step_3:"Room Recommendation", reg_step_0:"Client Info", reg_step_1:"Dog Info", reg_step_2:"Vaccine Records", reg_step_3:"Feeding & Care", reg_step_4:"Stay Details", reg_step_5:"Review & Book", confirmation:"Confirmed" };
+              return unmatchedDrafts.map(draft => {
+                const cd = draft.client_data || {};
+                const dd = draft.dog_data || {};
+                const draftName = [cd.firstName, cd.lastName].filter(Boolean).join(" ") || "Anonymous Visitor";
+                const draftPhone = cd.phone || "";
+                const draftDogName = dd.name || "";
+                const timeline = Array.isArray(draft.step_timeline) ? draft.step_timeline : [];
+                const isExpanded = expandedDraft === draft.id;
+                return (
+                  <div key={`draft-${draft.id}`}>
+                    <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center",fontSize:12,transition:"background 0.1s",background:`${C.pri}04`}}
+                      onMouseEnter={e=>e.currentTarget.style.background=`${C.pri}08`} onMouseLeave={e=>e.currentTarget.style.background=`${C.pri}04`}>
+                      <div style={{fontWeight:600,color:C.text,display:"flex",alignItems:"center",gap:6}}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                        {draftName}
+                      </div>
+                      <div style={{fontSize:11}}>{draftPhone ? fmtPhone(draftPhone) : <span style={{color:C.textMut}}>—</span>}</div>
+                      <div style={{fontSize:11}}>{draftDogName || <span style={{color:C.textMut}}>—</span>}</div>
+                      <div>
+                        <span style={{display:"inline-flex",alignItems:"center",gap:4,background:`${C.pri}10`,border:`1px solid ${C.pri}30`,borderRadius:6,padding:"2px 8px",cursor:"pointer"}} onClick={() => setExpandedDraft(prev => prev === draft.id ? null : draft.id)}>
+                          <span style={{fontWeight:700,color:C.pri,fontSize:11}}>Online</span>
+                          <span style={{fontSize:10,color:C.pri,fontWeight:600}}>{draft.completion_pct||0}%</span>
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="3" strokeLinecap="round" style={{transform:isExpanded?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.2s"}}><polyline points="6 9 12 15 18 9"/></svg>
+                        </span>
+                      </div>
+                      <div style={{fontSize:10,color:C.textSec}}>{draft.updated_at ? new Date(draft.updated_at).toLocaleDateString("en-US",{month:"numeric",day:"numeric"}) + " " + new Date(draft.updated_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "—"}</div>
+                      <div style={{fontSize:10,color:C.textMut,fontStyle:"italic"}}>In-progress booking</div>
+                      <div><span style={{color:C.textMut,fontSize:10}}>—</span></div>
+                      <div></div>
+                    </div>
+                    {isExpanded && (
+                      <div style={{padding:"12px 20px 12px 28px",background:`${C.pri}06`,borderBottom:`1px solid ${C.borderLight}`,borderLeft:`3px solid ${C.pri}`}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                          <span style={{fontSize:12,fontWeight:700,color:C.pri}}>Online Booking Journey</span>
+                          <span style={{fontSize:11,fontWeight:700,color:C.pri,background:`${C.pri}15`,padding:"2px 8px",borderRadius:8}}>{draft.completion_pct || 0}% complete</span>
+                          <span style={{fontSize:10,color:C.textSec,fontWeight:500}}>Last activity {new Date(draft.updated_at).toLocaleDateString("en-US",{month:"numeric",day:"numeric",year:"2-digit"})} {new Date(draft.updated_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</span>
+                        </div>
+                        <div style={{display:"flex",flexWrap:"wrap",gap:4,alignItems:"center"}}>
+                          {timeline.filter(s => s.step !== "splash").map((s, i) => {
+                            const name = stepNames[s.step] || s.step;
+                            const dur = s.duration || 0;
+                            const durLabel = dur < 60 ? `${dur}s` : `${Math.floor(dur/60)}m ${dur%60}s`;
+                            const filtered = timeline.filter(st => st.step !== "splash");
+                            const isLast = i === filtered.length - 1;
+                            return (
+                              <React.Fragment key={i}>
+                                <span style={{fontSize:11,fontWeight:600,color:C.text,background:C.surface,border:`1px solid ${C.borderLight}`,borderRadius:8,padding:"4px 10px",display:"inline-flex",alignItems:"center",gap:4}}>
+                                  {name}
+                                  <span style={{fontSize:10,color:C.textMut,fontWeight:500}}>({durLabel})</span>
+                                </span>
+                                {!isLast && <span style={{color:C.textMut,fontSize:10}}>→</span>}
+                                {isLast && !s.exitedAt && <span style={{fontSize:10,color:C.dan,fontWeight:600,marginLeft:4}}>stopped / closed tab</span>}
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
+                        {draft.booking_data && (draft.booking_data.checkIn || draft.booking_data.tourDate) && (
+                          <div style={{marginTop:8,fontSize:11,color:C.textSec}}>
+                            {draft.service_type === "tour" ? `Tour: ${draft.booking_data.tourDate} at ${draft.booking_data.tourTime || "—"}`
+                              : `Dates: ${draft.booking_data.checkIn || "—"} – ${draft.booking_data.checkOut || "—"}${draft.booking_data.selectedRoom ? ` · Room: ${draft.booking_data.selectedRoom}` : ""}`}
+                          </div>
+                        )}
+                        {(cd.firstName || cd.email || cd.phone) && (
+                          <div style={{marginTop:10,paddingTop:8,borderTop:`1px solid ${C.pri}20`,display:"grid",gridTemplateColumns:"1fr 1fr",gap:"4px 20px"}}>
+                            {cd.firstName && <div style={{fontSize:11}}><span style={{fontWeight:700,color:C.textSec}}>Name:</span> <span style={{color:C.text}}>{cd.firstName} {cd.lastName||""}</span></div>}
+                            {cd.email && <div style={{fontSize:11}}><span style={{fontWeight:700,color:C.textSec}}>Email:</span> <span style={{color:C.text}}>{cd.email}</span></div>}
+                            {cd.phone && <div style={{fontSize:11}}><span style={{fontWeight:700,color:C.textSec}}>Phone:</span> <span style={{color:C.text}}>{cd.phone}</span></div>}
+                            {dd.name && <div style={{fontSize:11}}><span style={{fontWeight:700,color:C.textSec}}>Dog:</span> <span style={{color:C.text}}>{dd.name}{dd.breed ? ` (${dd.breed})` : ""}</span></div>}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              });
+            })()}
           </>;
         })()}
 
