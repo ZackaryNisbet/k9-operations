@@ -3658,16 +3658,16 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             const logs = (data.auditLog || []).filter(l => l.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
             return logs.length > 0 ? (
               <div style={{maxHeight:400,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
-                {logs.map(log => (
+                {logs.map(log => { const dets = Array.isArray(log.details) ? log.details : []; return (
                   <div key={log.id} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.borderLight}`,fontSize:12}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:log.details.length>0?6:0}}>
-                      <span style={{fontWeight:700,color:C.pri}}>{log.userName}</span>
-                      <span style={{fontWeight:600,color:C.text}}>{log.action}</span>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:dets.length>0?6:0}}>
+                      <span style={{fontWeight:700,color:C.pri}}>{String(log.userName||"")}</span>
+                      <span style={{fontWeight:600,color:C.text}}>{String(log.action||"")}</span>
                       <span style={{marginLeft:"auto",color:C.textMut,fontSize:11,fontVariantNumeric:"tabular-nums"}}>{new Date(log.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true})}</span>
                     </div>
-                    {log.details.length > 0 && (
+                    {dets.length > 0 && (
                       <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                        {log.details.map((d, di) => {
+                        {dets.map((d, di) => {
                           const renderVal = (v) => v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
                           const oldStr = renderVal(d.oldVal);
                           const newStr = renderVal(d.newVal);
@@ -3689,7 +3689,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                       </div>
                     )}
                   </div>
-                ))}
+                ); })}
               </div>
             ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No history recorded yet</div>;
           })()}
