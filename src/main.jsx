@@ -2,6 +2,22 @@
 // Proprietary and Confidential. Unauthorized copying, modification,
 // distribution, or use of this software is strictly prohibited.
 
+// ── Production Security Guard ──────────────────────────────────────────────
+if (import.meta.env.PROD) {
+  // Disable right-click context menu
+  document.addEventListener('contextmenu', (e) => { e.preventDefault(); });
+
+  // Block dev tools keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    // F12
+    if (e.key === 'F12') { e.preventDefault(); return false; }
+    // Ctrl+Shift+I (Elements), Ctrl+Shift+J (Console), Ctrl+Shift+C (Inspect)
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && ['I','i','J','j','C','c'].includes(e.key)) { e.preventDefault(); return false; }
+    // Ctrl+U (View Source)
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'u' || e.key === 'U')) { e.preventDefault(); return false; }
+  });
+}
+
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import { AuthProvider, useAuth } from './AuthProvider';
