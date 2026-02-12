@@ -1206,14 +1206,14 @@ export default function BookingPage() {
                       </button>
                     </div>
 
-                    <div style={{ display: 'flex', gap: 16, overflowX: 'auto', paddingBottom: 12, scrollSnapType: 'x mandatory', WebkitOverflowScrolling: 'touch', marginBottom: 24 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16, marginBottom: 24 }}>
                       {ROOM_ORDER.map((rt, i) => {
                         const info = ROOM_INFO[rt];
                         const avail = availCounts[rt];
                         const sold = avail === 0;
                         return (
                           <div key={rt} className={`bk-room-card bk-scale-in ${selectedRoom === rt ? 'selected' : ''} ${sold ? 'disabled' : ''}`}
-                            style={{ animationDelay: `${i * 0.1}s`, minWidth: 240, maxWidth: 280, flex: '0 0 auto', scrollSnapAlign: 'start' }}
+                            style={{ animationDelay: `${i * 0.1}s` }}
                             onClick={() => !sold && setSelectedRoom(rt)}>
                             <div style={{ height: 180, position: 'relative', overflow: 'hidden', borderRadius: '16px 16px 0 0' }}>
                               <img src={ROOM_IMAGES[rt]} alt={rt} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
