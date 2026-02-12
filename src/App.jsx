@@ -14841,8 +14841,8 @@ function TeamTab({ profile, data, save }) {
           <div style={{ padding: "24px", textAlign: "center", color: C.textMut, fontSize: 13 }}>Loading team...</div>
         ) : (
           <>
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(100px,1fr) minmax(120px,1fr) minmax(100px,0.8fr) minmax(100px,0.8fr) 100px 48px", padding: "10px 24px", background: C.bg, borderTop: "1px solid " + C.border, borderBottom: "1px solid " + C.border, fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              <div>Name</div><div>Email</div><div>First Login</div><div>Last Active</div><div>Role</div><div/>
+            <div style={{ display: "grid", gridTemplateColumns: isOwner ? "minmax(100px,1fr) minmax(120px,1fr) minmax(100px,0.8fr) minmax(100px,0.8fr) 100px 70px" : "minmax(100px,1fr) minmax(120px,1fr) minmax(100px,0.8fr) minmax(100px,0.8fr) 100px", padding: "10px 24px", background: C.bg, borderTop: "1px solid " + C.border, borderBottom: "1px solid " + C.border, fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              <div>Name</div><div>Email</div><div>First Login</div><div>Last Active</div><div>Role</div>{isOwner && <div>Action</div>}
             </div>
             {team.sort((a, b) => {
               const ro = { owner: 0, manager: 1, staff: 2 };
@@ -14851,7 +14851,7 @@ function TeamTab({ profile, data, save }) {
               const daysInactive = daysSince(m.last_accessed_at || m.last_sign_in_at);
               const isInactive = autoDeactEnabled && daysInactive !== null && daysInactive >= autoDeactDays;
               return (
-              <div key={m.id} style={{ display: "grid", gridTemplateColumns: "minmax(100px,1fr) minmax(120px,1fr) minmax(100px,0.8fr) minmax(100px,0.8fr) 100px 48px", padding: "14px 24px", borderBottom: "1px solid " + C.borderLight, alignItems: "center", background: isInactive ? C.danLt : "transparent" }}>
+              <div key={m.id} style={{ display: "grid", gridTemplateColumns: isOwner ? "minmax(100px,1fr) minmax(120px,1fr) minmax(100px,0.8fr) minmax(100px,0.8fr) 100px 70px" : "minmax(100px,1fr) minmax(120px,1fr) minmax(100px,0.8fr) minmax(100px,0.8fr) 100px", padding: "14px 24px", borderBottom: "1px solid " + C.borderLight, alignItems: "center", background: isInactive ? C.danLt : "transparent" }}>
                 <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>
                   {m.full_name || "\u2014"}
                   {m.id === profile.id && <span style={{ marginLeft: 8, fontSize: 11, color: C.acc, fontWeight: 700 }}>(You)</span>}
@@ -14867,21 +14867,23 @@ function TeamTab({ profile, data, save }) {
                     <Badge color={getRoleColor(m, data)}>{getRoleName(m, data)}</Badge>
                   )}
                 </div>
+                {isOwner && (
                 <div style={{ textAlign: "center" }}>
-                  {isOwner && m.id !== profile.id && (
+                  {m.id !== profile.id ? (
                     confirmRemove === m.id ? (
-                      <button onClick={() => removeMember(m.id)} title="Confirm remove"
-                        style={{ background: C.dan, border: "none", cursor: "pointer", color: "#fff", padding: "3px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, fontFamily: "inherit" }}>
-                        Remove
+                      <button onClick={() => removeMember(m.id)} title="Confirm delete"
+                        style={{ background: C.dan, border: "none", cursor: "pointer", color: "#fff", padding: "5px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700, fontFamily: "inherit" }}>
+                        Delete
                       </button>
                     ) : (
-                      <button onClick={() => setConfirmRemove(m.id)} title="Remove from team"
-                        style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, padding: 4, borderRadius: 6 }}>
-                        <I.X />
+                      <button onClick={() => setConfirmRemove(m.id)} title="Delete user"
+                        style={{ background: "none", border: `1.5px solid ${C.dan}40`, cursor: "pointer", color: C.dan, padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600, fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                       </button>
                     )
-                  )}
+                  ) : <span/>}
                 </div>
+                )}
               </div>
               );
             })}
