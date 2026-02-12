@@ -153,9 +153,9 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
 
   if (collapsed) {
     return (
-      <div style={{ padding: "0 8px", marginBottom: 14 }}>
+      <div style={{ padding: "0 4px", width: "100%" }}>
         <button onClick={() => setOpen(!open)} title={current.name}
-          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: "6px 0", borderRadius: 8, border: "1.5px solid rgba(175,141,84,0.2)", background: isEnterprise ? "rgba(175,141,84,0.15)" : "rgba(255,255,255,0.06)", cursor: "pointer", color: C.acc, fontSize: 11, fontWeight: 700, fontFamily: "inherit" }}>
+          style={{ width: "100%", height: 40, display: "flex", alignItems: "center", justifyContent: "center", padding: "0", borderRadius: 10, border: "1.5px solid rgba(175,141,84,0.2)", background: isEnterprise ? "rgba(175,141,84,0.15)" : "rgba(255,255,255,0.06)", cursor: "pointer", color: C.acc, fontSize: 11, fontWeight: 700, fontFamily: "inherit", boxSizing: "border-box" }}>
           {isEnterprise ? "\u2605" : current.name.slice(0, 2).toUpperCase()}
         </button>
       </div>
@@ -163,9 +163,9 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
   }
 
   return (
-    <div style={{ padding: "0 14px", marginBottom: 14, position: "relative" }}>
+    <div style={{ padding: "0 4px", position: "relative", width: "100%" }}>
       <button ref={btnRef} onClick={() => setOpen(!open)}
-        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, border: "1.5px solid rgba(175,141,84,0.2)", background: isEnterprise ? "rgba(175,141,84,0.12)" : "rgba(255,255,255,0.06)", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
+        style={{ width: "100%", height: 40, display: "flex", alignItems: "center", gap: 8, padding: "0 10px", borderRadius: 10, border: "1.5px solid rgba(175,141,84,0.2)", background: isEnterprise ? "rgba(175,141,84,0.12)" : "rgba(255,255,255,0.06)", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", boxSizing: "border-box" }}>
         <div style={{ width: 24, height: 24, borderRadius: 6, background: isEnterprise ? "rgba(175,141,84,0.25)" : "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: C.acc, flexShrink: 0 }}>
           {isEnterprise ? "\u2605" : current.name.slice(0, 1)}
         </div>
@@ -20754,24 +20754,26 @@ export default function App() {
         {filterMode ? (
           <LifecycleFilterPanel filters={lcFilters} onChange={setLcFilters} onClose={() => setLcFilterOpen(false)} />
         ) : (<>
-        <div style={{padding:sbExpanded?"22px 18px 18px":"22px 0 18px",display:"flex",alignItems:"center",justifyContent:sbExpanded?"flex-start":"center",gap:12,transition:"padding 0.15s ease"}}>
-          <div style={{flexShrink:0}}>{sbExpanded ? <K9Logo size={38}/> : <K9LogoMini size={34}/>}</div>
-          {sbExpanded&&<div><div style={{fontSize:16,fontWeight:700,color:C.acc,whiteSpace:"nowrap",fontFamily:"'Canela', Georgia, serif",letterSpacing:"0.02em"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div>}
+        <div style={{padding:"22px 15px 18px",display:"flex",alignItems:"center",justifyContent:"flex-start",gap:12,height:40,boxSizing:"content-box"}}>
+          <div style={{flexShrink:0,width:34,display:"flex",alignItems:"center",justifyContent:"center"}}>{sbExpanded ? <K9Logo size={38}/> : <K9LogoMini size={34}/>}</div>
+          <div style={{overflow:"hidden",opacity:sbExpanded?1:0,transition:"opacity 0.1s",whiteSpace:"nowrap"}}><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif",letterSpacing:"0.02em"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div>
         </div>
-        <div style={{margin:"0 16px 14px",height:1,background:"rgba(175,141,84,0.15)"}}/>
-        <LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={!sbExpanded} allLocations={allLocations} profile={profile} />
-        <nav style={{flex:1,padding:sbExpanded?"0 10px":"0 8px",overflowY:"auto"}}>
+        <div style={{margin:"0 16px 10px",height:1,background:"rgba(175,141,84,0.15)"}}/>
+        <div style={{height:44,flexShrink:0,padding:"0 10px",marginBottom:10,display:"flex",alignItems:"center"}}>
+          <LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={!sbExpanded} allLocations={allLocations} profile={profile} />
+        </div>
+        <nav style={{flex:1,padding:"0 10px",overflowY:"auto"}}>
           {navSections.map((sec, si) => (
             <div key={si}>
               {sec.label && sbExpanded && <div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}
-              {!sec.label && si > 0 && <div style={{margin:sbExpanded?"10px 14px":"10px 4px",height:1,background:"rgba(175,141,84,0.12)"}}/>}
+              {!sec.label && si > 0 && <div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}
               {sec.items.filter(item => { const perm = NAV_PERM_MAP[item.id]; return !perm || hasPermission(profile, data, perm); }).map(item=>{const act=activeNav===item.id;const hasKids=!!item.children;
                 return(<div key={item.id}>
-                  <button onMouseEnter={!sbExpanded?(e)=>{const r=e.currentTarget.getBoundingClientRect();setNavTooltip({label:item.label,top:r.top+r.height/2,left:r.right+10});}:undefined} onMouseLeave={!sbExpanded?()=>setNavTooltip(null):undefined} onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:sbExpanded?(item.indent?"8px 14px 8px 28px":"10px 14px"):"10px 0",justifyContent:sbExpanded?"flex-start":"center",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"all 0.12s",whiteSpace:"nowrap",position:"relative"}}>
-                    <span style={{flexShrink:0}}>{item.icon}</span>{sbExpanded&&<><span style={{flex:1,textAlign:"left"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'GT Eesti',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.15s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
+                  <button onMouseEnter={!sbExpanded?(e)=>{const r=e.currentTarget.getBoundingClientRect();setNavTooltip({label:item.label,top:r.top+r.height/2,left:r.right+10});}:undefined} onMouseLeave={!sbExpanded?()=>setNavTooltip(null):undefined} onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"8px 14px 8px 28px":"10px 14px",justifyContent:"flex-start",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"background 0.12s, color 0.12s",whiteSpace:"nowrap",position:"relative",boxSizing:"border-box"}}>
+                    <span style={{flexShrink:0,width:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{item.icon}</span>{sbExpanded&&<><span style={{flex:1,textAlign:"left",overflow:"hidden"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'GT Eesti',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.15s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
                   </button>
                   {hasKids&&opsExpanded&&sbExpanded&&<div style={{marginLeft:20,marginBottom:4}}>
-                    {item.children.map(ch=>{const chAct=page===ch.id;return(<button key={ch.id} onClick={()=>nav(ch.id)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 12px",border:"none",borderRadius:8,background:chAct?"rgba(175,141,84,0.12)":"transparent",color:chAct?C.acc:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:chAct?600:400,cursor:"pointer",marginBottom:1,fontFamily:"inherit",transition:"all 0.12s",whiteSpace:"nowrap"}}>
+                    {item.children.map(ch=>{const chAct=page===ch.id;return(<button key={ch.id} onClick={()=>nav(ch.id)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 12px",border:"none",borderRadius:8,background:chAct?"rgba(175,141,84,0.12)":"transparent",color:chAct?C.acc:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:chAct?600:400,cursor:"pointer",marginBottom:1,fontFamily:"inherit",transition:"background 0.12s, color 0.12s",whiteSpace:"nowrap"}}>
                       <span style={{width:4,height:4,borderRadius:2,background:chAct?C.acc:"rgba(255,255,255,0.2)",flexShrink:0}}/>{ch.label}
                     </button>);})}
                   </div>}
@@ -20782,7 +20784,7 @@ export default function App() {
         </nav>
         <div style={{padding:"14px 10px",display:"flex",flexDirection:"column",gap:6}}>
           {sbExpanded && <div style={{padding:"0 4px 4px",fontSize:11,color:"rgba(175,141,84,0.4)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{profile?.full_name || profile?.email}</div>}
-          <button onClick={signOut} style={{width:"100%",padding:"7px 0",border:"none",borderRadius:8,background:"rgba(239,68,68,0.12)",color:"rgba(255,150,150,0.8)",cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:500}}>{sbExpanded?"Sign Out":"⏻"}</button>
+          <button onClick={signOut} style={{width:"100%",padding:"7px 14px",border:"none",borderRadius:8,background:"rgba(239,68,68,0.12)",color:"rgba(255,150,150,0.8)",cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:500,textAlign:"center",boxSizing:"border-box"}}>{sbExpanded?"Sign Out":"⏻"}</button>
           {sbExpanded && <div style={{textAlign:"center",fontSize:9,color:"rgba(255,255,255,0.5)",marginTop:4,lineHeight:1.4}}>&copy; 2026 K9 Operations LLC<br/>All Rights Reserved</div>}
         </div>
         </>)}
