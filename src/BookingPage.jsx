@@ -167,8 +167,8 @@ body{font-family:'GT Eesti',system-ui,-apple-system,sans-serif;background:${B.bg
 .bk-hero-dot{width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.4);transition:all .3s}.bk-hero-dot.active{background:#fff;transform:scale(1.2)}
 
 /* CTA card on hero */
-.bk-cta-card{background:rgba(255,255,255,.08);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.15);border-radius:20px;padding:28px 32px;cursor:pointer;transition:all .4s cubic-bezier(.16,1,.3,1);text-align:left;min-width:280px}
-.bk-cta-card:hover{background:rgba(255,255,255,.15);transform:translateY(-4px);border-color:rgba(255,255,255,.3);box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.bk-cta-card{background:rgba(0,30,60,.82);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.2);border-radius:20px;padding:28px 32px;cursor:pointer;transition:all .4s cubic-bezier(.16,1,.3,1);text-align:left;min-width:280px}
+.bk-cta-card:hover{background:rgba(0,36,72,.92);transform:translateY(-4px);border-color:rgba(255,255,255,.4);box-shadow:0 20px 60px rgba(0,0,0,.3)}
 
 /* Scrollbar */
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:${B.border};border-radius:3px}::-webkit-scrollbar-thumb:hover{background:${B.textMut}}
@@ -252,11 +252,9 @@ const Icons = {
   X: ({ size = 20 }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
 };
 
-// K9 Logo as SVG
-const K9Logo = ({ size = 48, color = '#fff' }) => (
-  <svg width={size} height={size * 1.15} viewBox="0 0 100 115" fill={color}>
-    <path d="M50 5C45 5 40 8 38 15L35 25C33 28 30 30 27 30C22 30 18 34 18 39C18 42 19 44 21 46L25 50C22 55 20 61 20 68C20 90 33 105 50 105C67 105 80 90 80 68C80 61 78 55 75 50L79 46C81 44 82 42 82 39C82 34 78 30 73 30C70 30 67 28 65 25L62 15C60 8 55 5 50 5ZM42 65C44.2 65 46 66.8 46 69C46 71.2 44.2 73 42 73C39.8 73 38 71.2 38 69C38 66.8 39.8 65 42 65ZM58 65C60.2 65 62 66.8 62 69C62 71.2 60.2 73 58 73C55.8 73 54 71.2 54 69C54 66.8 55.8 65 58 65ZM47 78H53L50 82L47 78Z"/>
-  </svg>
+// K9 Resorts Official Logo
+const K9Logo = ({ size = 48 }) => (
+  <img src="/k9-logo.png" alt="K9 Resorts" style={{ width: size, height: 'auto', objectFit: 'contain', filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }} />
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -397,6 +395,7 @@ export default function BookingPage() {
 
   // Hero carousel
   const [heroIdx, setHeroIdx] = useState(0);
+  const learnRef = useRef(null);
 
   // Availability flow state
   const [serviceType, setServiceType] = useState(null); // 'boarding' | 'daycare'
@@ -543,7 +542,7 @@ export default function BookingPage() {
   if (loading) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: B.navy }}>
       <div style={{ textAlign: 'center' }}>
-        <K9Logo size={64} color={B.gold} />
+        <K9Logo size={64} />
         <div style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 28, fontWeight: 700, color: '#fff', marginTop: 20 }}>K9 Resorts</div>
         <div style={{ fontSize: 12, color: B.gold, letterSpacing: '.15em', textTransform: 'uppercase', marginTop: 6 }}>Luxury Pet Hotel</div>
         <div style={{ width: 40, height: 3, background: B.gold, borderRadius: 2, margin: '24px auto 0', animation: 'bkFadeIn 1s ease infinite alternate' }} />
@@ -579,7 +578,7 @@ export default function BookingPage() {
 
         <div style={{ position: 'relative', zIndex: 3, textAlign: 'center', padding: '0 24px', maxWidth: 900 }}>
           <div className="bk-fade-up" style={{ marginBottom: 20 }}>
-            <K9Logo size={56} color={B.gold} />
+            <K9Logo size={56} />
           </div>
           <h1 className="bk-fade-up bk-fade-up-d1" style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 'clamp(36px, 6vw, 72px)', fontWeight: 700, color: '#fff', lineHeight: 1.1, marginBottom: 12 }}>
             {locName}
@@ -617,7 +616,7 @@ export default function BookingPage() {
               </div>
             </div>
 
-            <div className="bk-cta-card" onClick={() => navigateTo('learn', 'up')}>
+            <div className="bk-cta-card" onClick={() => learnRef.current?.scrollIntoView({ behavior: 'smooth' })}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
                 <Icons.Sparkle size={22} />
                 <span style={{ fontSize: 18, fontWeight: 700, color: '#fff' }}>Why K9 Resorts?</span>
@@ -689,6 +688,53 @@ export default function BookingPage() {
           ))}
         </div>
       </RevealSection>
+
+      {/* Why K9 Resorts Section (scroll target) */}
+      <div ref={learnRef} style={{ background: '#fff' }}>
+        <div style={{ background: B.navy, padding: '80px 24px', textAlign: 'center' }}>
+          <RevealSection>
+            <div style={{ fontSize: 12, fontWeight: 700, color: B.gold, letterSpacing: '.15em', textTransform: 'uppercase', marginBottom: 16 }}>Welcome to the New Gold Standard</div>
+            <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 'clamp(32px, 5vw, 56px)', color: '#fff', lineHeight: 1.1, marginBottom: 16 }}>
+              Not All Pet Care Facilities<br />Are Created Equal
+            </h2>
+            <div className="bk-gold-line" style={{ marginBottom: 20 }} />
+            <p style={{ color: 'rgba(255,255,255,.7)', fontSize: 18, maxWidth: 600, margin: '0 auto', lineHeight: 1.6 }}>
+              K9 Resorts is a multi-award-winning, internationally recognized luxury pet hotel offering resort-style vacations and doggie daycare.
+            </p>
+          </RevealSection>
+        </div>
+
+        <div style={{ maxWidth: 900, margin: '0 auto', padding: '80px 24px' }}>
+          <RevealSection>
+            <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 36, color: B.navy, textAlign: 'center', marginBottom: 40 }}>Why We're #1</h2>
+          </RevealSection>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 16 }}>
+            {[
+              'Cage-Free Luxury Boarding Options',
+              'Veterinarian Recommended',
+              'Multi-Award-Winning and Internationally Recognized',
+              '"Ritz Carlton of Dog Hotels"',
+              'Anti-Microbial Flooring',
+              'Aerapy UV Air Purification System',
+              'Hospital Grade Disinfectants',
+              'Professionally-Trained and Loving Staff',
+              'Ultra Clean Facility',
+              'Designer Brand Pet Suites',
+              'Outdoor "Pet-Safe" Courtyard',
+              'Premium Kuranda Dog Beds',
+              "TV's in All Luxury Suites",
+              'Ultra Premium Les Pooches Dog Shampoo',
+            ].map((item, i) => (
+              <RevealSection key={i} style={{ animationDelay: `${i * 0.05}s` }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px', background: B.bg, borderRadius: 12 }}>
+                  <Icons.Check size={18} color={B.gold} />
+                  <span style={{ fontSize: 14, fontWeight: 500, color: B.text }}>{item}</span>
+                </div>
+              </RevealSection>
+            ))}
+          </div>
+        </div>
+      </div>
 
       {/* CTA footer */}
       <div style={{ background: B.navy, padding: '80px 24px', textAlign: 'center' }}>
@@ -1389,68 +1435,7 @@ export default function BookingPage() {
     </div>
   );
 
-  // ═════════════════════════════════════════════════════════════════════════
-  // LEARN MORE PAGE
-  // ═════════════════════════════════════════════════════════════════════════
-  const renderLearnMore = () => (
-    <div style={{ minHeight: '100vh', background: '#fff' }}>
-      <NavBar title="Why K9 Resorts?" />
-
-      {/* Hero */}
-      <div style={{ background: B.navy, padding: '80px 24px', textAlign: 'center' }}>
-        <div className="bk-fade-up">
-          <div style={{ fontSize: 12, fontWeight: 700, color: B.gold, letterSpacing: '.15em', textTransform: 'uppercase', marginBottom: 16 }}>Welcome to the New Gold Standard</div>
-          <h1 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 'clamp(32px, 5vw, 56px)', color: '#fff', lineHeight: 1.1, marginBottom: 16 }}>
-            Not All Pet Care Facilities<br />Are Created Equal
-          </h1>
-          <div className="bk-gold-line" style={{ marginBottom: 20 }} />
-          <p style={{ color: 'rgba(255,255,255,.7)', fontSize: 18, maxWidth: 600, margin: '0 auto', lineHeight: 1.6 }}>
-            K9 Resorts is a multi-award-winning, internationally recognized luxury pet hotel offering resort-style vacations and doggie daycare.
-          </p>
-        </div>
-      </div>
-
-      {/* Why We're #1 */}
-      <div style={{ maxWidth: 900, margin: '0 auto', padding: '80px 24px' }}>
-        <RevealSection>
-          <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 36, color: B.navy, textAlign: 'center', marginBottom: 40 }}>Why We're #1</h2>
-        </RevealSection>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 16 }}>
-          {[
-            'Cage-Free Luxury Boarding Options',
-            'Veterinarian Recommended',
-            'Multi-Award-Winning and Internationally Recognized',
-            '"Ritz Carlton of Dog Hotels"',
-            'Anti-Microbial Flooring',
-            'Aerapy UV Air Purification System',
-            'Hospital Grade Disinfectants',
-            'Professionally-Trained and Loving Staff',
-            'Ultra Clean Facility',
-            'Designer Brand Pet Suites',
-            'Outdoor "Pet-Safe" Courtyard',
-            'Premium Kuranda Dog Beds',
-            "TV's in All Luxury Suites",
-            'Ultra Premium Les Pooches Dog Shampoo',
-          ].map((item, i) => (
-            <RevealSection key={i} style={{ animationDelay: `${i * 0.05}s` }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 18px', background: B.bg, borderRadius: 12 }}>
-                <Icons.Check size={18} color={B.gold} />
-                <span style={{ fontSize: 14, fontWeight: 500, color: B.text }}>{item}</span>
-              </div>
-            </RevealSection>
-          ))}
-        </div>
-      </div>
-
-      {/* CTA */}
-      <div style={{ background: B.navy, padding: '60px 24px', textAlign: 'center' }}>
-        <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 32, color: '#fff', marginBottom: 16 }}>Ready to Experience the Difference?</h2>
-        <button className="bk-btn bk-btn-primary" onClick={() => navigateTo('availability', 'left')}>
-          Book Now <Icons.Arrow size={18} />
-        </button>
-      </div>
-    </div>
-  );
+  // renderLearnMore removed — content now inline in splash page
 
   // ═════════════════════════════════════════════════════════════════════════
   // RENDER
@@ -1462,14 +1447,13 @@ export default function BookingPage() {
       case 'register': return renderRegistration();
       case 'confirmation': return renderConfirmation();
       case 'account': return renderAccount();
-      case 'learn': return renderLearnMore();
       default: return renderSplash();
     }
   };
 
   return (
-    <PageTransition pageKey={currentPage} direction={transDir}>
+    <div key={currentPage} className="bk-fade-in" style={{ minHeight: '100vh' }}>
       {renderCurrentPage()}
-    </PageTransition>
+    </div>
   );
 }
