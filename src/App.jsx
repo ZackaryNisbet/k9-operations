@@ -5716,6 +5716,297 @@ function LifecycleFilterPanel({ filters, onChange, onClose }) {
   );
 }
 
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// REPORT FILTER FIELD DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════════
+const RPT_FILTER_FIELDS = {
+  overnight: [
+    { section: "Booking Info", key: "dogName", label: "Dog Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Booking Info", key: "clientFirst", label: "First Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Booking Info", key: "clientLast", label: "Last Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Booking Info", key: "phone", label: "Phone", type: "text", ops: ["contains","equals","empty","notEmpty"] },
+    { section: "Room", key: "roomType", label: "Room Type", type: "select", ops: ["is","isNot"], options: ["LS","ER","DC","SC"] },
+    { section: "Room", key: "room", label: "Room #", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Stay", key: "checkInDate", label: "Check-In", type: "date", ops: ["after","before"] },
+    { section: "Stay", key: "checkOutDate", label: "Check-Out", type: "date", ops: ["after","before"] },
+    { section: "Stay", key: "nights", label: "Nights", type: "number", ops: ["=",">=","<=",">","<"] },
+    { section: "Stay", key: "status", label: "Status", type: "select", ops: ["is","isNot"], options: ["upcoming","checked-in","checked-out","cancelled"] },
+    { section: "Stay", key: "bookingSource", label: "Source", type: "select", ops: ["is","isNot"], options: ["phone","online","walk-in"] },
+    { section: "Financial", key: "total", label: "Total ($)", type: "currency", ops: ["=",">=","<=",">","<"] },
+  ],
+  daycare: [
+    { section: "Booking Info", key: "dogName", label: "Dog Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Booking Info", key: "clientFirst", label: "First Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Booking Info", key: "phone", label: "Phone", type: "text", ops: ["contains","equals","empty","notEmpty"] },
+    { section: "Visit", key: "visitDate", label: "Visit Date", type: "date", ops: ["after","before"] },
+    { section: "Visit", key: "dayType", label: "Day Type", type: "select", ops: ["is","isNot"], options: ["Full","Half"] },
+    { section: "Visit", key: "size", label: "Size", type: "select", ops: ["is","isNot"], options: ["Small","Medium","Large"] },
+    { section: "Status", key: "status", label: "Status", type: "select", ops: ["is","isNot"], options: ["upcoming","checked-in","checked-out","cancelled"] },
+    { section: "Status", key: "bookingSource", label: "Source", type: "select", ops: ["is","isNot"], options: ["phone","online","walk-in"] },
+    { section: "Financial", key: "total", label: "Total ($)", type: "currency", ops: ["=",">=","<=",">","<"] },
+  ],
+  evaluations: [
+    { section: "Dog Info", key: "dogName", label: "Dog Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Dog Info", key: "breed", label: "Breed", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Dog Info", key: "clientFirst", label: "Client", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Evaluation", key: "evalDate", label: "Eval Date", type: "date", ops: ["after","before"] },
+    { section: "Evaluation", key: "evaluator", label: "Evaluator", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Evaluation", key: "result", label: "Result", type: "select", ops: ["is","isNot"], options: ["green","yellow","red"] },
+    { section: "Evaluation", key: "scorePercent", label: "Score %", type: "number", ops: ["=",">=","<=",">","<"] },
+    { section: "Status", key: "status", label: "Status", type: "select", ops: ["is","isNot"], options: ["upcoming","completed","cancelled"] },
+  ],
+  tours: [
+    { section: "Client Info", key: "clientFirst", label: "First Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Client Info", key: "clientLast", label: "Last Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Client Info", key: "phone", label: "Phone", type: "text", ops: ["contains","equals","empty","notEmpty"] },
+    { section: "Tour", key: "tourDate", label: "Tour Date", type: "date", ops: ["after","before"] },
+    { section: "Tour", key: "status", label: "Status", type: "select", ops: ["is","isNot"], options: ["upcoming","completed","cancelled","no-show"] },
+    { section: "Tour", key: "bookingSource", label: "Source", type: "select", ops: ["is","isNot"], options: ["phone","online","walk-in"] },
+  ],
+  dayboarding: [
+    { section: "Booking Info", key: "dogName", label: "Dog Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Booking Info", key: "clientFirst", label: "First Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Booking Info", key: "phone", label: "Phone", type: "text", ops: ["contains","equals","empty","notEmpty"] },
+    { section: "Visit", key: "visitDate", label: "Visit Date", type: "date", ops: ["after","before"] },
+    { section: "Visit", key: "status", label: "Status", type: "select", ops: ["is","isNot"], options: ["upcoming","checked-in","checked-out","cancelled"] },
+    { section: "Visit", key: "bookingSource", label: "Source", type: "select", ops: ["is","isNot"], options: ["phone","online","walk-in"] },
+    { section: "Financial", key: "total", label: "Total ($)", type: "currency", ops: ["=",">=","<=",">","<"] },
+  ],
+  cancellations: [
+    { section: "Service", key: "serviceType", label: "Service Type", type: "select", ops: ["is","isNot"], options: ["boarding","daycare","eval","tour","dayboarding"] },
+    { section: "Service", key: "dogName", label: "Dog Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Service", key: "clientName", label: "Client Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Timing", key: "originalCheckIn", label: "Original Check-In", type: "date", ops: ["after","before"] },
+    { section: "Timing", key: "cancelledAt", label: "Cancelled At", type: "date", ops: ["after","before"] },
+    { section: "Timing", key: "daysBeforeService", label: "Days Before Service", type: "number", ops: ["=",">=","<=",">","<"] },
+    { section: "Details", key: "cancellationReason", label: "Reason", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+  ],
+  clients: [
+    { section: "Client Info", key: "firstName", label: "First Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Client Info", key: "lastName", label: "Last Name", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Client Info", key: "phone", label: "Phone", type: "text", ops: ["contains","equals","empty","notEmpty"] },
+    { section: "Client Info", key: "email", label: "Email", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Activity", key: "totalVisits", label: "Total Visits", type: "number", ops: ["=",">=","<=",">","<"] },
+    { section: "Activity", key: "totalBoardingNights", label: "Boarding Nights", type: "number", ops: ["=",">=","<=",">","<"] },
+    { section: "Activity", key: "totalSpent", label: "Total Spent ($)", type: "currency", ops: ["=",">=","<=",">","<"] },
+    { section: "Activity", key: "daysSinceLastVisit", label: "Days Since Visit", type: "number", ops: ["=",">=","<=",">","<"] },
+    { section: "Status", key: "isActive", label: "Active", type: "select", ops: ["is","isNot"], options: ["Yes","No"] },
+    { section: "Status", key: "referralSource", label: "Referral Source", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+  ],
+  "hourly-volume": [
+    { section: "Filter Data", key: "serviceType", label: "Service Type", type: "select", ops: ["is","isNot"], options: ["boarding","daycare","eval","tour"] },
+    { section: "Filter Data", key: "bookingSource", label: "Source", type: "select", ops: ["is","isNot"], options: ["phone","online","walk-in"] },
+  ],
+  occupancy: [
+    { section: "Filter Data", key: "roomType", label: "Room Type", type: "select", ops: ["is","isNot"], options: ["LS","ER","DC","SC"] },
+    { section: "Filter Data", key: "bookingSource", label: "Source", type: "select", ops: ["is","isNot"], options: ["phone","online","walk-in"] },
+  ],
+  revenue: [
+    { section: "Filter Data", key: "serviceType", label: "Service Type", type: "select", ops: ["is","isNot"], options: ["boarding","daycare","eval","tour"] },
+    { section: "Filter Data", key: "bookingSource", label: "Source", type: "select", ops: ["is","isNot"], options: ["phone","online","walk-in"] },
+    { section: "Filter Data", key: "roomType", label: "Room Type", type: "select", ops: ["is","isNot"], options: ["LS","ER","DC","SC"] },
+  ],
+  "booking-pace": [
+    { section: "Filter Data", key: "serviceType", label: "Service Type", type: "select", ops: ["is","isNot"], options: ["boarding","daycare","eval","tour"] },
+    { section: "Filter Data", key: "bookingSource", label: "Source", type: "select", ops: ["is","isNot"], options: ["phone","online","walk-in"] },
+  ],
+  "client-intel": [
+    { section: "Filter Data", key: "isActive", label: "Active", type: "select", ops: ["is","isNot"], options: ["Yes","No"] },
+    { section: "Filter Data", key: "referralSource", label: "Referral Source", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+  ],
+  "eval-funnel": [
+    { section: "Filter Data", key: "evaluator", label: "Evaluator", type: "text", ops: ["contains","equals","starts","empty","notEmpty"] },
+    { section: "Filter Data", key: "result", label: "Result", type: "select", ops: ["is","isNot"], options: ["green","yellow","red"] },
+  ],
+};
+
+function getFilterFieldsForReport(reportId) { return RPT_FILTER_FIELDS[reportId] || []; }
+function getPresetsForReport(reportId) { return []; }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GENERIC REPORT FILTER FUNCTION
+// ═══════════════════════════════════════════════════════════════════════════
+function applyReportFilters(rows, filters, fields) {
+  if (!rows || rows.length === 0) return rows;
+  const keys = Object.keys(filters);
+  if (keys.length === 0) return rows;
+  return rows.filter(row => {
+    return keys.every(k => {
+      const f = filters[k];
+      if (!f) return true;
+      const { op, val } = f;
+      if (val === "" && op !== "empty" && op !== "notEmpty" && op !== "has" && op !== "missing") return true;
+      const field = fields.find(fd => fd.key === k);
+      if (!field) return true;
+      const rv = row[field.key];
+      if (field.type === "text") {
+        const s = String(rv || "").toLowerCase(), q = String(val || "").toLowerCase();
+        if (op === "contains") return s.includes(q);
+        if (op === "equals") return s === q;
+        if (op === "starts") return s.startsWith(q);
+        if (op === "empty") return !rv || rv === "—";
+        if (op === "notEmpty") return !!rv && rv !== "—";
+      }
+      if (field.type === "number" || field.type === "currency") {
+        const nv = parseFloat(rv), nq = parseFloat(val);
+        if (isNaN(nv) || isNaN(nq)) return true;
+        if (op === "=") return nv === nq;
+        if (op === ">=") return nv >= nq;
+        if (op === "<=") return nv <= nq;
+        if (op === ">") return nv > nq;
+        if (op === "<") return nv < nq;
+      }
+      if (field.type === "date") {
+        const d = String(rv || "");
+        if (!d || d === "—") return op === "before";
+        if (op === "after") return d > val;
+        if (op === "before") return d < val;
+      }
+      if (field.type === "select") {
+        const s = String(rv || "");
+        if (op === "is") return s === val;
+        if (op === "isNot") return s !== val;
+      }
+      if (field.type === "presence") {
+        if (op === "has") return !!rv && rv !== "—";
+        if (op === "missing") return !rv || rv === "—";
+      }
+      return true;
+    });
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GENERIC FILTER PANEL (renders inside sidebar — matches LifecycleFilterPanel style)
+// ═══════════════════════════════════════════════════════════════════════════
+function GenericFilterPanel({ fields, filters, onChange, onClose, presets = [] }) {
+  const [debounceTimers] = useState({});
+  const activeCount = Object.keys(filters).length;
+
+  const setFilter = (key, op, val) => {
+    const n = { ...filters };
+    if (val === "" && op !== "empty" && op !== "notEmpty" && op !== "has" && op !== "missing") {
+      delete n[key];
+    } else {
+      n[key] = { op, val };
+    }
+    onChange(n);
+  };
+
+  const setFilterDebounced = (key, op, val) => {
+    if (debounceTimers[key]) clearTimeout(debounceTimers[key]);
+    debounceTimers[key] = setTimeout(() => setFilter(key, op, val), 300);
+  };
+
+  const clearFilter = (key) => { const n = { ...filters }; delete n[key]; onChange(n); };
+  const clearAll = () => onChange({});
+
+  const applyPreset = (preset) => {
+    const keys = Object.keys(preset.filters);
+    const isActive = keys.every(k => filters[k] && filters[k].op === preset.filters[k].op);
+    if (isActive) {
+      const n = { ...filters };
+      keys.forEach(k => delete n[k]);
+      onChange(n);
+    } else {
+      onChange({ ...filters, ...preset.filters });
+    }
+  };
+
+  const sections = fields.reduce((acc, f) => {
+    if (!acc[f.section]) acc[f.section] = [];
+    acc[f.section].push(f);
+    return acc;
+  }, {});
+
+  const renderField = (field) => {
+    const f = filters[field.key];
+    const hasVal = !!f;
+    const curOp = f?.op || field.ops[0];
+    const curVal = f?.val ?? "";
+    const noValueOps = ["empty","notEmpty","has","missing"];
+    const needsValue = !["presence"].includes(field.type) && !noValueOps.includes(curOp);
+
+    return (
+      <div key={field.key} style={{padding:"6px 8px",borderRadius:6,borderLeft:hasVal?`3px solid ${C.suc}`:"3px solid transparent",background:hasVal?`${C.suc}06`:"transparent",transition:"all 0.15s"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+          <span style={{fontSize:11,fontWeight:600,color:hasVal?C.text:C.textSec}}>{field.label}</span>
+          {hasVal && <button onClick={()=>clearFilter(field.key)} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:0,display:"flex",lineHeight:1}} title="Clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+        </div>
+        <div style={{display:"flex",gap:4}}>
+          <select value={curOp} onChange={e => {
+            const newOp = e.target.value;
+            if (!needsValue || noValueOps.includes(newOp)) { setFilter(field.key, newOp, ""); }
+            else if (hasVal) { setFilter(field.key, newOp, curVal); }
+          }} style={{width:needsValue?72:"100%",padding:"4px 2px",border:`1px solid ${hasVal?C.suc+"50":C.borderLight}`,borderRadius:4,fontSize:10,fontFamily:"inherit",background:C.surface,color:C.text,cursor:"pointer",flexShrink:0}}>
+            {field.ops.map(op => <option key={op} value={op}>{LC_OP_LABELS[op]||op}</option>)}
+          </select>
+          {needsValue && (
+            field.type === "select" ? (
+              <select value={curVal} onChange={e => setFilter(field.key, curOp, e.target.value)} style={{flex:1,padding:"4px 4px",border:`1px solid ${hasVal?C.suc+"50":C.borderLight}`,borderRadius:4,fontSize:10,fontFamily:"inherit",background:C.surface,color:C.text,cursor:"pointer"}}>
+                <option value="">Select…</option>
+                {(field.options||[]).map(o => <option key={o} value={o}>{o || "(none)"}</option>)}
+              </select>
+            ) : field.type === "date" ? (
+              <input type="date" defaultValue={curVal} onChange={e => setFilter(field.key, curOp, e.target.value)} style={{flex:1,padding:"4px 4px",border:`1px solid ${hasVal?C.suc+"50":C.borderLight}`,borderRadius:4,fontSize:10,fontFamily:"inherit",background:C.surface,color:C.text}} />
+            ) : (
+              <input type={field.type==="text"?"text":"number"} defaultValue={curVal}
+                placeholder={field.type==="currency"?"$0":"0"}
+                onChange={e => { const v=e.target.value; if(field.type==="text"){setFilterDebounced(field.key,curOp,v);}else{setFilter(field.key,curOp,v);} }}
+                style={{flex:1,padding:"4px 6px",border:`1px solid ${hasVal?C.suc+"50":C.borderLight}`,borderRadius:4,fontSize:10,fontFamily:"inherit",background:C.surface,color:C.text,minWidth:0}} />
+            )
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100%",overflow:"hidden"}}>
+      <div style={{padding:"16px 14px 12px",borderBottom:`1px solid ${C.borderLight}`,flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            <span style={{fontSize:14,fontWeight:800,color:C.text}}>Filters</span>
+            {activeCount > 0 && <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minWidth:20,height:20,padding:"0 6px",borderRadius:10,fontSize:11,fontWeight:800,background:C.pri,color:"#fff"}}>{activeCount}</span>}
+          </div>
+          <button onClick={onClose} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:4,display:"flex",borderRadius:4}}
+            onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        {activeCount > 0 && <button onClick={clearAll} style={{width:"100%",padding:"5px 8px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,fontSize:10,fontWeight:600,color:C.textSec,cursor:"pointer",fontFamily:"inherit"}}>Clear All Filters</button>}
+      </div>
+      {presets.length > 0 && (
+        <div style={{padding:"10px 14px 6px",borderBottom:`1px solid ${C.borderLight}`,flexShrink:0}}>
+          <div style={{fontSize:9,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Quick Filters</div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+            {presets.map(p => {
+              const keys = Object.keys(p.filters);
+              const isOn = keys.every(k => filters[k] && filters[k].op === p.filters[k].op);
+              return <button key={p.label} onClick={()=>applyPreset(p)} style={{padding:"4px 8px",borderRadius:6,border:`1.5px solid ${isOn?C.pri:C.border}`,background:isOn?C.priLt:"transparent",color:isOn?C.pri:C.textSec,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{p.icon} {p.label}</button>;
+            })}
+          </div>
+        </div>
+      )}
+      <div style={{flex:1,overflowY:"auto",padding:"8px 10px"}}>
+        {Object.entries(sections).map(([section, flds]) => (
+          <div key={section} style={{marginBottom:12}}>
+            <div style={{fontSize:9,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"4px 4px 6px"}}>{section}</div>
+            <div style={{display:"flex",flexDirection:"column",gap:2}}>{flds.map(renderField)}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{padding:"10px 14px",borderTop:`1px solid ${C.borderLight}`,flexShrink:0,textAlign:"center"}}>
+        <button onClick={onClose} style={{width:"100%",padding:"8px 12px",border:"none",borderRadius:6,background:C.pri,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>Done</button>
+      </div>
+    </div>
+  );
+}
+
+
 const DEFAULT_LIFECYCLE_BANNERS = {
   conversion: "Leads auto-feed here after an Eval or Tour with no booking (+1 day follow-up). Log each outreach attempt, set the next follow-up date, and mark leads as Cold when they stop responding.",
   active: "Active customers have a booking history and either have an upcoming reservation or visited recently. Clients move here automatically when they book or pay for the first time.",
@@ -19786,9 +20077,11 @@ function SVGFunnel({ stages, width = 400, height = 280 }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // REPORTS PAGE — Entities + Analytics two-layer reporting suite
 // ═══════════════════════════════════════════════════════════════════════════
-function ReportsPage({ data, save, nav, profile }) {
+function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen, rptFilters, setRptFilters, onActiveReportChange }) {
   const [section, setSection] = useState("entities"); // "entities" | "analytics"
   const [activeReport, setActiveReport] = useState(null);
+  useEffect(() => { setRptFilters({}); setRptFilterOpen(false); }, [activeReport]);
+  useEffect(() => { if (onActiveReportChange) onActiveReportChange(activeReport); }, [activeReport]);
   const [reportsSearch, setReportsSearch] = useState("");
 
   const today = new Date().toISOString().split("T")[0];
@@ -20037,6 +20330,33 @@ function ReportsPage({ data, save, nav, profile }) {
       };
     });
   }, [allClients, allRes, allDogs]);
+
+  // ═══ FILTERED ENTITY DATA (applies report filters) ═══
+  const filteredOvernightData = useMemo(() => applyReportFilters(overnightData, rptFilters, RPT_FILTER_FIELDS.overnight || []), [overnightData, rptFilters]);
+  const filteredDaycareData = useMemo(() => applyReportFilters(daycareData, rptFilters, RPT_FILTER_FIELDS.daycare || []), [daycareData, rptFilters]);
+  const filteredEvaluationData = useMemo(() => applyReportFilters(evaluationData, rptFilters, RPT_FILTER_FIELDS.evaluations || []), [evaluationData, rptFilters]);
+  const filteredToursData = useMemo(() => applyReportFilters(toursData, rptFilters, RPT_FILTER_FIELDS.tours || []), [toursData, rptFilters]);
+  const filteredDayboardingData = useMemo(() => applyReportFilters(dayboardingData, rptFilters, RPT_FILTER_FIELDS.dayboarding || []), [dayboardingData, rptFilters]);
+  const filteredCancellationsData = useMemo(() => applyReportFilters(cancellationsData, rptFilters, RPT_FILTER_FIELDS.cancellations || []), [cancellationsData, rptFilters]);
+  const filteredClientDirectoryData = useMemo(() => applyReportFilters(clientDirectoryData, rptFilters, RPT_FILTER_FIELDS.clients || []), [clientDirectoryData, rptFilters]);
+
+
+  // ═══ PRE-FILTERED SOURCE DATA FOR ANALYTICS ═══
+  const rptFilteredRes = useMemo(() => {
+    if (!rptFilters || Object.keys(rptFilters).length === 0) return allRes;
+    const isAnalytics = ["hourly-volume","occupancy","revenue","booking-pace"].includes(activeReport);
+    if (!isAnalytics) return allRes;
+    return (allRes || []).filter(r => {
+      return Object.entries(rptFilters).every(([key, {op, val}]) => {
+        if (val === "" && op !== "empty" && op !== "notEmpty") return true;
+        if (key === "serviceType") { const s = r.type || ""; return op === "is" ? s === val : s !== val; }
+        if (key === "bookingSource") { const s = r.bookingSource || ""; return op === "is" ? s === val : s !== val; }
+        if (key === "roomType") { const s = r.roomType || ""; return op === "is" ? s === val : s !== val; }
+        return true;
+      });
+    });
+  }, [allRes, rptFilters, activeReport]);
+
 
   // ═══ EXISTING buildAccrualData (COPY FROM EXISTING CODE) ═══
   const buildAccrualData = useMemo(() => {
@@ -20288,7 +20608,7 @@ function ReportsPage({ data, save, nav, profile }) {
       occupancyByHour[hkey] = 0;
     }
 
-    const relevantRes = (allRes || []).filter(r =>
+    const relevantRes = (rptFilteredRes || []).filter(r =>
       (r.type === "boarding" || r.type === "daycare" || r.type === "dayboarding") &&
       r.checkIn >= rangeFrom && r.checkIn <= rangeTo &&
       r.actualCheckInTime
@@ -20309,7 +20629,7 @@ function ReportsPage({ data, save, nav, profile }) {
     });
 
     return { checkinsByHour, checkoutsByHour };
-  }, [allRes, rangeFrom, rangeTo]);
+  }, [rptFilteredRes, rangeFrom, rangeTo]);
 
   const occupancyData = useMemo(() => {
     const byDay = {};
@@ -20323,7 +20643,7 @@ function ReportsPage({ data, save, nav, profile }) {
 
     let cur = rangeFrom;
     while (cur <= rangeTo) {
-      const occupied = (allRes || []).filter(r =>
+      const occupied = (rptFilteredRes || []).filter(r =>
         r.type === "boarding" &&
         r.checkIn <= cur && r.checkOut > cur &&
         (r.status === "checked-in" || r.status === "checked-out")
@@ -20344,7 +20664,7 @@ function ReportsPage({ data, save, nav, profile }) {
     });
 
     return { byDay, byRoomType, byDOW };
-  }, [allRes, rangeFrom, rangeTo]);
+  }, [rptFilteredRes, rangeFrom, rangeTo]);
 
   const revenueData = useMemo(() => {
     const { days, dayData, totals } = buildAccrualData;
@@ -20365,7 +20685,7 @@ function ReportsPage({ data, save, nav, profile }) {
     const bySource = { "online": 0, "walk-in": 0, "phone": 0 };
     const leadTimes = { "0-1": 0, "2-7": 0, "8-14": 0, "15-30": 0, "30+": 0 };
 
-    (allRes || [])
+    (rptFilteredRes || [])
       .filter(r => r.status !== "cancelled" && r.createdAt && r.checkIn)
       .forEach(r => {
         const source = r.bookingSource || "phone";
@@ -20383,7 +20703,7 @@ function ReportsPage({ data, save, nav, profile }) {
       });
 
     return { bySource, leadTimes };
-  }, [allRes]);
+  }, [rptFilteredRes]);
 
   const clientIntelligenceData = useMemo(() => {
     const allClientMetrics = clientDirectoryData;
@@ -20452,6 +20772,15 @@ function ReportsPage({ data, save, nav, profile }) {
           </button>
           <span style={{ color: C.textMut, fontSize: 13 }}>/</span>
           <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{item?.label}</span>
+
+        {/* Filter button */}
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={() => setRptFilterOpen(!rptFilterOpen)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", border: `1.5px solid ${rptFilterOpen ? C.pri : C.border}`, borderRadius: 8, background: rptFilterOpen ? C.priLt : C.surface, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, color: rptFilterOpen ? C.pri : C.textSec, transition: "all 0.15s" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+            Filter
+            {Object.keys(rptFilters).length > 0 && <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 5px", borderRadius: 9, fontSize: 10, fontWeight: 800, background: C.pri, color: "#fff" }}>{Object.keys(rptFilters).length}</span>}
+          </button>
+        </div>
         </div>
 
         {/* Date range controls for analytics (not for entities or payments) */}
@@ -20468,11 +20797,31 @@ function ReportsPage({ data, save, nav, profile }) {
           </div>
         )}
 
+        {/* Active filter pills */}
+        {Object.keys(rptFilters).length > 0 && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16, alignItems: "center" }}>
+            {Object.entries(rptFilters).map(([key, { op, val }]) => {
+              const fields = getFilterFieldsForReport(activeReport);
+              const field = fields.find(f => f.key === key);
+              const label = field ? field.label : key;
+              return (
+                <span key={key} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 8, background: C.priLt, color: C.pri, fontSize: 11, fontWeight: 600 }}>
+                  {label} {LC_OP_LABELS[op] || op} {val && <strong>{val}</strong>}
+                  <button onClick={() => { const n = { ...rptFilters }; delete n[key]; setRptFilters(n); }} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 0, display: "flex", marginLeft: 2 }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                  </button>
+                </span>
+              );
+            })}
+            <button onClick={() => setRptFilters({})} style={{ padding: "4px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, fontSize: 11, fontWeight: 600, color: C.textSec, cursor: "pointer", fontFamily: "inherit" }}>Clear all</button>
+          </div>
+        )}
+
         {/* ENTITY TABLES */}
         {activeReport === "overnight" && (
           <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
             <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Overnight Stays ({overnightData.length})</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Overnight Stays ({filteredOvernightData.length})</span>
             </div>
             <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -20491,7 +20840,7 @@ function ReportsPage({ data, save, nav, profile }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {overnightData.map(r => (
+                  {filteredOvernightData.map(r => (
                     <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
                       <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace", whiteSpace: "nowrap" }}>{r.idShort}</td>
                       <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.dogName}</td>
@@ -20514,7 +20863,7 @@ function ReportsPage({ data, save, nav, profile }) {
         {activeReport === "daycare" && (
           <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
             <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daycare Visits ({daycareData.length})</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daycare Visits ({filteredDaycareData.length})</span>
             </div>
             <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -20533,7 +20882,7 @@ function ReportsPage({ data, save, nav, profile }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {daycareData.map(r => (
+                  {filteredDaycareData.map(r => (
                     <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
                       <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
                       <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.dogName}</td>
@@ -20556,7 +20905,7 @@ function ReportsPage({ data, save, nav, profile }) {
         {activeReport === "evaluations" && (
           <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
             <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Evaluations ({evaluationData.length})</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Evaluations ({filteredEvaluationData.length})</span>
             </div>
             <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -20574,7 +20923,7 @@ function ReportsPage({ data, save, nav, profile }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {evaluationData.map(r => {
+                  {filteredEvaluationData.map(r => {
                     let resultColor = C.textMut;
                     if (r.result === "green") resultColor = C.suc;
                     else if (r.result === "yellow") resultColor = C.warn;
@@ -20603,7 +20952,7 @@ function ReportsPage({ data, save, nav, profile }) {
         {activeReport === "tours" && (
           <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
             <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Tours ({toursData.length})</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Tours ({filteredToursData.length})</span>
             </div>
             <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -20619,7 +20968,7 @@ function ReportsPage({ data, save, nav, profile }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {toursData.map(r => (
+                  {filteredToursData.map(r => (
                     <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
                       <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
                       <td style={{ padding: "8px 12px", color: C.text }}>{r.clientFirst} {r.clientLast}</td>
@@ -20639,7 +20988,7 @@ function ReportsPage({ data, save, nav, profile }) {
         {activeReport === "dayboarding" && (
           <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
             <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Day Boarding ({dayboardingData.length})</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Day Boarding ({filteredDayboardingData.length})</span>
             </div>
             <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -20657,7 +21006,7 @@ function ReportsPage({ data, save, nav, profile }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {dayboardingData.map(r => (
+                  {filteredDayboardingData.map(r => (
                     <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
                       <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
                       <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.dogName}</td>
@@ -20679,7 +21028,7 @@ function ReportsPage({ data, save, nav, profile }) {
         {activeReport === "cancellations" && (
           <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
             <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Cancellations ({cancellationsData.length})</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Cancellations ({filteredCancellationsData.length})</span>
             </div>
             <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -20696,7 +21045,7 @@ function ReportsPage({ data, save, nav, profile }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {cancellationsData.map(r => (
+                  {filteredCancellationsData.map(r => (
                     <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
                       <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
                       <td style={{ padding: "8px 12px", fontSize: 11, fontWeight: 600, color: C.text, textTransform: "capitalize" }}>{r.serviceType}</td>
@@ -20717,7 +21066,7 @@ function ReportsPage({ data, save, nav, profile }) {
         {activeReport === "clients" && (
           <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
             <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Client Directory ({clientDirectoryData.length})</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Client Directory ({filteredClientDirectoryData.length})</span>
             </div>
             <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -20736,7 +21085,7 @@ function ReportsPage({ data, save, nav, profile }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {clientDirectoryData.map(c => (
+                  {filteredClientDirectoryData.map(c => (
                     <tr key={c.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
                       <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{c.firstName} {c.lastName}</td>
                       <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{c.phone}</td>
@@ -22279,7 +22628,11 @@ export default function App() {
   const [lcFilterOpen, setLcFilterOpen] = useState(false);
   const [lcFilters, setLcFilters] = useState({});
   useEffect(() => { if (page !== "clients" && lcFilterOpen) setLcFilterOpen(false); }, [page, lcFilterOpen]);
+  const [rptFilterOpen, setRptFilterOpen] = useState(false);
+  const [rptFilters, setRptFilters] = useState({});
+  useEffect(() => { if (page !== "reports") { setRptFilterOpen(false); setRptFilters({}); } }, [page]);
   // (navTooltip removed — auto-expand sidebar replaces it)
+  const [rptActiveReport, setRptActiveReport] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [opsExpanded, setOpsExpanded] = useState(false);
   const [navStack, setNavStack] = useState([{ page: initRoute.page, params: initRoute.params }]);
@@ -22555,7 +22908,7 @@ export default function App() {
 
       case "messages": return hp("view_messages") ? <MessagesPage data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "payments": return hp("view_payments") ? <PaymentsPage data={data} save={save} nav={nav} profile={profile}/> : denied;
-      case "reports": return hp("view_payments") ? <ReportsPage data={data} save={save} nav={nav} profile={profile}/> : denied;
+      case "reports": return hp("view_payments") ? <ReportsPage data={data} save={save} nav={nav} profile={profile} rptFilterOpen={rptFilterOpen} setRptFilterOpen={setRptFilterOpen} rptFilters={rptFilters} setRptFilters={setRptFilters} onActiveReportChange={setRptActiveReport}/> : denied;
       case "ai": return hp("use_ai") ? <AIPage data={data} save={save} nav={nav}/> : denied;
       case "lms": return <LMSPage data={data} save={save} nav={nav} profile={profile}/>;
       case "settings": return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile}/> : denied;
@@ -22591,7 +22944,7 @@ export default function App() {
 
       {/* Sidebar Desktop — always collapsed, expands on hover */}
       {(() => {
-        const filterMode = lcFilterOpen && page === "clients";
+        const filterMode = (lcFilterOpen && page === "clients") || (rptFilterOpen && page === "reports");
         const sbExpanded = filterMode || sidebarOpen;
         return (
       <div className="sidebar-d"
@@ -22599,7 +22952,7 @@ export default function App() {
         onMouseLeave={()=>{if(!filterMode)setSidebarOpen(false);}}
         style={{width:filterMode?240:(sbExpanded?240:68),background:filterMode?C.surface:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,display:"flex",flexDirection:"column",transition:"width 0.15s cubic-bezier(0.4,0,0.2,1), background 0.15s ease",overflow:"hidden",flexShrink:0,borderRight:filterMode?`1px solid ${C.border}`:"none",zIndex:50}}>
         {filterMode ? (
-          <LifecycleFilterPanel filters={lcFilters} onChange={setLcFilters} onClose={() => setLcFilterOpen(false)} />
+          page === "clients" ? <LifecycleFilterPanel filters={lcFilters} onChange={setLcFilters} onClose={() => setLcFilterOpen(false)} /> : <GenericFilterPanel fields={getFilterFieldsForReport(rptActiveReport)} filters={rptFilters} onChange={setRptFilters} onClose={() => setRptFilterOpen(false)} presets={getPresetsForReport(rptActiveReport)} />
         ) : (<>
         <div style={{padding:"22px 15px 18px",display:"flex",alignItems:"center",justifyContent:"flex-start",gap:12,height:40,boxSizing:"content-box"}}>
           <div style={{flexShrink:0,width:34,display:"flex",alignItems:"center",justifyContent:"center"}}>{sbExpanded ? <K9Logo size={38}/> : <K9LogoMini size={34}/>}</div>
