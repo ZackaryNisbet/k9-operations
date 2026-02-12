@@ -20204,6 +20204,7 @@ export default function App() {
     const loc = allLocations.find(l => l.id === currentLocation);
     return loc ? loc.slug : (allLocations[1]?.slug || "demo");
   }, [currentLocation, allLocations]);
+  const currentLoc = useMemo(() => allLocations.find(l => !l.isEnterprise && l.id === currentLocation) || null, [allLocations, currentLocation]);
 
   // Set initial location from URL on mount
   useEffect(() => {
