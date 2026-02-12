@@ -20432,7 +20432,7 @@ export default function App() {
   const [lcFilterOpen, setLcFilterOpen] = useState(false);
   const [lcFilters, setLcFilters] = useState({});
   useEffect(() => { if (page !== "clients" && lcFilterOpen) setLcFilterOpen(false); }, [page, lcFilterOpen]);
-  const [navTooltip, setNavTooltip] = useState(null);
+  // (navTooltip removed — auto-expand sidebar replaces it)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [opsExpanded, setOpsExpanded] = useState(false);
   const [navStack, setNavStack] = useState([{ page: initRoute.page, params: initRoute.params }]);
@@ -20769,7 +20769,7 @@ export default function App() {
               {!sec.label && si > 0 && <div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}
               {sec.items.filter(item => { const perm = NAV_PERM_MAP[item.id]; return !perm || hasPermission(profile, data, perm); }).map(item=>{const act=activeNav===item.id;const hasKids=!!item.children;
                 return(<div key={item.id}>
-                  <button onMouseEnter={!sbExpanded?(e)=>{const r=e.currentTarget.getBoundingClientRect();setNavTooltip({label:item.label,top:r.top+r.height/2,left:r.right+10});}:undefined} onMouseLeave={!sbExpanded?()=>setNavTooltip(null):undefined} onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"8px 14px 8px 28px":"10px 14px",justifyContent:"flex-start",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"background 0.12s, color 0.12s",whiteSpace:"nowrap",position:"relative",boxSizing:"border-box"}}>
+                  <button onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"8px 14px 8px 28px":"10px 14px",justifyContent:"flex-start",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"background 0.12s, color 0.12s",whiteSpace:"nowrap",position:"relative",boxSizing:"border-box"}}>
                     <span style={{flexShrink:0,width:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{item.icon}</span>{sbExpanded&&<><span style={{flex:1,textAlign:"left",overflow:"hidden"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'GT Eesti',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.15s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
                   </button>
                   {hasKids&&opsExpanded&&sbExpanded&&<div style={{marginLeft:20,marginBottom:4}}>
@@ -20791,9 +20791,6 @@ export default function App() {
       </div>
         );
       })()}
-
-      {/* Sidebar Tooltip — only visible when collapsed (not hovered) */}
-      {navTooltip && !sidebarOpen && <div style={{position:"fixed",top:navTooltip.top,left:navTooltip.left,transform:"translateY(-50%)",background:"#1a2940",color:"#fff",padding:"6px 12px",borderRadius:6,fontSize:12,fontWeight:600,whiteSpace:"nowrap",pointerEvents:"none",zIndex:9999,boxShadow:"0 4px 12px rgba(0,0,0,0.25)"}}>{navTooltip.label}</div>}
 
       {/* Mobile Header */}
       <div className="mob-h" style={{display:"none",position:"fixed",top:0,left:0,right:0,height:56,background:C.pri,alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100}}>
