@@ -540,7 +540,7 @@ export default function BookingPage() {
 
           {/* Three CTAs */}
           <div className="bk-fade-up bk-fade-up-d3" style={{ display: 'flex', gap: 16, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <button className="bk-cta-card" style={{ border: 'none', font: 'inherit', color: 'inherit', textAlign: 'left' }} onClick={() => { setCurrentPage('availability'); window.scrollTo(0,0); }}>
+            <button className="bk-cta-card" style={{ border: 'none', font: 'inherit', color: 'inherit', textAlign: 'left' }} onClick={() => { console.log('CTA CLICK: View Availability'); setCurrentPage('availability'); window.scrollTo(0,0); }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
                 <Icons.Calendar size={22} />
                 <span style={{ fontSize: 18, fontWeight: 700, color: '#fff' }}>View Availability</span>
@@ -695,7 +695,7 @@ export default function BookingPage() {
         <p style={{ color: 'rgba(255,255,255,.7)', fontSize: 16, maxWidth: 500, margin: '0 auto 30px', lineHeight: 1.6 }}>
           Give your pup the 5-star experience they deserve.
         </p>
-        <button className="bk-btn bk-btn-primary" onClick={() => { setCurrentPage('availability'); window.scrollTo(0,0); }}>
+        <button className="bk-btn bk-btn-primary" onClick={() => { console.log('FOOTER CLICK: Check Availability'); setCurrentPage('availability'); window.scrollTo(0,0); }}>
           Check Availability <Icons.Arrow size={18} />
         </button>
         <div style={{ marginTop: 40, fontSize: 11, color: 'rgba(255,255,255,.3)' }}>© 2026 K9 Resorts Luxury Pet Hotel. All Rights Reserved.</div>
@@ -1401,13 +1401,34 @@ export default function BookingPage() {
     }
   };
 
+  // Debug: log page changes
+  console.log('[K9 BookingPage] currentPage =', currentPage, '| BUILD_ID = 28');
+
+  let pageContent;
+  try {
+    switch (currentPage) {
+      case 'availability': pageContent = renderAvailability(); break;
+      case 'register': pageContent = renderRegistration(); break;
+      case 'confirmation': pageContent = renderConfirmation(); break;
+      case 'account': pageContent = renderAccount(); break;
+      default: pageContent = renderSplash(); break;
+    }
+  } catch (err) {
+    console.error('[K9 BookingPage] RENDER ERROR:', err);
+    pageContent = <div style={{ padding: 40, color: 'red', fontFamily: 'monospace' }}>RENDER ERROR: {err.message}</div>;
+  }
+
   return (
     <div style={{ minHeight: '100vh' }}>
-      {currentPage === 'splash' && renderSplash()}
-      {currentPage === 'availability' && renderAvailability()}
-      {currentPage === 'register' && renderRegistration()}
-      {currentPage === 'confirmation' && renderConfirmation()}
-      {currentPage === 'account' && renderAccount()}
+      {/* TEMP DEBUG BAR — remove after testing */}
+      <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 9999, background: '#ff0040', color: '#fff', padding: '6px 16px', fontSize: 13, fontFamily: 'monospace', fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>BUILD 28 | Page: {currentPage}</span>
+        <span style={{ display: 'flex', gap: 8 }}>
+          <button onClick={() => { console.log('DEBUG: going to availability'); setCurrentPage('availability'); }} style={{ background: '#fff', color: '#000', border: 'none', borderRadius: 4, padding: '4px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>→ Availability</button>
+          <button onClick={() => { console.log('DEBUG: going to splash'); setCurrentPage('splash'); }} style={{ background: '#fff', color: '#000', border: 'none', borderRadius: 4, padding: '4px 12px', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>→ Splash</button>
+        </span>
+      </div>
+      {pageContent}
     </div>
   );
 }
