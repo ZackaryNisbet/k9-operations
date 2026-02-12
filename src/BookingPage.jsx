@@ -279,65 +279,15 @@ function RevealSection({ children, style, className = '' }) {
   return <div ref={ref} className={`bk-reveal ${className}`} style={style}>{children}</div>;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// PAGE TRANSITION WRAPPER
-// ═══════════════════════════════════════════════════════════════════════════
-function PageTransition({ pageKey, direction, children }) {
-  const [pages, setPages] = useState([{ key: pageKey, content: children, anim: 'bk-fade-in' }]);
-  const prevKey = useRef(pageKey);
-
-  useEffect(() => {
-    if (pageKey === prevKey.current) return;
-    const enterClass = direction === 'left' ? 'bk-slide-enter-right' : direction === 'right' ? 'bk-slide-enter-left' : direction === 'up' ? 'bk-slide-enter-up' : 'bk-slide-enter-right';
-    const exitClass = direction === 'left' ? 'bk-slide-exit-left' : direction === 'right' ? 'bk-slide-exit-right' : direction === 'up' ? 'bk-slide-exit-down' : 'bk-slide-exit-left';
-    setPages(prev => [
-      { key: prevKey.current, content: prev[prev.length - 1]?.content, anim: exitClass },
-      { key: pageKey, content: children, anim: enterClass },
-    ]);
-    prevKey.current = pageKey;
-    const t = setTimeout(() => setPages(p => p.filter(pg => pg.key === pageKey)), 750);
-    return () => clearTimeout(t);
-  }, [pageKey]);
-
-  // Update content for current page
-  useEffect(() => {
-    setPages(p => p.map(pg => pg.key === pageKey ? { ...pg, content: children } : pg));
-  }, [children]);
-
-  return (
-    <div className="bk-page-container" style={{ minHeight: '100vh' }}>
-      {pages.map(pg => (
-        <div key={pg.key} className={`bk-page ${pg.anim}`} style={{ position: pages.length > 1 ? 'absolute' : 'relative' }}>
-          {pg.content}
-        </div>
-      ))}
-    </div>
-  );
-}
+// Page transitions handled via key-based remount with bk-fade-in CSS class
 
 // ═══════════════════════════════════════════════════════════════════════════
 // QUESTION TRANSITION (fade out old → fade in new)
 // ═══════════════════════════════════════════════════════════════════════════
 function QuestionTransition({ questionKey, children }) {
-  const [current, setCurrent] = useState({ key: questionKey, content: children });
-  const [fading, setFading] = useState(false);
-
-  useEffect(() => {
-    if (questionKey === current.key) {
-      setCurrent(c => ({ ...c, content: children }));
-      return;
-    }
-    setFading(true);
-    const t = setTimeout(() => {
-      setCurrent({ key: questionKey, content: children });
-      setFading(false);
-    }, 300);
-    return () => clearTimeout(t);
-  }, [questionKey, children]);
-
   return (
-    <div className={fading ? 'bk-question-exit' : 'bk-question-enter'} key={current.key}>
-      {current.content}
+    <div className="bk-question-enter" key={questionKey}>
+      {children}
     </div>
   );
 }
