@@ -16,8 +16,9 @@
 -- 5. Invitee logs in with temp password → prompted to set permanent one
 -- ============================================================
 
--- Enable pg_net extension (async HTTP requests from PostgreSQL)
+-- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 
 CREATE OR REPLACE FUNCTION send_team_invite(invite_email TEXT, invite_name TEXT DEFAULT '')
 RETURNS JSONB AS $$
@@ -42,24 +43,37 @@ BEGIN
   -- Generate random 8-character temp password (letters + digits)
   temp_pass := substr(md5(random()::text || clock_timestamp()::text), 1, 8);
 
-  -- Create user via Supabase Auth Admin API with temp password
-  SELECT net.http_post(
-    url := project_url || '/auth/v1/admin/users',
-    headers := jsonb_build_object(
-      'Authorization', 'Bearer ' || service_key,
-      'apikey', service_key,
-      'Content-Type', 'application/json'
-    ),
-    body := jsonb_build_object(
-      'email', invite_email,
-      'password', temp_pass,
-      'email_confirm', true,
-      'user_metadata', jsonb_build_object(
-        'full_name', invite_name,
+  -- Create or update user with temp password
+  IF EXISTS (SELECT 1 FROM auth.users WHERE email = invite_email) THEN
+    -- User already exists (re-invite) — update their password + metadata directly
+    UPDATE auth.users SET
+      encrypted_password = crypt(temp_pass, gen_salt('bf')),
+      raw_user_meta_data = COALESCE(raw_user_meta_data, '{}'::jsonb) || jsonb_build_object(
+        'full_name', COALESCE(NULLIF(invite_name, ''), raw_user_meta_data->>'full_name'),
         'force_password_change', true
+      ),
+      updated_at = now()
+    WHERE email = invite_email;
+  ELSE
+    -- New user — create via Supabase Auth Admin API
+    SELECT net.http_post(
+      url := project_url || '/auth/v1/admin/users',
+      headers := jsonb_build_object(
+        'Authorization', 'Bearer ' || service_key,
+        'apikey', service_key,
+        'Content-Type', 'application/json'
+      ),
+      body := jsonb_build_object(
+        'email', invite_email,
+        'password', temp_pass,
+        'email_confirm', true,
+        'user_metadata', jsonb_build_object(
+          'full_name', invite_name,
+          'force_password_change', true
+        )
       )
-    )
-  ) INTO request_id;
+    ) INTO request_id;
+  END IF;
 
   -- Build the welcome email HTML
   display_name := COALESCE(NULLIF(invite_name, ''), split_part(invite_email, '@', 1));
@@ -81,13 +95,14 @@ BEGIN
     || '<h2 style="margin:0 0 8px;color:#1a1d23;font-size:20px;font-weight:700">Welcome, ' || display_name || '!</h2>'
     || '<p style="margin:0 0 24px;color:#6b7280;font-size:14px;line-height:1.6">You''ve been invited to K9 Operations. Use the credentials below to sign in. You''ll be asked to set a permanent password on your first login.</p>'
     || '<div style="background:#f8f9fb;border:1.5px solid #e5e7eb;border-radius:10px;padding:20px 24px;margin-bottom:24px">'
-    || '<div style="margin-bottom:14px">'
-    || '<div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Email</div>'
-    || '<div style="font-size:15px;font-weight:600;color:#1a1d23;font-family:monospace">' || invite_email || '</div>'
+    || '<div style="margin-bottom:16px">'
+    || '<div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Email</div>'
+    || '<div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px;font-size:16px;font-weight:600;color:#1a1d23;font-family:monospace;-webkit-user-select:all;user-select:all">' || invite_email || '</div>'
     || '</div>'
-    || '<div style="border-top:1px solid #e5e7eb;padding-top:14px">'
-    || '<div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Temporary Password</div>'
-    || '<div style="font-size:18px;font-weight:700;color:#003462;font-family:monospace;letter-spacing:1px">' || temp_pass || '</div>'
+    || '<div style="border-top:1px solid #e5e7eb;padding-top:16px">'
+    || '<div style="font-size:11px;font-weight:700;color:#9ca3af;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Temporary Password</div>'
+    || '<div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:6px;padding:10px 14px;font-size:20px;font-weight:700;color:#003462;font-family:monospace;letter-spacing:2px;-webkit-user-select:all;user-select:all">' || temp_pass || '</div>'
+    || '<div style="font-size:11px;color:#9ca3af;margin-top:6px">Tap the password to select it, then copy</div>'
     || '</div>'
     || '</div>'
     || '<a href="https://k9operations.com" style="display:block;text-align:center;background:#003462;color:#ffffff;text-decoration:none;padding:14px 24px;border-radius:8px;font-size:15px;font-weight:600;letter-spacing:0.3px">Sign In to K9 Operations</a>'
