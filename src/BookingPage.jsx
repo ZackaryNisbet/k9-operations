@@ -2,8 +2,35 @@
 // Proprietary and Confidential. Unauthorized copying, modification,
 // distribution, or use of this software is strictly prohibited.
 
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, Component } from 'react';
 import { supabase } from './supabaseClient';
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ERROR BOUNDARY — catches render errors and shows useful info
+// ═══════════════════════════════════════════════════════════════════════════
+class BookingErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error('BookingPage Error:', error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8F7F4', fontFamily: "'GT Eesti', sans-serif", padding: 24 }}>
+          <div style={{ textAlign: 'center', maxWidth: 500 }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>🐾</div>
+            <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 28, color: '#003462', marginBottom: 12 }}>Something went wrong</h2>
+            <p style={{ color: '#6B7280', fontSize: 15, lineHeight: 1.6, marginBottom: 16 }}>We encountered an unexpected error. Please try refreshing the page.</p>
+            <div style={{ background: '#fff', border: '1px solid #E5E7EB', borderRadius: 12, padding: 16, textAlign: 'left', marginBottom: 20, maxHeight: 120, overflow: 'auto' }}>
+              <code style={{ fontSize: 12, color: '#EF4444', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{this.state.error?.message || 'Unknown error'}</code>
+            </div>
+            <button onClick={() => window.location.reload()} style={{ padding: '12px 28px', background: '#003462', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>Refresh Page</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BRAND CONSTANTS
@@ -1149,7 +1176,7 @@ export default function BookingPage() {
             })()}
 
             {/* Step 2: Room selection with live availability */}
-            {availStep === 2 && (
+            {availStep === 2 && serviceType !== 'tour' && (
               <div>
                 <div style={{ textAlign: 'center', marginBottom: 40 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: B.gold, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 16 }}>Step 3 of 4</div>
@@ -2213,12 +2240,14 @@ export default function BookingPage() {
   };
 
   return (
-    <div style={{ minHeight: '100vh' }}>
-      {currentPage === 'splash' && renderSplash()}
-      {currentPage === 'availability' && renderAvailability()}
-      {currentPage === 'register' && renderRegistration()}
-      {currentPage === 'confirmation' && renderConfirmation()}
-      {currentPage === 'account' && renderAccount()}
-    </div>
+    <BookingErrorBoundary>
+      <div style={{ minHeight: '100vh' }}>
+        {currentPage === 'splash' && renderSplash()}
+        {currentPage === 'availability' && renderAvailability()}
+        {currentPage === 'register' && renderRegistration()}
+        {currentPage === 'confirmation' && renderConfirmation()}
+        {currentPage === 'account' && renderAccount()}
+      </div>
+    </BookingErrorBoundary>
   );
 }
