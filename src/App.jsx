@@ -69,6 +69,15 @@ const PAGE_SLUGS = {
   "ops-opening":"ops/opening", "ops-fe":"ops/front-end", "ops-be":"ops/back-end", "ops-rooms":"ops/rooms",
   "ops-pictures":"ops/pictures", "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
   eod:"eod", ai:"ai", settings:"settings", "evaluation-form":"evaluation", "online-bookings":"bookings",
+  "settings-team":"settings/team-management", "settings-roles":"settings/roles",
+  "settings-fields":"settings/fields", "settings-tags":"settings/tags", "settings-vaccines":"settings/vaccines",
+  "settings-agreements":"settings/agreements", "settings-questionnaire":"settings/questionnaire",
+  "settings-pricing":"settings/pricing", "settings-packages":"settings/packages", "settings-discounts":"settings/discounts", "settings-dropdowns":"settings/dropdowns",
+  "settings-eod":"settings/eod", "settings-daily-ops":"settings/daily-ops", "settings-run-card":"settings/run-card",
+  "settings-resort-info":"settings/resort-info", "settings-facility":"settings/facility", "settings-rooms":"settings/rooms",
+  "settings-closed-dates":"settings/closed-dates", "settings-policies":"settings/policies", "settings-compliance-rules":"settings/compliance-rules",
+  "settings-booking-settings":"settings/booking-settings",
+  "settings-legal":"settings/legal", "settings-hotkeys":"settings/hotkeys", "settings-reset":"settings/reset",
   "enterprise-locations":"locations", "enterprise-operations":"oversight", "enterprise-packages":"packages", "enterprise-users":"users",
 };
 const SLUG_TO_PAGE = {};
@@ -14726,8 +14735,9 @@ function TeamTab({ profile, data, save }) {
   };
 
   const removeMember = async (userId) => {
-    const { error } = await supabase.from("profiles").update({ location_id: null }).eq("id", userId);
-    if (error) console.error("Failed to remove member:", error);
+    const { data: result, error } = await supabase.rpc('delete_team_member', { target_user_id: userId });
+    if (error) console.error("Failed to delete member:", error);
+    else if (result && !result.success) console.error("Delete failed:", result.error);
     setConfirmRemove(null);
     fetchTeam();
   };
@@ -14832,13 +14842,13 @@ function TeamTab({ profile, data, save }) {
         ) : (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "minmax(100px,1fr) minmax(120px,1fr) minmax(100px,0.8fr) minmax(100px,0.8fr) 100px 48px", padding: "10px 24px", background: C.bg, borderTop: "1px solid " + C.border, borderBottom: "1px solid " + C.border, fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              <div>Name</div><div>Email</div><div>First Login</div><div>Last Login</div><div>Role</div><div/>
+              <div>Name</div><div>Email</div><div>First Login</div><div>Last Active</div><div>Role</div><div/>
             </div>
             {team.sort((a, b) => {
               const ro = { owner: 0, manager: 1, staff: 2 };
               return (ro[a.role] || 9) - (ro[b.role] || 9);
             }).map(m => {
-              const daysInactive = daysSince(m.last_sign_in_at);
+              const daysInactive = daysSince(m.last_accessed_at || m.last_sign_in_at);
               const isInactive = autoDeactEnabled && daysInactive !== null && daysInactive >= autoDeactDays;
               return (
               <div key={m.id} style={{ display: "grid", gridTemplateColumns: "minmax(100px,1fr) minmax(120px,1fr) minmax(100px,0.8fr) minmax(100px,0.8fr) 100px 48px", padding: "14px 24px", borderBottom: "1px solid " + C.borderLight, alignItems: "center", background: isInactive ? C.danLt : "transparent" }}>
@@ -14849,7 +14859,7 @@ function TeamTab({ profile, data, save }) {
                 </div>
                 <div style={{ fontSize: 13, color: C.textSec, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{m.email}</div>
                 <div style={{ fontSize: 12, color: C.textSec }}>{fmtDt(m.created_at)}</div>
-                <div style={{ fontSize: 12, color: isInactive ? C.dan : C.textSec, fontWeight: isInactive ? 600 : 400 }}>{fmtDt(m.last_sign_in_at)}</div>
+                <div style={{ fontSize: 12, color: isInactive ? C.dan : C.textSec, fontWeight: isInactive ? 600 : 400 }}>{fmtDt(m.last_accessed_at || m.last_sign_in_at)}</div>
                 <div>
                   {isOwner && m.id !== profile.id ? (
                     <CustomSelect value={m.role||"staff"} onChange={v=>updateRole(m.id,v)} options={[...(data.roles||DEFAULT_ROLES).map(r=>({value:r.id,label:r.name})),...(!((data.roles||[]).some(r=>r.id===m.role))&&m.role?[{value:m.role,label:m.role}]:[])]} small style={{width:130}}/>
@@ -16618,8 +16628,8 @@ function PackageReportsTab({ data }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // SETTINGS (Fields + Dog Tags)
 // ═══════════════════════════════════════════════════════════════════════════
-function SettingsPage({ data, save, profile }) {
-  const [tab, setTab] = useState(null);
+function SettingsPage({ data, save, profile, nav, settingsTab }) {
+  const [tab, setTab] = useState(settingsTab || null);
   const [settingsSearch, setSettingsSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [newClosedDate, setNewClosedDate] = useState("");
@@ -16796,7 +16806,7 @@ function SettingsPage({ data, save, profile }) {
     return (
       <div>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-          <button onClick={() => setTab(null)} style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.pri, padding: "6px 0" }}>
+          <button onClick={() => nav ? nav("settings") : setTab(null)} style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.pri, padding: "6px 0" }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
             Settings
           </button>
@@ -17629,7 +17639,7 @@ function SettingsPage({ data, save, profile }) {
             {!sec.label && si > 0 && <div style={{ borderTop: `1.5px solid ${C.border}`, marginBottom: 16, marginTop: 4 }} />}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
               {sec.items.map(cat => (
-                <button key={cat.id} onClick={() => { setTab(cat.id); setSettingsSearch(""); }}
+                <button key={cat.id} onClick={() => { if (nav) { nav("settings-" + cat.id); } else { setTab(cat.id); } setSettingsSearch(""); }}
                   style={{ display: "flex", alignItems: "center", gap: 16, padding: "18px 20px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "all 0.15s", width: "100%" }}
                   onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = C.priLt; }}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.surface; }}>
@@ -22920,7 +22930,8 @@ export default function App() {
   // Flat list for lookups
   const navItems = navSections.flatMap(s => s.items);
   const isOpsPage = page.startsWith("ops-");
-  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":["dashboard","clients","reservations","online-bookings","messages","reports","settings","ai","lms"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog","questionnaire"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
+  const isSettingsSubPage = page.startsWith("settings-");
+  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":isSettingsSubPage||page==="settings"?"settings":["dashboard","clients","reservations","online-bookings","messages","reports","ai","lms"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog","questionnaire"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
 
   function renderPage() {
     // Enterprise pages — gated to owner/enterprise_admin
@@ -22958,8 +22969,13 @@ export default function App() {
       case "reports": return hp("view_payments") ? <ReportsPage data={data} save={save} nav={nav} profile={profile} rptFilterOpen={rptFilterOpen} setRptFilterOpen={setRptFilterOpen} rptFilters={rptFilters} setRptFilters={setRptFilters} onActiveReportChange={setRptActiveReport}/> : denied;
       case "ai": return hp("use_ai") ? <AIPage data={data} save={save} nav={nav}/> : denied;
       case "lms": return <LMSPage data={data} save={save} nav={nav} profile={profile}/>;
-      case "settings": return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile}/> : denied;
-      default: return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
+      case "settings": return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile} nav={nav}/> : denied;
+      default:
+        if (isSettingsSubPage) {
+          const subTab = page.replace("settings-", "");
+          return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile} nav={nav} settingsTab={subTab}/> : denied;
+        }
+        return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
     }
   }
 
