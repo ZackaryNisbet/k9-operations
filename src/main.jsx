@@ -130,9 +130,9 @@ function Root() {
             </div>
           ) : (
             <>
-              <h3 style={{ margin: '0 0 6px', fontSize: 18, fontWeight: 700, color: '#1A1D23' }}>Set your password</h3>
+              <h3 style={{ margin: '0 0 6px', fontSize: 18, fontWeight: 700, color: '#1A1D23' }}>Set Your Password</h3>
               <p style={{ margin: '0 0 24px', fontSize: 13, color: '#6B7280', lineHeight: 1.5 }}>
-                Choose a password so you can sign in next time.
+                Welcome! Please set a permanent password for your account.
               </p>
               <form onSubmit={handleSetPassword} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <div>
