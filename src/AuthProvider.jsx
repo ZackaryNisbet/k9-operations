@@ -56,6 +56,8 @@ export function AuthProvider({ children }) {
     if (existing) {
       setProfile(existing);
       setLoading(false);
+      // Stamp last_accessed_at (fire-and-forget)
+      supabase.from('profiles').update({ last_accessed_at: new Date().toISOString() }).eq('id', userId).then(() => {});
       return;
     }
 
