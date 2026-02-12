@@ -14744,6 +14744,44 @@ function TeamTab({ profile, data, save }) {
 
   const [inviteSending, setInviteSending] = useState(false);
   const [inviteCredentials, setInviteCredentials] = useState(null);
+  const [copiedField, setCopiedField] = useState(null);
+
+  const CopyBtn = ({ text, field, label = "Copy", size = "sm" }) => {
+    const isCopied = copiedField === field;
+    const handleCopy = () => {
+      navigator.clipboard.writeText(text);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(prev => prev === field ? null : prev), 2000);
+    };
+    const isBig = size === "lg";
+    return (
+      <button onClick={handleCopy} title={isCopied ? "Copied!" : label}
+        style={{
+          background: isCopied ? C.suc + "18" : "none",
+          border: `1.5px solid ${isCopied ? C.suc : C.border}`,
+          borderRadius: isBig ? 8 : 6,
+          padding: isBig ? "8px 18px" : "4px 10px",
+          fontSize: isBig ? 12 : 11,
+          fontWeight: 600,
+          color: isCopied ? C.suc : C.textSec,
+          cursor: "pointer",
+          fontFamily: "inherit",
+          display: "flex", alignItems: "center", gap: 6,
+          transition: "all 0.25s ease",
+          minWidth: isBig ? 160 : 70,
+          justifyContent: "center",
+        }}>
+        <span style={{
+          display: "inline-flex", alignItems: "center",
+          transform: isCopied ? "scale(1.15)" : "scale(1)",
+          transition: "transform 0.25s ease",
+        }}>
+          {isCopied ? <I.CheckCircle /> : <I.Clipboard />}
+        </span>
+        <span>{isCopied ? "Copied!" : label}</span>
+      </button>
+    );
+  };
 
   const addInvite = async () => {
     if (!inviteEmail.trim()) return;
@@ -14922,28 +14960,21 @@ function TeamTab({ profile, data, save }) {
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Email</div>
                     <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: "monospace" }}>{inviteCredentials.email}</div>
                   </div>
-                  <button onClick={() => navigator.clipboard.writeText(inviteCredentials.email)} title="Copy email"
-                    style={{ background: "none", border: "1.5px solid " + C.border, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, color: C.textSec, cursor: "pointer", fontFamily: "inherit" }}>
-                    Copy
-                  </button>
+                  <CopyBtn text={inviteCredentials.email} field="invite-email" label="Copy" />
                 </div>
                 <div style={{ borderTop: "1px solid " + C.borderLight, paddingTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div>
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Temporary Password</div>
                     <div style={{ fontSize: 16, fontWeight: 700, color: C.pri, fontFamily: "monospace", letterSpacing: "0.08em" }}>{inviteCredentials.tempPassword}</div>
                   </div>
-                  <button onClick={() => navigator.clipboard.writeText(inviteCredentials.tempPassword)} title="Copy password"
-                    style={{ background: "none", border: "1.5px solid " + C.border, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, color: C.textSec, cursor: "pointer", fontFamily: "inherit" }}>
-                    Copy
-                  </button>
+                  <CopyBtn text={inviteCredentials.tempPassword} field="invite-password" label="Copy" />
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
-                <button onClick={() => {
-                  navigator.clipboard.writeText(`You've been invited to K9 Operations!\n\nSign in at: k9operations.com\nEmail: ${inviteCredentials.email}\nTemporary Password: ${inviteCredentials.tempPassword}\n\nYou'll be asked to set a permanent password on your first login.`);
-                }} style={{ padding: "8px 18px", background: C.pri, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-                  Copy All Credentials
-                </button>
+                <CopyBtn
+                  text={`You've been invited to K9 Operations!\n\nSign in at: k9operations.com\nEmail: ${inviteCredentials.email}\nTemporary Password: ${inviteCredentials.tempPassword}\n\nYou'll be asked to set a permanent password on your first login.`}
+                  field="invite-all" label="Copy All Credentials" size="lg"
+                />
                 <button onClick={() => setInviteCredentials(null)} style={{ padding: "8px 18px", background: "none", color: C.textSec, border: "1.5px solid " + C.border, borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
                   Dismiss
                 </button>
