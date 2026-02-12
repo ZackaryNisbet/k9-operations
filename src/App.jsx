@@ -14733,10 +14733,12 @@ function TeamTab({ profile, data, save }) {
   };
 
   const [inviteSending, setInviteSending] = useState(false);
+  const [inviteCredentials, setInviteCredentials] = useState(null);
 
   const addInvite = async () => {
     if (!inviteEmail.trim()) return;
     setInviteSending(true);
+    setInviteCredentials(null);
     const inv = {
       id: gid(),
       email: inviteEmail.trim().toLowerCase(),
@@ -14747,21 +14749,31 @@ function TeamTab({ profile, data, save }) {
     // Save the pending invite to the data blob
     await save({ ...data, pendingInvites: [...pendingInvites, inv] });
 
-    // Try to auto-send invite email via Supabase Auth API
-    let emailSent = false;
+    // Try to create user with temp password via Supabase Admin API
+    let created = false;
+    let tempPassword = null;
     try {
       const { data: result } = await supabase.rpc('send_team_invite', {
         invite_email: inv.email,
         invite_name: inv.name || '',
       });
-      emailSent = result && result.success;
+      if (result && result.success && result.temp_password) {
+        created = true;
+        tempPassword = result.temp_password;
+      }
     } catch (e) {
       console.log('send_team_invite not available:', e.message);
     }
 
     setInviteEmail(""); setInviteName(""); setInviteRole("role_staff");
     setInviteSending(false);
-    setInviteMsg(emailSent ? ("email:" + (inv.name || inv.email)) : (inv.name || inv.email));
+
+    if (created && tempPassword) {
+      setInviteCredentials({ email: inv.email, tempPassword, name: inv.name || inv.email });
+      setInviteMsg(null);
+    } else {
+      setInviteMsg(inv.name || inv.email);
+    }
   };
 
   const removeInvite = async (invId) => {
@@ -14875,7 +14887,7 @@ function TeamTab({ profile, data, save }) {
         <Card style={{ padding: "24px 28px" }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Invite Team Member</div>
           <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>
-            Enter their details and click Invite. They'll receive an email with a link to join your team.
+            Enter their details and click Invite. They'll get a temporary password to sign in with.
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 130px auto", gap: 12, alignItems: "flex-end" }}>
             <Inp label="Email" type="email" value={inviteEmail} onChange={v => setInviteEmail(v)} placeholder="staff@k9resorts.com" />
@@ -14883,28 +14895,57 @@ function TeamTab({ profile, data, save }) {
             <Inp label="Role" type="select" value={inviteRole} onChange={v => setInviteRole(v)} options={(data.roles || DEFAULT_ROLES).map(r => ({ value: r.id, label: r.name }))} />
             <Btn onClick={addInvite} disabled={inviteSending}>{inviteSending ? "Sending..." : "Invite"}</Btn>
           </div>
-          {inviteMsg && inviteMsg.startsWith("email:") && (
-            <div style={{ marginTop: 16, padding: "16px 20px", borderRadius: 12, background: C.sucLt, border: "1.5px solid " + C.suc + "30" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {inviteCredentials && (
+            <div style={{ marginTop: 16, padding: "20px 24px", borderRadius: 12, background: C.sucLt, border: "1.5px solid " + C.suc + "30" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
                 <I.CheckCircle />
-                <span style={{ fontSize: 14, fontWeight: 700, color: C.suc }}>Invite email sent to {inviteMsg.slice(6)}</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.suc }}>Account created for {inviteCredentials.name}</span>
               </div>
-              <div style={{ fontSize: 13, color: C.textSec, marginTop: 6 }}>
-                They'll receive an email with a link to join. Once they click it, they'll be automatically added to your team.
+              <div style={{ fontSize: 13, color: C.text, lineHeight: 1.6, marginBottom: 12 }}>
+                Share these login credentials. They'll be prompted to set a permanent password on first sign-in.
               </div>
-              <button onClick={() => setInviteMsg(null)} style={{ marginTop: 10, padding: "6px 14px", background: "none", color: C.textSec, border: "1.5px solid " + C.border, borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-                Dismiss
-              </button>
+              <div style={{ background: C.surface, borderRadius: 10, padding: "16px 20px", border: "1.5px solid " + C.border }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Email</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text, fontFamily: "monospace" }}>{inviteCredentials.email}</div>
+                  </div>
+                  <button onClick={() => navigator.clipboard.writeText(inviteCredentials.email)} title="Copy email"
+                    style={{ background: "none", border: "1.5px solid " + C.border, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, color: C.textSec, cursor: "pointer", fontFamily: "inherit" }}>
+                    Copy
+                  </button>
+                </div>
+                <div style={{ borderTop: "1px solid " + C.borderLight, paddingTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Temporary Password</div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: C.pri, fontFamily: "monospace", letterSpacing: "0.08em" }}>{inviteCredentials.tempPassword}</div>
+                  </div>
+                  <button onClick={() => navigator.clipboard.writeText(inviteCredentials.tempPassword)} title="Copy password"
+                    style={{ background: "none", border: "1.5px solid " + C.border, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, color: C.textSec, cursor: "pointer", fontFamily: "inherit" }}>
+                    Copy
+                  </button>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+                <button onClick={() => {
+                  navigator.clipboard.writeText(`You've been invited to K9 Operations!\n\nSign in at: k9operations.com\nEmail: ${inviteCredentials.email}\nTemporary Password: ${inviteCredentials.tempPassword}\n\nYou'll be asked to set a permanent password on your first login.`);
+                }} style={{ padding: "8px 18px", background: C.pri, color: "#fff", border: "none", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                  Copy All Credentials
+                </button>
+                <button onClick={() => setInviteCredentials(null)} style={{ padding: "8px 18px", background: "none", color: C.textSec, border: "1.5px solid " + C.border, borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                  Dismiss
+                </button>
+              </div>
             </div>
           )}
-          {inviteMsg && !inviteMsg.startsWith("email:") && (
+          {inviteMsg && (
             <div style={{ marginTop: 16, padding: "16px 20px", borderRadius: 12, background: C.sucLt, border: "1.5px solid " + C.suc + "30" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                 <I.CheckCircle />
                 <span style={{ fontSize: 14, fontWeight: 700, color: C.suc }}>Invitation saved for {inviteMsg}</span>
               </div>
               <div style={{ fontSize: 13, color: C.text, lineHeight: 1.6, marginBottom: 10 }}>
-                Send them these instructions to get started:
+                The auto-invite couldn't be sent. Share these instructions manually:
               </div>
               <div style={{ background: C.surface, borderRadius: 8, padding: "12px 16px", border: "1px solid " + C.border, fontSize: 13, color: C.text, lineHeight: 1.6, fontFamily: "inherit" }}>
                 <div>1. Go to <strong>k9operations.com</strong></div>

@@ -18,8 +18,13 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
-      if (session?.user) fetchProfile(session.user.id);
+      const u = session?.user ?? null;
+      setUser(u);
+      // Check if user needs to set a permanent password (invited with temp password)
+      if (u && u.user_metadata?.force_password_change === true) {
+        setNeedsPasswordSet(true);
+      }
+      if (u) fetchProfile(u.id);
       else setLoading(false);
     });
 
@@ -28,8 +33,13 @@ export function AuthProvider({ children }) {
       if (event === 'PASSWORD_RECOVERY') {
         setNeedsPasswordSet(true);
       }
-      setUser(session?.user ?? null);
-      if (session?.user) fetchProfile(session.user.id);
+      const u = session?.user ?? null;
+      setUser(u);
+      // Also check force_password_change on sign-in (temp password invite flow)
+      if (u && u.user_metadata?.force_password_change === true) {
+        setNeedsPasswordSet(true);
+      }
+      if (u) fetchProfile(u.id);
       else { setProfile(null); setLoading(false); }
     });
 
@@ -96,7 +106,10 @@ export function AuthProvider({ children }) {
   };
 
   const updatePassword = async (newPassword) => {
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    const { error } = await supabase.auth.updateUser({
+      password: newPassword,
+      data: { force_password_change: false }
+    });
     if (!error) setNeedsPasswordSet(false);
     return { error };
   };
