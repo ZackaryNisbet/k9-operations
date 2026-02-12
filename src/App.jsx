@@ -22469,7 +22469,8 @@ export default function App() {
   // SAFETY: Only initialize DEMO when Supabase CONFIRMS data is empty (isEmpty=true).
   // NEVER overwrite on load errors or null data from slow connections.
   // NOTE: Locations created via "Add Location" use {_initialized:true} to skip this.
-  const rawOrDemo = rawData || (loading ? null : (isEmpty ? DEMO : null));
+  // Also fallback to DEMO when profile has no location_id (new user before claim completes)
+  const rawOrDemo = rawData || (loading ? null : ((isEmpty || !profile?.location_id) ? DEMO : null));
   // Normalize: ensure all expected arrays/objects exist so new/empty locations don't crash on .filter()
   const data = rawOrDemo ? (() => {
     const merged = {
