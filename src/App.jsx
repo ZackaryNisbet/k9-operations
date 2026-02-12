@@ -5672,7 +5672,7 @@ const DEFAULT_LIFECYCLE_BANNERS = {
 // ═══════════════════════════════════════════════════════════════════════════
 // CLIENTS PAGE — Customer Lifecycle
 // ═══════════════════════════════════════════════════════════════════════════
-function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setLcFilters, setLcFilterOpen }) {
+function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setLcFilters, setLcFilterOpen, locationSlug }) {
   const [activeTab, setActiveTab] = useState("conversion");
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState(null);
@@ -5946,13 +5946,13 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // Load booking drafts when Online Booking filter is active or when conversion tab is shown
   useEffect(() => {
-    if (activeTab === "conversion" && !draftsLoaded && currentLoc?.slug) {
-      supabase.rpc("get_booking_drafts", { p_location_slug: currentLoc.slug }).then(({ data: d }) => {
+    if (activeTab === "conversion" && !draftsLoaded && locationSlug) {
+      supabase.rpc("get_booking_drafts", { p_location_slug: locationSlug }).then(({ data: d }) => {
         if (d) setBookingDrafts(Array.isArray(d) ? d : []);
         setDraftsLoaded(true);
       }).catch(() => setDraftsLoaded(true));
     }
-  }, [activeTab, draftsLoaded, currentLoc?.slug]);
+  }, [activeTab, draftsLoaded, locationSlug]);
 
   const renderSource = (client) => {
     const src = getClientSource(client);
@@ -20454,7 +20454,7 @@ export default function App() {
     switch(page) {
       case "operations": return hp("view_daily_ops") ? <OperationsHub data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "dashboard": return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
-      case "clients": return hp("view_clients") ? <ClientsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} lcFilters={lcFilters} setLcFilters={setLcFilters} setLcFilterOpen={setLcFilterOpen}/> : denied;
+      case "clients": return hp("view_clients") ? <ClientsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} lcFilters={lcFilters} setLcFilters={setLcFilters} setLcFilterOpen={setLcFilterOpen} locationSlug={currentLoc?.slug}/> : denied;
       case "client-detail": return hp("view_client_detail") ? <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile} openReservationId={params.openReservation}/> : denied;
       case "new-client": return hp("create_client") ? <NewClientPage data={data} save={save} nav={nav} prefill={params.prefill} addGlobalToast={addGlobalToast}/> : denied;
       case "dog-detail": return hp("view_dog_detail") ? <DogDetailPage data={data} save={save} clientId={params.clientId} dogId={params.dogId} nav={nav} profile={profile}/> : denied;
