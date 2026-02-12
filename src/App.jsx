@@ -14902,7 +14902,7 @@ function TeamTab({ profile, data, save }) {
                 <span style={{ fontSize: 14, fontWeight: 700, color: C.suc }}>Account created for {inviteCredentials.name}</span>
               </div>
               <div style={{ fontSize: 13, color: C.text, lineHeight: 1.6, marginBottom: 12 }}>
-                Share these login credentials. They'll be prompted to set a permanent password on first sign-in.
+                A welcome email with these credentials has been sent. They'll be prompted to set a permanent password on first sign-in.
               </div>
               <div style={{ background: C.surface, borderRadius: 10, padding: "16px 20px", border: "1.5px solid " + C.border }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
