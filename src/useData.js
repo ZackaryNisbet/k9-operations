@@ -90,6 +90,7 @@ export function useData(profile) {
   const locationId = profile?.location_id;
   const saveTimeoutRef = useRef(null);
   const prevDataRef = useRef(null);
+  const savingRef = useRef(false);
 
   // ── LOAD ──
   useEffect(() => {
@@ -97,6 +98,10 @@ export function useData(profile) {
     setLoading(true);
 
     const load = async () => {
+      // Skip if a save is in progress — the save will set prevDataRef
+      // and real-time will re-trigger load after the save completes
+      if (savingRef.current) return;
+
       setLoadError(false);
       try {
         const [
@@ -116,6 +121,9 @@ export function useData(profile) {
           supabase.from('k9_audit_log').select('id, doc').eq('location_id', locationId).order('created_at'),
           supabase.from(REMINDER_TABLE).select('id, doc').eq('location_id', locationId).order('created_at'),
         ]);
+
+        // Double-check: if save started while we were awaiting, discard this load
+        if (savingRef.current) return;
 
         if (locRes.error) {
           console.error('Failed to load location:', locRes.error);
@@ -201,9 +209,13 @@ export function useData(profile) {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 
     saveTimeoutRef.current = setTimeout(async () => {
+      savingRef.current = true;
       try {
         const prev = prevDataRef.current || {};
         prevDataRef.current = newData;
+
+        // Collect ALL write promises, then execute in one batch
+        const writeOps = [];
 
         // ── 1. Standard entity tables: diff and write ──
         for (const [key, config] of Object.entries(ENTITIES)) {
@@ -223,13 +235,17 @@ export function useData(profile) {
               doc: item,
               ...extractDenorm(item),
             }));
-            const { error } = await supabase.from(table).upsert(rows, { onConflict: 'id' });
-            if (error) console.error(`Failed to upsert ${key}:`, error);
+            writeOps.push(
+              supabase.from(table).upsert(rows, { onConflict: 'id' })
+                .then(({ error }) => { if (error) console.error(`Failed to upsert ${key}:`, error); })
+            );
           }
 
           if (diff.deletes.length > 0) {
-            const { error } = await supabase.from(table).delete().in('id', diff.deletes.map(i => i.id));
-            if (error) console.error(`Failed to delete ${key}:`, error);
+            writeOps.push(
+              supabase.from(table).delete().in('id', diff.deletes.map(i => i.id))
+                .then(({ error }) => { if (error) console.error(`Failed to delete ${key}:`, error); })
+            );
           }
         }
 
@@ -249,13 +265,17 @@ export function useData(profile) {
               doc: item,
               ...dailyOpsDenorm(item),
             }));
-            const { error } = await supabase.from(DAILY_OPS_TABLE).upsert(rows, { onConflict: 'id' });
-            if (error) console.error(`Failed to upsert ${key}:`, error);
+            writeOps.push(
+              supabase.from(DAILY_OPS_TABLE).upsert(rows, { onConflict: 'id' })
+                .then(({ error }) => { if (error) console.error(`Failed to upsert ${key}:`, error); })
+            );
           }
 
           if (diff.deletes.length > 0) {
-            const { error } = await supabase.from(DAILY_OPS_TABLE).delete().in('id', diff.deletes.map(i => i.id));
-            if (error) console.error(`Failed to delete ${key}:`, error);
+            writeOps.push(
+              supabase.from(DAILY_OPS_TABLE).delete().in('id', diff.deletes.map(i => i.id))
+                .then(({ error }) => { if (error) console.error(`Failed to delete ${key}:`, error); })
+            );
           }
         }
 
@@ -273,12 +293,16 @@ export function useData(profile) {
                 sent_at: item.sentAt || null,
                 doc: item,
               }));
-              const { error } = await supabase.from(REMINDER_TABLE).upsert(rows, { onConflict: 'id' });
-              if (error) console.error('Failed to upsert reminders:', error);
+              writeOps.push(
+                supabase.from(REMINDER_TABLE).upsert(rows, { onConflict: 'id' })
+                  .then(({ error }) => { if (error) console.error('Failed to upsert reminders:', error); })
+              );
             }
             if (diff.deletes.length > 0) {
-              const { error } = await supabase.from(REMINDER_TABLE).delete().in('id', diff.deletes.map(i => i.id));
-              if (error) console.error('Failed to delete reminders:', error);
+              writeOps.push(
+                supabase.from(REMINDER_TABLE).delete().in('id', diff.deletes.map(i => i.id))
+                  .then(({ error }) => { if (error) console.error('Failed to delete reminders:', error); })
+              );
             }
           }
         }
@@ -288,7 +312,6 @@ export function useData(profile) {
         for (const [key, value] of Object.entries(newData)) {
           if (ENTITY_KEYS.has(key)) continue;
           if (key === 'automations' && value) {
-            // Strip reminderLog — it's in its own table
             const { reminderLog, ...autoSettings } = value;
             settingsOnly[key] = autoSettings;
           } else {
@@ -296,15 +319,18 @@ export function useData(profile) {
           }
         }
 
-        const { error } = await supabase
-          .from('locations')
-          .update({ data: settingsOnly })
-          .eq('id', locationId);
+        writeOps.push(
+          supabase.from('locations').update({ data: settingsOnly }).eq('id', locationId)
+            .then(({ error }) => { if (error) console.error('Failed to save settings:', error); })
+        );
 
-        if (error) console.error('Failed to save settings:', error);
+        // Fire ALL writes at once — no partial state for real-time to pick up
+        await Promise.all(writeOps);
 
       } catch (err) {
         console.error('Save failed:', err);
+      } finally {
+        savingRef.current = false;
       }
     }, 300);
   }, [locationId]);

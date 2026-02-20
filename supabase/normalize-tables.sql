@@ -222,17 +222,29 @@ ALTER TABLE k9_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE k9_audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE k9_reminder_log ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS k9_clients_rls ON k9_clients;
 CREATE POLICY k9_clients_rls ON k9_clients FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
+DROP POLICY IF EXISTS k9_dogs_rls ON k9_dogs;
 CREATE POLICY k9_dogs_rls ON k9_dogs FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
+DROP POLICY IF EXISTS k9_vaccine_records_rls ON k9_vaccine_records;
 CREATE POLICY k9_vaccine_records_rls ON k9_vaccine_records FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
+DROP POLICY IF EXISTS k9_reservations_rls ON k9_reservations;
 CREATE POLICY k9_reservations_rls ON k9_reservations FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
+DROP POLICY IF EXISTS k9_evaluations_rls ON k9_evaluations;
 CREATE POLICY k9_evaluations_rls ON k9_evaluations FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
+DROP POLICY IF EXISTS k9_daily_ops_rls ON k9_daily_ops;
 CREATE POLICY k9_daily_ops_rls ON k9_daily_ops FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
+DROP POLICY IF EXISTS k9_payments_rls ON k9_payments;
 CREATE POLICY k9_payments_rls ON k9_payments FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
+DROP POLICY IF EXISTS k9_packages_rls ON k9_packages;
 CREATE POLICY k9_packages_rls ON k9_packages FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
+DROP POLICY IF EXISTS k9_package_sales_rls ON k9_package_sales;
 CREATE POLICY k9_package_sales_rls ON k9_package_sales FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
+DROP POLICY IF EXISTS k9_messages_rls ON k9_messages;
 CREATE POLICY k9_messages_rls ON k9_messages FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
+DROP POLICY IF EXISTS k9_audit_log_rls ON k9_audit_log;
 CREATE POLICY k9_audit_log_rls ON k9_audit_log FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
+DROP POLICY IF EXISTS k9_reminder_log_rls ON k9_reminder_log;
 CREATE POLICY k9_reminder_log_rls ON k9_reminder_log FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
 
 -- ============================================================
@@ -246,11 +258,17 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS k9_clients_ts ON k9_clients;
 CREATE TRIGGER k9_clients_ts BEFORE UPDATE ON k9_clients FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS k9_dogs_ts ON k9_dogs;
 CREATE TRIGGER k9_dogs_ts BEFORE UPDATE ON k9_dogs FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS k9_vaccine_records_ts ON k9_vaccine_records;
 CREATE TRIGGER k9_vaccine_records_ts BEFORE UPDATE ON k9_vaccine_records FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS k9_reservations_ts ON k9_reservations;
 CREATE TRIGGER k9_reservations_ts BEFORE UPDATE ON k9_reservations FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS k9_daily_ops_ts ON k9_daily_ops;
 CREATE TRIGGER k9_daily_ops_ts BEFORE UPDATE ON k9_daily_ops FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+DROP TRIGGER IF EXISTS k9_packages_ts ON k9_packages;
 CREATE TRIGGER k9_packages_ts BEFORE UPDATE ON k9_packages FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ============================================================
