@@ -3662,61 +3662,25 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       {/* TAB 3: HISTORY */}
       {activeTab === "history" && (
         <div>
-          {secHeader("Reservation History")}
-          {(() => {
-            try {
-            const rawLogs = Array.isArray(data.auditLog) ? data.auditLog : [];
-            const logs = rawLogs.filter(l => l && typeof l === "object" && l.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp||0) - new Date(a.timestamp||0));
-            const safeStr = (v) => {
-              if (v == null) return "";
-              if (v instanceof Date) return v.toLocaleString();
-              if (typeof v === "object") return JSON.stringify(v);
-              return String(v);
-            };
-            return logs.length > 0 ? (
-              <div style={{maxHeight:400,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
-                {logs.map((log, li) => {
-                  const rawDets = log.details;
-                  const dets = Array.isArray(rawDets) ? rawDets : (rawDets && typeof rawDets === "object") ? [rawDets] : typeof rawDets === "string" ? [{field:"Detail",oldVal:"",newVal:rawDets}] : [];
-                  return (
-                  <div key={log.id||("log-"+li)} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.borderLight}`,fontSize:12}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:dets.length>0?6:0}}>
-                      <span style={{fontWeight:700,color:C.pri}}>{safeStr(log.userName)}</span>
-                      <span style={{fontWeight:600,color:C.text}}>{safeStr(log.action)}</span>
-                      <span style={{marginLeft:"auto",color:C.textMut,fontSize:11,fontVariantNumeric:"tabular-nums"}}>{log.timestamp ? new Date(log.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true}) : ""}</span>
-                    </div>
-                    {dets.length > 0 && (
-                      <div style={{display:"flex",flexDirection:"column",gap:3}}>
-                        {dets.map((d, di) => {
-                          if (!d || typeof d !== "object") return null;
-                          const oldStr = safeStr(d.oldVal);
-                          const newStr = safeStr(d.newVal);
-                          return (
-                          <div key={di} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,paddingLeft:4}}>
-                            <span style={{color:C.textMut,fontWeight:500,minWidth:90}}>{safeStr(d.field)}</span>
-                            {oldStr !== "" && (
-                              <span style={{color:C.dan,textDecoration:"line-through",opacity:0.7}}>{oldStr}</span>
-                            )}
-                            {oldStr !== "" && newStr !== "" && (
-                              <span style={{color:C.textMut}}>{"\u2192"}</span>
-                            )}
-                            {newStr !== "" && (
-                              <span style={{color:C.suc,fontWeight:600}}>{newStr}</span>
-                            )}
-                          </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                  );
-                })}
+          <div style={{fontSize:11,fontWeight:700,color:C.textMut,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10,marginTop:20}}>{"Reservation History"}</div>
+          <div style={{fontSize:13,color:C.text}}>{"Audit log entries: " + String((Array.isArray(data.auditLog) ? data.auditLog : []).filter(l => l && l.reservationId === reservation.id).length)}</div>
+          <div style={{marginTop:12,maxHeight:400,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
+            {(Array.isArray(data.auditLog) ? data.auditLog : []).filter(l => l && l.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp||0) - new Date(a.timestamp||0)).map((log, li) => (
+              <div key={String(log.id||li)} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:"1px solid " + C.borderLight,fontSize:12}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontWeight:700,color:C.pri}}>{String(log.userName||"")}</span>
+                  <span style={{fontWeight:600,color:C.text}}>{String(log.action||"")}</span>
+                  <span style={{marginLeft:"auto",color:C.textMut,fontSize:11}}>{log.timestamp ? new Date(log.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true}) : ""}</span>
+                </div>
+                {log.details && (
+                  <pre style={{margin:"6px 0 0",fontSize:11,color:C.textSec,whiteSpace:"pre-wrap",wordBreak:"break-all"}}>{JSON.stringify(log.details)}</pre>
+                )}
               </div>
-            ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No history recorded yet</div>;
-            } catch (err) {
-              return <div style={{fontSize:13,color:C.dan,fontFamily:"monospace",whiteSpace:"pre-wrap",padding:12,background:C.danLt,borderRadius:8}}>{"History error: " + String(err?.message || err) + "\n\nAudit log sample: " + JSON.stringify((data.auditLog||[]).filter(l=>l&&l.reservationId===reservation.id).slice(0,2), null, 2)}</div>;
-            }
-          })()}
+            ))}
+            {(Array.isArray(data.auditLog) ? data.auditLog : []).filter(l => l && l.reservationId === reservation.id).length === 0 && (
+              <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>{"No history recorded yet"}</div>
+            )}
+          </div>
         </div>
       )}
 
