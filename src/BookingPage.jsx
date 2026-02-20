@@ -1974,9 +1974,11 @@ export default function BookingPage() {
         const clientSales = allSales.filter(s => s.clientId === matchClient.id || dogIds.includes(s.dogId));
         setAccountData({
           success: true,
-          client: { firstName: matchClient.fields?.first_name, lastName: matchClient.fields?.last_name, email: matchClient.fields?.email, phone: matchClient.fields?.phone, address: matchClient.fields?.address },
+          clientId: matchClient.id,
+          locationId: locRow.id,
+          client: { firstName: matchClient.fields?.first_name, lastName: matchClient.fields?.last_name, email: matchClient.fields?.email, phone: matchClient.fields?.phone, address: matchClient.fields?.address, emergencyContact: matchClient.fields?.emergency_contact, emergencyPhone: matchClient.fields?.emergency_phone, vetName: matchClient.fields?.vet_name, vetPhone: matchClient.fields?.vet_phone },
           dogs: clientDogs.map(d => ({ id: d.id, name: d.fields?.name, breed: d.fields?.breed, weight: d.fields?.weight, dob: d.fields?.dob, sex: d.fields?.sex, profilePic: d.fields?.profilePic, vaccines: d.vaccines || [] })),
-          reservations: clientRes.map(r => ({ id: r.id, dogId: r.dogId, dogName: (clientDogs.find(d=>d.id===r.dogId)?.fields?.name || ''), type: r.type, status: r.status, checkIn: r.checkIn, checkOut: r.checkOut, checkInTime: r.checkInTime, checkOutTime: r.checkOutTime, roomType: r.roomType, room: r.room, bathType: r.bathType, totalCost: r.totalCost, depositPaid: r.depositPaid, balanceDue: r.balanceDue })),
+          reservations: clientRes.map(r => ({ id: r.id, dogId: r.dogId, dogName: (clientDogs.find(d=>d.id===r.dogId)?.fields?.name || ''), type: r.type, status: r.status, checkIn: r.checkIn, checkOut: r.checkOut, checkInTime: r.checkInTime, checkOutTime: r.checkOutTime, roomType: r.roomType, room: r.room, bathType: r.bathType, bathCost: r.bathCost, roomRate: r.roomRate, totalCost: r.totalCost, depositPaid: r.depositPaid, balanceDue: r.balanceDue, addOns: r.addOns, notes: r.notes, feedingInstructions: r.feedingInstructions, medications: r.medications })),
           vaccines: clientDogs.flatMap(d => (d.vaccines || []).map(v => ({ ...v, dogName: d.fields?.name }))),
           packages: clientSales,
           payments: [],
@@ -2088,14 +2090,80 @@ export default function BookingPage() {
     const upcoming = reservations.filter(r => r.checkOut >= new Date().toISOString().split('T')[0] && r.status !== 'cancelled');
     const past = reservations.filter(r => r.checkOut < new Date().toISOString().split('T')[0] || r.status === 'checked-out');
 
+    // Removed vaccines from top-level tabs — now nested in Dogs
     const TABS = [
       { key: 'overview', label: 'Overview', icon: '👤' },
       { key: 'dogs', label: 'Dogs', icon: '🐕' },
       { key: 'reservations', label: 'Reservations', icon: '📅' },
-      { key: 'vaccines', label: 'Vaccines', icon: '💉' },
       { key: 'packages', label: 'Packages', icon: '📦' },
       { key: 'payments', label: 'Payments', icon: '💳' },
     ];
+
+    // Editable info helpers
+    const [editSection, setEditSection] = useState(null); // 'personal' | 'emergency' | 'vet'
+    const [editFields, setEditFields] = useState({});
+    const [editSaving, setEditSaving] = useState(false);
+    const [expandedRes, setExpandedRes] = useState(null);
+    const [expandedDog, setExpandedDog] = useState(null);
+
+    const startEdit = (section, fields) => { setEditSection(section); setEditFields({...fields}); };
+    const cancelEdit = () => { setEditSection(null); setEditFields({}); };
+
+    const saveEdit = async (section) => {
+      setEditSaving(true);
+      try {
+        // Build the updated fields mapping
+        const fieldMap = {};
+        if (section === 'personal') {
+          fieldMap.first_name = editFields.firstName || '';
+          fieldMap.last_name = editFields.lastName || '';
+          fieldMap.email = editFields.email || '';
+          fieldMap.phone = editFields.phone || '';
+          fieldMap.address = editFields.address || '';
+        } else if (section === 'emergency') {
+          fieldMap.emergency_contact = editFields.emergencyContact || '';
+          fieldMap.emergency_phone = editFields.emergencyPhone || '';
+        } else if (section === 'vet') {
+          fieldMap.vet_name = editFields.vetName || '';
+          fieldMap.vet_phone = editFields.vetPhone || '';
+        }
+        // Read current location data, update the client fields, write back
+        const locId = acct?.locationId;
+        if (locId) {
+          const { data: locRow } = await supabase.from('locations').select('data').eq('id', locId).single();
+          if (locRow) {
+            const locData = locRow.data || {};
+            const clients = locData.clients || [];
+            const cIdx = clients.findIndex(c => c.id === acct.clientId);
+            if (cIdx >= 0) {
+              clients[cIdx].fields = { ...clients[cIdx].fields, ...fieldMap };
+              locData.clients = clients;
+              await supabase.from('locations').update({ data: locData }).eq('id', locId);
+              // Update local state
+              const updatedClient = { ...cl };
+              if (section === 'personal') { updatedClient.firstName = editFields.firstName; updatedClient.lastName = editFields.lastName; updatedClient.email = editFields.email; updatedClient.phone = editFields.phone; updatedClient.address = editFields.address; }
+              if (section === 'emergency') { updatedClient.emergencyContact = editFields.emergencyContact; updatedClient.emergencyPhone = editFields.emergencyPhone; }
+              if (section === 'vet') { updatedClient.vetName = editFields.vetName; updatedClient.vetPhone = editFields.vetPhone; }
+              setAccountData({ ...acct, client: updatedClient });
+            }
+          }
+        }
+        setEditSection(null);
+        setEditFields({});
+      } catch (err) {
+        console.error('Save error:', err);
+        alert('Could not save changes. Please try again.');
+      }
+      setEditSaving(false);
+    };
+
+    const EditableInput = ({ label, field, type }) => (
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: B.textMut, marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</label>
+        <input type={type || 'text'} value={editFields[field] || ''} onChange={e => setEditFields({ ...editFields, [field]: e.target.value })}
+          style={{ width: '100%', padding: '10px 12px', border: `1px solid ${B.border}`, borderRadius: 8, fontSize: 14, fontFamily: 'inherit', color: B.text, boxSizing: 'border-box' }} />
+      </div>
+    );
 
     const InfoRow = ({ label, value }) => (
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${B.border}`, fontSize: 14 }}>
@@ -2104,178 +2172,302 @@ export default function BookingPage() {
       </div>
     );
 
+    const SectionCard = ({ title, section, fields, children }) => {
+      const isEditing = editSection === section;
+      return (
+        <div style={{ background: '#fff', borderRadius: 16, border: `2px solid ${B.border}`, padding: 24, marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 20, color: B.navy, margin: 0 }}>{title}</h3>
+            {!isEditing ? (
+              <button onClick={() => startEdit(section, fields)} style={{ padding: '6px 16px', border: `1px solid ${B.border}`, borderRadius: 8, background: '#fff', fontSize: 12, fontWeight: 600, color: B.navy, cursor: 'pointer' }}>Edit</button>
+            ) : (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={cancelEdit} style={{ padding: '6px 14px', border: `1px solid ${B.border}`, borderRadius: 8, background: '#fff', fontSize: 12, fontWeight: 600, color: B.textSec, cursor: 'pointer' }}>Cancel</button>
+                <button onClick={() => saveEdit(section)} disabled={editSaving} style={{ padding: '6px 14px', border: 'none', borderRadius: 8, background: B.gold, fontSize: 12, fontWeight: 600, color: '#fff', cursor: 'pointer', opacity: editSaving ? 0.6 : 1 }}>{editSaving ? 'Saving...' : 'Save'}</button>
+              </div>
+            )}
+          </div>
+          {children}
+        </div>
+      );
+    };
+
+    const countNights = (ci, co) => { if (!ci || !co) return 0; return Math.max(1, Math.round((new Date(co+"T12:00:00") - new Date(ci+"T12:00:00")) / 86400000)); };
+    const fmtDateLocal = (d) => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
+
     return (
       <div style={{ minHeight: '100vh', background: B.bg }}>
         <NavBar title={`Welcome, ${cl.firstName || 'Guest'}`} onBack={() => { setAccountStep('phone'); setAccountData(null); setAccountPhone(''); setAccountOtp(''); navigateTo('splash', 'right'); }} />
         <div style={{ maxWidth: 700, margin: '0 auto', padding: '20px 24px 60px' }}>
-          {/* Tabs */}
-          <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 8, marginBottom: 24, scrollSnapType: 'x mandatory' }}>
+
+          {/* Book New Reservation link */}
+          <button onClick={() => { navigateTo('availability', 'left'); }}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', padding: '14px 20px', background: B.gold, color: '#fff', border: 'none', borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: 'pointer', marginBottom: 20, fontFamily: 'inherit' }}>
+            <Icons.Calendar size={18} color="#fff" />
+            Book a New Reservation
+          </button>
+
+          {/* Tabs — wrapped, no horizontal scroll */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 24 }}>
             {TABS.map(t => (
               <button key={t.key} onClick={() => setAccountTab(t.key)}
-                className={`bk-chip ${accountTab === t.key ? 'selected' : ''}`}
-                style={{ padding: '10px 16px', fontSize: 13, whiteSpace: 'nowrap', scrollSnapAlign: 'start' }}>
+                style={{ padding: '10px 18px', fontSize: 13, whiteSpace: 'nowrap', border: accountTab === t.key ? `2px solid ${B.navy}` : `1px solid ${B.border}`, borderRadius: 24, background: accountTab === t.key ? B.navy : '#fff', color: accountTab === t.key ? '#fff' : B.navy, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.2s' }}>
                 <span style={{ marginRight: 6 }}>{t.icon}</span>{t.label}
               </button>
             ))}
           </div>
 
-          {/* Overview Tab */}
+          {/* Overview Tab — Editable */}
           {accountTab === 'overview' && (
             <div>
-              <div style={{ background: '#fff', borderRadius: 16, border: `2px solid ${B.border}`, padding: 24, marginBottom: 20 }}>
-                <h3 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 20, color: B.navy, marginBottom: 16 }}>Personal Information</h3>
-                <InfoRow label="Name" value={`${cl.firstName || ''} ${cl.lastName || ''}`} />
-                <InfoRow label="Phone" value={cl.phone} />
-                <InfoRow label="Email" value={cl.email} />
-                <InfoRow label="Address" value={cl.address} />
-              </div>
-              <div style={{ background: '#fff', borderRadius: 16, border: `2px solid ${B.border}`, padding: 24, marginBottom: 20 }}>
-                <h3 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 20, color: B.navy, marginBottom: 16 }}>Emergency Contact</h3>
-                <InfoRow label="Contact" value={cl.emergencyContact} />
-                <InfoRow label="Phone" value={cl.emergencyPhone} />
-              </div>
-              <div style={{ background: '#fff', borderRadius: 16, border: `2px solid ${B.border}`, padding: 24 }}>
-                <h3 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 20, color: B.navy, marginBottom: 16 }}>Veterinarian</h3>
-                <InfoRow label="Vet Name" value={cl.vetName} />
-                <InfoRow label="Vet Phone" value={cl.vetPhone} />
-              </div>
+              <SectionCard title="Personal Information" section="personal" fields={{ firstName: cl.firstName, lastName: cl.lastName, phone: cl.phone, email: cl.email, address: cl.address }}>
+                {editSection === 'personal' ? (
+                  <div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <EditableInput label="First Name" field="firstName" />
+                      <EditableInput label="Last Name" field="lastName" />
+                    </div>
+                    <EditableInput label="Phone" field="phone" type="tel" />
+                    <EditableInput label="Email" field="email" type="email" />
+                    <EditableInput label="Address" field="address" />
+                  </div>
+                ) : (
+                  <div>
+                    <InfoRow label="Name" value={`${cl.firstName || ''} ${cl.lastName || ''}`} />
+                    <InfoRow label="Phone" value={cl.phone} />
+                    <InfoRow label="Email" value={cl.email} />
+                    <InfoRow label="Address" value={cl.address} />
+                  </div>
+                )}
+              </SectionCard>
+              <SectionCard title="Emergency Contact" section="emergency" fields={{ emergencyContact: cl.emergencyContact, emergencyPhone: cl.emergencyPhone }}>
+                {editSection === 'emergency' ? (
+                  <div>
+                    <EditableInput label="Contact Name" field="emergencyContact" />
+                    <EditableInput label="Contact Phone" field="emergencyPhone" type="tel" />
+                  </div>
+                ) : (
+                  <div>
+                    <InfoRow label="Contact" value={cl.emergencyContact} />
+                    <InfoRow label="Phone" value={cl.emergencyPhone} />
+                  </div>
+                )}
+              </SectionCard>
+              <SectionCard title="Veterinarian" section="vet" fields={{ vetName: cl.vetName, vetPhone: cl.vetPhone }}>
+                {editSection === 'vet' ? (
+                  <div>
+                    <EditableInput label="Vet Name" field="vetName" />
+                    <EditableInput label="Vet Phone" field="vetPhone" type="tel" />
+                  </div>
+                ) : (
+                  <div>
+                    <InfoRow label="Vet Name" value={cl.vetName} />
+                    <InfoRow label="Vet Phone" value={cl.vetPhone} />
+                  </div>
+                )}
+              </SectionCard>
             </div>
           )}
 
-          {/* Dogs Tab */}
+          {/* Dogs Tab — with vaccines nested inside each dog */}
           {accountTab === 'dogs' && (
             <div>
               {dogs.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: 40, color: B.textSec }}>No dogs on file.</div>
-              ) : dogs.map((d, i) => (
-                <div key={i} style={{ background: '#fff', borderRadius: 16, border: `2px solid ${B.border}`, padding: 24, marginBottom: 16 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-                    <div style={{ width: 48, height: 48, borderRadius: '50%', background: B.navy, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <Icons.Dog size={24} color="#fff" />
-                    </div>
-                    <div>
-                      <h3 style={{ fontSize: 18, fontWeight: 700, color: B.navy, margin: 0 }}>{d.name}</h3>
-                      <div style={{ fontSize: 13, color: B.textSec }}>{d.breed}</div>
-                    </div>
-                  </div>
-                  <InfoRow label="Weight" value={d.weight ? `${d.weight} lbs` : null} />
-                  <InfoRow label="Sex" value={d.sex} />
-                  <InfoRow label="Spayed/Neutered" value={d.spayedNeutered} />
-                  <InfoRow label="Date of Birth" value={d.dob ? fmtDate(d.dob) : null} />
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Reservations Tab */}
-          {accountTab === 'reservations' && (() => {
-            const countNights = (ci, co) => { if (!ci || !co) return 0; return Math.max(1, Math.round((new Date(co+"T12:00:00") - new Date(ci+"T12:00:00")) / 86400000)); };
-            const fmtDateLocal = (d) => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
-            return (
-              <div>
-                {upcoming.length > 0 && (
-                  <div style={{marginBottom:24}}>
-                    <div style={{fontSize:14,fontWeight:700,color:B.navy,marginBottom:12}}>Upcoming & Current Stays</div>
-                    {upcoming.map((r,i) => {
-                      const nights = countNights(r.checkIn, r.checkOut);
-                      const roomCost = (r.roomRate || 0) * nights;
-                      const total = r.totalCost || roomCost + (r.bathCost || 0);
-                      return (
-                        <div key={i} style={{padding:16,border:`1px solid ${B.border}`,borderRadius:12,marginBottom:10,background:'#fff'}}>
-                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                            <div style={{fontWeight:600,color:B.navy,fontSize:14}}>{r.dogName || 'Dog'}</div>
-                            <span style={{fontSize:11,padding:'4px 10px',borderRadius:20,background:r.status==='checked-in'?'#DEF7EC':'#E8EDF2',color:r.status==='checked-in'?'#03543F':B.navy,fontWeight:600}}>{r.status === 'checked-in' ? 'In House' : 'Upcoming'}</span>
+              ) : dogs.map((d, i) => {
+                const dogVaccines = vaccines.filter(v => v.dogId === d.id || v.dogName === d.name);
+                const isExpanded = expandedDog === d.id;
+                return (
+                  <div key={i} style={{ background: '#fff', borderRadius: 16, border: `2px solid ${B.border}`, marginBottom: 16, overflow: 'hidden' }}>
+                    <div style={{ padding: 24, cursor: 'pointer' }} onClick={() => setExpandedDog(isExpanded ? null : d.id)}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        {d.profilePic ? (
+                          <img src={d.profilePic} alt={d.name} style={{ width: 48, height: 48, borderRadius: '50%', objectFit: 'cover' }} />
+                        ) : (
+                          <div style={{ width: 48, height: 48, borderRadius: '50%', background: B.navy, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Icons.Dog size={24} color="#fff" />
                           </div>
-                          <div style={{fontSize:12,color:'#6B7280',marginBottom:4}}>{r.roomType || 'Room'} · {fmtDateLocal(r.checkIn)} — {fmtDateLocal(r.checkOut)} ({nights} night{nights!==1?'s':''})</div>
-                          {(r.roomRate || r.totalCost) && (
-                            <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid #E5E7EB',fontSize:12}}>
-                              <div style={{display:'flex',justifyContent:'space-between',marginBottom:3,color:'#6B7280'}}>
-                                <span>{r.roomType} × {nights} night{nights!==1?'s':''}</span>
-                                <span>${roomCost.toFixed(2)}</span>
-                              </div>
-                              {r.bathCost > 0 && <div style={{display:'flex',justifyContent:'space-between',marginBottom:3,color:'#6B7280'}}><span>Bath</span><span>${r.bathCost.toFixed(2)}</span></div>}
-                              <div style={{display:'flex',justifyContent:'space-between',marginTop:6,fontWeight:700,color:B.navy,fontSize:13}}>
-                                <span>Total</span>
-                                <span>${total.toFixed(2)}</span>
-                              </div>
+                        )}
+                        <div style={{ flex: 1 }}>
+                          <h3 style={{ fontSize: 18, fontWeight: 700, color: B.navy, margin: 0 }}>{d.name}</h3>
+                          <div style={{ fontSize: 13, color: B.textSec }}>{d.breed}{d.weight ? ` · ${d.weight} lbs` : ''}</div>
+                        </div>
+                        <div style={{ fontSize: 18, color: B.textMut, transition: 'transform 0.2s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</div>
+                      </div>
+                    </div>
+                    {isExpanded && (
+                      <div style={{ padding: '0 24px 24px', borderTop: `1px solid ${B.border}` }}>
+                        <div style={{ paddingTop: 16 }}>
+                          <InfoRow label="Weight" value={d.weight ? `${d.weight} lbs` : null} />
+                          <InfoRow label="Sex" value={d.sex} />
+                          <InfoRow label="Spayed/Neutered" value={d.spayedNeutered} />
+                          <InfoRow label="Date of Birth" value={d.dob ? fmtDate(d.dob) : null} />
+                        </div>
+                        {/* Vaccines nested here */}
+                        <div style={{ marginTop: 20 }}>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: B.navy, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span>💉</span> Vaccines
+                          </div>
+                          {dogVaccines.length === 0 ? (
+                            <div style={{ background: '#F9FAFB', borderRadius: 10, padding: 16, color: B.textSec, fontSize: 13 }}>
+                              No vaccine records on file. Please bring records to your next visit.
+                            </div>
+                          ) : (
+                            <div style={{ background: '#F9FAFB', borderRadius: 10, overflow: 'hidden' }}>
+                              {dogVaccines.map((v, vi) => {
+                                const expired = v.expirationDate && v.expirationDate < new Date().toISOString().split('T')[0];
+                                return (
+                                  <div key={vi} style={{ padding: '10px 16px', borderBottom: vi < dogVaccines.length - 1 ? `1px solid ${B.border}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div>
+                                      <div style={{ fontSize: 13, fontWeight: 600, color: B.text }}>{v.name}</div>
+                                      {v.expirationDate && <div style={{ fontSize: 11, color: expired ? B.err : B.textSec }}>Exp: {fmtDate(v.expirationDate)}{expired ? ' — Expired' : ''}</div>}
+                                    </div>
+                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 12, background: expired ? '#FEE2E2' : '#DEF7EC', color: expired ? '#991B1B' : '#03543F' }}>{expired ? 'Expired' : 'Current'}</span>
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
-                          <div style={{display:'flex',gap:8,marginTop:10}}>
-                            <button onClick={() => alert('Invoice emailed to ' + (cl.email || 'your email'))} style={{flex:1,padding:'8px',border:`1px solid ${B.border}`,borderRadius:8,background:'#fff',fontSize:11,fontWeight:600,cursor:'pointer',color:B.navy}}>Email Invoice</button>
-                            <button onClick={() => alert('Invoice download coming soon!')} style={{flex:1,padding:'8px',border:`1px solid ${B.border}`,borderRadius:8,background:'#fff',fontSize:11,fontWeight:600,cursor:'pointer',color:B.navy}}>Download Invoice</button>
-                          </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {past.length > 0 && (
-                  <div>
-                    <div style={{fontSize:14,fontWeight:700,color:B.navy,marginBottom:12}}>Past Stays</div>
-                    {past.map((r,i) => {
-                      const nights = countNights(r.checkIn, r.checkOut);
-                      const roomCost = (r.roomRate || 0) * nights;
-                      const total = r.totalCost || roomCost;
-                      return (
-                        <div key={i} style={{padding:14,border:`1px solid ${B.border}`,borderRadius:12,marginBottom:8,background:'#FAFAFA'}}>
-                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-                            <div>
-                              <div style={{fontWeight:600,color:B.navy,fontSize:13}}>{r.dogName || 'Dog'}</div>
-                              <div style={{fontSize:11,color:'#6B7280',marginTop:2}}>{r.roomType} · {fmtDateLocal(r.checkIn)} — {fmtDateLocal(r.checkOut)}</div>
-                            </div>
-                            {total > 0 && <div style={{fontWeight:700,color:B.navy,fontSize:13}}>${total.toFixed(2)}</div>}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                {upcoming.length === 0 && past.length === 0 && (
-                  <div style={{textAlign:'center',padding:'40px 20px',color:'#9CA3AF'}}>
-                    <div style={{fontSize:40,marginBottom:8}}>📅</div>
-                    <div style={{fontWeight:500}}>No reservations yet</div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-
-          {/* Vaccines Tab */}
-          {accountTab === 'vaccines' && (
-            <div>
-              {dogs.map((d, di) => {
-                const dv = vaccines.filter(v => v.dogId === d.id || v.dogName === d.name);
-                return (
-                  <div key={di} style={{ marginBottom: 20 }}>
-                    <h3 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 18, color: B.navy, marginBottom: 12 }}>{d.name}'s Vaccines</h3>
-                    {dv.length === 0 ? (
-                      <div style={{ background: '#fff', borderRadius: 14, border: `1px solid ${B.border}`, padding: 20, color: B.textSec, fontSize: 14 }}>
-                        No vaccine records. Please bring records to your next visit or contact us to update.
-                      </div>
-                    ) : (
-                      <div style={{ background: '#fff', borderRadius: 14, border: `1px solid ${B.border}`, overflow: 'hidden' }}>
-                        {dv.map((v, vi) => {
-                          const expired = v.expirationDate && v.expirationDate < new Date().toISOString().split('T')[0];
-                          return (
-                            <div key={vi} style={{ padding: '12px 18px', borderBottom: vi < dv.length - 1 ? `1px solid ${B.border}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <div>
-                                <div style={{ fontSize: 14, fontWeight: 600, color: B.text }}>{v.name}</div>
-                                {v.expirationDate && <div style={{ fontSize: 12, color: expired ? B.err : B.textSec }}>Expires: {fmtDate(v.expirationDate)}{expired ? ' (Expired)' : ''}</div>}
-                              </div>
-                              <span style={{ fontSize: 12, fontWeight: 600, color: expired ? B.err : B.suc }}>{expired ? 'Expired' : 'Current'}</span>
-                            </div>
-                          );
-                        })}
                       </div>
                     )}
                   </div>
                 );
               })}
-              {dogs.length === 0 && <div style={{ textAlign: 'center', padding: 40, color: B.textSec }}>No dogs on file to show vaccine records.</div>}
             </div>
           )}
 
-          {/* Packages Tab */}
+          {/* Reservations Tab — clickable with expanded details */}
+          {accountTab === 'reservations' && (
+            <div>
+              {/* Book link at top of reservations */}
+              <button onClick={() => { navigateTo('availability', 'left'); }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', padding: '12px 20px', background: '#fff', color: B.navy, border: `2px solid ${B.navy}`, borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: 'pointer', marginBottom: 20, fontFamily: 'inherit' }}>
+                <Icons.Calendar size={16} /> Book a New Stay
+              </button>
+              {upcoming.length > 0 && (
+                <div style={{marginBottom:24}}>
+                  <div style={{fontSize:14,fontWeight:700,color:B.navy,marginBottom:12}}>Upcoming & Current Stays</div>
+                  {upcoming.map((r,i) => {
+                    const nights = countNights(r.checkIn, r.checkOut);
+                    const roomCost = (r.roomRate || 0) * nights;
+                    const total = r.totalCost || roomCost + (r.bathCost || 0);
+                    const isOpen = expandedRes === r.id;
+                    return (
+                      <div key={i} style={{border:`1px solid ${isOpen ? B.navy : B.border}`,borderRadius:12,marginBottom:10,background:'#fff',overflow:'hidden',transition:'border-color 0.2s'}}>
+                        <div style={{padding:16,cursor:'pointer'}} onClick={() => setExpandedRes(isOpen ? null : r.id)}>
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:4}}>
+                            <div style={{display:'flex',alignItems:'center',gap:8}}>
+                              <div style={{fontWeight:600,color:B.navy,fontSize:14}}>{r.dogName || 'Dog'}</div>
+                              <span style={{fontSize:11,padding:'3px 10px',borderRadius:20,background:r.status==='checked-in'?'#DEF7EC':'#E8EDF2',color:r.status==='checked-in'?'#03543F':B.navy,fontWeight:600}}>{r.status === 'checked-in' ? 'In House' : 'Upcoming'}</span>
+                            </div>
+                            <div style={{display:'flex',alignItems:'center',gap:8}}>
+                              {total > 0 && <span style={{fontWeight:700,color:B.navy,fontSize:14}}>${total.toFixed(2)}</span>}
+                              <span style={{fontSize:14,color:B.textMut,transition:'transform 0.2s',transform:isOpen?'rotate(90deg)':'rotate(0deg)'}}>▶</span>
+                            </div>
+                          </div>
+                          <div style={{fontSize:12,color:'#6B7280'}}>{r.roomType || 'Room'} · {fmtDateLocal(r.checkIn)} — {fmtDateLocal(r.checkOut)} ({nights} night{nights!==1?'s':''})</div>
+                        </div>
+                        {isOpen && (
+                          <div style={{padding:'0 16px 16px',borderTop:`1px solid ${B.border}`}}>
+                            <div style={{paddingTop:12}}>
+                              <InfoRow label="Room" value={`${r.roomType || ''}${r.room ? ` (${r.room})` : ''}`} />
+                              <InfoRow label="Check-In" value={`${fmtDateLocal(r.checkIn)}${r.checkInTime ? ` at ${r.checkInTime}` : ''}`} />
+                              <InfoRow label="Check-Out" value={`${fmtDateLocal(r.checkOut)}${r.checkOutTime ? ` at ${r.checkOutTime}` : ''}`} />
+                              {r.bathType && <InfoRow label="Bath" value={r.bathType} />}
+                              {r.feedingInstructions && <InfoRow label="Feeding" value={r.feedingInstructions} />}
+                              {r.medications && <InfoRow label="Medications" value={r.medications} />}
+                              {r.notes && <InfoRow label="Notes" value={r.notes} />}
+                              {/* Cost breakdown */}
+                              <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${B.border}`}}>
+                                <div style={{fontSize:13,fontWeight:700,color:B.navy,marginBottom:8}}>Cost Breakdown</div>
+                                <div style={{display:'flex',justifyContent:'space-between',fontSize:13,color:'#6B7280',marginBottom:4}}>
+                                  <span>{r.roomType} × {nights} night{nights!==1?'s':''}</span>
+                                  <span>${roomCost.toFixed(2)}</span>
+                                </div>
+                                {r.bathCost > 0 && <div style={{display:'flex',justifyContent:'space-between',fontSize:13,color:'#6B7280',marginBottom:4}}><span>Bath ({r.bathType})</span><span>${r.bathCost.toFixed(2)}</span></div>}
+                                {r.addOns && Object.entries(r.addOns).map(([name, cost]) => (
+                                  <div key={name} style={{display:'flex',justifyContent:'space-between',fontSize:13,color:'#6B7280',marginBottom:4}}><span>{name}</span><span>${Number(cost).toFixed(2)}</span></div>
+                                ))}
+                                <div style={{display:'flex',justifyContent:'space-between',marginTop:8,paddingTop:8,borderTop:`1px solid ${B.border}`,fontWeight:700,color:B.navy,fontSize:14}}>
+                                  <span>Total</span>
+                                  <span>${total.toFixed(2)}</span>
+                                </div>
+                                {r.depositPaid > 0 && (
+                                  <div style={{display:'flex',justifyContent:'space-between',fontSize:13,color:'#10B981',marginTop:4}}>
+                                    <span>Deposit Paid</span>
+                                    <span>-${r.depositPaid.toFixed(2)}</span>
+                                  </div>
+                                )}
+                                {r.balanceDue > 0 && (
+                                  <div style={{display:'flex',justifyContent:'space-between',fontSize:13,fontWeight:700,color:B.err,marginTop:4}}>
+                                    <span>Balance Due</span>
+                                    <span>${r.balanceDue.toFixed(2)}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {past.length > 0 && (
+                <div>
+                  <div style={{fontSize:14,fontWeight:700,color:B.navy,marginBottom:12}}>Past Stays</div>
+                  {past.map((r,i) => {
+                    const nights = countNights(r.checkIn, r.checkOut);
+                    const roomCost = (r.roomRate || 0) * nights;
+                    const total = r.totalCost || roomCost;
+                    const isOpen = expandedRes === r.id;
+                    return (
+                      <div key={i} style={{border:`1px solid ${isOpen ? B.navy : B.border}`,borderRadius:12,marginBottom:8,background:isOpen ? '#fff' : '#FAFAFA',overflow:'hidden',transition:'all 0.2s',cursor:'pointer'}} onClick={() => setExpandedRes(isOpen ? null : r.id)}>
+                        <div style={{padding:14}}>
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                            <div>
+                              <div style={{fontWeight:600,color:B.navy,fontSize:13}}>{r.dogName || 'Dog'}</div>
+                              <div style={{fontSize:11,color:'#6B7280',marginTop:2}}>{r.roomType} · {fmtDateLocal(r.checkIn)} — {fmtDateLocal(r.checkOut)}</div>
+                            </div>
+                            <div style={{display:'flex',alignItems:'center',gap:8}}>
+                              {total > 0 && <div style={{fontWeight:700,color:B.navy,fontSize:13}}>${total.toFixed(2)}</div>}
+                              <span style={{fontSize:14,color:B.textMut,transition:'transform 0.2s',transform:isOpen?'rotate(90deg)':'rotate(0deg)'}}>▶</span>
+                            </div>
+                          </div>
+                        </div>
+                        {isOpen && (
+                          <div style={{padding:'0 14px 14px',borderTop:`1px solid ${B.border}`}} onClick={e => e.stopPropagation()}>
+                            <div style={{paddingTop:10}}>
+                              <InfoRow label="Room" value={`${r.roomType || ''}${r.room ? ` (${r.room})` : ''}`} />
+                              <InfoRow label="Check-In" value={fmtDateLocal(r.checkIn)} />
+                              <InfoRow label="Check-Out" value={fmtDateLocal(r.checkOut)} />
+                              {r.bathType && <InfoRow label="Bath" value={r.bathType} />}
+                              <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${B.border}`}}>
+                                <div style={{display:'flex',justifyContent:'space-between',fontWeight:700,color:B.navy,fontSize:13}}>
+                                  <span>Total</span>
+                                  <span>${total.toFixed(2)}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {upcoming.length === 0 && past.length === 0 && (
+                <div style={{textAlign:'center',padding:'40px 20px',color:'#9CA3AF'}}>
+                  <div style={{fontSize:40,marginBottom:8}}>📅</div>
+                  <div style={{fontWeight:500}}>No reservations yet</div>
+                  <div style={{fontSize:13,marginTop:8,color:B.navy,fontWeight:600,cursor:'pointer'}} onClick={() => navigateTo('availability','left')}>Book your first stay →</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Packages Tab — fixed coupon display + purchase adds to list */}
           {accountTab === 'packages' && (() => {
             const availablePkgs = (locationData?.packages || []).filter(p => p.availableOnline && p.active !== false);
             return (
@@ -2285,23 +2477,34 @@ export default function BookingPage() {
                   <div style={{marginBottom:28}}>
                     <div style={{fontSize:14,fontWeight:700,color:B.navy,marginBottom:12}}>Your Packages</div>
                     {packages.map((p,i) => {
-                      const total = p.total || p.quantity || 1;
-                      const remaining = p.remaining ?? (total - (p.used || 0));
-                      const pct = total > 0 ? (remaining / total) * 100 : 0;
+                      const purchased = p.quantity || p.total || 1;
+                      const used = p.used || p.redeemed || 0;
+                      const remaining = p.remaining ?? (purchased - used);
+                      const pct = purchased > 0 ? (remaining / purchased) * 100 : 0;
                       const barColor = pct > 25 ? '#10B981' : pct > 5 ? '#F59E0B' : '#EF4444';
+                      const expiryStr = p.expiryDate ? new Date(p.expiryDate+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : null;
+                      const isExpired = p.expiryDate && p.expiryDate < new Date().toISOString().split('T')[0];
                       return (
-                        <div key={i} style={{padding:16,border:`1px solid ${B.border}`,borderRadius:12,marginBottom:10,background:'#fff'}}>
-                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                        <div key={i} style={{padding:16,border:`1px solid ${isExpired ? '#FCA5A5' : B.border}`,borderRadius:12,marginBottom:10,background:isExpired ? '#FFF5F5' : '#fff'}}>
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
                             <div style={{fontWeight:600,color:B.navy,fontSize:14}}>{p.name || p.packageName}</div>
-                            {p.expiryDate && <span style={{fontSize:11,color:'#6B7280'}}>Expires {new Date(p.expiryDate+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</span>}
+                            {isExpired && <span style={{fontSize:11,padding:'3px 10px',borderRadius:12,background:'#FEE2E2',color:'#991B1B',fontWeight:600}}>Expired</span>}
                           </div>
-                          <div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:'#6B7280',marginBottom:6}}>
-                            <span>{remaining} of {total} remaining</span>
-                            <span style={{fontWeight:600,color:barColor}}>{pct.toFixed(0)}%</span>
+                          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+                            <div style={{background:'#F9FAFB',borderRadius:8,padding:'8px 12px',textAlign:'center'}}>
+                              <div style={{fontSize:20,fontWeight:700,color:B.navy}}>{remaining}</div>
+                              <div style={{fontSize:11,color:'#6B7280',fontWeight:500}}>Coupons Left</div>
+                            </div>
+                            <div style={{background:'#F9FAFB',borderRadius:8,padding:'8px 12px',textAlign:'center'}}>
+                              <div style={{fontSize:20,fontWeight:700,color:B.navy}}>{purchased}</div>
+                              <div style={{fontSize:11,color:'#6B7280',fontWeight:500}}>Purchased</div>
+                            </div>
                           </div>
-                          <div style={{height:8,background:'#E5E7EB',borderRadius:4,overflow:'hidden'}}>
-                            <div style={{height:'100%',width:`${pct}%`,background:barColor,borderRadius:4,transition:'width 0.3s'}}/>
+                          {expiryStr && <div style={{fontSize:12,color:isExpired ? '#991B1B' : '#6B7280',marginBottom:8}}>Expires: {expiryStr}</div>}
+                          <div style={{height:6,background:'#E5E7EB',borderRadius:3,overflow:'hidden'}}>
+                            <div style={{height:'100%',width:`${pct}%`,background:barColor,borderRadius:3,transition:'width 0.3s'}}/>
                           </div>
+                          <div style={{fontSize:11,color:'#6B7280',marginTop:4,textAlign:'right'}}>{used} used of {purchased}</div>
                         </div>
                       );
                     })}
@@ -2320,11 +2523,12 @@ export default function BookingPage() {
                             <div style={{flex:1}}>
                               <div style={{fontWeight:700,color:B.navy,fontSize:15,marginBottom:4}}>{p.name}</div>
                               <div style={{fontSize:12,color:'#6B7280',lineHeight:1.5,marginBottom:8}}>{p.description?.substring(0,120)}{p.description?.length > 120 ? '...' : ''}</div>
-                              <div style={{display:'flex',gap:12,fontSize:12}}>
-                                <span style={{color:'#6B7280'}}><s>${p.retailValue?.toFixed(2)}</s></span>
+                              <div style={{display:'flex',gap:12,fontSize:12,alignItems:'center'}}>
+                                {p.retailValue > 0 && <span style={{color:'#6B7280'}}><s>${p.retailValue?.toFixed(2)}</s></span>}
                                 <span style={{fontWeight:700,color:B.navy,fontSize:14}}>${p.packagePrice?.toFixed(2)}</span>
                                 {pctOff > 0 && <span style={{color:'#10B981',fontWeight:600}}>{pctOff}% off</span>}
                               </div>
+                              <div style={{fontSize:11,color:'#6B7280',marginTop:4}}>{p.quantity} coupons per package</div>
                             </div>
                             <button onClick={() => { setPkgCheckout({ pkg: p, qty: 1 }); setCheckoutStep('details'); }} style={{padding:'10px 20px',background:B.gold,color:'#fff',border:'none',borderRadius:10,fontWeight:700,fontSize:13,cursor:'pointer',whiteSpace:'nowrap',marginLeft:12}}>Buy</button>
                           </div>
@@ -2342,7 +2546,7 @@ export default function BookingPage() {
                   </div>
                 )}
 
-                {/* Mock Checkout Modal */}
+                {/* Checkout Modal */}
                 {pkgCheckout && (
                   <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}} onClick={() => setPkgCheckout(null)}>
                     <div style={{background:'#fff',borderRadius:16,padding:28,maxWidth:420,width:'90%',maxHeight:'80vh',overflow:'auto'}} onClick={e => e.stopPropagation()}>
@@ -2351,7 +2555,7 @@ export default function BookingPage() {
                           <div style={{fontSize:18,fontWeight:700,color:B.navy,marginBottom:16}}>Checkout</div>
                           <div style={{padding:14,background:'#F9FAFB',borderRadius:10,marginBottom:16}}>
                             <div style={{fontWeight:600,color:B.navy,fontSize:14,marginBottom:4}}>{pkgCheckout.pkg.name}</div>
-                            <div style={{fontSize:12,color:'#6B7280'}}>{pkgCheckout.pkg.quantity} {pkgCheckout.pkg.serviceCategory === 'Boarding' ? 'nights' : 'days'} of {pkgCheckout.pkg.serviceName}</div>
+                            <div style={{fontSize:12,color:'#6B7280'}}>{pkgCheckout.pkg.quantity} coupons per package</div>
                             <div style={{fontSize:16,fontWeight:700,color:B.navy,marginTop:8}}>${(pkgCheckout.pkg.packagePrice * pkgCheckout.qty).toFixed(2)}</div>
                           </div>
                           <div style={{marginBottom:16}}>
@@ -2364,30 +2568,50 @@ export default function BookingPage() {
                           </div>
                           <div style={{marginBottom:16}}>
                             <label style={{display:'block',fontSize:12,fontWeight:600,color:B.navy,marginBottom:6}}>Card Number</label>
-                            <input type="text" placeholder="4242 4242 4242 4242" maxLength={19} style={{width:'100%',padding:'10px 12px',border:'1px solid #D1D5DB',borderRadius:8,fontSize:14}} className="no-focus-ring"/>
+                            <input type="text" placeholder="4242 4242 4242 4242" maxLength={19} style={{width:'100%',padding:'10px 12px',border:'1px solid #D1D5DB',borderRadius:8,fontSize:14,boxSizing:'border-box'}} className="no-focus-ring"/>
                           </div>
                           <div style={{display:'flex',gap:12,marginBottom:20}}>
                             <div style={{flex:1}}>
                               <label style={{display:'block',fontSize:12,fontWeight:600,color:B.navy,marginBottom:6}}>Expiry</label>
-                              <input type="text" placeholder="MM/YY" maxLength={5} style={{width:'100%',padding:'10px 12px',border:'1px solid #D1D5DB',borderRadius:8,fontSize:14}} className="no-focus-ring"/>
+                              <input type="text" placeholder="MM/YY" maxLength={5} style={{width:'100%',padding:'10px 12px',border:'1px solid #D1D5DB',borderRadius:8,fontSize:14,boxSizing:'border-box'}} className="no-focus-ring"/>
                             </div>
                             <div style={{flex:1}}>
                               <label style={{display:'block',fontSize:12,fontWeight:600,color:B.navy,marginBottom:6}}>CVC</label>
-                              <input type="text" placeholder="123" maxLength={4} style={{width:'100%',padding:'10px 12px',border:'1px solid #D1D5DB',borderRadius:8,fontSize:14}} className="no-focus-ring"/>
+                              <input type="text" placeholder="123" maxLength={4} style={{width:'100%',padding:'10px 12px',border:'1px solid #D1D5DB',borderRadius:8,fontSize:14,boxSizing:'border-box'}} className="no-focus-ring"/>
                             </div>
                           </div>
                           <div style={{fontSize:11,color:'#9CA3AF',textAlign:'center',marginBottom:16,fontStyle:'italic'}}>This is a demo checkout. No payment will be processed.</div>
-                          <button onClick={() => setCheckoutStep('success')} style={{width:'100%',padding:'14px',background:B.gold,color:'#fff',border:'none',borderRadius:10,fontWeight:700,fontSize:15,cursor:'pointer'}}>Place Order — ${(pkgCheckout.pkg.packagePrice * pkgCheckout.qty).toFixed(2)}</button>
+                          <button onClick={() => {
+                            // Add purchased package to the local packages list
+                            const newPkg = {
+                              id: Date.now().toString(),
+                              name: pkgCheckout.pkg.name,
+                              packageName: pkgCheckout.pkg.name,
+                              quantity: (pkgCheckout.pkg.quantity || 1) * pkgCheckout.qty,
+                              total: (pkgCheckout.pkg.quantity || 1) * pkgCheckout.qty,
+                              used: 0,
+                              redeemed: 0,
+                              remaining: (pkgCheckout.pkg.quantity || 1) * pkgCheckout.qty,
+                              expiryDate: pkgCheckout.pkg.expirationDate || null,
+                              purchaseDate: new Date().toISOString().split('T')[0],
+                              packagePrice: pkgCheckout.pkg.packagePrice * pkgCheckout.qty,
+                            };
+                            setAccountData(prev => ({ ...prev, packages: [...(prev?.packages || []), newPkg] }));
+                            setCheckoutStep('success');
+                          }} style={{width:'100%',padding:'14px',background:B.gold,color:'#fff',border:'none',borderRadius:10,fontWeight:700,fontSize:15,cursor:'pointer'}}>Place Order — ${(pkgCheckout.pkg.packagePrice * pkgCheckout.qty).toFixed(2)}</button>
                           <button onClick={() => setPkgCheckout(null)} style={{width:'100%',padding:'10px',background:'none',border:'none',color:'#6B7280',fontWeight:500,cursor:'pointer',marginTop:8,fontSize:13}}>Cancel</button>
                         </div>
                       ) : (
                         <div style={{textAlign:'center',padding:'20px 0'}}>
-                          <div style={{fontSize:48,marginBottom:12}}>✓</div>
+                          <div style={{width:48,height:48,borderRadius:'50%',background:'#DEF7EC',display:'inline-flex',alignItems:'center',justifyContent:'center',marginBottom:12}}>
+                            <span style={{fontSize:24,color:'#03543F'}}>✓</span>
+                          </div>
                           <div style={{fontSize:18,fontWeight:700,color:B.navy,marginBottom:8}}>Order Confirmed!</div>
                           <div style={{fontSize:13,color:'#6B7280',marginBottom:4}}>{pkgCheckout.qty}× {pkgCheckout.pkg.name}</div>
+                          <div style={{fontSize:12,color:'#6B7280',marginBottom:4}}>{(pkgCheckout.pkg.quantity || 1) * pkgCheckout.qty} coupons added to your account</div>
                           <div style={{fontSize:16,fontWeight:700,color:B.navy,marginBottom:16}}>${(pkgCheckout.pkg.packagePrice * pkgCheckout.qty).toFixed(2)}</div>
                           <div style={{fontSize:11,color:'#9CA3AF',fontStyle:'italic',marginBottom:20}}>Demo mode — no payment was processed</div>
-                          <button onClick={() => setPkgCheckout(null)} style={{padding:'12px 32px',background:B.gold,color:'#fff',border:'none',borderRadius:10,fontWeight:700,fontSize:14,cursor:'pointer'}}>Done</button>
+                          <button onClick={() => { setPkgCheckout(null); setCheckoutStep('details'); }} style={{padding:'12px 32px',background:B.gold,color:'#fff',border:'none',borderRadius:10,fontWeight:700,fontSize:14,cursor:'pointer'}}>Done</button>
                         </div>
                       )}
                     </div>
