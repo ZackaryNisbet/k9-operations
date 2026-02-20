@@ -214,72 +214,59 @@ export function useData(profile) {
         const prev = prevDataRef.current || {};
         prevDataRef.current = newData;
 
-        // Collect ALL write promises, then execute in one batch
-        const writeOps = [];
-
-        // ── 1. Standard entity tables: diff and write ──
-        for (const [key, config] of Object.entries(ENTITIES)) {
+        // Helper: diff + build upsert/delete ops for one entity key
+        const buildOps = (key, table, extractDenorm) => {
+          const ops = [];
           const oldArr = prev[key];
           const newArr = newData[key];
-          if (oldArr === newArr) continue;
-
+          if (oldArr === newArr) return ops;
           const diff = diffArrays(oldArr, newArr);
-          if (!diff.hasChanges) continue;
-
-          const { table, extractDenorm } = config;
-
+          if (!diff.hasChanges) return ops;
           if (diff.adds.length > 0 || diff.updates.length > 0) {
             const rows = [...diff.adds, ...diff.updates].map(item => ({
-              id: item.id,
-              location_id: locationId,
-              doc: item,
-              ...extractDenorm(item),
+              id: item.id, location_id: locationId, doc: item, ...extractDenorm(item),
             }));
-            writeOps.push(
-              supabase.from(table).upsert(rows, { onConflict: 'id' })
-                .then(({ error }) => { if (error) console.error(`Failed to upsert ${key}:`, error); })
-            );
+            ops.push(supabase.from(table).upsert(rows, { onConflict: 'id' })
+              .then(({ error }) => { if (error) console.error(`Upsert ${key}:`, error); }));
           }
-
           if (diff.deletes.length > 0) {
-            writeOps.push(
-              supabase.from(table).delete().in('id', diff.deletes.map(i => i.id))
-                .then(({ error }) => { if (error) console.error(`Failed to delete ${key}:`, error); })
-            );
+            ops.push(supabase.from(table).delete().in('id', diff.deletes.map(i => i.id))
+              .then(({ error }) => { if (error) console.error(`Delete ${key}:`, error); }));
           }
-        }
+          return ops;
+        };
 
-        // ── 2. Daily ops shared table (eodEntries + dailyOps) ──
-        for (const key of ['eodEntries', 'dailyOps']) {
-          const oldArr = prev[key];
-          const newArr = newData[key];
-          if (oldArr === newArr) continue;
+        // ── Write in FK-safe tiers (parents before children) ──
 
-          const diff = diffArrays(oldArr, newArr);
-          if (!diff.hasChanges) continue;
+        // Tier 1: no entity FKs — clients, packages
+        const t1 = [
+          ...buildOps('clients', 'k9_clients', ENTITIES.clients.extractDenorm),
+          ...buildOps('packages', 'k9_packages', ENTITIES.packages.extractDenorm),
+        ];
+        if (t1.length) await Promise.all(t1);
 
-          if (diff.adds.length > 0 || diff.updates.length > 0) {
-            const rows = [...diff.adds, ...diff.updates].map(item => ({
-              id: item.id,
-              location_id: locationId,
-              doc: item,
-              ...dailyOpsDenorm(item),
-            }));
-            writeOps.push(
-              supabase.from(DAILY_OPS_TABLE).upsert(rows, { onConflict: 'id' })
-                .then(({ error }) => { if (error) console.error(`Failed to upsert ${key}:`, error); })
-            );
-          }
+        // Tier 2: depends on clients — dogs
+        const t2 = buildOps('dogs', 'k9_dogs', ENTITIES.dogs.extractDenorm);
+        if (t2.length) await Promise.all(t2);
 
-          if (diff.deletes.length > 0) {
-            writeOps.push(
-              supabase.from(DAILY_OPS_TABLE).delete().in('id', diff.deletes.map(i => i.id))
-                .then(({ error }) => { if (error) console.error(`Failed to delete ${key}:`, error); })
-            );
-          }
-        }
+        // Tier 3: depends on clients + dogs + packages — reservations, packageSales, messages
+        const t3 = [
+          ...buildOps('reservations', 'k9_reservations', ENTITIES.reservations.extractDenorm),
+          ...buildOps('packageSales', 'k9_package_sales', ENTITIES.packageSales.extractDenorm),
+          ...buildOps('messages', 'k9_messages', ENTITIES.messages.extractDenorm),
+        ];
+        if (t3.length) await Promise.all(t3);
 
-        // ── 3. Reminder log (nested in automations) ──
+        // Tier 4: depends on dogs + reservations — evaluations, payments, auditLog
+        const t4 = [
+          ...buildOps('evaluations', 'k9_evaluations', ENTITIES.evaluations.extractDenorm),
+          ...buildOps('payments', 'k9_payments', ENTITIES.payments.extractDenorm),
+          ...buildOps('auditLog', 'k9_audit_log', ENTITIES.auditLog.extractDenorm),
+          ...buildOps('eodEntries', DAILY_OPS_TABLE, dailyOpsDenorm),
+          ...buildOps('dailyOps', DAILY_OPS_TABLE, dailyOpsDenorm),
+        ];
+
+        // Reminder log
         const oldRemLog = prev.automations?.reminderLog;
         const newRemLog = newData.automations?.reminderLog;
         if (oldRemLog !== newRemLog) {
@@ -287,27 +274,20 @@ export function useData(profile) {
           if (diff.hasChanges) {
             if (diff.adds.length > 0 || diff.updates.length > 0) {
               const rows = [...diff.adds, ...diff.updates].map(item => ({
-                id: item.id,
-                location_id: locationId,
-                client_id: item.clientId || null,
-                sent_at: item.sentAt || null,
-                doc: item,
+                id: item.id, location_id: locationId,
+                client_id: item.clientId || null, sent_at: item.sentAt || null, doc: item,
               }));
-              writeOps.push(
-                supabase.from(REMINDER_TABLE).upsert(rows, { onConflict: 'id' })
-                  .then(({ error }) => { if (error) console.error('Failed to upsert reminders:', error); })
-              );
+              t4.push(supabase.from(REMINDER_TABLE).upsert(rows, { onConflict: 'id' })
+                .then(({ error }) => { if (error) console.error('Upsert reminders:', error); }));
             }
             if (diff.deletes.length > 0) {
-              writeOps.push(
-                supabase.from(REMINDER_TABLE).delete().in('id', diff.deletes.map(i => i.id))
-                  .then(({ error }) => { if (error) console.error('Failed to delete reminders:', error); })
-              );
+              t4.push(supabase.from(REMINDER_TABLE).delete().in('id', diff.deletes.map(i => i.id))
+                .then(({ error }) => { if (error) console.error('Delete reminders:', error); }));
             }
           }
         }
 
-        // ── 4. Settings only → locations.data (no entity arrays) ──
+        // Settings → locations.data
         const settingsOnly = {};
         for (const [key, value] of Object.entries(newData)) {
           if (ENTITY_KEYS.has(key)) continue;
@@ -318,14 +298,10 @@ export function useData(profile) {
             settingsOnly[key] = value;
           }
         }
+        t4.push(supabase.from('locations').update({ data: settingsOnly }).eq('id', locationId)
+          .then(({ error }) => { if (error) console.error('Save settings:', error); }));
 
-        writeOps.push(
-          supabase.from('locations').update({ data: settingsOnly }).eq('id', locationId)
-            .then(({ error }) => { if (error) console.error('Failed to save settings:', error); })
-        );
-
-        // Fire ALL writes at once — no partial state for real-time to pick up
-        await Promise.all(writeOps);
+        if (t4.length) await Promise.all(t4);
 
       } catch (err) {
         console.error('Save failed:', err);
