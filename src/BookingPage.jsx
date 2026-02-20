@@ -1948,32 +1948,20 @@ export default function BookingPage() {
     setAccountLoading(true);
     setAccountError('');
 
-    // Bypass: master code "000000" skips OTP verification
+    // Bypass: master code "000000" skips OTP verification — loads client data directly
     if (accountOtp === "000000") {
       try {
-        // First try the RPC
-        const { data: loc, error: rpcErr } = await supabase.rpc('get_customer_portal_data', { p_phone: accountPhone, p_slug: slug });
-        if (!rpcErr && loc?.success) {
-          setAccountData(loc);
-          setAccountStep('portal');
-          setAccountLoading(false);
-          return;
-        }
-      } catch (e) { /* RPC may not exist, fall through to direct lookup */ }
-
-      // Fallback: direct data lookup from location_data
-      try {
         const cleanPhone = accountPhone.replace(/\D/g, '');
-        // Find location by slug
-        const { data: locations } = await supabase.from('locations').select('id').eq('slug', slug).single();
-        if (!locations?.id) { setAccountError('Location not found.'); setAccountLoading(false); return; }
-        const { data: locData } = await supabase.rpc('get_location_data', { p_location_id: locations.id });
-        if (!locData) { setAccountError('Could not load location data.'); setAccountLoading(false); return; }
+        // Query location data directly from the locations table (anon key)
+        const { data: locRow, error: locErr } = await supabase.from('locations').select('id, data').eq('slug', slug).single();
+        if (locErr) { console.error('Bypass location query error:', locErr.message, locErr.code, locErr.details); setAccountError('Could not load location data: ' + locErr.message); setAccountLoading(false); return; }
+        if (!locRow) { setAccountError('Location not found for slug: ' + slug); setAccountLoading(false); return; }
+        const locData = locRow.data || {};
         // Search clients by phone
         const clients = locData.clients || [];
         const matchClient = clients.find(c => {
           const cp = (c.fields?.phone || '').replace(/\D/g, '');
-          return cp === cleanPhone || cp.endsWith(cleanPhone.slice(-10)) || cleanPhone.endsWith(cp.slice(-10));
+          return cp.length >= 10 && cleanPhone.length >= 10 && (cp === cleanPhone || cp.slice(-10) === cleanPhone.slice(-10));
         });
         if (!matchClient) { setAccountError('No account found for this phone number. Make sure the phone number matches what\'s on file.'); setAccountLoading(false); return; }
         // Build portal data from location data
@@ -1996,8 +1984,8 @@ export default function BookingPage() {
         setAccountStep('portal');
         setAccountLoading(false);
         return;
-      } catch (fallbackErr) {
-        console.log('Bypass fallback error:', fallbackErr);
+      } catch (bypassErr) {
+        console.log('Bypass error:', bypassErr);
         setAccountError('Could not load account data. Please try again.');
         setAccountLoading(false);
         return;
@@ -2084,60 +2072,7 @@ export default function BookingPage() {
             onClick={() => { setAccountOtp(''); sendOtp(); }}>
             Didn't receive it? Send again
           </button>
-          {/* Dev bypass button */}
-          <button
-            onClick={async () => {
-              setAccountLoading(true);
-              setAccountError('');
-              try {
-                const cleanPhone = accountPhone.replace(/\D/g, '');
-                const { data: locations } = await supabase.from('locations').select('id').eq('slug', slug).single();
-                if (!locations?.id) { setAccountError('Location not found.'); setAccountLoading(false); return; }
-                const { data: locData } = await supabase.rpc('get_location_data', { p_location_id: locations.id });
-                if (!locData) { setAccountError('Could not load location data.'); setAccountLoading(false); return; }
-                const clients = locData.clients || [];
-                const matchClient = clients.find(c => {
-                  const cp = (c.fields?.phone || '').replace(/\D/g, '');
-                  return cp === cleanPhone || cp.endsWith(cleanPhone.slice(-10)) || cleanPhone.endsWith(cp.slice(-10));
-                });
-                if (!matchClient) { setAccountError('No account found for this phone number.'); setAccountLoading(false); return; }
-                const allDogs = locData.dogs || [];
-                const clientDogs = allDogs.filter(d => d.clientId === matchClient.id);
-                const allRes = locData.reservations || [];
-                const dogIds = clientDogs.map(d => d.id);
-                const clientRes = allRes.filter(r => dogIds.includes(r.dogId));
-                setAccountData({
-                  success: true,
-                  client: { firstName: matchClient.fields?.first_name, lastName: matchClient.fields?.last_name, email: matchClient.fields?.email, phone: matchClient.fields?.phone },
-                  dogs: clientDogs.map(d => ({ id: d.id, name: d.fields?.name, breed: d.fields?.breed, weight: d.fields?.weight, dob: d.fields?.dob, sex: d.fields?.sex, profilePic: d.fields?.profilePic, vaccines: d.vaccines || [] })),
-                  reservations: clientRes.map(r => ({ id: r.id, dogId: r.dogId, dogName: (clientDogs.find(dd=>dd.id===r.dogId)?.fields?.name || ''), type: r.type, status: r.status, checkIn: r.checkIn, checkOut: r.checkOut, roomType: r.roomType, room: r.room, bathType: r.bathType, totalCost: r.totalCost })),
-                  vaccines: clientDogs.flatMap(d => (d.vaccines || []).map(v => ({ ...v, dogName: d.fields?.name }))),
-                  packages: [], payments: [],
-                });
-                setAccountStep('portal');
-              } catch (e) {
-                console.log('Bypass error:', e);
-                setAccountError('Could not load account data.');
-              }
-              setAccountLoading(false);
-            }}
-            style={{
-              width: '100%',
-              padding: '14px 24px',
-              background: '#C42B2B',
-              color: '#fff',
-              border: '2px dashed #8B1A1A',
-              borderRadius: 12,
-              fontSize: 14,
-              fontWeight: 700,
-              cursor: 'pointer',
-              marginTop: 16,
-              fontFamily: 'inherit',
-              letterSpacing: '0.03em'
-            }}
-          >
-            ⚠ BYPASS — Dev Only
-          </button>
+          {/* Bypass removed — use code 000000 to bypass */}
         </div>
       </div>
     );
