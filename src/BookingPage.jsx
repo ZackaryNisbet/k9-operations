@@ -1951,20 +1951,54 @@ export default function BookingPage() {
     // Bypass: master code "000000" skips OTP verification
     if (accountOtp === "000000") {
       try {
-        const { data: loc } = await supabase.rpc('get_customer_portal_data', { p_phone: accountPhone, p_slug: slug });
-        if (loc?.success) {
+        // First try the RPC
+        const { data: loc, error: rpcErr } = await supabase.rpc('get_customer_portal_data', { p_phone: accountPhone, p_slug: slug });
+        if (!rpcErr && loc?.success) {
           setAccountData(loc);
           setAccountStep('portal');
           setAccountLoading(false);
           return;
-        } else {
-          setAccountError('No account found for this phone number.');
-          setAccountLoading(false);
-          return;
         }
-      } catch (bypassErr) {
-        console.log('Bypass RPC error:', bypassErr.message);
-        setAccountError('Portal data service not available. Please try again.');
+      } catch (e) { /* RPC may not exist, fall through to direct lookup */ }
+
+      // Fallback: direct data lookup from location_data
+      try {
+        const cleanPhone = accountPhone.replace(/\D/g, '');
+        // Find location by slug
+        const { data: locations } = await supabase.from('locations').select('id').eq('slug', slug).single();
+        if (!locations?.id) { setAccountError('Location not found.'); setAccountLoading(false); return; }
+        const { data: locData } = await supabase.rpc('get_location_data', { p_location_id: locations.id });
+        if (!locData) { setAccountError('Could not load location data.'); setAccountLoading(false); return; }
+        // Search clients by phone
+        const clients = locData.clients || [];
+        const matchClient = clients.find(c => {
+          const cp = (c.fields?.phone || '').replace(/\D/g, '');
+          return cp === cleanPhone || cp.endsWith(cleanPhone.slice(-10)) || cleanPhone.endsWith(cp.slice(-10));
+        });
+        if (!matchClient) { setAccountError('No account found for this phone number. Make sure the phone number matches what\'s on file.'); setAccountLoading(false); return; }
+        // Build portal data from location data
+        const allDogs = locData.dogs || [];
+        const clientDogs = allDogs.filter(d => d.clientId === matchClient.id);
+        const allRes = locData.reservations || [];
+        const dogIds = clientDogs.map(d => d.id);
+        const clientRes = allRes.filter(r => dogIds.includes(r.dogId));
+        const allSales = locData.packageSales || [];
+        const clientSales = allSales.filter(s => s.clientId === matchClient.id || dogIds.includes(s.dogId));
+        setAccountData({
+          success: true,
+          client: { firstName: matchClient.fields?.first_name, lastName: matchClient.fields?.last_name, email: matchClient.fields?.email, phone: matchClient.fields?.phone, address: matchClient.fields?.address },
+          dogs: clientDogs.map(d => ({ id: d.id, name: d.fields?.name, breed: d.fields?.breed, weight: d.fields?.weight, dob: d.fields?.dob, sex: d.fields?.sex, profilePic: d.fields?.profilePic, vaccines: d.vaccines || [] })),
+          reservations: clientRes.map(r => ({ id: r.id, dogId: r.dogId, dogName: (clientDogs.find(d=>d.id===r.dogId)?.fields?.name || ''), type: r.type, status: r.status, checkIn: r.checkIn, checkOut: r.checkOut, checkInTime: r.checkInTime, checkOutTime: r.checkOutTime, roomType: r.roomType, room: r.room, bathType: r.bathType, totalCost: r.totalCost, depositPaid: r.depositPaid, balanceDue: r.balanceDue })),
+          vaccines: clientDogs.flatMap(d => (d.vaccines || []).map(v => ({ ...v, dogName: d.fields?.name }))),
+          packages: clientSales,
+          payments: [],
+        });
+        setAccountStep('portal');
+        setAccountLoading(false);
+        return;
+      } catch (fallbackErr) {
+        console.log('Bypass fallback error:', fallbackErr);
+        setAccountError('Could not load account data. Please try again.');
         setAccountLoading(false);
         return;
       }
@@ -2056,15 +2090,34 @@ export default function BookingPage() {
               setAccountLoading(true);
               setAccountError('');
               try {
-                const { data: loc } = await supabase.rpc('get_customer_portal_data', { p_phone: accountPhone, p_slug: slug });
-                if (loc?.success) {
-                  setAccountData(loc);
-                  setAccountStep('portal');
-                } else {
-                  setAccountError('No account found for this phone number.');
-                }
+                const cleanPhone = accountPhone.replace(/\D/g, '');
+                const { data: locations } = await supabase.from('locations').select('id').eq('slug', slug).single();
+                if (!locations?.id) { setAccountError('Location not found.'); setAccountLoading(false); return; }
+                const { data: locData } = await supabase.rpc('get_location_data', { p_location_id: locations.id });
+                if (!locData) { setAccountError('Could not load location data.'); setAccountLoading(false); return; }
+                const clients = locData.clients || [];
+                const matchClient = clients.find(c => {
+                  const cp = (c.fields?.phone || '').replace(/\D/g, '');
+                  return cp === cleanPhone || cp.endsWith(cleanPhone.slice(-10)) || cleanPhone.endsWith(cp.slice(-10));
+                });
+                if (!matchClient) { setAccountError('No account found for this phone number.'); setAccountLoading(false); return; }
+                const allDogs = locData.dogs || [];
+                const clientDogs = allDogs.filter(d => d.clientId === matchClient.id);
+                const allRes = locData.reservations || [];
+                const dogIds = clientDogs.map(d => d.id);
+                const clientRes = allRes.filter(r => dogIds.includes(r.dogId));
+                setAccountData({
+                  success: true,
+                  client: { firstName: matchClient.fields?.first_name, lastName: matchClient.fields?.last_name, email: matchClient.fields?.email, phone: matchClient.fields?.phone },
+                  dogs: clientDogs.map(d => ({ id: d.id, name: d.fields?.name, breed: d.fields?.breed, weight: d.fields?.weight, dob: d.fields?.dob, sex: d.fields?.sex, profilePic: d.fields?.profilePic, vaccines: d.vaccines || [] })),
+                  reservations: clientRes.map(r => ({ id: r.id, dogId: r.dogId, dogName: (clientDogs.find(dd=>dd.id===r.dogId)?.fields?.name || ''), type: r.type, status: r.status, checkIn: r.checkIn, checkOut: r.checkOut, roomType: r.roomType, room: r.room, bathType: r.bathType, totalCost: r.totalCost })),
+                  vaccines: clientDogs.flatMap(d => (d.vaccines || []).map(v => ({ ...v, dogName: d.fields?.name }))),
+                  packages: [], payments: [],
+                });
+                setAccountStep('portal');
               } catch (e) {
-                setAccountError('Portal data service not available.');
+                console.log('Bypass error:', e);
+                setAccountError('Could not load account data.');
               }
               setAccountLoading(false);
             }}
