@@ -586,6 +586,19 @@ export default function BookingPage() {
   const [accountEditing, setAccountEditing] = useState(null);
   const [pkgCheckout, setPkgCheckout] = useState(null); // { pkg, qty }
   const [checkoutStep, setCheckoutStep] = useState('details'); // 'details' | 'success'
+  // Portal sub-states (must be at component top level for hooks rules)
+  const [editSection, setEditSection] = useState(null);
+  const [editFields, setEditFields] = useState({});
+  const [editSaving, setEditSaving] = useState(false);
+  const [expandedRes, setExpandedRes] = useState(null);
+  const [expandedDog, setExpandedDog] = useState(null);
+  const [contactOpen, setContactOpen] = useState(false);
+  const [saveBanner, setSaveBanner] = useState(null);
+  const [vaccineUploadDog, setVaccineUploadDog] = useState(null);
+  const [vaccineUploadFile, setVaccineUploadFile] = useState(null);
+  const [vaccineUploadName, setVaccineUploadName] = useState('');
+  const [vaccineUploadExpiry, setVaccineUploadExpiry] = useState('');
+  const [vaccineUploading, setVaccineUploading] = useState(false);
 
   // Real-time draft capture
   const [sessionId] = useState(() => {
@@ -2099,20 +2112,6 @@ export default function BookingPage() {
       { key: 'payments', label: 'Payments', icon: '💳' },
       { key: 'settings', label: 'Settings', icon: '⚙️' },
     ];
-
-    // Editable info helpers
-    const [editSection, setEditSection] = useState(null); // 'personal' | 'emergency' | 'vet'
-    const [editFields, setEditFields] = useState({});
-    const [editSaving, setEditSaving] = useState(false);
-    const [expandedRes, setExpandedRes] = useState(null);
-    const [expandedDog, setExpandedDog] = useState(null);
-    const [contactOpen, setContactOpen] = useState(false);
-    const [saveBanner, setSaveBanner] = useState(null); // success message banner
-    const [vaccineUploadDog, setVaccineUploadDog] = useState(null); // dog id for vaccine upload modal
-    const [vaccineUploadFile, setVaccineUploadFile] = useState(null);
-    const [vaccineUploadName, setVaccineUploadName] = useState('');
-    const [vaccineUploadExpiry, setVaccineUploadExpiry] = useState('');
-    const [vaccineUploading, setVaccineUploading] = useState(false);
 
     const startEdit = (section, fields) => { setEditSection(section); setEditFields({...fields}); };
     const cancelEdit = () => { setEditSection(null); setEditFields({}); };
