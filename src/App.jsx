@@ -17933,8 +17933,6 @@ function SettingsPage({ data, save, profile, nav, settingsTab }) {
           const deliveryRate = log.length > 0 ? Math.round((deliveredCount / log.length) * 100) : 0;
           // Recent log entries (last 50)
           const recentLog = [...log].sort((a, b) => (b.sentAt || "").localeCompare(a.sentAt || "")).slice(0, 50);
-          const editingTierRef = React.useRef(null);
-
           return (
             <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
               {/* Master Toggle */}
