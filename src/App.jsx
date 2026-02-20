@@ -3664,11 +3664,22 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         <div>
           {secHeader("Reservation History")}
           {(() => {
-            const logs = (data.auditLog || []).filter(l => l.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            try {
+            const rawLogs = Array.isArray(data.auditLog) ? data.auditLog : [];
+            const logs = rawLogs.filter(l => l && typeof l === "object" && l.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp||0) - new Date(a.timestamp||0));
+            const safeStr = (v) => {
+              if (v == null) return "";
+              if (v instanceof Date) return v.toLocaleString();
+              if (typeof v === "object") return JSON.stringify(v);
+              return String(v);
+            };
             return logs.length > 0 ? (
               <div style={{maxHeight:400,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
-                {logs.map((log, li) => { const dets = Array.isArray(log.details) ? log.details : (log.details && typeof log.details === "object" && !Array.isArray(log.details)) ? [log.details] : []; const safeStr = (v) => v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v); return (
-                  <div key={log.id||li} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.borderLight}`,fontSize:12}}>
+                {logs.map((log, li) => {
+                  const rawDets = log.details;
+                  const dets = Array.isArray(rawDets) ? rawDets : (rawDets && typeof rawDets === "object") ? [rawDets] : typeof rawDets === "string" ? [{field:"Detail",oldVal:"",newVal:rawDets}] : [];
+                  return (
+                  <div key={log.id||("log-"+li)} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.borderLight}`,fontSize:12}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:dets.length>0?6:0}}>
                       <span style={{fontWeight:700,color:C.pri}}>{safeStr(log.userName)}</span>
                       <span style={{fontWeight:600,color:C.text}}>{safeStr(log.action)}</span>
@@ -3698,9 +3709,13 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                       </div>
                     )}
                   </div>
-                ); })}
+                  );
+                })}
               </div>
             ) : <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>No history recorded yet</div>;
+            } catch (err) {
+              return <div style={{fontSize:13,color:C.dan,fontFamily:"monospace",whiteSpace:"pre-wrap",padding:12,background:C.danLt,borderRadius:8}}>{"History error: " + String(err?.message || err) + "\n\nAudit log sample: " + JSON.stringify((data.auditLog||[]).filter(l=>l&&l.reservationId===reservation.id).slice(0,2), null, 2)}</div>;
+            }
           })()}
         </div>
       )}
