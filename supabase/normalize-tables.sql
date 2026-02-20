@@ -5,43 +5,62 @@
 -- Run this in Supabase SQL Editor to create all tables.
 -- Each row stores a `doc` JSONB column (the full app object) plus
 -- denormalized columns for efficient SQL queries.
+--
+-- NOTE: Entity IDs are TEXT (app generates short IDs like "c1", "d1"
+-- for demo data and UUIDs for real data — both are strings).
+
+-- ============================================================
+-- Drop existing tables in FK-safe order (children first)
+-- ============================================================
+DROP TABLE IF EXISTS k9_reminder_log CASCADE;
+DROP TABLE IF EXISTS k9_audit_log CASCADE;
+DROP TABLE IF EXISTS k9_messages CASCADE;
+DROP TABLE IF EXISTS k9_package_sales CASCADE;
+DROP TABLE IF EXISTS k9_payments CASCADE;
+DROP TABLE IF EXISTS k9_daily_ops CASCADE;
+DROP TABLE IF EXISTS k9_evaluations CASCADE;
+DROP TABLE IF EXISTS k9_vaccine_records CASCADE;
+DROP TABLE IF EXISTS k9_reservations CASCADE;
+DROP TABLE IF EXISTS k9_packages CASCADE;
+DROP TABLE IF EXISTS k9_dogs CASCADE;
+DROP TABLE IF EXISTS k9_clients CASCADE;
 
 -- ============================================================
 -- 1. k9_clients — Pet parents / owners
 -- ============================================================
-CREATE TABLE IF NOT EXISTS k9_clients (
-  id UUID PRIMARY KEY,
+CREATE TABLE k9_clients (
+  id TEXT PRIMARY KEY,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
   doc JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_k9_clients_loc ON k9_clients(location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_clients_fields ON k9_clients USING GIN((doc->'fields'));
+CREATE INDEX idx_k9_clients_loc ON k9_clients(location_id);
+CREATE INDEX idx_k9_clients_fields ON k9_clients USING GIN((doc->'fields'));
 
 -- ============================================================
 -- 2. k9_dogs — Pets
 -- ============================================================
-CREATE TABLE IF NOT EXISTS k9_dogs (
-  id UUID PRIMARY KEY,
+CREATE TABLE k9_dogs (
+  id TEXT PRIMARY KEY,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  client_id UUID REFERENCES k9_clients(id) ON DELETE CASCADE,
+  client_id TEXT REFERENCES k9_clients(id) ON DELETE CASCADE,
   doc JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_k9_dogs_loc ON k9_dogs(location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_dogs_client ON k9_dogs(client_id);
+CREATE INDEX idx_k9_dogs_loc ON k9_dogs(location_id);
+CREATE INDEX idx_k9_dogs_client ON k9_dogs(client_id);
 
 -- ============================================================
 -- 3. k9_vaccine_records — One row per vaccine per dog
 -- ============================================================
-CREATE TABLE IF NOT EXISTS k9_vaccine_records (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+CREATE TABLE k9_vaccine_records (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  dog_id UUID NOT NULL REFERENCES k9_dogs(id) ON DELETE CASCADE,
+  dog_id TEXT NOT NULL REFERENCES k9_dogs(id) ON DELETE CASCADE,
   vaccine_name TEXT NOT NULL,
   expires_at DATE,
   doc JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -49,19 +68,19 @@ CREATE TABLE IF NOT EXISTS k9_vaccine_records (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_k9_vax_loc ON k9_vaccine_records(location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_vax_dog ON k9_vaccine_records(dog_id);
-CREATE INDEX IF NOT EXISTS idx_k9_vax_expires ON k9_vaccine_records(expires_at, location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_vax_name ON k9_vaccine_records(vaccine_name, location_id);
+CREATE INDEX idx_k9_vax_loc ON k9_vaccine_records(location_id);
+CREATE INDEX idx_k9_vax_dog ON k9_vaccine_records(dog_id);
+CREATE INDEX idx_k9_vax_expires ON k9_vaccine_records(expires_at, location_id);
+CREATE INDEX idx_k9_vax_name ON k9_vaccine_records(vaccine_name, location_id);
 
 -- ============================================================
 -- 4. k9_reservations — Bookings
 -- ============================================================
-CREATE TABLE IF NOT EXISTS k9_reservations (
-  id UUID PRIMARY KEY,
+CREATE TABLE k9_reservations (
+  id TEXT PRIMARY KEY,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  client_id UUID REFERENCES k9_clients(id) ON DELETE SET NULL,
-  dog_id UUID REFERENCES k9_dogs(id) ON DELETE SET NULL,
+  client_id TEXT REFERENCES k9_clients(id) ON DELETE SET NULL,
+  dog_id TEXT REFERENCES k9_dogs(id) ON DELETE SET NULL,
   status TEXT,
   check_in DATE,
   check_out DATE,
@@ -70,32 +89,32 @@ CREATE TABLE IF NOT EXISTS k9_reservations (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_k9_res_loc ON k9_reservations(location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_res_client ON k9_reservations(client_id);
-CREATE INDEX IF NOT EXISTS idx_k9_res_dog ON k9_reservations(dog_id);
-CREATE INDEX IF NOT EXISTS idx_k9_res_status ON k9_reservations(status, location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_res_dates ON k9_reservations(check_in, check_out, location_id);
+CREATE INDEX idx_k9_res_loc ON k9_reservations(location_id);
+CREATE INDEX idx_k9_res_client ON k9_reservations(client_id);
+CREATE INDEX idx_k9_res_dog ON k9_reservations(dog_id);
+CREATE INDEX idx_k9_res_status ON k9_reservations(status, location_id);
+CREATE INDEX idx_k9_res_dates ON k9_reservations(check_in, check_out, location_id);
 
 -- ============================================================
 -- 5. k9_evaluations — Behavioral assessments
 -- ============================================================
-CREATE TABLE IF NOT EXISTS k9_evaluations (
-  id UUID PRIMARY KEY,
+CREATE TABLE k9_evaluations (
+  id TEXT PRIMARY KEY,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  dog_id UUID REFERENCES k9_dogs(id) ON DELETE CASCADE,
-  reservation_id UUID REFERENCES k9_reservations(id) ON DELETE SET NULL,
+  dog_id TEXT REFERENCES k9_dogs(id) ON DELETE CASCADE,
+  reservation_id TEXT REFERENCES k9_reservations(id) ON DELETE SET NULL,
   doc JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_k9_eval_loc ON k9_evaluations(location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_eval_dog ON k9_evaluations(dog_id);
-CREATE INDEX IF NOT EXISTS idx_k9_eval_res ON k9_evaluations(reservation_id);
+CREATE INDEX idx_k9_eval_loc ON k9_evaluations(location_id);
+CREATE INDEX idx_k9_eval_dog ON k9_evaluations(dog_id);
+CREATE INDEX idx_k9_eval_res ON k9_evaluations(reservation_id);
 
 -- ============================================================
 -- 6. k9_daily_ops — Checklists (opening, closing, FE, BE, rooms, etc.)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS k9_daily_ops (
+CREATE TABLE k9_daily_ops (
   id TEXT PRIMARY KEY,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
   type TEXT,
@@ -105,18 +124,18 @@ CREATE TABLE IF NOT EXISTS k9_daily_ops (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_k9_ops_loc ON k9_daily_ops(location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_ops_type ON k9_daily_ops(type, location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_ops_date ON k9_daily_ops(entry_date DESC, location_id);
+CREATE INDEX idx_k9_ops_loc ON k9_daily_ops(location_id);
+CREATE INDEX idx_k9_ops_type ON k9_daily_ops(type, location_id);
+CREATE INDEX idx_k9_ops_date ON k9_daily_ops(entry_date DESC, location_id);
 
 -- ============================================================
 -- 7. k9_payments — Financial transactions
 -- ============================================================
-CREATE TABLE IF NOT EXISTS k9_payments (
-  id UUID PRIMARY KEY,
+CREATE TABLE k9_payments (
+  id TEXT PRIMARY KEY,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  client_id UUID REFERENCES k9_clients(id) ON DELETE SET NULL,
-  reservation_id UUID REFERENCES k9_reservations(id) ON DELETE SET NULL,
+  client_id TEXT REFERENCES k9_clients(id) ON DELETE SET NULL,
+  reservation_id TEXT REFERENCES k9_reservations(id) ON DELETE SET NULL,
   amount DECIMAL(10, 2),
   method TEXT,
   status TEXT,
@@ -124,87 +143,87 @@ CREATE TABLE IF NOT EXISTS k9_payments (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_k9_pay_loc ON k9_payments(location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_pay_client ON k9_payments(client_id);
-CREATE INDEX IF NOT EXISTS idx_k9_pay_res ON k9_payments(reservation_id);
-CREATE INDEX IF NOT EXISTS idx_k9_pay_status ON k9_payments(status, location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_pay_time ON k9_payments(created_at DESC, location_id);
+CREATE INDEX idx_k9_pay_loc ON k9_payments(location_id);
+CREATE INDEX idx_k9_pay_client ON k9_payments(client_id);
+CREATE INDEX idx_k9_pay_res ON k9_payments(reservation_id);
+CREATE INDEX idx_k9_pay_status ON k9_payments(status, location_id);
+CREATE INDEX idx_k9_pay_time ON k9_payments(created_at DESC, location_id);
 
 -- ============================================================
 -- 8. k9_packages — Package templates (products)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS k9_packages (
-  id UUID PRIMARY KEY,
+CREATE TABLE k9_packages (
+  id TEXT PRIMARY KEY,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
   doc JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_k9_pkg_loc ON k9_packages(location_id);
+CREATE INDEX idx_k9_pkg_loc ON k9_packages(location_id);
 
 -- ============================================================
 -- 9. k9_package_sales — Purchased package instances
 -- ============================================================
-CREATE TABLE IF NOT EXISTS k9_package_sales (
-  id UUID PRIMARY KEY,
+CREATE TABLE k9_package_sales (
+  id TEXT PRIMARY KEY,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  client_id UUID REFERENCES k9_clients(id) ON DELETE SET NULL,
-  package_id UUID REFERENCES k9_packages(id) ON DELETE SET NULL,
+  client_id TEXT REFERENCES k9_clients(id) ON DELETE SET NULL,
+  package_id TEXT REFERENCES k9_packages(id) ON DELETE SET NULL,
   doc JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_k9_pkgsale_loc ON k9_package_sales(location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_pkgsale_client ON k9_package_sales(client_id);
-CREATE INDEX IF NOT EXISTS idx_k9_pkgsale_pkg ON k9_package_sales(package_id);
+CREATE INDEX idx_k9_pkgsale_loc ON k9_package_sales(location_id);
+CREATE INDEX idx_k9_pkgsale_client ON k9_package_sales(client_id);
+CREATE INDEX idx_k9_pkgsale_pkg ON k9_package_sales(package_id);
 
 -- ============================================================
 -- 10. k9_messages — SMS/email communications
 -- ============================================================
-CREATE TABLE IF NOT EXISTS k9_messages (
-  id UUID PRIMARY KEY,
+CREATE TABLE k9_messages (
+  id TEXT PRIMARY KEY,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  client_id UUID REFERENCES k9_clients(id) ON DELETE SET NULL,
+  client_id TEXT REFERENCES k9_clients(id) ON DELETE SET NULL,
   sent_at TIMESTAMPTZ,
   doc JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_k9_msg_loc ON k9_messages(location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_msg_client ON k9_messages(client_id);
-CREATE INDEX IF NOT EXISTS idx_k9_msg_time ON k9_messages(sent_at DESC, location_id);
+CREATE INDEX idx_k9_msg_loc ON k9_messages(location_id);
+CREATE INDEX idx_k9_msg_client ON k9_messages(client_id);
+CREATE INDEX idx_k9_msg_time ON k9_messages(sent_at DESC, location_id);
 
 -- ============================================================
 -- 11. k9_audit_log — Every significant action (append-only)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS k9_audit_log (
-  id UUID PRIMARY KEY,
+CREATE TABLE k9_audit_log (
+  id TEXT PRIMARY KEY,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  reservation_id UUID REFERENCES k9_reservations(id) ON DELETE SET NULL,
+  reservation_id TEXT REFERENCES k9_reservations(id) ON DELETE SET NULL,
   doc JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_k9_audit_loc ON k9_audit_log(location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_audit_res ON k9_audit_log(reservation_id);
-CREATE INDEX IF NOT EXISTS idx_k9_audit_time ON k9_audit_log(created_at DESC, location_id);
+CREATE INDEX idx_k9_audit_loc ON k9_audit_log(location_id);
+CREATE INDEX idx_k9_audit_res ON k9_audit_log(reservation_id);
+CREATE INDEX idx_k9_audit_time ON k9_audit_log(created_at DESC, location_id);
 
 -- ============================================================
 -- 12. k9_reminder_log — Vaccine reminder audit trail
 -- ============================================================
-CREATE TABLE IF NOT EXISTS k9_reminder_log (
+CREATE TABLE k9_reminder_log (
   id TEXT PRIMARY KEY,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  client_id UUID REFERENCES k9_clients(id) ON DELETE SET NULL,
+  client_id TEXT REFERENCES k9_clients(id) ON DELETE SET NULL,
   sent_at TIMESTAMPTZ,
   doc JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_k9_rem_loc ON k9_reminder_log(location_id);
-CREATE INDEX IF NOT EXISTS idx_k9_rem_client ON k9_reminder_log(client_id);
-CREATE INDEX IF NOT EXISTS idx_k9_rem_time ON k9_reminder_log(sent_at DESC, location_id);
+CREATE INDEX idx_k9_rem_loc ON k9_reminder_log(location_id);
+CREATE INDEX idx_k9_rem_client ON k9_reminder_log(client_id);
+CREATE INDEX idx_k9_rem_time ON k9_reminder_log(sent_at DESC, location_id);
 
 -- ============================================================
 -- RLS Policies — Staff can read/write their own location's data
@@ -222,29 +241,17 @@ ALTER TABLE k9_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE k9_audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE k9_reminder_log ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS k9_clients_rls ON k9_clients;
 CREATE POLICY k9_clients_rls ON k9_clients FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-DROP POLICY IF EXISTS k9_dogs_rls ON k9_dogs;
 CREATE POLICY k9_dogs_rls ON k9_dogs FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-DROP POLICY IF EXISTS k9_vaccine_records_rls ON k9_vaccine_records;
 CREATE POLICY k9_vaccine_records_rls ON k9_vaccine_records FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-DROP POLICY IF EXISTS k9_reservations_rls ON k9_reservations;
 CREATE POLICY k9_reservations_rls ON k9_reservations FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-DROP POLICY IF EXISTS k9_evaluations_rls ON k9_evaluations;
 CREATE POLICY k9_evaluations_rls ON k9_evaluations FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-DROP POLICY IF EXISTS k9_daily_ops_rls ON k9_daily_ops;
 CREATE POLICY k9_daily_ops_rls ON k9_daily_ops FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-DROP POLICY IF EXISTS k9_payments_rls ON k9_payments;
 CREATE POLICY k9_payments_rls ON k9_payments FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-DROP POLICY IF EXISTS k9_packages_rls ON k9_packages;
 CREATE POLICY k9_packages_rls ON k9_packages FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-DROP POLICY IF EXISTS k9_package_sales_rls ON k9_package_sales;
 CREATE POLICY k9_package_sales_rls ON k9_package_sales FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-DROP POLICY IF EXISTS k9_messages_rls ON k9_messages;
 CREATE POLICY k9_messages_rls ON k9_messages FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-DROP POLICY IF EXISTS k9_audit_log_rls ON k9_audit_log;
 CREATE POLICY k9_audit_log_rls ON k9_audit_log FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-DROP POLICY IF EXISTS k9_reminder_log_rls ON k9_reminder_log;
 CREATE POLICY k9_reminder_log_rls ON k9_reminder_log FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
 
 -- ============================================================
@@ -258,17 +265,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS k9_clients_ts ON k9_clients;
 CREATE TRIGGER k9_clients_ts BEFORE UPDATE ON k9_clients FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-DROP TRIGGER IF EXISTS k9_dogs_ts ON k9_dogs;
 CREATE TRIGGER k9_dogs_ts BEFORE UPDATE ON k9_dogs FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-DROP TRIGGER IF EXISTS k9_vaccine_records_ts ON k9_vaccine_records;
 CREATE TRIGGER k9_vaccine_records_ts BEFORE UPDATE ON k9_vaccine_records FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-DROP TRIGGER IF EXISTS k9_reservations_ts ON k9_reservations;
 CREATE TRIGGER k9_reservations_ts BEFORE UPDATE ON k9_reservations FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-DROP TRIGGER IF EXISTS k9_daily_ops_ts ON k9_daily_ops;
 CREATE TRIGGER k9_daily_ops_ts BEFORE UPDATE ON k9_daily_ops FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-DROP TRIGGER IF EXISTS k9_packages_ts ON k9_packages;
 CREATE TRIGGER k9_packages_ts BEFORE UPDATE ON k9_packages FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ============================================================
@@ -278,7 +279,7 @@ CREATE TRIGGER k9_packages_ts BEFORE UPDATE ON k9_packages FOR EACH ROW EXECUTE 
 -- ============================================================
 
 -- Merge field updates into a client's doc.fields
-CREATE OR REPLACE FUNCTION portal_update_client_fields(p_client_id UUID, p_location_id UUID, p_field_updates JSONB)
+CREATE OR REPLACE FUNCTION portal_update_client_fields(p_client_id TEXT, p_location_id UUID, p_field_updates JSONB)
 RETURNS void AS $$
 BEGIN
   UPDATE k9_clients
@@ -289,7 +290,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Replace a client's notificationPrefs
-CREATE OR REPLACE FUNCTION portal_update_client_notif_prefs(p_client_id UUID, p_location_id UUID, p_prefs JSONB)
+CREATE OR REPLACE FUNCTION portal_update_client_notif_prefs(p_client_id TEXT, p_location_id UUID, p_prefs JSONB)
 RETURNS void AS $$
 BEGIN
   UPDATE k9_clients
@@ -300,7 +301,7 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Append a vaccine record to a dog's doc.vaccines array
-CREATE OR REPLACE FUNCTION portal_add_dog_vaccine(p_dog_id UUID, p_location_id UUID, p_vaccine JSONB)
+CREATE OR REPLACE FUNCTION portal_add_dog_vaccine(p_dog_id TEXT, p_location_id UUID, p_vaccine JSONB)
 RETURNS void AS $$
 BEGIN
   UPDATE k9_dogs
@@ -316,7 +317,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- ============================================================
 
 -- Shared helper: builds portal data from normalized tables for a known client
-CREATE OR REPLACE FUNCTION _build_portal_data(p_location_id UUID, p_client_id UUID, p_client_doc JSONB)
+CREATE OR REPLACE FUNCTION _build_portal_data(p_location_id UUID, p_client_id TEXT, p_client_doc JSONB)
 RETURNS JSONB AS $$
 DECLARE
   dogs_data JSONB;
@@ -642,3 +643,25 @@ BEGIN
   RETURN jsonb_build_object('success', true, 'name', loc_name);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================================
+-- Allow authenticated users to delete booking_drafts for their location
+-- (needed by "Erase All Data" button)
+-- ============================================================
+DROP POLICY IF EXISTS "Allow authenticated delete on booking_drafts" ON booking_drafts;
+CREATE POLICY "Allow authenticated delete on booking_drafts" ON booking_drafts FOR DELETE USING (auth.role() = 'authenticated');
+
+-- ============================================================
+-- Enable realtime for all entity tables
+-- ============================================================
+ALTER PUBLICATION supabase_realtime ADD TABLE k9_clients;
+ALTER PUBLICATION supabase_realtime ADD TABLE k9_dogs;
+ALTER PUBLICATION supabase_realtime ADD TABLE k9_reservations;
+ALTER PUBLICATION supabase_realtime ADD TABLE k9_evaluations;
+ALTER PUBLICATION supabase_realtime ADD TABLE k9_daily_ops;
+ALTER PUBLICATION supabase_realtime ADD TABLE k9_payments;
+ALTER PUBLICATION supabase_realtime ADD TABLE k9_packages;
+ALTER PUBLICATION supabase_realtime ADD TABLE k9_package_sales;
+ALTER PUBLICATION supabase_realtime ADD TABLE k9_messages;
+ALTER PUBLICATION supabase_realtime ADD TABLE k9_audit_log;
+ALTER PUBLICATION supabase_realtime ADD TABLE k9_reminder_log;

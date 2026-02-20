@@ -17696,7 +17696,7 @@ function PackageReportsTab({ data }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // SETTINGS (Fields + Dog Tags)
 // ═══════════════════════════════════════════════════════════════════════════
-function SettingsPage({ data, save, profile, nav, settingsTab }) {
+function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug }) {
   const [tab, setTab] = useState(settingsTab || null);
   useEffect(() => { setTab(settingsTab || null); }, [settingsTab]);
   const [settingsSearch, setSettingsSearch] = useState("");
@@ -17816,8 +17816,9 @@ function SettingsPage({ data, save, profile, nav, settingsTab }) {
   const handleEraseAll = async () => {
     setErasing(true);
     try {
+      // Use profile.location_id (locationId from useData isn't in scope here)
+      const loc = profile.location_id;
       // Delete from all entity tables in FK-safe order (children first)
-      const loc = locationId;
       await Promise.all([
         supabase.from('k9_reminder_log').delete().eq('location_id', loc),
         supabase.from('k9_audit_log').delete().eq('location_id', loc),
@@ -17838,6 +17839,8 @@ function SettingsPage({ data, save, profile, nav, settingsTab }) {
         supabase.from('k9_clients').delete().eq('location_id', loc),
         supabase.from('k9_packages').delete().eq('location_id', loc),
       ]);
+      // Also clear booking drafts (anonymous visitor data in Conversion tab)
+      if (locationSlug) await supabase.from('booking_drafts').delete().eq('location_slug', locationSlug);
       // Reset in-memory state to empty arrays
       const empty = { ...data, clients: [], dogs: [], reservations: [], evaluations: [], eodEntries: [], dailyOps: [], payments: [], packages: [], packageSales: [], messages: [], auditLog: [] };
       if (empty.automations) empty.automations = { ...empty.automations, reminderLog: [] };
@@ -24423,7 +24426,7 @@ export default function App() {
       case "reports": return hp("view_payments") ? <ReportsPage data={data} save={save} nav={nav} profile={profile} rptFilterOpen={rptFilterOpen} setRptFilterOpen={setRptFilterOpen} rptFilters={rptFilters} setRptFilters={setRptFilters} onActiveReportChange={setRptActiveReport}/> : denied;
       case "ai": return hp("use_ai") ? <AIPage data={data} save={save} nav={nav}/> : denied;
       case "lms": return <LMSPage data={data} save={save} nav={nav} profile={profile}/>;
-      case "settings": return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile} nav={nav}/> : denied;
+      case "settings": return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile} nav={nav} locationSlug={locSlug}/> : denied;
       default:
         if (isSettingsSubPage) {
           const subTab = page.replace("settings-", "");
