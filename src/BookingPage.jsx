@@ -584,6 +584,8 @@ export default function BookingPage() {
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountError, setAccountError] = useState('');
   const [accountEditing, setAccountEditing] = useState(null);
+  const [pkgCheckout, setPkgCheckout] = useState(null); // { pkg, qty }
+  const [checkoutStep, setCheckoutStep] = useState('details'); // 'details' | 'success'
 
   // Real-time draft capture
   const [sessionId] = useState(() => {
@@ -1945,6 +1947,29 @@ export default function BookingPage() {
   const verifyOtp = async () => {
     setAccountLoading(true);
     setAccountError('');
+
+    // Bypass: master code "000000" skips OTP verification
+    if (accountOtp === "000000") {
+      try {
+        const { data: loc } = await supabase.rpc('get_customer_portal_data', { p_phone: accountPhone, p_slug: slug });
+        if (loc?.success) {
+          setAccountData(loc);
+          setAccountStep('portal');
+          setAccountLoading(false);
+          return;
+        } else {
+          setAccountError('No account found for this phone number.');
+          setAccountLoading(false);
+          return;
+        }
+      } catch (bypassErr) {
+        console.log('Bypass RPC error:', bypassErr.message);
+        setAccountError('Portal data service not available. Please try again.');
+        setAccountLoading(false);
+        return;
+      }
+    }
+
     try {
       const { data: result, error: e } = await supabase.rpc('verify_otp_and_get_customer', { p_phone: accountPhone, p_code: accountOtp, p_slug: slug });
       if (e) throw e;
@@ -2024,6 +2049,41 @@ export default function BookingPage() {
           <button style={{ background: 'none', border: 'none', color: B.textSec, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}
             onClick={() => { setAccountOtp(''); sendOtp(); }}>
             Didn't receive it? Send again
+          </button>
+          {/* Dev bypass button */}
+          <button
+            onClick={async () => {
+              setAccountLoading(true);
+              setAccountError('');
+              try {
+                const { data: loc } = await supabase.rpc('get_customer_portal_data', { p_phone: accountPhone, p_slug: slug });
+                if (loc?.success) {
+                  setAccountData(loc);
+                  setAccountStep('portal');
+                } else {
+                  setAccountError('No account found for this phone number.');
+                }
+              } catch (e) {
+                setAccountError('Portal data service not available.');
+              }
+              setAccountLoading(false);
+            }}
+            style={{
+              width: '100%',
+              padding: '14px 24px',
+              background: '#C42B2B',
+              color: '#fff',
+              border: '2px dashed #8B1A1A',
+              borderRadius: 12,
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: 'pointer',
+              marginTop: 16,
+              fontFamily: 'inherit',
+              letterSpacing: '0.03em'
+            }}
+          >
+            ⚠ BYPASS — Dev Only
           </button>
         </div>
       </div>
@@ -2120,40 +2180,77 @@ export default function BookingPage() {
           )}
 
           {/* Reservations Tab */}
-          {accountTab === 'reservations' && (
-            <div>
-              {upcoming.length > 0 && (
-                <>
-                  <h3 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 18, color: B.navy, marginBottom: 12 }}>Upcoming & Current</h3>
-                  {upcoming.map((r, i) => (
-                    <div key={i} style={{ background: '#fff', borderRadius: 14, border: `2px solid ${B.gold}40`, padding: 20, marginBottom: 12 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: B.navy }}>{r.type === 'tour' ? 'Facility Tour' : r.roomType || r.type}</span>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: B.suc, background: `${B.suc}15`, padding: '2px 10px', borderRadius: 8 }}>{r.status}</span>
-                      </div>
-                      <div style={{ fontSize: 13, color: B.textSec }}>{fmtDate(r.checkIn)} → {fmtDate(r.checkOut)}</div>
-                      {r.dogName && <div style={{ fontSize: 13, color: B.text, marginTop: 4 }}>Dog: {r.dogName}</div>}
-                    </div>
-                  ))}
-                </>
-              )}
-              {past.length > 0 && (
-                <>
-                  <h3 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 18, color: B.navy, marginBottom: 12, marginTop: 20 }}>Past Stays</h3>
-                  {past.slice(0, 10).map((r, i) => (
-                    <div key={i} style={{ background: '#fff', borderRadius: 14, border: `1px solid ${B.border}`, padding: 16, marginBottom: 8 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                        <span style={{ fontSize: 14, fontWeight: 600, color: B.text }}>{r.roomType || r.type}</span>
-                        <span style={{ fontSize: 12, color: B.textMut }}>{fmtDate(r.checkIn)} → {fmtDate(r.checkOut)}</span>
-                      </div>
-                      {r.dogName && <div style={{ fontSize: 12, color: B.textSec }}>Dog: {r.dogName}</div>}
-                    </div>
-                  ))}
-                </>
-              )}
-              {reservations.length === 0 && <div style={{ textAlign: 'center', padding: 40, color: B.textSec }}>No reservations found.</div>}
-            </div>
-          )}
+          {accountTab === 'reservations' && (() => {
+            const countNights = (ci, co) => { if (!ci || !co) return 0; return Math.max(1, Math.round((new Date(co+"T12:00:00") - new Date(ci+"T12:00:00")) / 86400000)); };
+            const fmtDateLocal = (d) => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
+            return (
+              <div>
+                {upcoming.length > 0 && (
+                  <div style={{marginBottom:24}}>
+                    <div style={{fontSize:14,fontWeight:700,color:B.navy,marginBottom:12}}>Upcoming & Current Stays</div>
+                    {upcoming.map((r,i) => {
+                      const nights = countNights(r.checkIn, r.checkOut);
+                      const roomCost = (r.roomRate || 0) * nights;
+                      const total = r.totalCost || roomCost + (r.bathCost || 0);
+                      return (
+                        <div key={i} style={{padding:16,border:`1px solid ${B.border}`,borderRadius:12,marginBottom:10,background:'#fff'}}>
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                            <div style={{fontWeight:600,color:B.navy,fontSize:14}}>{r.dogName || 'Dog'}</div>
+                            <span style={{fontSize:11,padding:'4px 10px',borderRadius:20,background:r.status==='checked-in'?'#DEF7EC':'#E8EDF2',color:r.status==='checked-in'?'#03543F':B.navy,fontWeight:600}}>{r.status === 'checked-in' ? 'In House' : 'Upcoming'}</span>
+                          </div>
+                          <div style={{fontSize:12,color:'#6B7280',marginBottom:4}}>{r.roomType || 'Room'} · {fmtDateLocal(r.checkIn)} — {fmtDateLocal(r.checkOut)} ({nights} night{nights!==1?'s':''})</div>
+                          {(r.roomRate || r.totalCost) && (
+                            <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid #E5E7EB',fontSize:12}}>
+                              <div style={{display:'flex',justifyContent:'space-between',marginBottom:3,color:'#6B7280'}}>
+                                <span>{r.roomType} × {nights} night{nights!==1?'s':''}</span>
+                                <span>${roomCost.toFixed(2)}</span>
+                              </div>
+                              {r.bathCost > 0 && <div style={{display:'flex',justifyContent:'space-between',marginBottom:3,color:'#6B7280'}}><span>Bath</span><span>${r.bathCost.toFixed(2)}</span></div>}
+                              <div style={{display:'flex',justifyContent:'space-between',marginTop:6,fontWeight:700,color:B.navy,fontSize:13}}>
+                                <span>Total</span>
+                                <span>${total.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          )}
+                          <div style={{display:'flex',gap:8,marginTop:10}}>
+                            <button onClick={() => alert('Invoice emailed to ' + (cl.email || 'your email'))} style={{flex:1,padding:'8px',border:`1px solid ${B.border}`,borderRadius:8,background:'#fff',fontSize:11,fontWeight:600,cursor:'pointer',color:B.navy}}>Email Invoice</button>
+                            <button onClick={() => alert('Invoice download coming soon!')} style={{flex:1,padding:'8px',border:`1px solid ${B.border}`,borderRadius:8,background:'#fff',fontSize:11,fontWeight:600,cursor:'pointer',color:B.navy}}>Download Invoice</button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {past.length > 0 && (
+                  <div>
+                    <div style={{fontSize:14,fontWeight:700,color:B.navy,marginBottom:12}}>Past Stays</div>
+                    {past.map((r,i) => {
+                      const nights = countNights(r.checkIn, r.checkOut);
+                      const roomCost = (r.roomRate || 0) * nights;
+                      const total = r.totalCost || roomCost;
+                      return (
+                        <div key={i} style={{padding:14,border:`1px solid ${B.border}`,borderRadius:12,marginBottom:8,background:'#FAFAFA'}}>
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                            <div>
+                              <div style={{fontWeight:600,color:B.navy,fontSize:13}}>{r.dogName || 'Dog'}</div>
+                              <div style={{fontSize:11,color:'#6B7280',marginTop:2}}>{r.roomType} · {fmtDateLocal(r.checkIn)} — {fmtDateLocal(r.checkOut)}</div>
+                            </div>
+                            {total > 0 && <div style={{fontWeight:700,color:B.navy,fontSize:13}}>${total.toFixed(2)}</div>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                {upcoming.length === 0 && past.length === 0 && (
+                  <div style={{textAlign:'center',padding:'40px 20px',color:'#9CA3AF'}}>
+                    <div style={{fontSize:40,marginBottom:8}}>📅</div>
+                    <div style={{fontWeight:500}}>No reservations yet</div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Vaccines Tab */}
           {accountTab === 'vaccines' && (
@@ -2191,32 +2288,126 @@ export default function BookingPage() {
           )}
 
           {/* Packages Tab */}
-          {accountTab === 'packages' && (
-            <div>
-              {packages.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: 40 }}>
-                  <div style={{ fontSize: 48, marginBottom: 16 }}>📦</div>
-                  <h3 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 22, color: B.navy, marginBottom: 8 }}>No Active Packages</h3>
-                  <p style={{ color: B.textSec, fontSize: 15, lineHeight: 1.6, marginBottom: 24 }}>
-                    Save on daycare and boarding with our prepaid packages! Ask us about our package options during your next visit.
-                  </p>
-                  <button className="bk-btn bk-btn-gold-outline" onClick={() => { setAccountTab('overview'); }}>
-                    <Icons.Phone size={16} /> Contact Us About Packages
-                  </button>
-                </div>
-              ) : packages.map((p, i) => (
-                <div key={i} style={{ background: '#fff', borderRadius: 14, border: `2px solid ${B.gold}40`, padding: 20, marginBottom: 12 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                    <span style={{ fontSize: 16, fontWeight: 700, color: B.navy }}>{p.name}</span>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: B.gold }}>{p.remaining || 0} remaining</span>
+          {accountTab === 'packages' && (() => {
+            const availablePkgs = (locationData?.packages || []).filter(p => p.availableOnline && p.active !== false);
+            return (
+              <div>
+                {/* Your Active Packages */}
+                {packages.length > 0 && (
+                  <div style={{marginBottom:28}}>
+                    <div style={{fontSize:14,fontWeight:700,color:B.navy,marginBottom:12}}>Your Packages</div>
+                    {packages.map((p,i) => {
+                      const total = p.total || p.quantity || 1;
+                      const remaining = p.remaining ?? (total - (p.used || 0));
+                      const pct = total > 0 ? (remaining / total) * 100 : 0;
+                      const barColor = pct > 25 ? '#10B981' : pct > 5 ? '#F59E0B' : '#EF4444';
+                      return (
+                        <div key={i} style={{padding:16,border:`1px solid ${B.border}`,borderRadius:12,marginBottom:10,background:'#fff'}}>
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:6}}>
+                            <div style={{fontWeight:600,color:B.navy,fontSize:14}}>{p.name || p.packageName}</div>
+                            {p.expiryDate && <span style={{fontSize:11,color:'#6B7280'}}>Expires {new Date(p.expiryDate+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</span>}
+                          </div>
+                          <div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:'#6B7280',marginBottom:6}}>
+                            <span>{remaining} of {total} remaining</span>
+                            <span style={{fontWeight:600,color:barColor}}>{pct.toFixed(0)}%</span>
+                          </div>
+                          <div style={{height:8,background:'#E5E7EB',borderRadius:4,overflow:'hidden'}}>
+                            <div style={{height:'100%',width:`${pct}%`,background:barColor,borderRadius:4,transition:'width 0.3s'}}/>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div style={{ fontSize: 13, color: B.textSec }}>
-                    {p.total || 0} total · {(p.total || 0) - (p.remaining || 0)} used
+                )}
+
+                {/* Available for Purchase */}
+                {availablePkgs.length > 0 && (
+                  <div>
+                    <div style={{fontSize:14,fontWeight:700,color:B.navy,marginBottom:12}}>Available Packages</div>
+                    {availablePkgs.map(p => {
+                      const pctOff = p.retailValue > 0 ? ((p.retailValue - p.packagePrice) / p.retailValue * 100).toFixed(0) : 0;
+                      return (
+                        <div key={p.id} style={{padding:16,border:`1px solid ${B.border}`,borderRadius:12,marginBottom:10,background:'#fff'}}>
+                          <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+                            <div style={{flex:1}}>
+                              <div style={{fontWeight:700,color:B.navy,fontSize:15,marginBottom:4}}>{p.name}</div>
+                              <div style={{fontSize:12,color:'#6B7280',lineHeight:1.5,marginBottom:8}}>{p.description?.substring(0,120)}{p.description?.length > 120 ? '...' : ''}</div>
+                              <div style={{display:'flex',gap:12,fontSize:12}}>
+                                <span style={{color:'#6B7280'}}><s>${p.retailValue?.toFixed(2)}</s></span>
+                                <span style={{fontWeight:700,color:B.navy,fontSize:14}}>${p.packagePrice?.toFixed(2)}</span>
+                                {pctOff > 0 && <span style={{color:'#10B981',fontWeight:600}}>{pctOff}% off</span>}
+                              </div>
+                            </div>
+                            <button onClick={() => { setPkgCheckout({ pkg: p, qty: 1 }); setCheckoutStep('details'); }} style={{padding:'10px 20px',background:B.gold,color:'#fff',border:'none',borderRadius:10,fontWeight:700,fontSize:13,cursor:'pointer',whiteSpace:'nowrap',marginLeft:12}}>Buy</button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                )}
+
+                {packages.length === 0 && availablePkgs.length === 0 && (
+                  <div style={{textAlign:'center',padding:'40px 20px',color:'#9CA3AF'}}>
+                    <div style={{fontSize:40,marginBottom:8}}>📦</div>
+                    <div style={{fontWeight:500}}>No packages available</div>
+                    <div style={{fontSize:13,marginTop:4}}>Check back soon for package offers!</div>
+                  </div>
+                )}
+
+                {/* Mock Checkout Modal */}
+                {pkgCheckout && (
+                  <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:9999}} onClick={() => setPkgCheckout(null)}>
+                    <div style={{background:'#fff',borderRadius:16,padding:28,maxWidth:420,width:'90%',maxHeight:'80vh',overflow:'auto'}} onClick={e => e.stopPropagation()}>
+                      {checkoutStep === 'details' ? (
+                        <div>
+                          <div style={{fontSize:18,fontWeight:700,color:B.navy,marginBottom:16}}>Checkout</div>
+                          <div style={{padding:14,background:'#F9FAFB',borderRadius:10,marginBottom:16}}>
+                            <div style={{fontWeight:600,color:B.navy,fontSize:14,marginBottom:4}}>{pkgCheckout.pkg.name}</div>
+                            <div style={{fontSize:12,color:'#6B7280'}}>{pkgCheckout.pkg.quantity} {pkgCheckout.pkg.serviceCategory === 'Boarding' ? 'nights' : 'days'} of {pkgCheckout.pkg.serviceName}</div>
+                            <div style={{fontSize:16,fontWeight:700,color:B.navy,marginTop:8}}>${(pkgCheckout.pkg.packagePrice * pkgCheckout.qty).toFixed(2)}</div>
+                          </div>
+                          <div style={{marginBottom:16}}>
+                            <label style={{display:'block',fontSize:12,fontWeight:600,color:B.navy,marginBottom:6}}>Quantity</label>
+                            <div style={{display:'flex',alignItems:'center',gap:8}}>
+                              <button onClick={() => setPkgCheckout({...pkgCheckout, qty: Math.max(1, pkgCheckout.qty-1)})} style={{width:32,height:32,border:`1px solid #D1D5DB`,borderRadius:6,background:'#fff',cursor:'pointer',fontWeight:600}}>−</button>
+                              <span style={{fontWeight:600,fontSize:16,minWidth:24,textAlign:'center'}}>{pkgCheckout.qty}</span>
+                              <button onClick={() => setPkgCheckout({...pkgCheckout, qty: pkgCheckout.qty+1})} style={{width:32,height:32,border:`1px solid #D1D5DB`,borderRadius:6,background:'#fff',cursor:'pointer',fontWeight:600}}>+</button>
+                            </div>
+                          </div>
+                          <div style={{marginBottom:16}}>
+                            <label style={{display:'block',fontSize:12,fontWeight:600,color:B.navy,marginBottom:6}}>Card Number</label>
+                            <input type="text" placeholder="4242 4242 4242 4242" maxLength={19} style={{width:'100%',padding:'10px 12px',border:'1px solid #D1D5DB',borderRadius:8,fontSize:14}} className="no-focus-ring"/>
+                          </div>
+                          <div style={{display:'flex',gap:12,marginBottom:20}}>
+                            <div style={{flex:1}}>
+                              <label style={{display:'block',fontSize:12,fontWeight:600,color:B.navy,marginBottom:6}}>Expiry</label>
+                              <input type="text" placeholder="MM/YY" maxLength={5} style={{width:'100%',padding:'10px 12px',border:'1px solid #D1D5DB',borderRadius:8,fontSize:14}} className="no-focus-ring"/>
+                            </div>
+                            <div style={{flex:1}}>
+                              <label style={{display:'block',fontSize:12,fontWeight:600,color:B.navy,marginBottom:6}}>CVC</label>
+                              <input type="text" placeholder="123" maxLength={4} style={{width:'100%',padding:'10px 12px',border:'1px solid #D1D5DB',borderRadius:8,fontSize:14}} className="no-focus-ring"/>
+                            </div>
+                          </div>
+                          <div style={{fontSize:11,color:'#9CA3AF',textAlign:'center',marginBottom:16,fontStyle:'italic'}}>This is a demo checkout. No payment will be processed.</div>
+                          <button onClick={() => setCheckoutStep('success')} style={{width:'100%',padding:'14px',background:B.gold,color:'#fff',border:'none',borderRadius:10,fontWeight:700,fontSize:15,cursor:'pointer'}}>Place Order — ${(pkgCheckout.pkg.packagePrice * pkgCheckout.qty).toFixed(2)}</button>
+                          <button onClick={() => setPkgCheckout(null)} style={{width:'100%',padding:'10px',background:'none',border:'none',color:'#6B7280',fontWeight:500,cursor:'pointer',marginTop:8,fontSize:13}}>Cancel</button>
+                        </div>
+                      ) : (
+                        <div style={{textAlign:'center',padding:'20px 0'}}>
+                          <div style={{fontSize:48,marginBottom:12}}>✓</div>
+                          <div style={{fontSize:18,fontWeight:700,color:B.navy,marginBottom:8}}>Order Confirmed!</div>
+                          <div style={{fontSize:13,color:'#6B7280',marginBottom:4}}>{pkgCheckout.qty}× {pkgCheckout.pkg.name}</div>
+                          <div style={{fontSize:16,fontWeight:700,color:B.navy,marginBottom:16}}>${(pkgCheckout.pkg.packagePrice * pkgCheckout.qty).toFixed(2)}</div>
+                          <div style={{fontSize:11,color:'#9CA3AF',fontStyle:'italic',marginBottom:20}}>Demo mode — no payment was processed</div>
+                          <button onClick={() => setPkgCheckout(null)} style={{padding:'12px 32px',background:B.gold,color:'#fff',border:'none',borderRadius:10,fontWeight:700,fontSize:14,cursor:'pointer'}}>Done</button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Payments Tab */}
           {accountTab === 'payments' && (

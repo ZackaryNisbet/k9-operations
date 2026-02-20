@@ -7482,8 +7482,8 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           const totalOutstanding = clientSales.reduce((sum, sale) => {
             const pkg = pkgs.find(p => p.id === sale.packageId);
             const remaining = (sale.quantity || 0) - (sale.used || 0);
-            const unitPrice = pkg ? (pkg.packagePrice / pkg.quantity) : 0;
-            return sum + (remaining > 0 ? remaining * unitPrice : 0);
+            const retailUnitRate = ((sale.retailValue || pkg?.retailValue || 0) / (pkg?.quantity || 1));
+            return sum + (remaining > 0 ? remaining * retailUnitRate : 0);
           }, 0);
           const storeCredit = client.storeCredit || 0;
 
@@ -7520,8 +7520,8 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                     {clientSales.map(sale => {
                       const pkg = pkgs.find(p => p.id === sale.packageId);
                       const remaining = Math.max(0, (sale.quantity || 0) - (sale.used || 0));
-                      const unitPrice = pkg ? (pkg.packagePrice / pkg.quantity) : 0;
-                      const value = remaining * unitPrice;
+                      const retailUnitRate = ((sale.retailValue || pkg?.retailValue || 0) / (pkg?.quantity || 1));
+                      const value = remaining * retailUnitRate;
                       let expiresAt = null;
                       if (pkg?.expirationType === "relative" && sale.purchaseDate) {
                         const d = new Date(sale.purchaseDate + "T00:00:00");
@@ -13447,6 +13447,45 @@ function PricingTab({ data, save }) {
           );
         })}
       </Card>
+
+      {/* Service Descriptions */}
+      <Card style={{ padding: "24px 28px", marginTop: 16 }}>
+        {sectionTitle("Service Descriptions", "These descriptions appear in auto-generated package details and on the customer booking page.")}
+        {(() => {
+          const allServices = [];
+          Object.keys(p.boardingRates || {}).forEach(svc => { if ((p.boardingRates[svc] || 0) > 0) allServices.push({ name: svc, category: "Boarding" }); });
+          if ((p.daycareRates?.fullDay || 0) > 0) allServices.push({ name: "Full Day Daycare", category: "Daycare" });
+          if ((p.daycareRates?.halfDay || 0) > 0) allServices.push({ name: "Half Day Daycare", category: "Daycare" });
+          if ((p.dayboardingRate || 0) > 0) allServices.push({ name: "Day Boarding", category: "Daycare" });
+          Object.keys(p.addOns || {}).forEach(svc => { if ((p.addOns[svc] || 0) > 0) allServices.push({ name: svc, category: "Add-On" }); });
+          const descs = data.serviceDescriptions || {};
+          const defaults = {
+            "Luxury Suite": "Our most spacious cage-free suite featuring Kuranda luxury bedding, flat-screen TV tuned to Dog TV, glass privacy doors, and a sound-resistant environment.",
+            "Executive Room": "A generous cage-free room with Kuranda bedding, glass privacy doors, and top-of-the-line Snyder enclosures. Ideal for one or two dogs.",
+            "Double Compartment": "A comfortable compartment with comfort mat bedding, perfect for dogs up to 100 lbs or those who participate in daycare during the day.",
+            "Single Compartment": "A cozy compartment ideal for smaller dogs under 35 lbs or those who are comfortably crate-trained at home.",
+            "Full Day Daycare": "A full day of supervised play, socialization, and enrichment activities with other dogs, including meals and rest periods.",
+            "Half Day Daycare": "A half day of supervised play and socialization, perfect for dogs who need a shorter session of enrichment.",
+            "Day Boarding": "Daytime boarding with supervised play and socialization, ideal for dogs who need care during the day without overnight stays.",
+          };
+          return allServices.map(svc => (
+            <div key={svc.name} style={{ marginBottom: 10, padding: "12px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{svc.name}</span>
+                <Badge size="sm" color="default">{svc.category}</Badge>
+              </div>
+              <textarea
+                value={descs[svc.name] ?? defaults[svc.name] ?? ""}
+                onChange={(e) => save({ ...data, serviceDescriptions: { ...descs, [svc.name]: e.target.value } })}
+                placeholder="Describe this service in 1-2 sentences..."
+                rows={2}
+                style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 8, background: C.surface, fontSize: 12, color: C.text, fontFamily: "inherit", resize: "vertical", lineHeight: 1.5 }}
+                className="no-focus-ring"
+              />
+            </div>
+          ));
+        })()}
+      </Card>
     </div>
   );
 }
@@ -13460,16 +13499,22 @@ function PackagesSection({ data, save }) {
   const pkgs = data.packages || [];
   const sales = data.packageSales || [];
 
-  const handleDeletePackage = async (id) => {
-    const hasSales = sales.some(s => s.packageId === id);
-    if (hasSales) {
-      alert("Cannot delete package with existing sales.");
-      return;
-    }
-    const confirmed = window.confirm("Are you sure you want to delete this package?");
+  const handleArchivePackage = async (id) => {
+    const confirmed = window.confirm("Archive this package? It will no longer be available for sale but existing sales are unaffected.");
     if (!confirmed) return;
-    await save({ ...data, packages: pkgs.filter(p => p.id !== id) });
+    await save({ ...data, packages: pkgs.map(p => p.id === id ? { ...p, active: false } : p) });
   };
+
+  const handleReactivatePackage = async (id) => {
+    await save({ ...data, packages: pkgs.map(p => p.id === id ? { ...p, active: true } : p) });
+  };
+
+  const handleToggleOnline = async (id) => {
+    await save({ ...data, packages: pkgs.map(p => p.id === id ? { ...p, availableOnline: !p.availableOnline } : p) });
+  };
+
+  const activePkgs = pkgs.filter(p => p.active !== false);
+  const archivedPkgs = pkgs.filter(p => p.active === false);
 
   return (
     <div style={{padding:24}}>
@@ -13477,7 +13522,7 @@ function PackagesSection({ data, save }) {
         <h2 style={{margin:0,fontSize:24,fontWeight:700,color:C.text}}>Packages</h2>
         <div style={{display:"flex",gap:12}}>
           <div style={{display:"flex",gap:6}}>
-            {[["packages", "Packages"], ["reports", "Reports"]].map(([view, label]) => (
+            {[["packages", "Packages"], ["archived", "Archived"], ["reports", "Reports"]].map(([view, label]) => (
               <button key={view} onClick={() => setActiveView(view)} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${activeView === view ? C.pri : C.border}`,background:activeView === view ? C.priLt : "transparent",color:activeView === view ? C.pri : C.text,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
             ))}
           </div>
@@ -13492,29 +13537,62 @@ function PackagesSection({ data, save }) {
 
       {activeView === "reports" ? (
         <PackageReportsTab data={data} />
-      ) : pkgs.length === 0 ? (
+      ) : activeView === "archived" ? (
+        archivedPkgs.length === 0 ? (
+          <div style={{textAlign:"center",padding:"60px 20px",color:C.textMut}}>
+            <div style={{fontSize:48,marginBottom:16}}>📦</div>
+            <p style={{fontSize:16,fontWeight:500,margin:0}}>No archived packages</p>
+          </div>
+        ) : (
+          <Card>
+            <div style={{display:"grid",gridTemplateColumns:"2.5fr 1.2fr 0.6fr 0.9fr 1fr",gap:0,alignItems:"stretch"}}>
+              {["Package Name","Service","Qty","Price",""].map(h => (
+                <div key={h} style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>{h}</div>
+              ))}
+              {archivedPkgs.map(pkg => (
+                <React.Fragment key={pkg.id}>
+                  <div style={{padding:"12px",borderBottom:`1px solid ${C.borderLight}`,opacity:0.6}}>
+                    <div style={{fontWeight:600,color:C.text,fontSize:14}}>{pkg.name}</div>
+                    <div style={{fontSize:12,color:C.textMut,marginTop:2}}>{pkg.description?.substring(0,40)}</div>
+                  </div>
+                  <div style={{padding:"12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13,opacity:0.6}}>{pkg.serviceName}</div>
+                  <div style={{padding:"12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13,textAlign:"center",opacity:0.6}}>{pkg.quantity}</div>
+                  <div style={{padding:"12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13,opacity:0.6}}>${pkg.packagePrice?.toFixed(2)}</div>
+                  <div style={{padding:"12px",borderBottom:`1px solid ${C.borderLight}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <Btn onClick={() => handleReactivatePackage(pkg.id)} variant="secondary" size="sm">Reactivate</Btn>
+                  </div>
+                </React.Fragment>
+              ))}
+            </div>
+          </Card>
+        )
+      ) : activePkgs.length === 0 ? (
         <div style={{textAlign:"center",padding:"60px 20px",color:C.textMut}}>
           <div style={{fontSize:48,marginBottom:16}}>🎁</div>
           <p style={{fontSize:16,fontWeight:500,margin:0}}>No packages yet. Create one to get started!</p>
         </div>
       ) : (
         <Card>
-          <div style={{display:"grid",gridTemplateColumns:"2.5fr 1.2fr 0.6fr 0.9fr 0.9fr 0.9fr 0.9fr 1.1fr 0.7fr",gap:0,alignItems:"stretch"}}>
+          <div style={{display:"grid",gridTemplateColumns:"2.2fr 1.1fr 0.5fr 0.8fr 0.8fr 0.8fr 0.8fr 0.8fr 0.9fr 0.6fr 0.5fr",gap:0,alignItems:"stretch"}}>
             {/* Header */}
             <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Package Name</div>
             <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Service</div>
             <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Qty</div>
             <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Price</div>
             <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Retail</div>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Price/Unit</div>
             <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Savings</div>
             <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Savings/Unit</div>
             <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Expiration</div>
-            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Sold</div>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`}}>Online</div>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`,textAlign:"center"}}>Actions</div>
 
             {/* Data rows */}
-            {pkgs.map((pkg) => {
+            {activePkgs.map((pkg) => {
               const soldQty = sales.filter(s => s.packageId === pkg.id).reduce((sum, s) => sum + s.quantity, 0);
               const expirationText = pkg.expirationType === "relative" ? `${pkg.expirationDays} days` : pkg.expirationDate;
+              const retailPerUnit = pkg.quantity > 0 ? (pkg.retailValue || 0) / pkg.quantity : 0;
+              const discountPerUnit = pkg.quantity > 0 ? (pkg.packagePrice || 0) / pkg.quantity : 0;
               return (
                 <React.Fragment key={pkg.id}>
                   <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,cursor:"pointer",background:editPkg?.id === pkg.id ? C.surfaceHover : "transparent"}} onClick={() => setEditPkg(pkg)}>
@@ -13525,16 +13603,22 @@ function PackagesSection({ data, save }) {
                   <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13,textAlign:"center"}}>{pkg.quantity}</div>
                   <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13}}>${pkg.packagePrice?.toFixed(2)}</div>
                   <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13}}>${pkg.retailValue?.toFixed(2)}</div>
+                  <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,fontSize:13}}>
+                    <div style={{fontSize:11,color:C.textMut,marginBottom:2}}>${retailPerUnit.toFixed(2)}</div>
+                    <div style={{fontWeight:600,color:C.text}}>${discountPerUnit.toFixed(2)}</div>
+                  </div>
                   <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.suc,fontSize:13,fontWeight:600}}>${pkg.savings?.toFixed(2)}</div>
                   <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13}}>${pkg.savingsPerUnit?.toFixed(2)}</div>
                   <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,color:C.text,fontSize:13}}>{expirationText}</div>
-                  <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                    <span style={{color:C.text,fontSize:13}}>{soldQty}</span>
-                    {!sales.some(s => s.packageId === pkg.id) && (
-                      <button onClick={() => handleDeletePackage(pkg.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.dan,padding:4,display:"flex",alignItems:"center"}}>
-                        <I.Trash/>
-                      </button>
-                    )}
+                  <div style={{padding:"12px",borderBottom:`1px solid ${C.borderLight}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <button onClick={() => handleToggleOnline(pkg.id)} style={{width:48,height:28,borderRadius:14,border:"none",background:pkg.availableOnline ? C.pri : C.border,cursor:"pointer",position:"relative",transition:"background 0.2s"}} title={pkg.availableOnline ? "Available online" : "Not available online"}>
+                      <div style={{position:"absolute",width:24,height:24,borderRadius:"50%",background:"white",top:2,left:pkg.availableOnline ? 22 : 2,transition:"left 0.2s"}}/>
+                    </button>
+                  </div>
+                  <div style={{padding:"12px 12px",borderBottom:`1px solid ${C.borderLight}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <button onClick={() => handleArchivePackage(pkg.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.text,padding:4,display:"flex",alignItems:"center"}} title="Archive package">
+                      <I.X/>
+                    </button>
                   </div>
                 </React.Fragment>
               );
@@ -13557,7 +13641,7 @@ function CreatePackageWizard({ data, save, onClose }) {
   const [pricingMode, setPricingMode] = useState("discount-pct");
   const [discountPct, setDiscountPct] = useState(10);
   const [discountDollar, setDiscountDollar] = useState(0);
-  const [customPrice, setCustomPrice] = useState(0);
+  const [customPrice, setCustomPrice] = useState("");
   const [expirationType, setExpirationType] = useState("relative");
   const [expirationDays, setExpirationDays] = useState(90);
   const [expirationDate, setExpirationDate] = useState("");
@@ -13603,7 +13687,7 @@ function CreatePackageWizard({ data, save, onClose }) {
   } else if (pricingMode === "discount-dollar") {
     packagePrice = retailValue - discountDollar;
   } else {
-    packagePrice = customPrice;
+    packagePrice = Number(customPrice) || 0;
   }
 
   const savings = Math.max(0, retailValue - packagePrice);
@@ -13631,15 +13715,16 @@ function CreatePackageWizard({ data, save, onClose }) {
 
   const handleCreate = async () => {
     const finalDiscountPct = retailValue > 0 ? ((retailValue - packagePrice) / retailValue) * 100 : 0;
+    const unitLabelPlural = selectedService.unitLabel === "night" ? "Nights" : selectedService.unitLabel === "day" ? "Days" : "Coupons";
     const autoName = finalDiscountPct > 0
-      ? `${finalDiscountPct.toFixed(0)}% Off ${quantity}-${selectedService.unitLabel} ${selectedService.name} Package`
-      : `${quantity}-${selectedService.unitLabel} ${selectedService.name} Package`;
+      ? `${finalDiscountPct.toFixed(0)}% Off ${quantity} ${selectedService.name} ${unitLabelPlural}`
+      : `${quantity} ${selectedService.name} ${unitLabelPlural} — $${packagePrice.toFixed(2)}`;
 
     const expirationText = expirationType === "relative"
-      ? `Package expires ${expirationDays} days after purchase`
-      : `Package expires on ${expirationDate}`;
-
-    const autoDesc = `Save $${savings.toFixed(2)} (${finalDiscountPct.toFixed(1)}% off retail) on ${quantity} ${selectedService.unitLabel}s of ${selectedService.name}. That's $${savingsPerUnit.toFixed(2)} savings per ${selectedService.unitLabel}! ${expirationText}`;
+      ? `Package expires ${expirationDays} days after purchase.`
+      : `Package expires on ${expirationDate}.`;
+    const serviceDesc = (data.serviceDescriptions || {})[selectedService.name] || "";
+    const autoDesc = `Save $${savings.toFixed(2)} (${finalDiscountPct.toFixed(1)}% off retail) on ${quantity} ${selectedService.unitLabel === "night" ? "nights" : selectedService.unitLabel === "day" ? "days" : "units"} of ${selectedService.name}. That's $${savingsPerUnit.toFixed(2)} savings per ${selectedService.unitLabel}!${serviceDesc ? " " + serviceDesc : ""} ${expirationText}`;
 
     const newPkg = {
       id: "pkg_" + gid(),
@@ -13666,6 +13751,14 @@ function CreatePackageWizard({ data, save, onClose }) {
     await save({ ...data, packages: [...(data.packages || []), newPkg] });
     onClose();
   };
+
+  // Auto-generated name/desc preview
+  const unitLabelPlural = selectedService ? (selectedService.unitLabel === "night" ? "Nights" : selectedService.unitLabel === "day" ? "Days" : "Coupons") : "";
+  const previewDiscountPct = retailValue > 0 ? ((retailValue - packagePrice) / retailValue) * 100 : 0;
+  const autoNamePreview = selectedService ? (previewDiscountPct > 0 ? `${previewDiscountPct.toFixed(0)}% Off ${quantity} ${selectedService.name} ${unitLabelPlural}` : `${quantity} ${selectedService.name} ${unitLabelPlural} — $${packagePrice.toFixed(2)}`) : "";
+  const serviceDescPreview = selectedService ? ((data.serviceDescriptions || {})[selectedService.name] || "") : "";
+  const expirationPreview = expirationType === "relative" ? `Package expires ${expirationDays} days after purchase.` : (expirationDate ? `Package expires on ${expirationDate}.` : "");
+  const autoDescPreview = selectedService ? `Save $${savings.toFixed(2)} (${previewDiscountPct.toFixed(1)}% off retail) on ${quantity} ${selectedService.unitLabel === "night" ? "nights" : selectedService.unitLabel === "day" ? "days" : "units"} of ${selectedService.name}. That's $${savingsPerUnit.toFixed(2)} savings per ${selectedService.unitLabel}!${serviceDescPreview ? " " + serviceDescPreview : ""} ${expirationPreview}` : "";
 
   return (
     <Modal title="Create Package" wide onClose={onClose}>
@@ -13781,13 +13874,16 @@ function CreatePackageWizard({ data, save, onClose }) {
                   {opt.mode === "custom" && (
                     <input
                       type="number"
-                      value={customPrice}
-                      onChange={(e) => { setCustomPrice(Math.max(0, parseFloat(e.target.value) || 0)); setPricingMode("custom"); }}
+                      value={customPrice === "" ? "" : customPrice}
+                      onChange={(e) => { setCustomPrice(e.target.value === "" ? "" : Math.max(0, parseFloat(e.target.value) || 0)); setPricingMode("custom"); }}
                       style={{width:70,padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}}
                       className="no-focus-ring"
                     />
                   )}
                   {opt.mode === "custom" && <span style={{fontSize:12,color:C.textMut}}>$</span>}
+                  {opt.mode === "custom" && pricingMode === "custom" && retailValue > 0 && Number(customPrice) > 0 && Number(customPrice) < retailValue && (
+                    <span style={{fontSize:11,color:C.suc,fontWeight:600,marginLeft:4}}>≈ {((retailValue - Number(customPrice)) / retailValue * 100).toFixed(1)}% off</span>
+                  )}
                 </label>
               </div>
             ))}
@@ -13795,12 +13891,20 @@ function CreatePackageWizard({ data, save, onClose }) {
 
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:24,padding:12,background:C.bg,borderRadius:8}}>
             <div>
-              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Total Savings</div>
-              <div style={{fontSize:18,fontWeight:700,color:savings > 0 ? C.suc : C.textMut}}>${savings.toFixed(2)}</div>
+              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Retail / Unit</div>
+              <div style={{fontSize:16,fontWeight:700,color:C.textMut}}>${quantity > 0 ? (retailValue / quantity).toFixed(2) : "0.00"}</div>
             </div>
             <div>
-              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Savings Per Unit</div>
-              <div style={{fontSize:18,fontWeight:700,color:C.text}}>${savingsPerUnit.toFixed(2)}</div>
+              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Price / Unit</div>
+              <div style={{fontSize:16,fontWeight:700,color:C.pri}}>${quantity > 0 ? ((pricingMode === "custom" ? (Number(customPrice) || 0) : packagePrice) / quantity).toFixed(2) : "0.00"}</div>
+            </div>
+            <div>
+              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Total Savings</div>
+              <div style={{fontSize:16,fontWeight:700,color:savings > 0 ? C.suc : C.textMut}}>${savings.toFixed(2)}</div>
+            </div>
+            <div>
+              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Savings / Unit</div>
+              <div style={{fontSize:16,fontWeight:700,color:C.text}}>${savingsPerUnit.toFixed(2)}</div>
             </div>
           </div>
 
@@ -13862,7 +13966,7 @@ function CreatePackageWizard({ data, save, onClose }) {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Auto-generated name"
+              placeholder={autoNamePreview || "Package name"}
               style={{width:"100%",padding:"10px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:14}}
               className="no-focus-ring"
             />
@@ -13873,7 +13977,7 @@ function CreatePackageWizard({ data, save, onClose }) {
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Auto-generated description"
+              placeholder={autoDescPreview || "Package description"}
               rows={4}
               style={{width:"100%",padding:"10px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:14,fontFamily:"inherit",resize:"vertical"}}
               className="no-focus-ring"
@@ -13900,6 +14004,7 @@ function CreatePackageWizard({ data, save, onClose }) {
               <div><span style={{color:C.textMut}}>Package Price:</span> ${packagePrice.toFixed(2)}</div>
               <div><span style={{color:C.textMut}}>Savings:</span> <span style={{color:C.suc,fontWeight:600}}>${savings.toFixed(2)}</span></div>
               <div><span style={{color:C.textMut}}>Savings/Unit:</span> ${savingsPerUnit.toFixed(2)}</div>
+              <div><span style={{color:C.textMut}}>Price/Unit:</span> ${quantity > 0 ? (packagePrice / quantity).toFixed(2) : "0.00"}</div>
               <div><span style={{color:C.textMut}}>Expires:</span> {expirationType === "relative" ? `${expirationDays} days` : expirationDate}</div>
             </div>
           </Card>
@@ -13920,7 +14025,7 @@ function SellPackageModal({ data, save, onClose }) {
   const [cartItems, setCartItems] = useState([{ packageId: null, qty: 1 }]);
   const [success, setSuccess] = useState(false);
 
-  const pkgs = data.packages?.filter(p => p.active) || [];
+  const pkgs = data.packages?.filter(p => p.active !== false) || [];
   const clients = data.clients || [];
 
   const filteredClients = !selectedClient
@@ -13970,6 +14075,8 @@ function SellPackageModal({ data, save, onClose }) {
       })(),
       unitsRemaining: (pkgs.find(p => p.id === item.packageId)?.quantity || 1) * item.qty,
       status: "active",
+      used: 0,
+      retailValue: pkgs.find(p => p.id === item.packageId)?.retailValue || 0,
     }));
 
     await save({ ...data, packageSales: [...(data.packageSales || []), ...sales] });
@@ -15460,59 +15567,85 @@ function EnterpriseOperationsPage({ data, save, nav, profile, handleLocationChan
 // ═══════════════════════════════════════════════════════════════════════════
 function EnterprisePackagesPage({ data, save, allLocations }) {
   const [showCreate, setShowCreate] = useState(false);
-  const [selectedPkg, setSelectedPkg] = useState(null);
   const [pushModal, setPushModal] = useState(null);
   const [pushLocations, setPushLocations] = useState([]);
   const [pushing, setPushing] = useState(false);
+  const [activeView, setActiveView] = useState("packages");
+  const [locationFilter, setLocationFilter] = useState("all");
+  const [expandedLocs, setExpandedLocs] = useState(null);
 
-  const entPkgs = data.enterprisePackages || [];
+  const entPkgs = (data.enterprisePackages || []).filter(p => p.active !== false);
+  const archivedEntPkgs = (data.enterprisePackages || []).filter(p => p.active === false);
   const locations = (allLocations || []).filter(l => !l.isEnterprise);
+  const locNameMap = Object.fromEntries(locations.map(l => [l.id, l.name]));
 
   const handleCreateEnterprisePkg = async (pkg) => {
-    const newPkg = { ...pkg, id: gid(), createdAt: todayStr(), pushedTo: [] };
-    await save({ ...data, enterprisePackages: [...entPkgs, newPkg] });
+    const newPkg = { ...pkg, id: gid(), createdAt: todayStr(), pushedTo: [], active: true };
+    await save({ ...data, enterprisePackages: [...(data.enterprisePackages || []), newPkg] });
     setShowCreate(false);
   };
 
-  const handleDeletePkg = async (pkgId) => {
-    if (!window.confirm("Delete this enterprise package template?")) return;
-    await save({ ...data, enterprisePackages: entPkgs.filter(p => p.id !== pkgId) });
-    setSelectedPkg(null);
+  const handleArchivePkg = async (pkgId) => {
+    if (!window.confirm("Archive this enterprise package? It will no longer be available for pushing to locations.")) return;
+    await save({ ...data, enterprisePackages: (data.enterprisePackages || []).map(p => p.id === pkgId ? { ...p, active: false } : p) });
+  };
+
+  const handleReactivatePkg = async (pkgId) => {
+    await save({ ...data, enterprisePackages: (data.enterprisePackages || []).map(p => p.id === pkgId ? { ...p, active: true } : p) });
   };
 
   const handlePushToLocations = async () => {
     if (!pushModal || pushLocations.length === 0) return;
     setPushing(true);
     const pkg = pushModal;
-    // Push to each selected location via RPC
     for (const locId of pushLocations) {
       try {
         const { data: locData, error } = await supabase.rpc('get_location_data', { p_location_id: locId });
         if (error || !locData) continue;
         const existing = locData.packages || [];
-        // Don't duplicate - check by name
-        if (existing.some(p => p.name === pkg.name)) continue;
+        if (existing.some(p => p.enterpriseSourceId === pkg.id)) continue;
+        // Dynamic pricing: calculate from location's rates
+        const pricing = locData.pricing || {};
+        let unitRate = 0;
+        if (pkg.serviceCategory === "Boarding") {
+          unitRate = (pricing.boardingRates || {})[pkg.serviceName] || 0;
+        } else if (pkg.serviceCategory === "Daycare") {
+          if (pkg.serviceName === "Full Day Daycare") unitRate = pricing.daycareRates?.fullDay || 0;
+          else if (pkg.serviceName === "Half Day Daycare") unitRate = pricing.daycareRates?.halfDay || 0;
+          else if (pkg.serviceName === "Day Boarding") unitRate = pricing.dayboardingRate || 0;
+        } else {
+          unitRate = (pricing.addOns || {})[pkg.serviceName] || 0;
+        }
+        const retailValue = unitRate * pkg.quantity;
+        let packagePrice = retailValue;
+        if (pkg.discountType === "percent") packagePrice = retailValue * (1 - (pkg.discountValue || 0) / 100);
+        else if (pkg.discountType === "fixed") packagePrice = retailValue - (pkg.discountValue || 0);
+        const savings = Math.max(0, retailValue - packagePrice);
         const localPkg = {
-          id: gid(), name: pkg.name, description: pkg.description,
+          id: "pkg_" + gid(), name: pkg.name, description: pkg.description,
           serviceCategory: pkg.serviceCategory, serviceName: pkg.serviceName,
-          quantity: pkg.quantity, pricingMode: pkg.pricingMode,
-          discountPct: pkg.discountPct, discountDollar: pkg.discountDollar,
-          packagePrice: pkg.packagePrice, retailValue: pkg.retailValue,
-          unitPrice: pkg.unitPrice, savings: pkg.savings, savingsPerUnit: pkg.savingsPerUnit,
+          unitRate, quantity: pkg.quantity, retailValue, packagePrice, savings,
+          savingsPerUnit: savings / Math.max(1, pkg.quantity),
+          discountType: pkg.discountType, discountValue: pkg.discountValue,
           expirationType: pkg.expirationType, expirationDays: pkg.expirationDays,
-          expirationDate: pkg.expirationDate, availableOnline: pkg.availableOnline,
-          enterpriseSourceId: pkg.id,
+          availableOnline: pkg.availableOnline, enterpriseSourceId: pkg.id,
+          active: true, createdAt: todayStr(),
         };
         await supabase.rpc('update_location_data', { p_location_id: locId, p_data: { ...locData, packages: [...existing, localPkg] } });
       } catch (e) { console.error('Push package error:', e); }
     }
-    // Update pushedTo
-    const updated = entPkgs.map(p => p.id === pkg.id ? { ...p, pushedTo: [...new Set([...(p.pushedTo || []), ...pushLocations])] } : p);
+    const updated = (data.enterprisePackages || []).map(p => p.id === pkg.id ? { ...p, pushedTo: [...new Set([...(p.pushedTo || []), ...pushLocations])] } : p);
     await save({ ...data, enterprisePackages: updated });
     setPushing(false);
     setPushModal(null);
     setPushLocations([]);
   };
+
+  // Filter packages by location
+  const filteredPkgs = locationFilter === "all" ? entPkgs : entPkgs.filter(p => (p.pushedTo || []).includes(locationFilter));
+
+  const hdrStyle = {fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`};
+  const cellStyle = {padding:"12px",borderBottom:`1px solid ${C.borderLight}`,fontSize:13,color:C.text};
 
   return (
     <div style={{ padding: 24 }}>
@@ -15521,47 +15654,160 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
           <h2 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: C.text }}>Enterprise Packages</h2>
           <p style={{ margin: "4px 0 0", fontSize: 14, color: C.textSec }}>Create package templates and roll them out to multiple locations</p>
         </div>
-        <Btn onClick={() => setShowCreate(true)} icon={<I.Plus />}>Create Package</Btn>
+        <div style={{display:"flex",gap:12,alignItems:"center"}}>
+          <div style={{display:"flex",gap:6}}>
+            {[["packages","Packages"],["archived","Archived"],["reports","Reports"]].map(([v,l]) => (
+              <button key={v} onClick={() => setActiveView(v)} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${activeView === v ? C.pri : C.border}`,background:activeView === v ? C.priLt : "transparent",color:activeView === v ? C.pri : C.text,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{l}</button>
+            ))}
+          </div>
+          {activeView === "packages" && <Btn onClick={() => setShowCreate(true)} icon={<I.Plus />}>Create Package</Btn>}
+        </div>
       </div>
 
-      {entPkgs.length === 0 ? (
-        <Card style={{ textAlign: "center", padding: "60px 20px" }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>🎁</div>
-          <p style={{ fontSize: 16, fontWeight: 500, color: C.textMut, margin: 0 }}>No enterprise packages yet. Create one to roll out to your locations.</p>
-        </Card>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 16 }}>
-          {entPkgs.map(pkg => (
-            <Card key={pkg.id} style={{ padding: "20px 24px", cursor: "pointer", border: selectedPkg?.id === pkg.id ? `2px solid ${C.pri}` : undefined }} onClick={() => setSelectedPkg(pkg)}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-                <div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{pkg.name}</div>
-                  <div style={{ fontSize: 12, color: C.textMut, marginTop: 2 }}>{pkg.serviceName} × {pkg.quantity}</div>
-                </div>
-                <Badge color={pkg.availableOnline ? "success" : "default"} size="sm">{pkg.availableOnline ? "Online" : "In-Store"}</Badge>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
-                <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Price</div><div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>${pkg.packagePrice?.toFixed(2)}</div></div>
-                <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Retail</div><div style={{ fontSize: 15, fontWeight: 600, color: C.textSec }}>${pkg.retailValue?.toFixed(2)}</div></div>
-                <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Savings</div><div style={{ fontSize: 15, fontWeight: 700, color: C.suc }}>${pkg.savings?.toFixed(2)}</div></div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ fontSize: 12, color: C.textSec }}>
-                  <span style={{ fontWeight: 600 }}>{(pkg.pushedTo || []).length}</span> of {locations.length} locations
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={e => { e.stopPropagation(); setPushModal(pkg); setPushLocations([]); }} style={{ padding: "5px 12px", borderRadius: 6, border: `1px solid ${C.pri}30`, background: C.priLt, color: C.pri, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Push to Locations</button>
-                  <button onClick={e => { e.stopPropagation(); handleDeletePkg(pkg.id); }} style={{ padding: "5px 8px", borderRadius: 6, border: `1px solid ${C.dan}30`, background: "transparent", color: C.dan, fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center" }}><I.Trash /></button>
-                </div>
+      {activeView === "packages" && (
+        <>
+          {/* Location filter */}
+          <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+            <span style={{fontSize:12,fontWeight:600,color:C.textSec}}>Filter:</span>
+            <select value={locationFilter} onChange={e => setLocationFilter(e.target.value)} style={{padding:"6px 12px",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13,background:C.surface,color:C.text,fontFamily:"inherit"}} className="no-focus-ring">
+              <option value="all">All Locations</option>
+              {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
+          </div>
+
+          {filteredPkgs.length === 0 ? (
+            <Card style={{ textAlign: "center", padding: "60px 20px" }}>
+              <div style={{ fontSize: 48, marginBottom: 16 }}>🎁</div>
+              <p style={{ fontSize: 16, fontWeight: 500, color: C.textMut, margin: 0 }}>
+                {locationFilter !== "all" ? "No enterprise packages assigned to this location." : "No enterprise packages yet. Create one to roll out to your locations."}
+              </p>
+            </Card>
+          ) : (
+            <Card>
+              <div style={{display:"grid",gridTemplateColumns:"2fr 1fr 0.5fr 1fr 2fr 0.7fr 0.7fr",gap:0,alignItems:"stretch"}}>
+                <div style={hdrStyle}>Package Name</div>
+                <div style={hdrStyle}>Service</div>
+                <div style={hdrStyle}>Qty</div>
+                <div style={hdrStyle}>Discount</div>
+                <div style={hdrStyle}>Locations</div>
+                <div style={hdrStyle}>Online</div>
+                <div style={hdrStyle}>Actions</div>
+                {filteredPkgs.map(pkg => {
+                  const discountText = pkg.discountType === "percent" ? `${pkg.discountValue}% Off` : pkg.discountType === "fixed" ? `$${pkg.discountValue} Off` : "Custom";
+                  const pushed = pkg.pushedTo || [];
+                  const showLocs = pushed.slice(0, 3);
+                  const moreLocs = pushed.length - 3;
+                  return (
+                    <React.Fragment key={pkg.id}>
+                      <div style={{...cellStyle,fontWeight:600}}>
+                        <div>{pkg.name}</div>
+                        <div style={{fontSize:11,color:C.textMut,marginTop:2,fontWeight:400}}>{pkg.description?.substring(0,50)}</div>
+                      </div>
+                      <div style={cellStyle}>{pkg.serviceName}</div>
+                      <div style={{...cellStyle,textAlign:"center"}}>{pkg.quantity}</div>
+                      <div style={cellStyle}>
+                        <Badge color="info" size="sm">{discountText}</Badge>
+                      </div>
+                      <div style={{...cellStyle,display:"flex",flexWrap:"wrap",gap:4,alignItems:"center"}}>
+                        {pushed.length === 0 ? (
+                          <span style={{fontSize:11,color:C.textMut,fontStyle:"italic"}}>Not pushed yet</span>
+                        ) : (
+                          <>
+                            {showLocs.map(locId => (
+                              <span key={locId} style={{fontSize:11,padding:"2px 8px",borderRadius:12,background:C.priLt,color:C.pri,fontWeight:600,whiteSpace:"nowrap"}}>{locNameMap[locId] || locId}</span>
+                            ))}
+                            {moreLocs > 0 && (
+                              <span onClick={(e) => { e.stopPropagation(); setExpandedLocs(expandedLocs === pkg.id ? null : pkg.id); }} style={{fontSize:11,padding:"2px 8px",borderRadius:12,background:C.bg,color:C.textSec,fontWeight:600,cursor:"pointer"}}>+{moreLocs} more</span>
+                            )}
+                          </>
+                        )}
+                        {expandedLocs === pkg.id && pushed.length > 3 && (
+                          <div style={{width:"100%",marginTop:4,padding:8,background:C.bg,borderRadius:8,fontSize:11,color:C.textSec,lineHeight:1.8}}>
+                            {pushed.map(locId => locNameMap[locId] || locId).join(", ")}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{...cellStyle,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                        <div onClick={() => { const updated = (data.enterprisePackages || []).map(p => p.id === pkg.id ? { ...p, availableOnline: !p.availableOnline } : p); save({ ...data, enterprisePackages: updated }); }} style={{width:40,height:24,borderRadius:12,border:"none",background:pkg.availableOnline ? C.suc : C.border,cursor:"pointer",position:"relative",transition:"background 0.2s"}}>
+                          <div style={{width:18,height:18,borderRadius:9,background:"#fff",boxShadow:"0 1px 3px rgba(0,0,0,0.2)",position:"absolute",top:3,left:pkg.availableOnline ? 19 : 3,transition:"left 0.2s"}} />
+                        </div>
+                      </div>
+                      <div style={{...cellStyle,display:"flex",gap:6,alignItems:"center",justifyContent:"center"}}>
+                        <button onClick={() => { setPushModal(pkg); setPushLocations([]); }} style={{padding:"4px 10px",borderRadius:6,border:`1px solid ${C.pri}30`,background:C.priLt,color:C.pri,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}} title="Push to locations">Push</button>
+                        <button onClick={() => handleArchivePkg(pkg.id)} style={{padding:"4px 6px",borderRadius:6,border:`1px solid ${C.border}`,background:"transparent",color:C.textMut,fontSize:11,cursor:"pointer",display:"flex",alignItems:"center"}} title="Archive"><I.X/></button>
+                      </div>
+                    </React.Fragment>
+                  );
+                })}
               </div>
             </Card>
-          ))}
-        </div>
+          )}
+        </>
+      )}
+
+      {activeView === "archived" && (
+        archivedEntPkgs.length === 0 ? (
+          <div style={{textAlign:"center",padding:"60px 20px",color:C.textMut}}>
+            <div style={{fontSize:48,marginBottom:16}}>📦</div>
+            <p style={{fontSize:16,fontWeight:500,margin:0}}>No archived enterprise packages</p>
+          </div>
+        ) : (
+          <Card>
+            <div style={{display:"grid",gridTemplateColumns:"2.5fr 1.2fr 0.6fr 1fr 1fr",gap:0,alignItems:"stretch"}}>
+              {["Package Name","Service","Qty","Discount",""].map(h => (
+                <div key={h} style={hdrStyle}>{h}</div>
+              ))}
+              {archivedEntPkgs.map(pkg => (
+                <React.Fragment key={pkg.id}>
+                  <div style={{...cellStyle,opacity:0.6}}><div style={{fontWeight:600}}>{pkg.name}</div></div>
+                  <div style={{...cellStyle,opacity:0.6}}>{pkg.serviceName}</div>
+                  <div style={{...cellStyle,opacity:0.6,textAlign:"center"}}>{pkg.quantity}</div>
+                  <div style={{...cellStyle,opacity:0.6}}>{pkg.discountType === "percent" ? `${pkg.discountValue}% Off` : pkg.discountType === "fixed" ? `$${pkg.discountValue} Off` : "Custom"}</div>
+                  <div style={{...cellStyle,display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    <Btn onClick={() => handleReactivatePkg(pkg.id)} variant="secondary" size="sm">Reactivate</Btn>
+                  </div>
+                </React.Fragment>
+              ))}
+            </div>
+          </Card>
+        )
+      )}
+
+      {activeView === "reports" && (
+        <Card style={{padding:24}}>
+          <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:16}}>Enterprise Package Reports</div>
+          <p style={{fontSize:13,color:C.textSec,marginBottom:20}}>Aggregated outstanding package value across all locations. Data loads from each location's package sales.</p>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16,marginBottom:24}}>
+            <Card style={{padding:16,textAlign:"center",background:C.bg}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",marginBottom:8}}>Enterprise Templates</div>
+              <div style={{fontSize:24,fontWeight:700,color:C.pri}}>{entPkgs.length}</div>
+            </Card>
+            <Card style={{padding:16,textAlign:"center",background:C.bg}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",marginBottom:8}}>Locations With Packages</div>
+              <div style={{fontSize:24,fontWeight:700,color:C.suc}}>{new Set(entPkgs.flatMap(p => p.pushedTo || [])).size}</div>
+            </Card>
+            <Card style={{padding:16,textAlign:"center",background:C.bg}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",marginBottom:8}}>Total Pushes</div>
+              <div style={{fontSize:24,fontWeight:700,color:C.acc}}>{entPkgs.reduce((sum, p) => sum + (p.pushedTo || []).length, 0)}</div>
+            </Card>
+          </div>
+          <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:12}}>Packages by Location</div>
+          {locations.map(loc => {
+            const locPkgs = entPkgs.filter(p => (p.pushedTo || []).includes(loc.id));
+            if (locPkgs.length === 0) return null;
+            return (
+              <div key={loc.id} style={{padding:"12px 16px",borderRadius:8,border:`1px solid ${C.borderLight}`,marginBottom:8,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{fontWeight:600,fontSize:13,color:C.text}}>{loc.name}</div>
+                <Badge size="sm">{locPkgs.length} package{locPkgs.length !== 1 ? "s" : ""}</Badge>
+              </div>
+            );
+          })}
+        </Card>
       )}
 
       {/* Create Package Modal */}
       {showCreate && (
-        <Modal title="Create Enterprise Package" onClose={() => setShowCreate(false)} width={560}>
+        <Modal title="Create Enterprise Package" onClose={() => setShowCreate(false)} wide>
           <EnterpriseCreatePkgForm onSave={handleCreateEnterprisePkg} onCancel={() => setShowCreate(false)} />
         </Modal>
       )}
@@ -15570,7 +15816,7 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
       {pushModal && (
         <Modal title={`Push "${pushModal.name}" to Locations`} onClose={() => setPushModal(null)} width={480}>
           <div style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 13, color: C.textSec, marginBottom: 12 }}>Select locations to receive this package template:</div>
+            <div style={{ fontSize: 13, color: C.textSec, marginBottom: 12 }}>Select locations to receive this package template. Pricing will be calculated dynamically from each location's rates.</div>
             {locations.map(loc => {
               const alreadyPushed = (pushModal.pushedTo || []).includes(loc.id);
               const selected = pushLocations.includes(loc.id);
@@ -15598,97 +15844,168 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
   );
 }
 
-// Inline form for enterprise package creation
+// Enterprise package creation wizard (multi-step)
 function EnterpriseCreatePkgForm({ onSave, onCancel }) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
+  const [step, setStep] = useState(1);
   const [serviceCategory, setServiceCategory] = useState("Boarding");
   const [serviceName, setServiceName] = useState("");
-  const [unitPrice, setUnitPrice] = useState(0);
   const [quantity, setQuantity] = useState(10);
-  const [pricingMode, setPricingMode] = useState("discount-pct");
-  const [discountPct, setDiscountPct] = useState(10);
-  const [discountDollar, setDiscountDollar] = useState(0);
-  const [customPrice, setCustomPrice] = useState(0);
+  const [discountType, setDiscountType] = useState("percent");
+  const [discountValue, setDiscountValue] = useState(10);
   const [expirationType, setExpirationType] = useState("relative");
   const [expirationDays, setExpirationDays] = useState(180);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [availableOnline, setAvailableOnline] = useState(true);
 
-  const retailValue = unitPrice * quantity;
-  const packagePrice = pricingMode === "discount-pct" ? retailValue * (1 - discountPct / 100) :
-    pricingMode === "discount-dollar" ? retailValue - discountDollar : customPrice;
-  const savings = retailValue - packagePrice;
-  const savingsPerUnit = quantity > 0 ? savings / quantity : 0;
+  const serviceOptions = {
+    "Boarding": ["Luxury Suite", "Executive Room", "Double Compartment", "Single Compartment"],
+    "Daycare": ["Full Day Daycare", "Half Day Daycare", "Day Boarding"],
+    "Add-Ons": ["Standard Bath", "Hypo Bath", "Medicated Bath", "Whitening Bath"]
+  };
 
-  const inputStyle = { width: "100%", padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", background: C.surface, color: C.text };
-  const labelStyle = { fontSize: 12, fontWeight: 600, color: C.text, display: "block", marginBottom: 4 };
+  const unitLabel = serviceCategory === "Boarding" ? "night" : serviceCategory === "Daycare" ? "day" : "unit";
+  const unitLabelPlural = unitLabel === "night" ? "Nights" : unitLabel === "day" ? "Days" : "Coupons";
+  const autoName = discountType === "percent" && discountValue > 0
+    ? `${discountValue}% Off ${quantity} ${serviceName || serviceCategory} ${unitLabelPlural}`
+    : `${quantity} ${serviceName || serviceCategory} ${unitLabelPlural}`;
+  const autoDesc = `Enterprise package: ${discountType === "percent" ? discountValue + "% off" : "$" + discountValue + " off"} ${quantity} ${unitLabelPlural.toLowerCase()} of ${serviceName || serviceCategory}. Pricing is calculated dynamically per location. ${expirationType === "relative" ? `Expires ${expirationDays} days after purchase.` : "No expiration."}`;
 
-  const handleSubmit = () => {
-    if (!name.trim() || !serviceName.trim() || unitPrice <= 0) return;
-    onSave({ name, description, serviceCategory, serviceName, unitPrice, quantity, pricingMode, discountPct, discountDollar, packagePrice: Math.round(packagePrice * 100) / 100, retailValue: Math.round(retailValue * 100) / 100, savings: Math.round(savings * 100) / 100, savingsPerUnit: Math.round(savingsPerUnit * 100) / 100, expirationType, expirationDays, availableOnline });
+  const handleCreate = () => {
+    if (!serviceName) return;
+    onSave({
+      name: name || autoName,
+      description: description || autoDesc,
+      serviceCategory, serviceName, quantity,
+      discountType, discountValue,
+      expirationType, expirationDays: expirationType === "relative" ? expirationDays : null,
+      availableOnline,
+    });
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div>
-        <label style={labelStyle}>Package Name *</label>
-        <input value={name} onChange={e => setName(e.target.value)} style={inputStyle} placeholder="e.g., 10-Night Boarding Bundle" />
-      </div>
-      <div>
-        <label style={labelStyle}>Description</label>
-        <input value={description} onChange={e => setDescription(e.target.value)} style={inputStyle} placeholder="Brief description" />
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+    <div>
+      {step === 1 && (
         <div>
-          <label style={labelStyle}>Service Category</label>
-          <CustomSelect value={serviceCategory} onChange={v=>setServiceCategory(v)} options={["Boarding","Daycare","Day Boarding","Grooming"].map(o=>({value:o,label:o}))}/>
+          <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:16}}>Step 1: Select Service</div>
+          <div style={{display:"flex",gap:8,marginBottom:20}}>
+            {Object.keys(serviceOptions).map(cat => (
+              <button key={cat} onClick={() => { setServiceCategory(cat); setServiceName(""); }}
+                style={{flex:1,padding:"10px 16px",border:`2px solid ${serviceCategory === cat ? C.acc : C.border}`,background:serviceCategory === cat ? C.accLt : "transparent",borderRadius:8,fontWeight:600,cursor:"pointer",color:C.text,fontSize:13,transition:"all 0.2s"}}>{cat}</button>
+            ))}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12,marginBottom:24}}>
+            {(serviceOptions[serviceCategory] || []).map(svc => (
+              <Card key={svc} onClick={() => setServiceName(svc)} hoverable
+                style={{padding:16,cursor:"pointer",border:`2px solid ${serviceName === svc ? C.acc : C.border}`,background:serviceName === svc ? C.accLt : "transparent",textAlign:"center"}}>
+                <div style={{fontWeight:600,color:C.text}}>{svc}</div>
+                <div style={{fontSize:11,color:C.textMut,marginTop:4}}>per {unitLabel}</div>
+              </Card>
+            ))}
+          </div>
+          <div style={{display:"flex",gap:12,justifyContent:"flex-end"}}>
+            <Btn onClick={onCancel} variant="secondary">Cancel</Btn>
+            <Btn onClick={() => setStep(2)} variant="primary" disabled={!serviceName}>Next</Btn>
+          </div>
         </div>
+      )}
+
+      {step === 2 && (
         <div>
-          <label style={labelStyle}>Service Name *</label>
-          <input value={serviceName} onChange={e => setServiceName(e.target.value)} style={inputStyle} placeholder="e.g., Luxury Suite" />
+          <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:16}}>Step 2: Quantity & Discount</div>
+          <div style={{marginBottom:20,padding:12,background:C.priLt,borderRadius:8}}>
+            <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Selected Service</div>
+            <div style={{fontSize:16,fontWeight:600,color:C.text}}>{serviceName}</div>
+          </div>
+          <div style={{marginBottom:20}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Quantity</label>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <button onClick={() => setQuantity(Math.max(1, quantity - 1))} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>−</button>
+              <input type="number" value={quantity} onChange={e => setQuantity(Math.max(1, parseInt(e.target.value) || 1))} style={{width:60,padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",fontSize:14}} className="no-focus-ring" />
+              <button onClick={() => setQuantity(quantity + 1)} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>+</button>
+              <span style={{marginLeft:"auto",fontSize:14,color:C.textMut}}>Unit: {unitLabel}</span>
+            </div>
+          </div>
+          <div style={{marginBottom:20}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Discount (applied dynamically per location's rates)</label>
+            <div style={{display:"flex",gap:8,marginBottom:12}}>
+              {[["percent","% Off"],["fixed","$ Off"]].map(([type,label]) => (
+                <button key={type} onClick={() => setDiscountType(type)} style={{flex:1,padding:"8px 12px",borderRadius:8,border:`1.5px solid ${discountType === type ? C.pri : C.border}`,background:discountType === type ? C.priLt : "transparent",color:discountType === type ? C.pri : C.text,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
+              ))}
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <input type="number" value={discountValue} onChange={e => setDiscountValue(Math.max(0, parseFloat(e.target.value) || 0))} style={{width:100,padding:"8px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:14}} className="no-focus-ring" />
+              <span style={{fontSize:13,color:C.textMut}}>{discountType === "percent" ? "%" : "$ per unit"}</span>
+            </div>
+          </div>
+          <Card style={{padding:12,background:C.bg,marginBottom:20}}>
+            <div style={{fontSize:12,color:C.textMut,fontStyle:"italic"}}>Note: Actual package pricing will be calculated from each location's rates when pushed. For example, if a location charges $45/day for daycare and you set 10% off, the package price will be $405 for 10 days at that location.</div>
+          </Card>
+          <div style={{display:"flex",gap:12,justifyContent:"flex-end"}}>
+            <Btn onClick={() => setStep(1)} variant="secondary">Back</Btn>
+            <Btn onClick={() => setStep(3)} variant="primary">Next</Btn>
+          </div>
         </div>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      )}
+
+      {step === 3 && (
         <div>
-          <label style={labelStyle}>Unit Price ($)</label>
-          <input type="number" value={unitPrice} onChange={e => setUnitPrice(parseFloat(e.target.value) || 0)} style={inputStyle} min="0" step="0.01" />
-        </div>
-        <div>
-          <label style={labelStyle}>Quantity</label>
-          <input type="number" value={quantity} onChange={e => setQuantity(parseInt(e.target.value) || 1)} style={inputStyle} min="1" />
-        </div>
-      </div>
-      <div>
-        <label style={labelStyle}>Pricing Mode</label>
-        <div style={{ display: "flex", gap: 8 }}>
-          {[["discount-pct", "% Off"], ["discount-dollar", "$ Off"], ["custom", "Custom Price"]].map(([mode, label]) => (
-            <button key={mode} onClick={() => setPricingMode(mode)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${pricingMode === mode ? C.pri : C.border}`, background: pricingMode === mode ? C.priLt : "transparent", color: pricingMode === mode ? C.pri : C.text, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{label}</button>
+          <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:16}}>Step 3: Expiration</div>
+          {[
+            { type: "relative", label: "Relative to purchase" },
+            { type: "none", label: "No expiration" }
+          ].map(opt => (
+            <div key={opt.type} style={{marginBottom:12,padding:12,border:`1px solid ${expirationType === opt.type ? C.acc : C.border}`,borderRadius:8,cursor:"pointer",background:expirationType === opt.type ? C.accLt : "transparent"}} onClick={() => setExpirationType(opt.type)}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:opt.type === "relative" && expirationType === "relative" ? 8 : 0}}>
+                <input type="radio" checked={expirationType === opt.type} onChange={() => setExpirationType(opt.type)} />
+                <span style={{fontWeight:600,fontSize:13,color:C.text}}>{opt.label}</span>
+              </div>
+              {opt.type === "relative" && expirationType === "relative" && (
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <input type="number" value={expirationDays} onChange={e => setExpirationDays(Math.max(1, parseInt(e.target.value) || 90))} style={{width:80,padding:"6px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}} className="no-focus-ring" />
+                  <span style={{fontSize:12,color:C.textMut}}>days after purchase</span>
+                </div>
+              )}
+            </div>
           ))}
+          <div style={{display:"flex",gap:12,justifyContent:"flex-end",marginTop:16}}>
+            <Btn onClick={() => setStep(2)} variant="secondary">Back</Btn>
+            <Btn onClick={() => setStep(4)} variant="primary">Next</Btn>
+          </div>
         </div>
-      </div>
-      {pricingMode === "discount-pct" && <div><label style={labelStyle}>Discount %</label><input type="number" value={discountPct} onChange={e => setDiscountPct(parseFloat(e.target.value) || 0)} style={inputStyle} min="0" max="100" /></div>}
-      {pricingMode === "discount-dollar" && <div><label style={labelStyle}>Discount Amount ($)</label><input type="number" value={discountDollar} onChange={e => setDiscountDollar(parseFloat(e.target.value) || 0)} style={inputStyle} min="0" /></div>}
-      {pricingMode === "custom" && <div><label style={labelStyle}>Custom Package Price ($)</label><input type="number" value={customPrice} onChange={e => setCustomPrice(parseFloat(e.target.value) || 0)} style={inputStyle} min="0" step="0.01" /></div>}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      )}
+
+      {step === 4 && (
         <div>
-          <label style={labelStyle}>Expiration</label>
-          <CustomSelect value={expirationType} onChange={v=>setExpirationType(v)} options={[{value:"relative",label:"Days from purchase"},{value:"none",label:"No expiration"}]}/>
+          <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:16}}>Step 4: Name & Details</div>
+          <div style={{marginBottom:16}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Package Name</label>
+            <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder={autoName} style={{width:"100%",padding:"10px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:14}} className="no-focus-ring" />
+          </div>
+          <div style={{marginBottom:16}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Description</label>
+            <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder={autoDesc} rows={3} style={{width:"100%",padding:"10px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:14,fontFamily:"inherit",resize:"vertical"}} className="no-focus-ring" />
+          </div>
+          <div style={{marginBottom:20,display:"flex",alignItems:"center",gap:12}}>
+            <input type="checkbox" checked={availableOnline} onChange={e => setAvailableOnline(e.target.checked)} id="ent-online" style={{cursor:"pointer"}} />
+            <label htmlFor="ent-online" style={{cursor:"pointer",fontSize:13,fontWeight:500,color:C.text}}>Available for online purchase</label>
+          </div>
+          <Card style={{marginBottom:20,padding:16,background:C.bg}}>
+            <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Summary</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,fontSize:12}}>
+              <div><span style={{color:C.textMut}}>Service:</span> <span style={{fontWeight:600}}>{serviceName}</span></div>
+              <div><span style={{color:C.textMut}}>Qty:</span> <span style={{fontWeight:600}}>{quantity} {unitLabelPlural.toLowerCase()}</span></div>
+              <div><span style={{color:C.textMut}}>Discount:</span> <span style={{fontWeight:600}}>{discountType === "percent" ? `${discountValue}%` : `$${discountValue}`} off</span></div>
+              <div><span style={{color:C.textMut}}>Expires:</span> <span style={{fontWeight:600}}>{expirationType === "relative" ? `${expirationDays} days` : "Never"}</span></div>
+              <div style={{gridColumn:"1/-1"}}><span style={{color:C.textMut}}>Pricing:</span> <span style={{fontWeight:600,fontStyle:"italic"}}>Dynamic — calculated per location's rates</span></div>
+            </div>
+          </Card>
+          <div style={{display:"flex",gap:12,justifyContent:"flex-end"}}>
+            <Btn onClick={() => setStep(3)} variant="secondary">Back</Btn>
+            <Btn onClick={handleCreate} variant="primary">Create Package</Btn>
+          </div>
         </div>
-        {expirationType === "relative" && <div><label style={labelStyle}>Days</label><input type="number" value={expirationDays} onChange={e => setExpirationDays(parseInt(e.target.value) || 90)} style={inputStyle} min="1" /></div>}
-      </div>
-      {/* Summary */}
-      <Card style={{ padding: 16, background: C.bg }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8, textAlign: "center" }}>
-          <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Retail</div><div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>${retailValue.toFixed(2)}</div></div>
-          <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Package</div><div style={{ fontSize: 16, fontWeight: 700, color: C.pri }}>${packagePrice.toFixed(2)}</div></div>
-          <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Savings</div><div style={{ fontSize: 16, fontWeight: 700, color: C.suc }}>${savings.toFixed(2)}</div></div>
-          <div><div style={{ fontSize: 10, color: C.textMut, textTransform: "uppercase" }}>Per Unit</div><div style={{ fontSize: 16, fontWeight: 700, color: C.suc }}>${savingsPerUnit.toFixed(2)}</div></div>
-        </div>
-      </Card>
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
-        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
-        <Btn onClick={handleSubmit} disabled={!name.trim() || !serviceName.trim() || unitPrice <= 0}>Create Package</Btn>
-      </div>
+      )}
     </div>
   );
 }
@@ -16505,8 +16822,8 @@ function PackageReportsTab({ data }) {
     const pkg = pkgs.find(p => p.id === sale.packageId);
     const remaining = (sale.quantity || 0) - (sale.used || 0);
     if (remaining <= 0) return null;
-    const unitPrice = pkg ? (pkg.packagePrice / pkg.quantity) : 0;
-    const value = remaining * unitPrice;
+    const retailUnitRate = ((sale.retailValue || pkg?.retailValue || 0) / (pkg?.quantity || 1));
+    const value = remaining * retailUnitRate;
     // Calculate expiration
     let expiresAt = null;
     if (pkg?.expirationType === "relative" && sale.purchaseDate) {
