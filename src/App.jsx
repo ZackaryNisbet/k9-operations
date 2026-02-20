@@ -3661,27 +3661,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
       {/* TAB 3: HISTORY */}
       {activeTab === "history" && (
-        <div>
-          <div style={{fontSize:11,fontWeight:700,color:C.textMut,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10,marginTop:20}}>{"Reservation History"}</div>
-          <div style={{fontSize:13,color:C.text}}>{"Audit log entries: " + String((Array.isArray(data.auditLog) ? data.auditLog : []).filter(l => l && l.reservationId === reservation.id).length)}</div>
-          <div style={{marginTop:12,maxHeight:400,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
-            {(Array.isArray(data.auditLog) ? data.auditLog : []).filter(l => l && l.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp||0) - new Date(a.timestamp||0)).map((log, li) => (
-              <div key={String(log.id||li)} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:"1px solid " + C.borderLight,fontSize:12}}>
-                <div style={{display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontWeight:700,color:C.pri}}>{String(log.userName||"")}</span>
-                  <span style={{fontWeight:600,color:C.text}}>{String(log.action||"")}</span>
-                  <span style={{marginLeft:"auto",color:C.textMut,fontSize:11}}>{log.timestamp ? new Date(log.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true}) : ""}</span>
-                </div>
-                {log.details && (
-                  <pre style={{margin:"6px 0 0",fontSize:11,color:C.textSec,whiteSpace:"pre-wrap",wordBreak:"break-all"}}>{JSON.stringify(log.details)}</pre>
-                )}
-              </div>
-            ))}
-            {(Array.isArray(data.auditLog) ? data.auditLog : []).filter(l => l && l.reservationId === reservation.id).length === 0 && (
-              <div style={{fontSize:13,color:C.textMut,fontStyle:"italic"}}>{"No history recorded yet"}</div>
-            )}
-          </div>
-        </div>
+        <div style={{padding:20,fontSize:14,color:C.text}}>{"History tab loaded OK. Res ID: " + String(reservation.id)}</div>
       )}
 
       {/* Payment Form Modal */}
