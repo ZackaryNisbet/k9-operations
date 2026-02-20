@@ -2093,10 +2093,11 @@ export default function BookingPage() {
     // Removed vaccines from top-level tabs — now nested in Dogs
     const TABS = [
       { key: 'overview', label: 'Overview', icon: '👤' },
-      { key: 'dogs', label: 'Dogs', icon: '🐕' },
-      { key: 'reservations', label: 'Reservations', icon: '📅' },
+      { key: 'dogs', label: `Dogs${dogs.length ? ` (${dogs.length})` : ''}`, icon: '🐕' },
+      { key: 'reservations', label: `Reservations${reservations.length ? ` (${reservations.length})` : ''}`, icon: '📅' },
       { key: 'packages', label: 'Packages', icon: '📦' },
       { key: 'payments', label: 'Payments', icon: '💳' },
+      { key: 'settings', label: 'Settings', icon: '⚙️' },
     ];
 
     // Editable info helpers
@@ -2105,14 +2106,21 @@ export default function BookingPage() {
     const [editSaving, setEditSaving] = useState(false);
     const [expandedRes, setExpandedRes] = useState(null);
     const [expandedDog, setExpandedDog] = useState(null);
+    const [contactOpen, setContactOpen] = useState(false);
+    const [saveBanner, setSaveBanner] = useState(null); // success message banner
+    const [vaccineUploadDog, setVaccineUploadDog] = useState(null); // dog id for vaccine upload modal
+    const [vaccineUploadFile, setVaccineUploadFile] = useState(null);
+    const [vaccineUploadName, setVaccineUploadName] = useState('');
+    const [vaccineUploadExpiry, setVaccineUploadExpiry] = useState('');
+    const [vaccineUploading, setVaccineUploading] = useState(false);
 
     const startEdit = (section, fields) => { setEditSection(section); setEditFields({...fields}); };
     const cancelEdit = () => { setEditSection(null); setEditFields({}); };
+    const showBanner = (msg) => { setSaveBanner(msg); setTimeout(() => setSaveBanner(null), 3000); };
 
     const saveEdit = async (section) => {
       setEditSaving(true);
       try {
-        // Build the updated fields mapping
         const fieldMap = {};
         if (section === 'personal') {
           fieldMap.first_name = editFields.firstName || '';
@@ -2127,7 +2135,6 @@ export default function BookingPage() {
           fieldMap.vet_name = editFields.vetName || '';
           fieldMap.vet_phone = editFields.vetPhone || '';
         }
-        // Read current location data, update the client fields, write back
         const locId = acct?.locationId;
         if (locId) {
           const { data: locRow } = await supabase.from('locations').select('data').eq('id', locId).single();
@@ -2139,12 +2146,12 @@ export default function BookingPage() {
               clients[cIdx].fields = { ...clients[cIdx].fields, ...fieldMap };
               locData.clients = clients;
               await supabase.from('locations').update({ data: locData }).eq('id', locId);
-              // Update local state
               const updatedClient = { ...cl };
               if (section === 'personal') { updatedClient.firstName = editFields.firstName; updatedClient.lastName = editFields.lastName; updatedClient.email = editFields.email; updatedClient.phone = editFields.phone; updatedClient.address = editFields.address; }
               if (section === 'emergency') { updatedClient.emergencyContact = editFields.emergencyContact; updatedClient.emergencyPhone = editFields.emergencyPhone; }
               if (section === 'vet') { updatedClient.vetName = editFields.vetName; updatedClient.vetPhone = editFields.vetPhone; }
               setAccountData({ ...acct, client: updatedClient });
+              showBanner('Changes saved successfully!');
             }
           }
         }
@@ -2155,6 +2162,73 @@ export default function BookingPage() {
         alert('Could not save changes. Please try again.');
       }
       setEditSaving(false);
+    };
+
+    // Upload vaccine record
+    const handleVaccineUpload = async () => {
+      if (!vaccineUploadName || !vaccineUploadDog) return;
+      setVaccineUploading(true);
+      try {
+        const locId = acct?.locationId;
+        if (locId) {
+          const { data: locRow } = await supabase.from('locations').select('data').eq('id', locId).single();
+          if (locRow) {
+            const locData = locRow.data || {};
+            const allDogs = locData.dogs || [];
+            const dIdx = allDogs.findIndex(d => d.id === vaccineUploadDog);
+            if (dIdx >= 0) {
+              if (!allDogs[dIdx].vaccines) allDogs[dIdx].vaccines = [];
+              const newVaccine = {
+                id: Date.now().toString(),
+                name: vaccineUploadName,
+                expirationDate: vaccineUploadExpiry || null,
+                uploadedAt: new Date().toISOString(),
+                uploadedBy: 'portal',
+              };
+              allDogs[dIdx].vaccines.push(newVaccine);
+              locData.dogs = allDogs;
+              await supabase.from('locations').update({ data: locData }).eq('id', locId);
+              // Update local state
+              const updatedVaccines = [...vaccines, { ...newVaccine, dogId: vaccineUploadDog, dogName: dogs.find(d=>d.id===vaccineUploadDog)?.name }];
+              setAccountData(prev => ({ ...prev, vaccines: updatedVaccines }));
+              showBanner('Vaccine record added!');
+            }
+          }
+        }
+        setVaccineUploadDog(null);
+        setVaccineUploadName('');
+        setVaccineUploadExpiry('');
+        setVaccineUploadFile(null);
+      } catch (err) {
+        console.error('Vaccine upload error:', err);
+        alert('Could not save vaccine record. Please try again.');
+      }
+      setVaccineUploading(false);
+    };
+
+    // Notification prefs
+    const notifPrefs = acct?.notificationPrefs || { emailReminders: true, textReminders: false, vaccineAlerts: true, marketingEmails: false };
+    const saveNotifPref = async (key, val) => {
+      const updated = { ...notifPrefs, [key]: val };
+      try {
+        const locId = acct?.locationId;
+        if (locId) {
+          const { data: locRow } = await supabase.from('locations').select('data').eq('id', locId).single();
+          if (locRow) {
+            const locData = locRow.data || {};
+            const clients = locData.clients || [];
+            const cIdx = clients.findIndex(c => c.id === acct.clientId);
+            if (cIdx >= 0) {
+              if (!clients[cIdx].notificationPrefs) clients[cIdx].notificationPrefs = {};
+              clients[cIdx].notificationPrefs = updated;
+              locData.clients = clients;
+              await supabase.from('locations').update({ data: locData }).eq('id', locId);
+            }
+          }
+        }
+        setAccountData(prev => ({ ...prev, notificationPrefs: updated }));
+        showBanner('Preferences updated!');
+      } catch (err) { console.error('Notif save error:', err); }
     };
 
     const EditableInput = ({ label, field, type }) => (
@@ -2168,7 +2242,7 @@ export default function BookingPage() {
     const InfoRow = ({ label, value }) => (
       <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', borderBottom: `1px solid ${B.border}`, fontSize: 14 }}>
         <span style={{ color: B.textMut, fontWeight: 600 }}>{label}</span>
-        <span style={{ color: B.text, fontWeight: 500, textAlign: 'right' }}>{value || '—'}</span>
+        <span style={{ color: B.text, fontWeight: 500, textAlign: 'right', maxWidth: '60%', wordBreak: 'break-word' }}>{value || '—'}</span>
       </div>
     );
 
@@ -2179,11 +2253,11 @@ export default function BookingPage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <h3 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 20, color: B.navy, margin: 0 }}>{title}</h3>
             {!isEditing ? (
-              <button onClick={() => startEdit(section, fields)} style={{ padding: '6px 16px', border: `1px solid ${B.border}`, borderRadius: 8, background: '#fff', fontSize: 12, fontWeight: 600, color: B.navy, cursor: 'pointer' }}>Edit</button>
+              <button onClick={() => startEdit(section, fields)} style={{ padding: '6px 16px', border: `1px solid ${B.border}`, borderRadius: 8, background: '#fff', fontSize: 12, fontWeight: 600, color: B.navy, cursor: 'pointer', fontFamily: 'inherit' }}>Edit</button>
             ) : (
               <div style={{ display: 'flex', gap: 8 }}>
-                <button onClick={cancelEdit} style={{ padding: '6px 14px', border: `1px solid ${B.border}`, borderRadius: 8, background: '#fff', fontSize: 12, fontWeight: 600, color: B.textSec, cursor: 'pointer' }}>Cancel</button>
-                <button onClick={() => saveEdit(section)} disabled={editSaving} style={{ padding: '6px 14px', border: 'none', borderRadius: 8, background: B.gold, fontSize: 12, fontWeight: 600, color: '#fff', cursor: 'pointer', opacity: editSaving ? 0.6 : 1 }}>{editSaving ? 'Saving...' : 'Save'}</button>
+                <button onClick={cancelEdit} style={{ padding: '6px 14px', border: `1px solid ${B.border}`, borderRadius: 8, background: '#fff', fontSize: 12, fontWeight: 600, color: B.textSec, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
+                <button onClick={() => saveEdit(section)} disabled={editSaving} style={{ padding: '6px 14px', border: 'none', borderRadius: 8, background: B.gold, fontSize: 12, fontWeight: 600, color: '#fff', cursor: 'pointer', opacity: editSaving ? 0.6 : 1, fontFamily: 'inherit' }}>{editSaving ? 'Saving...' : 'Save'}</button>
               </div>
             )}
           </div>
@@ -2192,13 +2266,62 @@ export default function BookingPage() {
       );
     };
 
+    const ToggleSwitch = ({ on, onChange, label, desc }) => (
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 0', borderBottom: `1px solid ${B.border}` }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: B.navy }}>{label}</div>
+          {desc && <div style={{ fontSize: 12, color: B.textSec, marginTop: 2 }}>{desc}</div>}
+        </div>
+        <div onClick={() => onChange(!on)} style={{ width: 44, height: 24, borderRadius: 12, background: on ? '#10B981' : '#D1D5DB', cursor: 'pointer', position: 'relative', transition: 'background 0.2s', flexShrink: 0, marginLeft: 12 }}>
+          <div style={{ width: 20, height: 20, borderRadius: 10, background: '#fff', position: 'absolute', top: 2, left: on ? 22 : 2, transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+        </div>
+      </div>
+    );
+
     const countNights = (ci, co) => { if (!ci || !co) return 0; return Math.max(1, Math.round((new Date(co+"T12:00:00") - new Date(ci+"T12:00:00")) / 86400000)); };
     const fmtDateLocal = (d) => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "";
+
+    // Quick stats for overview header
+    const activePkgCount = packages.filter(p => { const rem = p.remaining ?? ((p.quantity || p.total || 1) - (p.used || p.redeemed || 0)); return rem > 0 && (!p.expiryDate || p.expiryDate >= new Date().toISOString().split('T')[0]); }).length;
+    const expiredVaccines = vaccines.filter(v => v.expirationDate && v.expirationDate < new Date().toISOString().split('T')[0]);
 
     return (
       <div style={{ minHeight: '100vh', background: B.bg }}>
         <NavBar title={`Welcome, ${cl.firstName || 'Guest'}`} onBack={() => { setAccountStep('phone'); setAccountData(null); setAccountPhone(''); setAccountOtp(''); navigateTo('splash', 'right'); }} />
-        <div style={{ maxWidth: 700, margin: '0 auto', padding: '20px 24px 60px' }}>
+        <div style={{ maxWidth: 700, margin: '0 auto', padding: '20px 24px 100px' }}>
+
+          {/* Save success banner */}
+          {saveBanner && (
+            <div style={{ position: 'fixed', top: 70, left: '50%', transform: 'translateX(-50%)', zIndex: 9999, padding: '12px 24px', background: '#03543F', color: '#fff', borderRadius: 10, fontSize: 14, fontWeight: 600, boxShadow: '0 4px 12px rgba(0,0,0,0.15)', animation: 'fadeIn 0.3s ease' }}>
+              {saveBanner}
+            </div>
+          )}
+
+          {/* Overview quick stats bar */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 16 }}>
+            <div style={{ background: '#fff', borderRadius: 12, padding: '14px 12px', textAlign: 'center', border: `1px solid ${B.border}` }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: B.navy }}>{upcoming.length}</div>
+              <div style={{ fontSize: 11, color: B.textSec, fontWeight: 500 }}>Upcoming Stays</div>
+            </div>
+            <div style={{ background: '#fff', borderRadius: 12, padding: '14px 12px', textAlign: 'center', border: `1px solid ${B.border}` }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: B.navy }}>{dogs.length}</div>
+              <div style={{ fontSize: 11, color: B.textSec, fontWeight: 500 }}>Dogs</div>
+            </div>
+            <div style={{ background: '#fff', borderRadius: 12, padding: '14px 12px', textAlign: 'center', border: `1px solid ${B.border}` }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color: activePkgCount > 0 ? '#10B981' : B.navy }}>{activePkgCount}</div>
+              <div style={{ fontSize: 11, color: B.textSec, fontWeight: 500 }}>Active Packages</div>
+            </div>
+          </div>
+
+          {/* Expired vaccine alert */}
+          {expiredVaccines.length > 0 && (
+            <div style={{ background: '#FFF5F5', border: '1px solid #FCA5A5', borderRadius: 12, padding: '12px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Icons.Alert size={18} color="#DC2626" />
+              <div style={{ fontSize: 13, color: '#991B1B', fontWeight: 500 }}>
+                {expiredVaccines.length} expired vaccine{expiredVaccines.length > 1 ? 's' : ''} — please update records before your next visit
+              </div>
+            </div>
+          )}
 
           {/* Book New Reservation link */}
           <button onClick={() => { navigateTo('availability', 'left'); }}
@@ -2269,30 +2392,41 @@ export default function BookingPage() {
             </div>
           )}
 
-          {/* Dogs Tab — with vaccines nested inside each dog */}
+          {/* Dogs Tab — with vaccines nested + upload */}
           {accountTab === 'dogs' && (
             <div>
               {dogs.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: 40, color: B.textSec }}>No dogs on file.</div>
+                <div style={{ textAlign: 'center', padding: 40, color: B.textSec }}>
+                  <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#F3F4F6', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+                    <Icons.Dog size={32} color={B.textMut} />
+                  </div>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>No dogs on file</div>
+                  <div style={{ fontSize: 13 }}>Contact us to add your pup to your account.</div>
+                </div>
               ) : dogs.map((d, i) => {
                 const dogVaccines = vaccines.filter(v => v.dogId === d.id || v.dogName === d.name);
+                const expCount = dogVaccines.filter(v => v.expirationDate && v.expirationDate < new Date().toISOString().split('T')[0]).length;
                 const isExpanded = expandedDog === d.id;
                 return (
                   <div key={i} style={{ background: '#fff', borderRadius: 16, border: `2px solid ${B.border}`, marginBottom: 16, overflow: 'hidden' }}>
                     <div style={{ padding: 24, cursor: 'pointer' }} onClick={() => setExpandedDog(isExpanded ? null : d.id)}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         {d.profilePic ? (
-                          <img src={d.profilePic} alt={d.name} style={{ width: 48, height: 48, borderRadius: '50%', objectFit: 'cover' }} />
+                          <img src={d.profilePic} alt={d.name} style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover', border: `3px solid ${B.navy}20` }} />
                         ) : (
-                          <div style={{ width: 48, height: 48, borderRadius: '50%', background: B.navy, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <Icons.Dog size={24} color="#fff" />
+                          <div style={{ width: 56, height: 56, borderRadius: '50%', background: `linear-gradient(135deg, ${B.navy}, ${B.navy}DD)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 700, color: '#fff' }}>
+                            {d.name ? d.name.charAt(0).toUpperCase() : <Icons.Dog size={28} color="#fff" />}
                           </div>
                         )}
                         <div style={{ flex: 1 }}>
                           <h3 style={{ fontSize: 18, fontWeight: 700, color: B.navy, margin: 0 }}>{d.name}</h3>
                           <div style={{ fontSize: 13, color: B.textSec }}>{d.breed}{d.weight ? ` · ${d.weight} lbs` : ''}</div>
+                          {expCount > 0 && <div style={{ fontSize: 11, color: '#DC2626', fontWeight: 600, marginTop: 2 }}>{expCount} expired vaccine{expCount > 1 ? 's' : ''}</div>}
                         </div>
-                        <div style={{ fontSize: 18, color: B.textMut, transition: 'transform 0.2s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 11, padding: '3px 10px', borderRadius: 12, background: '#E8EDF2', color: B.navy, fontWeight: 600 }}>{dogVaccines.length} vaccine{dogVaccines.length !== 1 ? 's' : ''}</span>
+                          <div style={{ fontSize: 18, color: B.textMut, transition: 'transform 0.2s', transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}>▶</div>
+                        </div>
                       </div>
                     </div>
                     {isExpanded && (
@@ -2303,26 +2437,33 @@ export default function BookingPage() {
                           <InfoRow label="Spayed/Neutered" value={d.spayedNeutered} />
                           <InfoRow label="Date of Birth" value={d.dob ? fmtDate(d.dob) : null} />
                         </div>
-                        {/* Vaccines nested here */}
+                        {/* Vaccines nested */}
                         <div style={{ marginTop: 20 }}>
-                          <div style={{ fontSize: 14, fontWeight: 700, color: B.navy, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span>💉</span> Vaccines
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: B.navy, display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span>💉</span> Vaccines
+                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); setVaccineUploadDog(d.id); setVaccineUploadName(''); setVaccineUploadExpiry(''); }}
+                              style={{ padding: '5px 12px', border: `1px solid ${B.border}`, borderRadius: 8, background: '#fff', fontSize: 11, fontWeight: 600, color: B.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'inherit' }}>
+                              <Icons.Plus size={12} /> Add Record
+                            </button>
                           </div>
                           {dogVaccines.length === 0 ? (
-                            <div style={{ background: '#F9FAFB', borderRadius: 10, padding: 16, color: B.textSec, fontSize: 13 }}>
-                              No vaccine records on file. Please bring records to your next visit.
+                            <div style={{ background: '#F9FAFB', borderRadius: 10, padding: 16, color: B.textSec, fontSize: 13, textAlign: 'center' }}>
+                              No vaccine records on file. Tap "Add Record" to upload.
                             </div>
                           ) : (
                             <div style={{ background: '#F9FAFB', borderRadius: 10, overflow: 'hidden' }}>
                               {dogVaccines.map((v, vi) => {
                                 const expired = v.expirationDate && v.expirationDate < new Date().toISOString().split('T')[0];
+                                const expSoon = !expired && v.expirationDate && (() => { const d = new Date(v.expirationDate+"T12:00:00"); const now = new Date(); return (d - now) < 30*86400000; })();
                                 return (
                                   <div key={vi} style={{ padding: '10px 16px', borderBottom: vi < dogVaccines.length - 1 ? `1px solid ${B.border}` : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <div>
                                       <div style={{ fontSize: 13, fontWeight: 600, color: B.text }}>{v.name}</div>
-                                      {v.expirationDate && <div style={{ fontSize: 11, color: expired ? B.err : B.textSec }}>Exp: {fmtDate(v.expirationDate)}{expired ? ' — Expired' : ''}</div>}
+                                      {v.expirationDate && <div style={{ fontSize: 11, color: expired ? B.err : expSoon ? '#D97706' : B.textSec }}>Exp: {fmtDate(v.expirationDate)}{expired ? ' — Expired' : expSoon ? ' — Expiring soon' : ''}</div>}
                                     </div>
-                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 12, background: expired ? '#FEE2E2' : '#DEF7EC', color: expired ? '#991B1B' : '#03543F' }}>{expired ? 'Expired' : 'Current'}</span>
+                                    <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 12, background: expired ? '#FEE2E2' : expSoon ? '#FEF3C7' : '#DEF7EC', color: expired ? '#991B1B' : expSoon ? '#92400E' : '#03543F' }}>{expired ? 'Expired' : expSoon ? 'Exp. Soon' : 'Current'}</span>
                                   </div>
                                 );
                               })}
@@ -2337,10 +2478,51 @@ export default function BookingPage() {
             </div>
           )}
 
+          {/* Vaccine upload modal */}
+          {vaccineUploadDog && (
+            <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }} onClick={() => setVaccineUploadDog(null)}>
+              <div style={{ background: '#fff', borderRadius: 16, padding: 28, maxWidth: 400, width: '90%' }} onClick={e => e.stopPropagation()}>
+                <div style={{ fontSize: 18, fontWeight: 700, color: B.navy, marginBottom: 4 }}>Add Vaccine Record</div>
+                <div style={{ fontSize: 13, color: B.textSec, marginBottom: 20 }}>for {dogs.find(d=>d.id===vaccineUploadDog)?.name || 'Dog'}</div>
+                <div style={{ marginBottom: 12 }}>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: B.textMut, marginBottom: 4, textTransform: 'uppercase' }}>Vaccine Name *</label>
+                  <select value={vaccineUploadName} onChange={e => setVaccineUploadName(e.target.value)}
+                    style={{ width: '100%', padding: '10px 12px', border: `1px solid ${B.border}`, borderRadius: 8, fontSize: 14, fontFamily: 'inherit', background: '#fff', boxSizing: 'border-box' }}>
+                    <option value="">Select vaccine...</option>
+                    <option value="Rabies">Rabies</option>
+                    <option value="DHPP">DHPP (Distemper)</option>
+                    <option value="Bordetella">Bordetella (Kennel Cough)</option>
+                    <option value="Canine Influenza">Canine Influenza</option>
+                    <option value="Leptospirosis">Leptospirosis</option>
+                    <option value="Lyme">Lyme Disease</option>
+                    <option value="Fecal Test">Fecal Test</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                {vaccineUploadName === 'Other' && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: B.textMut, marginBottom: 4, textTransform: 'uppercase' }}>Vaccine Name</label>
+                    <input type="text" placeholder="Enter vaccine name" onChange={e => setVaccineUploadName(e.target.value)}
+                      style={{ width: '100%', padding: '10px 12px', border: `1px solid ${B.border}`, borderRadius: 8, fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                  </div>
+                )}
+                <div style={{ marginBottom: 20 }}>
+                  <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: B.textMut, marginBottom: 4, textTransform: 'uppercase' }}>Expiration Date</label>
+                  <input type="date" value={vaccineUploadExpiry} onChange={e => setVaccineUploadExpiry(e.target.value)}
+                    style={{ width: '100%', padding: '10px 12px', border: `1px solid ${B.border}`, borderRadius: 8, fontSize: 14, fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                </div>
+                <button onClick={handleVaccineUpload} disabled={!vaccineUploadName || vaccineUploadName === 'Other' || vaccineUploading}
+                  style={{ width: '100%', padding: '14px', background: B.gold, color: '#fff', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: 15, cursor: 'pointer', opacity: (!vaccineUploadName || vaccineUploadName === 'Other' || vaccineUploading) ? 0.5 : 1, fontFamily: 'inherit' }}>
+                  {vaccineUploading ? 'Saving...' : 'Add Vaccine Record'}
+                </button>
+                <button onClick={() => setVaccineUploadDog(null)} style={{ width: '100%', padding: '10px', background: 'none', border: 'none', color: '#6B7280', fontWeight: 500, cursor: 'pointer', marginTop: 8, fontSize: 13, fontFamily: 'inherit' }}>Cancel</button>
+              </div>
+            </div>
+          )}
+
           {/* Reservations Tab — clickable with expanded details */}
           {accountTab === 'reservations' && (
             <div>
-              {/* Book link at top of reservations */}
               <button onClick={() => { navigateTo('availability', 'left'); }}
                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', padding: '12px 20px', background: '#fff', color: B.navy, border: `2px solid ${B.navy}`, borderRadius: 12, fontWeight: 700, fontSize: 14, cursor: 'pointer', marginBottom: 20, fontFamily: 'inherit' }}>
                 <Icons.Calendar size={16} /> Book a New Stay
@@ -2625,7 +2807,13 @@ export default function BookingPage() {
           {accountTab === 'payments' && (
             <div>
               {payments.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: 40, color: B.textSec }}>No payment history found.</div>
+                <div style={{ textAlign: 'center', padding: 40, color: B.textSec }}>
+                  <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#F3F4F6', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+                    <span style={{ fontSize: 28 }}>💳</span>
+                  </div>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>No payment history</div>
+                  <div style={{ fontSize: 13 }}>Payment records will appear here after your first stay.</div>
+                </div>
               ) : payments.map((p, i) => (
                 <div key={i} style={{ background: '#fff', borderRadius: 14, border: `1px solid ${B.border}`, padding: 16, marginBottom: 8 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
@@ -2649,6 +2837,53 @@ export default function BookingPage() {
               </div>
             </div>
           )}
+
+          {/* Settings Tab — notification preferences */}
+          {accountTab === 'settings' && (
+            <div>
+              <div style={{ background: '#fff', borderRadius: 16, border: `2px solid ${B.border}`, padding: 24, marginBottom: 20 }}>
+                <h3 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 20, color: B.navy, marginBottom: 4 }}>Notification Preferences</h3>
+                <p style={{ fontSize: 13, color: B.textSec, marginBottom: 16 }}>Choose how you'd like to hear from us.</p>
+                <ToggleSwitch label="Email Reminders" desc="Get email reminders before upcoming stays" on={notifPrefs.emailReminders} onChange={v => saveNotifPref('emailReminders', v)} />
+                <ToggleSwitch label="Text Reminders" desc="SMS reminders 24 hours before check-in" on={notifPrefs.textReminders} onChange={v => saveNotifPref('textReminders', v)} />
+                <ToggleSwitch label="Vaccine Expiration Alerts" desc="Get notified when vaccines are about to expire" on={notifPrefs.vaccineAlerts} onChange={v => saveNotifPref('vaccineAlerts', v)} />
+                <ToggleSwitch label="Promotions & Offers" desc="Package deals, seasonal offers, and news" on={notifPrefs.marketingEmails} onChange={v => saveNotifPref('marketingEmails', v)} />
+              </div>
+
+              {/* Sign out */}
+              <button onClick={() => { setAccountStep('phone'); setAccountData(null); setAccountPhone(''); setAccountOtp(''); setAccountTab('overview'); }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', padding: '14px 20px', background: '#fff', color: '#DC2626', border: '2px solid #FCA5A5', borderRadius: 12, fontWeight: 700, fontSize: 15, cursor: 'pointer', fontFamily: 'inherit' }}>
+                Sign Out
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Floating contact button */}
+        <div style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 999 }}>
+          {contactOpen && (
+            <div style={{ position: 'absolute', bottom: 64, right: 0, background: '#fff', borderRadius: 16, boxShadow: '0 8px 30px rgba(0,0,0,0.15)', padding: 8, width: 220, marginBottom: 8 }}>
+              <a href="tel:+1" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 10, textDecoration: 'none', color: B.navy, fontWeight: 600, fontSize: 14, transition: 'background 0.2s' }}
+                onMouseEnter={e => e.currentTarget.style.background='#F3F4F6'} onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                <Icons.Phone size={18} color={B.navy} /> Call Us
+              </a>
+              <a href={`mailto:info@${slug || 'k9resorts'}.com`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 10, textDecoration: 'none', color: B.navy, fontWeight: 600, fontSize: 14, transition: 'background 0.2s' }}
+                onMouseEnter={e => e.currentTarget.style.background='#F3F4F6'} onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                <Icons.Mail size={18} color={B.navy} /> Email Us
+              </a>
+              <div style={{ borderTop: `1px solid ${B.border}`, margin: '4px 16px' }} />
+              <button onClick={() => { navigateTo('availability', 'left'); setContactOpen(false); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', borderRadius: 10, border: 'none', background: 'transparent', color: B.gold, fontWeight: 600, fontSize: 14, cursor: 'pointer', width: '100%', fontFamily: 'inherit' }}
+                onMouseEnter={e => e.currentTarget.style.background='#F3F4F6'} onMouseLeave={e => e.currentTarget.style.background='transparent'}>
+                <Icons.Calendar size={18} color={B.gold} /> Book a Stay
+              </button>
+            </div>
+          )}
+          <button onClick={() => setContactOpen(!contactOpen)}
+            style={{ width: 56, height: 56, borderRadius: '50%', background: B.navy, border: 'none', cursor: 'pointer', boxShadow: '0 4px 15px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'transform 0.2s, background 0.2s' }}
+            onMouseEnter={e => { e.currentTarget.style.transform='scale(1.08)'; }}
+            onMouseLeave={e => { e.currentTarget.style.transform='scale(1)'; }}>
+            {contactOpen ? <Icons.X size={24} color="#fff" /> : <Icons.Phone size={24} color="#fff" />}
+          </button>
         </div>
       </div>
     );
