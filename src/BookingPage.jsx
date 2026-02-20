@@ -1963,40 +1963,15 @@ export default function BookingPage() {
 
     // Bypass: master code "000000" skips OTP verification — loads client data directly
     if (accountOtp === "000000") {
+      // Dev bypass: skip OTP, load via RPC directly
       try {
-        const cleanPhone = accountPhone.replace(/\D/g, '');
-        // Query location data directly from the locations table (anon key)
-        const { data: locRow, error: locErr } = await supabase.from('locations').select('id, data').eq('slug', slug).single();
-        if (locErr) { console.error('Bypass location query error:', locErr.message, locErr.code, locErr.details); setAccountError('Could not load location data: ' + locErr.message); setAccountLoading(false); return; }
-        if (!locRow) { setAccountError('Location not found for slug: ' + slug); setAccountLoading(false); return; }
-        const locData = locRow.data || {};
-        // Search clients by phone
-        const clients = locData.clients || [];
-        const matchClient = clients.find(c => {
-          const cp = (c.fields?.phone || '').replace(/\D/g, '');
-          return cp.length >= 10 && cleanPhone.length >= 10 && (cp === cleanPhone || cp.slice(-10) === cleanPhone.slice(-10));
-        });
-        if (!matchClient) { setAccountError('No account found for this phone number. Make sure the phone number matches what\'s on file.'); setAccountLoading(false); return; }
-        // Build portal data from location data
-        const allDogs = locData.dogs || [];
-        const clientDogs = allDogs.filter(d => d.clientId === matchClient.id);
-        const allRes = locData.reservations || [];
-        const dogIds = clientDogs.map(d => d.id);
-        const clientRes = allRes.filter(r => dogIds.includes(r.dogId));
-        const allSales = locData.packageSales || [];
-        const clientSales = allSales.filter(s => s.clientId === matchClient.id || dogIds.includes(s.dogId));
-        setAccountData({
-          success: true,
-          clientId: matchClient.id,
-          locationId: locRow.id,
-          client: { firstName: matchClient.fields?.first_name, lastName: matchClient.fields?.last_name, email: matchClient.fields?.email, phone: matchClient.fields?.phone, address: matchClient.fields?.address, emergencyContact: matchClient.fields?.emergency_contact, emergencyPhone: matchClient.fields?.emergency_phone, vetName: matchClient.fields?.vet_name, vetPhone: matchClient.fields?.vet_phone },
-          dogs: clientDogs.map(d => ({ id: d.id, name: d.fields?.name, breed: d.fields?.breed, weight: d.fields?.weight, dob: d.fields?.dob, sex: d.fields?.sex, profilePic: d.fields?.profilePic, vaccines: d.vaccines || [] })),
-          reservations: clientRes.map(r => ({ id: r.id, dogId: r.dogId, dogName: (clientDogs.find(d=>d.id===r.dogId)?.fields?.name || ''), type: r.type, status: r.status, checkIn: r.checkIn, checkOut: r.checkOut, checkInTime: r.checkInTime, checkOutTime: r.checkOutTime, roomType: r.roomType, room: r.room, bathType: r.bathType, bathCost: r.bathCost, roomRate: r.roomRate, totalCost: r.totalCost, depositPaid: r.depositPaid, balanceDue: r.balanceDue, addOns: r.addOns, notes: r.notes, feedingInstructions: r.feedingInstructions, medications: r.medications })),
-          vaccines: clientDogs.flatMap(d => (d.vaccines || []).map(v => ({ ...v, dogName: d.fields?.name }))),
-          packages: clientSales,
-          payments: [],
-        });
-        setAccountStep('portal');
+        const { data: result } = await supabase.rpc('get_customer_portal_data', { p_phone: accountPhone, p_slug: slug });
+        if (result?.success) {
+          setAccountData(result);
+          setAccountStep('portal');
+        } else {
+          setAccountError(result?.message || 'No account found for this phone number.');
+        }
         setAccountLoading(false);
         return;
       } catch (bypassErr) {
@@ -2136,23 +2111,13 @@ export default function BookingPage() {
         }
         const locId = acct?.locationId;
         if (locId) {
-          const { data: locRow } = await supabase.from('locations').select('data').eq('id', locId).single();
-          if (locRow) {
-            const locData = locRow.data || {};
-            const clients = locData.clients || [];
-            const cIdx = clients.findIndex(c => c.id === acct.clientId);
-            if (cIdx >= 0) {
-              clients[cIdx].fields = { ...clients[cIdx].fields, ...fieldMap };
-              locData.clients = clients;
-              await supabase.from('locations').update({ data: locData }).eq('id', locId);
+          await supabase.rpc('portal_update_client_fields', { p_client_id: acct.clientId, p_location_id: locId, p_field_updates: fieldMap });
               const updatedClient = { ...cl };
               if (section === 'personal') { updatedClient.firstName = editFields.firstName; updatedClient.lastName = editFields.lastName; updatedClient.email = editFields.email; updatedClient.phone = editFields.phone; updatedClient.address = editFields.address; }
               if (section === 'emergency') { updatedClient.emergencyContact = editFields.emergencyContact; updatedClient.emergencyPhone = editFields.emergencyPhone; }
               if (section === 'vet') { updatedClient.vetName = editFields.vetName; updatedClient.vetPhone = editFields.vetPhone; }
               setAccountData({ ...acct, client: updatedClient });
               showBanner('Changes saved successfully!');
-            }
-          }
         }
         setEditSection(null);
         setEditFields({});
@@ -2170,13 +2135,6 @@ export default function BookingPage() {
       try {
         const locId = acct?.locationId;
         if (locId) {
-          const { data: locRow } = await supabase.from('locations').select('data').eq('id', locId).single();
-          if (locRow) {
-            const locData = locRow.data || {};
-            const allDogs = locData.dogs || [];
-            const dIdx = allDogs.findIndex(d => d.id === vaccineUploadDog);
-            if (dIdx >= 0) {
-              if (!allDogs[dIdx].vaccines) allDogs[dIdx].vaccines = [];
               const newVaccine = {
                 id: Date.now().toString(),
                 name: vaccineUploadName,
@@ -2184,15 +2142,11 @@ export default function BookingPage() {
                 uploadedAt: new Date().toISOString(),
                 uploadedBy: 'portal',
               };
-              allDogs[dIdx].vaccines.push(newVaccine);
-              locData.dogs = allDogs;
-              await supabase.from('locations').update({ data: locData }).eq('id', locId);
+              await supabase.rpc('portal_add_dog_vaccine', { p_dog_id: vaccineUploadDog, p_location_id: locId, p_vaccine: newVaccine });
               // Update local state
-              const updatedVaccines = [...vaccines, { ...newVaccine, dogId: vaccineUploadDog, dogName: dogs.find(d=>d.id===vaccineUploadDog)?.name }];
-              setAccountData(prev => ({ ...prev, vaccines: updatedVaccines }));
+              const displayVaccines = [...vaccines, { ...newVaccine, dogId: vaccineUploadDog, dogName: dogs.find(d=>d.id===vaccineUploadDog)?.name }];
+              setAccountData(prev => ({ ...prev, vaccines: displayVaccines }));
               showBanner('Vaccine record added!');
-            }
-          }
         }
         setVaccineUploadDog(null);
         setVaccineUploadName('');
@@ -2212,18 +2166,7 @@ export default function BookingPage() {
       try {
         const locId = acct?.locationId;
         if (locId) {
-          const { data: locRow } = await supabase.from('locations').select('data').eq('id', locId).single();
-          if (locRow) {
-            const locData = locRow.data || {};
-            const clients = locData.clients || [];
-            const cIdx = clients.findIndex(c => c.id === acct.clientId);
-            if (cIdx >= 0) {
-              if (!clients[cIdx].notificationPrefs) clients[cIdx].notificationPrefs = {};
-              clients[cIdx].notificationPrefs = updated;
-              locData.clients = clients;
-              await supabase.from('locations').update({ data: locData }).eq('id', locId);
-            }
-          }
+          await supabase.rpc('portal_update_client_notif_prefs', { p_client_id: acct.clientId, p_location_id: locId, p_prefs: updated });
         }
         setAccountData(prev => ({ ...prev, notificationPrefs: updated }));
         showBanner('Preferences updated!');
