@@ -269,6 +269,156 @@ const getVaxStatus = (dog, requiredVaccines, policies) => {
   return { ok: expired.length === 0 && missing.length === 0, expired, missing, expiringSoon, graceperiod };
 };
 
+// === Vaccine Reminder Engine ===
+// Scans all dogs, matches expiring vaccines to configured tiers, deduplicates against log,
+// batches multiple vaccines per client, and returns an array of reminder actions to send.
+const buildVaccineReminders = (data) => {
+  const autoCfg = data.automations || {};
+  if (!autoCfg.enabled) return [];
+  const tiers = (autoCfg.tiers || []).filter(t => t.enabled);
+  if (!tiers.length) return [];
+  const log = autoCfg.reminderLog || [];
+  const dogs = data.dogs || [];
+  const clients = data.clients || [];
+  const allVaccineIds = (data.requiredVaccines || ["rabies_exp", "dhpp_exp", "bordetella_exp"]);
+  const vaccineNames = { rabies_exp: "Rabies", dhpp_exp: "Distemper (DHPP)", bordetella_exp: "Bordetella", canine_flu_exp: "Canine Influenza" };
+  const now = new Date();
+  const todayStr = now.toISOString().slice(0, 10);
+
+  // Build set of already-sent (clientId + dogId + vaccineId + tierId) combos
+  const sentKeys = new Set(log.map(l => `${l.clientId}|${(l.dogIds||[]).join(",")}|${(l.vaccineIds||[]).join(",")}|${l.tierId}`));
+
+  // Per-client batching map: clientId → { client, items: [{ dog, vaccineName, vaccineId, tier, daysUntil }] }
+  const clientBatches = {};
+
+  for (const dog of dogs) {
+    if (!dog.fields || !dog.clientId) continue;
+    const client = clients.find(c => c.id === dog.clientId);
+    if (!client) continue;
+    // Respect opt-out
+    if (client.notificationPrefs && client.notificationPrefs.vaccineAlerts === false) continue;
+    if (client.notificationPrefs && client.notificationPrefs.textReminders === false) continue;
+    // Need phone number
+    const phone = client.phone || client.mobilePhone;
+    if (!phone) continue;
+
+    for (const vId of allVaccineIds) {
+      const expiryStr = dog.fields[vId];
+      if (!expiryStr) continue; // Missing vaccine — not in reminder flow (that's a compliance issue, not a reminder)
+      const expiryDate = new Date(expiryStr + "T00:00:00");
+      const diffMs = expiryDate - now;
+      const daysUntil = Math.round(diffMs / 86400000);
+
+      // Find matching tier (first match by day range)
+      // Sort tiers by priority: critical > high > medium > low, so most urgent fires first
+      const priOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+      const sortedTiers = [...tiers].sort((a, b) => (priOrder[a.priority] || 3) - (priOrder[b.priority] || 3));
+
+      for (const tier of sortedTiers) {
+        const minDay = Math.min(tier.dayStart, tier.dayEnd);
+        const maxDay = Math.max(tier.dayStart, tier.dayEnd);
+        if (daysUntil >= minDay && daysUntil <= maxDay) {
+          // Check dedup
+          const dedupKey = `${client.id}|${dog.id}|${vId}|${tier.id}`;
+          if (sentKeys.has(dedupKey)) break; // Already sent for this tier, skip to next vaccine
+
+          // Add to batch
+          if (!clientBatches[client.id]) {
+            clientBatches[client.id] = { client, phone, items: [] };
+          }
+          clientBatches[client.id].items.push({
+            dog,
+            dogName: dog.fields.name || dog.name || "your dog",
+            vaccineName: vaccineNames[vId] || vId.replace("_exp", ""),
+            vaccineId: vId,
+            tier,
+            expiryDate: expiryStr,
+            daysUntil,
+          });
+          break; // Only match the first (most urgent) tier per vaccine
+        }
+      }
+    }
+  }
+
+  // Build reminder actions from batches
+  const reminders = [];
+  const dailyCap = autoCfg.dailyCap || 50;
+  // Count how many were already sent today
+  const sentTodayCount = log.filter(l => l.sentAt && l.sentAt.slice(0, 10) === todayStr).length;
+  let remaining = dailyCap - sentTodayCount;
+
+  // Sort batches by highest priority item (critical first)
+  const batchEntries = Object.values(clientBatches).sort((a, b) => {
+    const priOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+    const aPri = Math.min(...a.items.map(i => priOrder[i.tier.priority] || 3));
+    const bPri = Math.min(...b.items.map(i => priOrder[i.tier.priority] || 3));
+    return aPri - bPri;
+  });
+
+  for (const batch of batchEntries) {
+    if (remaining <= 0) break;
+    const { client, phone, items } = batch;
+    // Group items by tier for message construction
+    // Use highest-priority tier's template as the base
+    const highestItem = items.reduce((a, b) => {
+      const priOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+      return (priOrder[a.tier.priority] || 3) <= (priOrder[b.tier.priority] || 3) ? a : b;
+    });
+
+    // Build message — if multiple vaccines, list them all
+    let message = highestItem.tier.template;
+    const locationName = data.facilityName || data.name || "K9 Resorts";
+    const dogNames = [...new Set(items.map(i => i.dogName))];
+    const vaccineNamesList = [...new Set(items.map(i => i.vaccineName))];
+    const daysStr = highestItem.daysUntil > 0 ? `in ${highestItem.daysUntil} days` : highestItem.daysUntil === 0 ? "today" : `${Math.abs(highestItem.daysUntil)} days ago`;
+
+    // If multiple vaccines/dogs, append a summary
+    if (items.length > 1) {
+      message = `Hi ${client.firstName || "there"}! This is a reminder from ${locationName} about upcoming vaccine expirations:\n`;
+      items.forEach(item => {
+        const ds = item.daysUntil > 0 ? `expires in ${item.daysUntil} days` : item.daysUntil === 0 ? "expires today" : `expired ${Math.abs(item.daysUntil)} days ago`;
+        message += `• ${item.dogName} — ${item.vaccineName} (${ds}, ${item.expiryDate})\n`;
+      });
+      message += `Please update your records so we can continue providing great care!`;
+    } else {
+      // Single vaccine — use template with merge tags
+      message = message
+        .replace(/\{ownerFirst\}/g, client.firstName || "there")
+        .replace(/\{ownerLast\}/g, client.lastName || "")
+        .replace(/\{dogName\}/g, highestItem.dogName)
+        .replace(/\{vaccineName\}/g, highestItem.vaccineName)
+        .replace(/\{expiryDate\}/g, highestItem.expiryDate)
+        .replace(/\{locationName\}/g, locationName)
+        .replace(/\{daysUntil\}/g, daysStr);
+    }
+
+    reminders.push({
+      id: "rem_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+      clientId: client.id,
+      dogIds: [...new Set(items.map(i => i.dog.id))],
+      dogNames,
+      vaccineIds: [...new Set(items.map(i => i.vaccineId))],
+      vaccineNames: vaccineNamesList,
+      type: "vaccine_expiry",
+      channel: "sms",
+      phone,
+      message,
+      tierId: highestItem.tier.id,
+      tierName: highestItem.tier.name,
+      tierPriority: highestItem.tier.priority,
+      intervalKey: highestItem.tier.name,
+      scheduledFor: todayStr,
+      status: "pending",
+      sentAt: null,
+      items: items.map(i => ({ dogId: i.dog.id, dogName: i.dogName, vaccineId: i.vaccineId, vaccineName: i.vaccineName, expiryDate: i.expiryDate, daysUntil: i.daysUntil, tierId: i.tier.id })),
+    });
+    remaining--;
+  }
+
+  return reminders;
+};
+
 // Dog age compliance check
 const getDogAgeCompliance = (dog, policies, reservations) => {
   const pol = policies || {};
@@ -17692,6 +17842,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab }) {
       { id: "team", label: "Team Management", desc: "View, invite, and manage team members and roles", keywords: "team users staff members invite roles owner manager admin" },
       { id: "roles", label: "Roles & Permissions", desc: "Create custom roles and configure granular permissions", keywords: "roles permissions access control rbac custom staff owner manager security" },
       { id: "session-security", label: "Session Security", desc: "Auto-sign-out timer to prevent stale sessions", keywords: "session timeout auto sign out security timer hours csr account switch" },
+      { id: "automations", label: "Automations", desc: "Vaccine reminder SMS automation with configurable tiers and reporting", keywords: "automations reminders vaccines text sms twilio notifications expiry expiring alerts" },
     ]},
     { label: "Legal", items: [
       { id: "legal", label: "Legal", desc: "Terms of Service and Privacy Policy", keywords: "legal terms of service privacy policy tos" },
@@ -17707,7 +17858,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab }) {
     agreements:"edit_agreements",pricing:"edit_pricing",packages:"edit_pricing",discounts:"edit_pricing",dropdowns:"edit_dropdowns",
     eod:"edit_eod_template","daily-ops":"edit_ops_template",
     facility:"edit_facility",rooms:"edit_rooms","closed-dates":"edit_facility",policies:"edit_vaccines_config","compliance-rules":"edit_vaccines_config","booking-settings":"edit_facility",
-    team:"manage_team",roles:"manage_roles","session-security":"manage_team",reset:"reset_data",
+    team:"manage_team",roles:"manage_roles","session-security":"manage_team",automations:"manage_team",reset:"reset_data",
   };
   const hp = (k) => hasPermission(profile, data, k);
   // Filter settings items by permission
@@ -17738,7 +17889,272 @@ function SettingsPage({ data, save, profile, nav, settingsTab }) {
           <TeamTab profile={profile} data={data} save={save} />
         ) : tab === "roles" ? (
           <RolesPermissionsTab data={data} save={save} profile={profile} />
-        ) : tab === "session-security" ? (() => {
+        ) : tab === "automations" ? (() => {
+          const DEF_TIERS = [
+            { id: "t30", name: "Early Warning", dayStart: 28, dayEnd: 30, priority: "low", enabled: true, template: "Hi {ownerFirst}! This is a friendly reminder from {locationName} that {dogName}'s {vaccineName} vaccine expires on {expiryDate}. Please schedule an appointment with your vet to keep {dogName} up to date!" },
+            { id: "t14", name: "2-Week Reminder", dayStart: 12, dayEnd: 14, priority: "medium", enabled: true, template: "Hi {ownerFirst}, just a heads up — {dogName}'s {vaccineName} vaccine expires in about 2 weeks ({expiryDate}). Please update their records so we can continue providing the best care!" },
+            { id: "t3", name: "Final Warning", dayStart: 2, dayEnd: 4, priority: "high", enabled: true, template: "Important: {dogName}'s {vaccineName} vaccine expires on {expiryDate} — that's just a few days away! Please get this updated ASAP to avoid any interruption in services at {locationName}." },
+            { id: "t0", name: "Expiration Day", dayStart: -1, dayEnd: 1, priority: "critical", enabled: true, template: "Urgent: {dogName}'s {vaccineName} vaccine is expiring today ({expiryDate}). {dogName} will not be able to attend services at {locationName} without a valid vaccine record. Please update us once renewed!" },
+            { id: "tPost", name: "Post-Expiry Follow-Up", dayStart: -8, dayEnd: -6, priority: "critical", enabled: true, template: "Hi {ownerFirst}, {dogName}'s {vaccineName} vaccine expired on {expiryDate}. We miss seeing {dogName}! Please send us updated records so we can get {dogName} back on the schedule at {locationName}." },
+          ];
+          const autoCfg = data.automations || { enabled: false, dailyCap: 50, tiers: DEF_TIERS, reminderLog: [] };
+          const tiers = autoCfg.tiers || DEF_TIERS;
+          const log = autoCfg.reminderLog || [];
+          const updateAuto = async (updates) => await save({ ...data, automations: { ...autoCfg, ...updates } });
+          const updateTier = async (tierId, updates) => {
+            const newTiers = tiers.map(t => t.id === tierId ? { ...t, ...updates } : t);
+            await updateAuto({ tiers: newTiers });
+          };
+          const addTier = async () => {
+            const newId = "t_" + Date.now();
+            const newTier = { id: newId, name: "New Tier", dayStart: 0, dayEnd: 0, priority: "low", enabled: true, template: "Hi {ownerFirst}, {dogName}'s {vaccineName} vaccine expires on {expiryDate}. Please update your records with {locationName}!" };
+            await updateAuto({ tiers: [...tiers, newTier] });
+          };
+          const removeTier = async (tierId) => {
+            if (!confirm("Remove this tier? This cannot be undone.")) return;
+            await updateAuto({ tiers: tiers.filter(t => t.id !== tierId) });
+          };
+          const resetTiers = async () => {
+            if (!confirm("Reset all tiers to defaults? Custom tiers will be lost.")) return;
+            await updateAuto({ tiers: DEF_TIERS });
+          };
+          const mergeTags = ["{ownerFirst}", "{ownerLast}", "{dogName}", "{vaccineName}", "{expiryDate}", "{locationName}", "{daysUntil}"];
+          const priColors = { low: { bg: "#EFF6FF", text: "#3B82F6", border: "#93C5FD" }, medium: { bg: "#FFF7ED", text: "#F97316", border: "#FDBA74" }, high: { bg: "#FEF2F2", text: "#EF4444", border: "#FCA5A5" }, critical: { bg: "#FEF2F2", text: "#DC2626", border: "#F87171" } };
+          // Log stats
+          const now = new Date();
+          const today = now.toISOString().slice(0, 10);
+          const weekAgo = new Date(now - 7 * 86400000).toISOString().slice(0, 10);
+          const monthAgo = new Date(now - 30 * 86400000).toISOString().slice(0, 10);
+          const sentToday = log.filter(l => l.sentAt && l.sentAt.slice(0, 10) === today).length;
+          const sentWeek = log.filter(l => l.sentAt && l.sentAt.slice(0, 10) >= weekAgo).length;
+          const sentMonth = log.filter(l => l.sentAt && l.sentAt.slice(0, 10) >= monthAgo).length;
+          const deliveredCount = log.filter(l => l.status === "delivered" || l.status === "sent").length;
+          const failedCount = log.filter(l => l.status === "failed").length;
+          const deliveryRate = log.length > 0 ? Math.round((deliveredCount / log.length) * 100) : 0;
+          // Recent log entries (last 50)
+          const recentLog = [...log].sort((a, b) => (b.sentAt || "").localeCompare(a.sentAt || "")).slice(0, 50);
+          const editingTierRef = React.useRef(null);
+
+          return (
+            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              {/* Master Toggle */}
+              <Card style={{ padding: "24px 28px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
+                  <span style={{ fontSize: 22 }}>🤖</span>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Vaccine Reminder Automations</div>
+                </div>
+                <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 24px", lineHeight: 1.5 }}>
+                  Automatically send SMS reminders to pet parents when their dog's vaccines are approaching expiration. Configure reminder tiers, customize message templates, and track delivery history.
+                </p>
+
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderRadius: 12, background: autoCfg.enabled ? C.sucLt : C.bg, border: `1.5px solid ${autoCfg.enabled ? "#A7F3D0" : C.border}`, marginBottom: 16, transition: "all 0.15s" }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Enable Vaccine Reminders</div>
+                    <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>When enabled, the system will scan daily and send reminders based on configured tiers</div>
+                  </div>
+                  <button onClick={() => updateAuto({ enabled: !autoCfg.enabled })} style={{ width: 48, height: 28, borderRadius: 14, border: "none", background: autoCfg.enabled ? C.suc : C.border, cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+                    <div style={{ width: 22, height: 22, borderRadius: 11, background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", position: "absolute", top: 3, left: autoCfg.enabled ? 23 : 3, transition: "left 0.2s" }} />
+                  </button>
+                </div>
+
+                {autoCfg.enabled && (
+                  <div style={{ padding: "16px 20px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.bg }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Daily Send Cap</div>
+                      <input type="number" min="1" max="500" value={autoCfg.dailyCap || 50} onChange={e => updateAuto({ dailyCap: parseInt(e.target.value) || 50 })} style={{ width: 80, padding: "6px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", background: C.surface, color: C.text, textAlign: "center" }} />
+                      <span style={{ fontSize: 12, color: C.textSec }}>max reminders per day (prevents bulk-import floods)</span>
+                    </div>
+                  </div>
+                )}
+              </Card>
+
+              {/* Reminder Tiers Table */}
+              <Card style={{ padding: "24px 28px" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 2 }}>Reminder Tiers</div>
+                    <div style={{ fontSize: 12, color: C.textSec }}>Each tier triggers once per vaccine per dog. Negative days = after expiry.</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={resetTiers} style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Reset Defaults</button>
+                    <button onClick={addTier} style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.pri}`, background: C.priLt, color: C.pri, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>+ Add Tier</button>
+                  </div>
+                </div>
+
+                <div style={{ borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+                  {/* Table Header */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 120px 100px 2fr 60px 50px", gap: 0, padding: "10px 16px", background: C.bg, borderBottom: `1px solid ${C.border}`, fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                    <div>Tier Name</div>
+                    <div>Day Range</div>
+                    <div>Priority</div>
+                    <div>Message Template</div>
+                    <div style={{ textAlign: "center" }}>On</div>
+                    <div></div>
+                  </div>
+
+                  {/* Tier Rows */}
+                  {tiers.map((tier, idx) => {
+                    const pc = priColors[tier.priority] || priColors.low;
+                    return (
+                      <div key={tier.id} style={{ display: "grid", gridTemplateColumns: "1fr 120px 100px 2fr 60px 50px", gap: 0, padding: "12px 16px", borderBottom: idx < tiers.length - 1 ? `1px solid ${C.border}` : "none", background: tier.enabled ? C.surface : `${C.bg}80`, alignItems: "start", opacity: tier.enabled ? 1 : 0.55, transition: "opacity 0.15s" }}>
+                        {/* Tier Name */}
+                        <div style={{ paddingRight: 8 }}>
+                          <input value={tier.name} onChange={e => updateTier(tier.id, { name: e.target.value })} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 13, fontWeight: 600, fontFamily: "inherit", background: "transparent", color: C.text }} />
+                        </div>
+                        {/* Day Range */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 4, paddingRight: 8 }}>
+                          <input type="number" value={tier.dayStart} onChange={e => updateTier(tier.id, { dayStart: parseInt(e.target.value) || 0 })} style={{ width: 42, padding: "6px 4px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: "transparent", color: C.text, textAlign: "center" }} />
+                          <span style={{ fontSize: 12, color: C.textMut }}>to</span>
+                          <input type="number" value={tier.dayEnd} onChange={e => updateTier(tier.id, { dayEnd: parseInt(e.target.value) || 0 })} style={{ width: 42, padding: "6px 4px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: "transparent", color: C.text, textAlign: "center" }} />
+                        </div>
+                        {/* Priority */}
+                        <div style={{ paddingRight: 8 }}>
+                          <select value={tier.priority} onChange={e => updateTier(tier.id, { priority: e.target.value })} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: `1px solid ${pc.border}`, fontSize: 12, fontWeight: 600, fontFamily: "inherit", background: pc.bg, color: pc.text, cursor: "pointer", appearance: "auto" }}>
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                            <option value="critical">Critical</option>
+                          </select>
+                        </div>
+                        {/* Message Template */}
+                        <div style={{ paddingRight: 8 }}>
+                          <textarea value={tier.template} onChange={e => updateTier(tier.id, { template: e.target.value })} rows={2} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", background: "transparent", color: C.text, resize: "vertical", lineHeight: 1.4 }} />
+                        </div>
+                        {/* Enabled Toggle */}
+                        <div style={{ display: "flex", justifyContent: "center", paddingTop: 4 }}>
+                          <button onClick={() => updateTier(tier.id, { enabled: !tier.enabled })} style={{ width: 40, height: 24, borderRadius: 12, border: "none", background: tier.enabled ? C.suc : C.border, cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+                            <div style={{ width: 18, height: 18, borderRadius: 9, background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", position: "absolute", top: 3, left: tier.enabled ? 19 : 3, transition: "left 0.2s" }} />
+                          </button>
+                        </div>
+                        {/* Delete */}
+                        <div style={{ display: "flex", justifyContent: "center", paddingTop: 4 }}>
+                          <button onClick={() => removeTier(tier.id)} style={{ width: 28, height: 28, borderRadius: 6, border: "none", background: "transparent", color: C.textMut, cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }} title="Remove tier">×</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {tiers.length === 0 && (
+                    <div style={{ padding: "32px 16px", textAlign: "center", color: C.textMut, fontSize: 13 }}>No tiers configured. Click "+ Add Tier" or "Reset Defaults" to get started.</div>
+                  )}
+                </div>
+
+                {/* Merge Tags Reference */}
+                <div style={{ marginTop: 16, padding: "12px 16px", borderRadius: 8, background: C.priLt, border: `1px solid ${C.pri}20` }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: C.pri, marginBottom: 6 }}>Available Merge Tags</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {mergeTags.map(tag => (
+                      <span key={tag} style={{ padding: "3px 8px", borderRadius: 4, background: C.surface, border: `1px solid ${C.border}`, fontSize: 11, fontFamily: "monospace", color: C.text, cursor: "default" }}>{tag}</span>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.textSec, marginTop: 6, lineHeight: 1.4 }}>Use these tags in message templates. They will be replaced with actual values when the reminder is sent. {"{daysUntil}"} shows "in X days" or "X days ago" depending on timing.</div>
+                </div>
+              </Card>
+
+              {/* Reporting / Stats */}
+              <Card style={{ padding: "24px 28px" }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 16 }}>Reminder Reports</div>
+
+                {/* Stats Row */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
+                  {[
+                    { label: "Sent Today", value: sentToday, color: C.pri },
+                    { label: "Sent This Week", value: sentWeek, color: "#8B5CF6" },
+                    { label: "Sent This Month", value: sentMonth, color: "#06B6D4" },
+                    { label: "Delivery Rate", value: deliveryRate + "%", color: C.suc },
+                    { label: "Failed", value: failedCount, color: failedCount > 0 ? C.dan : C.textMut },
+                  ].map(stat => (
+                    <div key={stat.label} style={{ padding: "16px", borderRadius: 12, border: `1px solid ${C.border}`, background: C.surface, textAlign: "center" }}>
+                      <div style={{ fontSize: 24, fontWeight: 800, color: stat.color, marginBottom: 4 }}>{stat.value}</div>
+                      <div style={{ fontSize: 11, color: C.textMut, fontWeight: 600 }}>{stat.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Manual Scan + Client Filter */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>Recent Activity</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      onClick={async () => {
+                        const pendingReminders = buildVaccineReminders(data);
+                        if (pendingReminders.length === 0) {
+                          alert("No reminders to send right now. All vaccines are either up to date, already reminded, or outside tier windows.");
+                          return;
+                        }
+                        if (!confirm(`Found ${pendingReminders.length} reminder(s) to send. Proceed?\n\nNote: In dev mode (no Twilio configured), these will be logged but not actually sent via SMS.`)) return;
+                        // Log them as "sent" (actual SMS sending is done by the edge function in production)
+                        const newLog = [...(autoCfg.reminderLog || []), ...pendingReminders.map(r => ({ ...r, status: "sent", sentAt: new Date().toISOString() }))];
+                        await updateAuto({ reminderLog: newLog.slice(-500) });
+                        alert(`${pendingReminders.length} reminder(s) logged successfully!`);
+                      }}
+                      style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.pri}`, background: C.priLt, color: C.pri, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
+                    >
+                      ▶ Run Scan Now
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (!confirm("Clear all reminder log entries? This cannot be undone.")) return;
+                        await updateAuto({ reminderLog: [] });
+                      }}
+                      style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
+                    >
+                      Clear Log
+                    </button>
+                  </div>
+                </div>
+                {recentLog.length === 0 ? (
+                  <div style={{ padding: "32px 16px", textAlign: "center", color: C.textMut, fontSize: 13, borderRadius: 12, border: `1px dashed ${C.border}`, background: C.bg }}>
+                    No reminders sent yet. Once automations are enabled and the daily scan runs, activity will appear here.
+                  </div>
+                ) : (
+                  <div style={{ borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden", maxHeight: 400, overflowY: "auto" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 90px 80px", padding: "8px 14px", background: C.bg, borderBottom: `1px solid ${C.border}`, fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.5px", position: "sticky", top: 0 }}>
+                      <div>Date</div>
+                      <div>Client</div>
+                      <div>Details</div>
+                      <div>Tier</div>
+                      <div>Status</div>
+                    </div>
+                    {recentLog.map((entry, i) => {
+                      const client = (data.clients || []).find(c => c.id === entry.clientId);
+                      const statusColor = entry.status === "sent" || entry.status === "delivered" ? C.suc : entry.status === "failed" ? C.dan : C.textMut;
+                      return (
+                        <div key={entry.id || i} style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 90px 80px", padding: "10px 14px", borderBottom: i < recentLog.length - 1 ? `1px solid ${C.border}` : "none", fontSize: 12, color: C.text, alignItems: "center" }}>
+                          <div style={{ color: C.textSec, fontSize: 11 }}>{entry.sentAt ? new Date(entry.sentAt).toLocaleString() : "—"}</div>
+                          <div style={{ fontWeight: 600 }}>{client ? `${client.firstName || ""} ${client.lastName || ""}`.trim() : entry.clientId?.slice(0, 8)}</div>
+                          <div style={{ color: C.textSec }}>{(entry.dogNames || entry.vaccineNames || []).join(", ") || entry.type || "—"}</div>
+                          <div><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: (priColors[entry.tierPriority] || priColors.low).bg, color: (priColors[entry.tierPriority] || priColors.low).text }}>{entry.intervalKey || "—"}</span></div>
+                          <div><span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: statusColor + "18", color: statusColor }}>{entry.status || "pending"}</span></div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </Card>
+
+              {/* How It Works */}
+              <Card style={{ padding: "24px 28px" }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 12 }}>How It Works</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  {[
+                    { icon: "🔍", title: "Daily Scan", desc: "Every day, the system checks all dogs' vaccine expiry dates against your configured tiers." },
+                    { icon: "📋", title: "Tier Matching", desc: "If a vaccine falls within a tier's day range, a reminder is queued. Each tier fires once per vaccine per dog." },
+                    { icon: "📱", title: "Smart Batching", desc: "Multiple vaccines for the same client are batched into a single message. Opt-outs and missing phone numbers are respected." },
+                    { icon: "📊", title: "Tracking & Dedup", desc: "Every reminder is logged. The system checks the log before sending to prevent duplicate messages." },
+                    { icon: "⚡", title: "Late Entries", desc: "If a new client record is added with a vaccine expiring soon, the system catches up to the correct tier — it won't replay past tiers." },
+                    { icon: "🛡️", title: "Daily Cap", desc: "A per-day send limit prevents floods during bulk imports. Reminders are prioritized by urgency." },
+                  ].map(item => (
+                    <div key={item.title} style={{ padding: "14px 16px", borderRadius: 10, border: `1px solid ${C.border}`, background: C.bg }}>
+                      <div style={{ fontSize: 14, marginBottom: 4 }}>{item.icon} <span style={{ fontWeight: 600, color: C.text }}>{item.title}</span></div>
+                      <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5 }}>{item.desc}</div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </div>
+          );
+        })() : tab === "session-security" ? (() => {
           const sessCfg = data.sessionTimeout || { enabled: false, hours: 8 };
           const updateSess = async (updates) => await save({ ...data, sessionTimeout: { ...sessCfg, ...updates } });
           return (
