@@ -2932,8 +2932,20 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
   // ── Print Run Card ────────────────────────────────────────────
   const printRunCard = () => {
-    const cfg = data.runCardConfig || {};
-    const show = (key) => cfg[key] !== false; // default true
+    // Use default template if available
+    const templates = data.runCardTemplates || [];
+    const defaultTpl = templates.find(t => t.isDefault);
+    const cfg = defaultTpl?.config || data.runCardConfig || {};
+    const sectionLayout = cfg.sectionLayout || null;
+    const show = (key) => {
+      // Check sectionLayout first (new system), fall back to legacy toggle
+      if (sectionLayout) {
+        const sectionMap = { showBelongings: "belongings", showFeeding: "feeding", showMedications: "medications", showBath: "bath", showActivityGrid: "activityGrid", showEmergencyContact: "emergency", showNotes: "notes", showDogTags: "tags", showFedToday: "fedToday", showMedsToday: "medsToday" };
+        const secId = sectionMap[key];
+        if (secId && sectionLayout[secId]) return sectionLayout[secId].enabled !== false;
+      }
+      return cfg[key] !== false;
+    };
 
     // Dog info
     const dName = dog.fields.name || "Unknown";
@@ -3106,6 +3118,48 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         </table></div>`;
     })();
 
+    // Build section HTML map for positioned layout
+    const sectionHtmlMap = {
+      header: `<div class="header"><div class="pic">${picHtml}</div><div class="header-info"><div><span class="dog-name">${dName}</span> <span class="owner-last">${cLast}</span><span style="margin-left:12px;" class="room-badge">| ${roomLabel}, ${roomNum}</span></div><div class="info-line">&bull; ${breed}${ageStr ? ", " + ageStr : ""}${sexStr ? " " + sexStr : ""}</div><div class="info-line">&bull; ${cFirst} ${cLast} ${cPhoneStr ? "(" + cPhoneStr + ")" : ""}</div><div style="font-size:14px;font-weight:700;margin:8px 0 4px;">${resType} | ${roomLabel}${inclNote}: ${fmtD(ciDate)}, ${fmtT(ciTime)} - <strong>${fmtD(coDate)}, ${fmtT(coTime)}</strong></div></div></div>`,
+      dogInfo: `<div class="info-line">&bull; ${breed}${ageStr ? ", " + ageStr : ""}${weight ? ", " + weight : ""}${sexStr ? " " + sexStr : ""}</div>`,
+      ownerContact: `<div class="info-line">&bull; ${cFirst} ${cLast} ${cPhoneStr ? "(" + cPhoneStr + ")" : ""}</div>`,
+      resDates: `<div style="font-size:14px;font-weight:700;margin:4px 0;">${resType} | ${roomLabel}${inclNote}: ${fmtD(ciDate)}, ${fmtT(ciTime)} - <strong>${fmtD(coDate)}, ${fmtT(coTime)}</strong></div>`,
+      belongings: show("showBelongings") && belongings ? `<div class="info-line">&bull; <strong>Describe pets belongings</strong> ${belongings}</div>` : "",
+      fedToday: show("showFedToday") ? `<div class="info-line">&bull; <strong>Has your pet been fed today?</strong> ${fedToday || ""}</div>` : "",
+      medsToday: show("showMedsToday") ? `<div class="info-line">&bull; <strong>Has your pet had medications today?</strong> ${medsToday || ""}</div>` : "",
+      tags: (show("showDogTags") || hasMeds || hasFeeding || hasBath) ? `<div class="tag-row">${show("showDogTags") ? tagNames.map(t => `<span class="tag">${t}</span>`).join("") : ""}${hasMeds ? `<span class="icon-badge">💊Meds:</span>` : ""}${hasFeeding ? `<span class="icon-badge">🍽Food from Home:</span>` : ""}${hasBath ? `<span class="icon-badge">🛁${bathType} Bath:</span>` : ""}</div>` : "",
+      emergency: show("showEmergencyContact") && (ecNameVal || ecPhoneStr) ? `<div style="margin:6px 0;font-size:12px;"><strong>Emergency Contact:</strong> ${ecNameVal} ${ecPhoneStr ? "(" + ecPhoneStr + ")" : ""}</div>` : "",
+      notes: show("showNotes") && notes ? `<div style="margin:6px 0;font-size:12px;"><strong>Notes:</strong> ${notes}</div>` : "",
+      feeding: show("showFeeding") && hasFeeding ? `<div class="section-header">FOOD: ${feedingSchedules.some(s => (s.foodType||"").toLowerCase().includes("home")) ? "FFH - Food From Home" : feedingSchedules[0]?.foodType || ""}</div>${feedingSummaryHtml}` : "",
+      activityGrid: show("showActivityGrid") && gridHtml ? gridHtml : "",
+      medications: medTableHtml,
+      bath: bathTableHtml,
+    };
+
+    // Build body content — use positioned layout if available, otherwise flow
+    let bodyContent;
+    if (sectionLayout) {
+      // Sort sections by Y position for proper rendering order
+      const sortedSections = Object.entries(sectionLayout)
+        .filter(([id, pos]) => pos.enabled !== false && sectionHtmlMap[id])
+        .sort((a, b) => (a[1].y || 0) - (b[1].y || 0));
+      bodyContent = `<div class="run-card-num">Run Card 1 of 1</div>` +
+        sortedSections.map(([id]) => sectionHtmlMap[id]).filter(Boolean).join("\n");
+    } else {
+      bodyContent = `<div class="run-card-num">Run Card 1 of 1</div>
+        ${sectionHtmlMap.header}
+        ${sectionHtmlMap.belongings}
+        ${sectionHtmlMap.fedToday}
+        ${sectionHtmlMap.medsToday}
+        ${sectionHtmlMap.tags}
+        ${sectionHtmlMap.emergency}
+        ${sectionHtmlMap.notes}
+        ${sectionHtmlMap.feeding}
+        ${sectionHtmlMap.activityGrid}
+        ${sectionHtmlMap.medications}
+        ${sectionHtmlMap.bath}`;
+    }
+
     const html = `<!DOCTYPE html><html><head><title>Run Card - ${dName}</title>
       <style>
         @page { size: portrait; margin: 0.4in; }
@@ -3125,60 +3179,69 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         .run-card-num { text-align: right; font-size: 11px; color: #666; margin-bottom: 8px; }
       </style></head><body>
       <div class="card">
-        <div class="run-card-num">Run Card 1 of 1</div>
-
-        <div class="header">
-          <div class="pic">${picHtml}</div>
-          <div class="header-info">
-            <div>
-              <span class="dog-name">${dName}</span> <span class="owner-last">${cLast}</span>
-              <span style="margin-left:12px;" class="room-badge">| ${roomLabel}, ${roomNum}</span>
-            </div>
-            <div class="info-line">&bull; ${breed}${ageStr ? ", " + ageStr : ""}${sexStr ? " " + sexStr : ""}</div>
-            <div class="info-line">&bull; ${cFirst} ${cLast} ${cPhoneStr ? "(" + cPhoneStr + ")" : ""}</div>
-            <div style="font-size:14px;font-weight:700;margin:8px 0 4px;">
-              ${resType} | ${roomLabel}${inclNote}: ${fmtD(ciDate)}, ${fmtT(ciTime)} - <strong>${fmtD(coDate)}, ${fmtT(coTime)}</strong>
-            </div>
-          </div>
-        </div>
-
-        ${show("showBelongings") && belongings ? `<div class="info-line">&bull; <strong>Describe pets belongings</strong> ${belongings}</div>` : ""}
-        ${show("showFedToday") ? `<div class="info-line">&bull; <strong>Has your pet been fed today?</strong> ${fedToday || ""}</div>` : ""}
-        ${show("showMedsToday") ? `<div class="info-line">&bull; <strong>Has your pet had medications today?</strong> ${medsToday || ""}</div>` : ""}
-
-        ${show("showDogTags") || hasMeds || hasFeeding || hasBath ? `
-        <div class="tag-row">
-          ${show("showDogTags") ? tagNames.map(t => `<span class="tag">${t}</span>`).join("") : ""}
-          ${hasMeds ? `<span class="icon-badge">💊Meds:</span>` : ""}
-          ${hasFeeding ? `<span class="icon-badge">🍽Food from Home:</span>` : ""}
-          ${hasBath ? `<span class="icon-badge">🛁${bathType} Bath:</span>` : ""}
-        </div>` : ""}
-
-        ${show("showEmergencyContact") && (ecNameVal || ecPhoneStr) ? `
-        <div style="margin:6px 0;font-size:12px;">
-          <strong>Emergency Contact:</strong> ${ecNameVal} ${ecPhoneStr ? "(" + ecPhoneStr + ")" : ""}
-        </div>` : ""}
-
-        ${show("showNotes") && notes ? `
-        <div style="margin:6px 0;font-size:12px;">
-          <strong>Notes:</strong> ${notes}
-        </div>` : ""}
-
-        ${show("showFeeding") && hasFeeding ? `
-        <div class="section-header">FOOD: ${feedingSchedules.some(s => (s.foodType||"").toLowerCase().includes("home")) ? "FFH - Food From Home" : feedingSchedules[0]?.foodType || ""}</div>
-        ${feedingSummaryHtml}` : ""}
-
-        ${show("showActivityGrid") && gridHtml ? gridHtml : ""}
-
-        ${medTableHtml}
-
-        ${bathTableHtml}
+        ${bodyContent}
       </div>
       <script>window.onload=()=>{window.print();}<\/script>
     </body></html>`;
 
     const w = window.open("", "_blank");
     if (w) { w.document.write(html); w.document.close(); }
+  };
+
+  // ── Print Body Check PDF ──────────────────────────────────────
+  const printBodyCheck = async () => {
+    try {
+      // Dynamically load pdf-lib from CDN
+      if (!window.PDFLib) {
+        const script = document.createElement("script");
+        script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js";
+        document.head.appendChild(script);
+        await new Promise((resolve, reject) => { script.onload = resolve; script.onerror = reject; });
+      }
+      const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+
+      // Fetch the body check template PDF
+      const pdfBytes = await fetch("/body-check-template.pdf").then(r => r.arrayBuffer());
+      const pdfDoc = await PDFDocument.load(pdfBytes);
+      const page = pdfDoc.getPage(0);
+      const { height } = page.getSize();
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const fontSize = 11;
+      const textColor = rgb(0, 0, 0);
+
+      // Overlay reservation data
+      const dName = dog.fields.name || "";
+      const roomNum = reservation.room || "";
+      const coDate = reservation.checkOut || "";
+      const fmtDate = (d) => {
+        if (!d) return "";
+        const dt = new Date(d + "T00:00:00");
+        return `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${dt.getFullYear()}`;
+      };
+
+      // Dog Name field: after "Dog Name:" text which ends around x=120
+      page.drawText(dName, { x: 125, y: height - 36, size: fontSize, font: boldFont, color: textColor });
+      // Room # field: after "Room #:" text which ends around x=310
+      page.drawText(roomNum, { x: 325, y: height - 36, size: fontSize, font: boldFont, color: textColor });
+      // Check-Out Date field: after "Check-Out Date:" text which ends around x=530
+      page.drawText(fmtDate(coDate), { x: 530, y: height - 36, size: fontSize, font: boldFont, color: textColor });
+
+      // Save and open
+      const modifiedPdf = await pdfDoc.save();
+      const blob = new Blob([modifiedPdf], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch (err) {
+      console.error("Body check PDF generation failed:", err);
+      alert("Failed to generate body check PDF. Please check that body-check-template.pdf is available.");
+    }
+  };
+
+  const printRunCardWithBodyCheck = async () => {
+    printRunCard();
+    await printBodyCheck();
   };
 
   return (
@@ -3740,10 +3803,16 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           <button onClick={()=>setShowCancelConfirm(true)} style={{display:"flex",alignItems:"center",gap:5,padding:"7px 14px",borderRadius:8,border:`1px solid ${C.danLt}`,background:"transparent",color:C.dan,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginRight:"auto"}}><I.Trash/> Cancel Reservation</button>
         )}
         {isBoarding && reservation.status !== "checked-out" && reservation.status !== "cancelled" && (
-          <button onClick={printRunCard} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:8,border:`1.5px solid ${C.pri}`,background:C.priLt||"#EBF5FF",color:C.pri,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-            Print Run Card
-          </button>
+          <>
+            <button onClick={printRunCard} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:8,border:`1.5px solid ${C.pri}`,background:C.priLt||"#EBF5FF",color:C.pri,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+              Print Run Card
+            </button>
+            <button onClick={printRunCardWithBodyCheck} style={{display:"flex",alignItems:"center",gap:6,padding:"7px 14px",borderRadius:8,border:`1.5px solid ${C.acc||"#F59E0B"}`,background:(C.accLt||"#FFF8E1"),color:C.acc||"#F59E0B",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+              Print + Body Check
+            </button>
+          </>
         )}
         <Btn variant="secondary" onClick={onClose}>Close</Btn>
         {!isReadOnly && (isCheckInMode ? (
@@ -13266,46 +13335,335 @@ function QuestionnaireSettingsTab({ data, save }) {
 }
 
 function RunCardConfigTab({ data, save }) {
-  const cfg = data.runCardConfig || {};
-  const toggle = async (key) => {
-    const cur = cfg[key] !== false; // default true
-    await save({ ...data, runCardConfig: { ...cfg, [key]: !cur } });
-  };
-
-  const options = [
-    { key: "showBelongings", label: "Belongings from Home", desc: "Show the belongings/items the pet brought from home" },
-    { key: "showFeeding", label: "Feeding Schedule", desc: "Show detailed feeding instructions including times, amounts, and food type" },
-    { key: "showMedications", label: "Medication Schedule", desc: "Show medication names, doses, and administration times" },
-    { key: "showBath", label: "Bath Type", desc: "Show the preferred bath type for the stay" },
-    { key: "showActivityGrid", label: "Daily Activity Grid", desc: "Show the day-by-day grid with feeding, medication, and bathing columns" },
-    { key: "showEmergencyContact", label: "Emergency Contact", desc: "Show the emergency contact name and phone number" },
-    { key: "showNotes", label: "Reservation Notes", desc: "Show any special notes or instructions for the stay" },
-    { key: "showDogTags", label: "Dog Tags", desc: "Show classification tags like Private Play, Small Playgroup, etc." },
-    { key: "showFedToday", label: '"Has pet been fed today?" prompt', desc: "Show a blank prompt for staff to note if pet was fed before drop-off" },
-    { key: "showMedsToday", label: '"Has pet had medications today?" prompt', desc: "Show a blank prompt for staff to note if pet had meds before drop-off" },
+  // ── Section definitions ──
+  const SECTIONS = [
+    { id: "header", label: "Header", desc: "Dog photo, name, owner, room badge", h: 120, w: 540 },
+    { id: "dogInfo", label: "Dog Info", desc: "Breed, age, sex/altered", h: 24, w: 540 },
+    { id: "ownerContact", label: "Owner Contact", desc: "Name and phone number", h: 24, w: 540 },
+    { id: "resDates", label: "Reservation Dates", desc: "Type, room, check-in/out dates & times", h: 30, w: 540 },
+    { id: "belongings", label: "Belongings", desc: "Items brought from home", h: 24, w: 540, configKey: "showBelongings" },
+    { id: "fedToday", label: "Fed Today?", desc: "Has pet been fed prompt", h: 24, w: 540, configKey: "showFedToday" },
+    { id: "medsToday", label: "Meds Today?", desc: "Has pet had medications prompt", h: 24, w: 540, configKey: "showMedsToday" },
+    { id: "tags", label: "Dog Tags", desc: "Classification tags & icons", h: 36, w: 540, configKey: "showDogTags" },
+    { id: "emergency", label: "Emergency Contact", desc: "Emergency name and phone", h: 26, w: 540, configKey: "showEmergencyContact" },
+    { id: "notes", label: "Notes", desc: "Special instructions", h: 30, w: 540, configKey: "showNotes" },
+    { id: "feeding", label: "Feeding Schedule", desc: "Food type, times, amounts", h: 50, w: 540, configKey: "showFeeding" },
+    { id: "activityGrid", label: "Activity Grid", desc: "Day-by-day feeding table", h: 80, w: 540, configKey: "showActivityGrid" },
+    { id: "medications", label: "Medications", desc: "Medication schedule table", h: 70, w: 540, configKey: "showMedications" },
+    { id: "bath", label: "Bath", desc: "Bath type and schedule", h: 60, w: 540, configKey: "showBath" },
   ];
 
-  return (
-    <Card style={{ padding: "24px 28px" }}>
-      <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Run Card Configuration</div>
-      <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 24px" }}>Choose what information to include on printed boarding run cards. All options are enabled by default.</p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {options.map(opt => {
-          const on = cfg[opt.key] !== false;
-          return (
-            <div key={opt.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px", borderRadius: 12, background: on ? C.sucLt : C.bg, border: `1.5px solid ${on ? "#A7F3D0" : C.border}`, transition: "all 0.15s" }}>
-              <div style={{ flex: 1, marginRight: 16 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{opt.label}</div>
-                <div style={{ fontSize: 12, color: C.textSec, marginTop: 2, lineHeight: 1.4 }}>{opt.desc}</div>
-              </div>
-              <button onClick={() => toggle(opt.key)} style={{ width: 48, height: 28, borderRadius: 14, border: "none", background: on ? C.suc : C.border, cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
-                <div style={{ width: 22, height: 22, borderRadius: 11, background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.2)", position: "absolute", top: 3, left: on ? 23 : 3, transition: "left 0.2s" }} />
-              </button>
-            </div>
-          );
-        })}
+  const DEFAULT_LAYOUT = {};
+  let yOff = 10;
+  SECTIONS.forEach(s => { DEFAULT_LAYOUT[s.id] = { x: 10, y: yOff, enabled: true }; yOff += s.h + 8; });
+
+  const cfg = data.runCardConfig || {};
+  const layout = cfg.sectionLayout || DEFAULT_LAYOUT;
+  const templates = data.runCardTemplates || [];
+
+  // Local drag state
+  const [dragging, setDragging] = useState(null);
+  const [dragPos, setDragPos] = useState({});
+  const [hovered, setHovered] = useState(null);
+  const [tplName, setTplName] = useState("");
+  const [renamingTpl, setRenamingTpl] = useState(null);
+  const [renameVal, setRenameVal] = useState("");
+  const containerRef = useRef(null);
+
+  // Canvas dimensions (preview scale)
+  const CARD_W = 560;
+  const CARD_H = 780;
+  const SCALE = 0.95;
+  const PREVIEW_W = CARD_W * SCALE;
+  const PREVIEW_H = CARD_H * SCALE;
+
+  const getPos = (sectionId) => {
+    if (dragging === sectionId && dragPos[sectionId]) return dragPos[sectionId];
+    return layout[sectionId] || { x: 10, y: 10, enabled: true };
+  };
+
+  const snap = (v) => Math.round(v / 5) * 5;
+
+  const handleMouseDown = (e, sectionId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const pos = getPos(sectionId);
+    const startMouseX = e.clientX;
+    const startMouseY = e.clientY;
+    const startX = pos.x;
+    const startY = pos.y;
+
+    const handleMove = (me) => {
+      const dx = (me.clientX - startMouseX) / SCALE;
+      const dy = (me.clientY - startMouseY) / SCALE;
+      const sec = SECTIONS.find(s => s.id === sectionId);
+      const newX = snap(Math.max(0, Math.min(CARD_W - (sec?.w || 100), startX + dx)));
+      const newY = snap(Math.max(0, Math.min(CARD_H - (sec?.h || 30), startY + dy)));
+      setDragPos(prev => ({ ...prev, [sectionId]: { ...pos, x: newX, y: newY } }));
+    };
+    const handleUp = () => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      const finalPos = dragPos[sectionId] || pos;
+      const newLayout = { ...layout, [sectionId]: { ...layout[sectionId], ...finalPos } };
+      save({ ...data, runCardConfig: { ...cfg, sectionLayout: newLayout } });
+      setDragging(null);
+    };
+    setDragging(sectionId);
+    window.addEventListener("mousemove", handleMove);
+    window.addEventListener("mouseup", handleUp);
+  };
+
+  const toggleSection = async (sectionId) => {
+    const cur = layout[sectionId]?.enabled !== false;
+    const newLayout = { ...layout, [sectionId]: { ...(layout[sectionId] || DEFAULT_LAYOUT[sectionId]), enabled: !cur } };
+    // Also update legacy config keys for backward compat
+    const sec = SECTIONS.find(s => s.id === sectionId);
+    const newCfg = { ...cfg, sectionLayout: newLayout };
+    if (sec?.configKey) newCfg[sec.configKey] = !cur;
+    await save({ ...data, runCardConfig: newCfg });
+  };
+
+  const resetLayout = async () => {
+    await save({ ...data, runCardConfig: { ...cfg, sectionLayout: { ...DEFAULT_LAYOUT } } });
+  };
+
+  // ── Template functions ──
+  const saveAsTemplate = async () => {
+    if (!tplName.trim()) return;
+    const newTpl = { id: "tpl_" + Date.now(), name: tplName.trim(), isDefault: templates.length === 0, config: { ...cfg, sectionLayout: { ...layout } } };
+    await save({ ...data, runCardTemplates: [...templates, newTpl] });
+    setTplName("");
+  };
+  const loadTemplate = async (tpl) => {
+    await save({ ...data, runCardConfig: { ...tpl.config } });
+  };
+  const setDefaultTemplate = async (tplId) => {
+    const updated = templates.map(t => ({ ...t, isDefault: t.id === tplId }));
+    await save({ ...data, runCardTemplates: updated });
+  };
+  const deleteTemplate = async (tplId) => {
+    if (!window.confirm("Delete this template?")) return;
+    await save({ ...data, runCardTemplates: templates.filter(t => t.id !== tplId) });
+  };
+  const renameTemplate = async (tplId) => {
+    if (!renameVal.trim()) return;
+    const updated = templates.map(t => t.id === tplId ? { ...t, name: renameVal.trim() } : t);
+    await save({ ...data, runCardTemplates: updated });
+    setRenamingTpl(null); setRenameVal("");
+  };
+
+  // ── Sample data for preview ──
+  const sampleContent = {
+    header: (
+      <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+        <div style={{width:60,height:60,borderRadius:6,background:"#e8e8e8",border:"1px solid #ccc",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#bbb" strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M20 21a8 8 0 1 0-16 0"/></svg>
+        </div>
+        <div style={{flex:1}}>
+          <div><span style={{fontSize:16,fontWeight:900}}>Buddy</span> <span style={{fontSize:16,fontWeight:300}}>Johnson</span> <span style={{fontSize:10,color:"#666",marginLeft:6}}>| Standard Room, R5</span></div>
+          <div style={{fontSize:9,color:"#555",marginTop:1}}>Golden Retriever, 3 Years, Male/Neutered</div>
+          <div style={{fontSize:9,color:"#555"}}>Jane Johnson (555) 123-4567</div>
+          <div style={{fontSize:10,fontWeight:700,marginTop:3}}>Boarding | Standard Room: Mon, 01/15 10:00 AM - <strong>Fri, 01/19 2:00 PM</strong></div>
+        </div>
       </div>
-    </Card>
+    ),
+    dogInfo: <div style={{fontSize:9,color:"#555"}}>&bull; Golden Retriever, 3 Years, 65 lbs, Male/Neutered</div>,
+    ownerContact: <div style={{fontSize:9,color:"#555"}}>&bull; Jane Johnson (555) 123-4567</div>,
+    resDates: <div style={{fontSize:10,fontWeight:700}}>Boarding | Standard Room (All Inclusive): Mon, 01/15 10:00 AM - Fri, 01/19 2:00 PM</div>,
+    belongings: <div style={{fontSize:9,color:"#555"}}>&bull; <strong>Belongings:</strong> Blue blanket, Kong toy, bag of kibble</div>,
+    fedToday: <div style={{fontSize:9,color:"#555"}}>&bull; <strong>Has your pet been fed today?</strong> ___________</div>,
+    medsToday: <div style={{fontSize:9,color:"#555"}}>&bull; <strong>Has your pet had medications today?</strong> ___________</div>,
+    tags: (
+      <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap",padding:"3px 0",borderTop:"1px solid #ddd",borderBottom:"1px solid #ddd"}}>
+        <span style={{fontSize:8,background:"#eee",border:"1px solid #aaa",padding:"1px 5px",borderRadius:3,fontWeight:700}}>Private Play</span>
+        <span style={{fontSize:8,background:"#eee",border:"1px solid #aaa",padding:"1px 5px",borderRadius:3,fontWeight:700}}>Large Dog</span>
+        <span style={{fontSize:8}}>&#x1F48A;Meds</span>
+        <span style={{fontSize:8}}>&#x1F37D;Food</span>
+        <span style={{fontSize:8}}>&#x1F6C1;Bath</span>
+      </div>
+    ),
+    emergency: <div style={{fontSize:9,color:"#555"}}><strong>Emergency Contact:</strong> Hayden Johnson (555) 987-6543</div>,
+    notes: <div style={{fontSize:9,color:"#555"}}><strong>Notes:</strong> Buddy is anxious during storms. Extra walks please.</div>,
+    feeding: (
+      <div>
+        <div style={{fontWeight:900,fontSize:9,borderTop:"1px solid #ccc",paddingTop:3}}>FOOD: FFH - Food From Home</div>
+        <div style={{fontSize:8,color:"#444"}}><strong>7:00 AM, 5:00 PM:</strong> 1 cup kibble — mix with warm water</div>
+      </div>
+    ),
+    activityGrid: (
+      <div style={{border:"1px solid #999",borderRadius:2,padding:2}}>
+        <div style={{fontSize:7,fontWeight:700,textAlign:"center",borderBottom:"1px solid #ccc",padding:1,background:"#f5f5f5"}}>Daily Activity Grid</div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:0}}>
+          {["Mon","Tue","Wed","Thu","Fri"].map(d => <div key={d} style={{fontSize:6,textAlign:"center",padding:1,borderRight:"1px solid #eee",fontWeight:700}}>{d}</div>)}
+        </div>
+        <div style={{height:20,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <span style={{fontSize:6,color:"#999"}}>administered / % eaten</span>
+        </div>
+      </div>
+    ),
+    medications: (
+      <div>
+        <div style={{fontWeight:900,fontSize:9,marginBottom:2}}>MEDICATIONS:</div>
+        <div style={{border:"1px solid #999",borderRadius:2,padding:2}}>
+          <div style={{fontSize:8,fontWeight:700}}>Rimadyl — 7:00 AM, 50mg tablet</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:0,marginTop:2}}>
+            {["Mon","Tue","Wed","Thu","Fri"].map(d => <div key={d} style={{fontSize:6,textAlign:"center",padding:2,border:"1px solid #ddd"}}>{d}</div>)}
+          </div>
+        </div>
+      </div>
+    ),
+    bath: (
+      <div>
+        <div style={{fontWeight:900,fontSize:9,marginBottom:2}}>BATH: Standard Bath</div>
+        <div style={{border:"1px solid #999",borderRadius:2,padding:2}}>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:0}}>
+            {["Mon","Tue","Wed","Thu","Fri"].map((d,i) => <div key={d} style={{fontSize:6,textAlign:"center",padding:2,border:"1px solid #ddd"}}>{i===4?"Scheduled":""}</div>)}
+          </div>
+        </div>
+      </div>
+    ),
+  };
+
+  // ── Grip icon SVG ──
+  const GripIcon = () => (
+    <svg width="10" height="10" viewBox="0 0 10 10" fill="#999"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="6" r="1.2"/><circle cx="6" cy="6" r="1.2"/><circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/></svg>
+  );
+  const EyeIcon = ({ open }) => open
+    ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+    : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>;
+
+  return (
+    <div style={{display:"flex",gap:24,alignItems:"flex-start"}}>
+      {/* LEFT: Interactive Preview Canvas */}
+      <div style={{flex:"0 0 auto"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <div style={{fontSize:16,fontWeight:700,color:C.text}}>Run Card Editor</div>
+          <button onClick={resetLayout} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Reset Layout</button>
+        </div>
+        <p style={{fontSize:12,color:C.textSec,margin:"0 0 12px",lineHeight:1.4}}>Drag sections to reposition them. Click the eye icon to show/hide sections on printed run cards.</p>
+        <div
+          ref={containerRef}
+          style={{
+            width: PREVIEW_W, height: PREVIEW_H, position: "relative", background: "#fff",
+            border: `2px solid ${C.border}`, borderRadius: 8, overflow: "hidden",
+            boxShadow: "0 4px 24px rgba(0,0,0,0.08)", userSelect: dragging ? "none" : "auto",
+          }}
+        >
+          {/* Grid lines for alignment guide */}
+          <div style={{position:"absolute",inset:0,backgroundImage:"linear-gradient(rgba(0,0,0,0.02) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.02) 1px, transparent 1px)",backgroundSize:`${20*SCALE}px ${20*SCALE}px`,pointerEvents:"none",zIndex:0}} />
+
+          {SECTIONS.map(sec => {
+            const pos = getPos(sec.id);
+            const enabled = pos.enabled !== false;
+            const isDragging = dragging === sec.id;
+            const isHovered = hovered === sec.id;
+            return (
+              <div
+                key={sec.id}
+                style={{
+                  position: "absolute",
+                  left: pos.x * SCALE,
+                  top: pos.y * SCALE,
+                  width: sec.w * SCALE,
+                  minHeight: sec.h * SCALE,
+                  border: isDragging ? `2px solid ${C.pri}` : isHovered ? `1.5px dashed ${C.pri}80` : "1.5px solid transparent",
+                  borderRadius: 4,
+                  background: isDragging ? C.priLt + "60" : isHovered ? C.priLt + "30" : "transparent",
+                  opacity: enabled ? 1 : 0.3,
+                  transition: isDragging ? "none" : "border 0.15s, background 0.15s, opacity 0.15s",
+                  zIndex: isDragging ? 100 : 1,
+                  cursor: "default",
+                  padding: "2px 4px",
+                  boxSizing: "border-box",
+                }}
+                onMouseEnter={() => !dragging && setHovered(sec.id)}
+                onMouseLeave={() => setHovered(null)}
+              >
+                {/* Controls overlay */}
+                {(isHovered || isDragging) && (
+                  <div style={{position:"absolute",top:-1,left:-1,right:-1,display:"flex",alignItems:"center",justifyContent:"space-between",padding:"1px 4px",background:C.pri,borderRadius:"4px 4px 0 0",zIndex:10}}>
+                    <div
+                      onMouseDown={(e) => handleMouseDown(e, sec.id)}
+                      style={{cursor:"grab",display:"flex",alignItems:"center",gap:3,padding:"1px 2px"}}
+                    >
+                      <GripIcon />
+                      <span style={{fontSize:8,fontWeight:700,color:"#fff",textTransform:"uppercase",letterSpacing:"0.04em"}}>{sec.label}</span>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); toggleSection(sec.id); }}
+                      style={{background:"none",border:"none",cursor:"pointer",color:"#fff",display:"flex",alignItems:"center",padding:2}}
+                      title={enabled ? "Hide section" : "Show section"}
+                    >
+                      <EyeIcon open={enabled} />
+                    </button>
+                  </div>
+                )}
+                {/* Section content preview */}
+                <div style={{pointerEvents:"none",transform:`scale(${SCALE})`,transformOrigin:"top left"}}>
+                  {sampleContent[sec.id] || <div style={{fontSize:9,color:"#999"}}>{sec.label}</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* RIGHT: Settings Panel */}
+      <div style={{flex:1,minWidth:280,maxWidth:360}}>
+        {/* Section Toggles */}
+        <Card style={{padding:"16px 20px",marginBottom:16}}>
+          <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:12}}>Section Visibility</div>
+          <div style={{display:"flex",flexDirection:"column",gap:6}}>
+            {SECTIONS.map(sec => {
+              const pos = getPos(sec.id);
+              const enabled = pos.enabled !== false;
+              return (
+                <div key={sec.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",borderRadius:8,background:enabled ? C.sucLt : C.bg,border:`1px solid ${enabled ? "#A7F3D0" : C.border}`,transition:"all 0.15s"}}>
+                  <div>
+                    <div style={{fontSize:12,fontWeight:600,color:C.text}}>{sec.label}</div>
+                    <div style={{fontSize:10,color:C.textSec}}>{sec.desc}</div>
+                  </div>
+                  <button onClick={() => toggleSection(sec.id)} style={{width:40,height:24,borderRadius:12,border:"none",background:enabled ? C.suc : C.border,cursor:"pointer",position:"relative",transition:"background 0.2s",flexShrink:0}}>
+                    <div style={{width:18,height:18,borderRadius:9,background:"#fff",boxShadow:"0 1px 3px rgba(0,0,0,0.15)",position:"absolute",top:3,left:enabled ? 19 : 3,transition:"left 0.2s"}} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+
+        {/* Templates */}
+        <Card style={{padding:"16px 20px"}}>
+          <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:4}}>Templates</div>
+          <p style={{fontSize:11,color:C.textSec,margin:"0 0 12px"}}>Save layouts as templates. The default template auto-applies when printing.</p>
+
+          {templates.length > 0 && (
+            <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:12}}>
+              {templates.map(tpl => (
+                <div key={tpl.id} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,border:`1.5px solid ${tpl.isDefault ? C.pri : C.border}`,background:tpl.isDefault ? C.priLt : C.bg}}>
+                  {renamingTpl === tpl.id ? (
+                    <input value={renameVal} onChange={e => setRenameVal(e.target.value)} onKeyDown={e => e.key === "Enter" && renameTemplate(tpl.id)} onBlur={() => renameTemplate(tpl.id)} autoFocus style={{flex:1,padding:"2px 6px",borderRadius:4,border:`1px solid ${C.border}`,fontSize:12,fontFamily:"inherit",background:C.surface,color:C.text}} />
+                  ) : (
+                    <span onDoubleClick={() => { setRenamingTpl(tpl.id); setRenameVal(tpl.name); }} style={{flex:1,fontSize:12,fontWeight:600,color:C.text,cursor:"default"}} title="Double-click to rename">{tpl.isDefault && <span style={{color:C.pri,marginRight:4}}>&#9733;</span>}{tpl.name}</span>
+                  )}
+                  <button onClick={() => loadTemplate(tpl)} style={{padding:"2px 8px",borderRadius:4,border:`1px solid ${C.pri}30`,background:C.priLt,color:C.pri,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}} title="Load this template">Load</button>
+                  <button onClick={() => setDefaultTemplate(tpl.id)} style={{padding:"2px 6px",borderRadius:4,border:`1px solid ${tpl.isDefault ? C.suc : C.border}`,background:tpl.isDefault ? C.sucLt : "transparent",color:tpl.isDefault ? C.suc : C.textMut,fontSize:10,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}} title="Set as default">&#9733;</button>
+                  <button onClick={() => deleteTemplate(tpl.id)} style={{padding:"2px 6px",borderRadius:4,border:`1px solid ${C.border}`,background:"transparent",color:C.textMut,fontSize:10,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center"}} title="Delete"><I.X/></button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div style={{display:"flex",gap:8}}>
+            <input value={tplName} onChange={e => setTplName(e.target.value)} onKeyDown={e => e.key === "Enter" && saveAsTemplate()} placeholder="Template name..." style={{flex:1,padding:"7px 10px",borderRadius:8,border:`1px solid ${C.border}`,fontSize:12,fontFamily:"inherit",background:C.surface,color:C.text}} />
+            <Btn onClick={saveAsTemplate} variant="primary" size="sm" disabled={!tplName.trim()}>Save</Btn>
+          </div>
+        </Card>
+      </div>
+    </div>
   );
 }
 
