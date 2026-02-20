@@ -17691,6 +17691,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab }) {
     { label: "Administration", items: [
       { id: "team", label: "Team Management", desc: "View, invite, and manage team members and roles", keywords: "team users staff members invite roles owner manager admin" },
       { id: "roles", label: "Roles & Permissions", desc: "Create custom roles and configure granular permissions", keywords: "roles permissions access control rbac custom staff owner manager security" },
+      { id: "session-security", label: "Session Security", desc: "Auto-sign-out timer to prevent stale sessions", keywords: "session timeout auto sign out security timer hours csr account switch" },
     ]},
     { label: "Legal", items: [
       { id: "legal", label: "Legal", desc: "Terms of Service and Privacy Policy", keywords: "legal terms of service privacy policy tos" },
@@ -17706,7 +17707,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab }) {
     agreements:"edit_agreements",pricing:"edit_pricing",packages:"edit_pricing",discounts:"edit_pricing",dropdowns:"edit_dropdowns",
     eod:"edit_eod_template","daily-ops":"edit_ops_template",
     facility:"edit_facility",rooms:"edit_rooms","closed-dates":"edit_facility",policies:"edit_vaccines_config","compliance-rules":"edit_vaccines_config","booking-settings":"edit_facility",
-    team:"manage_team",roles:"manage_roles",reset:"reset_data",
+    team:"manage_team",roles:"manage_roles","session-security":"manage_team",reset:"reset_data",
   };
   const hp = (k) => hasPermission(profile, data, k);
   // Filter settings items by permission
@@ -17737,7 +17738,45 @@ function SettingsPage({ data, save, profile, nav, settingsTab }) {
           <TeamTab profile={profile} data={data} save={save} />
         ) : tab === "roles" ? (
           <RolesPermissionsTab data={data} save={save} profile={profile} />
-        ) : tab === "hotkeys" ? (() => {
+        ) : tab === "session-security" ? (() => {
+          const sessCfg = data.sessionTimeout || { enabled: false, hours: 8 };
+          const updateSess = async (updates) => await save({ ...data, sessionTimeout: { ...sessCfg, ...updates } });
+          return (
+            <Card style={{padding:"24px 28px"}}>
+              <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:4}}>Session Security</div>
+              <p style={{fontSize:13,color:C.textSec,margin:"0 0 24px",lineHeight:1.5}}>Configure automatic sign-out to prevent stale sessions. When enabled, any account signed in longer than the configured time will be automatically signed out. This ensures a closing CSR is not accidentally using the opening CSR's account.</p>
+
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",borderRadius:12,background:sessCfg.enabled ? C.sucLt : C.bg,border:`1.5px solid ${sessCfg.enabled ? "#A7F3D0" : C.border}`,marginBottom:16,transition:"all 0.15s"}}>
+                <div>
+                  <div style={{fontSize:14,fontWeight:600,color:C.text}}>Auto Sign-Out Timer</div>
+                  <div style={{fontSize:12,color:C.textSec,marginTop:2}}>Automatically sign out accounts after a set period</div>
+                </div>
+                <button onClick={() => updateSess({ enabled: !sessCfg.enabled })} style={{width:48,height:28,borderRadius:14,border:"none",background:sessCfg.enabled ? C.suc : C.border,cursor:"pointer",position:"relative",transition:"background 0.2s",flexShrink:0}}>
+                  <div style={{width:22,height:22,borderRadius:11,background:"#fff",boxShadow:"0 1px 3px rgba(0,0,0,0.2)",position:"absolute",top:3,left:sessCfg.enabled ? 23 : 3,transition:"left 0.2s"}} />
+                </button>
+              </div>
+
+              {sessCfg.enabled && (
+                <div style={{padding:"20px",borderRadius:12,border:`1px solid ${C.border}`,background:C.bg}}>
+                  <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Maximum Session Duration</div>
+                  <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
+                    <input type="number" min="0.5" max="24" step="0.5" value={sessCfg.hours || 8} onChange={e => updateSess({ hours: parseFloat(e.target.value) || 1 })} style={{width:80,padding:"8px 12px",borderRadius:8,border:`1px solid ${C.border}`,fontSize:14,fontFamily:"inherit",background:C.surface,color:C.text,textAlign:"center"}} />
+                    <span style={{fontSize:13,color:C.textSec}}>hours</span>
+                  </div>
+                  <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                    {[1, 2, 4, 6, 8, 10, 12].map(h => (
+                      <button key={h} onClick={() => updateSess({ hours: h })} style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${sessCfg.hours === h ? C.pri : C.border}`,background:sessCfg.hours === h ? C.priLt : "transparent",color:sessCfg.hours === h ? C.pri : C.textSec,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{h}h</button>
+                    ))}
+                  </div>
+                  <div style={{marginTop:16,padding:"12px 16px",borderRadius:8,background:C.priLt,border:`1px solid ${C.pri}20`}}>
+                    <div style={{fontSize:12,color:C.pri,fontWeight:600}}>How it works</div>
+                    <div style={{fontSize:11,color:C.textSec,marginTop:4,lineHeight:1.5}}>When enabled, a background timer checks every 30 seconds. If the current account has been signed in for longer than {sessCfg.hours || 8} hour{(sessCfg.hours || 8) > 1 ? "s" : ""}, it will be automatically signed out with an alert. The timer resets when switching accounts.</div>
+                  </div>
+                </div>
+              )}
+            </Card>
+          );
+        })() : tab === "hotkeys" ? (() => {
           const hk = data.hotkeySettings || { enabled: false, showHints: false };
           const bindings = { ...DEF_HOTKEY_BINDINGS, ...(hk.bindings || {}) };
           const toggle = async (key) => await save({ ...data, hotkeySettings: { ...hk, [key]: !hk[key] } });
@@ -23602,6 +23641,13 @@ export default function App() {
   const [page, setPage] = useState(() => initRoute.locSlug === "enterprise" ? initRoute.page : initRoute.page);
   const [params, setParams] = useState(() => initRoute.params);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [accountSwitchOpen, setAccountSwitchOpen] = useState(false);
+  const [switchTarget, setSwitchTarget] = useState(null);
+  const [switchPassword, setSwitchPassword] = useState("");
+  const [switchError, setSwitchError] = useState("");
+  const [switchLoading, setSwitchLoading] = useState(false);
+  const [teamAccounts, setTeamAccounts] = useState([]);
+  const [signInTime, setSignInTime] = useState(() => Date.now());
   const [lcFilterOpen, setLcFilterOpen] = useState(false);
   const [lcFilters, setLcFilters] = useState({});
   useEffect(() => { if (page !== "clients" && lcFilterOpen) setLcFilterOpen(false); }, [page, lcFilterOpen]);
@@ -23612,6 +23658,39 @@ export default function App() {
   const [rptActiveReport, setRptActiveReport] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [opsExpanded, setOpsExpanded] = useState(false);
+
+  // Fetch team accounts for quick-switch
+  useEffect(() => {
+    if (!profile?.location_id) return;
+    supabase.from("profiles").select("id,full_name,email,role").eq("location_id", profile.location_id)
+      .then(({ data: members }) => { if (members) setTeamAccounts(members.filter(m => m.id !== profile.id)); });
+  }, [profile?.location_id, profile?.id]);
+
+  // Auto-sign-out timer
+  useEffect(() => {
+    const sessionCfg = data?.sessionTimeout || {};
+    if (!sessionCfg.enabled || !sessionCfg.hours) return;
+    const ms = sessionCfg.hours * 60 * 60 * 1000;
+    const timer = setInterval(() => {
+      if (Date.now() - signInTime >= ms) {
+        alert("Session expired — you've been signed in for " + sessionCfg.hours + " hour" + (sessionCfg.hours > 1 ? "s" : "") + ". Signing out for security.");
+        signOut();
+      }
+    }, 30000); // check every 30s
+    return () => clearInterval(timer);
+  }, [data?.sessionTimeout?.enabled, data?.sessionTimeout?.hours, signInTime, signOut]);
+
+  // Handle account switch
+  const handleAccountSwitch = async () => {
+    if (!switchTarget || !switchPassword) return;
+    setSwitchLoading(true);
+    setSwitchError("");
+    const { error } = await supabase.auth.signInWithPassword({ email: switchTarget.email, password: switchPassword });
+    setSwitchLoading(false);
+    if (error) { setSwitchError("Invalid password. Please try again."); return; }
+    setSwitchTarget(null); setSwitchPassword(""); setAccountSwitchOpen(false); setSignInTime(Date.now());
+  };
+
   const [navStack, setNavStack] = useState([{ page: initRoute.page, params: initRoute.params }]);
   const skipUrlPush = useRef(false);
   const isEnterprise = currentLocation === "enterprise";
@@ -23965,10 +24044,74 @@ export default function App() {
             </div>
           ))}
         </nav>
-        <div style={{padding:"14px 10px",display:"flex",flexDirection:"column",gap:6}}>
-          {sbExpanded && <div style={{padding:"0 4px 4px",fontSize:11,color:"rgba(175,141,84,0.4)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{profile?.full_name || profile?.email}</div>}
-          <button onClick={signOut} style={{width:"100%",padding:"7px 14px",border:"none",borderRadius:8,background:"rgba(239,68,68,0.12)",color:"rgba(255,150,150,0.8)",cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:500,textAlign:"center",boxSizing:"border-box"}}>{sbExpanded?"Sign Out":"⏻"}</button>
+        <div style={{padding:"14px 10px",display:"flex",flexDirection:"column",gap:6,position:"relative"}}>
+          {sbExpanded && (
+            <div style={{position:"relative"}}>
+              <button onClick={() => setAccountSwitchOpen(!accountSwitchOpen)} style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"6px 8px",border:"none",borderRadius:8,background:accountSwitchOpen ? "rgba(175,141,84,0.15)" : "transparent",color:"rgba(175,141,84,0.6)",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,textAlign:"left",transition:"background 0.15s"}}>
+                <div style={{width:26,height:26,borderRadius:13,background:"rgba(175,141,84,0.2)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                  <span style={{fontSize:11,fontWeight:800,color:C.acc}}>{(profile?.full_name || profile?.email || "?")[0].toUpperCase()}</span>
+                </div>
+                <div style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"rgba(175,141,84,0.55)",fontSize:11}}>{profile?.full_name || profile?.email}</div>
+                <span style={{fontSize:8,color:"rgba(175,141,84,0.3)",transform:accountSwitchOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.15s"}}>&#9650;</span>
+              </button>
+
+              {/* Quick-switch dropdown */}
+              {accountSwitchOpen && (
+                <div style={{position:"absolute",bottom:"100%",left:0,right:0,marginBottom:6,background:"#0B2545",border:"1px solid rgba(175,141,84,0.2)",borderRadius:10,boxShadow:"0 -8px 32px rgba(0,0,0,0.4)",overflow:"hidden",zIndex:200,maxHeight:280,overflowY:"auto"}}>
+                  <div style={{padding:"10px 12px 6px",fontSize:9,fontWeight:700,color:"rgba(175,141,84,0.35)",textTransform:"uppercase",letterSpacing:"0.08em"}}>Switch Account</div>
+                  {teamAccounts.length === 0 ? (
+                    <div style={{padding:"12px",fontSize:11,color:"rgba(255,255,255,0.3)",textAlign:"center",fontStyle:"italic"}}>No other accounts at this location</div>
+                  ) : teamAccounts.map(acct => (
+                    <button key={acct.id} onClick={() => { setSwitchTarget(acct); setSwitchPassword(""); setSwitchError(""); setAccountSwitchOpen(false); }}
+                      style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 12px",border:"none",background:"transparent",color:"rgba(255,255,255,0.8)",cursor:"pointer",fontFamily:"inherit",fontSize:12,textAlign:"left",transition:"background 0.1s"}}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(175,141,84,0.1)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      <div style={{width:28,height:28,borderRadius:14,background:"rgba(175,141,84,0.15)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                        <span style={{fontSize:12,fontWeight:800,color:C.acc}}>{(acct.full_name || acct.email || "?")[0].toUpperCase()}</span>
+                      </div>
+                      <div style={{flex:1,overflow:"hidden"}}>
+                        <div style={{fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{acct.full_name || acct.email}</div>
+                        <div style={{fontSize:10,color:"rgba(255,255,255,0.35)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{acct.email}</div>
+                      </div>
+                      <div style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:"rgba(175,141,84,0.1)",color:"rgba(175,141,84,0.5)",fontWeight:600,textTransform:"uppercase"}}>{acct.role}</div>
+                    </button>
+                  ))}
+                  <div style={{borderTop:"1px solid rgba(175,141,84,0.1)",padding:"6px 12px"}}>
+                    <button onClick={signOut} style={{width:"100%",padding:"8px",border:"none",borderRadius:6,background:"rgba(239,68,68,0.12)",color:"rgba(255,150,150,0.8)",cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Sign Out</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+          {!sbExpanded && <button onClick={signOut} style={{width:"100%",padding:"7px 14px",border:"none",borderRadius:8,background:"rgba(239,68,68,0.12)",color:"rgba(255,150,150,0.8)",cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:500,textAlign:"center",boxSizing:"border-box"}}>⏻</button>}
           {sbExpanded && <div style={{textAlign:"center",fontSize:9,color:"rgba(255,255,255,0.5)",marginTop:4,lineHeight:1.4}}>&copy; 2026 K9 Operations LLC<br/>All Rights Reserved</div>}
+
+          {/* Password prompt modal for account switch */}
+          {switchTarget && ReactDOM.createPortal(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:9999}} onClick={() => { setSwitchTarget(null); setSwitchPassword(""); setSwitchError(""); }}>
+              <div onClick={e => e.stopPropagation()} style={{background:C.surface,borderRadius:16,padding:28,width:380,maxWidth:"90vw",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+                <div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:4}}>Switch Account</div>
+                <div style={{fontSize:13,color:C.textSec,marginBottom:20}}>Enter password for <strong>{switchTarget.full_name || switchTarget.email}</strong></div>
+                <div style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:C.bg,borderRadius:10,marginBottom:16}}>
+                  <div style={{width:32,height:32,borderRadius:16,background:C.priLt,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                    <span style={{fontSize:14,fontWeight:800,color:C.pri}}>{(switchTarget.full_name || switchTarget.email || "?")[0].toUpperCase()}</span>
+                  </div>
+                  <div>
+                    <div style={{fontWeight:600,fontSize:13,color:C.text}}>{switchTarget.full_name || "Team Member"}</div>
+                    <div style={{fontSize:11,color:C.textMut}}>{switchTarget.email}</div>
+                  </div>
+                </div>
+                <input type="password" value={switchPassword} onChange={e => setSwitchPassword(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAccountSwitch()} placeholder="Password" autoFocus style={{width:"100%",padding:"10px 14px",borderRadius:10,border:`1.5px solid ${switchError ? "#EF4444" : C.border}`,fontSize:14,fontFamily:"inherit",background:C.bg,color:C.text,boxSizing:"border-box",marginBottom:switchError ? 8 : 16}} />
+                {switchError && <div style={{fontSize:12,color:"#EF4444",marginBottom:12,fontWeight:500}}>{switchError}</div>}
+                <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+                  <Btn variant="secondary" onClick={() => { setSwitchTarget(null); setSwitchPassword(""); setSwitchError(""); }}>Cancel</Btn>
+                  <Btn variant="primary" onClick={handleAccountSwitch} disabled={!switchPassword || switchLoading}>{switchLoading ? "Signing in..." : "Switch"}</Btn>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
         </div>
         </>)}
       </div>
