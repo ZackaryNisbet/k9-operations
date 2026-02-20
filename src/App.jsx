@@ -2023,12 +2023,15 @@ const NEW_LOCATION_DEFAULTS = {
 
 // ─── Reusable Components ────────────────────────────────────────────────────
 class ErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  constructor(props) { super(props); this.state = { hasError: false, error: null, errorInfo: null }; }
   static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, errorInfo) { this.setState({ errorInfo }); }
   render() {
     if (this.state.hasError) {
-      return React.createElement("div", { style: { padding: 40, fontFamily: "monospace", color: "red", whiteSpace: "pre-wrap" } },
-        "RENDER ERROR: " + (this.state.error?.message || "Unknown") + "\n\n" + (this.state.error?.stack || "")
+      return React.createElement("div", { style: { padding: 40, fontFamily: "monospace", color: "red", whiteSpace: "pre-wrap", fontSize: 12 } },
+        "RENDER ERROR: " + (this.state.error?.message || "Unknown") +
+        "\n\n=== COMPONENT STACK ===\n" + (this.state.errorInfo?.componentStack || "(loading...)") +
+        "\n\n=== JS STACK ===\n" + (this.state.error?.stack || "")
       );
     }
     return this.props.children;
