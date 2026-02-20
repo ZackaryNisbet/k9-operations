@@ -3667,27 +3667,27 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             const logs = (data.auditLog || []).filter(l => l.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
             return logs.length > 0 ? (
               <div style={{maxHeight:400,overflowY:"auto",display:"flex",flexDirection:"column",gap:4}}>
-                {logs.map(log => { const dets = Array.isArray(log.details) ? log.details : []; return (
-                  <div key={log.id} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.borderLight}`,fontSize:12}}>
+                {logs.map((log, li) => { const dets = Array.isArray(log.details) ? log.details : (log.details && typeof log.details === "object" && !Array.isArray(log.details)) ? [log.details] : []; const safeStr = (v) => v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v); return (
+                  <div key={log.id||li} style={{padding:"10px 14px",borderRadius:10,background:C.bg,border:`1px solid ${C.borderLight}`,fontSize:12}}>
                     <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:dets.length>0?6:0}}>
-                      <span style={{fontWeight:700,color:C.pri}}>{String(log.userName||"")}</span>
-                      <span style={{fontWeight:600,color:C.text}}>{String(log.action||"")}</span>
-                      <span style={{marginLeft:"auto",color:C.textMut,fontSize:11,fontVariantNumeric:"tabular-nums"}}>{new Date(log.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true})}</span>
+                      <span style={{fontWeight:700,color:C.pri}}>{safeStr(log.userName)}</span>
+                      <span style={{fontWeight:600,color:C.text}}>{safeStr(log.action)}</span>
+                      <span style={{marginLeft:"auto",color:C.textMut,fontSize:11,fontVariantNumeric:"tabular-nums"}}>{log.timestamp ? new Date(log.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true}) : ""}</span>
                     </div>
                     {dets.length > 0 && (
                       <div style={{display:"flex",flexDirection:"column",gap:3}}>
                         {dets.map((d, di) => {
-                          const renderVal = (v) => v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
-                          const oldStr = renderVal(d.oldVal);
-                          const newStr = renderVal(d.newVal);
+                          if (!d || typeof d !== "object") return null;
+                          const oldStr = safeStr(d.oldVal);
+                          const newStr = safeStr(d.newVal);
                           return (
                           <div key={di} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,paddingLeft:4}}>
-                            <span style={{color:C.textMut,fontWeight:500,minWidth:90}}>{renderVal(d.field)}</span>
+                            <span style={{color:C.textMut,fontWeight:500,minWidth:90}}>{safeStr(d.field)}</span>
                             {oldStr !== "" && (
                               <span style={{color:C.dan,textDecoration:"line-through",opacity:0.7}}>{oldStr}</span>
                             )}
                             {oldStr !== "" && newStr !== "" && (
-                              <span style={{color:C.textMut}}>→</span>
+                              <span style={{color:C.textMut}}>{"\u2192"}</span>
                             )}
                             {newStr !== "" && (
                               <span style={{color:C.suc,fontWeight:600}}>{newStr}</span>
