@@ -17710,6 +17710,8 @@ function SettingsPage({ data, save, profile, nav, settingsTab }) {
   const [editingTagName, setEditingTagName] = useState(null); // tag id being name-edited
   const [editingTagNameVal, setEditingTagNameVal] = useState("");
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [eraseConfirm, setEraseConfirm] = useState(false);
+  const [erasing, setErasing] = useState(false);
 
   // Facility settings
   const fs = data.facilitySettings || { largeDogDaycareSF: 0, smallDogDaycareSF: 0 };
@@ -17809,6 +17811,40 @@ function SettingsPage({ data, save, profile, nav, settingsTab }) {
     } catch (e) { console.warn("Backup download failed:", e); }
     await save(DEMO);
     setResetConfirm(false);
+  };
+
+  const handleEraseAll = async () => {
+    setErasing(true);
+    try {
+      // Delete from all entity tables in FK-safe order (children first)
+      const loc = locationId;
+      await Promise.all([
+        supabase.from('k9_reminder_log').delete().eq('location_id', loc),
+        supabase.from('k9_audit_log').delete().eq('location_id', loc),
+        supabase.from('k9_messages').delete().eq('location_id', loc),
+        supabase.from('k9_daily_ops').delete().eq('location_id', loc),
+      ]);
+      await Promise.all([
+        supabase.from('k9_evaluations').delete().eq('location_id', loc),
+        supabase.from('k9_payments').delete().eq('location_id', loc),
+        supabase.from('k9_package_sales').delete().eq('location_id', loc),
+      ]);
+      await supabase.from('k9_reservations').delete().eq('location_id', loc);
+      await Promise.all([
+        supabase.from('k9_vaccine_records').delete().eq('location_id', loc),
+        supabase.from('k9_dogs').delete().eq('location_id', loc),
+      ]);
+      await Promise.all([
+        supabase.from('k9_clients').delete().eq('location_id', loc),
+        supabase.from('k9_packages').delete().eq('location_id', loc),
+      ]);
+      // Reset in-memory state to empty arrays
+      const empty = { ...data, clients: [], dogs: [], reservations: [], evaluations: [], eodEntries: [], dailyOps: [], payments: [], packages: [], packageSales: [], messages: [], auditLog: [] };
+      if (empty.automations) empty.automations = { ...empty.automations, reminderLog: [] };
+      await save(empty);
+    } catch (err) { console.error('Erase failed:', err); }
+    setErasing(false);
+    setEraseConfirm(false);
   };
 
   // Settings sections for grouped list view
@@ -18267,13 +18303,18 @@ function SettingsPage({ data, save, profile, nav, settingsTab }) {
               </div>
             </Card>
           );
-        })() : tab === "reset" ? (
+        })() : tab === "reset" ? (<>
           <Card style={{ padding: "20px 24px" }}>
             <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: C.text }}>Demo Data</h3>
             <p style={{ margin: "0 0 14px", fontSize: 13, color: C.textSec }}>Reset all data back to the demo dataset.</p>
             {resetConfirm ? (<div style={{ display: "flex", gap: 10, alignItems: "center" }}><span style={{ fontSize: 13, color: C.dan, fontWeight: 600 }}>Are you sure?</span><Btn size="sm" variant="danger" onClick={handleReset}>Yes, Reset</Btn><Btn size="sm" variant="ghost" onClick={() => setResetConfirm(false)}>Cancel</Btn></div>) : (<Btn variant="secondary" size="sm" onClick={() => setResetConfirm(true)}>Reset to Demo Data</Btn>)}
           </Card>
-        ) : tab === "agreements" ? (
+          <Card style={{ padding: "20px 24px", marginTop: 16 }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: C.dan }}>Erase All Data</h3>
+            <p style={{ margin: "0 0 14px", fontSize: 13, color: C.textSec }}>Permanently delete all clients, dogs, reservations, and operational data from the database for this location. Settings and configuration are preserved.</p>
+            {eraseConfirm ? (<div style={{ display: "flex", gap: 10, alignItems: "center" }}><span style={{ fontSize: 13, color: C.dan, fontWeight: 600 }}>{erasing ? "Erasing..." : "This cannot be undone!"}</span>{!erasing && <Btn size="sm" variant="danger" onClick={handleEraseAll}>Yes, Erase Everything</Btn>}{!erasing && <Btn size="sm" variant="ghost" onClick={() => setEraseConfirm(false)}>Cancel</Btn>}</div>) : (<Btn variant="danger" size="sm" onClick={() => setEraseConfirm(true)}>Erase All Data</Btn>)}
+          </Card>
+        </>) : tab === "agreements" ? (
           <AgreementsPage data={data} save={save} />
         ) : tab === "questionnaire" ? (
           <QuestionnaireSettingsTab data={data} save={save} />
