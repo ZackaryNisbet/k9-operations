@@ -2697,6 +2697,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showPayForm, setShowPayForm] = useState(false);
   const [payFormDefaults, setPayFormDefaults] = useState(null);
+  const [expandedLines, setExpandedLines] = useState({});
   const [discountType, setDiscountType] = useState(reservation.discountType || "none"); // "none", "percent", "flat"
   const [discountValue, setDiscountValue] = useState(reservation.discountValue || 0);
   const [fedToday, setFedToday] = useState(reservation.fedToday || "");
@@ -3446,8 +3447,6 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             const fmt = (v) => `$${Math.abs(v).toFixed(2)}`;
             const configuredDiscounts = (data.discounts || []).filter(d => d.active !== false);
             const hasDiscount = discountType !== "none" && discountValue > 0;
-            const [expandedLines, setExpandedLines] = [useState({})[0], useState({})[1]];
-
             if (adjTotal === 0 && pr.total === 0) return <div style={{marginTop:20,fontSize:13,color:C.textMut,fontStyle:"italic"}}>No charge for this reservation.</div>;
 
             return (
@@ -3664,7 +3663,43 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
       {/* TAB 3: HISTORY */}
       {activeTab === "history" && (
-        <div style={{padding:20,fontSize:14,color:C.text}}>{"History tab loaded OK. Res ID: " + String(reservation.id)}</div>
+        <div>
+          {secHeader("Reservation History")}
+          {(() => {
+            const safeStr = (v) => {
+              if (v == null) return "";
+              if (typeof v === "object") return JSON.stringify(v);
+              return String(v);
+            };
+            const logs = (data.auditLog || [])
+              .filter(e => e.reservationId === reservation.id)
+              .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            if (logs.length === 0) return <div style={{fontSize:13,color:C.textMut,fontStyle:"italic",padding:"20px 0"}}>No history entries for this reservation.</div>;
+            return logs.map(entry => (
+              <div key={safeStr(entry.id)} style={{padding:"14px 16px",borderRadius:10,border:`1px solid ${C.border}`,background:C.surface,marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <Badge color={safeStr(entry.action).includes("Check") ? "success" : safeStr(entry.action).includes("Cancel") ? "danger" : "info"} size="sm">{safeStr(entry.action)}</Badge>
+                    <span style={{fontSize:12,color:C.textSec}}>by {safeStr(entry.userName)}</span>
+                  </div>
+                  <span style={{fontSize:11,color:C.textMut}}>{entry.timestamp ? new Date(entry.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true}) : ""}</span>
+                </div>
+                {Array.isArray(entry.details) && entry.details.length > 0 && (
+                  <div style={{display:"flex",flexDirection:"column",gap:4,marginTop:6}}>
+                    {entry.details.map((d, di) => (
+                      <div key={di} style={{fontSize:12,display:"flex",gap:6,alignItems:"baseline",color:C.textSec}}>
+                        <span style={{fontWeight:600,color:C.text,minWidth:100}}>{safeStr(d.field)}</span>
+                        <span style={{textDecoration:"line-through",color:C.dan}}>{safeStr(d.oldVal)}</span>
+                        <span style={{color:C.textMut}}>→</span>
+                        <span style={{fontWeight:600,color:C.suc}}>{safeStr(d.newVal)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ));
+          })()}
+        </div>
       )}
 
       {/* Payment Form Modal */}
