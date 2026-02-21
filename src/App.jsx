@@ -298,8 +298,8 @@ const buildVaccineReminders = (data) => {
     // Respect opt-out
     if (client.notificationPrefs && client.notificationPrefs.vaccineAlerts === false) continue;
     if (client.notificationPrefs && client.notificationPrefs.textReminders === false) continue;
-    // Need phone number
-    const phone = client.phone || client.mobilePhone;
+    // Need phone number (stored in client.fields.phone)
+    const phone = client.fields?.phone;
     if (!phone) continue;
 
     for (const vId of allVaccineIds) {
@@ -17696,7 +17696,7 @@ function PackageReportsTab({ data }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // SETTINGS (Fields + Dog Tags)
 // ═══════════════════════════════════════════════════════════════════════════
-function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug }) {
+function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, addGlobalToast }) {
   const [tab, setTab] = useState(settingsTab || null);
   useEffect(() => { setTab(settingsTab || null); }, [settingsTab]);
   const [settingsSearch, setSettingsSearch] = useState("");
@@ -17712,6 +17712,10 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug }) {
   const [resetConfirm, setResetConfirm] = useState(false);
   const [eraseConfirm, setEraseConfirm] = useState(false);
   const [erasing, setErasing] = useState(false);
+  const [scanPending, setScanPending] = useState(null); // array of pending reminders or null
+  const [clearLogConfirm, setClearLogConfirm] = useState(false);
+  const [removeTierConfirm, setRemoveTierConfirm] = useState(null); // tier id to remove or null
+  const [resetTiersConfirm, setResetTiersConfirm] = useState(false);
 
   // Facility settings
   const fs = data.facilitySettings || { largeDogDaycareSF: 0, smallDogDaycareSF: 0 };
@@ -17949,14 +17953,8 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug }) {
             const newTier = { id: newId, name: "New Tier", dayStart: 0, dayEnd: 0, priority: "low", enabled: true, template: "Hi {ownerFirst}, {dogName}'s {vaccineName} vaccine expires on {expiryDate}. Please update your records with {locationName}!" };
             await updateAuto({ tiers: [...tiers, newTier] });
           };
-          const removeTier = async (tierId) => {
-            if (!confirm("Remove this tier? This cannot be undone.")) return;
-            await updateAuto({ tiers: tiers.filter(t => t.id !== tierId) });
-          };
-          const resetTiers = async () => {
-            if (!confirm("Reset all tiers to defaults? Custom tiers will be lost.")) return;
-            await updateAuto({ tiers: DEF_TIERS });
-          };
+          const removeTier = (tierId) => setRemoveTierConfirm(tierId);
+          const resetTiers = () => setResetTiersConfirm(true);
           const mergeTags = ["{ownerFirst}", "{ownerLast}", "{dogName}", "{vaccineName}", "{expiryDate}", "{locationName}", "{daysUntil}"];
           const priColors = { low: { bg: "#EFF6FF", text: "#3B82F6", border: "#93C5FD" }, medium: { bg: "#FFF7ED", text: "#F97316", border: "#FDBA74" }, high: { bg: "#FEF2F2", text: "#EF4444", border: "#FCA5A5" }, critical: { bg: "#FEF2F2", text: "#DC2626", border: "#F87171" } };
           // Log stats
@@ -18116,24 +18114,18 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug }) {
                       onClick={async () => {
                         const pendingReminders = buildVaccineReminders(data);
                         if (pendingReminders.length === 0) {
-                          alert("No reminders to send right now. All vaccines are either up to date, already reminded, or outside tier windows.");
+                          addGlobalToast?.({ type: "info", message: "No reminders to send — all vaccines are up to date, already reminded, or outside tier windows." });
                           return;
                         }
-                        if (!confirm(`Found ${pendingReminders.length} reminder(s) to send. Proceed?\n\nNote: In dev mode (no Twilio configured), these will be logged but not actually sent via SMS.`)) return;
-                        // Log them as "sent" (actual SMS sending is done by the edge function in production)
-                        const newLog = [...(autoCfg.reminderLog || []), ...pendingReminders.map(r => ({ ...r, status: "sent", sentAt: new Date().toISOString() }))];
-                        await updateAuto({ reminderLog: newLog.slice(-500) });
-                        alert(`${pendingReminders.length} reminder(s) logged successfully!`);
+                        // Show confirmation via scanConfirm state
+                        setScanPending(pendingReminders);
                       }}
                       style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.pri}`, background: C.priLt, color: C.pri, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
                     >
                       ▶ Run Scan Now
                     </button>
                     <button
-                      onClick={async () => {
-                        if (!confirm("Clear all reminder log entries? This cannot be undone.")) return;
-                        await updateAuto({ reminderLog: [] });
-                      }}
+                      onClick={() => setClearLogConfirm(true)}
                       style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
                     >
                       Clear Log
@@ -18189,6 +18181,86 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug }) {
                   ))}
                 </div>
               </Card>
+
+              {/* ── Confirmation Overlays ── */}
+              {scanPending && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }} onClick={() => setScanPending(null)}>
+                  <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: "28px 32px", maxWidth: 420, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Send Vaccine Reminders?</div>
+                    <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.6, marginBottom: 20 }}>
+                      Found <strong style={{ color: C.pri }}>{scanPending.length}</strong> reminder{scanPending.length !== 1 ? "s" : ""} to send to {[...new Set(scanPending.map(r => r.clientId))].length} client{[...new Set(scanPending.map(r => r.clientId))].length !== 1 ? "s" : ""}. Each client will receive one batched message covering all their dogs' expiring vaccines.
+                    </div>
+                    <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                      <button onClick={() => setScanPending(null)} style={{ padding: "8px 18px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                      <button onClick={async () => {
+                        const newLog = [...log, ...scanPending.map(r => ({ ...r, sentAt: new Date().toISOString(), status: "sent" }))];
+                        await updateAuto({ reminderLog: newLog });
+                        addGlobalToast?.({ type: "success", message: `Sent ${scanPending.length} vaccine reminder${scanPending.length !== 1 ? "s" : ""} successfully.` });
+                        setScanPending(null);
+                      }} style={{ padding: "8px 22px", borderRadius: 8, border: "none", background: C.pri, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                        Send {scanPending.length} Reminder{scanPending.length !== 1 ? "s" : ""}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {clearLogConfirm && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }} onClick={() => setClearLogConfirm(false)}>
+                  <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: "28px 32px", maxWidth: 380, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Clear Reminder Log?</div>
+                    <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.6, marginBottom: 20 }}>This will erase all {log.length} log entries. Stats will reset to zero. This cannot be undone.</div>
+                    <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                      <button onClick={() => setClearLogConfirm(false)} style={{ padding: "8px 18px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                      <button onClick={async () => {
+                        await updateAuto({ reminderLog: [] });
+                        addGlobalToast?.({ type: "success", message: "Reminder log cleared." });
+                        setClearLogConfirm(false);
+                      }} style={{ padding: "8px 22px", borderRadius: 8, border: "none", background: C.dan, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                        Clear Log
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {removeTierConfirm && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }} onClick={() => setRemoveTierConfirm(null)}>
+                  <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: "28px 32px", maxWidth: 380, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Remove Tier?</div>
+                    <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.6, marginBottom: 20 }}>This reminder tier will be permanently deleted. This cannot be undone.</div>
+                    <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                      <button onClick={() => setRemoveTierConfirm(null)} style={{ padding: "8px 18px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                      <button onClick={async () => {
+                        await updateAuto({ tiers: tiers.filter(t => t.id !== removeTierConfirm) });
+                        addGlobalToast?.({ type: "success", message: "Tier removed." });
+                        setRemoveTierConfirm(null);
+                      }} style={{ padding: "8px 22px", borderRadius: 8, border: "none", background: C.dan, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {resetTiersConfirm && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }} onClick={() => setResetTiersConfirm(false)}>
+                  <div onClick={e => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: "28px 32px", maxWidth: 380, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>Reset All Tiers?</div>
+                    <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.6, marginBottom: 20 }}>All custom tiers will be replaced with the default configuration. This cannot be undone.</div>
+                    <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                      <button onClick={() => setResetTiersConfirm(false)} style={{ padding: "8px 18px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                      <button onClick={async () => {
+                        await updateAuto({ tiers: DEF_TIERS });
+                        addGlobalToast?.({ type: "success", message: "Tiers reset to defaults." });
+                        setResetTiersConfirm(false);
+                      }} style={{ padding: "8px 22px", borderRadius: 8, border: "none", background: C.dan, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                        Reset Tiers
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           );
         })() : tab === "session-security" ? (() => {
@@ -24426,7 +24498,7 @@ export default function App() {
       case "reports": return hp("view_payments") ? <ReportsPage data={data} save={save} nav={nav} profile={profile} rptFilterOpen={rptFilterOpen} setRptFilterOpen={setRptFilterOpen} rptFilters={rptFilters} setRptFilters={setRptFilters} onActiveReportChange={setRptActiveReport}/> : denied;
       case "ai": return hp("use_ai") ? <AIPage data={data} save={save} nav={nav}/> : denied;
       case "lms": return <LMSPage data={data} save={save} nav={nav} profile={profile}/>;
-      case "settings": return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile} nav={nav} locationSlug={locSlug}/> : denied;
+      case "settings": return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile} nav={nav} locationSlug={locSlug} addGlobalToast={addGlobalToast}/> : denied;
       default:
         if (isSettingsSubPage) {
           const subTab = page.replace("settings-", "");
