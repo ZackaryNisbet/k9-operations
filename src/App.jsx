@@ -45,6 +45,7 @@ const I = {
   CreditCard: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>,
   RefreshCw: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
   AlertTriangle: (props) => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
+  InfoCircle: (props) => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>,
   ShoppingCart: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>,
   GraduationCap: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 0 3 3 6 3s6-3 6-3v-5"/></svg>,
 };
@@ -235,13 +236,23 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
 const gid = () => Math.random().toString(36).substr(2, 9);
+
+// Smart dog name formatter for message templates
+function formatDogNames(dogs) {
+  const names = dogs.map(d => d.fields?.name || "your dog").filter(Boolean);
+  if (names.length === 0) return "your dog";
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return names.slice(0, -1).join(", ") + ", and " + names[names.length - 1];
+}
 const titleCase = (s) => (s || "").replace(/\b\w/g, c => c.toUpperCase());
 const fmtPhone = (p) => { const d = (p||"").replace(/\D/g,""); return d.length===10?`(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`:p||""; };
 const fmtDate = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00"); return dt.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}); };
 const fmtDateFull = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00"); return `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${dt.getFullYear()}`; };
 const fmtDateShort = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00"); return `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${String(dt.getFullYear()).slice(2)}`; };
 const fmtTime = (t) => { if(!t) return ""; const [h,m] = t.split(":").map(Number); const ampm = h >= 12 ? "PM" : "AM"; const h12 = h % 12 || 12; return `${h12}:${String(m).padStart(2,"0")} ${ampm}`; };
-const summarizeFeeding = (schedules) => { if(!schedules||!schedules.length) return ""; return schedules.map(s => { const t = (s.times||[]).join("/"); return `${s.amount||""} ${s.unit||""} ${t} ${s.foodType||""}`.trim(); }).join("; "); };
+const fmtInstr = (v) => Array.isArray(v) ? v.join(", ") : (v || "");
+const summarizeFeeding = (schedules) => { if(!schedules||!schedules.length) return ""; return schedules.map(s => { const t = (s.times||[]).join("/"); const instr = fmtInstr(s.instruction); return `${s.amount||""} ${s.unit||""} ${t} ${s.foodType||""} ${instr}`.trim(); }).join("; "); };
 const summarizeMeds = (schedules) => { if(!schedules||!schedules.length) return "None"; return schedules.map(s => { const timeStr = (s.times && s.times.length) ? s.times.join(", ") : (s.time || ""); return `${s.name||""} ${s.amount||""} ${s.unit||""} @ ${timeStr}`.trim(); }).join("; "); };
 
 // Vaccine status: returns {ok:bool, expired:[], missing:[], expiringSoon:[], graceperiod:[]}
@@ -659,7 +670,7 @@ const countHours = (tIn, tOut) => {
   return Math.max(0, (h2 * 60 + m2 - h1 * 60 - m1) / 60);
 };
 
-function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, dogs, dogProfiles, pricing, isSecondDogSameRoom, roomSegments }) {
+function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, dogs, dogProfiles, pricing, isSecondDogSameRoom, roomSegments, reservation }) {
   const p = pricing || DEF_PRICING;
   const lines = [];
   let subtotal = 0;
@@ -687,6 +698,28 @@ function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime
       const disc = Math.round(boardingSubtotal * (p.multiDogDiscount / 100) * 100) / 100;
       discountTotal += disc;
       lines.push({ label: `Multi-dog discount (${p.multiDogDiscount}% off)`, total: -disc, isDiscount: true });
+    }
+    // Private Play surcharge (prorated if tag changed mid-stay)
+    const ppSurcharge = p.privatePlaySurcharge || 0;
+    if (ppSurcharge > 0 && dogs && dogs.length > 0 && dogs[0] && (dogs[0].tags || []).includes("tag_pp")) {
+      const totalNights = roomSegments && roomSegments.length > 0
+        ? roomSegments.reduce((sum, seg) => sum + countNights(seg.startDate, seg.endDate), 0)
+        : countNights(checkIn, checkOut);
+      const ppStartDate = reservation?.privatePlayStartDate;
+      let ppNights = totalNights;
+      if (ppStartDate && ppStartDate > checkIn) {
+        ppNights = countNights(ppStartDate, checkOut);
+        if (ppNights < 0) ppNights = 0;
+        if (ppNights > totalNights) ppNights = totalNights;
+      }
+      if (ppNights > 0) {
+        const ppTotal = ppSurcharge * ppNights;
+        const label = ppStartDate && ppStartDate > checkIn
+          ? `Private Play surcharge ($${ppSurcharge}/night × ${ppNights} remaining)`
+          : `Private Play surcharge ($${ppSurcharge}/night × ${ppNights})`;
+        lines.push({ label, rate: ppSurcharge, qty: ppNights, total: ppTotal, isSurcharge: true });
+        subtotal += ppTotal;
+      }
     }
   } else if (type === "dayboarding") {
     const rate = p.dayboardingRate || ((p.daycareRates || {}).fullDay || 0) + 4;
@@ -1470,8 +1503,8 @@ const DEF_QUESTIONNAIRE = {
 // Default dog tag definitions
 const DEF_DOG_TAGS = [
   { id: "tag_eval", name: "Evaluation", colorIdx: 2 },
-  { id: "tag_lp", name: "Large Playgroup", colorIdx: 0 },
-  { id: "tag_sp", name: "Small Playgroup", colorIdx: 1 },
+  { id: "tag_lp", name: "Large Playgroup", colorIdx: 1 },
+  { id: "tag_sp", name: "Small Playgroup", colorIdx: 0 },
   { id: "tag_pp", name: "Private Play", colorIdx: 3 },
 ];
 const CLASSIFICATION_TAG_IDS = ["tag_lp", "tag_sp", "tag_pp"];
@@ -1538,6 +1571,8 @@ const DEF_PRICING = {
     "Gourmet Doggie Ice Cream": 4,
     "Lunch": 8,
   },
+  // Surcharges
+  privatePlaySurcharge: 10, // $/night for Private Play dogs
   // Discount rules
   multiDogDiscount: 20, // % off 2nd dog same room same owner
   // Payment rules
@@ -1597,7 +1632,7 @@ const DEF_FEEDING_TIME_OPTIONS = ["AM (6:00 am)","Noon (12:00 pm)","PM (6:00 pm)
 const DEF_FEEDING_UNIT_OPTIONS = ["Cup","1/2 Cup","1/4 Cup","Scoop","Tablespoon","Can","Piece"];
 const DEF_FOOD_TYPE_OPTIONS = ["Food From Home - Bagged","Food From Home - Unbagged","Blue Buffalo GI Vet-Grade (Chicken)","Blue Buffalo HF Vet-Grade (Salmon)"];
 const DEF_FOOD_SOURCE_OPTIONS = ["From Home","Resort Provided","Prescription"];
-const DEF_FEEDING_INSTRUCTION_OPTIONS = ["Regular","Slow Feeder","Hand Fed","Elevated Bowl","Separate from Others"];
+const DEF_FEEDING_INSTRUCTION_OPTIONS = ["Regular","Slow Feeder","Hand Fed","Elevated Bowl","Separate from Others","Monitor to Feed"];
 const DEF_MEDICATION_UNIT_OPTIONS = ["Tablet","Capsule","mL","Pump","Drop","Scoop"];
 const DEF_MEDICATION_TIME_OPTIONS = ["AM (6:00 am)","Noon (12:00 pm)","PM (6:00 pm)"];
 const DEF_MEDICATION_NAME_OPTIONS = ["Acepromazine","Amoxicillin","Apoquel","Benadryl","Carprofen","Cephalexin","Cerenia","Clavamox","Clindamycin","Cosequin","Cytopoint","Dasuquin","Denamarin","Deramaxx","Doxycycline","Enrofloxacin","Famotidine","Fish Oil","Fluconazole","Fluoxetine","Gabapentin","Galliprant","Glucosamine","Heartgard","Heart Medication","Hydroxyzine","Joint Supplement","Ketoconazole","Librela","Meloxicam","Metoclopramide","Metronidazole","Omeprazole","Ondansetron","Pepcid","Phenobarbital","Potassium Bromide","Prednisolone","Prednisone","Probiotic","Rimadyl","Sentinel","Simparica Trio","Sucralfate","Thyroid Medication","Tramadol","Trazodone","Vetmedin","Welactin","Zonisamide"];
@@ -2377,11 +2412,18 @@ function Inp({label,value,onChange,type="text",placeholder,required,style={},opt
 }
 
 // Discount picker dropdown — shows configured discounts from Settings
-function DiscountPicker({ discounts, onSelect }) {
+function DiscountPicker({ discounts, onSelect, clientId, data }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => { if (!open) return; const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [open]);
-  if (discounts.length === 0) return null;
+  // Filter out one-time discounts already used by this client
+  const client = clientId && data ? data.clients.find(c => c.id === clientId) : null;
+  const usedDiscountIds = new Set((client?.discountUsage || []).map(u => u.discountId));
+  const available = discounts.filter(d => {
+    if (d.discountKind === "one-time" && usedDiscountIds.has(d.id)) return false;
+    return true;
+  });
+  if (available.length === 0) return null;
   return (
     <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
       <button onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", color: C.pri, fontSize: 12, fontWeight: 700, fontFamily: "inherit", transition: "all 0.15s" }} onMouseEnter={e => e.currentTarget.style.borderColor = C.pri} onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
@@ -2391,11 +2433,14 @@ function DiscountPicker({ discounts, onSelect }) {
       {open && (
         <div style={{ position: "absolute", bottom: "100%", left: 0, marginBottom: 6, zIndex: 100, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.15)", padding: 8, minWidth: 260, maxHeight: 240, overflowY: "auto" }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", padding: "6px 10px" }}>Available Discounts</div>
-          {discounts.map(d => (
+          {available.map(d => (
             <button key={d.id} onClick={() => { onSelect(d); setOpen(false); }} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderRadius: 10, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.1s" }} onMouseEnter={e => e.currentTarget.style.background = C.bg} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{d.name}</div>
-                {d.lodgingTypes && d.lodgingTypes.length > 0 && <div style={{ fontSize: 10, color: C.textMut, marginTop: 1 }}>{d.lodgingTypes.join(", ")}</div>}
+                <div style={{ fontSize: 10, color: C.textMut, marginTop: 1 }}>
+                  {d.discountKind === "recurring" ? "Recurring" : "One-time"}
+                  {d.lodgingTypes && d.lodgingTypes.length > 0 ? ` · ${d.lodgingTypes.join(", ")}` : ""}
+                </div>
               </div>
               <span style={{ fontSize: 14, fontWeight: 800, color: C.suc, whiteSpace: "nowrap" }}>{d.type === "percentage" ? `${d.value}%` : `$${d.value}`}</span>
             </button>
@@ -2670,9 +2715,8 @@ function DogTagChips({ dog, dogTags, size = "sm" }) {
           const tag = dogTags.find(t => t.id === tagId);
           if (!tag) return null;
           const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
-          // Abbreviate: multi-word → initials (LP, SP, PP), single word → first 4 chars (EVAL)
-          const words = tag.name.split(/\s+/);
-          const abbr = words.length > 1 ? words.map(w => w[0]).join("").toUpperCase().slice(0, 2) : tag.name.toUpperCase().slice(0, 4);
+          // Abbreviate: L for Large Playgroup, S for Small Playgroup, PP for Private Play, first 4 for single-word
+          const abbr = tag.id === "tag_lp" ? "L" : tag.id === "tag_sp" ? "S" : tag.id === "tag_pp" ? "PP" : (() => { const words = tag.name.split(/\s+/); return words.length > 1 ? words.map(w => w[0]).join("").toUpperCase().slice(0, 2) : tag.name.toUpperCase().slice(0, 4); })();
           return (
             <Tip key={tagId} text={tag.name}>
               <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, borderRadius: 4, fontSize: 10, fontWeight: 800, background: tc.text, color: "#fff", cursor: "default", flexShrink: 0, padding: "0 4px", letterSpacing: 0 }}>{abbr}</span>
@@ -2845,11 +2889,15 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   const [pendingChanges, setPendingChanges] = useState([]);
   const [pendingAction, setPendingAction] = useState(null); // "save" or "checkin"
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelRefundOption, setCancelRefundOption] = useState("keep");
+  const [cancelCouponOption, setCancelCouponOption] = useState("return");
+  const [showPrintPrompt, setShowPrintPrompt] = useState(false);
   const [showPayForm, setShowPayForm] = useState(false);
   const [payFormDefaults, setPayFormDefaults] = useState(null);
   const [expandedLines, setExpandedLines] = useState({});
   const [discountType, setDiscountType] = useState(reservation.discountType || "none"); // "none", "percent", "flat"
   const [discountValue, setDiscountValue] = useState(reservation.discountValue || 0);
+  const [selectedDiscountId, setSelectedDiscountId] = useState(reservation.discountId || null);
   const [fedToday, setFedToday] = useState(reservation.fedToday || "");
   const [medsToday, setMedsToday] = useState(reservation.medsToday || "");
   // Activity tracking: { "2026-02-07|feeding_AM": { administered: true, by: "Name", at: "ISO", consumption: "100%" } }
@@ -2864,7 +2912,18 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     }
   }, [activityLog]);
 
-  const isReadOnly = reservation.status === "checked-out" || reservation.status === "cancelled";
+  const isReadOnly = reservation.status === "checked-out" || reservation.status === "cancelled" || reservation.status === "checked-in";
+  // Compliance gate: compute if any compliance checks are red (failed)
+  const complianceBlocked = (() => {
+    if (!isCheckInMode) return false;
+    const vaxStatus = getVaxStatus(dog, data.requiredVaccines, data.resortPolicies);
+    const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
+    const snStatus = getSpayNeuterCompliance(dog);
+    const agreements = data.agreements || DEF_AGREEMENTS;
+    const reqAgrs = agreements.filter(a => a.required !== false);
+    const allAgrSigned = reqAgrs.every(a => agrSigned(client, a.id));
+    return !vaxStatus.ok || !ageStatus.ok || !allAgrSigned || !snStatus.ok;
+  })();
   const BATH_OPTS = data.bathTypeOptions || ["Standard","Hypo","Medicated","Whitening"];
   const profileFeedingSchedules = dog.fields.feedingSchedules ?? [];
   const profileMedicationSchedules = dog.fields.medicationSchedules ?? [];
@@ -2892,6 +2951,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     emergencyContactOverride: (ecNameChanged || ecPhoneChanged) ? { name: ecName, phone: ecPhone } : reservation.emergencyContactOverride || null,
     discountType: discountType !== "none" ? discountType : undefined,
     discountValue: discountType !== "none" ? discountValue : undefined,
+    discountId: selectedDiscountId || undefined,
     activityLog,
   });
 
@@ -2910,7 +2970,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
   // Calculate adjusted total for deposit/payment gating
   const getAdjustedTotal = () => {
-    const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
+    const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false, reservation });
     let adjT = pr.total;
     if (discountType === "percent" && discountValue > 0) adjT = Math.max(0, adjT - Math.round(adjT * (discountValue / 100) * 100) / 100);
     else if (discountType === "flat" && discountValue > 0) adjT = Math.max(0, adjT - Math.min(discountValue, adjT));
@@ -2974,6 +3034,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       setShowConflict(true);
     } else {
       onSave(buildUpdatedRes(), doCheckIn, doCheckOut);
+      if (doCheckIn && isBoarding) { setShowPrintPrompt(true); return; }
     }
   };
 
@@ -3006,7 +3067,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     newData.reservations = newData.reservations.map(r => r.id === reservation.id ? merged : r);
     await save(newData);
     setShowConflict(false);
-    onClose();
+    if (doCheckIn && isBoarding) { setShowPrintPrompt(true); } else { onClose(); }
   };
 
   const secHeader = (label) => <div style={{fontSize:11,fontWeight:700,color:C.textMut,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10,marginTop:20}}>{label}</div>;
@@ -3047,7 +3108,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           label: `Feeding - ${time}`,
           type: "feeding",
           detail: [s.amount, s.unit, s.foodType].filter(Boolean).join(" "),
-          instruction: s.instruction || "",
+          instruction: fmtInstr(s.instruction),
           notes: s.notes || "",
           activeDays: days.map(() => true),
         });
@@ -3061,7 +3122,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         label: `Medication - ${s.name}`,
         type: "medication",
         detail: [timeStr, s.amount, s.unit].filter(Boolean).join(" "),
-        notes: s.instruction || s.notes || "",
+        notes: fmtInstr(s.instruction) || s.notes || "",
         activeDays: days.map(() => true),
       });
     });
@@ -3164,7 +3225,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     const feedingSummaryHtml = feedingSchedules.map(s => {
       const times = (s.times || []).join(", ");
       const detail = [s.amount, s.unit, s.foodType].filter(Boolean).join(" ");
-      const inst = s.instruction ? ` ${s.instruction}` : "";
+      const inst = fmtInstr(s.instruction) ? ` ${fmtInstr(s.instruction)}` : "";
       const n = s.notes ? ` ${s.notes}` : "";
       return `<div style="margin-bottom:4px;"><strong>${times}:</strong> ${detail}${inst}${n}</div>`;
     }).join("");
@@ -3236,7 +3297,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       }).join("");
       const medRows = medicationSchedules.map(s => {
         const timeStr = (s.times && s.times.length) ? s.times.join(", ") : (s.time || "");
-        const label = `<div style="font-weight:700;font-size:11px;">${s.name || "Medication"}</div><div style="font-size:10px;color:#444;">${[timeStr, s.amount, s.unit].filter(Boolean).join(" ")}${s.instruction ? " — " + s.instruction : (s.notes ? " — " + s.notes : "")}</div>`;
+        const label = `<div style="font-weight:700;font-size:11px;">${s.name || "Medication"}</div><div style="font-size:10px;color:#444;">${[timeStr, s.amount, s.unit].filter(Boolean).join(" ")}${fmtInstr(s.instruction) ? " — " + fmtInstr(s.instruction) : (s.notes ? " — " + s.notes : "")}</div>`;
         const cells = actDays.map(() => `<td style="border:1px solid #999;padding:6px 4px;text-align:center;">&nbsp;</td>`).join("");
         return `<tr><td style="padding:6px 8px;border:1px solid #999;vertical-align:top;">${label}</td>${cells}</tr>`;
       }).join("");
@@ -3376,6 +3437,13 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       page.drawText(roomNum, { x: 325, y: height - 36, size: fontSize, font: boldFont, color: textColor });
       // Check-Out Date field: after "Check-Out Date:" text which ends around x=530
       page.drawText(fmtDate(coDate), { x: 530, y: height - 36, size: fontSize, font: boldFont, color: textColor });
+
+      // Belongings field: print below header row, look for "Belongings:" area
+      const bText = belongings || reservation.belongings || "";
+      if (bText) {
+        // Draw belongings label + text near bottom of form in the belongings section
+        page.drawText("Belongings: " + bText, { x: 40, y: height - 56, size: 10, font, color: textColor, maxWidth: 520 });
+      }
 
       // Save and open
       const modifiedPdf = await pdfDoc.save();
@@ -3533,11 +3601,45 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             );
           })()}
 
-          {/* Read-only banner for completed reservations */}
+          {/* Read-only banner for completed/active reservations */}
           {isReadOnly && <div style={{padding:"10px 14px",borderRadius:8,background:C.bg,border:`1.5px solid ${C.border}`,marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-            <span style={{fontSize:12,fontWeight:600,color:C.textMut}}>This reservation is complete. All details are read-only.</span>
+            <span style={{fontSize:12,fontWeight:600,color:C.textMut}}>{reservation.status === "checked-in" ? "This reservation is checked in. Details are locked — use the Activities tab to track daily care." : "This reservation is complete. All details are read-only."}</span>
           </div>}
+
+          {/* EOD Mentions During Stay */}
+          {(() => {
+            const stayMentions = (data.eodEntries || []).flatMap(e => {
+              if (!e.date || e.date < reservation.checkIn || (reservation.checkOut && e.date > reservation.checkOut)) return [];
+              return (e.mentions || []).filter(m => (m.entityType === "dog" && m.entityId === reservation.dogId) || (m.entityType === "client" && m.entityId === reservation.clientId))
+                .map(m => ({ ...m, date: e.date, sections: e.sections }));
+            }).sort((a, b) => b.date.localeCompare(a.date));
+            if (!stayMentions.length) return null;
+            return (
+              <div style={{marginBottom:16,padding:"14px 18px",borderRadius:12,border:`2px solid ${C.acc}`,background:C.acc+"08"}}>
+                <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  <span style={{fontSize:14,fontWeight:800,color:C.acc}}>EOD Notes ({stayMentions.length})</span>
+                  <span style={{fontSize:11,color:C.textMut}}>during this stay</span>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {stayMentions.map((m, i) => {
+                    const sec = (m.sections || []).find(s => s.id === m.sectionId);
+                    const tpl = (data.eodTemplate || DEF_EOD_TEMPLATE).find(t => t.id === m.sectionId);
+                    return (
+                      <div key={m.id||i} style={{padding:"8px 12px",borderRadius:8,background:"#fff",border:`1px solid ${C.border}`}}>
+                        <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                          <span style={{fontSize:12,fontWeight:700,color:C.pri}}>{fmtDate(m.date)}</span>
+                          {tpl && <span style={{fontSize:11,color:C.textMut}}>{tpl.emoji} {tpl.label}</span>}
+                        </div>
+                        {sec?.content && <div style={{fontSize:12,color:C.text,marginTop:3,lineHeight:1.5}}>{sec.content.slice(0, 200)}{sec.content.length > 200 ? "…" : ""}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Section: Dates */}
           {secHeader("Reservation Dates")}
@@ -3622,7 +3724,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
           {/* ─── RECEIPT ─── Clean, unified receipt section ─── */}
           {(() => {
-            const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false });
+            const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false, reservation });
             // Append bath add-on if bath type is selected and 2+ nights
             if (bathType && countNights(checkIn,checkOut) >= 2) {
               const addOnPrices = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
@@ -3699,7 +3801,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                   {/* Add discount link */}
                   {!hasDiscount && !isReadOnly && configuredDiscounts.length > 0 && (
                     <div style={{marginBottom:8,position:"relative"}}>
-                      <DiscountPicker discounts={configuredDiscounts} onSelect={(d) => { setDiscountType(d.type === "percentage" ? "percent" : "flat"); setDiscountValue(d.value); }}/>
+                      <DiscountPicker discounts={configuredDiscounts} clientId={reservation.clientId} data={data} onSelect={(d) => { setDiscountType(d.type === "percentage" ? "percent" : "flat"); setDiscountValue(d.value); setSelectedDiscountId(d.id); }}/>
                     </div>
                   )}
                   {/* Total */}
@@ -3965,32 +4067,149 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           </>
         )}
         <Btn variant="secondary" onClick={onClose}>Close</Btn>
-        {!isReadOnly && (isCheckInMode ? (
-          <Btn variant="success" onClick={()=>handleSave(true, false)} icon={<I.LogIn/>}>Check In</Btn>
-        ) : isCheckOutMode ? (
+        {isCheckOutMode ? (
           <Btn variant="accent" onClick={()=>handleSave(false, true)} icon={<I.LogOut/>}>Check Out</Btn>
+        ) : !isReadOnly && (isCheckInMode ? (
+          <Btn variant="success" onClick={()=>handleSave(true, false)} icon={<I.LogIn/>} disabled={complianceBlocked} style={complianceBlocked ? {opacity:0.5,cursor:"not-allowed"} : {}} title={complianceBlocked ? "Resolve all compliance issues (red) before checking in" : ""}>Check In</Btn>
         ) : (
           <Btn onClick={()=>handleSave(false, false)}>Save Changes</Btn>
         ))}
       </div>
 
       {/* Cancel Reservation Confirmation */}
-      {showCancelConfirm && (
-        <Modal title="Cancel Reservation?" onClose={()=>setShowCancelConfirm(false)}>
-          <p style={{fontSize:14,color:C.text,lineHeight:1.6,margin:"0 0 8px"}}>
-            Are you sure you want to cancel the reservation for <strong>{dog.fields.name}</strong>?
-          </p>
-          <div style={{padding:"12px 16px",borderRadius:10,background:C.bg,border:`1px solid ${C.border}`,marginBottom:20}}>
-            <div style={{fontSize:13,color:C.textSec}}>{reservation.roomType ? `${reservation.roomType} · ` : ""}{fmtDate(reservation.checkIn)} — {fmtDate(reservation.checkOut)}</div>
+      {showCancelConfirm && (() => {
+        const collected = reservation.amountCollected || 0;
+        const hasCoupons = (reservation.appliedCoupons || []).length > 0;
+        const checkInDate = new Date(reservation.checkIn + "T00:00:00");
+        const hoursUntil = (checkInDate - new Date()) / 3600000;
+        const within72 = hoursUntil >= 72;
+        const cancelPolicyDays = (data.resortPolicies || {}).cancellationNoticeDays || 3;
+        const withinPolicy = hoursUntil >= cancelPolicyDays * 24;
+        return (
+          <Modal title="Cancel Reservation" onClose={()=>setShowCancelConfirm(false)} wide>
+            {/* Policy header */}
+            <div style={{padding:"12px 16px",borderRadius:10,background:C.danLt,border:`1px solid ${C.dan}30`,marginBottom:16}}>
+              <div style={{fontSize:13,fontWeight:700,color:C.dan,marginBottom:4}}>K9 Resorts Cancellation Policy</div>
+              <div style={{fontSize:12,color:C.text,lineHeight:1.5}}>Deposits are non-refundable. Exceptions may be made at management discretion. Team members must notify management when issuing refunds.</div>
+            </div>
+
+            <p style={{fontSize:14,color:C.text,lineHeight:1.6,margin:"0 0 8px"}}>
+              Cancel reservation for <strong>{dog.fields.name}</strong> · {reservation.roomType ? `${reservation.roomType} · ` : ""}{fmtDate(reservation.checkIn)} — {fmtDate(reservation.checkOut)}
+            </p>
+
+            {/* Recommendation based on notice period */}
+            <div style={{padding:"10px 14px",borderRadius:8,background:withinPolicy ? C.sucLt : C.warnLt,border:`1px solid ${withinPolicy ? C.suc : C.warn}30`,marginBottom:16,fontSize:12,color:C.text,lineHeight:1.5}}>
+              <strong style={{color: withinPolicy ? C.suc : C.warn}}>
+                {withinPolicy ? "Recommendation: Return deposit as store credit" : "Recommendation: Keep deposit (non-refundable)"}
+              </strong>
+              <div style={{marginTop:2}}>
+                {withinPolicy
+                  ? `Client gave ${Math.round(hoursUntil)} hours notice (meets the ${cancelPolicyDays * 24}-hour policy). Consider returning their deposit as store credit.`
+                  : `Client gave only ${Math.round(Math.max(0, hoursUntil))} hours notice (less than ${cancelPolicyDays * 24}-hour policy). Deposit is non-refundable per policy.`}
+              </div>
+            </div>
+
+            {/* Deposit refund options */}
+            {collected > 0 && !hasCoupons && (
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Deposit: ${collected.toFixed(2)} — How to handle?</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {[
+                    { id: "keep", label: "Keep Deposit", desc: "Non-refundable per policy. No refund issued.", color: C.textSec },
+                    { id: "store-credit", label: "Refund as Store Credit", desc: `Issue $${collected.toFixed(2)} store credit to client's account.`, color: C.info },
+                    { id: "card", label: "Return to Card", desc: "Issue a refund to original payment method. Requires management approval.", color: C.warn },
+                  ].map(opt => (
+                    <label key={opt.id} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${cancelRefundOption === opt.id ? opt.color : C.border}`,background:cancelRefundOption === opt.id ? opt.color + "10" : "transparent",cursor:"pointer"}}>
+                      <input type="radio" name="cancelRefund" checked={cancelRefundOption === opt.id} onChange={() => setCancelRefundOption(opt.id)} style={{marginTop:3}} />
+                      <div>
+                        <div style={{fontSize:13,fontWeight:600,color:C.text}}>{opt.label}</div>
+                        <div style={{fontSize:11,color:C.textMut}}>{opt.desc}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Coupon return options */}
+            {hasCoupons && (
+              <div style={{marginBottom:16}}>
+                <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Coupons Applied — Return to account?</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {[
+                    { id: "return", label: "Return Coupons", desc: "Return coupons to client's account with original expiration dates.", color: C.suc },
+                    { id: "forfeit", label: "Forfeit Coupons", desc: "Do not return coupons. They will not be added back.", color: C.dan },
+                  ].map(opt => (
+                    <label key={opt.id} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"10px 14px",borderRadius:8,border:`1.5px solid ${cancelCouponOption === opt.id ? opt.color : C.border}`,background:cancelCouponOption === opt.id ? opt.color + "10" : "transparent",cursor:"pointer"}}>
+                      <input type="radio" name="cancelCoupon" checked={cancelCouponOption === opt.id} onChange={() => setCancelCouponOption(opt.id)} style={{marginTop:3}} />
+                      <div>
+                        <div style={{fontSize:13,fontWeight:600,color:C.text}}>{opt.label}</div>
+                        <div style={{fontSize:11,color:C.textMut}}>{opt.desc}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <Btn variant="secondary" onClick={()=>setShowCancelConfirm(false)}>Keep Reservation</Btn>
+              <Btn variant="danger" onClick={async ()=>{
+                const auditDiffs = [{field:"Status",oldVal:reservation.status==="checked-in"?"Checked In":"Upcoming",newVal:"Cancelled"}];
+                let updatedSales = data.packageSales || [];
+                let updatedClients = data.clients;
+
+                // Handle coupon returns
+                if (hasCoupons && cancelCouponOption === "return") {
+                  (reservation.appliedCoupons || []).forEach(ac => {
+                    updatedSales = updatedSales.map(s => s.id === ac.saleId ? { ...s, used: Math.max(0, (s.used || 0) - ac.unitsUsed), unitsRemaining: (s.unitsRemaining || 0) + ac.unitsUsed } : s);
+                  });
+                  auditDiffs.push({field:"Coupons",oldVal:"Applied",newVal:"Returned to account"});
+                }
+
+                // Handle deposit refund
+                if (collected > 0 && cancelRefundOption === "store-credit") {
+                  updatedClients = updatedClients.map(c => c.id === reservation.clientId ? { ...c, storeCredit: (c.storeCredit || 0) + collected } : c);
+                  auditDiffs.push({field:"Deposit Refund",oldVal:`$${collected.toFixed(2)}`,newVal:"Store Credit"});
+                } else if (collected > 0 && cancelRefundOption === "card") {
+                  auditDiffs.push({field:"Deposit Refund",oldVal:`$${collected.toFixed(2)}`,newVal:"Returned to Card (requires processing)"});
+                } else if (collected > 0) {
+                  auditDiffs.push({field:"Deposit",oldVal:`$${collected.toFixed(2)}`,newVal:"Kept (non-refundable)"});
+                }
+
+                const cancelAudit = buildAuditEntry(reservation.id, "Cancelled Reservation", auditDiffs, profile);
+                await save({
+                  ...data,
+                  clients: updatedClients,
+                  packageSales: updatedSales,
+                  auditLog:[...(data.auditLog||[]),cancelAudit],
+                  reservations: data.reservations.map(r => r.id === reservation.id ? {
+                    ...r, status:"cancelled", cancelledAt:new Date().toISOString(),
+                    cancelledBy: profile?(profile.full_name||profile.email||"Staff"):"Staff",
+                    cancelRefundMethod: cancelRefundOption || "keep",
+                    cancelCouponAction: hasCoupons ? cancelCouponOption : undefined,
+                  } : r)
+                });
+                setShowCancelConfirm(false);
+                onClose();
+              }} icon={<I.Trash/>}>Confirm Cancellation</Btn>
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {/* Print Run Card + Body Check Prompt (after check-in) */}
+      {showPrintPrompt && (
+        <Modal title="Check-In Complete" onClose={() => { setShowPrintPrompt(false); onClose(); }}>
+          <div style={{ textAlign: "center", padding: "12px 0 20px" }}>
+            <div style={{ fontSize: 36, marginBottom: 8 }}>✓</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: C.text, marginBottom: 4 }}>{dog.fields.name} is checked in!</div>
+            <div style={{ fontSize: 13, color: C.textSec }}>Would you like to print the Run Card and Body Check form?</div>
           </div>
-          <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-            <Btn variant="secondary" onClick={()=>setShowCancelConfirm(false)}>Keep Reservation</Btn>
-            <Btn variant="danger" onClick={async ()=>{
-              const cancelAudit = buildAuditEntry(reservation.id, "Cancelled Reservation", [{field:"Status",oldVal:reservation.status==="checked-in"?"Checked In":"Upcoming",newVal:"Cancelled"}], profile);
-              await save({...data, auditLog:[...(data.auditLog||[]),cancelAudit], reservations: data.reservations.map(r => r.id === reservation.id ? {...r, status:"cancelled", cancelledAt:new Date().toISOString(), cancelledBy:profile?(profile.full_name||profile.email||"Staff"):"Staff"} : r)});
-              setShowCancelConfirm(false);
-              onClose();
-            }} icon={<I.Trash/>}>Cancel Reservation</Btn>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            <Btn variant="secondary" onClick={() => { setShowPrintPrompt(false); onClose(); }}>No</Btn>
+            <Btn onClick={() => { printRunCard(); setShowPrintPrompt(false); onClose(); }} icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>}>Run Card Only</Btn>
+            <Btn variant="success" onClick={() => { printRunCardWithBodyCheck(); setShowPrintPrompt(false); onClose(); }} icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>}>Run Card + Body Check</Btn>
           </div>
         </Modal>
       )}
@@ -4065,6 +4284,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const [bulkType, setBulkType] = useState("all");
   const [bulkAnimating, setBulkAnimating] = useState(false);
   const [bulkAnimatedIds, setBulkAnimatedIds] = useState(new Set());
+  const [showSellPkg, setShowSellPkg] = useState(false);
 
   const shiftDate = (days) => {
     const d = new Date(viewDate + "T12:00:00");
@@ -4141,7 +4361,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
       feedSch.forEach(s => {
         (s.times || []).forEach(time => {
           const colKey = `feeding_${time.replace(/\s+/g, "_")}`;
-          rows.push({ ...base, id: `${res.id}_${colKey}`, type: "feeding", colKey, time, label: `Feeding – ${time}`, qty: [s.amount, s.unit].filter(Boolean).join(" "), foodType: s.foodType || "", detail: [s.amount, s.unit, s.foodType].filter(Boolean).join(" "), instruction: s.instruction || "", notes: s.notes || "", logEntry: log[`${today}|${colKey}`] || {} });
+          rows.push({ ...base, id: `${res.id}_${colKey}`, type: "feeding", colKey, time, label: `Feeding – ${time}`, qty: [s.amount, s.unit].filter(Boolean).join(" "), foodType: s.foodType || "", detail: [s.amount, s.unit, s.foodType].filter(Boolean).join(" "), instruction: fmtInstr(s.instruction), notes: s.notes || "", logEntry: log[`${today}|${colKey}`] || {} });
         });
       });
 
@@ -4150,7 +4370,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
         const medTimes = (s.times && s.times.length > 0) ? s.times : (s.time ? [s.time] : ["Any"]);
         medTimes.forEach(time => {
           const colKey = `med_${(s.name || "").replace(/\s+/g, "_")}_${time.replace(/\s+/g, "_")}`;
-          rows.push({ ...base, id: `${res.id}_${colKey}`, type: "medication", colKey, time, label: s.name || "Medication", qty: [s.amount, s.unit].filter(Boolean).join(" "), foodType: "", detail: [s.amount, s.unit].filter(Boolean).join(" "), instruction: s.instruction || s.notes || "", notes: s.notes || "", logEntry: log[`${today}|${colKey}`] || {} });
+          rows.push({ ...base, id: `${res.id}_${colKey}`, type: "medication", colKey, time, label: s.name || "Medication", qty: [s.amount, s.unit].filter(Boolean).join(" "), foodType: "", detail: [s.amount, s.unit].filter(Boolean).join(" "), instruction: fmtInstr(s.instruction) || s.notes || "", notes: s.notes || "", logEntry: log[`${today}|${colKey}`] || {} });
         });
       });
 
@@ -4487,15 +4707,32 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     else if (fGoingHome.length > 0) setActiveTab("goinghome");
     else if (fCheckedOut.length > 0) setActiveTab("checkedout");
   }, [isFiltering, fExpected.length, fInHouse.length, fGoingHome.length, fCheckedOut.length]);
+  // Unpaid deposits: all upcoming/checked-in boarding/dayboarding reservations where deposit < 50% of total
+  const unpaidDeposits = useMemo(() => {
+    return data.reservations.filter(r => {
+      if (r.status !== "upcoming" && r.status !== "checked-in") return false;
+      if (r.type !== "boarding" && r.type !== "dayboarding") return false;
+      const payments = (data.payments || []).filter(p => p.reservationId === r.id && p.type !== "refund");
+      const collected = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+      const pricing = data.pricing || DEF_PRICING;
+      const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
+      const rate = (pricing.boardingRates || {})[r.roomType] || 0;
+      const est = rate * nights;
+      const depositReq = Math.round(est * 0.5 * 100) / 100;
+      return collected < depositReq;
+    });
+  }, [data.reservations, data.payments, data.pricing]);
+
   const tabs = [
     { id: "expected", label: "Expected", count: isFiltering ? fExpected.length : expected.length, total: expected.length, color: C.info },
     { id: "inhouse", label: "In-House", count: isFiltering ? fInHouse.length : inHouse.length, total: inHouse.length, color: C.suc },
     { id: "goinghome", label: "Going Home", count: isFiltering ? fGoingHome.length : goingHome.length, total: goingHome.length, color: C.acc },
     { id: "checkedout", label: "Checked Out", count: isFiltering ? fCheckedOut.length : checkedOut.length, total: checkedOut.length, color: C.textSec },
     { id: "activities", label: "Activities", count: filteredActivities.filter(r => !r.logEntry?.administered).length, total: allActivities.length, color: C.acc },
+    { id: "unpaid", label: "Unpaid Deposits", count: unpaidDeposits.length, total: unpaidDeposits.length, color: C.dan },
   ];
 
-  const rawItems = activeTab === "activities" ? [] : activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : fCheckedOut;
+  const rawItems = activeTab === "activities" || activeTab === "unpaid" ? [] : activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : fCheckedOut;
 
   const handleSort = (col) => {
     if (sortCol === col) { setSortDir(d => d === "asc" ? "desc" : "asc"); }
@@ -4743,6 +4980,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           <span data-shortcut-quickdc="1" onClick={()=>setShowQuickDC(true)} style={{display:"inline-flex"}}><Btn variant="success" onClick={()=>setShowQuickDC(true)} icon={<I.Plus/>}>Quick Check-In{(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.6)",background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>Q</kbd>}</Btn></span>
+          <Btn onClick={() => setShowSellPkg(true)} icon={<I.ShoppingCart/>} style={{background:C.acc,color:"#fff",border:"none"}}>Sell Package</Btn>
           <Btn onClick={onNew} icon={<I.Plus/>}>New {(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
         </div>
       </div>
@@ -5000,7 +5238,69 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
         </div>
 
         {/* ═══ ACTIVITIES TAB ═══ */}
-        {activeTab === "activities" ? (
+        {activeTab === "unpaid" ? (
+          <div style={{padding:16}}>
+            {unpaidDeposits.length === 0 ? (
+              <div style={{textAlign:"center",padding:32,color:C.textSec,fontSize:14}}>All deposits are up to date!</div>
+            ) : (
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                <thead>
+                  <tr style={{borderBottom:`2px solid ${C.border}`,textAlign:"left"}}>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Client</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Dog</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Dates</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Room</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Est. Total</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Deposit Req.</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Collected</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Outstanding</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unpaidDeposits.map(r => {
+                    const client = data.clients.find(x => x.id === r.clientId);
+                    const dog = data.dogs.find(x => x.id === r.dogId);
+                    const payments = (data.payments || []).filter(p => p.reservationId === r.id && p.type !== "refund");
+                    const collected = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+                    const pricing = data.pricing || DEF_PRICING;
+                    const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
+                    const rate = (pricing.boardingRates || {})[r.roomType] || 0;
+                    const est = rate * nights;
+                    const depositReq = Math.round(est * 0.5 * 100) / 100;
+                    const outstanding = Math.max(0, depositReq - collected);
+                    return (
+                      <tr key={r.id} onClick={() => nav("client", { clientId: r.clientId })} style={{borderBottom:`1px solid ${C.borderLight}`,cursor:"pointer",transition:"background 0.1s"}} onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                        <td style={{padding:"10px 12px",fontWeight:600,color:C.text}}>{client ? `${client.fields.first_name||""} ${client.fields.last_name||""}`.trim() : "—"}</td>
+                        <td style={{padding:"10px 12px",color:C.text}}>{dog?.fields.name || "—"}</td>
+                        <td style={{padding:"10px 12px",color:C.textSec,fontSize:12}}>{fmtDate(r.checkIn)} — {fmtDate(r.checkOut)}</td>
+                        <td style={{padding:"10px 12px",color:C.textSec}}>{r.roomType || "—"}</td>
+                        <td style={{padding:"10px 12px",textAlign:"right",color:C.text}}>${est.toFixed(2)}</td>
+                        <td style={{padding:"10px 12px",textAlign:"right",color:C.acc,fontWeight:600}}>${depositReq.toFixed(2)}</td>
+                        <td style={{padding:"10px 12px",textAlign:"right",color:collected > 0 ? C.suc : C.textMut}}>${collected.toFixed(2)}</td>
+                        <td style={{padding:"10px 12px",textAlign:"right",color:C.dan,fontWeight:700}}>${outstanding.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{borderTop:`2px solid ${C.border}`}}>
+                    <td colSpan={7} style={{padding:"10px 12px",fontWeight:700,color:C.text,textAlign:"right"}}>Total Outstanding:</td>
+                    <td style={{padding:"10px 12px",textAlign:"right",fontWeight:800,color:C.dan,fontSize:15}}>${unpaidDeposits.reduce((sum, r) => {
+                      const payments = (data.payments || []).filter(p => p.reservationId === r.id && p.type !== "refund");
+                      const collected = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+                      const pricing = data.pricing || DEF_PRICING;
+                      const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
+                      const rate = (pricing.boardingRates || {})[r.roomType] || 0;
+                      const est = rate * nights;
+                      const depositReq = Math.round(est * 0.5 * 100) / 100;
+                      return sum + Math.max(0, depositReq - collected);
+                    }, 0).toFixed(2)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            )}
+          </div>
+        ) : activeTab === "activities" ? (
           <div>
             {/* Print Bath Schedule Button */}
             {(() => {
@@ -5142,6 +5442,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                               <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                                 {typeBadge(row.type)}
                                 {row.foodType && <span style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{row.foodType}</span>}
+                                {row.type === "bathing" && row.detail && <span style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{row.detail}</span>}
                               </div>
                               {row.instruction && <div style={{ fontSize: 11, color: C.textSec, fontStyle: "italic", marginTop: 2 }}>{row.instruction}</div>}
                               {row.notes && <div style={{ fontSize: 10, color: C.textMut, marginTop: 1 }}>{row.notes}</div>}
@@ -5283,6 +5584,14 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                               {dog && (() => { const allEvals = (data.evaluations||[]).filter(e=>e.dogId===res.dogId&&e.locked).sort((a,b)=>(b.date||"").localeCompare(a.date||"")); if (!allEvals.length) return null; const le = allEvals[0]; const tipLines = allEvals.map((ev,i) => `Eval ${i+1}: ${ev.result==="green"?"Approved":"Not Approved"} \u2014 ${ev.totalScore||0}/${ev.maxScore||0} pts (${fmtDate(ev.date)})`).join("\n"); return (
                                 <Tip text={tipLines}>
                                   <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",width:16,height:16,borderRadius:"50%",background:le.result==="green"?C.suc:C.dan,color:"#fff",fontSize:9,fontWeight:800,flexShrink:0}}>{le.result==="green"?"\u2713":"\u2717"}</span>
+                                </Tip>); })()}
+                              {/* EOD Mention count icon */}
+                              {(() => { const eodCount = (data.eodEntries || []).reduce((cnt, e) => { if (!e.date || e.date < res.checkIn || (res.checkOut && e.date > res.checkOut)) return cnt; return cnt + (e.mentions || []).filter(m => m.entityType === "dog" && m.entityId === res.dogId).length; }, 0); if (!eodCount) return null; return (
+                                <Tip text={`${eodCount} EOD note${eodCount !== 1 ? "s" : ""} during stay`}>
+                                  <span style={{display:"inline-flex",alignItems:"center",gap:2,padding:"1px 6px",borderRadius:8,background:C.acc+"20",color:C.acc,fontSize:10,fontWeight:800,flexShrink:0}}>
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                                    ×{eodCount}
+                                  </span>
                                 </Tip>); })()}
                             </div>
                             <div style={{ fontSize: 11, color: C.textSec, marginTop: 1 }}>{dog?.fields?.breed ? `${dog.fields.breed} · ` : ""}{dogDetails}</div>
@@ -5721,6 +6030,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
           )}
         </div>
       )}
+      {showSellPkg && <SellPackageModal data={data} save={save} onClose={() => setShowSellPkg(false)} />}
     </div>
   );
 }
@@ -6263,6 +6573,10 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [showExtraCols, setShowExtraCols] = useState(false);
   const [editingBanner, setEditingBanner] = useState(null); // which tab's banner is being edited
   const [bannerDraft, setBannerDraft] = useState("");
+  const [showMassText, setShowMassText] = useState(false);
+  const [massTextSelected, setMassTextSelected] = useState(new Set());
+  const [massTextBody, setMassTextBody] = useState("");
+  const [showMassTextHistory, setShowMassTextHistory] = useState(false);
   const logBtnRef = useRef({});
   const colToggleRef = useRef(null);
 
@@ -6488,6 +6802,59 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         addGlobalToast?.({ message: "Undo successful — client restored" });
       }
     });
+  };
+
+  // ── Mass Text handler (personalizes variables per client) ──
+  const personalizeMsg = (body, clientId) => {
+    const c = data.clients.find(cl => cl.id === clientId);
+    const cDogs = (data.dogs || []).filter(d => d.clientId === clientId);
+    let msg = body;
+    msg = msg.replace(/\{clientName\}/g, c ? `${c.fields?.first_name || ""} ${c.fields?.last_name || ""}`.trim() || "Client" : "Client");
+    msg = msg.replace(/\{dogName\}/g, formatDogNames(cDogs));
+    msg = msg.replace(/\{checkInDate\}/g, "TBD");
+    msg = msg.replace(/\{checkOutDate\}/g, "TBD");
+    msg = msg.replace(/\{roomType\}/g, "TBD");
+    msg = msg.replace(/\{totalPrice\}/g, "TBD");
+    return msg;
+  };
+
+  const handleMassTextSend = async () => {
+    if (!massTextBody.trim() || massTextSelected.size === 0) return;
+    const now = new Date().toISOString();
+    const newMsgs = [...massTextSelected].map(cid => ({
+      id: gid(),
+      clientId: cid,
+      direction: "outbound",
+      channel: "sms",
+      body: personalizeMsg(massTextBody.trim(), cid),
+      timestamp: now,
+      status: "sent",
+      twilioSid: null,
+      templateId: null,
+      readAt: null,
+      isMassText: true
+    }));
+    const historyEntry = {
+      id: gid(),
+      sentAt: now,
+      sentBy: profile?.full_name || profile?.email || "Unknown",
+      body: massTextBody.trim(),
+      recipientCount: massTextSelected.size,
+      recipientIds: [...massTextSelected],
+      recipientNames: [...massTextSelected].map(cid => {
+        const c = data.clients.find(cl => cl.id === cid);
+        return c ? `${c.fields?.first_name || ""} ${c.fields?.last_name || ""}`.trim() : "Unknown";
+      })
+    };
+    await save({
+      ...data,
+      messages: [...(data.messages || []), ...newMsgs],
+      massTextHistory: [...(data.massTextHistory || []), historyEntry]
+    });
+    setShowMassText(false);
+    setMassTextBody("");
+    setMassTextSelected(new Set());
+    addGlobalToast?.({ message: `Mass text sent to ${massTextSelected.size} client${massTextSelected.size !== 1 ? "s" : ""}`, type: "success" });
   };
 
   // ── Tab config ──
@@ -6779,6 +7146,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
             Filter{activeFilterCount>0 && <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minWidth:18,height:18,padding:"0 5px",borderRadius:9,fontSize:10,fontWeight:800,background:C.pri,color:"#fff"}}>{activeFilterCount}</span>}
           </button>
+          <Btn variant="ghost" onClick={() => {
+            setMassTextSelected(new Set(activeList.filter(c => c.fields?.phone).map(c => c.id)));
+            setShowMassText(true);
+          }}>
+            <I.MessageSquare /> Mass Text ({activeList.filter(c => c.fields?.phone).length})
+          </Btn>
           <Btn onClick={() => nav("new-client")}>+ New Client</Btn>
         </div>
       </div>
@@ -7305,6 +7678,154 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         })()}
       </Card>
 
+      {/* Mass Text Modal */}
+      {showMassText && (
+        <div style={{position:"fixed",top:0,left:0,width:"100%",height:"100%",background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:10000}} onClick={() => setShowMassText(false)}>
+          <div onClick={e => e.stopPropagation()} style={{background:C.surface,borderRadius:12,border:`1.5px solid ${C.border}`,width:"90%",maxWidth:700,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            {/* Header */}
+            <div style={{padding:"20px 24px",borderBottom:`1.5px solid ${C.borderLight}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.text}}>Mass Text</h2>
+                <p style={{margin:"4px 0 0",fontSize:12,color:C.textSec}}>{massTextSelected.size} client{massTextSelected.size !== 1 ? "s" : ""} selected</p>
+              </div>
+              <button onClick={() => setShowMassText(false)} style={{background:"none",border:"none",cursor:"pointer",padding:"4px 8px",color:C.textMut,fontSize:20,fontFamily:"inherit"}}>×</button>
+            </div>
+
+            {/* Body */}
+            <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
+              {/* Client List */}
+              <div style={{flex:1,overflow:"auto",borderBottom:`1.5px solid ${C.borderLight}`,maxHeight:300}}>
+                <div style={{padding:"12px 16px"}}>
+                  <div style={{display:"flex",gap:8,marginBottom:12}}>
+                    <Btn size="sm" variant="ghost" onClick={() => setMassTextSelected(new Set(activeList.filter(c => c.fields?.phone).map(c => c.id)))}>
+                      Select All
+                    </Btn>
+                    <Btn size="sm" variant="ghost" onClick={() => setMassTextSelected(new Set())}>
+                      Deselect All
+                    </Btn>
+                  </div>
+                  {activeList.filter(c => c.fields?.phone).map(client => (
+                    <div key={client.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 8px",borderRadius:8,background:massTextSelected.has(client.id)?C.priLt:"transparent",marginBottom:8,cursor:"pointer"}} onClick={() => {
+                      const n = new Set(massTextSelected);
+                      if (n.has(client.id)) n.delete(client.id);
+                      else n.add(client.id);
+                      setMassTextSelected(n);
+                    }}>
+                      <input type="checkbox" checked={massTextSelected.has(client.id)} onChange={() => {}} style={{cursor:"pointer",width:18,height:18}} />
+                      <div style={{flex:1}}>
+                        <div style={{fontSize:13,fontWeight:600,color:C.text}}>{client.fields?.first_name} {client.fields?.last_name}</div>
+                        <div style={{fontSize:11,color:C.textSec}}>{client.fields?.phone}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Message Compose */}
+              <div style={{padding:"16px 20px",borderBottom:`1.5px solid ${C.borderLight}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                  <label style={{fontSize:12,fontWeight:700,color:C.text}}>Message</label>
+                  {(data.messageTemplates || []).filter(t => t.active !== false).length > 0 && (
+                    <div style={{position:"relative"}}>
+                      <Btn size="sm" variant="ghost" onClick={e => { e.stopPropagation(); const el = e.currentTarget; el.dataset.open = el.dataset.open === "1" ? "" : "1"; el.nextSibling.style.display = el.dataset.open === "1" ? "block" : "none"; }}>
+                        <I.FileText /> Use Template
+                      </Btn>
+                      <div style={{display:"none",position:"absolute",right:0,top:"100%",zIndex:10,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.15)",minWidth:240,maxHeight:200,overflow:"auto"}}>
+                        {(data.messageTemplates || []).filter(t => t.active !== false).map(tpl => (
+                          <button key={tpl.id} onClick={e => { setMassTextBody(tpl.body); e.currentTarget.parentNode.style.display = "none"; e.currentTarget.parentNode.previousSibling.dataset.open = ""; }}
+                            style={{display:"block",width:"100%",padding:"10px 14px",border:"none",borderBottom:`1px solid ${C.borderLight}`,background:"transparent",textAlign:"left",cursor:"pointer",fontFamily:"inherit",fontSize:12,color:C.text}}
+                            onMouseEnter={e => e.currentTarget.style.background = C.priLt}
+                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                            <div style={{fontWeight:600,marginBottom:2}}>{tpl.name}</div>
+                            <div style={{color:C.textSec,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{tpl.body.slice(0,80)}…</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <textarea
+                  value={massTextBody}
+                  onChange={e => setMassTextBody(e.target.value)}
+                  placeholder="Type your message here or use a template..."
+                  rows={4}
+                  style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:13,fontFamily:"inherit",resize:"vertical",outline:"none",background:C.bg,boxSizing:"border-box"}}
+                  onFocus={e => e.target.style.borderColor=C.pri}
+                  onBlur={e => e.target.style.borderColor=C.border}
+                />
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
+                  <div style={{fontSize:11,color:C.textMut}}>Character count: {massTextBody.length}</div>
+                  <div style={{fontSize:10,color:C.textSec}}>Variables like {"{dogName}"} will be personalized per client</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{padding:"16px 20px",display:"flex",gap:10,justifyContent:"space-between",alignItems:"center"}}>
+              <button onClick={() => setShowMassTextHistory(true)} style={{background:"none",border:"none",color:C.pri,cursor:"pointer",fontSize:12,fontWeight:600,textDecoration:"underline",padding:0,fontFamily:"inherit"}}>
+                View History
+              </button>
+              <div style={{display:"flex",gap:8}}>
+                <Btn variant="ghost" onClick={() => setShowMassText(false)}>Cancel</Btn>
+                <Btn onClick={handleMassTextSend} disabled={!massTextBody.trim() || massTextSelected.size === 0}>
+                  Send Mass Text
+                </Btn>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mass Text History Modal */}
+      {showMassTextHistory && (
+        <div style={{position:"fixed",top:0,left:0,width:"100%",height:"100%",background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:10001}} onClick={() => setShowMassTextHistory(false)}>
+          <div onClick={e => e.stopPropagation()} style={{background:C.surface,borderRadius:12,border:`1.5px solid ${C.border}`,width:"90%",maxWidth:800,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            {/* Header */}
+            <div style={{padding:"20px 24px",borderBottom:`1.5px solid ${C.borderLight}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.text}}>Mass Text History</h2>
+              <button onClick={() => setShowMassTextHistory(false)} style={{background:"none",border:"none",cursor:"pointer",padding:"4px 8px",color:C.textMut,fontSize:20,fontFamily:"inherit"}}>×</button>
+            </div>
+
+            {/* Body */}
+            <div style={{flex:1,overflow:"auto"}}>
+              {(!data.massTextHistory || data.massTextHistory.length === 0) ? (
+                <div style={{padding:"40px 24px",textAlign:"center"}}>
+                  <p style={{color:C.textSec,fontSize:13}}>No mass texts sent yet</p>
+                </div>
+              ) : (
+                <div>
+                  {data.massTextHistory.map(entry => (
+                    <div key={entry.id} style={{padding:"16px 20px",borderBottom:`1.5px solid ${C.borderLight}`,background:C.bg}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                        <div>
+                          <div style={{fontSize:13,fontWeight:600,color:C.text}}>
+                            {entry.recipientCount} client{entry.recipientCount !== 1 ? "s" : ""}
+                          </div>
+                          <div style={{fontSize:11,color:C.textSec,marginTop:2}}>
+                            {new Date(entry.sentAt).toLocaleDateString()} at {new Date(entry.sentAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})} by {entry.sentBy}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{fontSize:12,color:C.text,marginBottom:10,padding:"10px 12px",background:C.surface,borderRadius:6,borderLeft:`3px solid ${C.pri}`}}>
+                        "{entry.body}"
+                      </div>
+                      <div style={{fontSize:11,color:C.textSec}}>
+                        Recipients: {entry.recipientNames.join(", ")}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{padding:"16px 20px",borderTop:`1.5px solid ${C.borderLight}`,display:"flex",justifyContent:"flex-end"}}>
+              <Btn variant="ghost" onClick={() => setShowMassTextHistory(false)}>Close</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Log Popover */}
       {logPopover && (
         <div style={{position:"fixed",top:0,left:0,width:"100%",height:"100%",zIndex:9998}} onClick={()=>{setLogPopover(null);setLogNotes("");setLogDate("");}}>
@@ -7480,6 +8001,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     { id: "payments", label: "Payments", count: pmts.length, color: C.info },
     { id: "packages", label: "Packages", count: activePkgCount, color: "#EC4899" },
     { id: "lifecycle", label: "Lifecycle", count: (() => { const le = (client.lifecycleEvents || []).length; const cu = (client.lifecycle?.conversion?.updates || []).length; const ru = (client.lifecycle?.retention?.updates || []).length; return le + cu + ru; })(), color: "#8B5CF6" },
+    { id: "notes", label: "Notes", count: notesCount, color: "#F59E0B" },
   ];
 
   // Reservation card renderer
@@ -7574,6 +8096,31 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           ))}
         </div>
       </Card>
+
+      {/* Recurring Discount */}
+      {(() => {
+        const recurringDiscounts = (data.discounts || []).filter(d => d.discountKind === "recurring" && d.active !== false);
+        const currentRecDisc = recurringDiscounts.find(d => d.id === client.recurringDiscountId);
+        const handleSetRecDisc = async (discId) => {
+          await save({ ...data, clients: data.clients.map(c => c.id === clientId ? { ...c, recurringDiscountId: discId || null } : c) });
+        };
+        return recurringDiscounts.length > 0 ? (
+          <Card style={{ marginBottom: 16, padding: "12px 20px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>Recurring Discount</div>
+              <select value={client.recurringDiscountId || ""} onChange={e => handleSetRecDisc(e.target.value)} style={{ flex: 1, maxWidth: 300, padding: "6px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: C.surface, color: C.text, cursor: "pointer" }}>
+                <option value="">None</option>
+                {recurringDiscounts.map(d => <option key={d.id} value={d.id}>{d.name} ({d.type === "percentage" ? `${d.value}%` : `$${d.value}`} off)</option>)}
+              </select>
+              {currentRecDisc && (
+                <span style={{ padding: "4px 12px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: "#DBEAFE", color: "#1E40AF" }}>
+                  {currentRecDisc.name}: {currentRecDisc.type === "percentage" ? `${currentRecDisc.value}% off` : `$${currentRecDisc.value} off`} every visit
+                </span>
+              )}
+            </div>
+          </Card>
+        ) : null;
+      })()}
 
       {/* Tab Bar */}
       <div style={{ display: "flex", borderBottom: `2px solid ${C.borderLight}`, background: C.bg, borderRadius: "12px 12px 0 0", marginBottom: 0 }}>
@@ -7871,6 +8418,77 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           );
         })()}
 
+        {/* ──── NOTES TAB ──── */}
+        {activeTab === "notes" && (
+          <div>
+            <h3 style={{margin:"0 0 16px",fontSize:17,fontWeight:700,color:C.text}}>Notes & EOD Mentions</h3>
+
+            {/* Add new note */}
+            <Card style={{padding:"14px 18px",marginBottom:16}}>
+              <div style={{fontSize:12,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:8}}>Add Internal Note</div>
+              <div style={{display:"flex",gap:8}}>
+                <input value={newNote} onChange={e=>setNewNote(e.target.value)} placeholder="Type a note..." style={{flex:1,padding:"10px 14px",borderRadius:10,border:`1.5px solid ${C.border}`,fontSize:14,fontFamily:"inherit",background:C.bg,color:C.text,outline:"none"}} onKeyDown={e=>{if(e.key==="Enter"&&newNote.trim())handleAddNote();}} />
+                <Btn size="sm" onClick={handleAddNote} disabled={!newNote.trim()||noteSaving}>Add</Btn>
+              </div>
+            </Card>
+
+            {/* Client notes */}
+            {clientNotes.length > 0 && (
+              <div style={{marginBottom:20}}>
+                <div style={{fontSize:13,fontWeight:700,color:C.textSec,marginBottom:8}}>Internal Notes ({clientNotes.length})</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {clientNotes.sort((a,b)=>(b.timestamp||"").localeCompare(a.timestamp||"")).map(n => (
+                    <Card key={n.id} style={{padding:"10px 16px"}}>
+                      <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontSize:14,color:C.text,lineHeight:1.5,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{n.text}</div>
+                          <div style={{fontSize:11,color:C.textMut,marginTop:4}}>{n.addedBy || "Staff"}{n.timestamp ? ` \u00B7 ${new Date(n.timestamp).toLocaleDateString()} ${new Date(n.timestamp).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}` : ""}</div>
+                        </div>
+                        <button onClick={()=>handleDeleteNote(n.id)} style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,padding:4,borderRadius:6,flexShrink:0}} title="Delete note"><I.Trash size={14}/></button>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* EOD mentions */}
+            {eodMentions.length > 0 && (
+              <div>
+                <div style={{fontSize:13,fontWeight:700,color:C.textSec,marginBottom:8}}>EOD Mentions ({eodMentions.length})</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                  {eodMentions.map((m, i) => {
+                    const dogName = m.entityType === "dog" ? dn(m.entityId) : null;
+                    const sectionLabel = m.sections ? m.sections.find(s => s.content && s.content.includes(`@${m.entityType === "dog" ? dogName : client.fields.first_name}`))?.label : null;
+                    const preview = m.context || m.text || (m.sections ? m.sections.filter(s => s.content).map(s => s.content).join(" ").slice(0, 120) : "");
+                    return (
+                      <Card key={`eod-${i}`} style={{padding:"10px 16px",borderLeft:`3px solid ${C.acc}`,cursor:"pointer"}} hoverable onClick={() => nav("eod")}>
+                        <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
+                          <div style={{width:28,height:28,borderRadius:8,background:C.acc+"15",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,marginTop:2}}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                          </div>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2,flexWrap:"wrap"}}>
+                              <span style={{fontSize:13,fontWeight:700,color:C.text}}>{fmtDate(m.date)}</span>
+                              {dogName && <Badge color="primary" size="sm">{dogName}</Badge>}
+                              {sectionLabel && <Badge color="default" size="sm">{sectionLabel}</Badge>}
+                            </div>
+                            <div style={{fontSize:13,color:C.textSec,lineHeight:1.4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{preview || "EOD mention"}</div>
+                          </div>
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {clientNotes.length === 0 && eodMentions.length === 0 && (
+              <Card style={{textAlign:"center",padding:32}}><div style={{fontSize:14,color:C.textSec}}>No notes or EOD mentions yet</div></Card>
+            )}
+          </div>
+        )}
+
       </div>
 
       {/* Edit Modal */}
@@ -8047,7 +8665,15 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
       dogs: updatedDogs,
       dogTags: newDogTags,
       evaluations: [...(data.evaluations || []), evalObj],
-      reservations: data.reservations.map(r => r.id === reservationId ? { ...r, evalResult, ...(r.needsEval ? { needsEval: false } : {}) } : r),
+      reservations: data.reservations.map(r => {
+        if (r.id !== reservationId) return r;
+        const upd = { ...r, evalResult, ...(r.needsEval ? { needsEval: false } : {}) };
+        // If eval assigns Private Play mid-stay, stamp surcharge start date
+        if (selectedClassTag === "tag_pp" && r.status === "checked-in" && r.type === "boarding") {
+          upd.privatePlayStartDate = todayStr();
+        }
+        return upd;
+      }),
       auditLog: [...(data.auditLog || []), evalAudit],
     };
     // ── Auto-feed to Conversion from Eval ──
@@ -8362,8 +8988,8 @@ function EvaluationFormPage({ data, save, reservationId, nav, profile }) {
           <span style={{ fontSize: 22, color: C.textMut, fontWeight: 700 }}>&rarr;</span>
           {/* Classification options */}
           {[
-            { id: "tag_sp", name: "Small Playgroup", short: "SP", colorIdx: 1 },
-            { id: "tag_lp", name: "Large Playgroup", short: "LP", colorIdx: 0 },
+            { id: "tag_sp", name: "Small Playgroup", short: "S", colorIdx: 0 },
+            { id: "tag_lp", name: "Large Playgroup", short: "L", colorIdx: 1 },
             { id: "tag_pp", name: "Private Play", short: "PP", colorIdx: 3 },
           ].map(opt => {
             const tc = TAG_COLORS[opt.colorIdx % TAG_COLORS.length];
@@ -8416,11 +9042,52 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
   const [editFeedingSchedules, setEditFeedingSchedules] = useState([]);
   const [editMedSchedules, setEditMedSchedules] = useState([]);
   const [sentQuestionnaire, setSentQuestionnaire] = useState(false);
+  const [ppConfirm, setPpConfirm] = useState(null); // { reservations, daysLeft }
 
   if (!dog||!client) return <div style={{padding:40,textAlign:"center",color:C.textSec}}>Dog not found</div>;
 
+  // Find active boarding reservations for this dog
+  const getActiveBoardingForDog = () => {
+    const today = todayStr();
+    return (data.reservations || []).filter(r =>
+      r.dogId === dogId && r.type === "boarding" && r.status === "checked-in" && r.checkOut >= today
+    );
+  };
+
   const startEdit = () => { setEditFields({...dog.fields}); setEditTags([...(dog.tags||[])]); setEditGroupOverride(dog.daycareGroupOverride || null); setEditProfilePic(dog.profilePic || ""); setEditFeedingSchedules([...(dog.fields.feedingSchedules||[])]); setEditMedSchedules([...(dog.fields.medicationSchedules||[])]); setEditing(true); };
-  const saveEdit = async () => { await save({...data,dogs:data.dogs.map(d=>d.id===dogId?{...d,fields:{...editFields,feedingSchedules:editFeedingSchedules,medicationSchedules:editMedSchedules},tags:editTags,daycareGroupOverride:editGroupOverride||null,profilePic:editProfilePic||""}:d)}); setEditing(false); };
+
+  const doSaveEdit = async (addPPToReservations) => {
+    let updatedData = {...data, dogs: data.dogs.map(d=>d.id===dogId?{...d,fields:{...editFields,feedingSchedules:editFeedingSchedules,medicationSchedules:editMedSchedules},tags:editTags,daycareGroupOverride:editGroupOverride||null,profilePic:editProfilePic||""}:d)};
+    // If switching to Private Play mid-stay, stamp reservations with privatePlayStartDate
+    if (addPPToReservations && addPPToReservations.length > 0) {
+      const today = todayStr();
+      updatedData.reservations = (updatedData.reservations || data.reservations).map(r => {
+        if (addPPToReservations.includes(r.id)) return { ...r, privatePlayStartDate: today };
+        return r;
+      });
+    }
+    await save(updatedData);
+    setEditing(false);
+    setPpConfirm(null);
+  };
+
+  const saveEdit = async () => {
+    const hadPP = (dog.tags || []).includes("tag_pp");
+    const willHavePP = editTags.includes("tag_pp");
+    if (!hadPP && willHavePP) {
+      const activeBoarding = getActiveBoardingForDog();
+      if (activeBoarding.length > 0) {
+        const today = todayStr();
+        const resInfo = activeBoarding.map(r => {
+          const daysLeft = countNights(today, r.checkOut);
+          return { id: r.id, checkOut: r.checkOut, daysLeft };
+        });
+        setPpConfirm({ reservations: resInfo });
+        return;
+      }
+    }
+    await doSaveEdit([]);
+  };
 
   const sendQuestionnaireText = async () => {
     const clientName = `${client.fields.first_name || ""} ${client.fields.last_name || ""}`.trim();
@@ -8534,7 +9201,7 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
                     <span style={{fontSize:13,fontWeight:600,color:C.text}}>{s.amount} {s.unit}</span>
                     {s.foodType && <span style={{fontSize:12,color:C.textSec}}>· {s.foodType}</span>}
                   </div>
-                  {(s.instruction && s.instruction !== "Regular") && <div style={{fontSize:12,color:C.acc,fontWeight:600,marginTop:4}}>{s.instruction}</div>}
+                  {(fmtInstr(s.instruction) && fmtInstr(s.instruction) !== "Regular") && <div style={{fontSize:12,color:C.acc,fontWeight:600,marginTop:4}}>{fmtInstr(s.instruction)}</div>}
                   {s.notes && <div style={{fontSize:12,color:C.textSec,marginTop:2,fontStyle:"italic"}}>{s.notes}</div>}
                 </div>
               ))}
@@ -8556,8 +9223,8 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
                       <span key={ti} style={{display:"inline-block",padding:"2px 8px",borderRadius:6,background:C.accLt,color:C.acc,fontSize:11,fontWeight:700}}>{t}</span>
                     ))}
                   </div>
-                  {s.instruction && <div style={{fontSize:12,color:C.textSec,marginTop:4,fontStyle:"italic"}}>{s.instruction}</div>}
-                  {s.notes && !s.instruction && <div style={{fontSize:12,color:C.textSec,marginTop:4,fontStyle:"italic"}}>{s.notes}</div>}
+                  {fmtInstr(s.instruction) && <div style={{fontSize:12,color:C.textSec,marginTop:4,fontStyle:"italic"}}>{fmtInstr(s.instruction)}</div>}
+                  {s.notes && !fmtInstr(s.instruction) && <div style={{fontSize:12,color:C.textSec,marginTop:4,fontStyle:"italic"}}>{s.notes}</div>}
                 </div>
               ))}
             </div>
@@ -8766,6 +9433,30 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
           setEditFields(f => ({ ...f, weight: String(wt), weightLastUpdated: now, weightLog: [...(f.weightLog || []), logEntry] }));
         }} />
         <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:24}}><Btn variant="secondary" onClick={()=>setEditing(false)}>Cancel</Btn><Btn onClick={saveEdit}>Save</Btn></div>
+      </Modal>}
+      {/* Private Play surcharge confirmation dialog */}
+      {ppConfirm && <Modal title="Private Play Surcharge" onClose={() => setPpConfirm(null)} width={480}>
+        <div style={{ padding: "4px 0" }}>
+          <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B40", borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, color: "#92400E", marginBottom: 6 }}>This dog is currently boarding</div>
+            <div style={{ fontSize: 13, color: "#78350F", lineHeight: 1.5 }}>
+              Changing to Private Play will add a <strong>${(data.pricing?.privatePlaySurcharge || 10)}/night surcharge</strong> for the <strong>remainder</strong> of {ppConfirm.reservations.length === 1 ? "their stay" : "each active stay"}.
+            </div>
+          </div>
+          {ppConfirm.reservations.map(r => (
+            <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, marginBottom: 8, background: C.surface }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Checkout: {fmtDate(r.checkOut)}</div>
+                <div style={{ fontSize: 12, color: C.textSec }}>{r.daysLeft} night{r.daysLeft !== 1 ? "s" : ""} remaining</div>
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.pri }}>${(data.pricing?.privatePlaySurcharge || 10) * r.daysLeft}</div>
+            </div>
+          ))}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+            <Btn variant="secondary" onClick={() => setPpConfirm(null)}>Cancel</Btn>
+            <Btn onClick={() => doSaveEdit(ppConfirm.reservations.map(r => r.id))}>Confirm & Apply Surcharge</Btn>
+          </div>
+        </div>
       </Modal>}
     </div>
   );
@@ -9088,7 +9779,7 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight,
   const foodTypeOpts = data.foodTypeOptions || DEF_FOOD_TYPE_OPTIONS;
   const instrOpts = data.feedingInstructionOptions || DEF_FEEDING_INSTRUCTION_OPTIONS;
 
-  const blank = { id: gid(), times: [], amount: "", unit: "", foodType: "", instruction: "", notes: "" };
+  const blank = { id: gid(), times: [], amount: "", unit: "", foodType: "", instruction: [], notes: "" };
   const [draft, setDraft] = useState(blank);
   const [bbOverride, setBbOverride] = useState(false); // true when user manually overrides amount
 
@@ -9168,6 +9859,7 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight,
                 <div style={{ fontSize: 12, color: C.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {[s.amount && s.unit ? `${s.amount} ${s.unit}` : s.amount, s.foodType].filter(Boolean).join(" · ") || "No details"}
                 </div>
+                {fmtInstr(s.instruction) && <div style={{fontSize:11,color:C.acc,fontWeight:600,marginTop:2}}>{fmtInstr(s.instruction)}</div>}
               </div>
               {!readOnly && <button onClick={() => openEdit(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 4 }}><I.Edit /></button>}
               {!readOnly && <button onClick={() => remove(i)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Trash /></button>}
@@ -9312,7 +10004,20 @@ function FeedingScheduleEditor({ schedules, onChange, data, readOnly, dogWeight,
                 )}
               </div>
             )}
-            <Inp label="Feeding Instruction" type="select" value={draft.instruction} onChange={v => setDraft({ ...draft, instruction: v })} options={instrOpts} />
+            <div>
+              <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:6,letterSpacing:"0.03em",textTransform:"uppercase"}}>Feeding Instructions <span style={{fontWeight:400,textTransform:"none"}}>(select all that apply)</span></div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+                {instrOpts.map(opt => {
+                  const instrArr = Array.isArray(draft.instruction) ? draft.instruction : (draft.instruction ? [draft.instruction] : []);
+                  const sel = instrArr.includes(opt);
+                  return <button key={opt} type="button" onClick={() => {
+                    const cur = Array.isArray(draft.instruction) ? draft.instruction : (draft.instruction ? [draft.instruction] : []);
+                    const next = sel ? cur.filter(x => x !== opt) : [...cur, opt];
+                    setDraft({ ...draft, instruction: next });
+                  }} style={{padding:"6px 12px",borderRadius:8,border:`1.5px solid ${sel?C.pri:C.border}`,background:sel?C.priLt:"transparent",color:sel?C.pri:C.textSec,fontSize:12,fontWeight:sel?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>{opt}</button>;
+                })}
+              </div>
+            </div>
             <Inp label="Feeding Notes" value={draft.notes} onChange={v => setDraft({ ...draft, notes: v })} placeholder="Any special notes…" />
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 4 }}>
               <Btn variant="secondary" onClick={() => setShowModal(false)}>Cancel</Btn>
@@ -9600,9 +10305,13 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   const [parentDestination, setParentDestination] = useState("");
   const [resDiscountType, setResDiscountType] = useState("none"); // "none", "percent", "flat"
   const [resDiscountValue, setResDiscountValue] = useState(0);
+  const [resDiscountId, setResDiscountId] = useState(null);
   const [errors, setErrors] = useState({});
   const [selectedRoom, setSelectedRoom] = useState("");
   const [showBookedRooms, setShowBookedRooms] = useState(false);
+  const [showPartialAvail, setShowPartialAvail] = useState(false);
+  const [partialSegments, setPartialSegments] = useState([]); // [{roomType, startDate, endDate, room}]
+  const [partialStep, setPartialStep] = useState(0); // which segment we're configuring
 
   // Per-dog care overrides: { [dogId]: { feedingSchedules, medicationSchedules, bath_type } }
   const [careFields, setCareFields] = useState({});
@@ -9617,6 +10326,26 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   const [perDogConfig, setPerDogConfig] = useState({});
   // Compliance expand state
   const [complianceExpand, setComplianceExpand] = useState(null);
+  // Care instructions collapse (expanded by default for boarding, collapsed for daycare/eval/tour)
+  const [careExpanded, setCareExpanded] = useState(true);
+  // Applied coupons (package sale IDs with quantity to use as deposit)
+  const [appliedCoupons, setAppliedCoupons] = useState([]); // [{saleId, unitsToUse, value}]
+
+  // Auto-expand care for boarding, collapse for other types
+  useEffect(() => { setCareExpanded(type === "boarding"); }, [type]);
+
+  // Auto-apply recurring discount when client is selected
+  useEffect(() => {
+    if (!clientId) return;
+    const cl = data.clients.find(c => c.id === clientId);
+    if (cl && cl.recurringDiscountId) {
+      const disc = (data.discounts || []).find(d => d.id === cl.recurringDiscountId && d.active !== false);
+      if (disc) {
+        setResDiscountType(disc.type === "percentage" ? "percent" : "flat");
+        setResDiscountValue(disc.value);
+      }
+    }
+  }, [clientId]);
 
   // Auto-set daycare size from first selected dog
   useEffect(() => {
@@ -9654,6 +10383,51 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   }, [needsRoom, roomType, checkIn, checkOut, data.reservations]);
   const availableRooms = roomsForType.filter(r => !bookedRoomNames.has(r));
   const bookedRooms = roomsForType.filter(r => bookedRoomNames.has(r));
+
+  // Partial availability: find room types with availability for PART of the date range
+  const partialAvailByType = useMemo(() => {
+    if (!checkIn || !checkOut || !needsRoom || !showPartialAvail) return {};
+    const ci = checkIn; const co = checkOut;
+    const totalNights = countNights(ci, co);
+    if (totalNights <= 1) return {};
+    const result = {};
+    ROOM_TYPES.forEach(rt => {
+      const avail = roomAvailByType[rt];
+      if (!avail || avail.available > 0) return; // skip if already fully available
+      const rooms = allRooms[rt] || [];
+      if (rooms.length === 0) return;
+      // For each night, check which rooms are free
+      const nightDates = [];
+      let d = ci;
+      while (d < co) { nightDates.push(d); d = addDays(d, 1); }
+      // Find the longest continuous stretch of availability for any room in this type
+      let bestStretch = null;
+      rooms.forEach(room => {
+        const roomRes = data.reservations.filter(r => (r.type === "boarding" || r.type === "dayboarding") && r.roomType === rt && r.room === room && r.status !== "checked-out" && r.status !== "cancelled");
+        let streakStart = null; let streakEnd = null;
+        nightDates.forEach(nd => {
+          const nextD = addDays(nd, 1);
+          const isBooked = roomRes.some(r => r.checkIn < nextD && r.checkOut > nd);
+          if (!isBooked) {
+            if (!streakStart) streakStart = nd;
+            streakEnd = nextD;
+          } else {
+            if (streakStart && (!bestStretch || countNights(streakStart, streakEnd) > countNights(bestStretch.start, bestStretch.end))) {
+              bestStretch = { start: streakStart, end: streakEnd, room };
+            }
+            streakStart = null; streakEnd = null;
+          }
+        });
+        if (streakStart && (!bestStretch || countNights(streakStart, streakEnd) > countNights(bestStretch.start, bestStretch.end))) {
+          bestStretch = { start: streakStart, end: streakEnd, room };
+        }
+      });
+      if (bestStretch && countNights(bestStretch.start, bestStretch.end) > 0 && countNights(bestStretch.start, bestStretch.end) < totalNights) {
+        result[rt] = { ...bestStretch, nights: countNights(bestStretch.start, bestStretch.end), totalNights };
+      }
+    });
+    return result;
+  }, [checkIn, checkOut, needsRoom, showPartialAvail, roomAvailByType, data.reservations]);
 
   // Room scoring: for each room compute gap before/after and a smart score
   const roomScored = useMemo(() => {
@@ -9873,7 +10647,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
       const dogRoomType = cfg.roomType || roomType;
       const dogRoom = cfg.room || selectedRoom;
       const dogCheckOut = cfg.checkOut || checkOut;
-      const dogSegments = type === "boarding" ? (cfg.roomSegments || ((perDogConfig[did] || {}).roomSegments || [])) : [];
+      const configSegments = cfg.roomSegments || ((perDogConfig[did] || {}).roomSegments || []);
+      const dogSegments = type === "boarding" ? (configSegments.length > 0 ? configSegments : (partialSegments.length > 1 && partialSegments.every(s => s.roomType) ? partialSegments : [])) : [];
       const isSecondInRoom = !perDogMode && type === "boarding" && idx > 0;
       const resPricing = calcReservationPricing({
         type, roomType: dogRoomType, checkIn, checkOut: type === "boarding" ? dogCheckOut : checkIn,
@@ -9903,8 +10678,9 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         selectedAddOns: (dogAddOns[did]?.selectedAddOns || []),
         pricing: resPricing,
         ...(isSecondInRoom ? {isSecondDogSameRoom: true} : {}),
-        ...(resDiscountType !== "none" && resDiscountValue > 0 ? { discountType: resDiscountType, discountValue: resDiscountValue } : {}),
+        ...(resDiscountType !== "none" && resDiscountValue > 0 ? { discountType: resDiscountType, discountValue: resDiscountValue, discountId: resDiscountId || undefined } : {}),
         ...(saveMode === "save-only" ? { noDeposit: true } : {}),
+        ...(appliedCoupons.length > 0 ? { appliedCoupons: appliedCoupons.map(c => ({ saleId: c.saleId, unitsUsed: c.unitsToUse, value: c.value })) } : {}),
         bookingSource: "phone",
         createdAt: new Date().toISOString(),
       };
@@ -9970,7 +10746,27 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         });
       }
       const createAudits = saveRes.map(r => buildAuditEntry(r.id, "Reservation Created", [{field:"Type",oldVal:"",newVal:r.type},{field:"Dates",oldVal:"",newVal:`${r.checkIn} → ${r.checkOut}`},{field:"Status",oldVal:"",newVal:"Upcoming"}], profile));
-      await save({...data, dogs: saveDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...saveRes], auditLog:[...(data.auditLog||[]),...createAudits]});
+      // Deduct coupon units from package sales
+      let updatedSales = data.packageSales || [];
+      if (appliedCoupons.length > 0) {
+        updatedSales = updatedSales.map(s => {
+          const applied = appliedCoupons.find(c => c.saleId === s.id);
+          if (!applied) return s;
+          const newUsed = (s.used || 0) + applied.unitsToUse;
+          return { ...s, used: newUsed, unitsRemaining: Math.max(0, (s.unitsRemaining || s.quantity || 0) - applied.unitsToUse) };
+        });
+        // Also record as deposit-via-coupon payment
+        saveRes = saveRes.map(r => ({ ...r, amountCollected: appliedCoupons.reduce((sum, c) => sum + c.value, 0), depositMethod: "coupon" }));
+      }
+      // Track one-time discount usage on client
+      let saveClients = data.clients;
+      if (resDiscountId) {
+        const disc = (data.discounts || []).find(d => d.id === resDiscountId);
+        if (disc && disc.discountKind === "one-time") {
+          saveClients = saveClients.map(c => c.id === clientId ? { ...c, discountUsage: [...(c.discountUsage || []), { discountId: resDiscountId, usedAt: new Date().toISOString(), reservationId: saveRes[0]?.id }] } : c);
+        }
+      }
+      await save({...data, dogs: saveDogs, dogTags: saveDogTags, clients: saveClients, packageSales: updatedSales, reservations:[...data.reservations, ...saveRes], auditLog:[...(data.auditLog||[]),...createAudits]});
       nav("dashboard");
       if (addGlobalToast) addGlobalToast({ message: "Reservation Created", actionLabel: "View Reservation", onAction: () => nav("client-detail", { clientId, openReservation: saveRes[0]?.id }) });
     }
@@ -10005,7 +10801,17 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
       });
     }
     const createAudits2 = saveRes.map(r => buildAuditEntry(r.id, "Reservation Created", [{field:"Type",oldVal:"",newVal:r.type},{field:"Dates",oldVal:"",newVal:`${r.checkIn} → ${r.checkOut}`},{field:"Status",oldVal:"",newVal:"Upcoming"}], profile));
-    await save({...data, clients: newClients, dogs: newDogs, dogTags: saveDogTags, reservations:[...data.reservations, ...saveRes], auditLog:[...(data.auditLog||[]),...createAudits2]});
+    // Deduct coupon units
+    let updatedSales2 = data.packageSales || [];
+    if (appliedCoupons.length > 0) {
+      updatedSales2 = updatedSales2.map(s => {
+        const applied = appliedCoupons.find(c => c.saleId === s.id);
+        if (!applied) return s;
+        return { ...s, used: (s.used || 0) + applied.unitsToUse, unitsRemaining: Math.max(0, (s.unitsRemaining || s.quantity || 0) - applied.unitsToUse) };
+      });
+      saveRes = saveRes.map(r => ({ ...r, amountCollected: appliedCoupons.reduce((sum, c) => sum + c.value, 0), depositMethod: "coupon" }));
+    }
+    await save({...data, clients: newClients, dogs: newDogs, dogTags: saveDogTags, packageSales: updatedSales2, reservations:[...data.reservations, ...saveRes], auditLog:[...(data.auditLog||[]),...createAudits2]});
     setShowUpdateModal(false);
     nav("dashboard");
     if (addGlobalToast) addGlobalToast({ message: "Reservation Created", actionLabel: "View Reservation", onAction: () => nav("client-detail", { clientId, openReservation: saveRes[0]?.id }) });
@@ -10229,6 +11035,99 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                 );
               })}
             </div>
+            {/* Partial Availability Toggle */}
+            {needsRoom && checkIn && checkOut && countNights(checkIn, checkOut) > 1 && (
+              <div style={{marginTop:10,display:"flex",alignItems:"center",gap:8}}>
+                <label style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:C.textSec,cursor:"pointer"}}>
+                  <input type="checkbox" checked={showPartialAvail} onChange={e => setShowPartialAvail(e.target.checked)} style={{accentColor:C.acc}} />
+                  <span style={{fontWeight:600}}>Show Partial Availability</span>
+                </label>
+                <span style={{fontSize:10,color:C.textMut}}>Find rooms available for part of the stay</span>
+              </div>
+            )}
+            {/* Partial Availability Cards */}
+            {showPartialAvail && Object.keys(partialAvailByType).length > 0 && (
+              <div style={{marginTop:10}}>
+                <div style={{fontSize:11,fontWeight:700,color:C.acc,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.04em"}}>Partial Availability Found</div>
+                {Object.entries(partialAvailByType).map(([rt, pa]) => {
+                  const isSelected = partialSegments.some(s => s.roomType === rt);
+                  return (
+                    <div key={rt} style={{padding:"12px 16px",borderRadius:10,border:`1.5px solid ${isSelected ? C.suc : C.acc}40`,background:isSelected ? C.sucLt : `${C.acc}08`,marginBottom:8,cursor:"pointer"}}
+                      onClick={() => {
+                        if (isSelected) {
+                          setPartialSegments(prev => prev.filter(s => s.roomType !== rt));
+                        } else {
+                          // Set first segment as partial room, then need to fill the remainder
+                          const seg1 = { roomType: rt, startDate: pa.start, endDate: pa.end, room: pa.room };
+                          // Determine remaining segment(s)
+                          const remainingSegs = [];
+                          if (pa.start > checkIn) remainingSegs.push({ startDate: checkIn, endDate: pa.start, roomType: "", room: "" });
+                          if (pa.end < checkOut) remainingSegs.push({ startDate: pa.end, endDate: checkOut, roomType: "", room: "" });
+                          setPartialSegments([seg1, ...remainingSegs]);
+                          setRoomType(rt);
+                        }
+                      }}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div>
+                          <span style={{fontSize:13,fontWeight:700,color:C.text}}>{rt}</span>
+                          <span style={{fontSize:11,color:C.textSec,marginLeft:8}}>Room {pa.room}</span>
+                        </div>
+                        <span style={{fontSize:11,fontWeight:600,color:isSelected ? C.suc : C.acc,padding:"2px 10px",borderRadius:10,background:isSelected ? C.sucLt : `${C.acc}15`}}>
+                          {isSelected ? "Selected" : `${pa.nights}/${pa.totalNights} nights`}
+                        </span>
+                      </div>
+                      <div style={{fontSize:11,color:C.textSec,marginTop:4}}>
+                        Available {fmtDate(pa.start)} through {fmtDate(pa.end)} ({pa.nights} night{pa.nights > 1 ? "s" : ""} of {pa.totalNights} total)
+                      </div>
+                      {isSelected && partialSegments.filter(s => !s.roomType).length > 0 && (
+                        <div style={{marginTop:8,padding:"10px 14px",borderRadius:8,background:C.warnLt,border:`1px solid ${C.warn}30`}}>
+                          <div style={{fontSize:11,fontWeight:700,color:C.warn,marginBottom:6}}>Select a room type for the remaining nights:</div>
+                          {partialSegments.filter(s => !s.roomType).map((s, i) => {
+                            const segNights = countNights(s.startDate, s.endDate);
+                            return (
+                              <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginTop:6,flexWrap:"wrap"}}>
+                                <span style={{fontSize:12,fontWeight:600,color:C.text,minWidth:160}}>{fmtDate(s.startDate)} → {fmtDate(s.endDate)} ({segNights} night{segNights > 1 ? "s" : ""})</span>
+                                <select value={s.roomType || ""} onChange={e => {
+                                  const newSegs = [...partialSegments];
+                                  const idx = newSegs.findIndex(x => x.startDate === s.startDate && !x.roomType);
+                                  if (idx >= 0) {
+                                    const selType = e.target.value;
+                                    // Auto-assign first available room of that type for this segment
+                                    const typeRooms = allRooms[selType] || [];
+                                    const segBooked = new Set(data.reservations.filter(r => (r.type === "boarding" || r.type === "dayboarding") && r.roomType === selType && r.room && r.status !== "checked-out" && r.status !== "cancelled" && r.checkIn < s.endDate && r.checkOut > s.startDate).map(r => r.room));
+                                    const avail = typeRooms.filter(rm => !segBooked.has(rm));
+                                    newSegs[idx] = { ...newSegs[idx], roomType: selType, room: avail[0] || "" };
+                                  }
+                                  setPartialSegments(newSegs);
+                                }} style={{padding:"6px 10px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:12,fontFamily:"inherit",background:C.surface,color:C.text,fontWeight:600,minWidth:180}}>
+                                  <option value="">Choose room type...</option>
+                                  {ROOM_TYPES.map(rrt => {
+                                    const typeRooms = allRooms[rrt] || [];
+                                    const segBooked = new Set(data.reservations.filter(r => (r.type === "boarding" || r.type === "dayboarding") && r.roomType === rrt && r.room && r.status !== "checked-out" && r.status !== "cancelled" && r.checkIn < s.endDate && r.checkOut > s.startDate).map(r => r.room));
+                                    const availCount = typeRooms.filter(rm => !segBooked.has(rm)).length;
+                                    return <option key={rrt} value={rrt} disabled={availCount === 0}>{rrt} ({availCount} available)</option>;
+                                  })}
+                                </select>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {isSelected && partialSegments.every(s => s.roomType) && partialSegments.length > 1 && (
+                        <div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:C.sucLt,border:`1px solid ${C.suc}30`,fontSize:11,color:C.suc,fontWeight:600}}>
+                          All segments configured — this will create a split-room reservation with {partialSegments.length} segments.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {showPartialAvail && Object.keys(partialAvailByType).length === 0 && checkIn && checkOut && countNights(checkIn, checkOut) > 1 && (
+              <div style={{marginTop:8,padding:"10px 14px",borderRadius:8,background:C.bg,border:`1px solid ${C.borderLight}`,fontSize:12,color:C.textMut}}>
+                No partial availability found for unavailable room types in this date range.
+              </div>
+            )}
             {/* Smart Room Selection */}
             {roomsForType.length > 0 && (
               <div style={{marginTop:14}}>
@@ -10766,7 +11665,12 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         {/* Per-Dog Care Fields */}
         {selectedDogs.length > 0 && (
           <div style={{marginTop:24}}>
-            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:12,letterSpacing:"0.03em",textTransform:"uppercase"}}>Care Instructions per Dog</div>
+            <button onClick={() => setCareExpanded(!careExpanded)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",padding:0,marginBottom:careExpanded?12:0}}>
+              <span style={{fontSize:11,fontWeight:600,color:type==="boarding"?C.textSec:C.textMut,letterSpacing:"0.03em",textTransform:"uppercase"}}>Care Instructions per Dog</span>
+              {type !== "boarding" && <span style={{fontSize:10,color:C.textMut,fontStyle:"italic"}}>(optional for {type === "daycare" ? "daycare" : type === "evaluation" ? "evaluations" : "this type"})</span>}
+              <span style={{fontSize:10,color:C.textMut,marginLeft:"auto"}}>{careExpanded?"▲":"▼"}</span>
+            </button>
+            {careExpanded && (
             <div style={{display:"flex",flexDirection:"column",gap:16}}>
               {selectedDogs.map(did => {
                 const dog = data.dogs.find(d=>d.id===did);
@@ -10865,6 +11769,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                 );
               })}
             </div>
+            )}
           </div>
         )}
 
@@ -10919,11 +11824,69 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                     <span style={{fontSize:15,fontWeight:800,color:C.text}}>${adjTotal.toFixed(2)}</span>
                   </div>
                 </>)}
-                {!hasDiscount && configuredDiscounts.length > 0 && (<DiscountPicker discounts={configuredDiscounts} onSelect={(d) => {
+                {!hasDiscount && configuredDiscounts.length > 0 && (<DiscountPicker discounts={configuredDiscounts} clientId={clientId} data={data} onSelect={(d) => {
                   setResDiscountType(d.type === "percentage" ? "percent" : "flat");
                   setResDiscountValue(d.value);
+                  setResDiscountId(d.id);
                 }}/>)}
               </div>);
+            })()}
+
+            {/* Apply Coupons as Deposit */}
+            {clientId && type === "boarding" && (() => {
+              const clientSales = (data.packageSales || []).filter(s => s.clientId === clientId && s.status === "active" && (s.unitsRemaining || 0) - (s.used || 0) > 0);
+              // Filter for boarding-related packages only
+              const eligibleSales = clientSales.filter(s => {
+                const pkg = (data.packages || []).find(p => p.id === s.packageId);
+                return pkg && (pkg.serviceCategory === "Boarding" || (pkg.serviceNames || [pkg.serviceName]).some(n => (roomType || "").toLowerCase().includes(n.toLowerCase()) || n.toLowerCase().includes("boarding") || n.toLowerCase().includes(roomType.toLowerCase())));
+              });
+              if (eligibleSales.length === 0) return null;
+              const totalCouponValue = appliedCoupons.reduce((sum, c) => sum + (c.value || 0), 0);
+              return (
+                <div style={{marginTop:12,padding:"14px 18px",borderRadius:10,border:`1.5px solid ${C.info}`,background:C.info+"08"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.info} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6"/><path d="M14 2h6a2 2 0 0 1 2 2v6"/></svg>
+                    <span style={{fontSize:14,fontWeight:700,color:C.info}}>Apply Coupons as Deposit</span>
+                    <span style={{fontSize:11,color:C.textMut}}>({eligibleSales.length} available)</span>
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                    {eligibleSales.map(sale => {
+                      const pkg = (data.packages || []).find(p => p.id === sale.packageId);
+                      const remaining = (sale.unitsRemaining || sale.quantity || 0) - (sale.used || 0);
+                      const applied = appliedCoupons.find(c => c.saleId === sale.id);
+                      const unitRate = pkg?.unitRate || 0;
+                      return (
+                        <div key={sale.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:applied ? C.info+"15" : C.bg,borderRadius:8,border:`1px solid ${applied ? C.info+"40" : C.borderLight}`}}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:13,fontWeight:600,color:C.text}}>{sale.packageName || pkg?.name || "Package"}</div>
+                            <div style={{fontSize:11,color:C.textMut}}>{remaining} unit{remaining !== 1 ? "s" : ""} remaining · ${unitRate.toFixed(2)}/unit · Expires {sale.expiryDate ? fmtDate(sale.expiryDate) : "N/A"}</div>
+                          </div>
+                          {applied ? (
+                            <div style={{display:"flex",alignItems:"center",gap:6}}>
+                              <span style={{fontSize:13,fontWeight:700,color:C.info}}>{applied.unitsToUse} unit{applied.unitsToUse !== 1 ? "s" : ""} (${applied.value.toFixed(2)})</span>
+                              <button onClick={() => setAppliedCoupons(prev => prev.filter(c => c.saleId !== sale.id))} style={{background:"none",border:"none",cursor:"pointer",color:C.dan,padding:2}}><I.X size={14}/></button>
+                            </div>
+                          ) : (
+                            <Btn size="sm" variant="secondary" onClick={() => {
+                              const depositNeeded = livePricing ? Math.round(livePricing.total * 0.5 * 100) / 100 : 0;
+                              const alreadyApplied = appliedCoupons.reduce((s, c) => s + c.value, 0);
+                              const still = Math.max(0, depositNeeded - alreadyApplied);
+                              const unitsNeeded = unitRate > 0 ? Math.min(remaining, Math.ceil(still / unitRate)) : 1;
+                              const val = Math.min(still, unitsNeeded * unitRate);
+                              if (unitsNeeded > 0) setAppliedCoupons(prev => [...prev, { saleId: sale.id, unitsToUse: unitsNeeded, value: val }]);
+                            }}>Apply</Btn>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {totalCouponValue > 0 && (
+                    <div style={{marginTop:8,padding:"8px 12px",background:C.sucLt,borderRadius:8,fontSize:13,fontWeight:600,color:C.suc}}>
+                      Coupons applied: ${totalCouponValue.toFixed(2)} toward deposit
+                    </div>
+                  )}
+                </div>
+              );
             })()}
           </div>
         )}
@@ -11052,12 +12015,76 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
     return () => document.removeEventListener("mousedown", handler);
   }, [showCalendar]);
 
-  const dn = (did) => { const d = data.dogs.find(x => x.id === did); return d ? d.fields.name : "?"; };
+  const dn = (did, cid) => { const d = data.dogs.find(x => x.id === did); const dogName = d ? d.fields.name : "?"; const c = cid ? data.clients.find(x => x.id === cid) : (d ? data.clients.find(x => x.id === d.clientId) : null); const ln = c?.fields?.last_name; return ln ? `${dogName} ${ln}` : dogName; };
   const [collapsed, setCollapsed] = useState({});
   const toggleCollapse = (rt) => setCollapsed(prev => ({ ...prev, [rt]: !prev[rt] }));
 
   // All rooms grouped by type (must be before drag/optimize which reference it)
   const allRooms = data.rooms || {};
+
+  // Night-level selection mode
+  const [nightSelectMode, setNightSelectMode] = useState(false);
+  const [selectedNights, setSelectedNights] = useState({}); // { [resId]: Set of date strings }
+  const [nightDragTarget, setNightDragTarget] = useState(null); // { resId, room } during night-drag
+
+  const toggleNightSelect = (resId, date) => {
+    setSelectedNights(prev => {
+      const next = { ...prev };
+      const set = new Set(next[resId] || []);
+      if (set.has(date)) set.delete(date);
+      else set.add(date);
+      next[resId] = set;
+      if (set.size === 0) delete next[resId];
+      return next;
+    });
+  };
+
+  const moveSelectedNights = async (resId, targetRoom) => {
+    const nights = selectedNights[resId];
+    if (!nights || nights.size === 0) return;
+    const res = data.reservations.find(r => r.id === resId);
+    if (!res) return;
+    const sortedNights = [...nights].sort();
+    const newRoomType = roomTypeOf(targetRoom) || res.roomType;
+    // Build segments: group consecutive nights
+    const segments = [];
+    let segStart = sortedNights[0];
+    let segEnd = addDays(sortedNights[0], 1);
+    for (let i = 1; i < sortedNights.length; i++) {
+      if (sortedNights[i] === segEnd) { segEnd = addDays(segEnd, 1); }
+      else { segments.push({ startDate: segStart, endDate: segEnd }); segStart = sortedNights[i]; segEnd = addDays(sortedNights[i], 1); }
+    }
+    segments.push({ startDate: segStart, endDate: segEnd });
+    // Build remaining segments (nights NOT selected stay in original room)
+    const allNights = [];
+    let d = res.checkIn;
+    while (d < res.checkOut) { allNights.push(d); d = addDays(d, 1); }
+    const remainingNights = allNights.filter(n => !nights.has(n));
+    const remainingSegs = [];
+    if (remainingNights.length > 0) {
+      let rs = remainingNights[0]; let re = addDays(rs, 1);
+      for (let i = 1; i < remainingNights.length; i++) {
+        if (remainingNights[i] === re) { re = addDays(re, 1); }
+        else { remainingSegs.push({ startDate: rs, endDate: re, roomType: res.roomType, room: res.room }); rs = remainingNights[i]; re = addDays(remainingNights[i], 1); }
+      }
+      remainingSegs.push({ startDate: rs, endDate: re, roomType: res.roomType, room: res.room });
+    }
+    // Add moved segments
+    const movedSegs = segments.map(s => ({ startDate: s.startDate, endDate: s.endDate, roomType: newRoomType, room: targetRoom }));
+    const allSegs = [...remainingSegs, ...movedSegs].sort((a, b) => a.startDate.localeCompare(b.startDate));
+    // Check for conflicts on moved nights
+    for (const ms of movedSegs) {
+      if (hasConflict(resId, targetRoom, ms.startDate, ms.endDate)) {
+        addToast({ dogName: dn(res.dogId), action: "conflict", oldVal: "", newVal: `Cannot move to ${targetRoom} — overlap exists` });
+        return;
+      }
+    }
+    // Save with roomSegments
+    await save({ ...data, reservations: data.reservations.map(r => r.id === resId ? { ...r, roomSegments: allSegs } : r) });
+    addToast({ dogName: dn(res.dogId), action: "nights transferred", oldVal: `${nights.size} night${nights.size > 1 ? "s" : ""} from ${res.room}`, newVal: targetRoom, undoRes: res });
+    setSelectedNights({});
+    setNightDragTarget(null);
+  };
 
   // Interaction state: custom mouse system for drag/resize
   const [interaction, setInteraction] = useState(null);
@@ -11336,8 +12363,82 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>Lodging Calendar</h1>
-        <Btn onClick={onNew} icon={<I.Plus />}>New {(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button onClick={() => { setNightSelectMode(v => !v); if (nightSelectMode) { setSelectedNights({}); setNightDragTarget(null); } }}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${nightSelectMode ? C.acc : C.border}`, background: nightSelectMode ? `${C.acc}15` : "transparent", color: nightSelectMode ? C.acc : C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> Night Select
+          </button>
+          <Btn onClick={onNew} icon={<I.Plus />}>New {(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
+        </div>
       </div>
+      {/* Night selection instructions */}
+      {nightSelectMode && (
+        <div style={{ padding: "10px 16px", borderRadius: 10, background: `${C.acc}08`, border: `1.5px solid ${C.acc}30`, marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: 12, color: C.textSec }}>
+            <span style={{ fontWeight: 700, color: C.acc }}>Night Select Mode:</span> Click individual nights within a reservation to select them, then choose a target room to transfer.
+          </div>
+          {Object.keys(selectedNights).length > 0 && (
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: C.suc }}>{Object.values(selectedNights).reduce((s, set) => s + set.size, 0)} night(s) selected</span>
+              <Btn size="sm" variant="ghost" onClick={() => setSelectedNights({})}>Clear</Btn>
+            </div>
+          )}
+        </div>
+      )}
+      {/* Transfer selected nights panel */}
+      {nightSelectMode && Object.keys(selectedNights).length > 0 && (() => {
+        const resId = Object.keys(selectedNights)[0];
+        const res = data.reservations.find(r => r.id === resId);
+        if (!res) return null;
+        const nightCount = selectedNights[resId]?.size || 0;
+        const sortedDates = [...(selectedNights[resId] || [])].sort();
+        const dateLabel = sortedDates.length <= 3 ? sortedDates.map(d => fmtDate(d)).join(", ") : `${fmtDate(sortedDates[0])} – ${fmtDate(sortedDates[sortedDates.length - 1])}`;
+        // Build date ranges for conflict check
+        const nightRanges = [];
+        if (sortedDates.length > 0) {
+          let rs = sortedDates[0]; let re = addDays(sortedDates[0], 1);
+          for (let i = 1; i < sortedDates.length; i++) {
+            if (sortedDates[i] === re) { re = addDays(re, 1); }
+            else { nightRanges.push({ start: rs, end: re }); rs = sortedDates[i]; re = addDays(sortedDates[i], 1); }
+          }
+          nightRanges.push({ start: rs, end: re });
+        }
+        // Filter rooms: exclude current room and rooms with conflicts
+        const availRoomsList = [];
+        ROOM_TYPES.forEach(rt => (allRooms[rt] || []).forEach(room => {
+          if (room === res.room) return;
+          const hasConfl = nightRanges.some(nr => hasConflict(resId, room, nr.start, nr.end));
+          if (!hasConfl) availRoomsList.push({ room, type: rt });
+        }));
+        return (
+          <div style={{ padding: "14px 18px", borderRadius: 12, background: C.sucLt, border: `1.5px solid ${C.suc}40`, marginBottom: 12, boxShadow: "0 2px 8px rgba(0,0,0,0.05)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.suc }}>Transfer {nightCount} night{nightCount > 1 ? "s" : ""}</div>
+                <div style={{ fontSize: 11, color: C.textSec, marginTop: 2 }}>{dn(res.dogId, res.clientId)} · Currently in {res.room} · {dateLabel}</div>
+              </div>
+              <button onClick={() => setSelectedNights({})} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, fontSize: 16, padding: "2px 6px", fontFamily: "inherit" }}>×</button>
+            </div>
+            {availRoomsList.length > 0 ? (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Available rooms (no conflicts):</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {availRoomsList.map(({ room, type: rt }) => (
+                    <button key={room} onClick={() => moveSelectedNights(resId, room)}
+                      style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = C.suc; e.currentTarget.style.background = C.sucLt; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.surface; }}>
+                      {room} <span style={{ fontSize: 9, color: C.textMut, marginLeft: 4 }}>{rt}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: C.dan, fontWeight: 600 }}>No available rooms for these dates — all rooms have conflicts.</div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Week navigation */}
       <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 16, position: "relative" }}>
@@ -11585,7 +12686,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
                               pointerEvents: "none", zIndex: 5,
                               display: "flex", alignItems: "center", justifyContent: "center",
                             }}>
-                              <span style={{ fontSize: 10, fontWeight: 700, color: C.pri, opacity: 0.8 }}>{dn(res.dogId)}</span>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: C.pri, opacity: 0.8 }}>{dn(res.dogId, res.clientId)}</span>
                             </div>
                           );
                         }
@@ -11598,14 +12699,14 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
                         {inter && inter.type === "move" && inter.targetRoom !== row.room ? null : ghostEl}
                         {/* Actual block */}
                         <div
-                          onMouseDown={(e) => { if (e.button !== 0) return; const edge = getEdge(e, e.currentTarget); startInteraction(e, res, edge === "left" ? "resize-left" : edge === "right" ? "resize-right" : "move"); }}
-                          onMouseMove={(e) => { if (interaction) return; const edge = getEdge(e, e.currentTarget); e.currentTarget.style.cursor = edge ? "col-resize" : "grab"; }}
-                          onClick={() => { if (!justDraggedRef.current) setBoardingPreviewId(res.id); }}
-                          title={`${dn(res.dogId)} · ${fmtDate(res.checkIn)} → ${fmtDate(res.checkOut)} · ${res.status} · Drag to shift dates or move rooms · Drag edges to resize`}
+                          onMouseDown={(e) => { if (nightSelectMode) return; if (e.button !== 0) return; const edge = getEdge(e, e.currentTarget); startInteraction(e, res, edge === "left" ? "resize-left" : edge === "right" ? "resize-right" : "move"); }}
+                          onMouseMove={(e) => { if (nightSelectMode || interaction) return; const edge = getEdge(e, e.currentTarget); e.currentTarget.style.cursor = edge ? "col-resize" : "grab"; }}
+                          onClick={() => { if (nightSelectMode) return; if (!justDraggedRef.current) setBoardingPreviewId(res.id); }}
+                          title={nightSelectMode ? "Click nights to select them for transfer" : `${dn(res.dogId, res.clientId)} · ${fmtDate(res.checkIn)} → ${fmtDate(res.checkOut)} · ${res.status} · Drag to shift dates or move rooms · Drag edges to resize`}
                           style={{
                             position: "absolute", top: 6, bottom: 6,
                             left: `calc(${leftPct}% + 3px)`, width: `calc(${widthPct}% - 6px)`,
-                            background: bg, borderRadius: 6, cursor: inter ? "grabbing" : "grab",
+                            background: bg, borderRadius: 6, cursor: nightSelectMode ? "pointer" : (inter ? "grabbing" : "grab"),
                             display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
                             overflow: "hidden", whiteSpace: "nowrap",
                             borderLeft: showGreenEdge ? `4px solid ${C.suc}` : "none",
@@ -11617,15 +12718,45 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
                             zIndex: inter ? 10 : 2,
                             opacity: inter ? 0.35 : (interaction && interaction.resId !== res.id) ? 0.5 : 1,
                           }}
-                          onMouseEnter={e => { if (!interaction) e.currentTarget.style.opacity = "0.85"; }}
-                          onMouseLeave={e => { if (!interaction) e.currentTarget.style.opacity = "1"; }}
+                          onMouseEnter={e => { if (!interaction && !nightSelectMode) e.currentTarget.style.opacity = "0.85"; }}
+                          onMouseLeave={e => { if (!interaction && !nightSelectMode) e.currentTarget.style.opacity = "1"; }}
                         >
-                          {res.noDeposit && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isCheckedIn ? "#fca5a5" : C.dan} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}} title="No deposit collected"><line x1="12" y1="1" x2="12" y2="17"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/><line x1="4" y1="1" x2="20" y2="23" stroke={isCheckedIn ? "#fca5a5" : C.dan} strokeWidth="2"/></svg>}
-                          <span style={{ fontSize: 11, fontWeight: 700, color: fg, overflow: "hidden", textOverflow: "ellipsis", padding: "0 4px" }}>
-                            {dn(res.dogId)}
+                          {/* Night dividers (always shown) + selection overlays (night select mode only) */}
+                          {countNights(res.checkIn, res.checkOut) > 1 && (() => {
+                            const resNights = [];
+                            let nd = res.checkIn < weekStart ? weekStart : res.checkIn;
+                            const resEnd = res.checkOut > addDays(weekEnd, 1) ? addDays(weekEnd, 1) : res.checkOut;
+                            while (nd < resEnd) { resNights.push(nd); nd = addDays(nd, 1); }
+                            const totalW = (endIdx + endOff - startIdx - startOff);
+                            const selSet = selectedNights[res.id] || new Set();
+                            return resNights.map((nightDate, ni) => {
+                              const nightIdx = weekDays.indexOf(nightDate);
+                              if (nightIdx < 0) return null;
+                              const nightStartOff = nightDate === res.checkIn ? startOff : 0;
+                              const nightEndDate = addDays(nightDate, 1);
+                              const nightEndOff = nightEndDate >= res.checkOut ? endOff : (nightEndDate > weekEnd ? 1 : 0);
+                              const nightEndIdx = weekDays.indexOf(nightEndDate < weekStart ? weekStart : (nightEndDate > weekEnd ? weekEnd : nightEndDate));
+                              const nLeft = ((nightIdx + nightStartOff - startIdx - startOff) / totalW) * 100;
+                              const effEnd = nightEndIdx >= 0 ? nightEndIdx : 7;
+                              const nWidth = ((effEnd + nightEndOff - nightIdx - nightStartOff) / totalW) * 100;
+                              const isSel = selSet.has(nightDate);
+                              return (
+                                <div key={nightDate}
+                                  onClick={nightSelectMode ? (e) => { e.stopPropagation(); toggleNightSelect(res.id, nightDate); } : undefined}
+                                  style={{ position: "absolute", top: 0, bottom: 0, left: `${nLeft}%`, width: `${nWidth}%`, borderRight: ni < resNights.length - 1 ? `1px dashed ${nightSelectMode ? "rgba(128,128,128,0.35)" : "rgba(128,128,128,0.15)"}` : "none", background: isSel ? `${C.suc}40` : "transparent", cursor: nightSelectMode ? "pointer" : "inherit", display: "flex", alignItems: "center", justifyContent: "center", zIndex: nightSelectMode ? 3 : 1, transition: "background 0.1s", pointerEvents: nightSelectMode ? "auto" : "none" }}
+                                  onMouseEnter={nightSelectMode ? (e => { if (!isSel) e.currentTarget.style.background = `${C.acc}20`; }) : undefined}
+                                  onMouseLeave={nightSelectMode ? (e => { if (!isSel) e.currentTarget.style.background = "transparent"; }) : undefined}>
+                                  {isSel && <svg width="12" height="12" viewBox="0 0 24 24" fill={C.suc} stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                                </div>
+                              );
+                            });
+                          })()}
+                          {!nightSelectMode && res.noDeposit && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isCheckedIn ? "#fca5a5" : C.dan} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}} title="No deposit collected"><line x1="12" y1="1" x2="12" y2="17"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/><line x1="4" y1="1" x2="20" y2="23" stroke={isCheckedIn ? "#fca5a5" : C.dan} strokeWidth="2"/></svg>}
+                          <span style={{ fontSize: 11, fontWeight: 700, color: fg, overflow: "hidden", textOverflow: "ellipsis", padding: "0 4px", pointerEvents: "none", zIndex: 1 }}>
+                            {dn(res.dogId, res.clientId)}
                           </span>
-                          {showGreenEdge && span > 1 && <span style={{ fontSize: 9, color: isCheckedIn ? "rgba(255,255,255,0.6)" : C.textMut, flexShrink: 0 }}>in {fmtTime(res.checkInTime)}{res.actualCheckInTime ? ` (${new Date(res.actualCheckInTime).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})})` : ""}</span>}
-                          {showRedEdge && span > 2 && <span style={{ fontSize: 9, color: isCheckedIn ? "rgba(255,255,255,0.6)" : C.textMut, flexShrink: 0 }}>out {fmtTime(res.checkOutTime)}{res.actualCheckOutTime ? ` (${new Date(res.actualCheckOutTime).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})})` : ""}</span>}
+                          {!nightSelectMode && showGreenEdge && span > 1 && <span style={{ fontSize: 9, color: isCheckedIn ? "rgba(255,255,255,0.6)" : C.textMut, flexShrink: 0 }}>in {fmtTime(res.checkInTime)}{res.actualCheckInTime ? ` (${new Date(res.actualCheckInTime).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})})` : ""}</span>}
+                          {!nightSelectMode && showRedEdge && span > 2 && <span style={{ fontSize: 9, color: isCheckedIn ? "rgba(255,255,255,0.6)" : C.textMut, flexShrink: 0 }}>out {fmtTime(res.checkOutTime)}{res.actualCheckOutTime ? ` (${new Date(res.actualCheckOutTime).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})})` : ""}</span>}
                         </div>
                       </React.Fragment>
                     );
@@ -11653,7 +12784,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
                         pointerEvents: "none", zIndex: 5,
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: C.pri, opacity: 0.8 }}>{dn(s.origRes.dogId)}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: C.pri, opacity: 0.8 }}>{dn(s.origRes.dogId, s.origRes.clientId)}</span>
                       </div>
                     );
                   })()}
@@ -13923,6 +15054,18 @@ function PricingTab({ data, save }) {
             <span style={{ fontSize: 13, fontWeight: 700, color: C.textSec }}>%</span>
           </div>
         </div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}`, marginTop: 8 }}>
+          <div>
+            <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Private Play Surcharge</span>
+            <div style={{ fontSize: 11, color: C.textSec, marginTop: 2 }}>Auto-applied per night for dogs with a Private Play tag. Prorated if tag is added mid-stay.</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.textSec }}>$</span>
+            <input type="number" value={p.privatePlaySurcharge ?? 10} onChange={e => update("privatePlaySurcharge", Number(e.target.value) || 0)}
+              style={{ width: 60, padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "inherit", textAlign: "right" }} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.textSec }}>/night</span>
+          </div>
+        </div>
       </Card>
 
       {/* Payment Rules */}
@@ -14265,7 +15408,10 @@ function PackagesSection({ data, save }) {
 function CreatePackageWizard({ data, save, onClose }) {
   const [step, setStep] = useState(1);
   const [selectedCategory, setSelectedCategory] = useState("Boarding");
-  const [selectedService, setSelectedService] = useState(null);
+  const [selectedServices, setSelectedServices] = useState([]);
+  const [packageType, setPackageType] = useState("standard"); // standard | bogo | buyXgetY | freeNight
+  const [buyQty, setBuyQty] = useState(2);
+  const [freeQty, setFreeQty] = useState(1);
   const [quantity, setQuantity] = useState(1);
   const [pricingMode, setPricingMode] = useState("discount-pct");
   const [discountPct, setDiscountPct] = useState(10);
@@ -14308,26 +15454,47 @@ function CreatePackageWizard({ data, save, onClose }) {
   };
 
   const services = buildServices();
-  const retailValue = (selectedService?.rate || 0) * quantity;
-  let packagePrice = retailValue;
+  const bundledRate = selectedServices.reduce((sum, s) => sum + (s.rate || 0), 0);
 
-  if (pricingMode === "discount-pct") {
-    packagePrice = retailValue * (1 - discountPct / 100);
-  } else if (pricingMode === "discount-dollar") {
-    packagePrice = retailValue - discountDollar;
+  // Compute retail/package price based on package type
+  let effectiveQty = quantity;
+  let retailValue, packagePrice;
+
+  if (packageType === "bogo") {
+    // Buy 1, get 1 free — customer pays for `quantity`, gets 2*quantity
+    effectiveQty = quantity * 2;
+    retailValue = bundledRate * effectiveQty;
+    packagePrice = bundledRate * quantity;
+  } else if (packageType === "buyXgetY") {
+    effectiveQty = buyQty + freeQty;
+    retailValue = bundledRate * effectiveQty;
+    packagePrice = bundledRate * buyQty;
+  } else if (packageType === "freeNight") {
+    effectiveQty = 1;
+    retailValue = bundledRate * 1;
+    packagePrice = 0;
   } else {
-    packagePrice = Number(customPrice) || 0;
+    // standard
+    retailValue = bundledRate * quantity;
+    packagePrice = retailValue;
+    if (pricingMode === "discount-pct") {
+      packagePrice = retailValue * (1 - discountPct / 100);
+    } else if (pricingMode === "discount-dollar") {
+      packagePrice = retailValue - discountDollar;
+    } else {
+      packagePrice = Number(customPrice) || 0;
+    }
   }
 
   const savings = Math.max(0, retailValue - packagePrice);
-  const savingsPerUnit = savings / Math.max(1, quantity);
+  const savingsPerUnit = savings / Math.max(1, effectiveQty);
 
   const handleNext = () => {
-    if (step === 1 && !selectedService) {
-      alert("Please select a service.");
+    if (step === 1 && selectedServices.length === 0) {
+      alert("Please select at least one service.");
       return;
     }
-    if (step === 2) {
+    if (step === 2 && packageType === "standard") {
       if (packagePrice <= 0 || packagePrice > retailValue) {
         alert("Package price must be greater than $0 and not exceed retail value.");
         return;
@@ -14344,27 +15511,49 @@ function CreatePackageWizard({ data, save, onClose }) {
 
   const handleCreate = async () => {
     const finalDiscountPct = retailValue > 0 ? ((retailValue - packagePrice) / retailValue) * 100 : 0;
-    const unitLabelPlural = selectedService.unitLabel === "night" ? "Nights" : selectedService.unitLabel === "day" ? "Days" : "Coupons";
-    const autoName = finalDiscountPct > 0
-      ? `${finalDiscountPct.toFixed(0)}% Off ${quantity} ${selectedService.name} ${unitLabelPlural}`
-      : `${quantity} ${selectedService.name} ${unitLabelPlural} — $${packagePrice.toFixed(2)}`;
+    const svcNames = selectedServices.map(s => s.name).join(" + ");
+    const primaryUnit = selectedServices[0]?.unitLabel || "unit";
+    const unitLabelPlural = primaryUnit === "night" ? "Nights" : primaryUnit === "day" ? "Days" : "Coupons";
+
+    let autoName;
+    if (packageType === "bogo") {
+      autoName = `BOGO: Buy ${quantity}, Get ${quantity} Free — ${svcNames}`;
+    } else if (packageType === "buyXgetY") {
+      autoName = `Buy ${buyQty} Get ${freeQty} Free — ${svcNames}`;
+    } else if (packageType === "freeNight") {
+      autoName = `Free ${primaryUnit === "night" ? "Night" : "Session"} Coupon — ${svcNames}`;
+    } else {
+      autoName = finalDiscountPct > 0
+        ? `${finalDiscountPct.toFixed(0)}% Off ${quantity} ${svcNames} ${unitLabelPlural}`
+        : `${quantity} ${svcNames} ${unitLabelPlural} — $${packagePrice.toFixed(2)}`;
+    }
 
     const expirationText = expirationType === "relative"
       ? `Package expires ${expirationDays} days after purchase.`
       : `Package expires on ${expirationDate}.`;
-    const serviceDesc = (data.serviceDescriptions || {})[selectedService.name] || "";
-    const autoDesc = `Save $${savings.toFixed(2)} (${finalDiscountPct.toFixed(1)}% off retail) on ${quantity} ${selectedService.unitLabel === "night" ? "nights" : selectedService.unitLabel === "day" ? "days" : "units"} of ${selectedService.name}. That's $${savingsPerUnit.toFixed(2)} savings per ${selectedService.unitLabel}!${serviceDesc ? " " + serviceDesc : ""} ${expirationText}`;
+
+    let autoDesc;
+    if (packageType === "freeNight") {
+      autoDesc = `One complimentary ${primaryUnit} of ${svcNames}. ${expirationText}`;
+    } else {
+      autoDesc = `Save $${savings.toFixed(2)} (${finalDiscountPct.toFixed(1)}% off retail) on ${effectiveQty} ${primaryUnit === "night" ? "nights" : primaryUnit === "day" ? "days" : "units"} of ${svcNames}. ${expirationText}`;
+    }
 
     const newPkg = {
       id: "pkg_" + gid(),
-      serviceName: selectedService.name,
+      packageType,
+      serviceName: svcNames,
+      serviceNames: selectedServices.map(s => s.name),
       serviceCategory: selectedCategory,
-      unitRate: selectedService.rate,
-      quantity,
+      unitRate: bundledRate,
+      unitRates: selectedServices.map(s => ({ name: s.name, rate: s.rate })),
+      quantity: effectiveQty,
+      buyQty: packageType === "buyXgetY" ? buyQty : packageType === "bogo" ? quantity : undefined,
+      freeQty: packageType === "buyXgetY" ? freeQty : packageType === "bogo" ? quantity : packageType === "freeNight" ? 1 : undefined,
       retailValue,
       packagePrice,
-      discountType: pricingMode === "discount-pct" ? "percent" : pricingMode === "discount-dollar" ? "fixed" : "custom",
-      discountValue: pricingMode === "discount-pct" ? discountPct : pricingMode === "discount-dollar" ? discountDollar : 0,
+      discountType: packageType === "standard" ? (pricingMode === "discount-pct" ? "percent" : pricingMode === "discount-dollar" ? "fixed" : "custom") : "smart",
+      discountValue: packageType === "standard" ? (pricingMode === "discount-pct" ? discountPct : pricingMode === "discount-dollar" ? discountDollar : 0) : 0,
       savings,
       savingsPerUnit,
       expirationType,
@@ -14382,12 +15571,21 @@ function CreatePackageWizard({ data, save, onClose }) {
   };
 
   // Auto-generated name/desc preview
-  const unitLabelPlural = selectedService ? (selectedService.unitLabel === "night" ? "Nights" : selectedService.unitLabel === "day" ? "Days" : "Coupons") : "";
+  const svcNamesPreview = selectedServices.map(s => s.name).join(" + ");
+  const primaryUnitPreview = selectedServices[0]?.unitLabel || "unit";
+  const unitLabelPlural = selectedServices.length > 0 ? (primaryUnitPreview === "night" ? "Nights" : primaryUnitPreview === "day" ? "Days" : "Coupons") : "";
   const previewDiscountPct = retailValue > 0 ? ((retailValue - packagePrice) / retailValue) * 100 : 0;
-  const autoNamePreview = selectedService ? (previewDiscountPct > 0 ? `${previewDiscountPct.toFixed(0)}% Off ${quantity} ${selectedService.name} ${unitLabelPlural}` : `${quantity} ${selectedService.name} ${unitLabelPlural} — $${packagePrice.toFixed(2)}`) : "";
-  const serviceDescPreview = selectedService ? ((data.serviceDescriptions || {})[selectedService.name] || "") : "";
+  const autoNamePreview = selectedServices.length > 0 ? (
+    packageType === "bogo" ? `BOGO: Buy ${quantity}, Get ${quantity} Free — ${svcNamesPreview}` :
+    packageType === "buyXgetY" ? `Buy ${buyQty} Get ${freeQty} Free — ${svcNamesPreview}` :
+    packageType === "freeNight" ? `Free ${primaryUnitPreview === "night" ? "Night" : "Session"} Coupon — ${svcNamesPreview}` :
+    previewDiscountPct > 0 ? `${previewDiscountPct.toFixed(0)}% Off ${quantity} ${svcNamesPreview} ${unitLabelPlural}` : `${quantity} ${svcNamesPreview} ${unitLabelPlural} — $${packagePrice.toFixed(2)}`
+  ) : "";
   const expirationPreview = expirationType === "relative" ? `Package expires ${expirationDays} days after purchase.` : (expirationDate ? `Package expires on ${expirationDate}.` : "");
-  const autoDescPreview = selectedService ? `Save $${savings.toFixed(2)} (${previewDiscountPct.toFixed(1)}% off retail) on ${quantity} ${selectedService.unitLabel === "night" ? "nights" : selectedService.unitLabel === "day" ? "days" : "units"} of ${selectedService.name}. That's $${savingsPerUnit.toFixed(2)} savings per ${selectedService.unitLabel}!${serviceDescPreview ? " " + serviceDescPreview : ""} ${expirationPreview}` : "";
+  const autoDescPreview = selectedServices.length > 0 ? (
+    packageType === "freeNight" ? `One complimentary ${primaryUnitPreview} of ${svcNamesPreview}. ${expirationPreview}` :
+    `Save $${savings.toFixed(2)} (${previewDiscountPct.toFixed(1)}% off retail) on ${effectiveQty} ${primaryUnitPreview === "night" ? "nights" : primaryUnitPreview === "day" ? "days" : "units"} of ${svcNamesPreview}. ${expirationPreview}`
+  ) : "";
 
   return (
     <Modal title="Create Package" wide onClose={onClose}>
@@ -14397,7 +15595,7 @@ function CreatePackageWizard({ data, save, onClose }) {
             {["Boarding", "Daycare", "Add-Ons"].map(cat => (
               <button
                 key={cat}
-                onClick={() => { setSelectedCategory(cat); setSelectedService(null); }}
+                onClick={() => { setSelectedCategory(cat); setSelectedServices([]); }}
                 style={{
                   flex:1,
                   padding:"10px 16px",
@@ -14415,28 +15613,63 @@ function CreatePackageWizard({ data, save, onClose }) {
               </button>
             ))}
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:24}}>
-            {services.map(svc => (
-              <Card
-                key={svc.name}
-                onClick={() => setSelectedService(svc)}
-                hoverable
-                style={{
-                  padding:16,
-                  cursor:"pointer",
-                  border:`2px solid ${selectedService?.name === svc.name ? C.acc : C.border}`,
-                  background:selectedService?.name === svc.name ? C.accLt : "transparent",
-                  textAlign:"center"
-                }}
-              >
-                <div style={{fontWeight:600,color:C.text,marginBottom:8}}>{svc.name}</div>
-                <div style={{fontSize:12,color:C.textMut,marginBottom:8}}>${svc.rate.toFixed(2)} / {svc.unitLabel}</div>
-              </Card>
-            ))}
+          <div style={{fontSize:12,color:C.textMut,marginBottom:8}}>Select one or more services to bundle into this package:</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:16}}>
+            {services.map(svc => {
+              const isSel = selectedServices.some(s => s.name === svc.name);
+              return (
+                <Card
+                  key={svc.name}
+                  onClick={() => setSelectedServices(prev => isSel ? prev.filter(s => s.name !== svc.name) : [...prev, svc])}
+                  hoverable
+                  style={{
+                    padding:16,
+                    cursor:"pointer",
+                    border:`2px solid ${isSel ? C.acc : C.border}`,
+                    background:isSel ? C.accLt : "transparent",
+                    textAlign:"center",
+                    position:"relative"
+                  }}
+                >
+                  {isSel && <span style={{position:"absolute",top:6,right:8,fontSize:14,color:C.acc}}>✓</span>}
+                  <div style={{fontWeight:600,color:C.text,marginBottom:8}}>{svc.name}</div>
+                  <div style={{fontSize:12,color:C.textMut,marginBottom:8}}>${svc.rate.toFixed(2)} / {svc.unitLabel}</div>
+                </Card>
+              );
+            })}
           </div>
+          {selectedServices.length > 1 && (
+            <div style={{padding:"8px 14px",background:C.priLt,borderRadius:8,marginBottom:16,fontSize:13,color:C.pri,fontWeight:600}}>
+              Bundle: {selectedServices.map(s => s.name).join(" + ")} — ${bundledRate.toFixed(2)}/unit combined
+            </div>
+          )}
+
+          {selectedServices.length > 0 && (
+            <div style={{marginBottom:16}}>
+              <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Package Type</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+                {[
+                  { id: "standard", label: "Standard", desc: "Set custom qty + discount" },
+                  { id: "bogo", label: "BOGO", desc: "Buy 1, get 1 free" },
+                  { id: "buyXgetY", label: "Buy X Get Y", desc: "Buy X, get Y free" },
+                  { id: "freeNight", label: "Free Coupon", desc: "Single free night/session" },
+                ].map(t => (
+                  <button key={t.id} onClick={() => setPackageType(t.id)} style={{
+                    padding:"10px 8px",border:`2px solid ${packageType === t.id ? C.acc : C.border}`,
+                    background:packageType === t.id ? C.accLt : "transparent",borderRadius:8,cursor:"pointer",
+                    textAlign:"center",fontFamily:"inherit",transition:"all 0.15s"
+                  }}>
+                    <div style={{fontSize:13,fontWeight:700,color:packageType === t.id ? C.acc : C.text}}>{t.label}</div>
+                    <div style={{fontSize:10,color:C.textMut,marginTop:2}}>{t.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div style={{display:"flex",gap:12,justifyContent:"flex-end"}}>
             <Btn onClick={onClose} variant="secondary">Cancel</Btn>
-            <Btn onClick={handleNext} variant="primary" disabled={!selectedService}>Next</Btn>
+            <Btn onClick={handleNext} variant="primary" disabled={selectedServices.length === 0}>Next</Btn>
           </div>
         </div>
       )}
@@ -14444,96 +15677,127 @@ function CreatePackageWizard({ data, save, onClose }) {
       {step === 2 && (
         <div>
           <div style={{marginBottom:24,padding:12,background:C.priLt,borderRadius:8}}>
-            <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Selected Service</div>
-            <div style={{fontSize:16,fontWeight:600,color:C.text}}>{selectedService?.name}</div>
-          </div>
-
-          <div style={{marginBottom:24}}>
-            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Quantity</label>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <button onClick={() => setQuantity(Math.max(1, quantity - 1))} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>−</button>
-              <input type="number" value={quantity} onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))} style={{width:60,padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",fontSize:14}} className="no-focus-ring" />
-              <button onClick={() => setQuantity(quantity + 1)} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>+</button>
-              <span style={{marginLeft:"auto",fontSize:14,color:C.textMut}}>Unit: {selectedService?.unitLabel}</span>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+              <div style={{fontSize:12,color:C.textMut}}>Selected Service{selectedServices.length > 1 ? "s" : ""}</div>
+              <Badge color={packageType === "standard" ? "primary" : "accent"} size="sm">{packageType === "bogo" ? "BOGO" : packageType === "buyXgetY" ? "Buy X Get Y" : packageType === "freeNight" ? "Free Coupon" : "Standard"}</Badge>
             </div>
+            <div style={{fontSize:16,fontWeight:600,color:C.text}}>{selectedServices.map(s => s.name).join(" + ")}</div>
+            {selectedServices.length > 1 && <div style={{fontSize:12,color:C.textMut,marginTop:4}}>Bundled rate: ${bundledRate.toFixed(2)} per unit</div>}
           </div>
 
-          <div style={{marginBottom:16,padding:12,background:C.bg,borderRadius:8}}>
-            <div style={{fontSize:13,color:C.textMut,marginBottom:4}}>Retail Value</div>
-            <div style={{fontSize:24,fontWeight:700,color:C.text}}>${retailValue.toFixed(2)}</div>
-          </div>
-
-          <div style={{marginBottom:24}}>
-            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Package Price</label>
-            {[
-              { mode: "discount-pct", label: "Discount by %" },
-              { mode: "discount-dollar", label: "Subtract $" },
-              { mode: "custom", label: "Set custom price" }
-            ].map(opt => (
-              <div key={opt.mode} style={{marginBottom:12,display:"flex",alignItems:"center",gap:12}}>
-                <input
-                  type="radio"
-                  name="pricing"
-                  checked={pricingMode === opt.mode}
-                  onChange={() => setPricingMode(opt.mode)}
-                  style={{cursor:"pointer"}}
-                />
-                <label style={{flex:1,cursor:"pointer",display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:13,fontWeight:500}}>{opt.label}</span>
-                  {opt.mode === "discount-pct" && (
-                    <input
-                      type="number"
-                      value={discountPct}
-                      onChange={(e) => { setDiscountPct(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0))); setPricingMode("discount-pct"); }}
-                      style={{width:70,padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}}
-                      className="no-focus-ring"
-                    />
-                  )}
-                  {opt.mode === "discount-pct" && <span style={{fontSize:12,color:C.textMut}}>%</span>}
-                  {opt.mode === "discount-dollar" && (
-                    <input
-                      type="number"
-                      value={discountDollar}
-                      onChange={(e) => { setDiscountDollar(Math.max(0, parseFloat(e.target.value) || 0)); setPricingMode("discount-dollar"); }}
-                      style={{width:70,padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}}
-                      className="no-focus-ring"
-                    />
-                  )}
-                  {opt.mode === "discount-dollar" && <span style={{fontSize:12,color:C.textMut}}>$</span>}
-                  {opt.mode === "custom" && (
-                    <input
-                      type="number"
-                      value={customPrice === "" ? "" : customPrice}
-                      onChange={(e) => { setCustomPrice(e.target.value === "" ? "" : Math.max(0, parseFloat(e.target.value) || 0)); setPricingMode("custom"); }}
-                      style={{width:70,padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}}
-                      className="no-focus-ring"
-                    />
-                  )}
-                  {opt.mode === "custom" && <span style={{fontSize:12,color:C.textMut}}>$</span>}
-                  {opt.mode === "custom" && pricingMode === "custom" && retailValue > 0 && Number(customPrice) > 0 && Number(customPrice) < retailValue && (
-                    <span style={{fontSize:11,color:C.suc,fontWeight:600,marginLeft:4}}>≈ {((retailValue - Number(customPrice)) / retailValue * 100).toFixed(1)}% off</span>
-                  )}
-                </label>
+          {/* BOGO: just need quantity of "buy" portion */}
+          {packageType === "bogo" && (
+            <div style={{marginBottom:24}}>
+              <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Customer Buys (gets same amount free)</label>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <button onClick={() => setQuantity(Math.max(1, quantity - 1))} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>−</button>
+                <input type="text" inputMode="numeric" value={quantity} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setQuantity(v === "" ? "" : Math.max(1, parseInt(v))); }} onBlur={() => { if (!quantity || quantity < 1) setQuantity(1); }} style={{width:60,padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",fontSize:14}} className="no-focus-ring" />
+                <button onClick={() => setQuantity(quantity + 1)} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>+</button>
               </div>
-            ))}
-          </div>
+              <div style={{marginTop:12,padding:12,background:C.sucLt,borderRadius:8,fontSize:13,color:C.suc,fontWeight:600}}>
+                Buy {quantity}, get {quantity} free = {quantity * 2} total units for ${packagePrice.toFixed(2)}
+              </div>
+            </div>
+          )}
 
+          {/* Buy X Get Y */}
+          {packageType === "buyXgetY" && (
+            <div style={{marginBottom:24}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+                <div>
+                  <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Customer Buys</label>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <button onClick={() => setBuyQty(Math.max(1, buyQty - 1))} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>−</button>
+                    <input type="text" inputMode="numeric" value={buyQty} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setBuyQty(v === "" ? "" : Math.max(1, parseInt(v))); }} onBlur={() => { if (!buyQty || buyQty < 1) setBuyQty(1); }} style={{width:60,padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",fontSize:14}} className="no-focus-ring" />
+                    <button onClick={() => setBuyQty(buyQty + 1)} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>+</button>
+                  </div>
+                </div>
+                <div>
+                  <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Gets Free</label>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <button onClick={() => setFreeQty(Math.max(1, freeQty - 1))} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>−</button>
+                    <input type="text" inputMode="numeric" value={freeQty} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setFreeQty(v === "" ? "" : Math.max(1, parseInt(v))); }} onBlur={() => { if (!freeQty || freeQty < 1) setFreeQty(1); }} style={{width:60,padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",fontSize:14}} className="no-focus-ring" />
+                    <button onClick={() => setFreeQty(freeQty + 1)} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>+</button>
+                  </div>
+                </div>
+              </div>
+              <div style={{marginTop:12,padding:12,background:C.sucLt,borderRadius:8,fontSize:13,color:C.suc,fontWeight:600}}>
+                Buy {buyQty}, get {freeQty} free = {buyQty + freeQty} total units for ${packagePrice.toFixed(2)}
+              </div>
+            </div>
+          )}
+
+          {/* Free Night Coupon */}
+          {packageType === "freeNight" && (
+            <div style={{marginBottom:24}}>
+              <div style={{padding:16,background:C.sucLt,borderRadius:8,border:`1px solid ${C.suc}30`}}>
+                <div style={{fontSize:15,fontWeight:700,color:C.suc,marginBottom:4}}>Free {selectedServices[0]?.unitLabel === "night" ? "Night" : "Session"} Coupon</div>
+                <div style={{fontSize:13,color:C.text}}>This package gives the customer 1 complimentary {selectedServices[0]?.unitLabel || "unit"} of {selectedServices.map(s => s.name).join(" + ")}.</div>
+                <div style={{fontSize:13,color:C.text,marginTop:4}}>Value: <strong>${bundledRate.toFixed(2)}</strong> — Customer pays: <strong>$0.00</strong></div>
+              </div>
+            </div>
+          )}
+
+          {/* Standard: full pricing controls */}
+          {packageType === "standard" && (<>
+            <div style={{marginBottom:24}}>
+              <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Quantity</label>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <button onClick={() => setQuantity(Math.max(1, quantity - 1))} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>−</button>
+                <input type="text" inputMode="numeric" value={quantity} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setQuantity(v === "" ? "" : Math.max(1, parseInt(v))); }} onBlur={() => { if (!quantity || quantity < 1) setQuantity(1); }} style={{width:60,padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",fontSize:14}} className="no-focus-ring" />
+                <button onClick={() => setQuantity(quantity + 1)} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>+</button>
+                <span style={{marginLeft:"auto",fontSize:14,color:C.textMut}}>Unit: {selectedServices[0]?.unitLabel || "unit"}</span>
+              </div>
+            </div>
+
+            <div style={{marginBottom:16,padding:12,background:C.bg,borderRadius:8}}>
+              <div style={{fontSize:13,color:C.textMut,marginBottom:4}}>Retail Value</div>
+              <div style={{fontSize:24,fontWeight:700,color:C.text}}>${retailValue.toFixed(2)}</div>
+            </div>
+
+            <div style={{marginBottom:24}}>
+              <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Package Price</label>
+              {[
+                { mode: "discount-pct", label: "Discount by %" },
+                { mode: "discount-dollar", label: "Subtract $" },
+                { mode: "custom", label: "Set custom price" }
+              ].map(opt => (
+                <div key={opt.mode} style={{marginBottom:12,display:"flex",alignItems:"center",gap:12}}>
+                  <input type="radio" name="pricing" checked={pricingMode === opt.mode} onChange={() => setPricingMode(opt.mode)} style={{cursor:"pointer"}} />
+                  <label style={{flex:1,cursor:"pointer",display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:13,fontWeight:500}}>{opt.label}</span>
+                    {opt.mode === "discount-pct" && <input type="text" inputMode="decimal" value={discountPct} onChange={(e) => { const v = e.target.value.replace(/[^0-9.]/g, ""); setDiscountPct(v === "" ? "" : Math.min(100, Math.max(0, parseFloat(v) || 0))); setPricingMode("discount-pct"); }} onBlur={() => { if (discountPct === "") setDiscountPct(0); }} style={{width:70,padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}} className="no-focus-ring" />}
+                    {opt.mode === "discount-pct" && <span style={{fontSize:12,color:C.textMut}}>%</span>}
+                    {opt.mode === "discount-dollar" && <input type="text" inputMode="decimal" value={discountDollar} onChange={(e) => { const v = e.target.value.replace(/[^0-9.]/g, ""); setDiscountDollar(v === "" ? "" : Math.max(0, parseFloat(v) || 0)); setPricingMode("discount-dollar"); }} onBlur={() => { if (discountDollar === "") setDiscountDollar(0); }} style={{width:70,padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}} className="no-focus-ring" />}
+                    {opt.mode === "discount-dollar" && <span style={{fontSize:12,color:C.textMut}}>$</span>}
+                    {opt.mode === "custom" && <input type="text" inputMode="decimal" value={customPrice} onChange={(e) => { const v = e.target.value.replace(/[^0-9.]/g, ""); setCustomPrice(v === "" ? "" : Math.max(0, parseFloat(v) || 0)); setPricingMode("custom"); }} onBlur={() => { if (customPrice === "") setCustomPrice(0); }} style={{width:70,padding:"4px 8px",border:`1px solid ${C.border}`,borderRadius:4,fontSize:12}} className="no-focus-ring" />}
+                    {opt.mode === "custom" && <span style={{fontSize:12,color:C.textMut}}>$</span>}
+                    {opt.mode === "custom" && pricingMode === "custom" && retailValue > 0 && Number(customPrice) > 0 && Number(customPrice) < retailValue && (
+                      <span style={{fontSize:11,color:C.suc,fontWeight:600,marginLeft:4}}>≈ {((retailValue - Number(customPrice)) / retailValue * 100).toFixed(1)}% off</span>
+                    )}
+                  </label>
+                </div>
+              ))}
+            </div>
+          </>)}
+
+          {/* Summary stats */}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:24,padding:12,background:C.bg,borderRadius:8}}>
             <div>
-              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Retail / Unit</div>
-              <div style={{fontSize:16,fontWeight:700,color:C.textMut}}>${quantity > 0 ? (retailValue / quantity).toFixed(2) : "0.00"}</div>
+              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Retail Value</div>
+              <div style={{fontSize:16,fontWeight:700,color:C.textMut}}>${retailValue.toFixed(2)}</div>
             </div>
             <div>
-              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Price / Unit</div>
-              <div style={{fontSize:16,fontWeight:700,color:C.pri}}>${quantity > 0 ? ((pricingMode === "custom" ? (Number(customPrice) || 0) : packagePrice) / quantity).toFixed(2) : "0.00"}</div>
+              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Package Price</div>
+              <div style={{fontSize:16,fontWeight:700,color:C.pri}}>${packagePrice.toFixed(2)}</div>
             </div>
             <div>
               <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Total Savings</div>
               <div style={{fontSize:16,fontWeight:700,color:savings > 0 ? C.suc : C.textMut}}>${savings.toFixed(2)}</div>
             </div>
             <div>
-              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Savings / Unit</div>
-              <div style={{fontSize:16,fontWeight:700,color:C.text}}>${savingsPerUnit.toFixed(2)}</div>
+              <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Total Units</div>
+              <div style={{fontSize:16,fontWeight:700,color:C.text}}>{effectiveQty}</div>
             </div>
           </div>
 
@@ -14627,13 +15891,12 @@ function CreatePackageWizard({ data, save, onClose }) {
           <Card style={{marginBottom:24,padding:16,background:C.bg}}>
             <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Summary</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,fontSize:12}}>
-              <div><span style={{color:C.textMut}}>Service:</span> {selectedService?.name}</div>
-              <div><span style={{color:C.textMut}}>Qty:</span> {quantity} {selectedService?.unitLabel}s</div>
-              <div><span style={{color:C.textMut}}>Retail:</span> ${retailValue.toFixed(2)}</div>
+              <div><span style={{color:C.textMut}}>Service{selectedServices.length > 1 ? "s" : ""}:</span> {selectedServices.map(s => s.name).join(" + ")}</div>
+              <div><span style={{color:C.textMut}}>Type:</span> {packageType === "bogo" ? "BOGO" : packageType === "buyXgetY" ? `Buy ${buyQty} Get ${freeQty}` : packageType === "freeNight" ? "Free Coupon" : "Standard"}</div>
+              <div><span style={{color:C.textMut}}>Total Units:</span> {effectiveQty} {selectedServices[0]?.unitLabel || "unit"}s</div>
               <div><span style={{color:C.textMut}}>Package Price:</span> ${packagePrice.toFixed(2)}</div>
+              <div><span style={{color:C.textMut}}>Retail Value:</span> ${retailValue.toFixed(2)}</div>
               <div><span style={{color:C.textMut}}>Savings:</span> <span style={{color:C.suc,fontWeight:600}}>${savings.toFixed(2)}</span></div>
-              <div><span style={{color:C.textMut}}>Savings/Unit:</span> ${savingsPerUnit.toFixed(2)}</div>
-              <div><span style={{color:C.textMut}}>Price/Unit:</span> ${quantity > 0 ? (packagePrice / quantity).toFixed(2) : "0.00"}</div>
               <div><span style={{color:C.textMut}}>Expires:</span> {expirationType === "relative" ? `${expirationDays} days` : expirationDate}</div>
             </div>
           </Card>
@@ -16249,11 +17512,12 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
     const pkg = pushModal;
     for (const locId of pushLocations) {
       try {
-        const { data: locData, error } = await supabase.rpc('get_location_data', { p_location_id: locId });
-        if (error || !locData) continue;
-        const existing = locData.packages || [];
-        if (existing.some(p => p.enterpriseSourceId === pkg.id)) continue;
-        // Dynamic pricing: calculate from location's rates
+        // Check if package already pushed to this location via k9_packages table
+        const { data: existingPkgs } = await supabase.from('k9_packages').select('id').eq('location_id', locId).eq('fields->>enterpriseSourceId', pkg.id);
+        if (existingPkgs && existingPkgs.length > 0) continue;
+        // Get location pricing from settings blob for dynamic pricing calculation
+        const { data: locRow } = await supabase.from('locations').select('data').eq('id', locId).single();
+        const locData = locRow?.data || {};
         const pricing = locData.pricing || {};
         let unitRate = 0;
         if (pkg.serviceCategory === "Boarding") {
@@ -16280,7 +17544,21 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
           availableOnline: pkg.availableOnline, enterpriseSourceId: pkg.id,
           active: true, createdAt: todayStr(),
         };
-        await supabase.rpc('update_location_data', { p_location_id: locId, p_data: { ...locData, packages: [...existing, localPkg] } });
+        // Write directly to k9_packages table for the child location
+        await supabase.from('k9_packages').upsert({
+          id: localPkg.id, location_id: locId,
+          name: localPkg.name, description: localPkg.description,
+          service_category: localPkg.serviceCategory, service_name: localPkg.serviceName,
+          quantity: localPkg.quantity,
+          package_price: localPkg.packagePrice, retail_value: localPkg.retailValue,
+          unit_price: localPkg.unitRate, savings: localPkg.savings,
+          savings_per_unit: localPkg.savingsPerUnit,
+          discount_pct: localPkg.discountType === "percent" ? localPkg.discountValue : null,
+          discount_dollar: localPkg.discountType === "fixed" ? localPkg.discountValue : null,
+          expiration_type: localPkg.expirationType, expiration_days: localPkg.expirationDays,
+          available_online: localPkg.availableOnline,
+          fields: localPkg,
+        });
       } catch (e) { console.error('Push package error:', e); }
     }
     const updated = (data.enterprisePackages || []).map(p => p.id === pkg.id ? { ...p, pushedTo: [...new Set([...(p.pushedTo || []), ...pushLocations])] } : p);
@@ -17349,6 +18627,141 @@ function LMSPage({ data, save, nav, profile }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // DISCOUNTS SECTION
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// MESSAGE TEMPLATES SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════
+function MessageTemplatesTab({ data, save }) {
+  const [editId, setEditId] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editBody, setEditBody] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const templates = data.messageTemplates || [];
+
+  const VARIABLES = [
+    { tag: "{clientName}", desc: "Client's full name" },
+    { tag: "{dogName}", desc: "Smart dog names (uses 'and' / commas)" },
+    { tag: "{checkInDate}", desc: "Check-in date" },
+    { tag: "{checkOutDate}", desc: "Check-out date" },
+    { tag: "{roomType}", desc: "Room type name" },
+    { tag: "{totalPrice}", desc: "Reservation total price" },
+  ];
+
+  const startEdit = (tpl) => { setEditId(tpl.id); setEditName(tpl.name); setEditBody(tpl.body); };
+  const cancelEdit = () => { setEditId(null); setEditName(""); setEditBody(""); setShowCreate(false); };
+
+  const saveTemplate = async () => {
+    if (!editName.trim() || !editBody.trim()) return;
+    if (showCreate) {
+      const newTpl = { id: gid(), name: editName.trim(), body: editBody.trim(), active: true };
+      await save({ ...data, messageTemplates: [...templates, newTpl] });
+    } else {
+      await save({ ...data, messageTemplates: templates.map(t => t.id === editId ? { ...t, name: editName.trim(), body: editBody.trim() } : t) });
+    }
+    cancelEdit();
+  };
+
+  const toggleActive = async (id) => {
+    await save({ ...data, messageTemplates: templates.map(t => t.id === id ? { ...t, active: !t.active } : t) });
+  };
+
+  const deleteTemplate = async (id) => {
+    await save({ ...data, messageTemplates: templates.filter(t => t.id !== id) });
+  };
+
+  const insertVar = (tag) => {
+    setEditBody(prev => prev + tag);
+  };
+
+  const isEditing = editId || showCreate;
+
+  return (<>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+      <div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>Message Templates</div>
+        <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>Create and customize text message templates with smart variables</div>
+      </div>
+      {!isEditing && <Btn size="sm" onClick={() => { setShowCreate(true); setEditId(null); setEditName(""); setEditBody(""); }}>+ New Template</Btn>}
+    </div>
+
+    {/* Variable reference */}
+    <Card style={{ padding: "12px 16px", marginBottom: 16, background: C.bg }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 8 }}>Available Variables</div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {VARIABLES.map(v => (
+          <div key={v.tag} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+            <code style={{ background: C.priLt, color: C.pri, padding: "2px 6px", borderRadius: 4, fontWeight: 600, fontSize: 11 }}>{v.tag}</code>
+            <span style={{ color: C.textSec }}>{v.desc}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 8, fontSize: 11, color: C.textMut, fontStyle: "italic" }}>
+        Tip: {"{dogName}"} is smart — it handles grammar automatically: "Fluffy" for one dog, "Fluffy and Ginger" for two, "Fluffy, Ginger, and Darnell" for three+
+      </div>
+    </Card>
+
+    {/* Edit/Create form */}
+    {isEditing && (
+      <Card style={{ padding: 16, marginBottom: 16, border: `1.5px solid ${C.pri}` }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>{showCreate ? "Create Template" : "Edit Template"}</div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 4 }}>Template Name</label>
+          <input value={editName} onChange={e => setEditName(e.target.value)} placeholder="e.g. Booking Confirmation" style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", boxSizing: "border-box", background: C.surface, color: C.text }} />
+        </div>
+        <div style={{ marginBottom: 8 }}>
+          <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 4 }}>Message Body</label>
+          <textarea value={editBody} onChange={e => setEditBody(e.target.value)} placeholder="Hi {clientName}! We're excited to see {dogName}..." rows={5} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box", background: C.surface, color: C.text }} />
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 12 }}>
+          {VARIABLES.map(v => (
+            <button key={v.tag} onClick={() => insertVar(v.tag)} style={{ padding: "3px 8px", borderRadius: 6, border: `1px solid ${C.border}`, background: C.bg, color: C.pri, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{v.tag}</button>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: C.textMut, marginBottom: 12 }}>Character count: {editBody.length}</div>
+        {editBody && (
+          <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 8, background: C.bg, border: `1px solid ${C.borderLight}` }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.textSec, marginBottom: 4, textTransform: "uppercase" }}>Preview</div>
+            <div style={{ fontSize: 12, color: C.text }}>{editBody.replace(/\{clientName\}/g, "Jane Vance").replace(/\{dogName\}/g, "Buddy and Max").replace(/\{checkInDate\}/g, "Mar 15").replace(/\{checkOutDate\}/g, "Mar 20").replace(/\{roomType\}/g, "Executive Suite").replace(/\{totalPrice\}/g, "450.00")}</div>
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Btn variant="ghost" size="sm" onClick={cancelEdit}>Cancel</Btn>
+          <Btn size="sm" onClick={saveTemplate} disabled={!editName.trim() || !editBody.trim()}>Save Template</Btn>
+        </div>
+      </Card>
+    )}
+
+    {/* Template list */}
+    {templates.length === 0 && !isEditing ? (
+      <Card style={{ padding: "40px 20px", textAlign: "center" }}>
+        <I.MessageSquare style={{ width: 32, height: 32, color: C.textMut, marginBottom: 8 }} />
+        <div style={{ fontSize: 14, fontWeight: 600, color: C.textSec }}>No templates yet</div>
+        <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>Create your first message template to get started</div>
+      </Card>
+    ) : (
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {templates.map(tpl => (
+          <Card key={tpl.id} style={{ padding: "14px 16px", opacity: tpl.active === false ? 0.5 : 1 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{tpl.name}</div>
+                  <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: tpl.active !== false ? C.sucLt : C.bg, color: tpl.active !== false ? C.suc : C.textMut }}>{tpl.active !== false ? "Active" : "Inactive"}</span>
+                </div>
+                <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5 }}>{tpl.body}</div>
+              </div>
+              <div style={{ display: "flex", gap: 4, marginLeft: 12, flexShrink: 0 }}>
+                <button onClick={() => toggleActive(tpl.id)} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 10, cursor: "pointer", fontFamily: "inherit" }}>{tpl.active !== false ? "Disable" : "Enable"}</button>
+                <button onClick={() => startEdit(tpl)} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.border}`, background: "transparent", color: C.pri, fontSize: 10, cursor: "pointer", fontFamily: "inherit" }}>Edit</button>
+                <button onClick={() => deleteTemplate(tpl.id)} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.border}`, background: "transparent", color: C.dan, fontSize: 10, cursor: "pointer", fontFamily: "inherit" }}>Delete</button>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    )}
+  </>);
+}
+
 function DiscountsSection({ data, save }) {
   const [showCreate, setShowCreate] = useState(false);
   const [editDiscount, setEditDiscount] = useState(null);
@@ -17432,23 +18845,27 @@ function DiscountsSection({ data, save }) {
         </Card>
       ) : (
         <Card>
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 0.8fr 0.8fr 1.5fr 0.8fr 0.6fr 0.6fr", gap: 0 }}>
-            {["Name", "Type", "Value", "Referral Source", "Lodging Types", "Cap", ""].map(h => (
+          <div style={{ display: "grid", gridTemplateColumns: "2fr 0.7fr 0.7fr 0.7fr 1.2fr 0.7fr 0.6fr 0.6fr", gap: 0 }}>
+            {["Name", "Kind", "Type", "Value", "Referral Source", "Lodging Types", "Cap", ""].map(h => (
               <div key={h} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", padding: "10px 12px", background: C.bg, borderBottom: `1px solid ${C.border}`, letterSpacing: "0.06em" }}>{h}</div>
             ))}
             {discounts.map(disc => {
               const ref = referralSources.find(r => r.id === disc.referralSourceId);
+              const isRecurring = disc.discountKind === "recurring";
               return (
                 <React.Fragment key={disc.id}>
                   <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", gap: 8 }}>
                     <div style={{ width: 8, height: 8, borderRadius: "50%", background: disc.active ? C.suc : C.border }} />
                     <span style={{ fontSize: 14, fontWeight: 600, color: disc.active ? C.text : C.textMut }}>{disc.name}</span>
                   </div>
+                  <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 12 }}>
+                    <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 11, fontWeight: 600, background: isRecurring ? "#DBEAFE" : "#FEF3C7", color: isRecurring ? "#1E40AF" : "#92400E" }}>{isRecurring ? "Recurring" : "One-Time"}</span>
+                  </div>
                   <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.text }}>{disc.type === "percentage" ? "%" : "$"}</div>
                   <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.suc, fontWeight: 600 }}>{disc.type === "percentage" ? `${disc.value}%` : `$${disc.value}`}</div>
                   <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.text }}>{ref ? ref.name : "Any"}</div>
                   <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 12, color: C.textMut }}>{(disc.lodgingTypes || []).join(", ") || "All"}</div>
-                  <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.text }}>{disc.usageCap > 0 ? `${disc.usageCap}x` : "∞"}</div>
+                  <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, color: C.text }}>{isRecurring ? "—" : disc.usageCap > 0 ? `${disc.usageCap}x` : "∞"}</div>
                   <div style={{ padding: "12px 12px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", gap: 4 }}>
                     <button onClick={() => toggleActive(disc.id)} style={{ background: "none", border: "none", cursor: "pointer", color: disc.active ? C.suc : C.textMut, padding: 4 }}>{disc.active ? <I.Check /> : <I.Edit />}</button>
                     <button onClick={() => { setEditDiscount(disc); setShowCreate(true); }} style={{ background: "none", border: "none", cursor: "pointer", color: C.pri, padding: 4 }}><I.Edit /></button>
@@ -17478,6 +18895,7 @@ function DiscountForm({ discount, referralSources, onSave, onCancel }) {
   const [referralSourceId, setReferralSourceId] = useState(discount?.referralSourceId || "");
   const [lodgingTypes, setLodgingTypes] = useState(discount?.lodgingTypes || []);
   const [usageCap, setUsageCap] = useState(discount?.usageCap ?? 0);
+  const [discountKind, setDiscountKind] = useState(discount?.discountKind || "one-time"); // "recurring" | "one-time"
 
   const toggleLodging = (lt) => setLodgingTypes(prev => prev.includes(lt) ? prev.filter(l => l !== lt) : [...prev, lt]);
 
@@ -17486,7 +18904,19 @@ function DiscountForm({ discount, referralSources, onSave, onCancel }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div><label style={labelStyle}>Discount Name *</label><input value={name} onChange={e => setName(e.target.value)} style={inputStyle} placeholder="e.g., Friend Referral 10% Off" /></div>
+      <div><label style={labelStyle}>Discount Name *</label><input value={name} onChange={e => setName(e.target.value)} style={inputStyle} placeholder="e.g., First Responder, Friend Referral 10% Off" /></div>
+      {/* Discount Kind: recurring vs one-time */}
+      <div>
+        <label style={labelStyle}>Discount Kind</label>
+        <div style={{ display: "flex", gap: 8 }}>
+          {[{ v: "recurring", l: "Recurring", d: "Auto-applies every visit for assigned clients" }, { v: "one-time", l: "One-Time", d: "Can only be used once per client" }].map(opt => (
+            <button key={opt.v} onClick={() => setDiscountKind(opt.v)} style={{ flex: 1, padding: "10px 12px", borderRadius: 10, border: `2px solid ${discountKind === opt.v ? C.pri : C.border}`, background: discountKind === opt.v ? C.priLt : C.surface, cursor: "pointer", fontFamily: "inherit", textAlign: "left" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: discountKind === opt.v ? C.pri : C.text }}>{opt.l}</div>
+              <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>{opt.d}</div>
+            </button>
+          ))}
+        </div>
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div>
           <label style={labelStyle}>Type</label>
@@ -17512,16 +18942,16 @@ function DiscountForm({ discount, referralSources, onSave, onCancel }) {
         </div>
         <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Leave empty to apply to all types</div>
       </div>
-      <div>
+      {discountKind === "one-time" && <div>
         <label style={labelStyle}>Usage Cap per Client</label>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input type="number" value={usageCap} onChange={e => setUsageCap(parseInt(e.target.value) || 0)} style={{ ...inputStyle, width: 100 }} min="0" />
           <span style={{ fontSize: 12, color: C.textMut }}>{usageCap === 0 ? "Unlimited" : `Max ${usageCap} use${usageCap > 1 ? "s" : ""} per client`}</span>
         </div>
-      </div>
+      </div>}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 8 }}>
         <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
-        <Btn onClick={() => { if (!name.trim()) return; onSave({ name, type, value, referralSourceId, lodgingTypes, usageCap }); }} disabled={!name.trim()}>
+        <Btn onClick={() => { if (!name.trim()) return; onSave({ name, type, value, referralSourceId, lodgingTypes, usageCap: discountKind === "recurring" ? 0 : usageCap, discountKind }); }} disabled={!name.trim()}>
           {discount ? "Update" : "Create"}
         </Btn>
       </div>
@@ -17865,6 +19295,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
       { id: "pricing", label: "Pricing", desc: "Room rates, daycare fees, add-ons, and payment rules", keywords: "pricing rates fees cost money payment deposit" },
       { id: "packages", label: "Packages", desc: "Create and manage service packages with built-in discounts", keywords: "packages deals discounts bundles promotions savings" },
       { id: "discounts", label: "Discounts", desc: "Create discounts linked to referral sources with usage caps", keywords: "discounts referral source lodging cap coupon promotion" },
+      { id: "message-templates", label: "Message Templates", desc: "Customize text message templates with variables", keywords: "message templates text sms texting variables dog name" },
       { id: "dropdowns", label: "Dropdown Lists", desc: "Customize dropdown options for breeds, food types, etc.", keywords: "dropdowns lists options breeds food bath medication" },
     ]},
     { label: "Operations", items: [
@@ -17898,7 +19329,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
   // Map settings tab IDs → required permission keys
   const SETTINGS_PERM_MAP = {
     fields:"edit_fields",client:"edit_fields",dog:"edit_fields",tags:"edit_tags_config",vaccines:"edit_vaccines_config",
-    agreements:"edit_agreements",pricing:"edit_pricing",packages:"edit_pricing",discounts:"edit_pricing",dropdowns:"edit_dropdowns",
+    agreements:"edit_agreements",pricing:"edit_pricing",packages:"edit_pricing",discounts:"edit_pricing","message-templates":"edit_facility",dropdowns:"edit_dropdowns",
     eod:"edit_eod_template","daily-ops":"edit_ops_template",
     facility:"edit_facility",rooms:"edit_rooms","closed-dates":"edit_facility",policies:"edit_vaccines_config","compliance-rules":"edit_vaccines_config","booking-settings":"edit_facility",
     team:"manage_team",roles:"manage_roles","session-security":"manage_team",automations:"manage_team",reset:"reset_data",
@@ -18401,6 +19832,9 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
 
       ) : tab === "discounts" ? (
         <DiscountsSection data={data} save={save} />
+
+      ) : tab === "message-templates" ? (
+        <MessageTemplatesTab data={data} save={save} />
 
       ) : tab === "eod" ? (
         <EODTemplateTab data={data} save={save} />
@@ -18942,21 +20376,29 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
             <Card style={{ padding: "24px 28px" }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Tour Scheduling</div>
               <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>Control how facility tours are booked through the online booking page.</p>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:20,marginBottom:20}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:16,marginBottom:20}}>
                 <div>
                   <Inp label="Tour Duration (minutes)" type="number" value={tourSet.duration} onChange={v => updateBkSetting("tourSettings", "duration", parseInt(v) || 30)} />
-                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>How long each tour appointment lasts. Affects available time slot calculations.</div>
+                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>How long each tour lasts.</div>
+                </div>
+                <div>
+                  <Inp label="Start Time" type="time" value={tourSet.startTime || "09:00"} onChange={v => updateBkSetting("tourSettings", "startTime", v)} />
+                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Earliest tour slot.</div>
+                </div>
+                <div>
+                  <Inp label="End Time" type="time" value={tourSet.endTime || "16:30"} onChange={v => updateBkSetting("tourSettings", "endTime", v)} />
+                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Latest tour slot.</div>
                 </div>
                 <div style={{display:"flex",flexDirection:"column",gap:8}}>
                   <div style={{fontSize:13,fontWeight:600,color:C.text}}>Allow Concurrent Tours</div>
                   <div style={{display:"flex",alignItems:"center",gap:12}}>
                     <button onClick={()=>updateBkSetting("tourSettings","allowConcurrent",!tourSet.allowConcurrent)} style={{padding:"6px 16px",borderRadius:8,border:`1.5px solid ${tourSet.allowConcurrent?C.suc:C.border}`,background:tourSet.allowConcurrent?C.suc:C.surface,color:tourSet.allowConcurrent?"#fff":C.textSec,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{tourSet.allowConcurrent?"Allowed":"Not Allowed"}</button>
                   </div>
-                  <div style={{fontSize:11,color:C.textMut}}>When off, only one tour can be booked per time slot. When on, multiple tours can overlap.</div>
+                  <div style={{fontSize:11,color:C.textMut}}>Allow multiple tours at once.</div>
                 </div>
               </div>
               <div style={{padding:"10px 16px",borderRadius:8,background:C.bg,border:`1px solid ${C.border}`}}>
-                <div style={{fontSize:12,color:C.textSec}}>Tour booking hours: <strong>9:00 AM – 4:30 PM</strong> daily in {tourSet.duration}-minute intervals</div>
+                <div style={{fontSize:12,color:C.textSec}}>Tour booking hours: <strong>{(() => { const st = tourSet.startTime || "09:00"; const et = tourSet.endTime || "16:30"; const fmt = (t) => { const [h,m] = t.split(":"); const hr = parseInt(h); return `${hr > 12 ? hr - 12 : hr === 0 ? 12 : hr}:${m} ${hr >= 12 ? "PM" : "AM"}`; }; return `${fmt(st)} – ${fmt(et)}`; })()}</strong> daily in {tourSet.duration || 30}-minute intervals</div>
               </div>
             </Card>
 
@@ -20152,7 +21594,7 @@ function MessagesPage({ data, save, nav }) {
     const cDogs = dogs.filter(d => d.clientId === selClient);
     let body = tpl.body;
     body = body.replace(/\{clientName\}/g, clientName(c));
-    body = body.replace(/\{dogName\}/g, cDogs.length > 0 ? (cDogs[0].fields?.name || "your dog") : "your dog");
+    body = body.replace(/\{dogName\}/g, formatDogNames(cDogs));
     body = body.replace(/\{checkInDate\}/g, "TBD");
     body = body.replace(/\{checkOutDate\}/g, "TBD");
     body = body.replace(/\{roomType\}/g, "TBD");
@@ -24502,7 +25944,7 @@ export default function App() {
       default:
         if (isSettingsSubPage) {
           const subTab = page.replace("settings-", "");
-          return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile} nav={nav} settingsTab={subTab}/> : denied;
+          return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile} nav={nav} settingsTab={subTab} locationSlug={locSlug} addGlobalToast={addGlobalToast}/> : denied;
         }
         return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
     }
@@ -24686,14 +26128,19 @@ export default function App() {
       {/* ═══ Global Toast ═══ */}
       {globalToasts.length > 0 && (
         <div style={{position:"fixed",bottom:24,right:24,zIndex:9999,display:"flex",flexDirection:"column",gap:8,maxWidth:400}}>
-          {globalToasts.map(t => (
+          {globalToasts.map(t => {
+            const tIcon = t.type === "error" ? I.AlertTriangle : t.type === "info" ? I.InfoCircle : I.Check;
+            const tBg = t.type === "error" ? (C.danLt||"#fef2f2") : t.type === "info" ? (C.priLt||"#eff6ff") : (C.sucLt||"#e8f5e9");
+            const tFg = t.type === "error" ? C.dan : t.type === "info" ? C.pri : C.suc;
+            return (
             <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,background:C.surface,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 16px",boxShadow:"0 8px 24px rgba(0,0,0,0.12)",animation:"k9toast 0.3s ease-out"}}>
-              <div style={{width:28,height:28,borderRadius:14,background:C.sucLt||"#e8f5e9",color:C.suc,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><I.Check/></div>
+              <div style={{width:28,height:28,borderRadius:14,background:tBg,color:tFg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{React.createElement(tIcon)}</div>
               <div style={{flex:1,fontSize:13,fontWeight:600,color:C.text}}>{t.message}</div>
               {t.actionLabel && <button onClick={()=>{t.onAction&&t.onAction();dismissGlobalToast(t.id);}} style={{padding:"6px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{t.actionLabel}</button>}
               <button onClick={()=>dismissGlobalToast(t.id)} style={{width:22,height:22,borderRadius:11,border:"none",background:"transparent",cursor:"pointer",color:C.textMut,fontSize:15,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",padding:0,fontFamily:"inherit"}}>&times;</button>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
