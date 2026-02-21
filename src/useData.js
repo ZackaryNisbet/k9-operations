@@ -265,7 +265,8 @@ function packageToRow(pkg, locationId) {
 }
 
 function rowToPackage(r) {
-  const p = { id: r.id };
+  // Start from fields JSONB if present (enterprise push stores full object there)
+  const p = { ...(r.fields && typeof r.fields === 'object' ? r.fields : {}), id: r.id };
   if (r.name) p.name = r.name;
   if (r.description) p.description = r.description;
   if (r.service_category) p.serviceCategory = r.service_category;

@@ -538,6 +538,7 @@ export default function BookingPage() {
   const [checkIn, setCheckIn] = useState('');
   const [checkOut, setCheckOut] = useState('');
   const [selectedRoom, setSelectedRoom] = useState('');
+  const [dogSizeGroup, setDogSizeGroup] = useState(''); // 'small' | 'large' for daycare
 
   // Tour booking
   const [tourDate, setTourDate] = useState('');
@@ -556,6 +557,7 @@ export default function BookingPage() {
   const [vaccineFiles, setVaccineFiles] = useState([]);
   const [vaccineChoice, setVaccineChoice] = useState(null); // 'now' | 'later'
   const [feedingChoice, setFeedingChoice] = useState(null); // 'bluebuffalo' | 'fromhome' | 'skip'
+  const [feedingMeals, setFeedingMeals] = useState([]); // ['AM', 'PM'] or subset
   const [feedingNotes, setFeedingNotes] = useState('');
   const [bbProtein, setBbProtein] = useState(''); // 'chicken' | 'salmon'
   const [bbQty, setBbQty] = useState('');
@@ -569,6 +571,11 @@ export default function BookingPage() {
 
   // Add-ons
   const [selectedAddOns, setSelectedAddOns] = useState([]);
+  const [addOnDates, setAddOnDates] = useState({}); // { [addOnName]: [date1, date2] }
+
+  // Add-ons that are per-night (no date selection) vs one-time (allow date selection)
+  const PER_NIGHT_ADDONS = ['Couch', 'Sofa', 'Bed', 'Cot', 'TV', 'Webcam', 'Music'];
+  const HIDDEN_ADDONS = ['Lunch', 'lunch']; // #16: remove lunch from self-booking
 
   // Submission
   const [submitting, setSubmitting] = useState(false);
@@ -599,6 +606,55 @@ export default function BookingPage() {
   const [vaccineUploadName, setVaccineUploadName] = useState('');
   const [vaccineUploadExpiry, setVaccineUploadExpiry] = useState('');
   const [vaccineUploading, setVaccineUploading] = useState(false);
+
+  // Existing client recognition
+  const [existingClientMode, setExistingClientMode] = useState(false);
+  const [existingClientPhone, setExistingClientPhone] = useState('');
+  const [existingClientLoading, setExistingClientLoading] = useState(false);
+  const [existingClientError, setExistingClientError] = useState('');
+  const [existingClientData, setExistingClientData] = useState(null); // matched client+dogs from data
+  const [isExistingClient, setIsExistingClient] = useState(false);
+
+  const lookupExistingClient = async () => {
+    setExistingClientLoading(true);
+    setExistingClientError('');
+    const normalizedPhone = existingClientPhone.replace(/\D/g, '');
+    if (normalizedPhone.length < 10) {
+      setExistingClientError('Please enter a valid phone number.');
+      setExistingClientLoading(false);
+      return;
+    }
+    // Look up in data (loaded via RPC)
+    try {
+      const { data: result } = await supabase.rpc('get_customer_portal_data', { p_phone: existingClientPhone, p_slug: slug });
+      if (result?.success && result?.client) {
+        const cl = result.client;
+        setClient({
+          firstName: cl.first_name || '', lastName: cl.last_name || '',
+          phone: cl.phone || existingClientPhone, email: cl.email || '',
+          address: cl.address || '', emergencyContact: cl.emergency_contact || '',
+          emergencyPhone: cl.emergency_phone || '', vetName: cl.vet_name || '',
+          vetPhone: cl.vet_phone || '', referralSource: cl.referral_source || '', notes: ''
+        });
+        // Pre-fill dog info from first dog if available
+        if (result.dogs && result.dogs.length > 0) {
+          const d = result.dogs[0];
+          setDog({
+            name: d.name || '', breed: d.breed || '', weight: d.weight || '',
+            sex: d.sex || '', spayedNeutered: d.spayed_neutered || '', dob: d.dob || '', bathType: ''
+          });
+        }
+        setExistingClientData(result);
+        setIsExistingClient(true);
+        setExistingClientMode(false);
+      } else {
+        setExistingClientError('No account found for this phone number. Please register as a new client.');
+      }
+    } catch (err) {
+      setExistingClientError('Could not look up account. Please try again or register as a new client.');
+    }
+    setExistingClientLoading(false);
+  };
 
   // Real-time draft capture
   const [sessionId] = useState(() => {
@@ -772,13 +828,14 @@ export default function BookingPage() {
         dog: {
           ...dog,
           feedingChoice,
+          feedingMeals,
           feedingNotes: feedingChoice === 'bluebuffalo'
-            ? `Blue Buffalo ${bbProtein || 'chicken'}, ${bbQtyOverride && bbQty ? bbQty : 'recommended'} cups/day`
-            : feedingChoice === 'fromhome' ? feedingNotes
+            ? `Blue Buffalo ${bbProtein || 'chicken'}, ${bbQtyOverride && bbQty ? bbQty : 'recommended'} cups/day (${feedingMeals.join(' & ')})`
+            : feedingChoice === 'fromhome' ? `${feedingNotes} (${feedingMeals.join(' & ')})`
             : 'Skipped',
           feedingDetails: feedingChoice === 'bluebuffalo' ? { protein: bbProtein, qty: bbQtyOverride ? bbQty : 'recommended', override: bbQtyOverride } : null,
           medications: medChoice === 'has_meds' ? medications : [],
-          medicationNotes: medChoice === 'has_meds' ? medications.map(m => `${m.name} ${m.dosage} (${m.times.join(',')})`).join('; ') : medChoice === 'none' ? 'No medications' : 'Skipped',
+          medicationNotes: medChoice === 'has_meds' ? medications.map(m => `${m.name} ${m.dosageQty || ''} ${m.dosageUnit || ''} (${m.times.join(',')})`).join('; ') : medChoice === 'none' ? 'No medications' : 'Skipped',
           bathType: selectedBath,
         },
         checkIn, checkOut,
@@ -786,6 +843,8 @@ export default function BookingPage() {
         notes: bookingNotes,
         pricing: pricing ? { ...pricing, total: pricing.subtotal } : {},
         addOns: selectedAddOns,
+        addOnDates,
+        isExistingClient,
         vaccineChoice,
       };
       const { data: result, error: e } = await supabase.rpc('submit_online_booking', { p_slug: slug, p_booking: booking });
@@ -1169,23 +1228,29 @@ export default function BookingPage() {
               const tourSettings = loc?.settings?.tourSettings || {};
               const duration = tourSettings.duration || 30;
               const allowConcurrent = tourSettings.allowConcurrent !== false ? true : false;
-              // Generate 30-min slots from 9:00 AM to 4:30 PM
+              const startTime = tourSettings.startTime || "09:00";
+              const endTime = tourSettings.endTime || "16:30";
+              const [startH, startM] = startTime.split(":").map(Number);
+              const [endH, endM] = endTime.split(":").map(Number);
+              const startMin = startH * 60 + startM;
+              const endMin = endH * 60 + endM;
+              const interval = duration || 30;
+              // Generate slots from configured start to end time
               const slots = [];
-              for (let h = 9; h <= 16; h++) {
-                for (let m = 0; m < 60; m += 30) {
-                  if (h === 16 && m > 30) continue;
-                  const hour12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
-                  const ampm = h >= 12 ? 'PM' : 'AM';
-                  const label = `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
-                  const val = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-                  // Check conflicts with existing tour reservations
-                  const resArr = Array.isArray(loc?.reservations) ? loc.reservations : [];
-                  const conflict = !allowConcurrent && resArr.some(r =>
-                    r.type === 'tour' && r.checkIn === tourDate && r.tourTime === val &&
-                    r.status !== 'cancelled' && r.status !== 'checked-out'
-                  );
-                  slots.push({ label, val, conflict });
-                }
+              for (let mins = startMin; mins <= endMin; mins += interval) {
+                const h = Math.floor(mins / 60);
+                const m = mins % 60;
+                const hour12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
+                const ampm = h >= 12 ? 'PM' : 'AM';
+                const label = `${hour12}:${String(m).padStart(2, '0')} ${ampm}`;
+                const val = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+                // Check conflicts with existing tour reservations
+                const resArr = Array.isArray(loc?.reservations) ? loc.reservations : [];
+                const conflict = !allowConcurrent && resArr.some(r =>
+                  r.type === 'tour' && r.checkIn === tourDate && r.tourTime === val &&
+                  r.status !== 'cancelled' && r.status !== 'checked-out'
+                );
+                slots.push({ label, val, conflict });
               }
               return (
                 <div style={{ textAlign: 'center' }}>
@@ -1197,7 +1262,7 @@ export default function BookingPage() {
                     {fmtDate(tourDate)} · {duration}-minute guided tour
                   </p>
                   <p style={{ color: B.textMut, fontSize: 13, marginBottom: 32 }}>
-                    Tours available 9:00 AM – 4:30 PM
+                    Tours available {(() => { const fmt = (t) => { const [hh,mm] = t.split(":"); const hr = parseInt(hh); return `${hr > 12 ? hr - 12 : hr === 0 ? 12 : hr}:${mm} ${hr >= 12 ? "PM" : "AM"}`; }; return `${fmt(startTime)} – ${fmt(endTime)}`; })()}
                   </p>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'center', maxWidth: 500, margin: '0 auto 32px' }}>
                     {slots.map(s => (
@@ -1219,7 +1284,106 @@ export default function BookingPage() {
             })()}
 
             {/* Step 2: Room selection with live availability */}
-            {availStep === 2 && serviceType !== 'tour' && (
+            {/* Step 2 (Daycare): Play group capacity */}
+            {availStep === 2 && serviceType === 'daycare' && (
+              <div>
+                <div style={{ textAlign: 'center', marginBottom: 30 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: B.gold, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 16 }}>Step 3 of 4</div>
+                  <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 'clamp(24px, 4vw, 36px)', color: B.navy, marginBottom: 8 }}>Play Group Availability</h2>
+                  <p style={{ color: B.textSec, fontSize: 16 }}>{fmtDate(checkIn)}</p>
+                </div>
+
+                {/* Size selection for new clients */}
+                {!isExistingClient && !dogSizeGroup && (
+                  <div style={{ textAlign: 'center', marginBottom: 30 }}>
+                    <p style={{ fontSize: 16, color: B.navy, fontWeight: 600, marginBottom: 16 }}>Is your dog over or under 35 lbs?</p>
+                    <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
+                      <button className="bk-btn bk-btn-gold-outline" style={{ padding: '14px 32px', fontSize: 15 }} onClick={() => setDogSizeGroup('small')}>
+                        Under 35 lbs (Small Play)
+                      </button>
+                      <button className="bk-btn bk-btn-gold-outline" style={{ padding: '14px 32px', fontSize: 15 }} onClick={() => setDogSizeGroup('large')}>
+                        35+ lbs (Large Play)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Show capacity when size is known */}
+                {(isExistingClient || dogSizeGroup) && (() => {
+                  const resArr = Array.isArray(loc?.reservations) ? loc.reservations : [];
+                  const dcCap = loc?.settings?.daycareCapacity || { small: 15, large: 20, total: 35 };
+                  const dcOnDate = resArr.filter(r =>
+                    (r.type === 'daycare' || r.type === 'dayboarding' || r.type === 'evaluation') &&
+                    r.checkIn <= checkIn && (r.checkOut >= checkIn || r.checkIn === checkIn) &&
+                    r.status !== 'cancelled' && r.status !== 'checked-out'
+                  );
+                  const lgCount = dcOnDate.filter(r => r.daycareSize === 'large' || (!r.daycareSize)).length;
+                  const smCount = dcOnDate.filter(r => r.daycareSize === 'small').length;
+                  const lgCap = dcCap.large || 20;
+                  const smCap = dcCap.small || 15;
+                  const lgAvail = Math.max(0, lgCap - lgCount);
+                  const smAvail = Math.max(0, smCap - smCount);
+                  const effectiveSize = isExistingClient && existingClientData?.dogs?.[0]?.weight
+                    ? (parseFloat(existingClientData.dogs[0].weight) >= 35 ? 'large' : 'small')
+                    : dogSizeGroup;
+                  const myGroupAvail = effectiveSize === 'large' ? lgAvail : smAvail;
+                  const myGroupName = effectiveSize === 'large' ? 'Large Play' : 'Small Play';
+
+                  return (
+                    <div>
+                      {/* Play group capacity bars */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 30 }}>
+                        {[
+                          { label: 'Large Play (35+ lbs)', count: lgCount, cap: lgCap, avail: lgAvail, active: effectiveSize === 'large' },
+                          { label: 'Small Play (Under 35 lbs)', count: smCount, cap: smCap, avail: smAvail, active: effectiveSize === 'small' },
+                        ].map(g => (
+                          <div key={g.label} style={{ padding: '24px 20px', borderRadius: 16, background: g.active ? `${B.gold}08` : '#f8f9fa', border: g.active ? `2px solid ${B.gold}` : '1px solid #e5e7eb', textAlign: 'center' }}>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: B.navy, marginBottom: 12 }}>{g.label}</div>
+                            <div style={{ position: 'relative', height: 12, borderRadius: 6, background: '#e5e7eb', overflow: 'hidden', marginBottom: 12 }}>
+                              <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${Math.min(100, (g.count / g.cap) * 100)}%`, borderRadius: 6, background: g.avail === 0 ? B.err : g.avail <= 3 ? '#f59e0b' : B.suc, transition: 'width 0.3s' }} />
+                            </div>
+                            <div style={{ fontSize: 24, fontWeight: 800, color: g.avail === 0 ? B.err : B.suc }}>{g.avail}</div>
+                            <div style={{ fontSize: 12, color: B.textSec }}>spots available out of {g.cap}</div>
+                            <div style={{ fontSize: 11, color: B.textMut, marginTop: 4 }}>{g.count} currently booked</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Availability result */}
+                      {myGroupAvail > 0 ? (
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ padding: '16px 24px', borderRadius: 12, background: `${B.suc}10`, border: `1px solid ${B.suc}30`, marginBottom: 20 }}>
+                            <span style={{ fontSize: 15, fontWeight: 700, color: B.suc }}>Your pup can join {myGroupName}! {myGroupAvail} spot{myGroupAvail > 1 ? 's' : ''} available.</span>
+                          </div>
+                          <button className="bk-btn bk-btn-primary" onClick={() => { setRegStep(0); navigateTo('register', 'left'); }}>
+                            Continue to Registration <Icons.Arrow size={18} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ textAlign: 'center' }}>
+                          <div style={{ padding: '16px 24px', borderRadius: 12, background: `${B.err}10`, border: `1px solid ${B.err}30`, marginBottom: 20 }}>
+                            <span style={{ fontSize: 15, fontWeight: 700, color: B.err }}>{myGroupName} is full for {fmtDate(checkIn)}</span>
+                            <p style={{ fontSize: 13, color: B.textSec, marginTop: 6 }}>Please try a different date or give us a call.</p>
+                          </div>
+                          <button className="bk-btn bk-btn-gold-outline" onClick={() => setAvailStep(1)}>
+                            <Icons.Back size={16} /> Change Date
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <div style={{ textAlign: 'center', marginTop: 20 }}>
+                  <button className="bk-btn bk-btn-gold-outline" onClick={() => setAvailStep(1)}>
+                    <Icons.Back size={16} /> Back
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2 (Boarding): Room selection */}
+            {availStep === 2 && serviceType !== 'tour' && serviceType !== 'daycare' && (
               <div>
                 <div style={{ textAlign: 'center', marginBottom: 40 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: B.gold, letterSpacing: '.12em', textTransform: 'uppercase', marginBottom: 16 }}>Step 3 of 4</div>
@@ -1454,7 +1618,37 @@ export default function BookingPage() {
             {regStep === 0 && (
               <div>
                 <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 28, color: B.navy, marginBottom: 6 }}>Tell us about yourself</h2>
-                <p style={{ color: B.textSec, fontSize: 15, marginBottom: 28 }}>We'll use this to set up your account.</p>
+                <p style={{ color: B.textSec, fontSize: 15, marginBottom: 8 }}>We'll use this to set up your account.</p>
+
+                {/* Existing client lookup */}
+                {!isExistingClient && !existingClientMode && (
+                  <button onClick={() => setExistingClientMode(true)} style={{ display: 'block', width: '100%', padding: '12px 16px', marginBottom: 20, borderRadius: 12, border: `1.5px dashed ${B.gold}`, background: `${B.gold}08`, color: B.navy, fontSize: 14, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', textAlign: 'center', transition: 'all .15s' }}>
+                    Already a K9 Resorts client? Click here to look up your account
+                  </button>
+                )}
+                {existingClientMode && (
+                  <div style={{ padding: '16px 20px', marginBottom: 20, borderRadius: 12, border: `1.5px solid ${B.gold}40`, background: `${B.gold}08` }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: B.navy, marginBottom: 10 }}>Look up your account</div>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input value={existingClientPhone} onChange={e => setExistingClientPhone(e.target.value)} placeholder="Enter your phone number" style={{ flex: 1, padding: '10px 14px', borderRadius: 10, border: `1px solid ${B.border}`, fontSize: 15, fontFamily: 'inherit' }} onKeyDown={e => e.key === 'Enter' && lookupExistingClient()} />
+                      <button onClick={lookupExistingClient} disabled={existingClientLoading} style={{ padding: '10px 20px', borderRadius: 10, border: 'none', background: B.gold, color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', opacity: existingClientLoading ? 0.6 : 1 }}>
+                        {existingClientLoading ? 'Looking up...' : 'Look Up'}
+                      </button>
+                      <button onClick={() => { setExistingClientMode(false); setExistingClientError(''); }} style={{ padding: '10px 14px', borderRadius: 10, border: `1px solid ${B.border}`, background: 'transparent', color: B.textSec, fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>Cancel</button>
+                    </div>
+                    {existingClientError && <div style={{ fontSize: 13, color: '#DC2626', marginTop: 8 }}>{existingClientError}</div>}
+                  </div>
+                )}
+                {isExistingClient && (
+                  <div style={{ padding: '12px 16px', marginBottom: 20, borderRadius: 12, border: '1.5px solid #10B98140', background: '#10B98108', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ color: '#10B981', fontSize: 18 }}>&#10003;</span>
+                      <span style={{ fontSize: 14, fontWeight: 600, color: B.navy }}>Welcome back, {client.firstName}! Your info has been pre-filled. Please confirm your details below.</span>
+                    </div>
+                    <button onClick={() => { setIsExistingClient(false); setExistingClientData(null); setClient({ firstName: '', lastName: '', phone: '', email: '', address: '', emergencyContact: '', emergencyPhone: '', vetName: '', vetPhone: '', referralSource: '', notes: '' }); setDog({ name: '', breed: '', weight: '', sex: '', spayedNeutered: '', dob: '', bathType: '' }); }} style={{ background: 'none', border: 'none', color: B.textMut, cursor: 'pointer', fontSize: 12, fontFamily: 'inherit' }}>Clear</button>
+                  </div>
+                )}
+
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
                   <BkInput label="First Name" required value={client.firstName} onChange={e => setClient({ ...client, firstName: e.target.value })} placeholder="Jane" />
                   <BkInput label="Last Name" required value={client.lastName} onChange={e => setClient({ ...client, lastName: e.target.value })} placeholder="Smith" />
@@ -1570,7 +1764,7 @@ export default function BookingPage() {
 
               const COMMON_MEDS = ['Apoquel', 'Benadryl', 'Carprofen', 'Cephalexin', 'Gabapentin', 'Heartgard', 'Metronidazole', 'Prednisone', 'Trazodone', 'Simparica'];
               const TIME_OPTIONS = ['Morning', 'Noon', 'Evening', 'Bedtime'];
-              const addMed = () => setMedications(m => [...m, { name: '', dosage: '', times: [], instructions: '' }]);
+              const addMed = () => setMedications(m => [...m, { name: '', dosageQty: '', dosageUnit: 'pill', times: [], instructions: '' }]);
               const updateMed = (idx, field, val) => setMedications(m => m.map((med, i) => i === idx ? { ...med, [field]: val } : med));
               const toggleMedTime = (idx, time) => setMedications(m => m.map((med, i) => i === idx ? { ...med, times: med.times.includes(time) ? med.times.filter(t => t !== time) : [...med.times, time] } : med));
               const removeMed = (idx) => setMedications(m => m.filter((_, i) => i !== idx));
@@ -1598,6 +1792,25 @@ export default function BookingPage() {
                       </div>
                     ))}
                   </div>
+
+                  {/* AM/PM feeding selection */}
+                  {feedingChoice && feedingChoice !== 'skip' && (
+                    <div style={{ marginBottom: 16 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: B.navy, marginBottom: 8 }}>Feeding schedule</div>
+                      <div style={{ display: 'flex', gap: 10 }}>
+                        {['AM', 'PM'].map(meal => {
+                          const sel = feedingMeals.includes(meal);
+                          return (
+                            <div key={meal} className={`bk-chip ${sel ? 'selected' : ''}`} style={{ padding: '10px 24px', flex: 1, justifyContent: 'center' }}
+                              onClick={() => setFeedingMeals(prev => sel ? prev.filter(m => m !== meal) : [...prev, meal])}>
+                              <span style={{ fontSize: 14, fontWeight: 600 }}>{meal === 'AM' ? '🌅 Morning (AM)' : '🌙 Evening (PM)'}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {feedingMeals.length === 0 && <div style={{ fontSize: 12, color: '#DC2626', marginTop: 6 }}>Please select at least one meal time</div>}
+                    </div>
+                  )}
 
                   {/* Blue Buffalo expanded options */}
                   {feedingChoice === 'bluebuffalo' && (
@@ -1679,7 +1892,22 @@ export default function BookingPage() {
                               <input className="bk-input" list={`med-list-${idx}`} value={med.name} onChange={e => updateMed(idx, 'name', e.target.value)} placeholder="Start typing..." />
                               <datalist id={`med-list-${idx}`}>{COMMON_MEDS.map(m => <option key={m} value={m} />)}</datalist>
                             </div>
-                            <BkInput label="Dosage" value={med.dosage} onChange={e => updateMed(idx, 'dosage', e.target.value)} placeholder="e.g. 250mg, 1 tablet" />
+                            <div>
+                              <label className="bk-label">Dosage</label>
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <input className="bk-input" type="number" value={med.dosageQty} onChange={e => updateMed(idx, 'dosageQty', e.target.value)} placeholder="Qty" style={{ width: 70 }} min="0" />
+                                <select className="bk-input" value={med.dosageUnit || 'pill'} onChange={e => updateMed(idx, 'dosageUnit', e.target.value)} style={{ flex: 1 }}>
+                                  <option value="pill">Pill(s)</option>
+                                  <option value="tablet">Tablet(s)</option>
+                                  <option value="capsule">Capsule(s)</option>
+                                  <option value="ml">mL</option>
+                                  <option value="mg">mg</option>
+                                  <option value="drop">Drop(s)</option>
+                                  <option value="scoop">Scoop(s)</option>
+                                  <option value="chew">Chew(s)</option>
+                                </select>
+                              </div>
+                            </div>
                           </div>
                           <div style={{ marginBottom: 10 }}>
                             <label className="bk-label">When to give</label>
@@ -1740,13 +1968,13 @@ export default function BookingPage() {
                   <div style={{ background: '#fff', borderRadius: 16, border: `2px solid ${B.border}`, padding: 24, marginBottom: 20 }}>
                     <div style={{ fontSize: 15, fontWeight: 700, color: B.navy, marginBottom: 6 }}>Bathing Preference</div>
                     <p style={{ fontSize: 13, color: B.textSec, marginBottom: 16, lineHeight: 1.5 }}>
-                      All dogs boarding 2+ nights receive a complimentary standard bath. Upgrade to a premium bath if you'd like.
+                      A standard bath is required for all dogs boarding 2+ nights. You may upgrade to a premium bath if you'd like.
                     </p>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       {['Standard Bath', ...BATH_OPTIONS.filter(b => b !== 'Standard Bath')].map(b => (
                         <div key={b} className={`bk-chip ${selectedBath === b ? 'selected' : ''}`} style={{ padding: '10px 18px', fontSize: 14 }}
                           onClick={() => setSelectedBath(b)}>
-                          {b}{b === 'Standard Bath' && ' (Included)'}
+                          {b}{b === 'Standard Bath' && ' (Required)'}
                         </div>
                       ))}
                     </div>
@@ -1835,9 +2063,31 @@ export default function BookingPage() {
                             <span style={{ fontWeight: 600 }}>{fmtCurrency((loc?.pricing?.addOns?.[a] || 0) * pricing.nights)}</span>
                           </div>
                         ))}
+                        {/* Recurring discount for existing clients */}
+                        {isExistingClient && existingClientData?.client?.recurringDiscountId && (() => {
+                          const disc = existingClientData.discounts?.find(d => d.id === existingClientData.client.recurringDiscountId);
+                          if (!disc) return null;
+                          const discAmt = disc.type === 'percentage' ? Math.round(pricing.subtotal * (disc.value / 100) * 100) / 100 : Math.min(disc.value, pricing.subtotal);
+                          return (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 14, color: '#10B981' }}>
+                              <span style={{ fontWeight: 600 }}>&#8595; {disc.name} ({disc.type === 'percentage' ? `${disc.value}%` : `$${disc.value}`})</span>
+                              <span style={{ fontWeight: 700 }}>-{fmtCurrency(discAmt)}</span>
+                            </div>
+                          );
+                        })()}
                         <div style={{ borderTop: `2px solid ${B.navy}`, marginTop: 12, paddingTop: 12 }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 18, fontWeight: 700, color: B.navy }}>
-                            <span>Total</span><span>{fmtCurrency(pricing.subtotal)}</span>
+                            <span>Total</span><span>{fmtCurrency((() => {
+                              let tot = pricing.subtotal;
+                              if (isExistingClient && existingClientData?.client?.recurringDiscountId) {
+                                const disc = existingClientData.discounts?.find(d => d.id === existingClientData.client.recurringDiscountId);
+                                if (disc) {
+                                  const discAmt = disc.type === 'percentage' ? Math.round(tot * (disc.value / 100) * 100) / 100 : Math.min(disc.value, tot);
+                                  tot = Math.max(0, tot - discAmt);
+                                }
+                              }
+                              return tot;
+                            })())}</span>
                           </div>
                         </div>
                       </div>
@@ -1850,22 +2100,72 @@ export default function BookingPage() {
                   <div style={{ marginBottom: 24 }}>
                     <h3 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 20, color: B.navy, marginBottom: 12 }}>Enhance Your Stay</h3>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12 }}>
-                      {Object.entries(loc.pricing.addOns).filter(([k]) => !BATH_OPTIONS.includes(k) && k !== 'None' && k !== 'Standard Bath').map(([name, price]) => {
+                      {Object.entries(loc.pricing.addOns).filter(([k]) => !BATH_OPTIONS.includes(k) && k !== 'None' && k !== 'Standard Bath' && !HIDDEN_ADDONS.includes(k)).map(([name, price]) => {
                         const added = selectedAddOns.includes(name);
+                        const isPerNight = PER_NIGHT_ADDONS.some(p => name.toLowerCase().includes(p.toLowerCase()));
                         return (
-                          <div key={name} className={`bk-addon-card ${added ? 'added' : ''}`}
-                            onClick={() => setSelectedAddOns(s => added ? s.filter(a => a !== name) : [...s, name])}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: 14, fontWeight: 600 }}>{name}</span>
-                              {added ? <Icons.Check size={18} color={B.suc} /> : <Icons.Plus size={18} color={B.textMut} />}
+                          <div key={name}>
+                            <div className={`bk-addon-card ${added ? 'added' : ''}`}
+                              onClick={() => {
+                                if (added) { setSelectedAddOns(s => s.filter(a => a !== name)); setAddOnDates(prev => { const n = {...prev}; delete n[name]; return n; }); }
+                                else setSelectedAddOns(s => [...s, name]);
+                              }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <span style={{ fontSize: 14, fontWeight: 600 }}>{name}</span>
+                                {added ? <Icons.Check size={18} color={B.suc} /> : <Icons.Plus size={18} color={B.textMut} />}
+                              </div>
+                              <div style={{ fontSize: 15, fontWeight: 700, color: B.navy, marginTop: 6 }}>{fmtCurrency(price)}{isPerNight ? '/night' : ''}</div>
                             </div>
-                            <div style={{ fontSize: 15, fontWeight: 700, color: B.navy, marginTop: 6 }}>{fmtCurrency(price)}/day</div>
+                            {/* Date selection for one-time add-ons */}
+                            {added && !isPerNight && pricing?.nights > 1 && (() => {
+                              const dates = [];
+                              const start = new Date(checkIn + 'T00:00:00');
+                              for (let i = 0; i < pricing.nights; i++) {
+                                const d = new Date(start); d.setDate(d.getDate() + i);
+                                dates.push(d.toISOString().slice(0, 10));
+                              }
+                              const selDates = addOnDates[name] || [];
+                              return (
+                                <div style={{ padding: '8px 12px', background: B.bg, borderRadius: 10, marginTop: 6, fontSize: 12 }}>
+                                  <div style={{ fontWeight: 600, color: B.navy, marginBottom: 6 }}>Select days for {name}:</div>
+                                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                    {dates.map(dt => {
+                                      const sel = selDates.includes(dt);
+                                      return <button key={dt} onClick={(e) => { e.stopPropagation(); setAddOnDates(prev => ({ ...prev, [name]: sel ? selDates.filter(x => x !== dt) : [...selDates, dt] })); }}
+                                        style={{ padding: '4px 10px', borderRadius: 8, border: `1.5px solid ${sel ? B.gold : B.border}`, background: sel ? `${B.gold}15` : 'transparent', color: sel ? B.navy : B.textMut, fontSize: 12, fontWeight: sel ? 700 : 500, cursor: 'pointer', fontFamily: 'inherit' }}>
+                                        {new Date(dt + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                                      </button>;
+                                    })}
+                                  </div>
+                                  {selDates.length === 0 && <div style={{ fontSize: 11, color: B.textMut, marginTop: 4 }}>All days selected by default if none chosen</div>}
+                                </div>
+                              );
+                            })()}
                           </div>
                         );
                       })}
                     </div>
                   </div>
                 )}
+
+                {/* Private Play surcharge notice (#17) */}
+                {!isTour && (() => {
+                  const hasPP = isExistingClient && existingClientData?.dogs?.some(d => (d.tags || []).includes('tag_pp'));
+                  const ppRate = loc?.pricing?.privatePlaySurcharge || 10;
+                  return (
+                    <div style={{ background: '#FEF3C7', borderRadius: 14, padding: '16px 20px', marginBottom: 16, border: '1px solid #F59E0B30' }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: '#92400E', marginBottom: 6 }}>
+                        {hasPP ? `Private Play Surcharge — $${ppRate}/night` : 'About Private Play'}
+                      </div>
+                      <p style={{ fontSize: 13, color: '#78350F', lineHeight: 1.5, margin: 0 }}>
+                        {hasPP
+                          ? `Your dog is designated as Private Play. A $${ppRate}/night surcharge will be automatically applied to your reservation.`
+                          : `If your dog is designated as Private Play during their evaluation or stay, a $${ppRate}/night surcharge will apply from the point of designation through the remainder of the reservation.`
+                        }
+                      </p>
+                    </div>
+                  );
+                })()}
 
                 {/* Deposit notice — boarding/daycare only */}
                 {!isTour && pricing && (
