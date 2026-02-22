@@ -6817,7 +6817,10 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       const sorted = [...cRes].sort((a, b) => b.checkIn.localeCompare(a.checkIn));
       const lastRes = sorted.find(r => r.checkIn <= todayStr());
       const nextRes = sorted.filter(r => r.checkIn >= todayStr() && r.status === "upcoming").sort((a, b) => a.checkIn.localeCompare(b.checkIn))[0];
-      const totalSpent = cRes.reduce((s, r) => s + ((r.pricing && r.pricing.total) || 0), 0);
+      // totalSpent includes reservation pricing AND payment records (package purchases, deposits, etc.)
+      const resSpent = cRes.reduce((s, r) => s + ((r.pricing && r.pricing.total) || 0), 0);
+      const pmtSpent = (data.payments || []).filter(p => p.clientId === c.id && p.status === "completed" && p.type !== "refund").reduce((s, p) => s + (p.amount || 0), 0);
+      const totalSpent = resSpent + pmtSpent;
       const daysSinceLast = lastRes ? Math.round((new Date(todayStr()+"T12:00:00") - new Date(lastRes.checkIn+"T12:00:00")) / 86400000) : null;
       const dogNames = dogs.map(d => d.fields.name || "Unknown");
       let postEvalAppts = 0;
@@ -6829,7 +6832,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       map[c.id] = { dogCount: dogs.length, dogNames, daycareCount, boardingCount, evalCount, tourCount, lastRes, nextRes, totalSpent, totalRes: cRes.length, daysSinceLast, postEvalAppts, postTourAppts };
     });
     return map;
-  }, [data.clients, data.reservations, data.dogs]);
+  }, [data.clients, data.reservations, data.dogs, data.payments]);
 
   // ── Tab membership ──
   const clientTabMap = useMemo(() => {
@@ -6839,7 +6842,10 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     data.clients.forEach(c => {
       const s = clientStats[c.id] || {};
       const hasSpent = (s.totalSpent || 0) > 0;
-      const hasUpcoming = !!s.nextRes;
+      // hasUpcoming and hasBooking exclude tours/evals — only real services (boarding, daycare, etc.) count
+      const cRes = (data.reservations || []).filter(r => r.clientId === c.id);
+      const hasRealBooking = cRes.some(r => r.type !== "tour" && r.type !== "evaluation");
+      const hasUpcoming = cRes.some(r => r.checkIn >= todayStr() && r.status === "upcoming" && r.type !== "tour" && r.type !== "evaluation");
       const totalRes = s.totalRes || 0;
       const daysSince = s.daysSinceLast;
       const isCold = c.lifecycle?.cold === true;
@@ -6851,8 +6857,10 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         else if (dcPct >= 0.5 && daysSince >= dcThresh) isRetention = true;
         else if (dcPct < 0.5 && bdPct < 0.5 && daysSince >= dcThresh) isRetention = true;
       }
-      const isConversion = !hasSpent && !hasUpcoming && !isCold;
-      const isActive = hasSpent && !isRetention && !isCold;
+      // Conversion: no real bookings (excluding tours/evals), no money spent, not cold
+      const isConversion = !hasSpent && !hasRealBooking && !isCold;
+      // Active: has spent money OR has a real booking (not just tour/eval), and not in retention or cold
+      const isActive = (hasSpent || hasRealBooking) && !isRetention && !isCold;
       if (isCold) isRetention = false;
       map[c.id] = { isConversion, isActive, isRetention: isRetention && !isCold, isCold, isAll: true };
     });
@@ -6872,7 +6880,16 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       if (oldM.isConversion && newM.isActive) event = { event: "moved_to_active", date: todayStr(), details: "Moved to Active Customers (first booking/payment)" };
       else if (oldM.isActive && newM.isRetention) event = { event: "moved_to_retention", date: todayStr(), details: "Moved to Retention (lapsed client)" };
       else if (oldM.isRetention && newM.isActive) event = { event: "moved_to_active", date: todayStr(), details: "Returned to Active Customers (re-engaged)" };
-      if (event) { changed = true; return { ...c, lifecycleEvents: [...(c.lifecycleEvents || []), event] }; }
+      if (event) {
+        changed = true;
+        let updated = { ...c, lifecycleEvents: [...(c.lifecycleEvents || []), event] };
+        // When moving to retention, auto-set follow-up date to today
+        if (event.event === "moved_to_retention") {
+          const lc = updated.lifecycle || { conversion: { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }, retention: { notes:"",followUpDate:"",updates:[] }, cold:false, coldDate:"", coldFrom:"" };
+          updated = { ...updated, lifecycle: { ...lc, retention: { ...lc.retention, followUpDate: todayStr() } } };
+        }
+        return updated;
+      }
       return c;
     });
     prevTabMapRef.current = clientTabMap;
@@ -13416,6 +13433,9 @@ function OperationsHub({ data, save, nav, profile }) {
   const calRef = useRef(null);
   useEffect(() => { if (!showCalendar) return; const handler = (e) => { if (calRef.current && !calRef.current.contains(e.target)) setShowCalendar(false); }; document.addEventListener("mousedown", handler); return () => document.removeEventListener("mousedown", handler); }, [showCalendar]);
 
+  // Today's Progress snapshot
+  const [showTodayProgress, setShowTodayProgress] = useState(false);
+
   // Summary analytics
   const [expandSummary, setExpandSummary] = useState(false);
   const summaryStats = useMemo(() => {
@@ -13470,6 +13490,102 @@ function OperationsHub({ data, save, nav, profile }) {
     return { todayCompleted, todayTotal, todayPct, rows };
   }, [data, viewDate]);
 
+  // ─── Today's Progress snapshot data ───
+  const todayProgressData = useMemo(() => {
+    const reservations = data.reservations || [];
+    const allOps = data.dailyOps || [];
+    const dogs = data.dogs || [];
+
+    // Dogs in house: checked-in boarding + daycare for viewDate
+    const inHouseBoarding = reservations.filter(r => r.type === "boarding" && r.checkIn <= viewDate && r.checkOut >= viewDate && (r.status === "checked-in" || r.status === "upcoming"));
+    const inHouseDaycare = reservations.filter(r => (r.type === "daycare" || r.type === "dayboarding") && r.checkIn <= viewDate && r.checkOut >= viewDate && (r.status === "checked-in" || r.status === "upcoming"));
+    const dogsInHouse = inHouseBoarding.length + inHouseDaycare.length;
+
+    // Checking out today (still checked-in, checkOut === viewDate)
+    const checkingOut = reservations.filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-in");
+    // Already checked out today
+    const checkedOut = reservations.filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-out");
+
+    // Room cleaning stats
+    const roomStats = getRoomCleaningStats(data, viewDate);
+
+    // Baths: dogs checking out today that have a bath type
+    const bathRows = [];
+    reservations.filter(r => r.status === "checked-in" && r.checkIn <= viewDate && r.checkOut >= viewDate).forEach(res => {
+      const dog = dogs.find(d => d.id === res.dogId);
+      if (!dog) return;
+      const bath = res.careOverrides?.bath_type || dog.fields.bath_type || "";
+      if (bath && res.checkOut === viewDate) {
+        const logKey = `${viewDate}|bathing`;
+        const administered = !!(res.activityLog && res.activityLog[logKey] && res.activityLog[logKey].administered);
+        bathRows.push({ dogName: dog.fields.name, bathType: bath, done: administered });
+      }
+    });
+    const bathsTotal = bathRows.length;
+    const bathsDone = bathRows.filter(b => b.done).length;
+
+    // Private play stats
+    const ppDogIds = new Set();
+    reservations.forEach(r => { if (r.type === "evaluation" && r.evalResult === "passed_private") ppDogIds.add(r.dogId); });
+    dogs.forEach(d => { if ((d.tags || []).includes("tag_pp")) ppDogIds.add(d.id); });
+    const ppReservations = reservations.filter(r => (r.type === "boarding" || r.type === "daycare") && r.status === "checked-in" && r.checkIn <= viewDate && r.checkOut >= viewDate && ppDogIds.has(r.dogId));
+    const ppEntryId = `ops_pp_${viewDate}`;
+    const ppEntry = allOps.find(e => e.id === ppEntryId);
+    const ppItems = ppEntry ? ppEntry.items || {} : {};
+    let ppTotalDogs = ppReservations.length;
+    let ppSessionsLogged = 0;
+    let ppLastTime = null;
+    Object.values(ppItems).forEach(d => {
+      if (d && d.sessions) d.sessions.forEach(s => {
+        if (s.time || s.urinate || s.defecate) {
+          ppSessionsLogged++;
+          if (s.time) ppLastTime = s.time;
+        }
+      });
+    });
+
+    // Checklist progress for each ops type
+    const checklistProgress = {};
+    const activeItems = OPERATIONS_CATALOG.filter(c => c.frequency === "daily" && !c.comingSoon && c.dataKey !== "eodEntries");
+    activeItems.forEach(item => {
+      const progress = getOpsProgress(data, item, viewDate);
+      const status = getOpsCardStatus(data, item, viewDate);
+      const countLabel = getOpsCountLabel(data, item, viewDate);
+      checklistProgress[item.typeSub || item.id] = { label: item.label, progress, status, countLabel };
+    });
+
+    // Closing procedures specifically
+    const closingEntryId = `ops_closing_${viewDate}`;
+    const closingEntry = allOps.find(e => e.id === closingEntryId);
+    const closingTemplate = data.closingTemplate || DEF_CLOSING_TEMPLATE;
+    const dayIdx = new Date(viewDate + "T12:00:00").getDay();
+    const closingItems = closingTemplate.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
+    const closingTotal = closingItems.length;
+    let closingDone = 0;
+    if (closingEntry && closingEntry.items) {
+      const ci = closingEntry.items;
+      closingDone = !Array.isArray(ci) ? Object.values(ci).filter(i => i && i.checked).length : ci.filter(i => i.checked).length;
+    }
+
+    return {
+      dogsInHouse,
+      boardingCount: inHouseBoarding.length,
+      daycareCount: inHouseDaycare.length,
+      checkingOut: checkingOut.length,
+      checkedOut: checkedOut.length,
+      roomStats,
+      bathsTotal,
+      bathsDone,
+      bathRows,
+      ppTotalDogs,
+      ppSessionsLogged,
+      ppLastTime,
+      checklistProgress,
+      closingTotal,
+      closingDone,
+    };
+  }, [data, viewDate]);
+
   const groups = [
     { key: "daily", label: "Daily Operations", items: OPERATIONS_CATALOG.filter(c => c.frequency === "daily") },
     { key: "weekly", label: "Weekly Maintenance", items: OPERATIONS_CATALOG.filter(c => c.frequency === "weekly") },
@@ -13490,7 +13606,12 @@ function OperationsHub({ data, save, nav, profile }) {
     <div style={{ padding: "0 8px" }}>
       {/* Header with date nav */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
-        <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Operations</h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Operations</h2>
+          <button onClick={() => setShowTodayProgress(v => !v)} style={{ border: "none", borderRadius: 10, padding: "7px 16px", cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12, background: showTodayProgress ? C.pri : C.accLt, color: showTodayProgress ? "#fff" : C.accDk, transition: "all 0.2s", letterSpacing: "0.02em" }}>
+            {showTodayProgress ? "✕ Close" : "Today's Progress"}
+          </button>
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
           <button onClick={() => shiftDate(-1)} style={{ ...nbtn, background: C.surfaceHover, color: C.text }}>‹</button>
           <button onClick={() => setShowCalendar(v => !v)} style={{ ...nbtn, background: "transparent", color: C.text, minWidth: 220, textAlign: "center", fontSize: 14, fontWeight: 700 }}>{dateLbl}</button>
@@ -13513,6 +13634,153 @@ function OperationsHub({ data, save, nav, profile }) {
           )}
         </div>
       </div>
+
+      {/* Today's Progress snapshot */}
+      {showTodayProgress && (() => {
+        const tp = todayProgressData;
+        const cp = tp.checklistProgress;
+        const pctBar = (done, total, color) => {
+          const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+              <div style={{ flex: 1, height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
+                <div style={{ width: `${pct}%`, height: "100%", borderRadius: 3, background: pct === 100 ? C.suc : color || C.pri, transition: "width 0.3s" }} />
+              </div>
+              <span style={{ fontSize: 12, fontWeight: 700, color: pct === 100 ? C.suc : C.text, minWidth: 38, textAlign: "right" }}>{pct}%</span>
+            </div>
+          );
+        };
+        const metricCard = (label, value, sub, accent) => (
+          <div style={{ background: C.surface, borderRadius: 14, padding: "18px 20px", border: `1.5px solid ${C.border}`, flex: "1 1 140px", minWidth: 140 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>{label}</div>
+            <div style={{ fontSize: 28, fontWeight: 800, color: accent || C.pri, lineHeight: 1 }}>{value}</div>
+            {sub && <div style={{ fontSize: 12, color: C.textSec, marginTop: 4 }}>{sub}</div>}
+          </div>
+        );
+        const progressRow = (label, done, total, color) => (
+          <div style={{ padding: "10px 0", borderBottom: `1px solid ${C.borderLight}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{label}</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: done >= total && total > 0 ? C.suc : C.text }}>{done}/{total}</span>
+            </div>
+            {pctBar(done, total, color)}
+          </div>
+        );
+        // Parse checklist count labels like "3/7 tasks" or "2/5 rooms"
+        const parseCount = (countLabel) => {
+          if (!countLabel) return { done: 0, total: 0 };
+          const m = countLabel.match(/^(\d+)\/(\d+)/);
+          return m ? { done: parseInt(m[1]), total: parseInt(m[2]) } : { done: 0, total: 0 };
+        };
+        return (
+          <div style={{ marginBottom: 20, background: `linear-gradient(135deg, ${C.priLt} 0%, #F8F6F0 100%)`, borderRadius: 18, border: `1.5px solid ${C.border}`, overflow: "hidden" }}>
+            {/* Header bar */}
+            <div style={{ background: C.pri, padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: "#fff", letterSpacing: "0.01em" }}>Today's Progress</span>
+                <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.65)" }}>{isToday ? "Live" : dateLbl}</span>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 600, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em" }}>Read-Only Snapshot</span>
+            </div>
+
+            <div style={{ padding: "20px 24px" }}>
+              {/* Top metric cards */}
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
+                {metricCard("Dogs In House", tp.dogsInHouse, `${tp.boardingCount} boarding · ${tp.daycareCount} daycare`, C.pri)}
+                {metricCard("Checking Out", tp.checkingOut, "still in house", "#D97706")}
+                {metricCard("Checked Out", tp.checkedOut, "completed today", C.suc)}
+              </div>
+
+              {/* Two-column layout for progress details */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+                {/* Left column: Room Cleaning & Baths */}
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.pri, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10, paddingBottom: 6, borderBottom: `2px solid ${C.pri}` }}>Cleaning & Baths</div>
+
+                  {progressRow("Room Cleaning", tp.roomStats.totalDone, tp.roomStats.totalNeeded, C.pri)}
+
+                  <div style={{ padding: "10px 0", borderBottom: `1px solid ${C.borderLight}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Baths</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: tp.bathsDone >= tp.bathsTotal && tp.bathsTotal > 0 ? C.suc : C.text }}>{tp.bathsDone}/{tp.bathsTotal}</span>
+                    </div>
+                    {pctBar(tp.bathsDone, tp.bathsTotal, C.acc)}
+                    {tp.bathRows.length > 0 && (
+                      <div style={{ marginTop: 6 }}>
+                        {tp.bathRows.map((b, i) => (
+                          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.textSec, padding: "2px 0" }}>
+                            <span style={{ width: 14, height: 14, borderRadius: 7, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9, background: b.done ? C.sucLt : C.borderLight, color: b.done ? C.suc : C.textMut }}>{b.done ? "✓" : "○"}</span>
+                            <span style={{ fontWeight: 600 }}>{b.dogName}</span>
+                            <span style={{ color: C.textMut }}>({b.bathType})</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Pictures */}
+                  {cp.pictures && (() => {
+                    const pc = parseCount(cp.pictures.countLabel);
+                    return progressRow("Pictures", pc.done, pc.total, C.info);
+                  })()}
+                </div>
+
+                {/* Right column: Private Play & Checklists */}
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.pri, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10, paddingBottom: 6, borderBottom: `2px solid ${C.pri}` }}>Checklists & Activities</div>
+
+                  {/* Private Play */}
+                  <div style={{ padding: "10px 0", borderBottom: `1px solid ${C.borderLight}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Private Play</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>{tp.ppTotalDogs} dog{tp.ppTotalDogs !== 1 ? "s" : ""}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 16, marginTop: 6 }}>
+                      <span style={{ fontSize: 12, color: C.textSec }}><span style={{ fontWeight: 700, color: C.text }}>{tp.ppSessionsLogged}</span> session{tp.ppSessionsLogged !== 1 ? "s" : ""} logged</span>
+                      {tp.ppLastTime && <span style={{ fontSize: 12, color: C.textMut }}>Last: {tp.ppLastTime}</span>}
+                    </div>
+                  </div>
+
+                  {/* Opening Checklist */}
+                  {cp.opening && (() => {
+                    const oc = parseCount(cp.opening.countLabel);
+                    return progressRow("Opening Checklist", oc.done, oc.total, C.pri);
+                  })()}
+
+                  {/* Front-End Checklist */}
+                  {cp.fe && (() => {
+                    const fc = parseCount(cp.fe.countLabel);
+                    return progressRow("Front-End Checklist", fc.done, fc.total, C.acc);
+                  })()}
+
+                  {/* Back-End Checklist */}
+                  {cp.be && (() => {
+                    const bc = parseCount(cp.be.countLabel);
+                    return progressRow("Back-End Checklist", bc.done, bc.total, C.acc);
+                  })()}
+
+                  {/* Closing Procedures */}
+                  {progressRow("Closing Procedures", tp.closingDone, tp.closingTotal, C.dan)}
+                </div>
+              </div>
+
+              {/* Overall progress footer */}
+              <div style={{ marginTop: 20, padding: "14px 20px", background: C.surface, borderRadius: 12, border: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Overall Checklists</span>
+                  <span style={{ fontSize: 22, fontWeight: 800, color: summaryStats.todayPct === 100 ? C.suc : C.pri }}>{summaryStats.todayPct}%</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>{summaryStats.todayCompleted} of {summaryStats.todayTotal} complete</span>
+                  <div style={{ width: 120, height: 8, borderRadius: 4, background: C.borderLight, overflow: "hidden" }}>
+                    <div style={{ width: `${summaryStats.todayPct}%`, height: "100%", borderRadius: 4, background: summaryStats.todayPct === 100 ? C.suc : C.pri, transition: "width 0.3s" }} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Summary section */}
       <Card style={{ marginBottom: 20, padding: "14px 20px" }}>
