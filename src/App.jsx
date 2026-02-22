@@ -1826,12 +1826,12 @@ function generateDemoData() {
     });
   }
 
-  // Past boarding (checked out last 30 days) — only classified dogs
-  for (let i=0;i<40;i++){
+  // Past boarding (checked out last 60 days) — only classified dogs
+  for (let i=0;i<60;i++){
     const avail=classifiedDogs.filter(d=>!usedDogs.has(d.id));
     if(!avail.length) break;
     const dog=rp(avail);
-    const ed=ri(1,30),sl=ri(1,7);
+    const ed=ri(1,60),sl=ri(1,7);
     const co=addD(today,-ed),ci=addD(co,-sl);
     const rt=rp(Object.keys(ROOMS)),rm=rp(ROOMS[rt]);
     if(!isFree(rm,ci,co)) continue;
@@ -1975,11 +1975,11 @@ function generateDemoData() {
     });
   });
 
-  // EOD Entries (30 days of history)
+  // EOD Entries (60 days of history — 2 months)
   const eodEntries = [];
   const SECS=["sales","csr_checklist","alerts","team_notes","leads","tours","meds","birthdays","ice_cream","extra_play","baths","day_boarders","evaluations","small_daycare_notes","large_daycare_notes","boarding_notes","social_media","picture_requests","building_supplies","other"];
 
-  for (let off = -30; off <= -1; off++) {
+  for (let off = -60; off <= -1; off++) {
     const dt = addD(today, off);
     const dayDogs = [];
     reservations.forEach(r => {
@@ -2047,7 +2047,7 @@ function generateDemoData() {
     if (locked) history.push({ ts: dt+"T18:30:00", action: "Locked by Manager" });
     if (srand()>0.6) history.push({ ts: dt+"T"+String(ri(10,16)).padStart(2,"0")+":"+String(ri(0,59)).padStart(2,"0")+":00", action: "Edited by Staff" });
 
-    eodEntries.push({ date:dt, locked, sections, mentions, history });
+    eodEntries.push({ type:"eod", date:dt, locked, sections, mentions, history });
   }
 
   // Generate daily ops entries for last 3 days
