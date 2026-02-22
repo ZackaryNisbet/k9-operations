@@ -670,34 +670,51 @@ const countHours = (tIn, tOut) => {
   return Math.max(0, (h2 * 60 + m2 - h1 * 60 - m1) / 60);
 };
 
-function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, dogs, dogProfiles, pricing, isSecondDogSameRoom, roomSegments, reservation }) {
+function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, dogs, dogProfiles, pricing, isSecondDogSameRoom, roomSegments, reservation, appliedCoupons }) {
   const p = pricing || DEF_PRICING;
   const lines = [];
   let subtotal = 0;
   let discountTotal = 0;
+  const totalCouponValue = appliedCoupons ? appliedCoupons.reduce((sum, c) => sum + (c.value || 0), 0) : 0;
 
   if (type === "boarding") {
+    let roomLineTotal = 0;
+    let baseRoomCost = 0; // Track room cost before discount for coupon comparison
     if (roomSegments && roomSegments.length > 0) {
       // Price each room segment separately
       roomSegments.forEach(seg => {
         const segNights = countNights(seg.startDate, seg.endDate);
         const segRate = (p.boardingRates || {})[seg.roomType] || 0;
-        const segTotal = segNights * segRate;
-        lines.push({ label: `${seg.roomType} × ${segNights} night${segNights !== 1 ? "s" : ""}`, rate: segRate, qty: segNights, total: segTotal });
+        let segTotal = segNights * segRate;
+        baseRoomCost += segTotal;
+        // Apply multi-dog discount (20% off) ONLY if coupons don't cover this dog's charges
+        // If coupons will cover the room cost, the discount becomes irrelevant
+        if (isSecondDogSameRoom && p.multiDogDiscount > 0 && totalCouponValue < baseRoomCost) {
+          const discountAmount = Math.round(segTotal * (p.multiDogDiscount / 100) * 100) / 100;
+          segTotal -= discountAmount;
+          roomLineTotal += discountAmount; // Track discount for line item
+        }
+        lines.push({ label: `${seg.roomType} × ${segNights} night${segNights !== 1 ? "s" : ""}`, rate: segRate, qty: segNights, total: segTotal, isMultiDogDiscounted: isSecondDogSameRoom && p.multiDogDiscount > 0 && totalCouponValue < baseRoomCost });
         subtotal += segTotal;
       });
     } else {
       const nights = countNights(checkIn, checkOut);
       const rate = (p.boardingRates || {})[roomType] || 0;
-      const lineTotal = nights * rate;
-      lines.push({ label: `${roomType} × ${nights} night${nights !== 1 ? "s" : ""}`, rate, qty: nights, total: lineTotal });
+      let lineTotal = nights * rate;
+      baseRoomCost = lineTotal;
+      // Apply multi-dog discount (20% off) ONLY if coupons don't cover this dog's charges
+      if (isSecondDogSameRoom && p.multiDogDiscount > 0 && totalCouponValue < baseRoomCost) {
+        const discountAmount = Math.round(lineTotal * (p.multiDogDiscount / 100) * 100) / 100;
+        lineTotal -= discountAmount;
+        roomLineTotal = discountAmount; // Track discount for line item
+      }
+      lines.push({ label: `${roomType} × ${nights} night${nights !== 1 ? "s" : ""}`, rate, qty: nights, total: lineTotal, isMultiDogDiscounted: isSecondDogSameRoom && p.multiDogDiscount > 0 && totalCouponValue < baseRoomCost });
       subtotal += lineTotal;
     }
-    if (isSecondDogSameRoom && p.multiDogDiscount > 0) {
-      const boardingSubtotal = lines.reduce((s, l) => s + (l.isDiscount ? 0 : l.total), 0);
-      const disc = Math.round(boardingSubtotal * (p.multiDogDiscount / 100) * 100) / 100;
-      discountTotal += disc;
-      lines.push({ label: `Multi-dog discount (${p.multiDogDiscount}% off)`, total: -disc, isDiscount: true });
+    // Only show explicit discount line if multi-dog discount was applied and significant
+    if (isSecondDogSameRoom && p.multiDogDiscount > 0 && roomLineTotal > 0) {
+      lines.push({ label: `Multi-dog discount (${p.multiDogDiscount}% off 2nd dog)`, total: -roomLineTotal, isDiscount: true });
+      discountTotal += roomLineTotal;
     }
     // Private Play surcharge (prorated if tag changed mid-stay)
     const ppSurcharge = p.privatePlaySurcharge || 0;
@@ -1561,15 +1578,10 @@ const DEF_PRICING = {
     "Medicated Bath": 30,
     "Whitening Bath": 30,
     "Fresh N' Clean Bath": 30,
-    "Food From Home (Bagged)": 3,
-    "Food From Home (Unbagged)": 5,
-    "Medication (Bagged)": 3,
-    "Medication (Unbagged)": 5,
     "Evian Spring Water": 4,
     "Upgraded Dog Bed": 12,
     "Extra Personal Playtime": 15,
     "Gourmet Doggie Ice Cream": 4,
-    "Lunch": 8,
   },
   // Surcharges
   privatePlaySurcharge: 10, // $/night for Private Play dogs
@@ -2900,6 +2912,11 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   const [selectedDiscountId, setSelectedDiscountId] = useState(reservation.discountId || null);
   const [fedToday, setFedToday] = useState(reservation.fedToday || "");
   const [medsToday, setMedsToday] = useState(reservation.medsToday || "");
+  // Applied coupons (package sale IDs with quantity to use as deposit) for existing reservations
+  const [appliedCoupons, setAppliedCoupons] = useState(reservation.appliedCoupons ? reservation.appliedCoupons.map(ac => ({ saleId: ac.saleId, unitsToUse: ac.unitsUsed || 0, value: ac.value || 0 })) : []);
+  // Early check-in date adjustment popup
+  const [showDateAdjustPopup, setShowDateAdjustPopup] = useState(false);
+  const [adjustToToday, setAdjustToToday] = useState(false);
   // Activity tracking: { "2026-02-07|feeding_AM": { administered: true, by: "Name", at: "ISO", consumption: "100%" } }
   const [activityLog, setActivityLog] = useState(reservation.activityLog || {});
   const activityLogInitRef = useRef(JSON.stringify(reservation.activityLog || {}));
@@ -2952,6 +2969,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     discountType: discountType !== "none" ? discountType : undefined,
     discountValue: discountType !== "none" ? discountValue : undefined,
     discountId: selectedDiscountId || undefined,
+    ...(appliedCoupons.length > 0 ? { appliedCoupons: appliedCoupons.map(c => ({ saleId: c.saleId, unitsUsed: c.unitsToUse, value: c.value })) } : {}),
     activityLog,
   });
 
@@ -2978,15 +2996,38 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   };
 
   const handleSave = (doCheckIn, doCheckOut) => {
+    // Check for early check-in (trying to check in before reservation date)
+    if (doCheckIn && !isBoarding) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const resCheckInDate = new Date(checkIn + "T00:00:00");
+      const daysEarly = Math.floor((resCheckInDate - today) / 86400000);
+      if (daysEarly > 0) {
+        // Dog is scheduled for future date — offer date adjustment
+        setShowDateAdjustPopup(true);
+        setAdjustToToday(false);
+        return;
+      }
+    }
+
     if (doCheckIn && isBoarding) {
       const errs = {};
       if (!parentDest.trim()) errs.parentDestination = "Required — ask where the parent is going";
       if (!belongings.trim()) errs.belongings = "Required — list items brought from home";
-      // Deposit gate: 50% required
-      const adjTotal = getAdjustedTotal();
-      const depositRequired = Math.round(adjTotal * 0.5 * 100) / 100;
+      // Deposit gate: 50% required based on nightly rate only (not add-ons/surcharges)
+      // Calculate nightly rate separately from add-ons
+      const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false, reservation });
+      const nightlyRateLines = pr.lineItems.filter(l => !l.isAddon && !l.isSurcharge && !l.isDiscount);
+      const nightlyRateTotal = nightlyRateLines.reduce((sum, l) => sum + l.total, 0);
+      // Apply discount to nightly rate before calculating 50%
+      let discountedNightlyRate = nightlyRateTotal;
+      if (discountType === "percent" && discountValue > 0) discountedNightlyRate = Math.max(0, Math.round(nightlyRateTotal - (nightlyRateTotal * (discountValue / 100)) * 100) / 100);
+      else if (discountType === "flat" && discountValue > 0) discountedNightlyRate = Math.max(0, nightlyRateTotal - discountValue);
+      const depositRequired = Math.round(discountedNightlyRate * 0.5 * 100) / 100;
       const collected = reservation.amountCollected || 0;
-      if (adjTotal > 0 && collected < depositRequired) errs.deposit = `50% deposit required ($${depositRequired.toFixed(2)}). Collected: $${collected.toFixed(2)}`;
+      const totalCouponValue = appliedCoupons.reduce((sum, c) => sum + (c.value || 0), 0);
+      const depositMet = collected + totalCouponValue >= depositRequired;
+      if (nightlyRateTotal > 0 && !depositMet) errs.deposit = `50% deposit required ($${depositRequired.toFixed(2)}). Collected + Coupons: $${(collected + totalCouponValue).toFixed(2)}`;
       // Compliance gates — all must be green to check in
       const vaxStatus = getVaxStatus(dog, data.requiredVaccines, data.resortPolicies);
       if (!vaxStatus.ok) {
@@ -3007,9 +3048,30 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       if (!snStatus.ok) errs.compliance_spay = snStatus.reason || "Intact dog must be Private Play";
       if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     }
-    // Agreement gate for ALL reservation types (not just boarding)
+    // Compliance gate for ALL reservation types (daycare, evaluation, etc.)
     if (doCheckIn && !isBoarding) {
       const errs = {};
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const resCheckInDate = new Date(checkIn + "T00:00:00");
+
+      // Check if dog is expected today (reservation date matches)
+      if (resCheckInDate.getTime() !== today.getTime()) {
+        const daysEarly = Math.floor((resCheckInDate - today) / 86400000);
+        if (daysEarly > 0) {
+          errs.reservation_date = `Dog is scheduled for ${daysEarly} day${daysEarly > 1 ? 's' : ''} from now (${checkIn}). Adjust the reservation date to today to proceed with check-in.`;
+        } else {
+          errs.reservation_date = `Dog's reservation is for ${checkIn}, but today is ${new Date().toISOString().split('T')[0]}. Dates do not match.`;
+        }
+      }
+
+      // Compliance checks for all types
+      const vaxStatus = getVaxStatus(dog, data.requiredVaccines, data.resortPolicies);
+      if (!vaxStatus.ok) {
+        const issues = [...(vaxStatus.expired || []), ...(vaxStatus.missing || [])].map(v => v.replace(/_/g, " "));
+        errs.compliance_vaccines = `Vaccines not compliant: ${issues.join(", ")}`;
+      }
+      if (!ecName?.trim() || !ecPhone?.trim()) errs.compliance_ec = "Emergency contact name and phone are required";
       const agreements = data.agreements || DEF_AGREEMENTS;
       const reqAgrs = agreements.filter(a => a.required !== false);
       const allAgrSigned = reqAgrs.every(a => agrSigned(client, a.id));
@@ -3017,6 +3079,9 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         const unsigned = reqAgrs.filter(a => !agrSigned(client, a.id)).map(a => a.name);
         errs.compliance_agreements = `Unsigned agreements: ${unsigned.join(", ")}`;
       }
+      const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
+      if (!ageStatus.ok) errs.compliance_age = ageStatus.reason || "Dog does not meet age requirements";
+
       if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     }
     if (doCheckOut && isBoarding) {
@@ -3034,7 +3099,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       setShowConflict(true);
     } else {
       onSave(buildUpdatedRes(), doCheckIn, doCheckOut);
-      if (doCheckIn && isBoarding) { setShowPrintPrompt(true); return; }
+      if (doCheckIn) { setShowPrintPrompt(true); return; }
     }
   };
 
@@ -3067,7 +3132,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     newData.reservations = newData.reservations.map(r => r.id === reservation.id ? merged : r);
     await save(newData);
     setShowConflict(false);
-    if (doCheckIn && isBoarding) { setShowPrintPrompt(true); } else { onClose(); }
+    if (doCheckIn) { setShowPrintPrompt(true); } else { onClose(); }
   };
 
   const secHeader = (label) => <div style={{fontSize:11,fontWeight:700,color:C.textMut,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10,marginTop:20}}>{label}</div>;
@@ -3463,7 +3528,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   };
 
   return (
-    <Modal title={isCheckInMode ? `Check In: ${dog.fields.name}` : isCheckOutMode ? `Check Out: ${dog.fields.name}` : `${isBoarding ? "Boarding" : "Daycare"} Reservation: ${dog.fields.name}`} onClose={onClose} fullWidth>
+    <Modal title={isCheckInMode ? `Check In: ${dog.fields.name}` : isCheckOutMode ? `Check Out: ${dog.fields.name}` : `${isBoarding ? "Boarding" : "Daycare"} Reservation: ${dog.fields.name}`} onClose={onClose} wide>
       {/* Header info bar */}
       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:16}}>
         <span onClick={() => { if (nav) { onClose(); nav("dog-detail", { clientId: client.id, dogId: dog.id }); } }} style={{fontSize:16,fontWeight:800,color:C.pri,cursor:"pointer",textDecoration:"underline",textDecorationColor:C.pri+"40",textUnderlineOffset:2}} onMouseEnter={e => e.currentTarget.style.textDecorationColor = C.pri} onMouseLeave={e => e.currentTarget.style.textDecorationColor = C.pri+"40"}>{dog.fields.name}</span>
@@ -3826,6 +3891,62 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                   {isCheckInMode && !depositMet && <div style={{marginTop:10,fontSize:12,fontWeight:600,color:C.dan}}>50% deposit required to check in (min ${fmt(depositRequired)})</div>}
                   {isCheckOutMode && !fullPaymentMet && <div style={{marginTop:10,fontSize:12,fontWeight:600,color:C.dan}}>Full payment required to check out — {fmt(outstanding)} outstanding</div>}
 
+                  {/* Apply Coupons as Deposit Section */}
+                  {(() => {
+                    const clientSales = (data.packageSales || []).filter(s => s.clientId === reservation.clientId && s.status === "active" && (s.unitsRemaining || 0) - (s.used || 0) > 0);
+                    const eligibleSales = clientSales.filter(s => {
+                      const pkg = (data.packages || []).find(p => p.id === s.packageId);
+                      return pkg && (pkg.serviceCategory === "Boarding" || (pkg.serviceNames || [pkg.serviceName]).some(n => (reservation.roomType || "").toLowerCase().includes(n.toLowerCase()) || n.toLowerCase().includes("boarding") || n.toLowerCase().includes(reservation.roomType.toLowerCase())));
+                    });
+                    if (eligibleSales.length === 0) return null;
+                    const totalCouponValue = appliedCoupons.reduce((sum, c) => sum + (c.value || 0), 0);
+                    return (
+                      <div style={{marginTop:12,marginBottom:12,padding:"12px 0",borderTop:`1px solid ${C.borderLight||"#f0f0f0"}`,borderBottom:`1px solid ${C.borderLight||"#f0f0f0"}`}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.info} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 12v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6"/><path d="M14 2h6a2 2 0 0 1 2 2v6"/></svg>
+                          <span style={{fontSize:13,fontWeight:700,color:C.info}}>Apply Coupons as Deposit</span>
+                          <span style={{fontSize:11,color:C.textMut}}>({eligibleSales.length} available)</span>
+                        </div>
+                        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                          {eligibleSales.map(sale => {
+                            const pkg = (data.packages || []).find(p => p.id === sale.packageId);
+                            const remaining = sale.unitsRemaining !== undefined ? sale.unitsRemaining : Math.max(0, (sale.quantity || 0) - (sale.used || 0));
+                            const applied = appliedCoupons.find(c => c.saleId === sale.id);
+                            const unitRate = pkg?.unitRate || 0;
+                            return (
+                              <div key={sale.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",background:applied ? C.info+"15" : C.bg,borderRadius:8,border:`1px solid ${applied ? C.info+"40" : C.borderLight}`}}>
+                                <div style={{flex:1,minWidth:0}}>
+                                  <div style={{fontSize:12,fontWeight:600,color:C.text}}>{sale.packageName || pkg?.name || "Package"}</div>
+                                  <div style={{fontSize:10,color:C.textMut}}>{remaining} unit{remaining !== 1 ? "s" : ""} remaining · ${unitRate.toFixed(2)}/unit</div>
+                                </div>
+                                {applied ? (
+                                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                                    <span style={{fontSize:12,fontWeight:700,color:C.info}}>{applied.unitsToUse} unit{applied.unitsToUse !== 1 ? "s" : ""} (${applied.value.toFixed(2)})</span>
+                                    <button onClick={() => setAppliedCoupons(prev => prev.filter(c => c.saleId !== sale.id))} style={{background:"none",border:"none",cursor:"pointer",color:C.dan,padding:2}}><I.X size={14}/></button>
+                                  </div>
+                                ) : (
+                                  <Btn size="sm" variant="secondary" onClick={() => {
+                                    const depositNeeded = adjTotal * 0.5;
+                                    const alreadyApplied = appliedCoupons.reduce((s, c) => s + c.value, 0);
+                                    const still = Math.max(0, depositNeeded - alreadyApplied);
+                                    const unitsNeeded = unitRate > 0 ? Math.min(remaining, Math.ceil(still / unitRate)) : 1;
+                                    const val = Math.min(still, unitsNeeded * unitRate);
+                                    if (unitsNeeded > 0) setAppliedCoupons(prev => [...prev, { saleId: sale.id, unitsToUse: unitsNeeded, value: val }]);
+                                  }}>Apply</Btn>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {totalCouponValue > 0 && (
+                          <div style={{marginTop:8,padding:"8px 12px",background:C.sucLt,borderRadius:8,fontSize:12,fontWeight:600,color:C.suc}}>
+                            Coupons applied: ${totalCouponValue.toFixed(2)} toward deposit
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* Payment history */}
                   {resPmts.length > 0 && (
                     <div style={{marginTop:14,paddingTop:12,borderTop:`1px solid ${C.borderLight||"#f0f0f0"}`}}>
@@ -4041,9 +4162,10 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       {/* Footer */}
       {errors.deposit && <div style={{color:C.dan,fontSize:13,fontWeight:600,marginTop:8,padding:"8px 14px",background:C.danLt,borderRadius:8}}>{errors.deposit}</div>}
       {errors.payment && <div style={{color:C.dan,fontSize:13,fontWeight:600,marginTop:8,padding:"8px 14px",background:C.danLt,borderRadius:8}}>{errors.payment}</div>}
-      {(errors.compliance_vaccines || errors.compliance_ec || errors.compliance_agreements || errors.compliance_age) && (
+      {(errors.compliance_vaccines || errors.compliance_ec || errors.compliance_agreements || errors.compliance_age || errors.reservation_date) && (
         <div style={{marginTop:8,padding:"10px 14px",background:C.danLt,borderRadius:8,border:`1px solid ${C.dan}30`}}>
-          <div style={{fontSize:13,fontWeight:700,color:C.dan,marginBottom:4}}>⚠ Compliance check(s) must be resolved before check-in:</div>
+          <div style={{fontSize:13,fontWeight:700,color:C.dan,marginBottom:4}}>⚠ Check-in blocked — resolve the following:</div>
+          {errors.reservation_date && <div style={{fontSize:12,color:C.dan,marginTop:2}}>• {errors.reservation_date}</div>}
           {errors.compliance_vaccines && <div style={{fontSize:12,color:C.dan,marginTop:2}}>• {errors.compliance_vaccines}</div>}
           {errors.compliance_ec && <div style={{fontSize:12,color:C.dan,marginTop:2}}>• {errors.compliance_ec}</div>}
           {errors.compliance_agreements && <div style={{fontSize:12,color:C.dan,marginTop:2}}>• {errors.compliance_agreements}</div>}
@@ -4075,6 +4197,101 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           <Btn onClick={()=>handleSave(false, false)}>Save Changes</Btn>
         ))}
       </div>
+
+      {/* Early Check-in Date Adjustment Popup */}
+      {showDateAdjustPopup && (() => {
+        const today = new Date().toISOString().split('T')[0];
+        const daysEarly = Math.floor((new Date(checkIn + "T00:00:00") - new Date(today + "T00:00:00")) / 86400000);
+        const confirmDateAdjust = async (shouldAdjust) => {
+          if (shouldAdjust) {
+            // Adjust date to today and add audit log entry
+            const oldCheckIn = checkIn;
+            const newCheckIn = today;
+
+            // Create updated reservation with adjusted date
+            const adjustedRes = {
+              ...reservation,
+              parentDestination: parentDest,
+              belongings,
+              fedToday, medsToday,
+              checkIn: newCheckIn, checkOut, checkInTime, checkOutTime,
+              notes,
+              careOverrides: {
+                feedingSchedules, medicationSchedules,
+                bath_type: bathType,
+                postBathReturn,
+                feeding: summarizeFeeding(feedingSchedules),
+                medications: summarizeMeds(medicationSchedules)
+              },
+              emergencyContactOverride: (ecName !== clientEcName || ecPhone !== clientEcPhone) ? { name: ecName, phone: ecPhone } : reservation.emergencyContactOverride || null,
+              discountType: discountType !== "none" ? discountType : undefined,
+              discountValue: discountType !== "none" ? discountValue : undefined,
+              discountId: selectedDiscountId || undefined,
+              ...(appliedCoupons.length > 0 ? { appliedCoupons: appliedCoupons.map(c => ({ saleId: c.saleId, unitsUsed: c.unitsToUse, value: c.value })) } : {}),
+              activityLog,
+              status: "checked-in",
+              actualCheckInTime: new Date().toISOString(),
+              checkedInBy: profile ? (profile.full_name || profile.email || "Staff") : "Staff",
+              auditLog: [
+                ...(reservation.auditLog || []),
+                {
+                  timestamp: new Date().toISOString(),
+                  action: "reservation_date_adjusted",
+                  by: profile ? (profile.full_name || profile.email || "Staff") : "Staff",
+                  details: [
+                    { field: "Check-in Date", oldVal: oldCheckIn, newVal: newCheckIn }
+                  ]
+                }
+              ]
+            };
+
+            // Check compliance with new date
+            const errs = {};
+            if (!ecName?.trim() || !ecPhone?.trim()) errs.compliance_ec = "Emergency contact name and phone are required";
+            const agreements = data.agreements || DEF_AGREEMENTS;
+            const reqAgrs = agreements.filter(a => a.required !== false);
+            const allAgrSigned = reqAgrs.every(a => agrSigned(client, a.id));
+            if (!allAgrSigned) {
+              const unsigned = reqAgrs.filter(a => !agrSigned(client, a.id)).map(a => a.name);
+              errs.compliance_agreements = `Unsigned agreements: ${unsigned.join(", ")}`;
+            }
+            const vaxStatus = getVaxStatus(dog, data.requiredVaccines, data.resortPolicies);
+            if (!vaxStatus.ok) {
+              const issues = [...(vaxStatus.expired || []), ...(vaxStatus.missing || [])].map(v => v.replace(/_/g, " "));
+              errs.compliance_vaccines = `Vaccines not compliant: ${issues.join(", ")}`;
+            }
+            const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
+            if (!ageStatus.ok) errs.compliance_age = ageStatus.reason || "Dog does not meet age requirements";
+
+            if (Object.keys(errs).length > 0) {
+              setErrors(errs);
+              setShowDateAdjustPopup(false);
+              return;
+            }
+
+            setShowDateAdjustPopup(false);
+            onSave(adjustedRes, true, false);
+          } else {
+            setShowDateAdjustPopup(false);
+          }
+        };
+
+        return (
+          <Modal title="Adjust Reservation Date?" onClose={() => setShowDateAdjustPopup(false)}>
+            <div style={{padding:"0"}}>
+              <div style={{padding:"16px 20px",background:C.infLt,borderRadius:8,marginBottom:16,border:`1px solid ${C.inf}30`}}>
+                <div style={{fontSize:14,fontWeight:700,color:C.inf,marginBottom:6}}>{dog.fields.name} is scheduled for {daysEarly} day{daysEarly > 1 ? 's' : ''} from now</div>
+                <div style={{fontSize:13,color:C.text,lineHeight:1.5}}>Reservation date: <strong>{checkIn}</strong> → Today: <strong>{today}</strong></div>
+              </div>
+              <p style={{fontSize:14,color:C.text,margin:"0 0 20px",lineHeight:1.6}}>Would you like to adjust the reservation date to today and proceed with check-in?</p>
+              <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+                <button onClick={() => confirmDateAdjust(false)} style={{padding:"8px 20px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"transparent",color:C.text,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
+                <button onClick={() => confirmDateAdjust(true)} style={{padding:"8px 20px",borderRadius:8,border:"none",background:C.inf,color:"#fff",fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Adjust Date & Check In</button>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* Cancel Reservation Confirmation */}
       {showCancelConfirm && (() => {
@@ -5936,6 +6153,13 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               merged.discountType = updatedRes.discountType;
               merged.discountValue = updatedRes.discountValue;
             }
+            // Deduct coupons from package sales if applied
+            let updatedPackageSales = [...(data.packageSales || [])];
+            if (updatedRes.appliedCoupons && updatedRes.appliedCoupons.length > 0) {
+              updatedRes.appliedCoupons.forEach(ac => {
+                updatedPackageSales = updatedPackageSales.map(s => s.id === ac.saleId ? { ...s, used: (s.used || 0) + ac.unitsUsed, unitsRemaining: Math.max(0, (s.unitsRemaining || s.quantity || 0) - ac.unitsUsed) } : s);
+              });
+            }
             // Build audit log entries
             const auditLogs = [];
             const diffs = [];
@@ -5962,7 +6186,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               if (ciDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Filled Check-In Details", ciDiffs, profile));
             }
             const newAuditLog = [...(data.auditLog || []), ...auditLogs];
-            await save({ ...data, auditLog: newAuditLog, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
+            await save({ ...data, auditLog: newAuditLog, packageSales: updatedPackageSales, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
             addDashToast({ dogName: bDog.fields.name, action: doCheckIn ? "checked in" : doCheckOut ? "checked out" : "updated", oldVal: doCheckIn ? "Upcoming" : doCheckOut ? "Checked In" : "Previous", newVal: doCheckIn ? "Checked In" : doCheckOut ? "Checked Out" : "Saved", undoRes: origCopy });
             // Offer to text client about reservation changes (not for check-in/out)
             if (!doCheckIn && !doCheckOut && diffs.length > 0 && bClient) {
@@ -6030,7 +6254,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
           )}
         </div>
       )}
-      {showSellPkg && <SellPackageModal data={data} save={save} onClose={() => setShowSellPkg(false)} />}
+      {showSellPkg && <SellPackageModal data={data} save={save} onClose={() => setShowSellPkg(false)} nav={nav} />}
     </div>
   );
 }
@@ -7753,9 +7977,21 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                   onFocus={e => e.target.style.borderColor=C.pri}
                   onBlur={e => e.target.style.borderColor=C.border}
                 />
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6,marginBottom:12}}>
                   <div style={{fontSize:11,color:C.textMut}}>Character count: {massTextBody.length}</div>
-                  <div style={{fontSize:10,color:C.textSec}}>Variables like {"{dogName}"} will be personalized per client</div>
+                  <div style={{fontSize:10,color:C.textSec}}>Variables will be personalized per client</div>
+                </div>
+                {/* Available Template Variables Reference (Item 18) */}
+                <div style={{padding:12,background:C.bg,borderRadius:8,border:`1px solid ${C.borderLight}`}}>
+                  <div style={{fontSize:11,fontWeight:700,color:C.textMut,textTransform:"uppercase",marginBottom:8}}>Available Variables</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,fontSize:11,color:C.text}}>
+                    <div><code style={{background:C.surface,padding:"2px 6px",borderRadius:4,fontFamily:"monospace"}}>{"{clientName}"}</code> — Client first &amp; last name</div>
+                    <div><code style={{background:C.surface,padding:"2px 6px",borderRadius:4,fontFamily:"monospace"}}>{"{dogName}"}</code> — Dog's name</div>
+                    <div><code style={{background:C.surface,padding:"2px 6px",borderRadius:4,fontFamily:"monospace"}}>{"{checkInDate}"}</code> — Check-in date</div>
+                    <div><code style={{background:C.surface,padding:"2px 6px",borderRadius:4,fontFamily:"monospace"}}>{"{checkOutDate}"}</code> — Check-out date</div>
+                    <div><code style={{background:C.surface,padding:"2px 6px",borderRadius:4,fontFamily:"monospace"}}>{"{roomType}"}</code> — Room type</div>
+                    <div><code style={{background:C.surface,padding:"2px 6px",borderRadius:4,fontFamily:"monospace"}}>{"{totalPrice}"}</code> — Total cost</div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -7866,6 +8102,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const reservations = data.reservations.filter(r=>r.clientId===clientId).sort((a,b)=>b.checkIn.localeCompare(a.checkIn));
   const [editing, setEditing] = useState(false);
   const [editFields, setEditFields] = useState({});
+  const [editRecurringDiscountId, setEditRecurringDiscountId] = useState(null);
   const [activeTab, setActiveTab] = useState("dogs");
   const [resSubTab, setResSubTab] = useState("upcoming");
   const [newNote, setNewNote] = useState("");
@@ -7874,8 +8111,8 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
 
   if (!client) return <div style={{padding:40,textAlign:"center",color:C.textSec}}>Client not found</div>;
 
-  const startEdit = () => { setEditFields({...client.fields}); setEditing(true); };
-  const saveEdit = async () => { await save({...data,clients:data.clients.map(c=>c.id===clientId?{...c,fields:editFields}:c)}); setEditing(false); };
+  const startEdit = () => { setEditFields({...client.fields}); setEditRecurringDiscountId(client.recurringDiscountId || null); setEditing(true); };
+  const saveEdit = async () => { await save({...data,clients:data.clients.map(c=>c.id===clientId?{...c,fields:editFields,recurringDiscountId:editRecurringDiscountId||null}:c)}); setEditing(false); };
 
   const showTextNotifyToast = (client, dog, diffs) => {
     const clientName = `${client?.fields?.first_name || ""} ${client?.fields?.last_name || ""}`.trim() || "Client";
@@ -7901,9 +8138,23 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   };
 
   const [boardingPreviewId, setBoardingPreviewId] = useState(openReservationId || null);
+  const [earlyCheckInModal, setEarlyCheckInModal] = useState(null); // {rid, currentDate, today}
+
   const handleCheckIn = async (rid) => {
     const res = data.reservations.find(r => r.id === rid);
     if (res && (res.type === "boarding" || res.type === "dayboarding")) { setBoardingPreviewId(rid); return; }
+
+    // Check for early check-in (reservation is for future, but checking in today)
+    if (res && res.checkIn) {
+      const today = todayStr();
+      const reservedDate = res.checkIn;
+      if (reservedDate > today) {
+        // Early check-in detected — show popup instead of checking in immediately
+        setEarlyCheckInModal({ rid, currentDate: reservedDate, today });
+        return;
+      }
+    }
+
     // Agreement gate for non-boarding check-ins
     if (res) {
       const ciAgrs = (data.agreements || DEF_AGREEMENTS).filter(a => a.required !== false);
@@ -8096,31 +8347,6 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           ))}
         </div>
       </Card>
-
-      {/* Recurring Discount */}
-      {(() => {
-        const recurringDiscounts = (data.discounts || []).filter(d => d.discountKind === "recurring" && d.active !== false);
-        const currentRecDisc = recurringDiscounts.find(d => d.id === client.recurringDiscountId);
-        const handleSetRecDisc = async (discId) => {
-          await save({ ...data, clients: data.clients.map(c => c.id === clientId ? { ...c, recurringDiscountId: discId || null } : c) });
-        };
-        return recurringDiscounts.length > 0 ? (
-          <Card style={{ marginBottom: 16, padding: "12px 20px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>Recurring Discount</div>
-              <select value={client.recurringDiscountId || ""} onChange={e => handleSetRecDisc(e.target.value)} style={{ flex: 1, maxWidth: 300, padding: "6px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: C.surface, color: C.text, cursor: "pointer" }}>
-                <option value="">None</option>
-                {recurringDiscounts.map(d => <option key={d.id} value={d.id}>{d.name} ({d.type === "percentage" ? `${d.value}%` : `$${d.value}`} off)</option>)}
-              </select>
-              {currentRecDisc && (
-                <span style={{ padding: "4px 12px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: "#DBEAFE", color: "#1E40AF" }}>
-                  {currentRecDisc.name}: {currentRecDisc.type === "percentage" ? `${currentRecDisc.value}% off` : `$${currentRecDisc.value} off`} every visit
-                </span>
-              )}
-            </div>
-          </Card>
-        ) : null;
-      })()}
 
       {/* Tab Bar */}
       <div style={{ display: "flex", borderBottom: `2px solid ${C.borderLight}`, background: C.bg, borderRadius: "12px 12px 0 0", marginBottom: 0 }}>
@@ -8495,6 +8721,18 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
       {editing&&<Modal title="Edit Client" onClose={()=>setEditing(false)} wide>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
           {data.clientFields.filter(f=>f.type!=="textarea").map(f=>(<div key={f.id} style={f.type==="checkbox"?{display:"flex",alignItems:"end"}:{}}><Inp label={f.name} type={f.type} value={editFields[f.id]||""} onChange={v=>setEditFields({...editFields,[f.id]:v})} required={isFieldRequired(f,"create")} options={f.options}/></div>))}
+          {(() => {
+            const recurringDiscounts = (data.discounts || []).filter(d => d.discountKind === "recurring" && d.active !== false);
+            return recurringDiscounts.length > 0 ? (
+              <div style={{display:"flex",flexDirection:"column",gridColumn:"span 1"}}>
+                <label style={{fontSize:13,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",display:"block",marginBottom:6}}>Recurring Discount</label>
+                <select value={editRecurringDiscountId || ""} onChange={e => setEditRecurringDiscountId(e.target.value || null)} style={{width:"100%",padding:"6px 10px",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13,fontFamily:"inherit",background:C.surface,color:C.text,cursor:"pointer"}}>
+                  <option value="">None</option>
+                  {recurringDiscounts.map(d => <option key={d.id} value={d.id}>{d.name} ({d.type === "percentage" ? `${d.value}%` : `$${d.value}`} off)</option>)}
+                </select>
+              </div>
+            ) : null;
+          })()}
         </div>
         {data.clientFields.filter(f=>f.type==="textarea").map(f=>(<div key={f.id} style={{marginTop:16}}><Inp label={f.name} type="textarea" value={editFields[f.id]||""} onChange={v=>setEditFields({...editFields,[f.id]:v})}/></div>))}
         <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:24}}><Btn variant="secondary" onClick={()=>setEditing(false)}>Cancel</Btn><Btn onClick={saveEdit}>Save</Btn></div>
@@ -8543,8 +8781,15 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               if (updatedRes.belongings && updatedRes.belongings !== bRes.belongings) ciDiffs.push({field:"Belongings",oldVal:bRes.belongings||"(empty)",newVal:updatedRes.belongings});
               if (ciDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Filled Check-In Details", ciDiffs, profile));
             }
+            // Deduct coupons from package sales if applied
+            let updatedPackageSales = [...(data.packageSales || [])];
+            if (updatedRes.appliedCoupons && updatedRes.appliedCoupons.length > 0) {
+              updatedRes.appliedCoupons.forEach(ac => {
+                updatedPackageSales = updatedPackageSales.map(s => s.id === ac.saleId ? { ...s, used: (s.used || 0) + ac.unitsUsed, unitsRemaining: Math.max(0, (s.unitsRemaining || s.quantity || 0) - ac.unitsUsed) } : s);
+              });
+            }
             const newAuditLog = [...(data.auditLog || []), ...auditLogs];
-            await save({ ...data, auditLog: newAuditLog, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
+            await save({ ...data, auditLog: newAuditLog, packageSales: updatedPackageSales, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
             if (!doCheckIn && !doCheckOut && diffs.length > 0 && bClient) {
               showTextNotifyToast(bClient, bDog, diffs);
             }
@@ -9438,9 +9683,11 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
       {ppConfirm && <Modal title="Private Play Surcharge" onClose={() => setPpConfirm(null)} width={480}>
         <div style={{ padding: "4px 0" }}>
           <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B40", borderRadius: 10, padding: "14px 16px", marginBottom: 16 }}>
-            <div style={{ fontWeight: 700, fontSize: 14, color: "#92400E", marginBottom: 6 }}>This dog is currently boarding</div>
+            <div style={{ fontWeight: 700, fontSize: 14, color: "#92400E", marginBottom: 6 }}>This dog is boarding right now</div>
             <div style={{ fontSize: 13, color: "#78350F", lineHeight: 1.5 }}>
-              Changing to Private Play will add a <strong>${(data.pricing?.privatePlaySurcharge || 10)}/night surcharge</strong> for the <strong>remainder</strong> of {ppConfirm.reservations.length === 1 ? "their stay" : "each active stay"}.
+              {ppConfirm.reservations.length === 1
+                ? `This dog is boarding right now and has ${ppConfirm.reservations[0].daysLeft} day${ppConfirm.reservations[0].daysLeft !== 1 ? "s" : ""} left, we are going to add the private play surcharge for the REMAINDER of the stay.`
+                : `These dogs are boarding right now, we are going to add the private play surcharge ($${(data.pricing?.privatePlaySurcharge || 10)}/night) for the REMAINDER of each stay.`}
             </div>
           </div>
           {ppConfirm.reservations.map(r => (
@@ -10321,6 +10568,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   // Per-dog add-ons: { [dogId]: { bath_type, ... } }
   const [dogAddOns, setDogAddOns] = useState({});
   const [expandedAddOns, setExpandedAddOns] = useState({});
+  // Add-on date selection popup: { dogId, addon, prevState }
+  const [addOnDatePopup, setAddOnDatePopup] = useState(null);
   // Per-dog room config
   const [perDogMode, setPerDogMode] = useState(false);
   const [perDogConfig, setPerDogConfig] = useState({});
@@ -10330,6 +10579,27 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   const [careExpanded, setCareExpanded] = useState(true);
   // Applied coupons (package sale IDs with quantity to use as deposit)
   const [appliedCoupons, setAppliedCoupons] = useState([]); // [{saleId, unitsToUse, value}]
+  const [showPastBoardingModal, setShowPastBoardingModal] = useState(false);
+  const [lastUsedRoomType, setLastUsedRoomType] = useState("");
+
+  // Helper: get first available room type
+  const getFirstAvailableRoomType = (checkInDate, checkOutDate) => {
+    const ci = checkInDate; const co = checkOutDate || checkInDate;
+    for (const rt of ROOM_TYPES) {
+      const rooms = (data.rooms || {})[rt] || [];
+      const booked = new Set(data.reservations.filter(r => (r.type === "boarding" || r.type === "dayboarding") && r.roomType === rt && r.room && r.status !== "checked-out" && r.status !== "cancelled" && r.checkIn < co && r.checkOut > ci).map(r => r.room));
+      if (rooms.filter(r => !booked.has(r)).length > 0) return rt;
+    }
+    return "Luxury Suite"; // fallback
+  };
+
+  // Helper: get last-used room type for a dog
+  const getLastUsedRoomType = (dogId) => {
+    const dogRes = data.reservations.filter(r => r.dogIds && r.dogIds.includes(dogId) && r.status === "checked-out" && r.roomType);
+    if (dogRes.length === 0) return "";
+    const sorted = dogRes.sort((a, b) => new Date(b.checkOut) - new Date(a.checkOut));
+    return sorted[0].roomType || "";
+  };
 
   // Auto-expand care for boarding, collapse for other types
   useEffect(() => { setCareExpanded(type === "boarding"); }, [type]);
@@ -10343,6 +10613,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
       if (disc) {
         setResDiscountType(disc.type === "percentage" ? "percent" : "flat");
         setResDiscountValue(disc.value);
+        setResDiscountId(disc.id);
       }
     }
   }, [clientId]);
@@ -10352,6 +10623,27 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
     if (selectedDogs.length > 0 && (type === "daycare" || type === "evaluation")) {
       const dog = data.dogs.find(d => d.id === selectedDogs[0]);
       if (dog) setDaycareSize(getDogDaycareSize(dog));
+    }
+  }, [selectedDogs, type]);
+
+  // Auto-default room type to first available, or last-used for selected dog
+  useEffect(() => {
+    if (type === "boarding" || type === "dayboarding") {
+      if (selectedDogs.length > 0) {
+        const lastUsed = getLastUsedRoomType(selectedDogs[0]);
+        if (lastUsed) {
+          setLastUsedRoomType(lastUsed);
+          setRoomType(lastUsed);
+        } else {
+          const firstAvail = getFirstAvailableRoomType(checkIn, checkOut);
+          setLastUsedRoomType("");
+          setRoomType(firstAvail);
+        }
+      } else {
+        const firstAvail = getFirstAvailableRoomType(checkIn, checkOut);
+        setLastUsedRoomType("");
+        setRoomType(firstAvail);
+      }
     }
   }, [selectedDogs, type]);
 
@@ -10619,6 +10911,11 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
     if(type==="boarding"&&checkOut<checkIn)errs.checkOut="Must be after check-in";
     // Room validation: require a room for boarding/dayboarding
     if((type==="boarding"||type==="dayboarding")&&!perDogMode&&!selectedRoom)errs.room="Please select a room";
+    // Required fields for boarding
+    if(type==="boarding") {
+      if(!parentDestination.trim()) errs.parentDestination="Required — where is the parent going?";
+      if(!notes.trim()) errs.notes="Required — add general notes or special instructions";
+    }
     // Closed dates check — block check-ins and check-outs on closed dates
     const closedSet = new Set((data.closedDates || []).map(cd => cd.date));
     if(closedSet.has(checkIn)){const cd=(data.closedDates||[]).find(c=>c.date===checkIn);errs.checkIn=`Resort is closed on this date${cd?.label?` (${cd.label})`:""}`;}
@@ -10656,6 +10953,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         dogs: dog ? [dog] : [], dogProfiles: data.dogs, pricing: data.pricing,
         isSecondDogSameRoom: isSecondInRoom,
         roomSegments: dogSegments.length > 0 ? dogSegments : undefined,
+        appliedCoupons: appliedCoupons,
       });
       return {
         id:gid(),clientId,dogId:did,type,
@@ -11021,7 +11319,11 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         {/* Sub-type selectors */}
         {(type === "boarding" || type === "dayboarding") && (
           <div style={{marginTop:20}}>
-            <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Room Type <span style={{color:C.dan}}>*</span></div>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+              <div style={{fontSize:11,fontWeight:600,color:C.textSec,letterSpacing:"0.03em",textTransform:"uppercase"}}>Room Type <span style={{color:C.dan}}>*</span>{lastUsedRoomType && selectedDogs.length > 0 && <span style={{fontSize:10,fontWeight:500,color:C.pri,textTransform:"none",marginLeft:8}}>Last Used By {data.dogs.find(d=>d.id===selectedDogs[0])?.fields.name}</span>}</div>
+              {selectedDogs.length > 0 && (()=>{const pastRes = data.reservations.filter(r => r.dogIds && r.dogIds.includes(selectedDogs[0]) && r.status === "checked-out" && r.roomType); return pastRes.length > 0 ? <button onClick={()=>setShowPastBoardingModal(!showPastBoardingModal)} style={{fontSize:11,fontWeight:600,color:C.pri,cursor:"pointer",background:"none",border:"none",textDecoration:"underline",textDecorationColor:C.pri+"40",padding:0}}>View Past Boarding</button> : null;})()}
+            </div>
+            {showPastBoardingModal && selectedDogs.length > 0 && (()=>{const pastRes = data.reservations.filter(r => r.dogIds && r.dogIds.includes(selectedDogs[0]) && r.status === "checked-out" && r.roomType).sort((a,b) => new Date(b.checkOut) - new Date(a.checkOut)); return <div style={{marginBottom:12,padding:"12px",borderRadius:8,background:C.bg,border:`1px solid ${C.border}`}}>{pastRes.map(res => <div key={res.id} style={{fontSize:11,color:C.textSec,padding:"4px 0",display:"flex",justifyContent:"space-between"}}><span><strong>{res.roomType}</strong></span><span>{fmtDate(res.checkIn)} → {fmtDate(res.checkOut)}</span></div>)}</div>; })()}
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               {ROOM_TYPES.map(rt => {
                 const avail = roomAvailByType[rt];
@@ -11755,9 +12057,22 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                             <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:8}}>Add-Ons</div>
                             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"stretch"}}>
                               {Object.entries({...DEF_PRICING.addOns,...((data.pricing||{}).addOns||{})}).map(([addon,price])=>{
+                                const isBathAddon = addon.endsWith(" Bath");
+                                const hasBathSelected = !!dogAddOns[did]?.selectedBath;
+                                // Skip bath add-ons if a bath is already selected (show "Add Another Bath" instead)
+                                if (isBathAddon && hasBathSelected) return null;
                                 const selected=(dogAddOns[did]?.selectedAddOns||[]).includes(addon);
-                                return <button key={addon} onClick={()=>setDogAddOns(prev=>{const curr=prev[did]?.selectedAddOns||[];const next=curr.includes(addon)?curr.filter(a=>a!==addon):[...curr,addon];return{...prev,[did]:{...prev[did],selectedAddOns:next}};})} style={{padding:"8px 12px",borderRadius:8,border:`1.5px solid ${selected?C.pri:C.border}`,background:selected?C.priLt:C.bg,color:selected?C.pri:C.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,textAlign:"left"}}>
-                                  <span>{addon}</span><span style={{color:C.textSec,fontWeight:400,whiteSpace:"nowrap"}}>${Number(price).toFixed(2)}</span>
+                                const buttonLabel = isBathAddon ? "Add Another Bath" : addon;
+                                return <button key={addon} onClick={()=>{
+                                  // Show date selection popup for adding add-ons
+                                  if (!selected) {
+                                    setAddOnDatePopup({ dogId: did, addon, prevState: selected });
+                                  } else {
+                                    // If removing, just toggle off
+                                    setDogAddOns(prev=>{const curr=prev[did]?.selectedAddOns||[];const next=curr.filter(a=>a!==addon);return{...prev,[did]:{...prev[did],selectedAddOns:next}};});
+                                  }
+                                }} style={{padding:"8px 12px",borderRadius:8,border:`1.5px solid ${selected?C.pri:C.border}`,background:selected?C.priLt:C.bg,color:selected?C.pri:C.text,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,textAlign:"left"}}>
+                                  <span>{buttonLabel}</span><span style={{color:C.textSec,fontWeight:400,whiteSpace:"nowrap"}}>${Number(price).toFixed(2)}</span>
                                 </button>;
                               })}
                             </div>
@@ -11774,9 +12089,9 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         )}
 
         {type==="boarding"&&(
-          <div style={{marginTop:16}}><Inp label="Where are they going? (Parent destination)" value={parentDestination} onChange={setParentDestination} placeholder="e.g. Vacation in Florida, Business trip to NYC..."/></div>
+          <div style={{marginTop:16}}><Inp label="Where are they going? (Parent destination)" value={parentDestination} onChange={(v)=>{setParentDestination(v); if(errors.parentDestination) setErrors({...errors, parentDestination:undefined});}} placeholder="e.g. Vacation in Florida, Business trip to NYC..."/>{errors.parentDestination && <div style={{color:C.dan,fontSize:12,fontWeight:600,marginTop:4}}>{errors.parentDestination}</div>}</div>
         )}
-        <div style={{marginTop:16}}><Inp label="General Notes" type="textarea" value={notes} onChange={setNotes} placeholder="Special instructions for this stay..."/></div>
+        <div style={{marginTop:16}}><Inp label="General Notes" type="textarea" value={notes} onChange={(v)=>{setNotes(v); if(errors.notes) setErrors({...errors, notes:undefined});}} placeholder="Special instructions for this stay..."/>{errors.notes && <div style={{color:C.dan,fontSize:12,fontWeight:600,marginTop:4}}>{errors.notes}</div>}</div>
 
         {/* Late Checkout Notice */}
         {type === "boarding" && checkOutTime && checkOutTime > "12:30" && selectedDogs.length > 0 && (() => {
@@ -11813,7 +12128,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
               return (<div style={{marginTop:8}}>
                 {hasDiscount && (<>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 20px",background:C.sucLt,borderRadius:8,border:`1px solid ${C.suc}25`}}>
-                    <span style={{fontSize:13,fontWeight:600,color:C.suc}}>Discount ({resDiscountType === "percent" ? `${resDiscountValue}%` : `$${Number(resDiscountValue).toFixed(2)}`})</span>
+                    <span style={{fontSize:13,fontWeight:600,color:C.suc}}>Discount ({(() => { const d = configuredDiscounts.find(d => d.id === resDiscountId); return d ? d.name : ""; })()}) ({resDiscountType === "percent" ? `${resDiscountValue}%` : `$${Number(resDiscountValue).toFixed(2)}`})</span>
                     <div style={{display:"flex",alignItems:"center",gap:8}}>
                       <span style={{fontSize:13,fontWeight:700,color:C.suc}}>-${disc.toFixed(2)}</span>
                       <button onClick={() => { setResDiscountType("none"); setResDiscountValue(0); }} style={{background:"none",border:"none",cursor:"pointer",color:C.suc,padding:2,display:"flex"}}><I.X/></button>
@@ -11852,7 +12167,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                   <div style={{display:"flex",flexDirection:"column",gap:6}}>
                     {eligibleSales.map(sale => {
                       const pkg = (data.packages || []).find(p => p.id === sale.packageId);
-                      const remaining = (sale.unitsRemaining || sale.quantity || 0) - (sale.used || 0);
+                      const remaining = sale.unitsRemaining !== undefined ? sale.unitsRemaining : Math.max(0, (sale.quantity || 0) - (sale.used || 0));
                       const applied = appliedCoupons.find(c => c.saleId === sale.id);
                       const unitRate = pkg?.unitRate || 0;
                       return (
@@ -11965,6 +12280,86 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           </div>
         </Modal>
       );})()}
+
+      {/* Add-On Date Selection Popup */}
+      {addOnDatePopup && (() => {
+        const dateOptions = [
+          { value: "every-day", label: "Every Day" },
+          { value: "certain-dates", label: "Certain Dates" },
+          { value: "except-first", label: "Every Day Except First" },
+          { value: "except-last", label: "Every Day Except Last" },
+        ];
+        const [selectedOption, setSelectedOption] = useState("every-day");
+        const [selectedDates, setSelectedDates] = useState([]);
+
+        const handleConfirm = () => {
+          // For now, apply the add-on for all selected dates (feature complete for MVP)
+          setDogAddOns(prev => {
+            const curr = prev[addOnDatePopup.dogId]?.selectedAddOns || [];
+            const next = [...curr, addOnDatePopup.addon];
+            return { ...prev, [addOnDatePopup.dogId]: { ...prev[addOnDatePopup.dogId], selectedAddOns: next } };
+          });
+          setAddOnDatePopup(null);
+        };
+
+        return (
+          <Modal title="Add-On Date Selection" onClose={() => setAddOnDatePopup(null)} width={420}>
+            <div style={{ padding: "4px 0" }}>
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 8 }}>{addOnDatePopup.addon}</div>
+                <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.6 }}>
+                  Which days would you like to apply this add-on?
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                {dateOptions.map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => setSelectedOption(opt.value)}
+                    style={{
+                      padding: "12px 14px",
+                      borderRadius: 8,
+                      border: `1.5px solid ${selectedOption === opt.value ? C.pri : C.border}`,
+                      background: selectedOption === opt.value ? C.priLt : "transparent",
+                      color: selectedOption === opt.value ? C.pri : C.text,
+                      fontSize: 13,
+                      fontWeight: selectedOption === opt.value ? 600 : 500,
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      transition: "all 0.15s",
+                      textAlign: "left",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{
+                      width: 18,
+                      height: 18,
+                      borderRadius: 4,
+                      border: `1.5px solid ${selectedOption === opt.value ? C.pri : C.border}`,
+                      background: selectedOption === opt.value ? C.pri : "transparent",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}>
+                      {selectedOption === opt.value && <span style={{ color: "#fff", fontSize: 12, fontWeight: 700 }}>✓</span>}
+                    </div>
+                    <span>{opt.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <Btn variant="secondary" onClick={() => setAddOnDatePopup(null)}>Cancel</Btn>
+                <Btn onClick={handleConfirm}>Apply Add-On</Btn>
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
     </div>
   );
 }
@@ -12375,7 +12770,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
       {nightSelectMode && (
         <div style={{ padding: "10px 16px", borderRadius: 10, background: `${C.acc}08`, border: `1.5px solid ${C.acc}30`, marginBottom: 12, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ fontSize: 12, color: C.textSec }}>
-            <span style={{ fontWeight: 700, color: C.acc }}>Night Select Mode:</span> Click individual nights within a reservation to select them, then choose a target room to transfer.
+            <span style={{ fontWeight: 700, color: C.acc }}>Night Select Mode:</span> Hover over nights in a reservation to see the checkbox, click it to select, then drag those selected nights to a different room.
           </div>
           {Object.keys(selectedNights).length > 0 && (
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -12699,14 +13094,62 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
                         {inter && inter.type === "move" && inter.targetRoom !== row.room ? null : ghostEl}
                         {/* Actual block */}
                         <div
-                          onMouseDown={(e) => { if (nightSelectMode) return; if (e.button !== 0) return; const edge = getEdge(e, e.currentTarget); startInteraction(e, res, edge === "left" ? "resize-left" : edge === "right" ? "resize-right" : "move"); }}
+                          onMouseDown={(e) => {
+                            if (nightSelectMode) {
+                              // In night select mode, allow dragging if nights are selected
+                              const hasSelected = selectedNights[res.id] && selectedNights[res.id].size > 0;
+                              if (hasSelected && e.button === 0 && e.target.closest("[data-day-grid]")) {
+                                // Drag selected nights to different room
+                                e.preventDefault();
+                                e.stopPropagation();
+                                const colW = getColWidth();
+                                const state = { type: "night-drag", resId: res.id, startX: e.clientX, startY: e.clientY, colW, origRoom: res.room, targetRoom: res.room, moved: false };
+                                interRef.current = state;
+                                setInteraction(state);
+                                const onMove = (me) => {
+                                  const s = interRef.current;
+                                  if (!s) return;
+                                  const dx = me.clientX - s.startX;
+                                  const dy = me.clientY - s.startY;
+                                  if (!s.moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+                                  s.moved = true;
+                                  if (s.type === "night-drag") {
+                                    const el = document.elementFromPoint(me.clientX, me.clientY);
+                                    const rowEl = el && el.closest ? el.closest("[data-room-row]") : null;
+                                    if (rowEl) {
+                                      const tRoom = rowEl.dataset.roomRow;
+                                      if (tRoom) s.targetRoom = tRoom;
+                                    }
+                                  }
+                                  interRef.current = { ...s };
+                                  setInteraction({ ...s });
+                                };
+                                const onUp = async () => {
+                                  window.removeEventListener("mousemove", onMove);
+                                  window.removeEventListener("mouseup", onUp);
+                                  const s = interRef.current;
+                                  interRef.current = null;
+                                  setInteraction(null);
+                                  if (!s || !s.moved) return;
+                                  if (s.targetRoom === s.origRoom) return;
+                                  await moveSelectedNights(res.id, s.targetRoom);
+                                };
+                                window.addEventListener("mousemove", onMove);
+                                window.addEventListener("mouseup", onUp);
+                              }
+                              return;
+                            }
+                            if (e.button !== 0) return;
+                            const edge = getEdge(e, e.currentTarget);
+                            startInteraction(e, res, edge === "left" ? "resize-left" : edge === "right" ? "resize-right" : "move");
+                          }}
                           onMouseMove={(e) => { if (nightSelectMode || interaction) return; const edge = getEdge(e, e.currentTarget); e.currentTarget.style.cursor = edge ? "col-resize" : "grab"; }}
                           onClick={() => { if (nightSelectMode) return; if (!justDraggedRef.current) setBoardingPreviewId(res.id); }}
-                          title={nightSelectMode ? "Click nights to select them for transfer" : `${dn(res.dogId, res.clientId)} · ${fmtDate(res.checkIn)} → ${fmtDate(res.checkOut)} · ${res.status} · Drag to shift dates or move rooms · Drag edges to resize`}
+                          title={nightSelectMode ? (selectedNights[res.id] && selectedNights[res.id].size > 0 ? "Drag selected nights to a different room" : "Click nights to select them for transfer") : `${dn(res.dogId, res.clientId)} · ${fmtDate(res.checkIn)} → ${fmtDate(res.checkOut)} · ${res.status} · Drag to shift dates or move rooms · Drag edges to resize`}
                           style={{
                             position: "absolute", top: 6, bottom: 6,
                             left: `calc(${leftPct}% + 3px)`, width: `calc(${widthPct}% - 6px)`,
-                            background: bg, borderRadius: 6, cursor: nightSelectMode ? "pointer" : (inter ? "grabbing" : "grab"),
+                            background: bg, borderRadius: 6, cursor: nightSelectMode ? (selectedNights[res.id] && selectedNights[res.id].size > 0 ? "grab" : "pointer") : (inter ? "grabbing" : "grab"),
                             display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
                             overflow: "hidden", whiteSpace: "nowrap",
                             borderLeft: showGreenEdge ? `4px solid ${C.suc}` : "none",
@@ -12743,10 +13186,14 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
                               return (
                                 <div key={nightDate}
                                   onClick={nightSelectMode ? (e) => { e.stopPropagation(); toggleNightSelect(res.id, nightDate); } : undefined}
-                                  style={{ position: "absolute", top: 0, bottom: 0, left: `${nLeft}%`, width: `${nWidth}%`, borderRight: ni < resNights.length - 1 ? `1px dashed ${nightSelectMode ? "rgba(128,128,128,0.35)" : "rgba(128,128,128,0.15)"}` : "none", background: isSel ? `${C.suc}40` : "transparent", cursor: nightSelectMode ? "pointer" : "inherit", display: "flex", alignItems: "center", justifyContent: "center", zIndex: nightSelectMode ? 3 : 1, transition: "background 0.1s", pointerEvents: nightSelectMode ? "auto" : "none" }}
+                                  style={{ position: "absolute", top: 0, bottom: 0, left: `${nLeft}%`, width: `${nWidth}%`, borderRight: ni < resNights.length - 1 ? `1px dashed ${nightSelectMode ? "rgba(128,128,128,0.35)" : "rgba(128,128,128,0.15)"}` : "none", background: isSel ? `${C.suc}40` : "transparent", cursor: nightSelectMode ? "pointer" : "inherit", display: "flex", alignItems: "center", justifyContent: "center", zIndex: nightSelectMode ? 3 : 1, transition: "background 0.1s, border 0.1s", pointerEvents: nightSelectMode ? "auto" : "none" }}
                                   onMouseEnter={nightSelectMode ? (e => { if (!isSel) e.currentTarget.style.background = `${C.acc}20`; }) : undefined}
                                   onMouseLeave={nightSelectMode ? (e => { if (!isSel) e.currentTarget.style.background = "transparent"; }) : undefined}>
-                                  {isSel && <svg width="12" height="12" viewBox="0 0 24 24" fill={C.suc} stroke="#fff" strokeWidth="3"><polyline points="20 6 9 17 4 12"/></svg>}
+                                  {nightSelectMode && (
+                                    <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${isSel ? C.suc : "rgba(175,141,84,0.5)"}`, background: isSel ? C.suc : "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}>
+                                      {isSel && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
+                                    </div>
+                                  )}
                                 </div>
                               );
                             });
@@ -12896,8 +13343,15 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
               if (updatedRes.belongings && updatedRes.belongings !== bRes.belongings) ciDiffs.push({field:"Belongings",oldVal:bRes.belongings||"(empty)",newVal:updatedRes.belongings});
               if (ciDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Filled Check-In Details", ciDiffs, profile));
             }
+            // Deduct coupons from package sales if applied
+            let updatedPackageSales = [...(data.packageSales || [])];
+            if (updatedRes.appliedCoupons && updatedRes.appliedCoupons.length > 0) {
+              updatedRes.appliedCoupons.forEach(ac => {
+                updatedPackageSales = updatedPackageSales.map(s => s.id === ac.saleId ? { ...s, used: (s.used || 0) + ac.unitsUsed, unitsRemaining: Math.max(0, (s.unitsRemaining || s.quantity || 0) - ac.unitsUsed) } : s);
+              });
+            }
             const newAuditLog = [...(data.auditLog || []), ...auditLogs];
-            await save({ ...data, auditLog: newAuditLog, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
+            await save({ ...data, auditLog: newAuditLog, packageSales: updatedPackageSales, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
             if (!doCheckIn && !doCheckOut && diffs.length > 0 && bClient) {
               showTextNotifyToast(bClient, bDog, diffs);
             }
@@ -14257,9 +14711,10 @@ function EODPage({ data, save, nav }) {
       // Merge: keep any existing entries that aren't in the 60-day range, replace the rest
       const existingOutside = (data.eodEntries || []).filter(e => !entries.find(ne => ne.date === e.date));
       const merged = [...existingOutside, ...entries].sort((a, b) => a.date.localeCompare(b.date));
+      // Persist the data to the data state via save() function
       await save({ ...data, eodEntries: merged });
       setSeeding(false);
-      alert("Done! 60 days of sample EOD data generated.");
+      alert("Done! 60 days of sample EOD data generated. Data has been saved and will persist on refresh.");
     } catch (err) {
       console.error("EOD seed error:", err);
       setSeeding(false);
@@ -15357,7 +15812,7 @@ function PackagesSection({ data, save }) {
       ) : (
         <Card>
           {(() => {
-            const colDef = "2.2fr 1.1fr 0.5fr 0.8fr 0.8fr 0.8fr 0.8fr 0.9fr 0.6fr 0.8fr 0.5fr";
+            const colDef = "2.2fr 1.1fr 0.5fr 0.8fr 0.8fr 0.8fr 0.8fr 0.9fr 0.6fr 0.8fr 0.5fr 0.5fr";
             const hdrBase = {fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",padding:"10px 12px",background:C.bg,borderBottom:`1px solid ${C.border}`,cursor:"pointer",userSelect:"none",display:"flex",alignItems:"center",gap:4};
             const sortIcon = (field) => sortField === field ? (sortDir === "asc" ? " \u2191" : " \u2193") : "";
             return (
@@ -15372,6 +15827,7 @@ function PackagesSection({ data, save }) {
                 <div style={{...hdrBase,cursor:"default"}}>Expiration</div>
                 <div style={{...hdrBase,cursor:"default"}}>Online</div>
                 <div style={hdrBase} onClick={() => toggleSort("createdAt")}>Created{sortIcon("createdAt")}</div>
+                <div style={{...hdrBase,cursor:"default",justifyContent:"center",fontSize:10}}>Sold</div>
                 <div style={{...hdrBase,cursor:"default",justifyContent:"center"}}>Actions</div>
 
                 {sortedActivePkgs.map((pkg) => {
@@ -15408,6 +15864,7 @@ function PackagesSection({ data, save }) {
                         </button>
                       </div>
                       <div style={cellBase} onClick={() => toggleExpand(pkg)}><span style={{color:C.textMut,fontSize:12}}>{pkg.createdAt || "—"}</span></div>
+                      <div style={{...cellBase,textAlign:"center",fontSize:13,fontWeight:700,color:C.pri}}>{sales.filter(s => s.packageId === pkg.id).reduce((sum, s) => sum + (s.quantity || 0), 0)}</div>
                       <div style={{...cellBase,display:"flex",alignItems:"center",justifyContent:"center",cursor:"default"}}>
                         <button onClick={(e) => { e.stopPropagation(); handleArchivePackage(pkg.id); }} style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,padding:4,display:"flex",alignItems:"center"}} title="Archive package">
                           <I.X/>
@@ -15493,7 +15950,7 @@ function PackagesSection({ data, save }) {
       )}
 
       {showCreate && <CreatePackageWizard data={data} save={save} onClose={() => setShowCreate(false)} />}
-      {showSell && <SellPackageModal data={data} save={save} onClose={() => setShowSell(false)} />}
+      {showSell && <SellPackageModal data={data} save={save} onClose={() => setShowSell(false)} nav={nav} />}
     </div>
   );
 }
@@ -16004,7 +16461,7 @@ function CreatePackageWizard({ data, save, onClose }) {
   );
 }
 
-function SellPackageModal({ data, save, onClose }) {
+function SellPackageModal({ data, save, onClose, nav }) {
   const [selectedClient, setSelectedClient] = useState(null);
   const [searchQ, setSearchQ] = useState("");
   const [cartItems, setCartItems] = useState([{ packageId: null, qty: 1 }]);
@@ -16064,7 +16521,24 @@ function SellPackageModal({ data, save, onClose }) {
       retailValue: pkgs.find(p => p.id === item.packageId)?.retailValue || 0,
     }));
 
-    await save({ ...data, packageSales: [...(data.packageSales || []), ...sales] });
+    // Create payment records for each package sale
+    const payments = sales.map(sale => ({
+      id: gid(),
+      clientId: selectedClient.id,
+      reservationId: null,
+      amount: sale.totalPaid,
+      type: "package",
+      method: "cash",
+      cardLast4: null,
+      status: "completed",
+      note: `Package purchase: ${sale.packageName}`,
+      timestamp: new Date().toISOString(),
+      stripePaymentIntentId: null,
+      stripeRefundId: null,
+      processedBy: profile ? (profile.full_name || profile.email || "Staff") : "Staff",
+    }));
+
+    await save({ ...data, packageSales: [...(data.packageSales || []), ...sales], payments: [...(data.payments || []), ...payments] });
     setSuccess(true);
   };
 
@@ -16083,8 +16557,11 @@ function SellPackageModal({ data, save, onClose }) {
 
   return (
     <Modal title="Sell Package" wide onClose={onClose}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,paddingBottom:12,borderBottom:`1px solid ${C.borderLight}`}}>
+        <div style={{fontSize:13,fontWeight:600,color:C.text}}>Select Client</div>
+        <button onClick={() => {onClose(); nav && nav("settings", {tab:"packages"});}} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.textMut,fontSize:12,fontWeight:600,padding:"6px 12px",borderRadius:8,transition:"all 0.15s"}} onMouseEnter={e=>e.currentTarget.style.background=C.bg} onMouseLeave={e=>e.currentTarget.style.background="none"}><I.Settings size={14}/> Package Settings</button>
+      </div>
       <div style={{marginBottom:24}}>
-        <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Select Client</label>
         {selectedClient ? (
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:12,background:C.priLt,borderRadius:8}}>
             <div style={{fontSize:14,fontWeight:600,color:C.text}}>
@@ -16093,27 +16570,29 @@ function SellPackageModal({ data, save, onClose }) {
             <Btn onClick={() => { setSelectedClient(null); setSearchQ(""); }} variant="secondary" size="sm">Change</Btn>
           </div>
         ) : (
-          <div>
+          <div style={{position:"relative"}}>
             <input
               type="text"
               value={searchQ}
               onChange={(e) => setSearchQ(e.target.value)}
               placeholder="Search by name or phone..."
-              style={{width:"100%",padding:"10px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:14,marginBottom:8}}
+              style={{width:"100%",padding:"10px 14px",border:`2px solid ${C.border}`,borderRadius:8,fontSize:14,marginBottom:8,background:C.surface,color:C.text,fontFamily:"inherit",boxSizing:"border-box",transition:"all 0.15s",fontWeight:500}}
               className="no-focus-ring"
+              onFocus={(e) => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.boxShadow = `0 0 0 3px ${C.priLt}`; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}
             />
             {searchQ && filteredClients.length > 0 && (
-              <div style={{border:`1px solid ${C.border}`,borderRadius:6,maxHeight:240,overflow:"auto",background:C.surface}}>
+              <div style={{position:"absolute",top:"100%",left:0,right:0,border:`2px solid ${C.pri}`,borderRadius:8,borderTopLeftRadius:0,borderTopRightRadius:0,maxHeight:240,overflow:"auto",background:C.surface,zIndex:10,marginTop:-10,boxShadow:"0 8px 24px rgba(0,52,98,0.15)"}}>
                 {filteredClients.map(cl => (
                   <div
                     key={cl.id}
                     onClick={() => { setSelectedClient(cl); setSearchQ(""); }}
-                    style={{padding:10,borderBottom:`1px solid ${C.borderLight}`,cursor:"pointer",fontSize:13}}
-                    onMouseEnter={(e) => e.currentTarget.style.background = C.surfaceHover}
+                    style={{padding:"12px 14px",borderBottom:`1px solid ${C.borderLight}`,cursor:"pointer",fontSize:13,transition:"all 0.15s",fontWeight:500}}
+                    onMouseEnter={(e) => e.currentTarget.style.background = C.priLt}
                     onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
                   >
-                    <div style={{fontWeight:500,color:C.text}}>{cl.fields?.first_name} {cl.fields?.last_name}</div>
-                    <div style={{fontSize:11,color:C.textMut}}>{cl.fields?.phone}</div>
+                    <div style={{fontWeight:600,color:C.text}}>{cl.fields?.first_name} {cl.fields?.last_name}</div>
+                    <div style={{fontSize:11,color:C.textMut,marginTop:2}}>{cl.fields?.phone}</div>
                   </div>
                 ))}
               </div>
@@ -16123,9 +16602,9 @@ function SellPackageModal({ data, save, onClose }) {
       </div>
 
       <div style={{marginBottom:24}}>
-        <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Packages</label>
+        <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:10}}>Packages</label>
         {cartItems.map((item, idx) => (
-          <div key={idx} style={{display:"flex",gap:8,marginBottom:8,alignItems:"center"}}>
+          <div key={idx} style={{display:"flex",gap:10,marginBottom:10,alignItems:"center"}}>
             <select
               value={item.packageId || ""}
               onChange={(e) => {
@@ -16133,8 +16612,10 @@ function SellPackageModal({ data, save, onClose }) {
                 newItems[idx].packageId = e.target.value || null;
                 setCartItems(newItems);
               }}
-              style={{flex:1,padding:"8px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:13}}
+              style={{flex:1,padding:"10px 14px",border:`2px solid ${C.border}`,borderRadius:8,fontSize:13,background:C.surface,color:C.text,fontFamily:"inherit",boxSizing:"border-box",transition:"all 0.15s",fontWeight:500,appearance:"none",backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23003462' stroke-width='3' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center",paddingRight:40}}
               className="no-focus-ring"
+              onFocus={(e) => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.boxShadow = `0 0 0 3px ${C.priLt}`; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}
             >
               <option value="">Select a package...</option>
               {pkgs.map(pkg => (
@@ -16152,18 +16633,22 @@ function SellPackageModal({ data, save, onClose }) {
                 newItems[idx].qty = Math.max(1, parseInt(e.target.value) || 1);
                 setCartItems(newItems);
               }}
-              style={{width:60,padding:"8px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:13,textAlign:"center"}}
+              style={{width:70,padding:"10px 12px",border:`2px solid ${C.border}`,borderRadius:8,fontSize:13,textAlign:"center",background:C.surface,color:C.text,fontFamily:"inherit",boxSizing:"border-box",transition:"all 0.15s",fontWeight:500}}
               className="no-focus-ring"
+              onFocus={(e) => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.boxShadow = `0 0 0 3px ${C.priLt}`; }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}
             />
             <button
               onClick={() => handleRemoveCart(idx)}
-              style={{padding:6,background:"none",border:"none",cursor:"pointer",color:C.dan}}
+              style={{padding:8,background:"none",border:"none",cursor:"pointer",color:C.dan,display:"flex",alignItems:"center",justifyContent:"center",transition:"opacity 0.15s"}}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = "0.7"}
+              onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
             >
-              <I.X/>
+              <I.X size={18}/>
             </button>
           </div>
         ))}
-        <Btn onClick={handleAddCart} variant="secondary" size="sm" style={{marginTop:8}}>+ Add Another Package</Btn>
+        <Btn onClick={handleAddCart} variant="secondary" size="sm" style={{marginTop:12}}>+ Add Another Package</Btn>
       </div>
 
       <div style={{marginBottom:24,padding:12,background:C.bg,borderRadius:8,textAlign:"right"}}>
@@ -17630,6 +18115,10 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
         const localPkg = {
           id: "pkg_" + gid(), name: pkg.name, description: pkg.description,
           serviceCategory: pkg.serviceCategory, serviceName: pkg.serviceName,
+          serviceNames: pkg.serviceNames || [pkg.serviceName],
+          packageType: pkg.packageType || "standard",
+          buyQty: pkg.buyQty,
+          freeQty: pkg.freeQty,
           unitRate, quantity: pkg.quantity, retailValue, packagePrice, savings,
           savingsPerUnit: savings / Math.max(1, pkg.quantity),
           discountType: pkg.discountType, discountValue: pkg.discountValue,
@@ -17652,6 +18141,9 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
           available_online: localPkg.availableOnline,
           fields: localPkg,
         });
+        // Also update the location's data object in the locations table so useData loads it
+        const updatedLocData = { ...locData, packages: [...(locData.packages || []), localPkg] };
+        await supabase.from('locations').update({ data: updatedLocData }).eq('id', locId);
       } catch (e) { console.error('Push package error:', e); }
     }
     const updated = (data.enterprisePackages || []).map(p => p.id === pkg.id ? { ...p, pushedTo: [...new Set([...(p.pushedTo || []), ...pushLocations])] } : p);
@@ -17940,8 +18432,11 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
 function EnterpriseCreatePkgForm({ onSave, onCancel }) {
   const [step, setStep] = useState(1);
   const [serviceCategory, setServiceCategory] = useState("Boarding");
-  const [serviceName, setServiceName] = useState("");
+  const [selectedServices, setSelectedServices] = useState([]);
+  const [packageType, setPackageType] = useState("standard");
   const [quantity, setQuantity] = useState(10);
+  const [buyQty, setBuyQty] = useState(1);
+  const [freeQty, setFreeQty] = useState(1);
   const [discountType, setDiscountType] = useState("percent");
   const [discountValue, setDiscountValue] = useState(10);
   const [expirationType, setExpirationType] = useState("relative");
@@ -17958,80 +18453,182 @@ function EnterpriseCreatePkgForm({ onSave, onCancel }) {
 
   const unitLabel = serviceCategory === "Boarding" ? "night" : serviceCategory === "Daycare" ? "day" : "unit";
   const unitLabelPlural = unitLabel === "night" ? "Nights" : unitLabel === "day" ? "Days" : "Coupons";
-  const autoName = discountType === "percent" && discountValue > 0
-    ? `${discountValue}% Off ${quantity} ${serviceName || serviceCategory} ${unitLabelPlural}`
-    : `${quantity} ${serviceName || serviceCategory} ${unitLabelPlural}`;
-  const autoDesc = `Enterprise package: ${discountType === "percent" ? discountValue + "% off" : "$" + discountValue + " off"} ${quantity} ${unitLabelPlural.toLowerCase()} of ${serviceName || serviceCategory}. Pricing is calculated dynamically per location. ${expirationType === "relative" ? `Expires ${expirationDays} days after purchase.` : "No expiration."}`;
+  const svcNames = selectedServices.length > 0 ? selectedServices.join(" + ") : serviceCategory;
+  const effectiveQty = packageType === "bogo" ? (quantity * 2) : packageType === "buyXgetY" ? (buyQty + freeQty) : packageType === "freeNight" ? 1 : quantity;
+
+  const autoName = packageType === "bogo" ? `BOGO: Buy ${quantity}, Get ${quantity} Free — ${svcNames}` :
+    packageType === "buyXgetY" ? `Buy ${buyQty} Get ${freeQty} Free — ${svcNames}` :
+    packageType === "freeNight" ? `Free ${unitLabel === "night" ? "Night" : "Session"} Coupon — ${svcNames}` :
+    discountType === "percent" && discountValue > 0
+      ? `${discountValue}% Off ${quantity} ${svcNames} ${unitLabelPlural}`
+      : `${quantity} ${svcNames} ${unitLabelPlural}`;
+
+  const autoDesc = packageType === "freeNight"
+    ? `One complimentary ${unitLabel} of ${svcNames}. ${expirationType === "relative" ? `Expires ${expirationDays} days after purchase.` : "No expiration."}`
+    : `Enterprise package: ${packageType === "bogo" ? `Buy ${quantity}, get ${quantity} free` : packageType === "buyXgetY" ? `Buy ${buyQty}, get ${freeQty} free` : discountType === "percent" ? discountValue + "% off" : "$" + discountValue + " off"} for ${effectiveQty} ${unitLabelPlural.toLowerCase()} of ${svcNames}. Pricing is calculated dynamically per location. ${expirationType === "relative" ? `Expires ${expirationDays} days after purchase.` : "No expiration."}`;
 
   const handleCreate = () => {
-    if (!serviceName) return;
-    onSave({
+    if (selectedServices.length === 0) return;
+    const pkg = {
       name: name || autoName,
       description: description || autoDesc,
-      serviceCategory, serviceName, quantity,
-      discountType, discountValue,
+      serviceCategory,
+      serviceName: selectedServices.join(" + "),
+      serviceNames: selectedServices,
+      packageType,
+      quantity: packageType === "bogo" ? quantity : packageType === "buyXgetY" ? buyQty : packageType === "freeNight" ? 1 : quantity,
+      buyQty: packageType === "buyXgetY" ? buyQty : packageType === "bogo" ? quantity : undefined,
+      freeQty: packageType === "buyXgetY" ? freeQty : packageType === "bogo" ? quantity : packageType === "freeNight" ? 1 : undefined,
+      discountType: packageType === "standard" ? discountType : "smart",
+      discountValue: packageType === "standard" ? discountValue : 0,
       expirationType, expirationDays: expirationType === "relative" ? expirationDays : null,
       availableOnline,
-    });
+    };
+    onSave(pkg);
   };
 
   return (
     <div>
       {step === 1 && (
         <div>
-          <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:16}}>Step 1: Select Service</div>
+          <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:16}}>Step 1: Select Services</div>
           <div style={{display:"flex",gap:8,marginBottom:20}}>
             {Object.keys(serviceOptions).map(cat => (
-              <button key={cat} onClick={() => { setServiceCategory(cat); setServiceName(""); }}
+              <button key={cat} onClick={() => { setServiceCategory(cat); setSelectedServices([]); }}
                 style={{flex:1,padding:"10px 16px",border:`2px solid ${serviceCategory === cat ? C.acc : C.border}`,background:serviceCategory === cat ? C.accLt : "transparent",borderRadius:8,fontWeight:600,cursor:"pointer",color:C.text,fontSize:13,transition:"all 0.2s"}}>{cat}</button>
             ))}
           </div>
+          <div style={{fontSize:12,color:C.textMut,marginBottom:8}}>Select one or more services to bundle into this package:</div>
           <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:12,marginBottom:24}}>
-            {(serviceOptions[serviceCategory] || []).map(svc => (
-              <Card key={svc} onClick={() => setServiceName(svc)} hoverable
-                style={{padding:16,cursor:"pointer",border:`2px solid ${serviceName === svc ? C.acc : C.border}`,background:serviceName === svc ? C.accLt : "transparent",textAlign:"center"}}>
-                <div style={{fontWeight:600,color:C.text}}>{svc}</div>
-                <div style={{fontSize:11,color:C.textMut,marginTop:4}}>per {unitLabel}</div>
-              </Card>
-            ))}
+            {(serviceOptions[serviceCategory] || []).map(svc => {
+              const isSel = selectedServices.includes(svc);
+              return (
+                <Card key={svc} onClick={() => setSelectedServices(prev => isSel ? prev.filter(s => s !== svc) : [...prev, svc])} hoverable
+                  style={{padding:16,cursor:"pointer",border:`2px solid ${isSel ? C.acc : C.border}`,background:isSel ? C.accLt : "transparent",textAlign:"center",position:"relative"}}>
+                  {isSel && <span style={{position:"absolute",top:6,right:8,fontSize:14,color:C.acc}}>✓</span>}
+                  <div style={{fontWeight:600,color:C.text}}>{svc}</div>
+                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>per {unitLabel}</div>
+                </Card>
+              );
+            })}
           </div>
+          {selectedServices.length > 1 && (
+            <div style={{padding:"8px 14px",background:C.priLt,borderRadius:8,marginBottom:16,fontSize:13,color:C.pri,fontWeight:600}}>
+              Bundle: {selectedServices.join(" + ")}
+            </div>
+          )}
           <div style={{display:"flex",gap:12,justifyContent:"flex-end"}}>
             <Btn onClick={onCancel} variant="secondary">Cancel</Btn>
-            <Btn onClick={() => setStep(2)} variant="primary" disabled={!serviceName}>Next</Btn>
+            <Btn onClick={() => setStep(2)} variant="primary" disabled={selectedServices.length === 0}>Next</Btn>
           </div>
         </div>
       )}
 
       {step === 2 && (
         <div>
-          <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:16}}>Step 2: Quantity & Discount</div>
+          <div style={{fontSize:14,fontWeight:600,color:C.text,marginBottom:16}}>Step 2: Package Type</div>
           <div style={{marginBottom:20,padding:12,background:C.priLt,borderRadius:8}}>
-            <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Selected Service</div>
-            <div style={{fontSize:16,fontWeight:600,color:C.text}}>{serviceName}</div>
+            <div style={{fontSize:12,color:C.textMut,marginBottom:4}}>Selected Service{selectedServices.length > 1 ? "s" : ""}</div>
+            <div style={{fontSize:16,fontWeight:600,color:C.text}}>{selectedServices.join(" + ")}</div>
           </div>
-          <div style={{marginBottom:20}}>
-            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Quantity</label>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <button onClick={() => setQuantity(Math.max(1, quantity - 1))} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>−</button>
-              <input type="number" value={quantity} onChange={e => setQuantity(Math.max(1, parseInt(e.target.value) || 1))} style={{width:60,padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",fontSize:14}} className="no-focus-ring" />
-              <button onClick={() => setQuantity(quantity + 1)} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>+</button>
-              <span style={{marginLeft:"auto",fontSize:14,color:C.textMut}}>Unit: {unitLabel}</span>
-            </div>
-          </div>
-          <div style={{marginBottom:20}}>
-            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Discount (applied dynamically per location's rates)</label>
-            <div style={{display:"flex",gap:8,marginBottom:12}}>
-              {[["percent","% Off"],["fixed","$ Off"]].map(([type,label]) => (
-                <button key={type} onClick={() => setDiscountType(type)} style={{flex:1,padding:"8px 12px",borderRadius:8,border:`1.5px solid ${discountType === type ? C.pri : C.border}`,background:discountType === type ? C.priLt : "transparent",color:discountType === type ? C.pri : C.text,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
+          <div style={{marginBottom:24}}>
+            <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Package Type</label>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8}}>
+              {[
+                { id: "standard", label: "Standard", desc: "Set custom qty + discount" },
+                { id: "bogo", label: "BOGO", desc: "Buy 1, get 1 free" },
+                { id: "buyXgetY", label: "Buy X Get Y", desc: "Buy X, get Y free" },
+                { id: "freeNight", label: "Free Coupon", desc: "Single free night/session" },
+              ].map(t => (
+                <button key={t.id} onClick={() => setPackageType(t.id)} style={{
+                  padding:"10px 8px",border:`2px solid ${packageType === t.id ? C.acc : C.border}`,
+                  background:packageType === t.id ? C.accLt : "transparent",borderRadius:8,cursor:"pointer",
+                  textAlign:"center",fontFamily:"inherit",transition:"all 0.15s"
+                }}>
+                  <div style={{fontSize:13,fontWeight:700,color:packageType === t.id ? C.acc : C.text}}>{t.label}</div>
+                  <div style={{fontSize:10,color:C.textMut,marginTop:2}}>{t.desc}</div>
+                </button>
               ))}
             </div>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <input type="number" value={discountValue} onChange={e => setDiscountValue(Math.max(0, parseFloat(e.target.value) || 0))} style={{width:100,padding:"8px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:14}} className="no-focus-ring" />
-              <span style={{fontSize:13,color:C.textMut}}>{discountType === "percent" ? "%" : "$ per unit"}</span>
-            </div>
           </div>
+
+          {packageType === "bogo" && (
+            <div style={{marginBottom:24}}>
+              <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Customer Buys (gets same amount free)</label>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <button onClick={() => setQuantity(Math.max(1, quantity - 1))} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>−</button>
+                <input type="text" inputMode="numeric" value={quantity} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setQuantity(v === "" ? "" : Math.max(1, parseInt(v))); }} onBlur={() => { if (!quantity || quantity < 1) setQuantity(1); }} style={{width:60,padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",fontSize:14}} className="no-focus-ring" />
+                <button onClick={() => setQuantity(quantity + 1)} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>+</button>
+              </div>
+              <div style={{marginTop:12,padding:12,background:C.sucLt,borderRadius:8,fontSize:13,color:C.suc,fontWeight:600}}>
+                Buy {quantity}, get {quantity} free = {quantity * 2} total units
+              </div>
+            </div>
+          )}
+
+          {packageType === "buyXgetY" && (
+            <div style={{marginBottom:24}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+                <div>
+                  <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Customer Buys</label>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <button onClick={() => setBuyQty(Math.max(1, buyQty - 1))} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>−</button>
+                    <input type="text" inputMode="numeric" value={buyQty} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setBuyQty(v === "" ? "" : Math.max(1, parseInt(v))); }} onBlur={() => { if (!buyQty || buyQty < 1) setBuyQty(1); }} style={{width:60,padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",fontSize:14}} className="no-focus-ring" />
+                    <button onClick={() => setBuyQty(buyQty + 1)} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>+</button>
+                  </div>
+                </div>
+                <div>
+                  <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Gets Free</label>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <button onClick={() => setFreeQty(Math.max(1, freeQty - 1))} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>−</button>
+                    <input type="text" inputMode="numeric" value={freeQty} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setFreeQty(v === "" ? "" : Math.max(1, parseInt(v))); }} onBlur={() => { if (!freeQty || freeQty < 1) setFreeQty(1); }} style={{width:60,padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",fontSize:14}} className="no-focus-ring" />
+                    <button onClick={() => setFreeQty(freeQty + 1)} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>+</button>
+                  </div>
+                </div>
+              </div>
+              <div style={{marginTop:12,padding:12,background:C.sucLt,borderRadius:8,fontSize:13,color:C.suc,fontWeight:600}}>
+                Buy {buyQty}, get {freeQty} free = {buyQty + freeQty} total units
+              </div>
+            </div>
+          )}
+
+          {packageType === "freeNight" && (
+            <div style={{marginBottom:24}}>
+              <div style={{padding:16,background:C.sucLt,borderRadius:8,border:`1px solid ${C.suc}30`}}>
+                <div style={{fontSize:15,fontWeight:700,color:C.suc,marginBottom:4}}>Free {unitLabel === "night" ? "Night" : "Session"} Coupon</div>
+                <div style={{fontSize:13,color:C.text}}>This package gives the customer 1 complimentary {unitLabel} of {selectedServices.join(" + ")}.</div>
+              </div>
+            </div>
+          )}
+
+          {packageType === "standard" && (
+            <>
+              <div style={{marginBottom:24}}>
+                <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:8}}>Quantity</label>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <button onClick={() => setQuantity(Math.max(1, quantity - 1))} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>−</button>
+                  <input type="text" inputMode="numeric" value={quantity} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ""); setQuantity(v === "" ? "" : Math.max(1, parseInt(v))); }} onBlur={() => { if (!quantity || quantity < 1) setQuantity(1); }} style={{width:60,padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,textAlign:"center",fontSize:14}} className="no-focus-ring" />
+                  <button onClick={() => setQuantity(quantity + 1)} style={{padding:"6px 12px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,cursor:"pointer",fontWeight:600}}>+</button>
+                  <span style={{marginLeft:"auto",fontSize:14,color:C.textMut}}>Unit: {unitLabel}</span>
+                </div>
+              </div>
+              <div style={{marginBottom:20}}>
+                <label style={{display:"block",fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Discount (applied dynamically per location's rates)</label>
+                <div style={{display:"flex",gap:8,marginBottom:12}}>
+                  {[["percent","% Off"],["fixed","$ Off"]].map(([type,label]) => (
+                    <button key={type} onClick={() => setDiscountType(type)} style={{flex:1,padding:"8px 12px",borderRadius:8,border:`1.5px solid ${discountType === type ? C.pri : C.border}`,background:discountType === type ? C.priLt : "transparent",color:discountType === type ? C.pri : C.text,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{label}</button>
+                  ))}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <input type="number" value={discountValue} onChange={e => setDiscountValue(Math.max(0, parseFloat(e.target.value) || 0))} style={{width:100,padding:"8px 12px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:14}} className="no-focus-ring" />
+                  <span style={{fontSize:13,color:C.textMut}}>{discountType === "percent" ? "%" : "$ per unit"}</span>
+                </div>
+              </div>
+            </>
+          )}
+
           <Card style={{padding:12,background:C.bg,marginBottom:20}}>
-            <div style={{fontSize:12,color:C.textMut,fontStyle:"italic"}}>Note: Actual package pricing will be calculated from each location's rates when pushed. For example, if a location charges $45/day for daycare and you set 10% off, the package price will be $405 for 10 days at that location.</div>
+            <div style={{fontSize:12,color:C.textMut,fontStyle:"italic"}}>Note: Actual package pricing will be calculated from each location's rates when pushed. For example, if a location charges $45/day for daycare and you set 10% off, the package price will be calculated accordingly at that location.</div>
           </Card>
           <div style={{display:"flex",gap:12,justifyContent:"flex-end"}}>
             <Btn onClick={() => setStep(1)} variant="secondary">Back</Btn>
@@ -18085,9 +18682,13 @@ function EnterpriseCreatePkgForm({ onSave, onCancel }) {
           <Card style={{marginBottom:20,padding:16,background:C.bg}}>
             <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:12}}>Summary</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,fontSize:12}}>
-              <div><span style={{color:C.textMut}}>Service:</span> <span style={{fontWeight:600}}>{serviceName}</span></div>
-              <div><span style={{color:C.textMut}}>Qty:</span> <span style={{fontWeight:600}}>{quantity} {unitLabelPlural.toLowerCase()}</span></div>
-              <div><span style={{color:C.textMut}}>Discount:</span> <span style={{fontWeight:600}}>{discountType === "percent" ? `${discountValue}%` : `$${discountValue}`} off</span></div>
+              <div><span style={{color:C.textMut}}>Service:</span> <span style={{fontWeight:600}}>{selectedServices.join(" + ")}</span></div>
+              <div><span style={{color:C.textMut}}>Type:</span> <span style={{fontWeight:600}}>{packageType === "bogo" ? "BOGO" : packageType === "buyXgetY" ? "Buy X Get Y" : packageType === "freeNight" ? "Free Coupon" : "Standard"}</span></div>
+              {packageType === "bogo" && <div><span style={{color:C.textMut}}>Qty:</span> <span style={{fontWeight:600}}>Buy {quantity}, get {quantity} free</span></div>}
+              {packageType === "buyXgetY" && <div><span style={{color:C.textMut}}>Qty:</span> <span style={{fontWeight:600}}>Buy {buyQty}, get {freeQty} free</span></div>}
+              {packageType === "freeNight" && <div><span style={{color:C.textMut}}>Qty:</span> <span style={{fontWeight:600}}>1 free {unitLabel}</span></div>}
+              {packageType === "standard" && <div><span style={{color:C.textMut}}>Qty:</span> <span style={{fontWeight:600}}>{quantity} {unitLabelPlural.toLowerCase()}</span></div>}
+              {packageType === "standard" && <div><span style={{color:C.textMut}}>Discount:</span> <span style={{fontWeight:600}}>{discountType === "percent" ? `${discountValue}%` : `$${discountValue}`} off</span></div>}
               <div><span style={{color:C.textMut}}>Expires:</span> <span style={{fontWeight:600}}>{expirationType === "relative" ? `${expirationDays} days` : "Never"}</span></div>
               <div style={{gridColumn:"1/-1"}}><span style={{color:C.textMut}}>Pricing:</span> <span style={{fontWeight:600,fontStyle:"italic"}}>Dynamic — calculated per location's rates</span></div>
             </div>
@@ -18732,11 +19333,22 @@ function MessageTemplatesTab({ data, save }) {
 
   const VARIABLES = [
     { tag: "{clientName}", desc: "Client's full name" },
+    { tag: "{clientFirstName}", desc: "Client's first name only" },
+    { tag: "{clientLastName}", desc: "Client's last name only" },
     { tag: "{dogName}", desc: "Smart dog names (uses 'and' / commas)" },
-    { tag: "{checkInDate}", desc: "Check-in date" },
-    { tag: "{checkOutDate}", desc: "Check-out date" },
-    { tag: "{roomType}", desc: "Room type name" },
+    { tag: "{checkInDate}", desc: "Check-in date (formatted)" },
+    { tag: "{checkInTime}", desc: "Check-in time" },
+    { tag: "{checkOutDate}", desc: "Check-out date (formatted)" },
+    { tag: "{checkOutTime}", desc: "Check-out time" },
+    { tag: "{roomType}", desc: "Room type name (e.g., Executive Suite)" },
+    { tag: "{roomNumber}", desc: "Specific room number" },
+    { tag: "{servicetype}", desc: "Service type (boarding, daycare, evaluation)" },
     { tag: "{totalPrice}", desc: "Reservation total price" },
+    { tag: "{depositRequired}", desc: "Deposit amount required" },
+    { tag: "{depositCollected}", desc: "Deposit amount collected" },
+    { tag: "{daycareDogCount}", desc: "Number of dogs in daycare group" },
+    { tag: "{notes}", desc: "General reservation notes" },
+    { tag: "{specialInstructions}", desc: "Special care instructions" },
   ];
 
   const startEdit = (tpl) => { setEditId(tpl.id); setEditName(tpl.name); setEditBody(tpl.body); };
@@ -19391,6 +20003,9 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
       { id: "message-templates", label: "Message Templates", desc: "Customize text message templates with variables", keywords: "message templates text sms texting variables dog name" },
       { id: "dropdowns", label: "Dropdown Lists", desc: "Customize dropdown options for breeds, food types, etc.", keywords: "dropdowns lists options breeds food bath medication" },
     ]},
+    { label: "Reports", items: [
+      { id: "unpaid-deposits", label: "Unpaid Deposits", desc: "View outstanding deposit balances for upcoming boarding reservations", keywords: "unpaid deposits report payment financial outstanding balance" },
+    ]},
     { label: "Operations", items: [
       { id: "eod", label: "EOD Template", desc: "End-of-day report sections and template setup", keywords: "eod end of day template report sections" },
       { id: "daily-ops", label: "Daily Ops Templates", desc: "Opening, FE, BE, and closing checklist templates", keywords: "daily ops operations checklists opening closing front back" },
@@ -19423,7 +20038,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
   const SETTINGS_PERM_MAP = {
     fields:"edit_fields",client:"edit_fields",dog:"edit_fields",tags:"edit_tags_config",vaccines:"edit_vaccines_config",
     agreements:"edit_agreements",pricing:"edit_pricing",packages:"edit_pricing",discounts:"edit_pricing","message-templates":"edit_facility",dropdowns:"edit_dropdowns",
-    eod:"edit_eod_template","daily-ops":"edit_ops_template",
+    "unpaid-deposits":"view_reports",eod:"edit_eod_template","daily-ops":"edit_ops_template",
     facility:"edit_facility",rooms:"edit_rooms","closed-dates":"edit_facility",policies:"edit_vaccines_config","compliance-rules":"edit_vaccines_config","booking-settings":"edit_facility",
     team:"manage_team",roles:"manage_roles","session-security":"manage_team",automations:"manage_team",reset:"reset_data",
   };
@@ -19928,6 +20543,76 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
 
       ) : tab === "message-templates" ? (
         <MessageTemplatesTab data={data} save={save} />
+
+      ) : tab === "unpaid-deposits" ? (
+        <div style={{ padding: 24 }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Unpaid Deposits Report</div>
+          <div style={{ fontSize: 12, color: C.textSec, marginBottom: 16 }}>View outstanding deposit balances for upcoming boarding reservations</div>
+          {unpaidDeposits.length === 0 ? (
+            <Card style={{ padding: "40px 20px", textAlign: "center" }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: C.suc, marginBottom: 8 }}>All deposits are up to date!</div>
+              <p style={{ fontSize: 12, color: C.textSec, margin: 0 }}>No outstanding deposit balances found.</p>
+            </Card>
+          ) : (
+            <Card>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
+                <thead>
+                  <tr style={{borderBottom:`2px solid ${C.border}`,textAlign:"left"}}>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Client</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Dog</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Dates</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Room</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Est. Total</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Deposit Req.</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Collected</th>
+                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Outstanding</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unpaidDeposits.map(r => {
+                    const client = data.clients.find(x => x.id === r.clientId);
+                    const dog = data.dogs.find(x => x.id === r.dogId);
+                    const payments = (data.payments || []).filter(p => p.reservationId === r.id && p.type !== "refund");
+                    const collected = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+                    const pricing = data.pricing || DEF_PRICING;
+                    const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
+                    const rate = (pricing.boardingRates || {})[r.roomType] || 0;
+                    const est = rate * nights;
+                    const depositReq = Math.round(est * 0.5 * 100) / 100;
+                    const outstanding = Math.max(0, depositReq - collected);
+                    return (
+                      <tr key={r.id} onClick={() => nav("client", { clientId: r.clientId })} style={{borderBottom:`1px solid ${C.borderLight}`,cursor:"pointer",transition:"background 0.1s"}} onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                        <td style={{padding:"10px 12px",fontWeight:600,color:C.text}}>{client ? `${client.fields.first_name||""} ${client.fields.last_name||""}`.trim() : "—"}</td>
+                        <td style={{padding:"10px 12px",color:C.text}}>{dog?.fields.name || "—"}</td>
+                        <td style={{padding:"10px 12px",color:C.textSec,fontSize:12}}>{fmtDate(r.checkIn)} — {fmtDate(r.checkOut)}</td>
+                        <td style={{padding:"10px 12px",color:C.textSec}}>{r.roomType || "—"}</td>
+                        <td style={{padding:"10px 12px",textAlign:"right",color:C.text}}>${est.toFixed(2)}</td>
+                        <td style={{padding:"10px 12px",textAlign:"right",color:C.acc,fontWeight:600}}>${depositReq.toFixed(2)}</td>
+                        <td style={{padding:"10px 12px",textAlign:"right",color:collected > 0 ? C.suc : C.textMut}}>${collected.toFixed(2)}</td>
+                        <td style={{padding:"10px 12px",textAlign:"right",color:C.dan,fontWeight:700}}>${outstanding.toFixed(2)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr style={{borderTop:`2px solid ${C.border}`}}>
+                    <td colSpan={7} style={{padding:"10px 12px",fontWeight:700,color:C.text,textAlign:"right"}}>Total Outstanding:</td>
+                    <td style={{padding:"10px 12px",textAlign:"right",fontWeight:800,color:C.dan,fontSize:15}}>${unpaidDeposits.reduce((sum, r) => {
+                      const payments = (data.payments || []).filter(p => p.reservationId === r.id && p.type !== "refund");
+                      const collected = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
+                      const pricing = data.pricing || DEF_PRICING;
+                      const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
+                      const rate = (pricing.boardingRates || {})[r.roomType] || 0;
+                      const est = rate * nights;
+                      const depositReq = Math.round(est * 0.5 * 100) / 100;
+                      return sum + Math.max(0, depositReq - collected);
+                    }, 0).toFixed(2)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </Card>
+          )}
+        </div>
 
       ) : tab === "eod" ? (
         <EODTemplateTab data={data} save={save} />
@@ -20497,23 +21182,15 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
 
             <Card style={{ padding: "24px 28px" }}>
               <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Daycare Capacity</div>
-              <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>Set daily capacity limits for daycare bookings. When capacity is reached, the online booking page will show the day as unavailable.</p>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:20}}>
-                <div>
-                  <Inp label="Small Dogs (under 35 lbs)" type="number" value={dcCap.small} onChange={v => updateBkSetting("daycareCapacity", "small", parseInt(v) || 0)} />
-                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Maximum small dogs per day</div>
-                </div>
-                <div>
-                  <Inp label="Large Dogs (35+ lbs)" type="number" value={dcCap.large} onChange={v => updateBkSetting("daycareCapacity", "large", parseInt(v) || 0)} />
-                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Maximum large dogs per day</div>
-                </div>
-                <div>
-                  <Inp label="Total Daily Cap" type="number" value={dcCap.total} onChange={v => updateBkSetting("daycareCapacity", "total", parseInt(v) || 0)} />
-                  <div style={{fontSize:11,color:C.textMut,marginTop:4}}>Hard maximum regardless of size split</div>
-                </div>
+              <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 20px" }}>Daycare capacity is automatically calculated from your facility square footage settings. This ensures the online booking page and internal dashboard always use the same capacity numbers.</p>
+              <div style={{padding:"10px 16px",borderRadius:8,background:C.bg,border:`1px solid ${C.border}`}}>
+                <div style={{fontSize:12,color:C.textSec,marginBottom:8}}>Current capacity calculations:</div>
+                <div style={{fontSize:12,color:C.text}}>• Small Play (under 35 lbs): <strong>1 dog per 12 SF</strong> → {Math.floor((fs.smallDogDaycareSF || 0) / 12)} dogs</div>
+                <div style={{fontSize:12,color:C.text,marginTop:4}}>• Large Play (35+ lbs): <strong>1 dog per 18 SF</strong> → {Math.floor((fs.largeDogDaycareSF || 0) / 18)} dogs</div>
+                <div style={{fontSize:12,color:C.text,marginTop:4}}>• <strong>Total:</strong> {Math.floor((fs.smallDogDaycareSF || 0) / 12) + Math.floor((fs.largeDogDaycareSF || 0) / 18)} dogs per day</div>
               </div>
-              <div style={{marginTop:16,padding:"10px 16px",borderRadius:8,background:C.bg,border:`1px solid ${C.border}`}}>
-                <div style={{fontSize:12,color:C.textSec}}>Current capacity: up to <strong>{dcCap.small}</strong> small + <strong>{dcCap.large}</strong> large dogs, max <strong>{dcCap.total}</strong> total per day</div>
+              <div style={{marginTop:12,padding:"10px 14px",borderRadius:8,background:"#e8f5e9",border:"1px solid #4caf5030",fontSize:12,color:"#2e7d32"}}>
+                To adjust capacity, edit the facility square footage in the <strong>Facility</strong> settings.
               </div>
             </Card>
           </div>
@@ -21412,6 +22089,40 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
         </>
       )}
       </>)}
+
+      {/* Early Check-In Date Adjustment Modal (Item 24) */}
+      {earlyCheckInModal && (
+        <div style={{position:"fixed",top:0,left:0,width:"100%",height:"100%",background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:10000}} onClick={() => setEarlyCheckInModal(null)}>
+          <div onClick={e => e.stopPropagation()} style={{background:C.surface,borderRadius:12,border:`1.5px solid ${C.border}`,width:"90%",maxWidth:480,boxShadow:"0 20px 60px rgba(0,0,0,0.3)",padding:"32px"}}>
+            <div style={{fontSize:20,fontWeight:800,color:C.text,marginBottom:16}}>Early Check-In</div>
+            <div style={{fontSize:13,color:C.textSec,lineHeight:1.6,marginBottom:24}}>
+              <p>This reservation is scheduled for <strong>{new Date(earlyCheckInModal.currentDate + "T00:00:00").toLocaleDateString('en-US', {weekday:'long',month:'short',day:'numeric'})}</strong>, but you're checking in today <strong>{new Date(earlyCheckInModal.today + "T00:00:00").toLocaleDateString('en-US', {weekday:'long',month:'short',day:'numeric'})}</strong>.</p>
+              <p style={{marginTop:12}}>Would you like to adjust the check-in date to today?</p>
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:20}}>
+              <div style={{padding:12,background:C.bg,borderRadius:8}}>
+                <div style={{fontSize:11,color:C.textMut,marginBottom:4,textTransform:"uppercase",fontWeight:600}}>Current Date</div>
+                <div style={{fontSize:14,fontWeight:700,color:C.text}}>{new Date(earlyCheckInModal.currentDate + "T00:00:00").toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'})}</div>
+              </div>
+              <div style={{padding:12,background:C.sucLt,borderRadius:8,border:`1.5px solid ${C.suc}`}}>
+                <div style={{fontSize:11,color:C.textMut,marginBottom:4,textTransform:"uppercase",fontWeight:600}}>New Date</div>
+                <div style={{fontSize:14,fontWeight:700,color:C.suc}}>{new Date(earlyCheckInModal.today + "T00:00:00").toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'})}</div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <Btn variant="secondary" onClick={() => setEarlyCheckInModal(null)}>Cancel</Btn>
+              <Btn variant="success" onClick={async () => {
+                const res = data.reservations.find(r => r.id === earlyCheckInModal.rid);
+                if (res) {
+                  const dateChangeAudit = buildAuditEntry(earlyCheckInModal.rid, "Early Check-In Date Adjusted", [{field:"Check-In Date",oldVal:earlyCheckInModal.currentDate,newVal:earlyCheckInModal.today},{field:"Reason",oldVal:"",newVal:"Early check-in (dog arriving before scheduled date)"}], profile);
+                  await save({...data, auditLog:[...(data.auditLog||[]),dateChangeAudit], reservations:data.reservations.map(r=>r.id===earlyCheckInModal.rid?{...r,checkIn:earlyCheckInModal.today,status:"checked-in"}:r)});
+                }
+                setEarlyCheckInModal(null);
+              }}>Adjust Date & Check In</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
