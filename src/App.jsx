@@ -6254,7 +6254,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
           )}
         </div>
       )}
-      {showSellPkg && <SellPackageModal data={data} save={save} onClose={() => setShowSellPkg(false)} nav={nav} />}
+      {showSellPkg && <SellPackageModal data={data} save={save} onClose={() => setShowSellPkg(false)} nav={nav} profile={profile} />}
     </div>
   );
 }
@@ -15950,7 +15950,7 @@ function PackagesSection({ data, save }) {
       )}
 
       {showCreate && <CreatePackageWizard data={data} save={save} onClose={() => setShowCreate(false)} />}
-      {showSell && <SellPackageModal data={data} save={save} onClose={() => setShowSell(false)} nav={nav} />}
+      {showSell && <SellPackageModal data={data} save={save} onClose={() => setShowSell(false)} nav={nav} profile={profile} />}
     </div>
   );
 }
@@ -16461,7 +16461,7 @@ function CreatePackageWizard({ data, save, onClose }) {
   );
 }
 
-function SellPackageModal({ data, save, onClose, nav }) {
+function SellPackageModal({ data, save, onClose, nav, profile }) {
   const [selectedClient, setSelectedClient] = useState(null);
   const [searchQ, setSearchQ] = useState("");
   const [cartItems, setCartItems] = useState([{ packageId: null, qty: 1 }]);
