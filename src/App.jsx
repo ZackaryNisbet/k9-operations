@@ -18088,11 +18088,9 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
     if (!pushModal || pushLocations.length === 0) return;
     setPushing(true);
     const pkg = pushModal;
+    const successLocs = [];
     for (const locId of pushLocations) {
       try {
-        // Check if package already pushed to this location via k9_packages table
-        const { data: existingPkgs } = await supabase.from('k9_packages').select('id').eq('location_id', locId).eq('fields->>enterpriseSourceId', pkg.id);
-        if (existingPkgs && existingPkgs.length > 0) continue;
         // Get location pricing from settings blob for dynamic pricing calculation
         const { data: locRow } = await supabase.from('locations').select('data').eq('id', locId).single();
         const locData = locRow?.data || {};
@@ -18126,28 +18124,27 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
           availableOnline: pkg.availableOnline, enterpriseSourceId: pkg.id,
           active: true, createdAt: todayStr(),
         };
-        // Write directly to k9_packages table for the child location
-        await supabase.from('k9_packages').upsert({
-          id: localPkg.id, location_id: locId,
-          name: localPkg.name, description: localPkg.description,
-          service_category: localPkg.serviceCategory, service_name: localPkg.serviceName,
-          quantity: localPkg.quantity,
-          package_price: localPkg.packagePrice, retail_value: localPkg.retailValue,
-          unit_price: localPkg.unitRate, savings: localPkg.savings,
-          savings_per_unit: localPkg.savingsPerUnit,
-          discount_pct: localPkg.discountType === "percent" ? localPkg.discountValue : null,
-          discount_dollar: localPkg.discountType === "fixed" ? localPkg.discountValue : null,
-          expiration_type: localPkg.expirationType, expiration_days: localPkg.expirationDays,
-          available_online: localPkg.availableOnline,
-          fields: localPkg,
+        // Use SECURITY DEFINER RPC to bypass RLS — enterprise user writing to child location
+        const { data: rpcResult, error: rpcError } = await supabase.rpc('push_enterprise_package', {
+          p_pkg: localPkg,
+          p_location_id: locId,
         });
-        // Also update the location's data object in the locations table so useData loads it
-        const updatedLocData = { ...locData, packages: [...(locData.packages || []), localPkg] };
-        await supabase.from('locations').update({ data: updatedLocData }).eq('id', locId);
+        if (rpcError) {
+          console.error('Push RPC error:', rpcError);
+          continue;
+        }
+        if (rpcResult && rpcResult.success === false) {
+          if (rpcResult.message?.includes('already pushed')) continue;
+          console.error('Push rejected:', rpcResult.message);
+          continue;
+        }
+        successLocs.push(locId);
       } catch (e) { console.error('Push package error:', e); }
     }
-    const updated = (data.enterprisePackages || []).map(p => p.id === pkg.id ? { ...p, pushedTo: [...new Set([...(p.pushedTo || []), ...pushLocations])] } : p);
-    await save({ ...data, enterprisePackages: updated });
+    if (successLocs.length > 0) {
+      const updated = (data.enterprisePackages || []).map(p => p.id === pkg.id ? { ...p, pushedTo: [...new Set([...(p.pushedTo || []), ...successLocs])] } : p);
+      await save({ ...data, enterprisePackages: updated });
+    }
     setPushing(false);
     setPushModal(null);
     setPushLocations([]);
