@@ -13496,33 +13496,43 @@ function OperationsHub({ data, save, nav, profile }) {
     const allOps = data.dailyOps || [];
     const dogs = data.dogs || [];
 
-    // Dogs in house: checked-in boarding + daycare for viewDate
-    const inHouseBoarding = reservations.filter(r => r.type === "boarding" && r.checkIn <= viewDate && r.checkOut >= viewDate && (r.status === "checked-in" || r.status === "upcoming"));
-    const inHouseDaycare = reservations.filter(r => (r.type === "daycare" || r.type === "dayboarding") && r.checkIn <= viewDate && r.checkOut >= viewDate && (r.status === "checked-in" || r.status === "upcoming"));
-    const dogsInHouse = inHouseBoarding.length + inHouseDaycare.length;
+    // Dogs in house: checked-in only (matches dashboard logic)
+    const inHouse = reservations.filter(r => r.status === "checked-in" && r.checkIn <= viewDate && r.checkOut >= viewDate);
+    const inHouseBoarding = inHouse.filter(r => r.type === "boarding");
+    const inHouseDaycare = inHouse.filter(r => r.type === "daycare" || r.type === "dayboarding");
+    const dogsInHouse = inHouse.length;
 
-    // Checking out today (still checked-in, checkOut === viewDate)
-    const checkingOut = reservations.filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-in");
+    // Going home today (checked-in, checkOut === viewDate) — matches dashboard "Going Home"
+    const goingHome = reservations.filter(r => r.status === "checked-in" && r.checkOut === viewDate);
     // Already checked out today
-    const checkedOut = reservations.filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-out");
+    const checkedOut = reservations.filter(r => r.checkOut === viewDate && r.status === "checked-out");
 
     // Room cleaning stats
     const roomStats = getRoomCleaningStats(data, viewDate);
 
-    // Baths: dogs checking out today that have a bath type
+    // Baths: checked-in dogs checking out today that have a bath type (includes departure time)
     const bathRows = [];
-    reservations.filter(r => r.status === "checked-in" && r.checkIn <= viewDate && r.checkOut >= viewDate).forEach(res => {
+    inHouse.forEach(res => {
       const dog = dogs.find(d => d.id === res.dogId);
       if (!dog) return;
       const bath = res.careOverrides?.bath_type || dog.fields.bath_type || "";
       if (bath && res.checkOut === viewDate) {
         const logKey = `${viewDate}|bathing`;
         const administered = !!(res.activityLog && res.activityLog[logKey] && res.activityLog[logKey].administered);
-        bathRows.push({ dogName: dog.fields.name, bathType: bath, done: administered });
+        const coTime = res.checkOutTime || "";
+        bathRows.push({ dogName: dog.fields.name, bathType: bath, done: administered, checkOutTime: coTime });
       }
     });
     const bathsTotal = bathRows.length;
     const bathsDone = bathRows.filter(b => b.done).length;
+
+    // Pictures: boarding dogs not on first or last day (same logic as renderPictures)
+    const pictureDogs = reservations.filter(r => r.type === "boarding" && r.status === "checked-in" && r.checkIn < viewDate && r.checkOut > viewDate);
+    const picEntryId = `ops_pictures_${viewDate}`;
+    const picEntry = allOps.find(e => e.id === picEntryId);
+    const picItems = picEntry ? picEntry.items || {} : {};
+    const picturesTotal = pictureDogs.length;
+    const picturesDone = pictureDogs.filter(r => picItems[r.dogId]).length;
 
     // Private play stats
     const ppDogIds = new Set();
@@ -13571,12 +13581,14 @@ function OperationsHub({ data, save, nav, profile }) {
       dogsInHouse,
       boardingCount: inHouseBoarding.length,
       daycareCount: inHouseDaycare.length,
-      checkingOut: checkingOut.length,
+      goingHome: goingHome.length,
       checkedOut: checkedOut.length,
       roomStats,
       bathsTotal,
       bathsDone,
       bathRows,
+      picturesTotal,
+      picturesDone,
       ppTotalDogs,
       ppSessionsLogged,
       ppLastTime,
@@ -13687,7 +13699,7 @@ function OperationsHub({ data, save, nav, profile }) {
               {/* Top metric cards */}
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 24 }}>
                 {metricCard("Dogs In House", tp.dogsInHouse, `${tp.boardingCount} boarding · ${tp.daycareCount} daycare`, C.pri)}
-                {metricCard("Checking Out", tp.checkingOut, "still in house", "#D97706")}
+                {metricCard("Going Home", tp.goingHome, "departures today", "#D97706")}
                 {metricCard("Checked Out", tp.checkedOut, "completed today", C.suc)}
               </div>
 
@@ -13712,6 +13724,7 @@ function OperationsHub({ data, save, nav, profile }) {
                             <span style={{ width: 14, height: 14, borderRadius: 7, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9, background: b.done ? C.sucLt : C.borderLight, color: b.done ? C.suc : C.textMut }}>{b.done ? "✓" : "○"}</span>
                             <span style={{ fontWeight: 600 }}>{b.dogName}</span>
                             <span style={{ color: C.textMut }}>({b.bathType})</span>
+                            {b.checkOutTime && <span style={{ color: C.acc, fontWeight: 600 }}>· out {(() => { const [h,m] = b.checkOutTime.split(":"); const hr = parseInt(h); return `${hr > 12 ? hr-12 : hr || 12}:${m} ${hr >= 12 ? "PM" : "AM"}`; })()}</span>}
                           </div>
                         ))}
                       </div>
@@ -13719,10 +13732,7 @@ function OperationsHub({ data, save, nav, profile }) {
                   </div>
 
                   {/* Pictures */}
-                  {cp.pictures && (() => {
-                    const pc = parseCount(cp.pictures.countLabel);
-                    return progressRow("Pictures", pc.done, pc.total, C.info);
-                  })()}
+                  {progressRow("Pictures", tp.picturesDone, tp.picturesTotal, C.info)}
                 </div>
 
                 {/* Right column: Private Play & Checklists */}
