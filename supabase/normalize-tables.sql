@@ -271,6 +271,7 @@ CREATE TABLE k9_packages (
   expiration_days INT,
   expiration_date TEXT,
   available_online BOOLEAN DEFAULT FALSE,
+  fields JSONB,
   -- db timestamps
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
