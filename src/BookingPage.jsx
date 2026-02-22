@@ -581,6 +581,8 @@ export default function BookingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [confirmationId, setConfirmationId] = useState(null);
   const [bookingNotes, setBookingNotes] = useState('');
+  // ISSUE 2: Track if we need to ask about saving profile changes
+  const [askSaveChanges, setAskSaveChanges] = useState(false);
 
   // Account portal state
   const [accountStep, setAccountStep] = useState('phone'); // 'phone' | 'otp' | 'portal'
@@ -615,6 +617,14 @@ export default function BookingPage() {
   const [existingClientData, setExistingClientData] = useState(null); // matched client+dogs from data
   const [isExistingClient, setIsExistingClient] = useState(false);
 
+  // Accelerated flow for existing clients
+  const [skipToCheckout, setSkipToCheckout] = useState(false); // Jump existing clients directly to step 5 (cart)
+  const [showPostPaymentVerification, setShowPostPaymentVerification] = useState(false); // Show quick verification modal after payment
+
+  // ISSUE 2: Track original profile values for "Modified from Profile" indicator
+  const [clientOriinalValues, setClientOriinalValues] = useState(null); // original values from profile
+  const [modifiedFields, setModifiedFields] = useState(new Set()); // set of field names that were modified
+
   const lookupExistingClient = async () => {
     setExistingClientLoading(true);
     setExistingClientError('');
@@ -629,13 +639,23 @@ export default function BookingPage() {
       const { data: result } = await supabase.rpc('get_customer_portal_data', { p_phone: existingClientPhone, p_slug: slug });
       if (result?.success && result?.client) {
         const cl = result.client;
-        setClient({
-          firstName: cl.first_name || '', lastName: cl.last_name || '',
-          phone: cl.phone || existingClientPhone, email: cl.email || '',
-          address: cl.address || '', emergencyContact: cl.emergency_contact || '',
-          emergencyPhone: cl.emergency_phone || '', vetName: cl.vet_name || '',
-          vetPhone: cl.vet_phone || '', referralSource: cl.referral_source || '', notes: ''
-        });
+        // ISSUE 1 FIX: Populate ALL client fields from profile
+        const populatedClient = {
+          firstName: cl.first_name || '',
+          lastName: cl.last_name || '',
+          phone: cl.phone || existingClientPhone,
+          email: cl.email || '',
+          address: cl.address || '',
+          emergencyContact: cl.emergency_contact || '',
+          emergencyPhone: cl.emergency_phone || '',
+          vetName: cl.vet_name || '',
+          vetPhone: cl.vet_phone || '',
+          referralSource: cl.referral_source || '',
+          notes: cl.notes || ''
+        };
+        // Store original values for "Modified from Profile" tracking
+        setClientOriinalValues(populatedClient);
+        setClient(populatedClient);
         // Pre-fill dog info from first dog if available
         if (result.dogs && result.dogs.length > 0) {
           const d = result.dogs[0];
@@ -647,6 +667,16 @@ export default function BookingPage() {
         setExistingClientData(result);
         setIsExistingClient(true);
         setExistingClientMode(false);
+
+        // Accelerated flow: Skip straight to checkout (step 5) for existing clients
+        if (serviceType === 'tour') {
+          // For tours: only need confirmation
+          setTimeout(() => setRegStep(5), 200);
+        } else {
+          // For boarding/daycare: skip straight to checkout for FAST booking
+          setSkipToCheckout(true);
+          setTimeout(() => setRegStep(5), 200);
+        }
       } else {
         setExistingClientError('No account found for this phone number. Please register as a new client.');
       }
@@ -654,6 +684,22 @@ export default function BookingPage() {
       setExistingClientError('Could not look up account. Please try again or register as a new client.');
     }
     setExistingClientLoading(false);
+  };
+
+  // ISSUE 2: Helper to track field modifications
+  const handleClientFieldChange = (field, value) => {
+    setClient({ ...client, [field]: value });
+    // Track if this field was modified from the original profile value
+    if (clientOriinalValues && clientOriinalValues[field] !== value) {
+      setModifiedFields(prev => new Set([...prev, field]));
+    } else if (clientOriinalValues && clientOriinalValues[field] === value) {
+      // Remove from modified set if changed back to original
+      setModifiedFields(prev => {
+        const next = new Set(prev);
+        next.delete(field);
+        return next;
+      });
+    }
   };
 
   // Real-time draft capture
@@ -773,16 +819,36 @@ export default function BookingPage() {
     if (!locationData?.pricing || !selectedRoom || !checkIn || !checkOut) return null;
     const nights = countNights(checkIn, checkOut);
     const rate = locationData.pricing.boardingRates?.[selectedRoom] || 0;
-    const roomCost = rate * nights;
+    let roomCost = rate * nights;
+
+    // ISSUE 3: Apply multi-dog discount (20% off 2nd dog) if applicable
+    let multiDogDiscount = 0;
+    if (dogCount === 'multiple' && locationData.pricing.multiDogDiscount > 0) {
+      const discountAmount = Math.round(roomCost * (locationData.pricing.multiDogDiscount / 100) * 100) / 100;
+      multiDogDiscount = discountAmount;
+      roomCost = Math.max(0, roomCost - discountAmount);
+    }
+
     let bathCost = 0;
     if (selectedBath && locationData.pricing.addOns?.[selectedBath]) bathCost = locationData.pricing.addOns[selectedBath];
     let addOnCost = 0;
     selectedAddOns.forEach(a => { addOnCost += (locationData.pricing.addOns?.[a] || 0) * nights; });
-    const subtotal = roomCost + bathCost + addOnCost;
+    let subtotal = roomCost + bathCost + addOnCost;
+
+    // ISSUE 4: Apply recurring discount to self-booking if existing client
+    let discount = 0;
+    if (isExistingClient && existingClientData?.client?.recurringDiscountId) {
+      const disc = existingClientData.discounts?.find(d => d.id === existingClientData.client.recurringDiscountId);
+      if (disc) {
+        discount = disc.type === 'percentage' ? Math.round(subtotal * (disc.value / 100) * 100) / 100 : Math.min(disc.value, subtotal);
+      }
+    }
+    subtotal = Math.max(0, subtotal - discount);
+
     const depositPct = locationData.pricing.paymentRules?.boarding?.depositPercent || 50;
     const deposit = Math.round(subtotal * depositPct / 100);
-    return { nights, rate, roomCost, bathCost, addOnCost, subtotal, deposit, balance: subtotal - deposit, depositPct };
-  }, [locationData, selectedRoom, checkIn, checkOut, selectedBath, selectedAddOns]);
+    return { nights, rate, roomCost, bathCost, addOnCost, subtotal, discount, deposit, balance: subtotal - deposit, depositPct, multiDogDiscount };
+  }, [locationData, selectedRoom, checkIn, checkOut, selectedBath, selectedAddOns, isExistingClient, existingClientData, dogCount]);
 
   // Room recommendation logic
   const computeRecommendation = useCallback(() => {
@@ -814,6 +880,14 @@ export default function BookingPage() {
     try {
       const isTourBooking = serviceType === 'tour';
       const nights = isTourBooking ? 0 : countNights(checkIn, checkOut);
+
+      // ISSUE 2: Include modified fields in booking for potential profile update
+      const modifiedFieldsData = isExistingClient && modifiedFields.size > 0
+        ? Object.fromEntries(
+            Array.from(modifiedFields).map(field => [field, client[field]])
+          )
+        : null;
+
       const booking = isTourBooking ? {
         type: 'tour',
         client,
@@ -822,6 +896,7 @@ export default function BookingPage() {
         tourTime,
         tourDuration: locationData?.settings?.tourSettings?.duration || 30,
         notes: bookingNotes || client.notes,
+        modifiedFields: modifiedFieldsData,
       } : {
         type: serviceType || 'boarding',
         client,
@@ -846,12 +921,18 @@ export default function BookingPage() {
         addOnDates,
         isExistingClient,
         vaccineChoice,
+        modifiedFields: modifiedFieldsData,
       };
       const { data: result, error: e } = await supabase.rpc('submit_online_booking', { p_slug: slug, p_booking: booking });
       if (e) throw e;
       if (result?.bookingId || result?.success) {
         setConfirmationId(result.bookingId || 'confirmed');
-        navigateTo('confirmation', 'left');
+        // For existing clients who used fast checkout, show verification modal first
+        if (skipToCheckout) {
+          setShowPostPaymentVerification(true);
+        } else {
+          navigateTo('confirmation', 'left');
+        }
       } else {
         setError(result?.message || 'Failed to create booking');
       }
@@ -1196,7 +1277,11 @@ export default function BookingPage() {
                     r.checkIn <= checkIn && r.checkOut >= checkIn &&
                     r.status !== 'cancelled' && r.status !== 'checked-out'
                   ).length;
-                  const capacity = loc?.settings?.daycareCapacity?.total || (loc?.settings?.daycareCapacity?.small || 15) + (loc?.settings?.daycareCapacity?.large || 20);
+                  // Calculate total capacity from facility settings (same logic as internal dashboard)
+                  const fs = loc?.facilitySettings || { largeDogDaycareSF: 0, smallDogDaycareSF: 0 };
+                  const lgCap = Math.floor((fs.largeDogDaycareSF || 0) / 18);
+                  const smCap = Math.floor((fs.smallDogDaycareSF || 0) / 12);
+                  const capacity = lgCap + smCap;
                   const atCapacity = dcCount >= capacity;
                   if (atCapacity) return (
                     <div style={{ background: `${B.err}10`, borderRadius: 14, padding: '18px 22px', marginBottom: 20, border: `1px solid ${B.err}30` }}>
@@ -1311,7 +1396,10 @@ export default function BookingPage() {
                 {/* Show capacity when size is known */}
                 {(isExistingClient || dogSizeGroup) && (() => {
                   const resArr = Array.isArray(loc?.reservations) ? loc.reservations : [];
-                  const dcCap = loc?.settings?.daycareCapacity || { small: 15, large: 20, total: 35 };
+                  // Calculate capacity from facility settings (same logic as internal dashboard)
+                  const fs = loc?.facilitySettings || { largeDogDaycareSF: 0, smallDogDaycareSF: 0 };
+                  const lgCap = Math.floor((fs.largeDogDaycareSF || 0) / 18);
+                  const smCap = Math.floor((fs.smallDogDaycareSF || 0) / 12);
                   const dcOnDate = resArr.filter(r =>
                     (r.type === 'daycare' || r.type === 'dayboarding' || r.type === 'evaluation') &&
                     r.checkIn <= checkIn && (r.checkOut >= checkIn || r.checkIn === checkIn) &&
@@ -1319,8 +1407,6 @@ export default function BookingPage() {
                   );
                   const lgCount = dcOnDate.filter(r => r.daycareSize === 'large' || (!r.daycareSize)).length;
                   const smCount = dcOnDate.filter(r => r.daycareSize === 'small').length;
-                  const lgCap = dcCap.large || 20;
-                  const smCap = dcCap.small || 15;
                   const lgAvail = Math.max(0, lgCap - lgCount);
                   const smAvail = Math.max(0, smCap - smCount);
                   const effectiveSize = isExistingClient && existingClientData?.dogs?.[0]?.weight
@@ -1650,30 +1736,57 @@ export default function BookingPage() {
                 )}
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                  <BkInput label="First Name" required value={client.firstName} onChange={e => setClient({ ...client, firstName: e.target.value })} placeholder="Jane" />
-                  <BkInput label="Last Name" required value={client.lastName} onChange={e => setClient({ ...client, lastName: e.target.value })} placeholder="Vance" />
+                  <div>
+                    <BkInput label="First Name" required value={client.firstName} onChange={e => handleClientFieldChange('firstName', e.target.value)} placeholder="Jane" />
+                    {isExistingClient && modifiedFields.has('firstName') && <div style={{ fontSize: 12, color: B.warn, marginTop: 4, fontWeight: 500 }}>Modified from Profile</div>}
+                  </div>
+                  <div>
+                    <BkInput label="Last Name" required value={client.lastName} onChange={e => handleClientFieldChange('lastName', e.target.value)} placeholder="Vance" />
+                    {isExistingClient && modifiedFields.has('lastName') && <div style={{ fontSize: 12, color: B.warn, marginTop: 4, fontWeight: 500 }}>Modified from Profile</div>}
+                  </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                  <BkInput label="Phone Number" required type="tel" value={client.phone} onChange={e => setClient({ ...client, phone: e.target.value })} />
-                  <BkInput label="Email" required type="email" value={client.email} onChange={e => setClient({ ...client, email: e.target.value })} placeholder="jane@email.com" />
+                  <div>
+                    <BkInput label="Phone Number" required type="tel" value={client.phone} onChange={e => handleClientFieldChange('phone', e.target.value)} />
+                    {isExistingClient && modifiedFields.has('phone') && <div style={{ fontSize: 12, color: B.warn, marginTop: 4, fontWeight: 500 }}>Modified from Profile</div>}
+                  </div>
+                  <div>
+                    <BkInput label="Email" required type="email" value={client.email} onChange={e => handleClientFieldChange('email', e.target.value)} placeholder="jane@email.com" />
+                    {isExistingClient && modifiedFields.has('email') && <div style={{ fontSize: 12, color: B.warn, marginTop: 4, fontWeight: 500 }}>Modified from Profile</div>}
+                  </div>
                 </div>
                 <div style={{ marginBottom: 16 }}>
-                  <BkInput label="Address" required value={client.address} onChange={e => setClient({ ...client, address: e.target.value })} placeholder="123 Main St, Ellis Vance, CT 06901" />
+                  <BkInput label="Address" required value={client.address} onChange={e => handleClientFieldChange('address', e.target.value)} placeholder="123 Main St, Ellis Vance, CT 06901" />
+                  {isExistingClient && modifiedFields.has('address') && <div style={{ fontSize: 12, color: B.warn, marginTop: 4, fontWeight: 500 }}>Modified from Profile</div>}
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                  <BkInput label="Emergency Contact" required value={client.emergencyContact} onChange={e => setClient({ ...client, emergencyContact: e.target.value })} placeholder="John Vance" />
-                  <BkInput label="Emergency Phone" required type="tel" value={client.emergencyPhone} onChange={e => setClient({ ...client, emergencyPhone: e.target.value })} />
+                  <div>
+                    <BkInput label="Emergency Contact" required value={client.emergencyContact} onChange={e => handleClientFieldChange('emergencyContact', e.target.value)} placeholder="John Vance" />
+                    {isExistingClient && modifiedFields.has('emergencyContact') && <div style={{ fontSize: 12, color: B.warn, marginTop: 4, fontWeight: 500 }}>Modified from Profile</div>}
+                  </div>
+                  <div>
+                    <BkInput label="Emergency Phone" required type="tel" value={client.emergencyPhone} onChange={e => handleClientFieldChange('emergencyPhone', e.target.value)} />
+                    {isExistingClient && modifiedFields.has('emergencyPhone') && <div style={{ fontSize: 12, color: B.warn, marginTop: 4, fontWeight: 500 }}>Modified from Profile</div>}
+                  </div>
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-                  <BkInput label="Veterinarian Name" required value={client.vetName} onChange={e => setClient({ ...client, vetName: e.target.value })} placeholder="Dr. Johnson, ABC Vet" />
-                  <BkInput label="Vet Phone" required type="tel" value={client.vetPhone} onChange={e => setClient({ ...client, vetPhone: e.target.value })} />
+                  <div>
+                    <BkInput label="Veterinarian Name" required value={client.vetName} onChange={e => handleClientFieldChange('vetName', e.target.value)} placeholder="Dr. Johnson, ABC Vet" />
+                    {isExistingClient && modifiedFields.has('vetName') && <div style={{ fontSize: 12, color: B.warn, marginTop: 4, fontWeight: 500 }}>Modified from Profile</div>}
+                  </div>
+                  <div>
+                    <BkInput label="Vet Phone" required type="tel" value={client.vetPhone} onChange={e => handleClientFieldChange('vetPhone', e.target.value)} />
+                    {isExistingClient && modifiedFields.has('vetPhone') && <div style={{ fontSize: 12, color: B.warn, marginTop: 4, fontWeight: 500 }}>Modified from Profile</div>}
+                  </div>
                 </div>
                 <div style={{ marginBottom: 16 }}>
-                  <BkSelect label="How did you hear about us?" required options={['Google', 'Instagram', 'Facebook', 'Friend/Family', 'Veterinarian', 'Drive-by', 'Other']} value={client.referralSource} onChange={e => setClient({ ...client, referralSource: e.target.value })} />
+                  <BkSelect label="How did you hear about us?" required options={['Google', 'Instagram', 'Facebook', 'Friend/Family', 'Veterinarian', 'Drive-by', 'Other']} value={client.referralSource} onChange={e => handleClientFieldChange('referralSource', e.target.value)} />
+                  {isExistingClient && modifiedFields.has('referralSource') && <div style={{ fontSize: 12, color: B.warn, marginTop: 4, fontWeight: 500 }}>Modified from Profile</div>}
                 </div>
                 <div style={{ marginBottom: 24 }}>
                   <label className="bk-label">Notes</label>
-                  <textarea className="bk-input" rows={3} placeholder="Anything else we should know..." value={client.notes} onChange={e => setClient({ ...client, notes: e.target.value })} style={{ resize: 'vertical' }} />
+                  <textarea className="bk-input" rows={3} placeholder="Anything else we should know..." value={client.notes} onChange={e => handleClientFieldChange('notes', e.target.value)} style={{ resize: 'vertical' }} />
+                  {isExistingClient && modifiedFields.has('notes') && <div style={{ fontSize: 12, color: B.warn, marginTop: 4, fontWeight: 500 }}>Modified from Profile</div>}
                 </div>
                 <button className="bk-btn bk-btn-primary" style={{ width: '100%' }}
                   disabled={!client.firstName || !client.lastName || !client.phone || !client.email}
@@ -2232,6 +2345,225 @@ export default function BookingPage() {
       </div>
     </div>
   );
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // POST-PAYMENT VERIFICATION MODAL (For Existing Clients)
+  // ═════════════════════════════════════════════════════════════════════════
+  const renderPostPaymentVerification = () => {
+    if (!showPostPaymentVerification) return null;
+
+    const handleConfirmNoChanges = () => {
+      setShowPostPaymentVerification(false);
+      navigateTo('confirmation', 'left');
+    };
+
+    const handleSaveVerification = () => {
+      // Update feeding/meds/bath preferences and navigate to confirmation
+      setShowPostPaymentVerification(false);
+      navigateTo('confirmation', 'left');
+    };
+
+    return (
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0, 0, 0, 0.6)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+        zIndex: 9999,
+      }}>
+        <div style={{
+          background: '#fff',
+          borderRadius: 20,
+          padding: 32,
+          maxWidth: 500,
+          maxHeight: '85vh',
+          overflowY: 'auto',
+          boxShadow: '0 20px 60px rgba(0, 0, 0, 0.2)',
+        }} className="bk-fade-up">
+          <h2 style={{
+            fontFamily: "'Canela', Georgia, serif",
+            fontSize: 28,
+            color: B.navy,
+            marginBottom: 12,
+            marginTop: 0,
+          }}>
+            Quick Check-In
+          </h2>
+          <p style={{
+            color: B.textSec,
+            fontSize: 15,
+            marginBottom: 24,
+            lineHeight: 1.6,
+          }}>
+            Your deposit has been paid! Just a few quick details to confirm for {dog.name}'s stay.
+          </p>
+
+          {/* Emergency Contact */}
+          <div style={{ marginBottom: 20 }}>
+            <label className="bk-label">Emergency Contact Name</label>
+            <input
+              className="bk-input"
+              value={client.emergencyContact}
+              onChange={e => handleClientFieldChange('emergencyContact', e.target.value)}
+              placeholder="Full name"
+            />
+          </div>
+
+          <div style={{ marginBottom: 20 }}>
+            <label className="bk-label">Emergency Contact Phone</label>
+            <input
+              className="bk-input"
+              value={client.emergencyPhone}
+              onChange={e => handleClientFieldChange('emergencyPhone', e.target.value)}
+              placeholder="Phone number"
+            />
+          </div>
+
+          {/* Feeding Instructions */}
+          <div style={{
+            background: B.goldPale,
+            borderRadius: 14,
+            padding: 16,
+            marginBottom: 20,
+            border: `1px solid ${B.gold}30`,
+          }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: B.navy, marginBottom: 10 }}>
+              Feeding Instructions
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {[
+                { key: 'bluebuffalo', label: '🍽️ Blue Buffalo (Included)' },
+                { key: 'fromhome', label: '🏠 Food From Home' },
+                { key: 'skip', label: '⏭️ Skip for now' },
+              ].map(opt => (
+                <div
+                  key={opt.key}
+                  className={`bk-chip ${feedingChoice === opt.key ? 'selected' : ''}`}
+                  style={{ padding: '10px 16px', fontSize: 13, cursor: 'pointer' }}
+                  onClick={() => setFeedingChoice(opt.key)}
+                >
+                  <span>{opt.label}</span>
+                </div>
+              ))}
+            </div>
+            {feedingChoice === 'fromhome' && (
+              <div style={{ marginTop: 12 }}>
+                <textarea
+                  className="bk-input"
+                  rows={2}
+                  value={feedingNotes}
+                  onChange={e => setFeedingNotes(e.target.value)}
+                  placeholder="Brand, amount, frequency..."
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Medications */}
+          <div style={{
+            background: '#fff',
+            borderRadius: 14,
+            padding: 16,
+            marginBottom: 20,
+            border: `2px solid ${B.border}`,
+          }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: B.navy, marginBottom: 10 }}>
+              Medications
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {[
+                { key: 'has_meds', label: '💊 Yes, has medications' },
+                { key: 'none', label: '✅ No medications' },
+                { key: 'skip', label: '⏭️ Skip for now' },
+              ].map(opt => (
+                <div
+                  key={opt.key}
+                  className={`bk-chip ${medChoice === opt.key ? 'selected' : ''}`}
+                  style={{ padding: '10px 16px', fontSize: 13, cursor: 'pointer' }}
+                  onClick={() => {
+                    setMedChoice(opt.key);
+                    if (opt.key === 'has_meds' && medications.length === 0) {
+                      setMedications([{ name: '', dosageQty: '', dosageUnit: 'pill', times: [], instructions: '' }]);
+                    }
+                  }}
+                >
+                  <span>{opt.label}</span>
+                </div>
+              ))}
+            </div>
+            {medChoice === 'has_meds' && medications.length > 0 && (
+              <div style={{ marginTop: 12, fontSize: 13, color: B.textSec }}>
+                {medications.length} medication{medications.length > 1 ? 's' : ''} listed
+              </div>
+            )}
+          </div>
+
+          {/* Bathing Preference */}
+          {countNights(checkIn, checkOut) >= 2 && (
+            <div style={{
+              background: '#fff',
+              borderRadius: 14,
+              padding: 16,
+              marginBottom: 20,
+              border: `2px solid ${B.border}`,
+            }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: B.navy, marginBottom: 10 }}>
+                Bathing Preference
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {['Standard Bath', ...BATH_OPTIONS.filter(b => b !== 'Standard Bath')].map(b => (
+                  <div
+                    key={b}
+                    className={`bk-chip ${selectedBath === b ? 'selected' : ''}`}
+                    style={{ padding: '10px 16px', fontSize: 13, cursor: 'pointer' }}
+                    onClick={() => setSelectedBath(b)}
+                  >
+                    {b}{b === 'Standard Bath' && ' (Required)'}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Additional Notes */}
+          <div style={{ marginBottom: 24 }}>
+            <label className="bk-label">Anything else we should know?</label>
+            <textarea
+              className="bk-input"
+              rows={2}
+              value={bookingNotes}
+              onChange={e => setBookingNotes(e.target.value)}
+              placeholder="Behavioral notes, special instructions..."
+            />
+          </div>
+
+          {/* Buttons */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <button
+              className="bk-btn bk-btn-gold-outline"
+              onClick={handleConfirmNoChanges}
+              style={{ width: '100%' }}
+            >
+              Nothing's Changed
+            </button>
+            <button
+              className="bk-btn bk-btn-primary"
+              onClick={handleSaveVerification}
+              style={{ width: '100%' }}
+            >
+              Confirm & Continue
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // ═════════════════════════════════════════════════════════════════════════
   // ACCOUNT PAGE (placeholder)
@@ -3155,6 +3487,7 @@ export default function BookingPage() {
         {currentPage === 'register' && renderRegistration()}
         {currentPage === 'confirmation' && renderConfirmation()}
         {currentPage === 'account' && renderAccount()}
+        {renderPostPaymentVerification()}
       </div>
     </BookingErrorBoundary>
   );
