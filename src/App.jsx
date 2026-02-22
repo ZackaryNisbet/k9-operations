@@ -3862,7 +3862,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             const fullPaymentMet = collected >= adjTotal;
             const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
             const totalPaid = resPmts.filter(p => p.status === "completed" && p.type !== "refund").reduce((s, p) => s + p.amount, 0);
-            const fmt = (v) => `$${Math.abs(v).toFixed(2)}`;
+            const fmt = (v) => v < 0 ? `-$${Math.abs(v).toFixed(2)}` : `$${v.toFixed(2)}`;
             const configuredDiscounts = (data.discounts || []).filter(d => d.active !== false);
             const hasDiscount = discountType !== "none" && discountValue > 0;
             if (adjTotal === 0 && pr.total === 0) return <div style={{marginTop:20,fontSize:13,color:C.textMut,fontStyle:"italic"}}>No charge for this reservation.</div>;
@@ -3918,7 +3918,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                 <div style={{padding:"16px 24px",borderTop:`1px solid ${C.borderLight||"#f0f0f0"}`}}>
                   <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
                     <span style={{fontSize:13,color:C.textSec}}>Paid</span>
-                    <span style={{fontSize:13,fontWeight:700,color:C.suc,fontVariantNumeric:"tabular-nums"}}>{fmt(collected)}</span>
+                    <span style={{fontSize:13,fontWeight:700,color:collected <= 0 ? C.dan : depositMet ? C.suc : C.acc,fontVariantNumeric:"tabular-nums"}}>{fmt(collected)}</span>
                   </div>
                   <div style={{display:"flex",justifyContent:"space-between"}}>
                     <span style={{fontSize:13,color:outstanding>0?C.text:C.suc,fontWeight:outstanding>0?600:600}}>{outstanding>0?"Balance Due":"Paid in Full"}</span>
@@ -4190,8 +4190,15 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             const resPmts = payments.filter(p => p.reservationId === reservation.id && p.status === "completed" && p.type !== "refund");
             const resRefunds = payments.filter(p => p.reservationId === reservation.id && (p.type === "refund" || p.status === "refunded"));
             const newCollected = resPmts.reduce((s, p) => s + p.amount, 0) - resRefunds.reduce((s, p) => s + p.amount, 0);
+            // Update noDeposit flag based on whether deposit requirement is met after this payment/refund
+            const pricing = data.pricing || DEF_PRICING;
+            const nights = Math.max(1, countNights(reservation.checkIn, reservation.checkOut));
+            const rate = (pricing.boardingRates || {})[reservation.roomType] || 0;
+            const estTotal = rate * nights;
+            const depReq = Math.round(estTotal * 0.5 * 100) / 100;
+            const noDeposit = newCollected < depReq;
             const pmtAudit = buildAuditEntry(reservation.id, pmt.type === "refund" ? "Issued Refund" : "Collected Payment", [{field:pmt.type==="refund"?"Refund":"Payment",oldVal:`$${(reservation.amountCollected||0).toFixed(2)} collected`,newVal:`$${pmt.amount.toFixed(2)} ${pmt.type} via ${pmt.method}${pmt.method==="card"?" ····"+pmt.cardLast4:""}`}], profile);
-            await save({...data, payments, auditLog: [...(data.auditLog||[]), pmtAudit], reservations: data.reservations.map(r => r.id === reservation.id ? {...r, amountCollected: newCollected} : r)});
+            await save({...data, payments, auditLog: [...(data.auditLog||[]), pmtAudit], reservations: data.reservations.map(r => r.id === reservation.id ? {...r, amountCollected: newCollected, noDeposit} : r)});
             setShowPayForm(false);
           }}
         />
@@ -4967,8 +4974,9 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     return data.reservations.filter(r => {
       if (r.status !== "upcoming" && r.status !== "checked-in") return false;
       if (r.type !== "boarding" && r.type !== "dayboarding") return false;
-      const payments = (data.payments || []).filter(p => p.reservationId === r.id && p.type !== "refund");
-      const collected = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+      const pmts = (data.payments || []).filter(p => p.reservationId === r.id && p.status === "completed" && p.type !== "refund");
+      const refs = (data.payments || []).filter(p => p.reservationId === r.id && (p.type === "refund" || p.status === "refunded"));
+      const collected = pmts.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) - refs.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
       const pricing = data.pricing || DEF_PRICING;
       const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
       const rate = (pricing.boardingRates || {})[r.roomType] || 0;
@@ -12472,6 +12480,25 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
   // All rooms grouped by type (must be before drag/optimize which reference it)
   const allRooms = data.rooms || {};
 
+  // Dynamically compute which reservations have unpaid deposits (accounts for refunds)
+  const unpaidDepositIds = useMemo(() => {
+    const ids = new Set();
+    (data.reservations || []).forEach(r => {
+      if (r.status !== "upcoming" && r.status !== "checked-in") return;
+      if (r.type !== "boarding" && r.type !== "dayboarding") return;
+      const pmts = (data.payments || []).filter(p => p.reservationId === r.id && p.status === "completed" && p.type !== "refund");
+      const refs = (data.payments || []).filter(p => p.reservationId === r.id && (p.type === "refund" || p.status === "refunded"));
+      const collected = pmts.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) - refs.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+      const pricing = data.pricing || DEF_PRICING;
+      const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
+      const rate = (pricing.boardingRates || {})[r.roomType] || 0;
+      const est = rate * nights;
+      const depositReq = Math.round(est * 0.5 * 100) / 100;
+      if (collected < depositReq) ids.add(r.id);
+    });
+    return ids;
+  }, [data.reservations, data.payments, data.pricing]);
+
   // Night-level selection mode
   const [nightSelectMode, setNightSelectMode] = useState(false);
   const [selectedNights, setSelectedNights] = useState({}); // { [resId]: Set of date strings }
@@ -13253,7 +13280,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
                               );
                             });
                           })()}
-                          {!nightSelectMode && res.noDeposit && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isCheckedIn ? "#fca5a5" : C.dan} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}} title="No deposit collected"><line x1="12" y1="1" x2="12" y2="17"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/><line x1="4" y1="1" x2="20" y2="23" stroke={isCheckedIn ? "#fca5a5" : C.dan} strokeWidth="2"/></svg>}
+                          {!nightSelectMode && (res.noDeposit || unpaidDepositIds.has(res.id)) && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isCheckedIn ? "#fca5a5" : C.dan} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}} title="No deposit collected"><line x1="12" y1="1" x2="12" y2="17"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/><line x1="4" y1="1" x2="20" y2="23" stroke={isCheckedIn ? "#fca5a5" : C.dan} strokeWidth="2"/></svg>}
                           <span style={{ fontSize: 11, fontWeight: 700, color: fg, overflow: "hidden", textOverflow: "ellipsis", padding: "0 4px", pointerEvents: "none", zIndex: 1 }}>
                             {dn(res.dogId, res.clientId)}
                           </span>
@@ -23271,8 +23298,15 @@ function PaymentsPage({ data, save, nav, profile }) {
       if (ri >= 0) {
         const resPmts = updated.filter(p => p.reservationId === pmt.reservationId && p.status === "completed" && p.type !== "refund");
         const resRefunds = updated.filter(p => p.reservationId === pmt.reservationId && (p.status === "refunded" || p.type === "refund"));
+        const newCollected = resPmts.reduce((s, p) => s + p.amount, 0) - resRefunds.reduce((s, p) => s + p.amount, 0);
+        const res = newData.reservations[ri];
+        const pricing = data.pricing || DEF_PRICING;
+        const nights = Math.max(1, countNights(res.checkIn, res.checkOut));
+        const rate = (pricing.boardingRates || {})[res.roomType] || 0;
+        const estTotal = rate * nights;
+        const depReq = Math.round(estTotal * 0.5 * 100) / 100;
         newData.reservations = [...newData.reservations];
-        newData.reservations[ri] = { ...newData.reservations[ri], amountCollected: resPmts.reduce((s, p) => s + p.amount, 0) - resRefunds.reduce((s, p) => s + p.amount, 0) };
+        newData.reservations[ri] = { ...res, amountCollected: newCollected, noDeposit: newCollected < depReq };
       }
     }
     await save(newData);
