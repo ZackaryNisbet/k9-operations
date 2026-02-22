@@ -3855,13 +3855,15 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             if (discountType === "percent" && discountValue > 0) manualDiscount = Math.round(pr.total * (discountValue / 100) * 100) / 100;
             else if (discountType === "flat" && discountValue > 0) manualDiscount = Math.min(discountValue, pr.total);
             const adjTotal = Math.max(0, Math.round((pr.total - manualDiscount) * 100) / 100);
-            const collected = reservation.amountCollected || 0;
+            const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            const totalPaid = resPmts.filter(p => p.status === "completed" && p.type !== "refund").reduce((s, p) => s + p.amount, 0);
+            const totalRefunded = resPmts.filter(p => p.type === "refund" || p.status === "refunded").reduce((s, p) => s + p.amount, 0);
+            // Use live payment data for collected amount (more reliable than stored amountCollected)
+            const collected = resPmts.length > 0 ? (totalPaid - totalRefunded) : (reservation.amountCollected || 0);
             const outstanding = Math.max(0, adjTotal - collected);
             const depositRequired = Math.round(adjTotal * 0.5 * 100) / 100;
             const depositMet = collected >= depositRequired;
             const fullPaymentMet = collected >= adjTotal;
-            const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-            const totalPaid = resPmts.filter(p => p.status === "completed" && p.type !== "refund").reduce((s, p) => s + p.amount, 0);
             const fmt = (v) => v < 0 ? `-$${Math.abs(v).toFixed(2)}` : `$${v.toFixed(2)}`;
             const configuredDiscounts = (data.discounts || []).filter(d => d.active !== false);
             const hasDiscount = discountType !== "none" && discountValue > 0;
@@ -4002,8 +4004,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                     </div>
                   )}
 
-                  {/* Payment action */}
-                  {!isReadOnly && (
+                  {/* Payment action — allow on checked-in too, only hide for checked-out/cancelled */}
+                  {reservation.status !== "checked-out" && reservation.status !== "cancelled" && (
                     <div style={{display:"flex",gap:8,marginTop:14}}>
                       <button onClick={()=>{
                         if (isCheckInMode) { const depAmt = Math.max(0, depositRequired - collected); setPayFormDefaults({ amount: depAmt > 0 ? depAmt.toFixed(2) : "", type: "deposit" }); }
