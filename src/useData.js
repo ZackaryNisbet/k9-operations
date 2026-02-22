@@ -261,6 +261,7 @@ function packageToRow(pkg, locationId) {
     expiration_days: pkg.expirationDays != null ? pkg.expirationDays : null,
     expiration_date: pkg.expirationDate || null,
     available_online: pkg.availableOnline ?? false,
+    fields: pkg,
   };
 }
 
