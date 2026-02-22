@@ -14175,6 +14175,98 @@ function EODPage({ data, save, nav }) {
     }
   };
 
+  // Seed sample EOD data (2 months)
+  const [seeding, setSeeding] = useState(false);
+  const seedEODData = async () => {
+    if (seeding) return;
+    if (!window.confirm("Generate 60 days of sample EOD entries? This will overwrite any existing EOD data for those dates.")) return;
+    setSeeding(true);
+    try {
+      const _rng = { s: 42 };
+      const srand = () => { _rng.s = (_rng.s * 16807 + 0) % 2147483647; return (_rng.s - 1) / 2147483646; };
+      const ri = (a, b) => Math.floor(srand() * (b - a + 1)) + a;
+      const rp = (arr) => arr[Math.floor(srand() * arr.length)];
+      const addD = (base, n) => { const d = new Date(base + "T12:00:00"); d.setDate(d.getDate() + n); return d.toISOString().split("T")[0]; };
+      const FN=["Casey","James","Emily","Michael","Jessica","David","Jennifer","Robert","Ashley","Christopher","Amanda","Reese","Stephanie","Andrew","Nicole","Joshua","Samantha","Daniel","Lauren","William"];
+      const LN=["Mitchell","Chen","Rodriguez","Thompson","Ramsey","Johnson","Brown","Davis","Miller","Wilson","Anderson","Taylor","Thomas","Moore","Jackson"];
+      const dogs = data.dogs || [];
+      const clients = data.clients || [];
+      const reservations = data.reservations || [];
+      const entries = [];
+
+      for (let off = -60; off <= -1; off++) {
+        const dt = addD(td, off);
+        // Find dogs in-house on this date
+        const dayDogs = [];
+        reservations.forEach(r => {
+          if (r.checkIn <= dt && r.checkOut >= dt) {
+            const dg = dogs.find(d => d.id === r.dogId);
+            if (dg && !dayDogs.find(dd => dd.id === dg.id)) dayDogs.push(dg);
+          }
+        });
+        const pickDog = () => { const d = dayDogs.length > 0 ? rp(dayDogs) : dogs.length > 0 ? rp(dogs) : null; if (!d) return { d: { id: "x", fields: { name: "Buddy", weight: "50" } }, c: { id: "x", fields: { first_name: "Sample", last_name: "Client" } } }; const c = clients.find(cl => cl.id === d.clientId) || { id: "x", fields: { first_name: "Owner", last_name: "" } }; return { d, c }; };
+
+        const genSec = (sid) => {
+          switch(sid) {
+            case "sales": return "Today's Goal: $" + ri(800, 2500) + "\nWTD: $" + ri(3000, 15000) + "\nMTD: $" + ri(8000, 45000) + "\nYTD: $" + ri(30000, 200000);
+            case "csr_checklist": return ["Turn on Luxury TV's","Turn on music","Create Private Play log","Vacuum and Cherry front lobby before 7:00 am","Unlock latches on front door","Check incoming Tours","Do body checks on dogs leaving today and fill out form"].map(x => "[" + (srand() > 0.2 ? "x" : " ") + "] " + x).join("\n");
+            case "alerts": return rp(["- Goal for Each CSR to book at least 1 Eval/Tour","- Reminder: Valentine's Day packages available\n- Push puppy love photo package","- New pricing effective next week\n- All staff meeting Thursday","- Weekend fully booked for boarding\n- Waitlist available"]);
+            case "team_notes": { const { d, c } = pickDog(); return "@" + d.fields.name + " " + (c.fields.last_name||"") + " had a great day in playgroup\n" + rp(["Great teamwork today everyone!","Remember to check water bowls every hour","Updated cleaning schedule posted","Reminder: staff photos needed for website"]); }
+            case "leads": { const lines = []; for (let i = 0; i < ri(1, 3); i++) lines.push("- " + rp(FN) + " " + rp(LN) + " - " + rp(["called about boarding","interested in daycare","website inquiry","referral from client"])); return lines.join("\n"); }
+            case "tours": { const n = ri(0, 3); if (!n) return "No tours today"; const lines = []; for (let i = 0; i < n; i++) lines.push("- " + rp(FN) + " " + rp(LN) + " - " + rp(["booked boarding","scheduled evaluation","interested in daycare packages","signed up!"])); return lines.join("\n"); }
+            case "meds": { const md = dayDogs.filter(d => d.fields?.medicationSchedules?.length > 0); if (!md.length) return "Boarding:\nAM:\n- None\nPM:\n- None"; const lines = ["Boarding:", "AM:"]; md.forEach(d => { const c = clients.find(cl => cl.id === d.clientId); (d.fields.medicationSchedules||[]).forEach(m => lines.push("- @" + d.fields.name + " " + (c ? c.fields.last_name : "") + " - " + (m.amount||"1") + " " + (m.unit||"tablet") + " " + (m.name||"medication"))); }); lines.push("PM:", "- None"); return lines.join("\n"); }
+            case "birthdays": { const mo = parseInt(dt.split("-")[1]), dy = parseInt(dt.split("-")[2]); const bd = dogs.filter(d => { if (!d.fields?.dob) return false; const m = parseInt(d.fields.dob.split("-")[1]), dd = parseInt(d.fields.dob.split("-")[2]); return m === mo && Math.abs(dd - dy) <= 2; }); if (!bd.length) return "No birthdays today"; return bd.slice(0, 3).map(d => { const c = clients.find(cl => cl.id === d.clientId); return "- @" + d.fields.name + " " + (c ? c.fields.last_name : "") + " turns " + (2026 - parseInt(d.fields.dob.split("-")[0])) + "!"; }).join("\n"); }
+            case "ice_cream": { if (srand() > 0.5) return "None today"; const lines = []; for (let i = 0; i < ri(1, 3); i++) { const { d, c } = pickDog(); lines.push("- @" + d.fields.name + " " + (c.fields.last_name||"")); } return lines.join("\n"); }
+            case "extra_play": { if (srand() > 0.6) return "None today"; const lines = []; for (let i = 0; i < ri(1, 3); i++) { const { d, c } = pickDog(); lines.push("- @" + d.fields.name + " " + (c.fields.last_name||"") + " - " + rp(["30 min private play","1 hour play session","Extra yard time"])); } return lines.join("\n"); }
+            case "baths": { const n = ri(0, 4); if (!n) return ""; const lines = []; for (let i = 0; i < n; i++) { const { d, c } = pickDog(); lines.push("[" + (srand() > 0.3 ? "x" : " ") + "] @" + d.fields.name + " " + (c.fields.last_name||"") + " - " + rp(["Standard","Hypo","Medicated","Whitening"]) + " bath"); } return lines.join("\n"); }
+            case "day_boarders": { if (srand() > 0.5) return "None today"; const lines = []; for (let i = 0; i < ri(1, 3); i++) { const { d, c } = pickDog(); lines.push("- @" + d.fields.name + " " + (c.fields.last_name||"") + " - " + rp(["Day board, pickup by 6pm","Day board + bath","Private play only"])); } return lines.join("\n"); }
+            case "evaluations": { if (srand() > 0.6) return "Name, L/S daycare, Room # - Pass/fail\n- None today"; const lines = ["Name, L/S daycare, Room # - Pass/fail"]; for (let i = 0; i < ri(1, 2); i++) { const { d, c } = pickDog(); const sm = parseInt(d.fields.weight || "50") < 35; lines.push("- @" + d.fields.name + " " + (c.fields.last_name||"") + ", " + (sm ? "S" : "L") + " daycare - " + rp(["Passed, parents contacted","Private play recommended","Pending evaluation"])); } return lines.join("\n"); }
+            case "small_daycare_notes":
+            case "large_daycare_notes": { if (srand() > 0.5) return "(Dogs name, last initial, date/time and details of incident)\n- Nothing to report"; const lines = ["(Dogs name, last initial, date/time and details of incident)"]; for (let i = 0; i < ri(1, 3); i++) { const { d, c } = pickDog(); lines.push("- @" + d.fields.name + " " + (c.fields.last_name||"") + " " + ri(8, 16) + ":" + rp(["00","15","30","45"]) + " - " + rp(["played well in group","needed a break from play","was a bit mouthy, redirected","had loose stool","napped most of the afternoon","was very energetic today","did great with new dogs"])); } return lines.join("\n"); }
+            case "boarding_notes": { if (srand() > 0.4) return "All boarders doing well"; const lines = []; for (let i = 0; i < ri(1, 3); i++) { const { d, c } = pickDog(); lines.push("- @" + d.fields.name + " " + (c.fields.last_name||"") + " - " + rp(["eating well, happy in room","seemed anxious at first, settled in","loved playtime","refused dinner, will monitor","checkout tomorrow, bath scheduled","sleeping soundly"])); } return lines.join("\n"); }
+            case "social_media": return "[" + (srand() > 0.3 ? "x" : " ") + "] Instagram Stories\n[" + (srand() > 0.4 ? "x" : " ") + "] Instagram Post";
+            case "picture_requests": { if (srand() > 0.5) return ""; const lines = []; for (let i = 0; i < ri(1, 3); i++) { const { d, c } = pickDog(); lines.push("[" + (srand() > 0.4 ? "x" : " ") + "] @" + d.fields.name + " " + (c.fields.last_name||"") + " - " + rp(["owner requested photo","send to owner","daily update photo"])); } return lines.join("\n"); }
+            case "building_supplies": return rp(["All good","- Need more paper towels\n- Bleach running low","- Light out in hallway B","Everything stocked"]);
+            case "other": return rp(["","Quiet day overall","Busy morning, slower afternoon","Full house! Great energy today",""]);
+            default: return "";
+          }
+        };
+
+        const SECS = ["sales","csr_checklist","alerts","team_notes","leads","tours","meds","birthdays","ice_cream","extra_play","baths","day_boarders","evaluations","small_daycare_notes","large_daycare_notes","boarding_notes","social_media","picture_requests","building_supplies","other"];
+        const sections = SECS.map(sid => ({ id: sid, content: genSec(sid) }));
+
+        // Extract @mentions
+        const knownNames = dogs.map(dg => { const cl = clients.find(c => c.id === dg.clientId); return { name: (dg.fields.name + " " + (cl ? cl.fields.last_name : "")).trim(), dog: dg, client: cl }; });
+        const mentions = [];
+        let mIdx = 1;
+        sections.forEach(sec => {
+          knownNames.forEach(({ name, dog: dg }) => {
+            if (sec.content.includes("@" + name)) {
+              mentions.push({ id: "em" + dt.replace(/-/g, "") + "_" + (mIdx++), entityType: "dog", entityId: dg.id, entityName: name, sectionId: sec.id, createdAt: dt + "T" + String(ri(7, 18)).padStart(2, "0") + ":" + String(ri(0, 59)).padStart(2, "0") + ":00" });
+            }
+          });
+        });
+
+        const locked = off < -1;
+        const history = [{ ts: dt + "T07:00:00", action: "Created from template" }];
+        if (locked) history.push({ ts: dt + "T18:30:00", action: "Locked by Manager" });
+        if (srand() > 0.6) history.push({ ts: dt + "T" + String(ri(10, 16)).padStart(2, "0") + ":" + String(ri(0, 59)).padStart(2, "0") + ":00", action: "Edited by Staff" });
+
+        entries.push({ type: "eod", date: dt, locked, sections, mentions, history });
+      }
+      // Merge: keep any existing entries that aren't in the 60-day range, replace the rest
+      const existingOutside = (data.eodEntries || []).filter(e => !entries.find(ne => ne.date === e.date));
+      const merged = [...existingOutside, ...entries].sort((a, b) => a.date.localeCompare(b.date));
+      await save({ ...data, eodEntries: merged });
+      setSeeding(false);
+      alert("Done! 60 days of sample EOD data generated.");
+    } catch (err) {
+      console.error("EOD seed error:", err);
+      setSeeding(false);
+      alert("Error seeding EOD data: " + err.message);
+    }
+  };
+
   // History panel
   const [showHistory, setShowHistory] = useState(false);
   // New hire guide
@@ -14232,6 +14324,7 @@ function EODPage({ data, save, nav }) {
           <button onClick={() => setShowEODGuide(v => !v)} style={{ width: 22, height: 22, borderRadius: 11, border: `1.5px solid ${showEODGuide ? C.pri : C.border}`, background: showEODGuide ? C.priLt : "transparent", color: showEODGuide ? C.pri : C.textMut, fontSize: 12, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, fontFamily: "inherit", lineHeight: 1, transition: "all 0.15s" }} title="How EOD Reports work">?</button>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          {(data.eodEntries || []).length < 5 && <Btn variant="secondary" size="sm" onClick={seedEODData} disabled={seeding}>{seeding ? "Generating..." : "📋 Seed Sample Data"}</Btn>}
           <Btn variant="secondary" size="sm" onClick={() => setShowEODSearch(true)} icon={<I.Search />}>Search</Btn>
           {!isLocked && <Btn onClick={saveEOD} icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>}>Save</Btn>}
           {isPastDay && isLocked ? <Btn variant="secondary" size="sm" disabled style={{opacity:0.5,cursor:"not-allowed"}}>🔒 Locked</Btn> : <Btn variant="secondary" onClick={toggleLock} size="sm">{isLocked ? "🔒 Locked" : "🔓 Lock Day"}</Btn>}
