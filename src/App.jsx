@@ -21957,6 +21957,9 @@ function NewOverlay({ data, nav, onClose }) {
 // UNIFIED NEW PAGE (Client + Dog + Reservation — all in one)
 // ═══════════════════════════════════════════════════════════════════════════
 function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
+  // Early check-in modal (rendered at bottom of page)
+  const [earlyCheckInModal, setEarlyCheckInModal] = useState(null);
+
   // Action level: determines which fields are required
   const [selectedAction, setSelectedAction] = useState(null); // null → show picker; "create"|"tour"|"eval"|"reservation"
 
