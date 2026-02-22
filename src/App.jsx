@@ -1227,6 +1227,36 @@ function getRoomCleaningStats(data, date) {
   return { totalNeeded, totalDone, total: totalNeeded, cleaned: totalDone };
 }
 
+// PP progress helper: 3 required sessions per dog
+function getPPStats(data, date) {
+  const td = date || todayStr();
+  const entryId = `ops_pp_${td}`;
+  const entry = (data.dailyOps || []).find(e => e.id === entryId);
+  const ei = entry ? entry.items || {} : {};
+  // Count PP dogs for this date
+  const reservations = data.reservations || [];
+  const dogs = data.dogs || [];
+  const ppDogIds = new Set();
+  reservations.forEach(r => { if (r.type === "evaluation" && r.evalResult === "passed_private") ppDogIds.add(r.dogId); });
+  dogs.forEach(d => { if ((d.tags || []).includes("tag_pp")) ppDogIds.add(d.id); });
+  const ppRes = reservations.filter(r => (r.type === "boarding" || r.type === "daycare") && r.status === "checked-in" && r.checkIn <= td && r.checkOut >= td && ppDogIds.has(r.dogId));
+  const totalDogs = ppRes.length;
+  const requiredSessions = totalDogs * 3; // 3 required let-outs per dog
+  let completedSessions = 0;
+  let totalLogged = 0;
+  Object.values(ei).forEach(d => {
+    if (d && d.sessions) {
+      d.sessions.forEach((s, si) => {
+        if (s.time || s.urinate || s.defecate) {
+          totalLogged++;
+          if (si < 3) completedSessions++; // only first 3 count toward required
+        }
+      });
+    }
+  });
+  return { totalDogs, requiredSessions, completedSessions, totalLogged };
+}
+
 function getOpsCardStatus(data, item, date) {
   if (item.comingSoon) return "coming_soon";
   if (item.dataKey === "eodEntries") return "none"; // EOD is not measured
@@ -1253,6 +1283,12 @@ function getOpsCardStatus(data, item, date) {
     if (stats.totalNeeded === 0) return "not_started";
     if (stats.totalDone >= stats.totalNeeded) return "completed";
     return stats.totalDone > 0 ? "in_progress" : "not_started";
+  }
+  if (item.typeSub === "pp") {
+    const ppStats = getPPStats(data, td);
+    if (ppStats.requiredSessions === 0) return "not_started";
+    if (ppStats.completedSessions >= ppStats.requiredSessions) return "completed";
+    return ppStats.completedSessions > 0 ? "in_progress" : "not_started";
   }
   if (Array.isArray(ei)) {
     return ei.some(i => i.checked) ? "in_progress" : "not_started";
@@ -1290,6 +1326,10 @@ function getOpsProgress(data, item, date) {
   if (item.typeSub === "room_cleaning") {
     const stats = getRoomCleaningStats(data, td);
     return stats.totalNeeded > 0 ? Math.round((stats.totalDone / stats.totalNeeded) * 100) : 0;
+  }
+  if (item.typeSub === "pp") {
+    const ppStats = getPPStats(data, td);
+    return ppStats.requiredSessions > 0 ? Math.round((ppStats.completedSessions / ppStats.requiredSessions) * 100) : 0;
   }
   if (Array.isArray(ei)) {
     const total = ei.length;
@@ -1330,11 +1370,9 @@ function getOpsCountLabel(data, item, date) {
     return `${done}/${total} photos`;
   }
   if (item.typeSub === "pp") {
-    if (!entry || !entry.items) return "0 sessions";
-    const ei = entry.items;
-    let sessCount = 0;
-    Object.values(ei).forEach(d => { if (d && d.sessions) d.sessions.forEach(s => { if (s.time || s.urinate || s.defecate) sessCount++; }); });
-    return `${sessCount} session${sessCount !== 1 ? "s" : ""} logged`;
+    const ppStats = getPPStats(data, td);
+    if (ppStats.requiredSessions === 0) return "No PP dogs";
+    return `${ppStats.completedSessions}/${ppStats.requiredSessions} required · ${ppStats.totalLogged} total`;
   }
   return "";
 }
@@ -13507,8 +13545,19 @@ function OperationsHub({ data, save, nav, profile }) {
     // Already checked out today
     const checkedOut = reservations.filter(r => r.checkOut === viewDate && r.status === "checked-out");
 
-    // Room cleaning stats
+    // Room cleaning stats + awaiting checkout count
     const roomStats = getRoomCleaningStats(data, viewDate);
+    const allRooms = data.rooms || {};
+    const boardingCheckedOut = reservations.filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-out");
+    let roomsAwaitingCheckout = 0;
+    ROOM_TYPES.forEach(rt => {
+      (allRooms[rt] || []).forEach(rm => {
+        const activeRes = inHouseBoarding.find(r => r.room === rm);
+        const coRes = boardingCheckedOut.find(r => r.room === rm);
+        // Needs disinfect (checkOut === viewDate) but dog hasn't checked out yet
+        if (activeRes && activeRes.checkOut === viewDate && !coRes) roomsAwaitingCheckout++;
+      });
+    });
 
     // Baths: checked-in dogs checking out today that have a bath type (includes departure time)
     const bathRows = [];
@@ -13534,24 +13583,14 @@ function OperationsHub({ data, save, nav, profile }) {
     const picturesTotal = pictureDogs.length;
     const picturesDone = pictureDogs.filter(r => picItems[r.dogId]).length;
 
-    // Private play stats
-    const ppDogIds = new Set();
-    reservations.forEach(r => { if (r.type === "evaluation" && r.evalResult === "passed_private") ppDogIds.add(r.dogId); });
-    dogs.forEach(d => { if ((d.tags || []).includes("tag_pp")) ppDogIds.add(d.id); });
-    const ppReservations = reservations.filter(r => (r.type === "boarding" || r.type === "daycare") && r.status === "checked-in" && r.checkIn <= viewDate && r.checkOut >= viewDate && ppDogIds.has(r.dogId));
+    // Private play stats (3 required sessions per dog)
+    const ppStats = getPPStats(data, viewDate);
     const ppEntryId = `ops_pp_${viewDate}`;
     const ppEntry = allOps.find(e => e.id === ppEntryId);
     const ppItems = ppEntry ? ppEntry.items || {} : {};
-    let ppTotalDogs = ppReservations.length;
-    let ppSessionsLogged = 0;
     let ppLastTime = null;
     Object.values(ppItems).forEach(d => {
-      if (d && d.sessions) d.sessions.forEach(s => {
-        if (s.time || s.urinate || s.defecate) {
-          ppSessionsLogged++;
-          if (s.time) ppLastTime = s.time;
-        }
-      });
+      if (d && d.sessions) d.sessions.forEach(s => { if (s.time) ppLastTime = s.time; });
     });
 
     // Checklist progress for each ops type
@@ -13577,6 +13616,50 @@ function OperationsHub({ data, save, nav, profile }) {
       closingDone = !Array.isArray(ci) ? Object.values(ci).filter(i => i && i.checked).length : ci.filter(i => i.checked).length;
     }
 
+    // ─── Lifecycle stats ───
+    const clients = data.clients || [];
+    const payments = data.payments || [];
+
+    // Overdue follow-ups: followUpDate exists and is before viewDate
+    let overdueFollowUps = 0;
+    let dueTodayFollowUps = 0;
+    clients.forEach(c => {
+      const convFu = c.lifecycle?.conversion?.followUpDate || "";
+      const retFu = c.lifecycle?.retention?.followUpDate || "";
+      const fu = convFu || retFu;
+      if (fu && fu < viewDate) overdueFollowUps++;
+      if (fu && fu === viewDate) dueTodayFollowUps++;
+    });
+
+    // Lifecycle logs/updates made today (conversion + retention updates with loggedAt on viewDate)
+    let logsToday = 0;
+    clients.forEach(c => {
+      const convUpdates = c.lifecycle?.conversion?.updates || [];
+      const retUpdates = c.lifecycle?.retention?.updates || [];
+      [...convUpdates, ...retUpdates].forEach(u => {
+        if (u.loggedAt && u.loggedAt.startsWith(viewDate)) logsToday++;
+      });
+    });
+
+    // New customers created today
+    const newCustomersToday = clients.filter(c => {
+      const ca = c.createdAt || "";
+      return ca.startsWith(viewDate) || ca === viewDate;
+    }).length;
+
+    // New PAYING customers: clients whose first-ever completed payment was on viewDate
+    let newPayingToday = 0;
+    const paymentsByClient = {};
+    payments.filter(p => p.status === "completed" && p.type !== "refund").forEach(p => {
+      if (!paymentsByClient[p.clientId]) paymentsByClient[p.clientId] = [];
+      paymentsByClient[p.clientId].push(p);
+    });
+    Object.entries(paymentsByClient).forEach(([cid, pmts]) => {
+      pmts.sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
+      const first = pmts[0];
+      if (first && first.timestamp && first.timestamp.startsWith(viewDate)) newPayingToday++;
+    });
+
     return {
       dogsInHouse,
       boardingCount: inHouseBoarding.length,
@@ -13584,17 +13667,25 @@ function OperationsHub({ data, save, nav, profile }) {
       goingHome: goingHome.length,
       checkedOut: checkedOut.length,
       roomStats,
+      roomsAwaitingCheckout,
       bathsTotal,
       bathsDone,
       bathRows,
       picturesTotal,
       picturesDone,
-      ppTotalDogs,
-      ppSessionsLogged,
+      ppTotalDogs: ppStats.totalDogs,
+      ppRequiredSessions: ppStats.requiredSessions,
+      ppCompletedRequired: ppStats.completedSessions,
+      ppTotalLogged: ppStats.totalLogged,
       ppLastTime,
       checklistProgress,
       closingTotal,
       closingDone,
+      overdueFollowUps,
+      dueTodayFollowUps,
+      logsToday,
+      newCustomersToday,
+      newPayingToday,
     };
   }, [data, viewDate]);
 
@@ -13710,6 +13801,11 @@ function OperationsHub({ data, save, nav, profile }) {
                   <div style={{ fontSize: 13, fontWeight: 700, color: C.pri, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10, paddingBottom: 6, borderBottom: `2px solid ${C.pri}` }}>Cleaning & Baths</div>
 
                   {progressRow("Room Cleaning", tp.roomStats.totalDone, tp.roomStats.totalNeeded, C.pri)}
+                  {tp.roomsAwaitingCheckout > 0 && (
+                    <div style={{ padding: "4px 0 6px", fontSize: 11, color: C.warn, fontWeight: 600 }}>
+                      {tp.roomsAwaitingCheckout} room{tp.roomsAwaitingCheckout !== 1 ? "s" : ""} awaiting checkout for disinfect
+                    </div>
+                  )}
 
                   <div style={{ padding: "10px 0", borderBottom: `1px solid ${C.borderLight}` }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -13740,15 +13836,10 @@ function OperationsHub({ data, save, nav, profile }) {
                   <div style={{ fontSize: 13, fontWeight: 700, color: C.pri, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10, paddingBottom: 6, borderBottom: `2px solid ${C.pri}` }}>Checklists & Activities</div>
 
                   {/* Private Play */}
-                  <div style={{ padding: "10px 0", borderBottom: `1px solid ${C.borderLight}` }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Private Play</span>
-                      <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>{tp.ppTotalDogs} dog{tp.ppTotalDogs !== 1 ? "s" : ""}</span>
-                    </div>
-                    <div style={{ display: "flex", gap: 16, marginTop: 6 }}>
-                      <span style={{ fontSize: 12, color: C.textSec }}><span style={{ fontWeight: 700, color: C.text }}>{tp.ppSessionsLogged}</span> session{tp.ppSessionsLogged !== 1 ? "s" : ""} logged</span>
-                      {tp.ppLastTime && <span style={{ fontSize: 12, color: C.textMut }}>Last: {tp.ppLastTime}</span>}
-                    </div>
+                  {progressRow("Private Play", tp.ppCompletedRequired, tp.ppRequiredSessions, C.pri)}
+                  <div style={{ padding: "2px 0 8px", display: "flex", gap: 16, fontSize: 11, color: C.textSec }}>
+                    <span>{tp.ppTotalDogs} dog{tp.ppTotalDogs !== 1 ? "s" : ""} · {tp.ppTotalLogged} total session{tp.ppTotalLogged !== 1 ? "s" : ""}</span>
+                    {tp.ppLastTime && <span style={{ color: C.textMut }}>Last: {tp.ppLastTime}</span>}
                   </div>
 
                   {/* Opening Checklist */}
@@ -13771,6 +13862,43 @@ function OperationsHub({ data, save, nav, profile }) {
 
                   {/* Closing Procedures */}
                   {progressRow("Closing Procedures", tp.closingDone, tp.closingTotal, C.dan)}
+                </div>
+              </div>
+
+              {/* Lifecycle & Customer Stats */}
+              <div style={{ marginTop: 20 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.pri, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 12, paddingBottom: 6, borderBottom: `2px solid ${C.pri}` }}>Customer Lifecycle</div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 10 }}>
+                  {/* Overdue Follow-Ups */}
+                  <div style={{ background: tp.overdueFollowUps > 0 ? C.danLt : C.surface, borderRadius: 12, padding: "14px 16px", border: `1.5px solid ${tp.overdueFollowUps > 0 ? C.dan + "40" : C.border}` }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Overdue Follow-Ups</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: tp.overdueFollowUps > 0 ? C.dan : C.suc, lineHeight: 1 }}>{tp.overdueFollowUps}</div>
+                    {tp.overdueFollowUps > 0 && <div style={{ fontSize: 11, color: C.dan, marginTop: 3, fontWeight: 600 }}>need attention</div>}
+                  </div>
+                  {/* Due Today */}
+                  <div style={{ background: tp.dueTodayFollowUps > 0 ? C.warnLt : C.surface, borderRadius: 12, padding: "14px 16px", border: `1.5px solid ${tp.dueTodayFollowUps > 0 ? C.warn + "40" : C.border}` }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Due Today</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: tp.dueTodayFollowUps > 0 ? C.warn : C.textMut, lineHeight: 1 }}>{tp.dueTodayFollowUps}</div>
+                    <div style={{ fontSize: 11, color: C.textSec, marginTop: 3 }}>follow-ups scheduled</div>
+                  </div>
+                  {/* Logs Today */}
+                  <div style={{ background: C.surface, borderRadius: 12, padding: "14px 16px", border: `1.5px solid ${C.border}` }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Logs Today</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: tp.logsToday > 0 ? C.pri : C.textMut, lineHeight: 1 }}>{tp.logsToday}</div>
+                    <div style={{ fontSize: 11, color: C.textSec, marginTop: 3 }}>updates recorded</div>
+                  </div>
+                  {/* New Customers */}
+                  <div style={{ background: C.surface, borderRadius: 12, padding: "14px 16px", border: `1.5px solid ${C.border}` }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>New Customers</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: tp.newCustomersToday > 0 ? C.info : C.textMut, lineHeight: 1 }}>{tp.newCustomersToday}</div>
+                    <div style={{ fontSize: 11, color: C.textSec, marginTop: 3 }}>created today</div>
+                  </div>
+                  {/* New Paying Customers */}
+                  <div style={{ background: tp.newPayingToday > 0 ? C.sucLt : C.surface, borderRadius: 12, padding: "14px 16px", border: `1.5px solid ${tp.newPayingToday > 0 ? C.suc + "40" : C.border}` }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>First-Time Payers</div>
+                    <div style={{ fontSize: 24, fontWeight: 800, color: tp.newPayingToday > 0 ? C.suc : C.textMut, lineHeight: 1 }}>{tp.newPayingToday}</div>
+                    <div style={{ fontSize: 11, color: C.textSec, marginTop: 3 }}>first payment today</div>
+                  </div>
                 </div>
               </div>
 
@@ -14198,12 +14326,66 @@ function DailyOpsPage({ data, save, sub, nav, profile }) {
   };
 
   // ─── Private Play ───
+  const [ppEditTimePopover, setPpEditTimePopover] = useState(null); // { dogId, si }
+  const ppNowTime = () => { const n = new Date(); return n.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); };
+
+  const ppToggleUD = (dogId, si, field, val, ses) => {
+    if (isLocked) return;
+    const ppName = profile?.full_name || "";
+    const nSes = [...ses];
+    const cur = nSes[si];
+    const autoTime = ppNowTime();
+    // When checking U or D: auto-fill time if empty, record originalTime, set completedBy
+    if (val === true) {
+      const timeToSet = cur.time || autoTime;
+      nSes[si] = { ...cur, [field]: val, time: timeToSet, originalTime: cur.originalTime || timeToSet, completedBy: ppName, timeEdited: false };
+    } else {
+      // Unchecking: keep time if other checkbox is still checked, else clear
+      const otherField = field === "urinate" ? "defecate" : "urinate";
+      if (!cur[otherField]) {
+        nSes[si] = { ...cur, [field]: val, time: "", originalTime: "", completedBy: "", timeEdited: false };
+      } else {
+        nSes[si] = { ...cur, [field]: val };
+      }
+    }
+    setItems(prev => ({ ...prev, [dogId]: { sessions: nSes } }));
+    setDirty(true);
+  };
+
+  const ppEditTime = (dogId, si, newTime, ses) => {
+    if (isLocked) return;
+    const nSes = [...ses];
+    const cur = nSes[si];
+    nSes[si] = { ...cur, time: newTime, timeEdited: newTime !== (cur.originalTime || "") };
+    setItems(prev => ({ ...prev, [dogId]: { sessions: nSes } }));
+    setDirty(true);
+  };
+
   const renderPP = () => {
     const dogs = ppReservations;
     const ppItems = items;
     const sesLabels = ["Session 1", "Session 2", "Session 3", "Session 4", "Session 5"];
+    const isRequired = (si) => si < 3;
+    // Progress: 3 required sessions per dog
+    const totalRequired = dogs.length * 3;
+    let completedRequired = 0;
+    dogs.forEach(r => {
+      const dogData = ppItems[r.dogId] || {};
+      const ses = dogData.sessions || [];
+      ses.forEach((s, si) => { if (si < 3 && (s.time || s.urinate || s.defecate)) completedRequired++; });
+    });
+    const ppPct = totalRequired > 0 ? Math.round((completedRequired / totalRequired) * 100) : 0;
     return (
       <div>
+        {/* Progress bar */}
+        {dogs.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <div style={{ flex: 1, height: 8, background: C.surfaceHover, borderRadius: 4, overflow: "hidden" }}>
+              <div style={{ width: `${ppPct}%`, height: "100%", background: ppPct === 100 ? C.suc : C.pri, borderRadius: 4, transition: "width 0.3s" }} />
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 600, color: ppPct === 100 ? C.suc : C.text }}>{completedRequired}/{totalRequired} required</span>
+          </div>
+        )}
         {dogs.length === 0 ? <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No private play dogs checked in today.</div></Card> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, background: C.surface, borderRadius: 12, overflow: "hidden" }}>
@@ -14212,16 +14394,18 @@ function DailyOpsPage({ data, save, sub, nav, profile }) {
                   <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.textMut, fontSize: 11, borderBottom: `2px solid ${C.border}` }}>DOG</th>
                   <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.textMut, fontSize: 11, borderBottom: `2px solid ${C.border}` }}>OWNER</th>
                   {sesLabels.map((s, si) => (
-                    <th key={si} colSpan={3} style={{ padding: "10px 6px", textAlign: "center", fontWeight: 700, color: C.pri, fontSize: 11, borderBottom: `2px solid ${C.border}`, borderLeft: `1px solid ${C.border}` }}>{s}</th>
+                    <th key={si} colSpan={3} style={{ padding: "10px 6px", textAlign: "center", fontWeight: isRequired(si) ? 800 : 500, color: isRequired(si) ? C.pri : C.textMut, fontSize: 11, borderBottom: `2px solid ${isRequired(si) ? C.pri : C.border}`, borderLeft: `1px solid ${C.border}`, background: isRequired(si) ? C.priLt : C.surfaceHover }}>
+                      {s}{isRequired(si) ? <span style={{ fontSize: 9, fontWeight: 700, color: C.pri, marginLeft: 4, textTransform: "uppercase" }}>REQ</span> : <span style={{ fontSize: 9, fontWeight: 500, color: C.textMut, marginLeft: 4, fontStyle: "italic" }}>extra</span>}
+                    </th>
                   ))}
                 </tr>
                 <tr style={{ background: C.surfaceHover }}>
                   <th /><th />
                   {sesLabels.map((_, si) => (
                     <React.Fragment key={si}>
-                      <th style={{ padding: "4px 4px", fontSize: 10, color: C.textMut, fontWeight: 600, textAlign: "center", borderLeft: `1px solid ${C.border}` }}>Time</th>
-                      <th style={{ padding: "4px 4px", fontSize: 10, color: C.textMut, fontWeight: 600, textAlign: "center" }}>U</th>
-                      <th style={{ padding: "4px 4px", fontSize: 10, color: C.textMut, fontWeight: 600, textAlign: "center" }}>D</th>
+                      <th style={{ padding: "4px 4px", fontSize: 10, color: C.textMut, fontWeight: 600, textAlign: "center", borderLeft: `1px solid ${C.border}`, background: isRequired(si) ? C.priLt : "transparent" }}>Time</th>
+                      <th style={{ padding: "4px 4px", fontSize: 10, color: C.textMut, fontWeight: 600, textAlign: "center", background: isRequired(si) ? C.priLt : "transparent" }}>U</th>
+                      <th style={{ padding: "4px 4px", fontSize: 10, color: C.textMut, fontWeight: 600, textAlign: "center", background: isRequired(si) ? C.priLt : "transparent" }}>D</th>
                     </React.Fragment>
                   ))}
                 </tr>
@@ -14236,18 +14420,26 @@ function DailyOpsPage({ data, save, sub, nav, profile }) {
                       <td style={{ padding: "8px 12px", fontWeight: 700, color: C.text }}>{d ? d.fields.name : "?"}</td>
                       <td style={{ padding: "8px 12px", color: C.textSec, fontSize: 11 }}>{ownerName(r.clientId)}</td>
                       {ses.map((s, si) => {
-                        const ppName = profile?.full_name || "";
+                        const isEditingTime = ppEditTimePopover && ppEditTimePopover.dogId === r.dogId && ppEditTimePopover.si === si;
                         return (
                         <React.Fragment key={si}>
-                          <td style={{ padding: "4px 2px", borderLeft: `1px solid ${C.border}` }}>
-                            <input type="text" value={s.time} disabled={isLocked} onChange={e => { const nSes = [...ses]; nSes[si] = { ...nSes[si], time: e.target.value, completedBy: ppName }; setItems(prev => ({ ...prev, [r.dogId]: { sessions: nSes } })); setDirty(true); }} placeholder="—" style={{ width: 52, textAlign: "center", border: `1px solid ${C.border}`, borderRadius: 4, padding: "3px 0", fontSize: 11, fontFamily: "inherit", background: isLocked ? C.surfaceHover : "#fff" }} />
-                            {s.completedBy && s.time && <div style={{ fontSize: 9, color: C.textMut, textAlign: "center", marginTop: 1 }}>{s.completedBy}</div>}
+                          <td style={{ padding: "4px 2px", borderLeft: `1px solid ${C.border}`, background: isRequired(si) ? C.priLt + "80" : "transparent", verticalAlign: "top" }}>
+                            {isEditingTime ? (
+                              <input type="text" autoFocus defaultValue={s.time} onBlur={e => { ppEditTime(r.dogId, si, e.target.value, ses); setPpEditTimePopover(null); }} onKeyDown={e => { if (e.key === "Enter") { ppEditTime(r.dogId, si, e.target.value, ses); setPpEditTimePopover(null); } }} style={{ width: 56, textAlign: "center", border: `1.5px solid ${C.pri}`, borderRadius: 4, padding: "3px 0", fontSize: 11, fontFamily: "inherit", background: "#fff", outline: "none" }} />
+                            ) : (
+                              <div onClick={() => { if (!isLocked && s.time) setPpEditTimePopover({ dogId: r.dogId, si }); }} style={{ cursor: s.time && !isLocked ? "pointer" : "default", textAlign: "center" }}>
+                                <div style={{ fontSize: 11, fontWeight: 600, color: s.time ? C.text : C.textMut, padding: "3px 0" }}>{s.time || "—"}</div>
+                              </div>
+                            )}
+                            {s.timeEdited && <div style={{ fontSize: 8, color: C.warn, textAlign: "center", fontWeight: 700, cursor: "pointer" }} title={`Originally: ${s.originalTime}`}>edited</div>}
+                            {s.completedBy && s.time && !s.timeEdited && <div style={{ fontSize: 9, color: C.textMut, textAlign: "center", marginTop: 1 }}>{s.completedBy}</div>}
+                            {s.completedBy && s.time && s.timeEdited && <div style={{ fontSize: 9, color: C.textMut, textAlign: "center" }}>{s.completedBy}</div>}
                           </td>
-                          <td style={{ padding: "4px 2px", textAlign: "center" }}>
-                            <input type="checkbox" checked={!!s.urinate} disabled={isLocked} onChange={e => { const nSes = [...ses]; nSes[si] = { ...nSes[si], urinate: e.target.checked, completedBy: ppName }; setItems(prev => ({ ...prev, [r.dogId]: { sessions: nSes } })); setDirty(true); }} style={{ width: 16, height: 16, accentColor: C.pri }} />
+                          <td style={{ padding: "4px 2px", textAlign: "center", background: isRequired(si) ? C.priLt + "80" : "transparent" }}>
+                            <input type="checkbox" checked={!!s.urinate} disabled={isLocked} onChange={e => ppToggleUD(r.dogId, si, "urinate", e.target.checked, ses)} style={{ width: 16, height: 16, accentColor: C.pri }} />
                           </td>
-                          <td style={{ padding: "4px 2px", textAlign: "center" }}>
-                            <input type="checkbox" checked={!!s.defecate} disabled={isLocked} onChange={e => { const nSes = [...ses]; nSes[si] = { ...nSes[si], defecate: e.target.checked, completedBy: ppName }; setItems(prev => ({ ...prev, [r.dogId]: { sessions: nSes } })); setDirty(true); }} style={{ width: 16, height: 16, accentColor: C.acc }} />
+                          <td style={{ padding: "4px 2px", textAlign: "center", background: isRequired(si) ? C.priLt + "80" : "transparent" }}>
+                            <input type="checkbox" checked={!!s.defecate} disabled={isLocked} onChange={e => ppToggleUD(r.dogId, si, "defecate", e.target.checked, ses)} style={{ width: 16, height: 16, accentColor: C.acc }} />
                           </td>
                         </React.Fragment>
                         );
