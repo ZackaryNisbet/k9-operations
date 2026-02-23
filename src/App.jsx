@@ -3487,104 +3487,134 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         bathSchedule: bathTableHtml,
       };
 
-      // ── SMART PRINT LAYOUT ──
-      // Strategy: Detect header zone (photo + adjacent text), render as flex header.
-      // Then flow remaining elements sorted by Y, grouping same-Y elements into rows.
-      // Tables/grids get full width with overflow protection.
+      // ── GENERIC WYSIWYG PRINT ENGINE ──
+      // Faithfully reproduces ANY canvas arrangement. No hardcoded variable names
+      // for layout decisions — every element is treated uniformly.
+      // Horizontal position: proportional to canvas X/W (canvas=612px wide).
+      // Vertical order: sorted by canvas Y, with proportional gap preservation.
+      // Height: driven by actual content (document flow), not canvas H.
+      const CW = 612; // Canvas width (must match editor CARD_W)
       const visibleEls = cfgElements.filter(el => el.visible !== false);
       const sorted = [...visibleEls].sort((a, b) => (a.y || 0) - (b.y || 0) || (a.x || 0) - (b.x || 0));
 
-      // Detect header zone: photo element + any elements overlapping its Y range
-      const photoEl = sorted.find(el => el.varId === "dogPhoto");
-      const photoBottom = photoEl ? (photoEl.y || 0) + (photoEl.h || 120) : 0;
-      const photoRight = photoEl ? (photoEl.x || 0) + (photoEl.w || 120) : 0;
-      const headerEls = photoEl ? sorted.filter(el => el.varId !== "dogPhoto" && (el.y || 0) < photoBottom && (el.x || 0) >= photoRight - 20) : [];
-      const headerElIds = new Set([...(photoEl ? [photoEl.id] : []), ...headerEls.map(e => e.id)]);
-      const bodyEls = sorted.filter(el => !headerElIds.has(el.id));
-
-      // Render text element helper
-      const renderTextEl = (el) => {
-        const varId = el.varId;
-        if (varId === "separator") return `<hr style="border:none;border-top:1px solid #ccc;margin:4px 0;">`;
-        if (varId === "labelCustom") {
-          const lb = el.label ? `<strong>${el.label}</strong> ` : "";
-          return `<div style="font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};">${lb}${el.customText||""}</div>`;
-        }
-        const raw = varDataMap[varId];
-        if (raw === undefined || raw === "") return "";
-        if (varId === "dogTags") return `<div style="margin:3px 0;">${raw}</div>`;
-        if (["activityGrid","medications","bathSchedule","feedingSchedule"].includes(varId)) return raw; // handled separately
-        const lb = el.label ? `<strong>${el.label}</strong> ` : "";
-        return `<div style="font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};">${lb}${raw}</div>`;
-      };
-
-      // Build header section
-      let headerHtml = "";
-      if (photoEl) {
-        const headerTextHtml = headerEls.sort((a,b) => (a.y||0)-(b.y||0)).map(el => renderTextEl(el)).filter(Boolean).join("\n");
-        headerHtml = `<div style="display:flex;gap:16px;margin-bottom:8px;"><div style="flex-shrink:0;">${picHtml}</div><div style="flex:1;">${headerTextHtml}</div></div>`;
-      }
-
-      // Group body elements into rows (elements within 16px Y of each other)
+      // ── Step 1: Group elements into rows by Y-overlap ──
+      // Two elements share a row if their vertical extents overlap by >30% of
+      // the shorter element's height. This handles side-by-side elements that
+      // aren't pixel-perfect aligned (e.g., photo next to text fields).
       const rows = [];
-      bodyEls.forEach(el => {
-        const lastRow = rows[rows.length - 1];
-        if (lastRow && Math.abs((el.y || 0) - (lastRow[0].y || 0)) < 16) {
-          lastRow.push(el);
-        } else {
-          rows.push([el]);
+      sorted.forEach(el => {
+        const elTop = el.y || 0;
+        const elBot = elTop + (el.h || 24);
+        let placed = false;
+        for (let i = rows.length - 1; i >= Math.max(0, rows.length - 3); i--) {
+          const row = rows[i];
+          const rowTop = Math.min(...row.map(e => e.y || 0));
+          const rowBot = Math.max(...row.map(e => (e.y || 0) + (e.h || 24)));
+          const oTop = Math.max(elTop, rowTop);
+          const oBot = Math.min(elBot, rowBot);
+          const overlap = oBot - oTop;
+          const minH = Math.min(elBot - elTop, rowBot - rowTop);
+          if (overlap > minH * 0.3) { row.push(el); placed = true; break; }
         }
+        if (!placed) rows.push([el]);
       });
 
-      // Overflow detection for long stays
+      // ── Step 2: Universal element renderer ──
+      // Returns inner HTML for any element type. No special layout logic —
+      // just content rendering with the element's own typography settings.
+      const renderElContent = (el) => {
+        const varId = el.varId;
+        const fs = el.fontSize || 12;
+        const fw = el.bold ? 700 : 400;
+        const fst = el.italic ? "italic" : "normal";
+        const clr = el.color || "#222";
+        const ta = el.align || "left";
+        const baseStyle = `font-size:${fs}px;font-weight:${fw};font-style:${fst};color:${clr};text-align:${ta};`;
+
+        if (varId === "separator") return `<hr style="border:none;border-top:1px solid #ccc;margin:4px 0;">`;
+        if (varId === "dogPhoto") return picHtml;
+        if (varId === "labelCustom") {
+          const lb = el.label ? `<strong>${el.label}</strong> ` : "";
+          return `<div style="${baseStyle}">${lb}${el.customText || ""}</div>`;
+        }
+
+        const raw = varDataMap[varId];
+        if (raw === undefined || raw === "") return null;
+
+        // Table/grid types: handle page overflow uniformly
+        const tableLabels = { activityGrid: "Activity Grid", medications: "Medications", bathSchedule: "Bath Schedule", feedingSchedule: "Feeding Schedule" };
+        if (tableLabels[varId]) {
+          if (needsPage2) {
+            return `<div style="padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:11px;color:#666;font-style:italic;"><strong>${tableLabels[varId]}:</strong> See page 2 (${stayDays} days)</div>`;
+          }
+          return `<div style="overflow:hidden;">${raw}</div>`;
+        }
+
+        if (varId === "dogTags") return `<div style="margin:2px 0;">${raw}</div>`;
+
+        const lb = el.label ? `<strong>${el.label}</strong> ` : "";
+        return `<div style="${baseStyle}white-space:normal;overflow-wrap:break-word;">${lb}${raw}</div>`;
+      };
+
+      // ── Step 3: Overflow detection ──
       const stayDays = actDays.length;
       const needsPage2 = stayDays > 7;
 
-      // Build body rows
+      // ── Step 4: Build page rows with proportional positioning ──
       const page1Parts = [];
-      if (headerHtml) page1Parts.push(headerHtml);
+      let prevRowBot = 0;
 
-      rows.forEach(row => {
-        // Check if any element is a table/grid type
-        const hasGrid = row.some(el => ["activityGrid","medications","bathSchedule"].includes(el.varId));
+      rows.forEach((row, ri) => {
+        // Sort row elements left-to-right
+        row.sort((a, b) => (a.x || 0) - (b.x || 0));
+        const rowTop = Math.min(...row.map(e => e.y || 0));
+        const rowBot = Math.max(...row.map(e => (e.y || 0) + (e.h || 24)));
 
-        if (hasGrid) {
-          row.forEach(el => {
-            const varId = el.varId;
-            if (!["activityGrid","medications","bathSchedule"].includes(varId)) {
-              const h = renderTextEl(el);
-              if (h) page1Parts.push(`<div style="margin:3px 0;">${h}</div>`);
-              return;
-            }
-            if (needsPage2) {
-              const typeLabel = varId === "activityGrid" ? "Activity Grid" : varId === "medications" ? "Medications" : "Bath Schedule";
-              page1Parts.push(`<div style="margin:6px 0;padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:11px;color:#666;font-style:italic;"><strong>${typeLabel}:</strong> Check following page — too many entries to display on first page (${stayDays} days)</div>`);
-            } else {
-              const raw = varDataMap[varId];
-              if (raw) page1Parts.push(`<div style="margin:4px 0;overflow:hidden;width:100%;">${raw}</div>`);
-            }
-          });
-          return;
-        }
+        // Proportional vertical gap between rows (compressed for print)
+        const yGap = ri > 0 ? Math.max(0, rowTop - prevRowBot) : 0;
+        const gapPx = Math.min(Math.round(yGap * 0.4), 20);
+        const mTop = gapPx > 3 ? gapPx : 2;
+        prevRowBot = rowBot;
 
         if (row.length === 1) {
+          // ── Single-element row ──
           const el = row[0];
-          if (el.varId === "feedingSchedule") {
-            const raw = varDataMap.feedingSchedule;
-            if (raw) page1Parts.push(`<div style="margin:4px 0;">${raw}</div>`);
+          const content = renderElContent(el);
+          if (!content) return;
+          const leftPct = ((el.x || 0) / CW * 100).toFixed(1);
+          const widthPct = ((el.w || CW) / CW * 100).toFixed(1);
+
+          if (parseFloat(widthPct) > 85) {
+            // Near-full-width: render as block
+            page1Parts.push(`<div style="margin-top:${mTop}px;">${content}</div>`);
           } else {
-            const h = renderTextEl(el);
-            if (h) page1Parts.push(`<div style="margin:2px 0;">${h}</div>`);
+            // Partial width: position proportionally
+            page1Parts.push(`<div style="margin-top:${mTop}px;margin-left:${leftPct}%;width:${widthPct}%;">${content}</div>`);
           }
         } else {
-          // Multi-element row
-          const parts = row.map(el => {
-            if (el.varId === "feedingSchedule") return `<div style="flex:1;">${varDataMap.feedingSchedule||""}</div>`;
-            const h = renderTextEl(el);
-            if (!h) return "";
-            return `<div style="display:inline-block;vertical-align:top;width:${el.w||200}px;">${h}</div>`;
-          }).filter(Boolean);
-          if (parts.length > 0) page1Parts.push(`<div style="margin:2px 0;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">${parts.join("")}</div>`);
+          // ── Multi-element row: flex with proportional widths ──
+          const parts = [];
+          let lastRightEdge = 0;
+
+          row.forEach((el, idx) => {
+            const content = renderElContent(el);
+            if (!content) return;
+            const elX = el.x || 0;
+            const elW = el.w || 100;
+            const widthPct = (elW / CW * 100).toFixed(1);
+
+            // Gap: space between this element's left and previous element's right
+            const gap = idx === 0 ? elX : Math.max(0, elX - lastRightEdge);
+            const gapPct = (gap / CW * 100).toFixed(1);
+            const ml = parseFloat(gapPct) > 1.5 ? `margin-left:${gapPct}%;` : "";
+
+            parts.push(`<div style="width:${widthPct}%;${ml}flex-shrink:0;min-width:0;overflow:hidden;">${content}</div>`);
+            lastRightEdge = elX + elW;
+          });
+
+          if (parts.length > 0) {
+            page1Parts.push(`<div style="display:flex;align-items:flex-start;margin-top:${mTop}px;">${parts.join("")}</div>`);
+          }
         }
       });
 
