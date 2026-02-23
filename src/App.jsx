@@ -3487,28 +3487,140 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         bathSchedule: bathTableHtml,
       };
 
-      // Render with absolute positioning matching canvas layout
+      // ── SMART PRINT LAYOUT ──
+      // Strategy: Use canvas Y positions to determine ORDER, but render in document flow
+      // so elements push each other down naturally. Group elements on the same Y-row
+      // into inline rows. Complex elements (grids/tables) get full width and overflow handling.
       const visibleEls = cfgElements.filter(el => el.visible !== false);
-      const maxY = visibleEls.reduce((m, el) => Math.max(m, (el.y || 0) + (el.h || 24)), 0);
+      // Sort by Y position, then X
+      const sorted = [...visibleEls].sort((a, b) => (a.y || 0) - (b.y || 0) || (a.x || 0) - (b.x || 0));
 
-      const elementHtmlParts = visibleEls.map(el => {
-        const varId = el.varId;
-        let inner = "";
-        if (varId === "separator") {
-          inner = `<div style="width:100%;height:2px;background:#ccc;"></div>`;
-        } else if (varId === "labelCustom") {
-          const lb = el.label ? `<strong>${el.label}</strong> ` : "";
-          inner = `<div style="font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};">${lb}${el.customText||""}</div>`;
+      // Group elements into "rows" — elements within 12px Y of each other are on the same row
+      const rows = [];
+      sorted.forEach(el => {
+        const lastRow = rows[rows.length - 1];
+        if (lastRow && Math.abs((el.y || 0) - (lastRow[0].y || 0)) < 12) {
+          lastRow.push(el);
         } else {
+          rows.push([el]);
+        }
+      });
+
+      // Determine if grids/tables are too wide for page (> 7 day columns) — overflow to page 2
+      const maxPageDays = 7; // Max days that fit cleanly on one page
+      const stayDays = actDays.length;
+      const needsPage2 = stayDays > maxPageDays;
+
+      // Build page 1 HTML
+      const page1Parts = rows.map(row => {
+        if (row.length === 1) {
+          // Single element row — full width flow
+          const el = row[0];
+          const varId = el.varId;
+          if (varId === "separator") return `<hr style="border:none;border-top:1px solid #ccc;margin:6px 0;">`;
+          if (varId === "labelCustom") {
+            const lb = el.label ? `<strong>${el.label}</strong> ` : "";
+            return `<div style="font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};margin:2px 0;">${lb}${el.customText||""}</div>`;
+          }
           const raw = varDataMap[varId];
           if (raw === undefined || raw === "") return "";
-          if (["dogPhoto","activityGrid","medications","bathSchedule","feedingSchedule","dogTags"].includes(varId)) { inner = raw; }
-          else { const lb = el.label ? `<strong>${el.label}</strong> ` : ""; inner = `<div style="font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};">${lb}${raw}</div>`; }
+          // Complex elements: grids/tables
+          if (["activityGrid","medications","bathSchedule"].includes(varId)) {
+            if (needsPage2) {
+              // Show "see page 2" message instead of overflowing tables
+              const typeLabel = varId === "activityGrid" ? "Activity Grid" : varId === "medications" ? "Medications" : "Bath Schedule";
+              return `<div style="margin:8px 0;padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:11px;color:#666;font-style:italic;"><strong>${typeLabel}:</strong> See following page — stay exceeds single-page display (${stayDays} days)</div>`;
+            }
+            return `<div style="margin:4px 0;overflow:hidden;">${raw}</div>`;
+          }
+          if (varId === "feedingSchedule") return `<div style="margin:4px 0;">${raw}</div>`;
+          if (varId === "dogPhoto") return `<div style="float:left;margin:0 12px 8px 0;">${raw}</div>`;
+          if (varId === "dogTags") return `<div style="margin:4px 0;">${raw}</div>`;
+          // Text elements
+          const lb = el.label ? `<strong>${el.label}</strong> ` : "";
+          return `<div style="font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};margin:2px 0;">${lb}${raw}</div>`;
         }
-        return `<div style="position:absolute;left:${el.x||0}px;top:${el.y||0}px;width:${el.w||200}px;">${inner}</div>`;
+        // Multi-element row — use inline-block layout
+        const parts = row.map(el => {
+          const varId = el.varId;
+          if (varId === "separator") return `<hr style="border:none;border-top:1px solid #ccc;margin:6px 0;width:100%;">`;
+          if (varId === "dogPhoto") return `<div style="display:inline-block;vertical-align:top;margin-right:12px;">${varDataMap[varId]||""}</div>`;
+          const raw = varDataMap[varId];
+          if (raw === undefined || raw === "") return "";
+          if (varId === "labelCustom") {
+            const lb = el.label ? `<strong>${el.label}</strong> ` : "";
+            return `<span style="display:inline-block;vertical-align:top;width:${el.w||200}px;font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};">${lb}${el.customText||""}</span>`;
+          }
+          const lb = el.label ? `<strong>${el.label}</strong> ` : "";
+          return `<span style="display:inline-block;vertical-align:top;width:${el.w||200}px;font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};">${lb}${raw}</span>`;
+        }).filter(Boolean);
+        return `<div style="margin:2px 0;display:flex;align-items:baseline;gap:4px;flex-wrap:wrap;">${parts.join("")}</div>`;
       }).filter(Boolean);
 
-      bodyContent = `<div style="text-align:right;font-size:11px;color:#666;margin-bottom:4px;">Run Card 1 of 1</div><div style="position:relative;min-height:${maxY+20}px;">${elementHtmlParts.join("\n")}</div>`;
+      // Build page 2 for long stays (full-width calendar grids)
+      let page2Html = "";
+      if (needsPage2) {
+        // Build a readable calendar-style grid: 7 columns (Mon-Sun), rows for each week
+        const buildCalendarGrid = (title, contentFn) => {
+          const dayNames = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+          // Group actDays into weeks
+          const weeks = [];
+          let currentWeek = [];
+          actDays.forEach((d, i) => {
+            const dt = new Date(d + "T00:00:00");
+            const dow = dt.getDay(); // 0=Sun..6=Sat
+            const mondayIdx = dow === 0 ? 6 : dow - 1; // Convert to Mon=0..Sun=6
+            if (i === 0 && mondayIdx > 0) { for (let p = 0; p < mondayIdx; p++) currentWeek.push(null); }
+            currentWeek.push(d);
+            if (currentWeek.length === 7) { weeks.push(currentWeek); currentWeek = []; }
+          });
+          if (currentWeek.length > 0) { while (currentWeek.length < 7) currentWeek.push(null); weeks.push(currentWeek); }
+          const headerRow = dayNames.map(d => `<th style="padding:6px 4px;text-align:center;border:1px solid #999;font-size:11px;font-weight:700;background:#f5f5f5;">${d}</th>`).join("");
+          const bodyRows = weeks.map(week => {
+            const cells = week.map(day => {
+              if (!day) return `<td style="border:1px solid #ddd;padding:6px;background:#fafafa;"></td>`;
+              const dt = new Date(day + "T00:00:00");
+              const dateStr = `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}`;
+              const content = contentFn(day);
+              return `<td style="border:1px solid #999;padding:6px;vertical-align:top;font-size:10px;min-width:70px;"><div style="font-weight:700;margin-bottom:3px;">${dateStr}</div>${content}</td>`;
+            }).join("");
+            return `<tr>${cells}</tr>`;
+          }).join("");
+          return `<div style="margin-bottom:16px;"><div style="font-weight:900;font-size:13px;margin-bottom:6px;border-bottom:2px solid #333;padding-bottom:4px;">${title}</div><table style="width:100%;border-collapse:collapse;"><thead><tr>${headerRow}</tr></thead><tbody>${bodyRows}</tbody></table></div>`;
+        };
+
+        const feedingGrid = hasFeeding ? buildCalendarGrid(
+          `FEEDING: ${feedingSchedules.some(s => (s.foodType||"").toLowerCase().includes("home")) ? "FFH - Food From Home" : feedingSchedules[0]?.foodType || ""}`,
+          (day) => feedingSchedules.map(s => {
+            const times = (s.times || []).join(", ");
+            return `<div style="margin:2px 0;font-size:9px;"><strong>${times}:</strong> ${s.amount||""} ${s.unit||""}<br><span style="font-size:8px;">administered: ___ % eaten: ___</span></div>`;
+          }).join("")
+        ) : "";
+
+        const medsGrid = hasMeds ? buildCalendarGrid(
+          "MEDICATIONS",
+          (day) => medicationSchedules.map(s => {
+            const timeStr = (s.times && s.times.length) ? s.times.join(", ") : (s.time || "");
+            return `<div style="margin:2px 0;font-size:9px;"><strong>${s.name||"Med"}:</strong> ${timeStr} ${s.amount||""} ${s.unit||""}<br><span style="font-size:8px;">given: ___</span></div>`;
+          }).join("")
+        ) : "";
+
+        const bathGrid = hasBath ? buildCalendarGrid(
+          `BATH: ${bathType}`,
+          (day) => {
+            const lastDay = actDays[actDays.length - 1];
+            return day === lastDay ? `<div style="font-size:10px;font-weight:700;color:#333;">Scheduled</div>` : "";
+          }
+        ) : "";
+
+        page2Html = `<div style="page-break-before:always;padding-top:8px;">
+          <div style="text-align:right;font-size:11px;color:#666;margin-bottom:8px;">Run Card (continued) — ${dName} ${cLast}</div>
+          ${feedingGrid}${medsGrid}${bathGrid}
+        </div>`;
+      }
+
+      const totalPages = needsPage2 ? 2 : 1;
+      bodyContent = `<div style="text-align:right;font-size:11px;color:#666;margin-bottom:4px;">Run Card — Page 1 of ${totalPages}</div><div style="clear:both;">${page1Parts.join("\n")}</div>${page2Html}`;
     } else if (sectionLayout) {
       // ── LEGACY SECTION-BASED LAYOUT ──
       const sortedSections = Object.entries(sectionLayout)
