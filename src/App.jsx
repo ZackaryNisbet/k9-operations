@@ -3488,74 +3488,105 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       };
 
       // ── SMART PRINT LAYOUT ──
-      // Strategy: Use canvas Y positions to determine ORDER, but render in document flow
-      // so elements push each other down naturally. Group elements on the same Y-row
-      // into inline rows. Complex elements (grids/tables) get full width and overflow handling.
+      // Strategy: Detect header zone (photo + adjacent text), render as flex header.
+      // Then flow remaining elements sorted by Y, grouping same-Y elements into rows.
+      // Tables/grids get full width with overflow protection.
       const visibleEls = cfgElements.filter(el => el.visible !== false);
-      // Sort by Y position, then X
       const sorted = [...visibleEls].sort((a, b) => (a.y || 0) - (b.y || 0) || (a.x || 0) - (b.x || 0));
 
-      // Group elements into "rows" — elements within 12px Y of each other are on the same row
+      // Detect header zone: photo element + any elements overlapping its Y range
+      const photoEl = sorted.find(el => el.varId === "dogPhoto");
+      const photoBottom = photoEl ? (photoEl.y || 0) + (photoEl.h || 120) : 0;
+      const photoRight = photoEl ? (photoEl.x || 0) + (photoEl.w || 120) : 0;
+      const headerEls = photoEl ? sorted.filter(el => el.varId !== "dogPhoto" && (el.y || 0) < photoBottom && (el.x || 0) >= photoRight - 20) : [];
+      const headerElIds = new Set([...(photoEl ? [photoEl.id] : []), ...headerEls.map(e => e.id)]);
+      const bodyEls = sorted.filter(el => !headerElIds.has(el.id));
+
+      // Render text element helper
+      const renderTextEl = (el) => {
+        const varId = el.varId;
+        if (varId === "separator") return `<hr style="border:none;border-top:1px solid #ccc;margin:4px 0;">`;
+        if (varId === "labelCustom") {
+          const lb = el.label ? `<strong>${el.label}</strong> ` : "";
+          return `<div style="font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};">${lb}${el.customText||""}</div>`;
+        }
+        const raw = varDataMap[varId];
+        if (raw === undefined || raw === "") return "";
+        if (varId === "dogTags") return `<div style="margin:3px 0;">${raw}</div>`;
+        if (["activityGrid","medications","bathSchedule","feedingSchedule"].includes(varId)) return raw; // handled separately
+        const lb = el.label ? `<strong>${el.label}</strong> ` : "";
+        return `<div style="font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};">${lb}${raw}</div>`;
+      };
+
+      // Build header section
+      let headerHtml = "";
+      if (photoEl) {
+        const headerTextHtml = headerEls.sort((a,b) => (a.y||0)-(b.y||0)).map(el => renderTextEl(el)).filter(Boolean).join("\n");
+        headerHtml = `<div style="display:flex;gap:16px;margin-bottom:8px;"><div style="flex-shrink:0;">${picHtml}</div><div style="flex:1;">${headerTextHtml}</div></div>`;
+      }
+
+      // Group body elements into rows (elements within 16px Y of each other)
       const rows = [];
-      sorted.forEach(el => {
+      bodyEls.forEach(el => {
         const lastRow = rows[rows.length - 1];
-        if (lastRow && Math.abs((el.y || 0) - (lastRow[0].y || 0)) < 12) {
+        if (lastRow && Math.abs((el.y || 0) - (lastRow[0].y || 0)) < 16) {
           lastRow.push(el);
         } else {
           rows.push([el]);
         }
       });
 
-      // Determine if grids/tables are too wide for page (> 7 day columns) — overflow to page 2
-      const maxPageDays = 7; // Max days that fit cleanly on one page
+      // Overflow detection for long stays
       const stayDays = actDays.length;
-      const needsPage2 = stayDays > maxPageDays;
+      const needsPage2 = stayDays > 7;
 
-      // Build page 1 HTML
-      const page1Parts = rows.map(row => {
-        if (row.length === 1) {
-          // Single element row — full width flow
-          const el = row[0];
-          const varId = el.varId;
-          if (varId === "separator") return `<hr style="border:none;border-top:1px solid #ccc;margin:6px 0;">`;
-          if (varId === "labelCustom") {
-            const lb = el.label ? `<strong>${el.label}</strong> ` : "";
-            return `<div style="font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};margin:2px 0;">${lb}${el.customText||""}</div>`;
-          }
-          const raw = varDataMap[varId];
-          if (raw === undefined || raw === "") return "";
-          // Complex elements: grids/tables
-          if (["activityGrid","medications","bathSchedule"].includes(varId)) {
-            if (needsPage2) {
-              // Show "see page 2" message instead of overflowing tables
-              const typeLabel = varId === "activityGrid" ? "Activity Grid" : varId === "medications" ? "Medications" : "Bath Schedule";
-              return `<div style="margin:8px 0;padding:8px 12px;border:1px solid #ccc;border-radius:4px;font-size:11px;color:#666;font-style:italic;"><strong>${typeLabel}:</strong> See following page — stay exceeds single-page display (${stayDays} days)</div>`;
+      // Build body rows
+      const page1Parts = [];
+      if (headerHtml) page1Parts.push(headerHtml);
+
+      rows.forEach(row => {
+        // Check if any element is a table/grid type
+        const hasGrid = row.some(el => ["activityGrid","medications","bathSchedule"].includes(el.varId));
+
+        if (hasGrid) {
+          row.forEach(el => {
+            const varId = el.varId;
+            if (!["activityGrid","medications","bathSchedule"].includes(varId)) {
+              const h = renderTextEl(el);
+              if (h) page1Parts.push(`<div style="margin:3px 0;">${h}</div>`);
+              return;
             }
-            return `<div style="margin:4px 0;overflow:hidden;">${raw}</div>`;
-          }
-          if (varId === "feedingSchedule") return `<div style="margin:4px 0;">${raw}</div>`;
-          if (varId === "dogPhoto") return `<div style="float:left;margin:0 12px 8px 0;">${raw}</div>`;
-          if (varId === "dogTags") return `<div style="margin:4px 0;">${raw}</div>`;
-          // Text elements
-          const lb = el.label ? `<strong>${el.label}</strong> ` : "";
-          return `<div style="font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};margin:2px 0;">${lb}${raw}</div>`;
+            if (needsPage2) {
+              const typeLabel = varId === "activityGrid" ? "Activity Grid" : varId === "medications" ? "Medications" : "Bath Schedule";
+              page1Parts.push(`<div style="margin:6px 0;padding:6px 10px;border:1px solid #ccc;border-radius:4px;font-size:11px;color:#666;font-style:italic;"><strong>${typeLabel}:</strong> Check following page — too many entries to display on first page (${stayDays} days)</div>`);
+            } else {
+              const raw = varDataMap[varId];
+              if (raw) page1Parts.push(`<div style="margin:4px 0;overflow:hidden;width:100%;">${raw}</div>`);
+            }
+          });
+          return;
         }
-        // Multi-element row — use inline-block layout
-        const parts = row.map(el => {
-          const varId = el.varId;
-          if (varId === "separator") return `<hr style="border:none;border-top:1px solid #ccc;margin:6px 0;width:100%;">`;
-          if (varId === "dogPhoto") return `<div style="display:inline-block;vertical-align:top;margin-right:12px;">${varDataMap[varId]||""}</div>`;
-          const raw = varDataMap[varId];
-          if (raw === undefined || raw === "") return "";
-          if (varId === "labelCustom") {
-            const lb = el.label ? `<strong>${el.label}</strong> ` : "";
-            return `<span style="display:inline-block;vertical-align:top;width:${el.w||200}px;font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};">${lb}${el.customText||""}</span>`;
+
+        if (row.length === 1) {
+          const el = row[0];
+          if (el.varId === "feedingSchedule") {
+            const raw = varDataMap.feedingSchedule;
+            if (raw) page1Parts.push(`<div style="margin:4px 0;">${raw}</div>`);
+          } else {
+            const h = renderTextEl(el);
+            if (h) page1Parts.push(`<div style="margin:2px 0;">${h}</div>`);
           }
-          const lb = el.label ? `<strong>${el.label}</strong> ` : "";
-          return `<span style="display:inline-block;vertical-align:top;width:${el.w||200}px;font-size:${el.fontSize||12}px;font-weight:${el.bold?700:400};font-style:${el.italic?"italic":"normal"};color:${el.color||"#222"};text-align:${el.align||"left"};">${lb}${raw}</span>`;
-        }).filter(Boolean);
-        return `<div style="margin:2px 0;display:flex;align-items:baseline;gap:4px;flex-wrap:wrap;">${parts.join("")}</div>`;
-      }).filter(Boolean);
+        } else {
+          // Multi-element row
+          const parts = row.map(el => {
+            if (el.varId === "feedingSchedule") return `<div style="flex:1;">${varDataMap.feedingSchedule||""}</div>`;
+            const h = renderTextEl(el);
+            if (!h) return "";
+            return `<div style="display:inline-block;vertical-align:top;width:${el.w||200}px;">${h}</div>`;
+          }).filter(Boolean);
+          if (parts.length > 0) page1Parts.push(`<div style="margin:2px 0;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">${parts.join("")}</div>`);
+        }
+      });
 
       // Build page 2 for long stays (full-width calendar grids)
       let page2Html = "";
