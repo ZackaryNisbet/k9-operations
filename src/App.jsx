@@ -16314,7 +16314,6 @@ function EODPage({ data, save, nav }) {
   const updateSection = (secId, content) => { setEditSections(prev => ({ ...prev, [secId]: content })); };
 
   // Track which text section is being actively edited (click-to-edit)
-  const [editingSecId, setEditingSecId] = useState(null);
   const [editingCheckItem, setEditingCheckItem] = useState(null); // { secId, idx }
 
   // @ Mention system
@@ -16544,12 +16543,10 @@ function EODPage({ data, save, nav }) {
   // New hire guide
   const [showEODGuide, setShowEODGuide] = useState(false);
 
-  // Render mention-highlighted text
-  const renderContent = (text, mentions, secId) => {
-    if (!text) return <span style={{ color: C.textMut, fontStyle: "italic" }}>Empty</span>;
+  // Find mention hit positions in text
+  const findMentionHits = (text, mentions, secId) => {
     const secMentions = (mentions || []).filter(m => m.sectionId === secId);
-    if (secMentions.length === 0) return <span style={{ whiteSpace: "pre-wrap" }}>{text}</span>;
-    // Build a sorted list of all mention occurrences by position in text
+    if (!text || secMentions.length === 0) return [];
     const hits = [];
     secMentions.forEach(m => {
       const tag = `@${m.entityName}`;
@@ -16561,10 +16558,16 @@ function EODPage({ data, save, nav }) {
       }
     });
     hits.sort((a, b) => a.idx - b.idx);
-    // Deduplicate overlapping hits (keep first at each position)
     const deduped = [];
     let lastEnd = 0;
     hits.forEach(h => { if (h.idx >= lastEnd) { deduped.push(h); lastEnd = h.idx + h.len; } });
+    return deduped;
+  };
+
+  // Render mention-highlighted text (clickable — for locked/preview/profile pages)
+  const renderContent = (text, mentions, secId) => {
+    if (!text) return <span style={{ color: C.textMut, fontStyle: "italic" }}>Empty</span>;
+    const deduped = findMentionHits(text, mentions, secId);
     if (deduped.length === 0) return <span style={{ whiteSpace: "pre-wrap" }}>{text}</span>;
     const parts = [];
     let key = 0;
@@ -16580,6 +16583,24 @@ function EODPage({ data, save, nav }) {
       cursor = h.idx + h.len;
     });
     if (cursor < text.length) parts.push(<span key={key++} style={{ whiteSpace: "pre-wrap" }}>{text.slice(cursor)}</span>);
+    return <>{parts}</>;
+  };
+
+  // Render inline overlay for edit mode — shows ALL text (since textarea text is transparent)
+  // Mention spans get colored highlight; normal text gets standard color
+  const renderOverlay = (text, mentions, secId) => {
+    if (!text) return <span style={{ color: "transparent" }}>{"\u200B"}</span>;
+    const deduped = findMentionHits(text, mentions, secId);
+    if (deduped.length === 0) return <span style={{ whiteSpace: "pre-wrap", color: C.text }}>{text}</span>;
+    const parts = [];
+    let key = 0;
+    let cursor = 0;
+    deduped.forEach(h => {
+      if (h.idx > cursor) parts.push(<span key={key++} style={{ whiteSpace: "pre-wrap", color: C.text }}>{text.slice(cursor, h.idx)}</span>);
+      parts.push(<span key={key++} style={{ whiteSpace: "pre-wrap", color: C.pri, background: C.priLt, borderRadius: 4 }}>{h.tag}</span>);
+      cursor = h.idx + h.len;
+    });
+    if (cursor < text.length) parts.push(<span key={key++} style={{ whiteSpace: "pre-wrap", color: C.text }}>{text.slice(cursor)}</span>);
     return <>{parts}</>;
   };
 
@@ -16837,17 +16858,22 @@ function EODPage({ data, save, nav }) {
                     )}
                   </div>
                 ) : isLocked ? (
-                  /* ── TEXT MODE: LOCKED ── */
+                  /* ── TEXT MODE: LOCKED (clickable mentions) ── */
                   <div style={{ fontSize: 13, color: C.text, lineHeight: 1.6, minHeight: 24 }}>
                     {renderContent(content, activeMentions, sec.id)}
                   </div>
-                ) : editingSecId === sec.id ? (
-                  /* ── TEXT MODE: ACTIVELY EDITING ── */
+                ) : (
+                  /* ── TEXT MODE: UNLOCKED — overlay editor with inline mention highlights ── */
                   <>
-                    <textarea autoFocus value={content} onChange={(e) => handleTextChange(sec.id, e)} onKeyDown={(e) => handleKeyDown(sec.id, e)}
-                      onBlur={() => { if (!mentionState || mentionState.sectionId !== sec.id) setEditingSecId(null); }}
-                      placeholder={sec.defaultContent || "Type here... Use @ to mention a dog or client"}
-                      style={{ width: "100%", minHeight: 60, padding: 0, border: "none", outline: "none", fontSize: 13, color: C.text, fontFamily: "inherit", lineHeight: 1.6, resize: "vertical", background: "transparent", boxSizing: "border-box" }} />
+                    <div style={{ position: "relative", minHeight: 40 }}>
+                      {/* Highlight layer — behind textarea, renders styled mentions */}
+                      <div aria-hidden style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, fontSize: 13, fontFamily: "inherit", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word", pointerEvents: "none", overflow: "hidden", padding: 0 }}>
+                        {content ? renderOverlay(content, activeMentions, sec.id) : <span style={{ color: C.textMut, fontStyle: "italic" }}>{sec.defaultContent || "Type here... Use @ to mention a dog or client"}</span>}
+                      </div>
+                      {/* Textarea — on top, transparent text, visible caret */}
+                      <textarea value={content} onChange={(e) => handleTextChange(sec.id, e)} onKeyDown={(e) => handleKeyDown(sec.id, e)}
+                        style={{ width: "100%", minHeight: 40, padding: 0, border: "none", outline: "none", fontSize: 13, color: "transparent", caretColor: C.text, fontFamily: "inherit", lineHeight: 1.6, resize: "vertical", background: "transparent", boxSizing: "border-box", position: "relative", zIndex: 1 }} />
+                    </div>
                     {/* Mention Dropdown */}
                     {mentionState && mentionState.sectionId === sec.id && mentionResults.length > 0 && (
                       <div ref={mentionRef} style={{ position: "absolute", left: 16, bottom: -4, transform: "translateY(100%)", zIndex: 200, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.12)", maxHeight: 240, overflow: "auto", width: 280 }}>
@@ -16868,11 +16894,6 @@ function EODPage({ data, save, nav }) {
                       </div>
                     )}
                   </>
-                ) : (
-                  /* ── TEXT MODE: UNLOCKED PREVIEW (click to edit) ── */
-                  <div onClick={() => setEditingSecId(sec.id)} style={{ fontSize: 13, color: C.text, lineHeight: 1.6, minHeight: 24, cursor: "text", borderRadius: 6 }}>
-                    {content ? renderContent(content, activeMentions, sec.id) : <span style={{ color: C.textMut, fontStyle: "italic" }}>{sec.defaultContent || "Click to edit…"}</span>}
-                  </div>
                 )}
               </div>
             </Card>
