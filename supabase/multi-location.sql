@@ -144,6 +144,8 @@ ALTER TABLE profiles ADD CONSTRAINT profiles_role_check
 -- 6. get_locations_ops_data: Returns ops-relevant data for ALL
 --    locations. Used by Enterprise Operations Oversight page.
 --    Only owners/enterprise_admins can call.
+--    Reads from normalized tables (k9_daily_ops, k9_reservations)
+--    instead of the settings blob.
 -- ============================================================
 CREATE OR REPLACE FUNCTION get_locations_ops_data()
 RETURNS JSONB AS $$
@@ -154,22 +156,46 @@ BEGIN
   END IF;
 
   RETURN (
-    SELECT COALESCE(jsonb_agg(jsonb_build_object(
-      'id', id,
-      'name', name,
-      'dailyOps', COALESCE(data->'dailyOps', '[]'::jsonb),
-      'eodEntries', COALESCE(data->'eodEntries', '[]'::jsonb),
-      'rooms', COALESCE(data->'rooms', '{}'::jsonb),
-      'reservations', COALESCE(data->'reservations', '[]'::jsonb),
-      'openingTemplate', data->'openingTemplate',
-      'feTemplate', data->'feTemplate',
-      'beTemplate', data->'beTemplate',
-      'closingTemplate', data->'closingTemplate',
-      'attendanceRoster', COALESCE(data->'attendanceRoster', '[]'::jsonb),
-      'attendanceEntries', COALESCE(data->'attendanceEntries', '[]'::jsonb),
-      'attendanceAuditLog', COALESCE(data->'attendanceAuditLog', '[]'::jsonb)
-    )), '[]'::jsonb)
-    FROM locations
+    SELECT COALESCE(jsonb_agg(loc_row), '[]'::jsonb)
+    FROM (
+      SELECT jsonb_build_object(
+        'id', l.id,
+        'name', l.name,
+        'dailyOps', COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'id', d.id, 'type', d.type, 'date', d.date,
+            'locked', d.locked, 'items', d.items,
+            'sections', d.sections, 'mentions', d.mentions, 'history', d.history
+          ))
+          FROM k9_daily_ops d WHERE d.location_id = l.id AND d.type IS DISTINCT FROM 'eod'
+        ), '[]'::jsonb),
+        'eodEntries', COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'id', d.id, 'type', d.type, 'date', d.date,
+            'locked', d.locked, 'sections', d.sections,
+            'mentions', d.mentions, 'history', d.history
+          ))
+          FROM k9_daily_ops d WHERE d.location_id = l.id AND d.type = 'eod'
+        ), '[]'::jsonb),
+        'rooms', COALESCE(l.data->'rooms', '{}'::jsonb),
+        'reservations', COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'id', r.id, 'type', r.type, 'roomType', r.room_type, 'room', r.room,
+            'checkIn', r.check_in, 'checkOut', r.check_out, 'status', r.status
+          ))
+          FROM k9_reservations r WHERE r.location_id = l.id
+            AND r.status NOT IN ('cancelled')
+        ), '[]'::jsonb),
+        'openingTemplate', l.data->'openingTemplate',
+        'feTemplate', l.data->'feTemplate',
+        'beTemplate', l.data->'beTemplate',
+        'closingTemplate', l.data->'closingTemplate',
+        'attendanceRoster', COALESCE(l.data->'attendanceRoster', '[]'::jsonb),
+        'attendanceEntries', COALESCE(l.data->'attendanceEntries', '[]'::jsonb),
+        'attendanceAuditLog', COALESCE(l.data->'attendanceAuditLog', '[]'::jsonb)
+      ) AS loc_row
+      FROM locations l
+    ) sub
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
