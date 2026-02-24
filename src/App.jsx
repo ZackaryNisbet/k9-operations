@@ -16305,11 +16305,31 @@ function EODPage({ data, save, nav }) {
 
   // Section content management
   const [editSections, setEditSections] = useState({});
+  const [focusedSecId, setFocusedSecId] = useState(null); // which section textarea is focused
+  const lastSavedSecRef = useRef({}); // track what we last saved, to detect remote vs local
   useEffect(() => {
     const obj = {};
     entry.sections.forEach(s => { obj[s.id] = s.content; });
     setEditSections(obj);
+    lastSavedSecRef.current = { ...obj };
   }, [viewDate]);
+  // Merge remote changes into sections the user is NOT currently focused on
+  const existingSectionsKey = existing ? JSON.stringify(existing.sections?.map(s => s.id + ":" + (s.content || "").length)) : "";
+  useEffect(() => {
+    if (!existing) return;
+    setEditSections(prev => {
+      const next = { ...prev };
+      let changed = false;
+      existing.sections.forEach(s => {
+        // If this section differs from what we last saved AND user isn't focused on it, take remote version
+        if (s.id !== focusedSecId && s.content !== lastSavedSecRef.current[s.id]) {
+          next[s.id] = s.content;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [existingSectionsKey]);
 
   const updateSection = (secId, content) => { setEditSections(prev => ({ ...prev, [secId]: content })); };
 
@@ -16351,6 +16371,9 @@ function EODPage({ data, save, nav }) {
   const selectMention = (entity) => {
     if (!mentionState) return;
     const tag = `@${entity.name}`;
+    // Track the updated content for this section so we can save it (editSections is stale in this closure)
+    let updatedSectionContent = null;
+    const secIdForMention = mentionState.sectionId;
     if (mentionState.checklistIdx != null && mentionState.checklistIdx >= 0) {
       // Checklist item mention - insert into that item's label
       const secId = mentionState.sectionId;
@@ -16366,6 +16389,7 @@ function EODPage({ data, save, nav }) {
         const after = item.label.slice(mentionState.cursorPos);
         item.label = before + tag + " " + after;
         const newContent = items.map(it => `${it.checked ? "[x] " : "[ ] "}${it.label}`).join("\n");
+        updatedSectionContent = newContent;
         updateSection(secId, newContent);
         setTimeout(() => { if (mentionState.inputEl) { mentionState.inputEl.focus(); const newPos = before.length + tag.length + 1; mentionState.inputEl.setSelectionRange(newPos, newPos); } }, 10);
       }
@@ -16382,6 +16406,7 @@ function EODPage({ data, save, nav }) {
       const before = sec.slice(0, mentionState.atStart);
       const after = sec.slice(mentionState.cursorPos);
       const newContent = before + tag + " " + after;
+      updatedSectionContent = newContent;
       updateSection(mentionState.sectionId, newContent);
       setTimeout(() => { if (mentionState.inputEl) { mentionState.inputEl.focus(); const newPos = before.length + tag.length + 1; mentionState.inputEl.setSelectionRange(newPos, newPos); } }, 10);
     }
@@ -16395,8 +16420,19 @@ function EODPage({ data, save, nav }) {
     setMentionState(null);
     if (wasChecklist) setEditingCheckItem(null);
     // Auto-save the EOD entry with the new mention
-    const sections = template.map(t => ({ id: t.id, content: editSections[t.id] || "" }));
-    const newEntry = { ...entry, sections, mentions: updatedMentions, history: [...(entry.history || []), { ts: new Date().toISOString(), action: "mention_added", mentionName: entity.name }] };
+    // IMPORTANT: Build sections using the UPDATED content (editSections is stale in this closure)
+    const prevSections = entry.sections || [];
+    const freshSections = template.map(t => {
+      const content = (t.id === secIdForMention && updatedSectionContent != null) ? updatedSectionContent : (editSections[t.id] || "");
+      const prev = prevSections.find(s => s.id === t.id);
+      const editedBy = content !== (prev?.content || "") ? { name: staffName, at: new Date().toISOString() } : (prev?.editedBy || null);
+      return { id: t.id, content, ...(editedBy ? { editedBy } : {}) };
+    });
+    // Track what we saved
+    const savedObj = {};
+    freshSections.forEach(s => { savedObj[s.id] = s.content; });
+    lastSavedSecRef.current = savedObj;
+    const newEntry = { ...entry, sections: freshSections, mentions: updatedMentions, history: [...(entry.history || []), { ts: new Date().toISOString(), action: "mention_added", mentionName: entity.name }] };
     const entries = [...(data.eodEntries || [])];
     const eIdx = entries.findIndex(e => e.date === viewDate);
     if (eIdx >= 0) entries[eIdx] = newEntry; else entries.push(newEntry);
@@ -16419,15 +16455,36 @@ function EODPage({ data, save, nav }) {
     return () => document.removeEventListener("mousedown", handler);
   }, [mentionState]);
 
-  // Save EOD
-  const saveEOD = async () => {
-    const sections = template.map(t => ({ id: t.id, content: editSections[t.id] || "" }));
+  // Auto-save EOD (debounced) — saves on every keystroke after a short delay
+  const eodAutoSaveRef = useRef(null);
+  const staffName = profile?.full_name || profile?.email || "Staff";
+  const saveEOD = useCallback(() => {
+    const prevSections = entry.sections || [];
+    const sections = template.map(t => {
+      const content = editSections[t.id] || "";
+      const prev = prevSections.find(s => s.id === t.id);
+      // Track who last edited this section (only update attribution if content changed)
+      const prevContent = prev?.content || "";
+      const editedBy = content !== prevContent ? { name: staffName, at: new Date().toISOString() } : (prev?.editedBy || null);
+      return { id: t.id, content, ...(editedBy ? { editedBy } : {}) };
+    });
     const newEntry = { ...entry, sections, mentions: activeMentions, history: [...(entry.history || []), { ts: new Date().toISOString(), action: "saved" }] };
     const entries = [...(data.eodEntries || [])];
     const idx = entries.findIndex(e => e.date === viewDate);
     if (idx >= 0) entries[idx] = newEntry; else entries.push(newEntry);
-    await save({ ...data, eodEntries: entries });
-  };
+    // Track what we saved so we can detect remote changes later
+    const savedObj = {};
+    sections.forEach(s => { savedObj[s.id] = s.content; });
+    lastSavedSecRef.current = savedObj;
+    save({ ...data, eodEntries: entries });
+  }, [editSections, activeMentions, entry, viewDate, data, template, staffName]);
+  // Debounced auto-save: triggers 800ms after last edit
+  useEffect(() => {
+    if (isLocked) return;
+    if (eodAutoSaveRef.current) clearTimeout(eodAutoSaveRef.current);
+    eodAutoSaveRef.current = setTimeout(() => { saveEOD(); }, 800);
+    return () => { if (eodAutoSaveRef.current) clearTimeout(eodAutoSaveRef.current); };
+  }, [editSections]);
 
   // Lock/unlock
   const toggleLock = async () => {
@@ -16587,7 +16644,7 @@ function EODPage({ data, save, nav }) {
   };
 
   // Render inline overlay for edit mode — shows ALL text (since textarea text is transparent)
-  // Mention spans get colored highlight; normal text gets standard color
+  // Mention spans are clickable (pointerEvents: auto) for navigation; rest is transparent to clicks
   const renderOverlay = (text, mentions, secId) => {
     if (!text) return <span style={{ color: "transparent" }}>{"\u200B"}</span>;
     const deduped = findMentionHits(text, mentions, secId);
@@ -16597,7 +16654,11 @@ function EODPage({ data, save, nav }) {
     let cursor = 0;
     deduped.forEach(h => {
       if (h.idx > cursor) parts.push(<span key={key++} style={{ whiteSpace: "pre-wrap", color: C.text }}>{text.slice(cursor, h.idx)}</span>);
-      parts.push(<span key={key++} style={{ whiteSpace: "pre-wrap", color: C.pri, background: C.priLt, borderRadius: 4 }}>{h.tag}</span>);
+      parts.push(<span key={key++}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); nav(h.m.entityType === "dog" ? "dog-detail" : "client-detail", h.m.entityType === "dog" ? { clientId: h.m.clientId || data.dogs.find(d => d.id === h.m.entityId)?.clientId, dogId: h.m.entityId } : { clientId: h.m.entityId }); }}
+        onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; }}
+        onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
+        style={{ whiteSpace: "pre-wrap", color: C.pri, background: C.priLt, borderRadius: 4, pointerEvents: "auto", cursor: "pointer", fontWeight: 600 }}>{h.tag}</span>);
       cursor = h.idx + h.len;
     });
     if (cursor < text.length) parts.push(<span key={key++} style={{ whiteSpace: "pre-wrap", color: C.text }}>{text.slice(cursor)}</span>);
@@ -16619,7 +16680,6 @@ function EODPage({ data, save, nav }) {
         <div style={{ display: "flex", gap: 8 }}>
           {(data.eodEntries || []).length < 5 && <Btn variant="secondary" size="sm" onClick={seedEODData} disabled={seeding}>{seeding ? "Generating..." : "📋 Seed Sample Data"}</Btn>}
           <Btn variant="secondary" size="sm" onClick={() => setShowEODSearch(true)} icon={<I.Search />}>Search</Btn>
-          {!isLocked && <Btn onClick={saveEOD} icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/></svg>}>Save</Btn>}
           {isPastDay && isLocked ? <Btn variant="secondary" size="sm" disabled style={{opacity:0.5,cursor:"not-allowed"}}>🔒 Locked</Btn> : <Btn variant="secondary" onClick={toggleLock} size="sm">{isLocked ? "🔒 Locked" : "🔓 Lock Day"}</Btn>}
         </div>
       </div>
@@ -16635,7 +16695,7 @@ function EODPage({ data, save, nav }) {
           <div style={{ paddingLeft: 14, marginBottom: 10 }}>
             <div><span style={{ fontWeight: 700 }}>1. A new EOD auto-creates each day</span> — pre-filled with all the template sections. Just fill in the blanks as the day goes on.</div>
             <div><span style={{ fontWeight: 700 }}>2. Add notes to each section</span> — Sales totals, meds administered, daycare notes, incidents, leads, tours, etc. Fill in what applies, leave the rest blank.</div>
-            <div><span style={{ fontWeight: 700 }}>3. Save frequently</span> — Hit the Save button to persist your notes. Multiple people can add to it throughout the day.</div>
+            <div><span style={{ fontWeight: 700 }}>3. Auto-saves as you type</span> — Your notes are saved automatically. Multiple people can add to it throughout the day.</div>
             <div><span style={{ fontWeight: 700 }}>4. Lock at end of day</span> — When the EOD is complete, lock it so it can't be accidentally edited. Locked days can be unlocked by a manager if needed.</div>
           </div>
           <div style={{ fontWeight: 700, color: C.text, marginBottom: 4 }}>@ Mentions — linking notes to dogs & clients:</div>
@@ -16866,13 +16926,14 @@ function EODPage({ data, save, nav }) {
                   /* ── TEXT MODE: UNLOCKED — overlay editor with inline mention highlights ── */
                   <>
                     <div style={{ position: "relative", minHeight: 40 }}>
-                      {/* Highlight layer — behind textarea, renders styled mentions */}
-                      <div aria-hidden style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, fontSize: 13, fontFamily: "inherit", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word", pointerEvents: "none", overflow: "hidden", padding: 0 }}>
+                      {/* Textarea — below overlay, transparent text, visible caret */}
+                      <textarea value={content} onChange={(e) => handleTextChange(sec.id, e)} onKeyDown={(e) => handleKeyDown(sec.id, e)}
+                        onFocus={() => setFocusedSecId(sec.id)} onBlur={() => setFocusedSecId(f => f === sec.id ? null : f)}
+                        style={{ width: "100%", minHeight: 40, padding: 0, border: "none", outline: "none", fontSize: 13, color: "transparent", caretColor: C.text, fontFamily: "inherit", lineHeight: 1.6, resize: "vertical", background: "transparent", boxSizing: "border-box", position: "relative", zIndex: 1 }} />
+                      {/* Overlay — on top of textarea, pointerEvents:none EXCEPT on mention spans */}
+                      <div aria-hidden="false" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, fontSize: 13, fontFamily: "inherit", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word", pointerEvents: "none", overflow: "hidden", padding: 0, zIndex: 2 }}>
                         {content ? renderOverlay(content, activeMentions, sec.id) : <span style={{ color: C.textMut, fontStyle: "italic" }}>{sec.defaultContent || "Type here... Use @ to mention a dog or client"}</span>}
                       </div>
-                      {/* Textarea — on top, transparent text, visible caret */}
-                      <textarea value={content} onChange={(e) => handleTextChange(sec.id, e)} onKeyDown={(e) => handleKeyDown(sec.id, e)}
-                        style={{ width: "100%", minHeight: 40, padding: 0, border: "none", outline: "none", fontSize: 13, color: "transparent", caretColor: C.text, fontFamily: "inherit", lineHeight: 1.6, resize: "vertical", background: "transparent", boxSizing: "border-box", position: "relative", zIndex: 1 }} />
                     </div>
                     {/* Mention Dropdown */}
                     {mentionState && mentionState.sectionId === sec.id && mentionResults.length > 0 && (
@@ -16895,17 +16956,20 @@ function EODPage({ data, save, nav }) {
                     )}
                   </>
                 )}
+                {/* Edited-by attribution */}
+                {(() => { const secData = (entry.sections || []).find(s => s.id === sec.id); return secData?.editedBy ? (
+                  <div style={{ fontSize: 11, color: C.textMut, marginTop: 6, fontStyle: "italic" }}>Last edited by {secData.editedBy.name}{secData.editedBy.at ? ` · ${new Date(secData.editedBy.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}</div>
+                ) : null; })()}
               </div>
             </Card>
           );
         })}
       </div>
 
-      {/* Bottom save bar */}
+      {/* Bottom lock bar */}
       {!isLocked && (
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20, padding: "16px 0", borderTop: `1px solid ${C.borderLight}` }}>
           <Btn variant="secondary" onClick={toggleLock}>Lock Day</Btn>
-          <Btn onClick={saveEOD}>Save EOD</Btn>
         </div>
       )}
 
