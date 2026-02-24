@@ -28129,6 +28129,7 @@ export default function App() {
   const [rptActiveReport, setRptActiveReport] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [opsExpanded, setOpsExpanded] = useState(false);
+  const [mgmtExpanded, setMgmtExpanded] = useState(false);
 
   // Fetch team accounts for quick-switch
   useEffect(() => {
@@ -28370,7 +28371,6 @@ export default function App() {
     {id:"ops-pp",label:"PP Checklist",sub:"pp"},
     {id:"ops-closing",label:"Closing",sub:"closing"},
   ];
-  const [mgmtExpanded, setMgmtExpanded] = useState(false);
   const mgmtChildren = [
     {id:"mgmt-attendance",label:"Attendance Tracker"},
   ];
