@@ -2307,13 +2307,21 @@ const NEW_LOCATION_DEFAULTS = {
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null, errorInfo: null }; }
   static getDerivedStateFromError(error) { return { hasError: true, error }; }
-  componentDidCatch(error, errorInfo) { this.setState({ errorInfo }); }
+  componentDidCatch(error, errorInfo) { this.setState({ errorInfo }); console.error("ErrorBoundary caught:", error, errorInfo); }
   render() {
     if (this.state.hasError) {
-      return React.createElement("div", { style: { padding: 40, fontFamily: "monospace", color: "red", whiteSpace: "pre-wrap", fontSize: 12 } },
-        "RENDER ERROR: " + (this.state.error?.message || "Unknown") +
-        "\n\n=== COMPONENT STACK ===\n" + (this.state.errorInfo?.componentStack || "(loading...)") +
-        "\n\n=== JS STACK ===\n" + (this.state.error?.stack || "")
+      return React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 40px", textAlign: "center", fontFamily: "'GT Eesti', -apple-system, sans-serif" } },
+        React.createElement("div", { style: { fontSize: 48, marginBottom: 16 } }, "\u26A0\uFE0F"),
+        React.createElement("h2", { style: { fontSize: 20, fontWeight: 700, color: "#1B3A5C", marginBottom: 8 } }, "Something went wrong"),
+        React.createElement("p", { style: { fontSize: 14, color: "#6B7280", maxWidth: 400, lineHeight: 1.5, marginBottom: 20 } }, "This page encountered an unexpected error. Try refreshing the page or navigating to a different section."),
+        React.createElement("button", {
+          onClick: () => { this.setState({ hasError: false, error: null, errorInfo: null }); },
+          style: { padding: "10px 24px", background: "#1B3A5C", color: "#fff", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" }
+        }, "Try Again"),
+        this.props.showDetails && React.createElement("details", { style: { marginTop: 20, fontSize: 11, color: "#9CA3AF", maxWidth: 600, textAlign: "left" } },
+          React.createElement("summary", { style: { cursor: "pointer", marginBottom: 8 } }, "Technical details"),
+          React.createElement("pre", { style: { whiteSpace: "pre-wrap", background: "#F9FAFB", padding: 12, borderRadius: 6, overflow: "auto" } }, (this.state.error?.message || "Unknown error"))
+        )
       );
     }
     return this.props.children;
@@ -3016,16 +3024,23 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
   const isReadOnly = reservation.status === "checked-out" || reservation.status === "cancelled" || reservation.status === "checked-in";
   // Compliance gate: compute if any compliance checks are red (failed)
-  const complianceBlocked = (() => {
-    if (!isCheckInMode) return false;
+  const complianceFailures = (() => {
+    if (!isCheckInMode) return [];
+    const failures = [];
     const vaxStatus = getVaxStatus(dog, data.requiredVaccines, data.resortPolicies);
     const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
     const snStatus = getSpayNeuterCompliance(dog);
     const agreements = data.agreements || DEF_AGREEMENTS;
     const reqAgrs = agreements.filter(a => a.required !== false);
     const allAgrSigned = reqAgrs.every(a => agrSigned(client, a.id));
-    return !vaxStatus.ok || !ageStatus.ok || !allAgrSigned || !snStatus.ok;
+    if (!vaxStatus.ok) failures.push("Vaccines");
+    if (!ageStatus.ok) failures.push("Dog Age");
+    if (!snStatus.ok) failures.push("Spay/Neuter");
+    if (!allAgrSigned) failures.push("Agreements");
+    if (!client?.fields?.emergency_contact && !client?.fields?.emergencyContact) failures.push("Emergency Contact");
+    return failures;
   })();
+  const complianceBlocked = complianceFailures.length > 0;
   const BATH_OPTS = data.bathTypeOptions || ["Standard","Hypo","Medicated","Whitening"];
   const profileFeedingSchedules = dog.fields.feedingSchedules ?? [];
   const profileMedicationSchedules = dog.fields.medicationSchedules ?? [];
@@ -4516,7 +4531,11 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         {isCheckOutMode ? (
           <Btn variant="accent" onClick={()=>handleSave(false, true)} icon={<I.LogOut/>}>Check Out</Btn>
         ) : !isReadOnly && (isCheckInMode ? (
-          <Btn variant="success" onClick={()=>handleSave(true, false)} icon={<I.LogIn/>} disabled={complianceBlocked} style={complianceBlocked ? {opacity:0.5,cursor:"not-allowed"} : {}} title={complianceBlocked ? "Resolve all compliance issues (red) before checking in" : ""}>Check In</Btn>
+          <>{complianceBlocked && <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,fontSize:12,color:"#DC2626",fontWeight:600,marginRight:8}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            Resolve: {complianceFailures.join(", ")}
+          </div>}</>
+          <Btn variant="success" onClick={()=>handleSave(true, false)} icon={<I.LogIn/>} disabled={complianceBlocked} style={complianceBlocked ? {opacity:0.5,cursor:"not-allowed"} : {}} title={complianceBlocked ? "Resolve: " + complianceFailures.join(", ") : ""}>Check In</Btn>
         ) : (
           <Btn onClick={()=>handleSave(false, false)}>Save Changes</Btn>
         ))}
@@ -9875,7 +9894,7 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
           );
         })}
         <div style={{padding:"10px 20px",background:C.bg,borderTop:`1px solid ${C.border}`}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}><I.Sparkle/><span style={{fontSize:12,color:C.pri,fontWeight:500}}>Edit tracking & AI auto-parse coming with user accounts.</span></div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}><I.Sparkle/><span style={{fontSize:12,color:C.pri,fontWeight:500}}>Use AI Command to update vaccine records faster!</span></div>
         </div>
       </Card>
 
@@ -13942,12 +13961,43 @@ function OperationsHub({ data, save, nav, profile }) {
     const clients = data.clients || [];
     const payments = data.payments || [];
 
+    // Build local stage map (mirrors Customer Lifecycle page's clientTabMap logic)
+    const dcThresh = data.resortPolicies?.retentionDaycareDays ?? 90;
+    const bdThresh = data.resortPolicies?.retentionBoardingDays ?? 180;
+    const localStageMap = {};
+    clients.forEach(c => {
+      const cRes = (data.reservations || []).filter(r => r.clientId === c.id);
+      const cDogs = (data.dogs || []).filter(d => d.clientId === c.id);
+      const cPmts = (data.payments || []).filter(p => p.clientId === c.id && p.status === "completed" && p.type !== "refund");
+      const totalSpent = cPmts.reduce((s, p) => s + (p.amount || 0), 0);
+      const hasSpent = totalSpent > 0;
+      const hasRealBooking = cRes.some(r => r.type !== "tour" && r.type !== "evaluation");
+      const hasUpcoming = cRes.some(r => r.checkIn >= todayStr() && r.status === "upcoming" && r.type !== "tour" && r.type !== "evaluation");
+      const totalRes = cRes.length;
+      const pastRes = cRes.filter(r => r.checkOut && r.checkOut < todayStr()).sort((a, b) => b.checkOut.localeCompare(a.checkOut));
+      const daysSince = pastRes.length > 0 ? Math.floor((new Date() - new Date(pastRes[0].checkOut + "T12:00:00")) / 86400000) : null;
+      const daycareCount = cRes.filter(r => r.type === "daycare").length;
+      const boardingCount = cRes.filter(r => r.type === "boarding").length;
+      const isCold = c.lifecycle?.cold === true;
+      let isRetention = false;
+      if (hasSpent && !hasUpcoming && totalRes > 0 && daysSince != null) {
+        const dcPct = totalRes > 0 ? (daycareCount / totalRes) : 0;
+        const bdPct = totalRes > 0 ? (boardingCount / totalRes) : 0;
+        if (bdPct > 0.5 && daysSince >= bdThresh) isRetention = true;
+        else if (dcPct >= 0.5 && daysSince >= dcThresh) isRetention = true;
+        else if (dcPct < 0.5 && bdPct < 0.5 && daysSince >= dcThresh) isRetention = true;
+      }
+      const isConversion = !hasSpent && !hasRealBooking && !isCold;
+      const isActive = (hasSpent || hasRealBooking) && !isRetention && !isCold;
+      if (isCold) isRetention = false;
+      localStageMap[c.id] = { isConversion, isActive, isRetention: isRetention && !isCold, isCold };
+    });
+
     // Overdue follow-ups: only count clients actually in conversion or retention stages
-    // This matches the Customer Lifecycle page's clientTabMap stage logic
     let overdueFollowUps = 0;
     let dueTodayFollowUps = 0;
     clients.forEach(c => {
-      const tab = clientTabMap[c.id];
+      const tab = localStageMap[c.id];
       // Only count conversion follow-ups for clients in conversion stage
       const convFu = (tab?.isConversion && c.lifecycle?.conversion?.followUpDate) || "";
       // Only count retention follow-ups for clients in retention stage
@@ -14013,7 +14063,7 @@ function OperationsHub({ data, save, nav, profile }) {
       newCustomersToday,
       newPayingToday,
     };
-  }, [data, viewDate, clientTabMap]);
+  }, [data, viewDate]);
 
   const groups = [
     { key: "daily", label: "Daily Operations", items: OPERATIONS_CATALOG.filter(c => c.frequency === "daily") },
@@ -22338,40 +22388,44 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
 
   // Settings sections for grouped list view
   const settingsSections = [
-    { label: "Sales", items: [
-      { id: "fields", label: "Required Fields", desc: "Configure which fields are required at each lifecycle stage", keywords: "required fields client dog matrix create tour eval reservation phone email name" },
-      { id: "tags", label: "Dog Tags", desc: "Create color-coded tags for daycare, private play, etc.", keywords: "tags labels categories private play daycare" },
-      { id: "vaccines", label: "Vaccines", desc: "Configure required vaccinations and expiration tracking", keywords: "vaccines rabies bordetella dhpp flu required" },
-      { id: "agreements", label: "Agreements", desc: "Manage boarding and daycare agreement documents", keywords: "agreements contracts waivers liability boarding" },
-      { id: "questionnaire", label: "Questionnaire", desc: "Customize the Getting to Know Your Dog questionnaire", keywords: "questionnaire form dog intake application getting to know" },
+    { label: "Resort Setup", items: [
+      { id: "resort-info", label: "Resort Info", desc: "Resort address and timezone configuration", keywords: "resort address location timezone time zone city state zip" },
+      { id: "facility", label: "Facility", desc: "Daycare square footage and capacity calculations", keywords: "facility square footage capacity daycare large small" },
+      { id: "rooms", label: "Rooms", desc: "Configure room numbers for each boarding room type", keywords: "rooms boarding luxury executive double single compartment" },
+      { id: "closed-dates", label: "Closed Dates", desc: "Holidays and dates closed to the public — no check-ins or check-outs", keywords: "closed dates holidays christmas thanksgiving new year memorial labor easter july 4 blackout" },
+      { id: "booking-settings", label: "Online Booking", desc: "Tour scheduling, daycare capacity, and self-booking page settings", keywords: "booking online tour daycare capacity self-service concurrent scheduling" },
+    ]},
+    { label: "Pricing & Packages", items: [
       { id: "pricing", label: "Pricing", desc: "Room rates, daycare fees, add-ons, and payment rules", keywords: "pricing rates fees cost money payment deposit" },
       { id: "packages", label: "Packages", desc: "Create and manage service packages with built-in discounts", keywords: "packages deals discounts bundles promotions savings" },
       { id: "discounts", label: "Discounts", desc: "Create discounts linked to referral sources with usage caps", keywords: "discounts referral source lodging cap coupon promotion" },
-      { id: "message-templates", label: "Message Templates", desc: "Customize text message templates with variables", keywords: "message templates text sms texting variables dog name" },
-      { id: "dropdowns", label: "Dropdown Lists", desc: "Customize dropdown options for breeds, food types, etc.", keywords: "dropdowns lists options breeds food bath medication" },
-    ]},
-    { label: "Reports", items: [
       { id: "unpaid-deposits", label: "Unpaid Deposits", desc: "View outstanding deposit balances for upcoming boarding reservations", keywords: "unpaid deposits report payment financial outstanding balance" },
+    ]},
+    { label: "Client & Pet Data", items: [
+      { id: "fields", label: "Required Fields", desc: "Configure which fields are required at each lifecycle stage", keywords: "required fields client dog matrix create tour eval reservation phone email name" },
+      { id: "tags", label: "Dog Tags", desc: "Create color-coded tags for daycare, private play, etc.", keywords: "tags labels categories private play daycare" },
+      { id: "dropdowns", label: "Dropdown Lists", desc: "Customize dropdown options for breeds, food types, etc.", keywords: "dropdowns lists options breeds food bath medication" },
+      { id: "questionnaire", label: "Questionnaire", desc: "Customize the Getting to Know Your Dog questionnaire", keywords: "questionnaire form dog intake application getting to know" },
+    ]},
+    { label: "Compliance", items: [
+      { id: "vaccines", label: "Vaccines", desc: "Configure required vaccinations and expiration tracking", keywords: "vaccines rabies bordetella dhpp flu required" },
+      { id: "agreements", label: "Agreements", desc: "Manage boarding and daycare agreement documents", keywords: "agreements contracts waivers liability boarding" },
+      { id: "policies", label: "Resort Policies", desc: "Vaccine grace periods, age limits, grandfathering rules", keywords: "policies compliance vaccines grace period age limit grandfather senior" },
+      { id: "compliance-rules", label: "Compliance Rules", desc: "Configure which compliance checks apply to each appointment type", keywords: "compliance spay neuter intact group play private play daycare boarding check-in rules" },
     ]},
     { label: "Operations", items: [
       { id: "eod", label: "EOD Template", desc: "End-of-day report sections and template setup", keywords: "eod end of day template report sections" },
       { id: "daily-ops", label: "Daily Ops Templates", desc: "Opening, FE, BE, and closing checklist templates", keywords: "daily ops operations checklists opening closing front back" },
       { id: "run-card", label: "Run Card", desc: "Configure which information appears on printed boarding run cards", keywords: "run card print boarding kennel card daily schedule" },
     ]},
-    { label: "Resort Configuration", items: [
-      { id: "resort-info", label: "Resort Info", desc: "Resort address and timezone configuration", keywords: "resort address location timezone time zone city state zip" },
-      { id: "facility", label: "Facility", desc: "Daycare square footage and capacity calculations", keywords: "facility square footage capacity daycare large small" },
-      { id: "rooms", label: "Rooms", desc: "Configure room numbers for each boarding room type", keywords: "rooms boarding luxury executive double single compartment" },
-      { id: "closed-dates", label: "Closed Dates", desc: "Holidays and dates closed to the public — no check-ins or check-outs", keywords: "closed dates holidays christmas thanksgiving new year memorial labor easter july 4 blackout" },
-      { id: "policies", label: "Resort Policies", desc: "Vaccine grace periods, age limits, grandfathering rules", keywords: "policies compliance vaccines grace period age limit grandfather senior" },
-      { id: "compliance-rules", label: "Compliance Rules", desc: "Configure which compliance checks apply to each appointment type", keywords: "compliance spay neuter intact group play private play daycare boarding check-in rules" },
-      { id: "booking-settings", label: "Online Booking", desc: "Tour scheduling, daycare capacity, and self-booking page settings", keywords: "booking online tour daycare capacity self-service concurrent scheduling" },
+    { label: "Communications", items: [
+      { id: "message-templates", label: "Message Templates", desc: "Customize text message templates with variables", keywords: "message templates text sms texting variables dog name" },
+      { id: "automations", label: "Automations", desc: "Vaccine reminder SMS automation with configurable tiers and reporting", keywords: "automations reminders vaccines text sms twilio notifications expiry expiring alerts" },
     ]},
-    { label: "Administration", items: [
+    { label: "Team & Security", items: [
       { id: "team", label: "Team Management", desc: "View, invite, and manage team members and roles", keywords: "team users staff members invite roles owner manager admin" },
       { id: "roles", label: "Roles & Permissions", desc: "Create custom roles and configure granular permissions", keywords: "roles permissions access control rbac custom staff owner manager security" },
       { id: "session-security", label: "Session Security", desc: "Auto-sign-out timer to prevent stale sessions", keywords: "session timeout auto sign out security timer hours csr account switch" },
-      { id: "automations", label: "Automations", desc: "Vaccine reminder SMS automation with configurable tiers and reporting", keywords: "automations reminders vaccines text sms twilio notifications expiry expiring alerts" },
     ]},
     { label: "Legal", items: [
       { id: "legal", label: "Legal", desc: "Terms of Service and Privacy Policy", keywords: "legal terms of service privacy policy tos" },
@@ -25076,7 +25130,7 @@ function PaymentFormModal({ onClose, onSave, reservation, client, existingPaymen
       <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
         {err && <div style={{ color: "#dc2626", fontSize: 13, padding: "8px 12px", background: "rgba(220,38,38,0.08)", borderRadius: 6 }}>{err}</div>}
         {cName && <div style={{ fontSize: 13, color: C.textMut }}>Client: <strong style={{ color: C.text }}>{cName}</strong></div>}
-        {reservation && <div style={{ fontSize: 13, color: C.textMut }}>Reservation: {reservation.roomType} ({new Date(reservation.checkIn).toLocaleDateString()} – {new Date(reservation.checkOut).toLocaleDateString()})</div>}
+        {reservation && <div style={{ fontSize: 13, color: C.textMut }}>Reservation: {reservation.roomType || reservation.type || "Reservation"} ({new Date(reservation.checkIn + "T12:00:00").toLocaleDateString()} – {new Date(reservation.checkOut + "T12:00:00").toLocaleDateString()})</div>}
         <div><label style={labelS}>Amount ($)</label><input type="number" step="0.01" value={amt} onChange={e => { setAmt(e.target.value); setErr(""); }} placeholder="0.00" style={inputS} /></div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div><label style={labelS}>Type</label><CustomSelect value={type} onChange={v=>setType(v)} options={[{value:"payment",label:"Payment"},{value:"deposit",label:"Deposit"},{value:"tip",label:"Tip"},{value:"refund",label:"Refund"}]}/></div>
@@ -25203,7 +25257,7 @@ function PaymentsPage({ data, save, nav, profile }) {
             <input data-shortcut-search="1" placeholder="Search by client..." value={search} onChange={e => setSearch(e.target.value)} style={{ ...inputS, paddingLeft: 34 }} />
           </div>
           {[["Type", typeF, setTypeF, ["all","payment","deposit","tip","refund"]], ["Method", methodF, setMethodF, ["all","card","cash","check"]], ["Status", statusF, setStatusF, ["all","completed","pending","refunded","failed"]]].map(([lbl, val, set, opts]) => (
-            <CustomSelect key={lbl} value={val} onChange={v=>set(v)} options={opts.map(o=>({value:o,label:o==="all"?`All ${lbl}s`:o.charAt(0).toUpperCase()+o.slice(1)}))} small style={{width:130}}/>
+            <CustomSelect key={lbl} value={val} onChange={v=>set(v)} options={opts.map(o=>({value:o,label:o==="all"?`All ${lbl}${lbl.endsWith("s")?"es":"s"}`:o.charAt(0).toUpperCase()+o.slice(1)}))} small style={{width:130}}/>
           ))}
         </div>
 
@@ -25229,7 +25283,7 @@ function PaymentsPage({ data, save, nav, profile }) {
                   <tr key={p.id} style={{ borderBottom: `1px solid ${C.border}` }} onClick={() => { setEditPmt(p); setShowModal(true); }}>
                     <td style={tdS}>{new Date(p.timestamp).toLocaleDateString()}</td>
                     <td style={{ ...tdS, color: C.pri, fontWeight: 500, cursor: "pointer" }} onClick={e => { e.stopPropagation(); if (c) nav("client-detail", { clientId: c.id }); }}>{cName(c)}</td>
-                    <td style={{ ...tdS, fontSize: 13, color: C.textMut }}>{r ? `${r.roomType} (${new Date(r.checkIn).toLocaleDateString()})` : "—"}</td>
+                    <td style={{ ...tdS, fontSize: 13, color: C.textMut }}>{r ? `${r.roomType || r.type || "Reservation"} (${new Date(r.checkIn + "T12:00:00").toLocaleDateString()})` : "—"}</td>
                     <td style={{ ...tdS, textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>${p.amount.toFixed(2)}</td>
                     <td style={tdS}><span style={{ padding: "3px 8px", borderRadius: 4, fontSize: 12, fontWeight: 600, background: typeBg[p.type], color: typeClr[p.type] }}>{p.type}</span></td>
                     <td style={{ ...tdS, fontSize: 13 }}>{p.method === "card" ? `Card •••• ${p.cardLast4 || ""}` : p.method.charAt(0).toUpperCase() + p.method.slice(1)}</td>
@@ -28986,6 +29040,9 @@ export default function App() {
       case "operations": return "Operations";
       case "eod": return "End of Day";
       case "ai": return "AI Command";
+      case "lms": return "Learning";
+      case "reports": return "Reports";
+      case "online-bookings": return "Online Bookings";
       case "settings": return "Settings";
       case "ops-opening": return "Opening";
       case "ops-fe": return "FE Checklist";
@@ -29089,7 +29146,7 @@ export default function App() {
     if (page === "management") return (hp("view_management") || hp("view_daily_ops")) ? <ManagementHub data={data} save={save} nav={nav} profile={profile}/> : denied;
     if (page === "mgmt-attendance") return (hp("view_management") || hp("view_daily_ops")) ? <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile}/> : denied;
     switch(page) {
-      case "operations": return hp("view_daily_ops") ? <OperationsHub data={data} save={save} nav={nav} profile={profile}/> : denied;
+      case "operations": return <OperationsHub data={data} save={save} nav={nav} profile={profile}/>;
       case "dashboard": return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
       case "clients": return hp("view_clients") ? <ClientsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} lcFilters={lcFilters} setLcFilters={setLcFilters} setLcFilterOpen={setLcFilterOpen} locationSlug={currentLoc?.slug}/> : denied;
       case "client-detail": return hp("view_client_detail") ? <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile} openReservationId={params.openReservation}/> : denied;
@@ -29101,7 +29158,7 @@ export default function App() {
       case "online-bookings": return <OnlineBookingsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} allLocations={allLocations}/>;
       case "new-reservation": return hp("create_reservation") ? <NewReservationPage data={data} save={save} preClientId={params.clientId} nav={nav} profile={profile} addGlobalToast={addGlobalToast}/> : denied;
       case "unified-new": return <UnifiedNewPage data={data} save={save} nav={nav} prefill={params.prefill} profile={profile} addGlobalToast={addGlobalToast}/>;
-      case "evaluation-form": return hp("edit_evaluations") ? <EvaluationFormPage data={data} save={save} reservationId={params.reservationId} nav={nav} profile={profile}/> : denied;
+      case "evaluation-form": return <EvaluationFormPage data={data} save={save} reservationId={params.reservationId} nav={nav} profile={profile}/>;
       case "eod": return hp("view_eod") ? <EODPage data={data} save={save} nav={nav} profile={profile}/> : denied;
 
       case "messages": return hp("view_messages") ? <MessagesPage data={data} save={save} nav={nav} profile={profile}/> : denied;
@@ -29284,7 +29341,7 @@ export default function App() {
               ))}
             </div>
           )}
-          {renderPage()}
+          <ErrorBoundary key={page}>{renderPage()}</ErrorBoundary>
         </div>
       </div>
 
