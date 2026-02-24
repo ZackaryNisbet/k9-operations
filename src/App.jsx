@@ -14559,14 +14559,14 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
     };
 
     const cols = [
-      { id: "name", label: "Name", w: "17%", editable: true },
-      { id: "status", label: "Status", w: "9%" },
-      { id: "title", label: "Title", w: "16%", editable: true },
-      { id: "phone", label: "Phone", w: "12%", editable: true },
-      { id: "email", label: "Email", w: "18%", editable: true },
-      { id: "startDate", label: "Start Date", w: "10%" },
-      { id: "endDate", label: "End Date", w: "10%" },
-      { id: "days", label: "Days", w: "4%" },
+      { id: "name", label: "Name", w: "15%", editable: true },
+      { id: "status", label: "Status", w: "8%" },
+      { id: "title", label: "Title", w: "14%", editable: true },
+      { id: "phone", label: "Phone", w: "11%", editable: true },
+      { id: "email", label: "Email", w: "16%", editable: true },
+      { id: "startDate", label: "Start Date", w: "12%" },
+      { id: "endDate", label: "End Date", w: "12%" },
+      { id: "days", label: "Days", w: "5%" },
     ];
 
     const isEditing = (id, field) => editingField && editingField.id === id && editingField.field === field;
@@ -14685,7 +14685,7 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
                       {/* End Date */}
                       <td style={{ padding: "9px 12px", textAlign: "center" }}>
                         {canEditRoster && isActive ? (
-                          <MiniDatePicker value="" onChange={v => { if (v) setEndDate(member.id, v); }} placeholder="Set..." />
+                          <MiniDatePicker value="" onChange={v => { if (v) setEndDate(member.id, v); }} placeholder="—" />
                         ) : canEditRoster && !isActive ? (
                           <MiniDatePicker value={member.endDate} onChange={v => { if (v) { const m = roster.find(r => r.id === member.id); const old = m?.endDate; const newRoster = roster.map(r => r.id === member.id ? { ...r, endDate: v } : r); saveWithAudit({ attendanceRoster: newRoster }, "EDIT_ROSTER_FIELD", "Roster", `Updated End Date for ${member.name}: "${old}" → "${v}"`, { endDate: old }, { endDate: v }); } }} />
                         ) : (
@@ -14711,7 +14711,7 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
   // ── Input Tab (Attendance Log) ──
   function InputTab() {
     const [showAdd, setShowAdd] = useState(false);
-    const [form, setForm] = useState({ name: "", type: "", date: today, coverage: "No", notes: "", loggedBy: userInitials });
+    const [form, setForm] = useState({ name: "", type: "", date: today, coverage: "No", notes: "", loggedBy: userName });
     const [editingEntry, setEditingEntry] = useState(null);
     const [editForm, setEditForm] = useState({});
 
@@ -14719,7 +14719,7 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
 
     const addEntry = () => {
       if (!form.name || !form.type || !form.date) return;
-      const newEntry = { id: "ae_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8), ...form, createdAt: new Date().toISOString() };
+      const newEntry = { id: "ae_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8), ...form, loggedBy: userName, loggedAt: new Date().toISOString(), createdAt: new Date().toISOString() };
       saveWithAudit(
         { attendanceEntries: [...entries, newEntry] },
         "ADD_ATTENDANCE_ENTRY", "Attendance Log",
@@ -14727,7 +14727,7 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
         null,
         { name: form.name, type: form.type, date: form.date, coverage: form.coverage, notes: form.notes }
       );
-      setForm({ name: "", type: "", date: today, coverage: "No", notes: "", loggedBy: userInitials });
+      setForm({ name: "", type: "", date: today, coverage: "No", notes: "", loggedBy: userName });
       setShowAdd(false);
     };
 
@@ -14756,7 +14756,7 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
       if (editForm.coverage !== (original.coverage || "No")) changes.push(`Coverage: "${original.coverage || "No"}" → "${editForm.coverage}"`);
       if (editForm.notes !== (original.notes || "")) changes.push(`Notes updated`);
       if (changes.length === 0) { setEditingEntry(null); return; }
-      const newEntries = entries.map(e => e.id === entryId ? { ...e, ...editForm, lastEditedBy: userInitials, lastEditedAt: new Date().toISOString() } : e);
+      const newEntries = entries.map(e => e.id === entryId ? { ...e, ...editForm, lastEditedBy: userName, lastEditedAt: new Date().toISOString() } : e);
       saveWithAudit(
         { attendanceEntries: newEntries },
         "EDIT_ATTENDANCE_ENTRY", "Attendance Log",
@@ -14767,7 +14767,6 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
       setEditingEntry(null);
     };
 
-    const selectSt = { padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${C.pri}`, fontSize: 11, fontFamily: "inherit", background: C.surface, outline: "none" };
     const editInputSt = { padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${C.pri}`, fontSize: 11, fontFamily: "inherit", width: "100%", boxSizing: "border-box", outline: "none" };
 
     return (
@@ -14784,29 +14783,61 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
 
         {showAdd && (
           <Card style={{ marginBottom: 16, padding: 20 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>New Attendance Entry</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-              <select value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: C.surface }}>
-                <option value="">Select Employee...</option>
-                {activeRoster.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
-              </select>
-              <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: C.surface }}>
-                <option value="">Absence Type...</option>
-                {ATTENDANCE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <select value={form.coverage} onChange={e => setForm({ ...form, coverage: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: C.surface }}>
-                <option value="No">Coverage: No</option>
-                <option value="Yes">Coverage: Yes</option>
-              </select>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 16 }}>New Attendance Entry</div>
+            {/* Employee */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Employee</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {activeRoster.map(r => (
+                  <button key={r.id} onClick={() => setForm({ ...form, name: r.name })}
+                    style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${form.name === r.name ? C.pri : C.border}`, background: form.name === r.name ? C.priLt : C.surface, color: form.name === r.name ? C.pri : C.text, fontSize: 12, fontWeight: form.name === r.name ? 700 : 500, cursor: "pointer", fontFamily: "inherit", transition: "all 0.12s" }}
+                    onMouseEnter={e => { if (form.name !== r.name) e.currentTarget.style.borderColor = C.pri + "80"; }}
+                    onMouseLeave={e => { if (form.name !== r.name) e.currentTarget.style.borderColor = C.border; }}>
+                    {r.name}
+                  </button>
+                ))}
+                {activeRoster.length === 0 && <span style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No active employees. Add team members in the Roster tab first.</span>}
+              </div>
             </div>
-            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Shift Date:</span>
-              <MiniDatePicker value={form.date} onChange={v => setForm({ ...form, date: v || today })} />
+            {/* Absence Type */}
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Absence Type</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {ATTENDANCE_TYPES.map(t => {
+                  const clr = ATTENDANCE_TYPE_COLORS[t];
+                  const sel = form.type === t;
+                  return (
+                    <button key={t} onClick={() => setForm({ ...form, type: t })}
+                      style={{ padding: "7px 16px", borderRadius: 8, border: `2px solid ${sel ? clr : C.border}`, background: sel ? clr + "18" : C.surface, color: sel ? clr : C.textSec, fontSize: 12, fontWeight: sel ? 700 : 500, cursor: "pointer", fontFamily: "inherit", transition: "all 0.12s" }}
+                      onMouseEnter={e => { if (!sel) { e.currentTarget.style.borderColor = clr; e.currentTarget.style.color = clr; } }}
+                      onMouseLeave={e => { if (!sel) { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.textSec; } }}>
+                      {t}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div style={{ marginTop: 12 }}>
+            {/* Coverage + Date row */}
+            <div style={{ display: "flex", gap: 24, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Coverage Secured?</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={() => setForm({ ...form, coverage: "Yes" })}
+                    style={{ padding: "6px 18px", borderRadius: 8, border: `1.5px solid ${form.coverage === "Yes" ? C.suc : C.border}`, background: form.coverage === "Yes" ? "#D1FAE5" : C.surface, color: form.coverage === "Yes" ? "#059669" : C.textMut, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.12s" }}>Yes</button>
+                  <button onClick={() => setForm({ ...form, coverage: "No" })}
+                    style={{ padding: "6px 18px", borderRadius: 8, border: `1.5px solid ${form.coverage === "No" ? C.dan : C.border}`, background: form.coverage === "No" ? "#FEE2E2" : C.surface, color: form.coverage === "No" ? "#DC2626" : C.textMut, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.12s" }}>No</button>
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Shift Date</div>
+                <MiniDatePicker value={form.date} onChange={v => setForm({ ...form, date: v || today })} />
+              </div>
+            </div>
+            {/* Notes */}
+            <div style={{ marginBottom: 16 }}>
               <textarea placeholder="Notes (optional)" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
             </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
               <span style={{ fontSize: 11, color: C.textMut, marginRight: "auto" }}>Logged by: {form.loggedBy}</span>
               <Btn variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Btn>
               <Btn variant="primary" onClick={addEntry}>Save Entry</Btn>
@@ -14835,16 +14866,33 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
                     <tr key={entry.id} style={{ background: idx % 2 === 0 ? "#F8F9FA" : "#FFFFFF" }}>
                       <td style={{ padding: "9px 12px", fontWeight: 500 }}>
                         {isEd ? (
-                          <select value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} style={selectSt}>
-                            {activeRoster.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
-                          </select>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                            {activeRoster.map(r => {
+                              const sel = editForm.name === r.name;
+                              return (
+                                <button key={r.id} onClick={() => setEditForm({ ...editForm, name: r.name })}
+                                  style={{ padding: "3px 9px", borderRadius: 6, border: `1.5px solid ${sel ? C.pri : C.border}`, background: sel ? C.priLt : C.surface, color: sel ? C.pri : C.text, fontSize: 10, fontWeight: sel ? 700 : 500, cursor: "pointer", fontFamily: "inherit", transition: "all 0.12s", whiteSpace: "nowrap" }}>
+                                  {r.name}
+                                </button>
+                              );
+                            })}
+                          </div>
                         ) : entry.name}
                       </td>
                       <td style={{ padding: "9px 12px", textAlign: "center" }}>
                         {isEd ? (
-                          <select value={editForm.type} onChange={e => setEditForm({ ...editForm, type: e.target.value })} style={selectSt}>
-                            {ATTENDANCE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                          </select>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 3, justifyContent: "center" }}>
+                            {ATTENDANCE_TYPES.map(t => {
+                              const clr = ATTENDANCE_TYPE_COLORS[t];
+                              const sel = editForm.type === t;
+                              return (
+                                <button key={t} onClick={() => setEditForm({ ...editForm, type: t })}
+                                  style={{ padding: "3px 8px", borderRadius: 6, border: `1.5px solid ${sel ? clr : C.border}`, background: sel ? clr + "18" : C.surface, color: sel ? clr : C.textSec, fontSize: 10, fontWeight: sel ? 700 : 500, cursor: "pointer", fontFamily: "inherit", transition: "all 0.12s", whiteSpace: "nowrap" }}>
+                                  {t}
+                                </button>
+                              );
+                            })}
+                          </div>
                         ) : (
                           <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: (ATTENDANCE_TYPE_COLORS[entry.type] || "#999") + "20", color: ATTENDANCE_TYPE_COLORS[entry.type] || "#999" }}>{entry.type}</span>
                         )}
@@ -14858,24 +14906,27 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
                       </td>
                       <td style={{ padding: "9px 12px", textAlign: "center" }}>
                         {isEd ? (
-                          <select value={editForm.coverage} onChange={e => setEditForm({ ...editForm, coverage: e.target.value })} style={selectSt}>
-                            <option value="No">No</option>
-                            <option value="Yes">Yes</option>
-                          </select>
+                          <div style={{ display: "flex", gap: 3, justifyContent: "center" }}>
+                            <button onClick={() => setEditForm({ ...editForm, coverage: "Yes" })}
+                              style={{ padding: "3px 10px", borderRadius: 6, border: `1.5px solid ${editForm.coverage === "Yes" ? C.suc : C.border}`, background: editForm.coverage === "Yes" ? "#D1FAE5" : C.surface, color: editForm.coverage === "Yes" ? "#059669" : C.textMut, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.12s" }}>Yes</button>
+                            <button onClick={() => setEditForm({ ...editForm, coverage: "No" })}
+                              style={{ padding: "3px 10px", borderRadius: 6, border: `1.5px solid ${editForm.coverage === "No" ? C.dan : C.border}`, background: editForm.coverage === "No" ? "#FEE2E2" : C.surface, color: editForm.coverage === "No" ? "#DC2626" : C.textMut, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.12s" }}>No</button>
+                          </div>
                         ) : (
                           <span style={{ fontWeight: 600, color: entry.coverage === "Yes" ? C.suc : C.dan }}>{entry.coverage || "No"}</span>
                         )}
                       </td>
-                      <td style={{ padding: "9px 12px", color: C.textSec, maxWidth: 300 }}>
+                      <td style={{ padding: "9px 12px", color: C.textSec, minWidth: 200, maxWidth: 400 }}>
                         {isEd ? (
-                          <input value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} style={editInputSt} placeholder="Notes..." />
+                          <textarea value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} style={{ ...editInputSt, minHeight: 60, resize: "vertical" }} placeholder="Notes..." rows={3} />
                         ) : (
-                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }} title={entry.notes}>{entry.notes || "—"}</span>
+                          <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", display: "block", fontSize: 12, lineHeight: 1.5 }}>{entry.notes || "—"}</span>
                         )}
                       </td>
-                      <td style={{ padding: "9px 12px", textAlign: "center", fontWeight: 600 }}>
-                        {entry.loggedBy || "—"}
-                        {entry.lastEditedBy && <div style={{ fontSize: 9, color: C.textMut, fontWeight: 400 }}>edited: {entry.lastEditedBy}</div>}
+                      <td style={{ padding: "9px 12px", textAlign: "center", fontSize: 11 }}>
+                        <div style={{ fontWeight: 600, color: C.text }}>{entry.loggedBy || "—"}</div>
+                        {entry.loggedAt && <div style={{ fontSize: 9, color: C.textMut, fontWeight: 400 }}>{new Date(entry.loggedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })} {new Date(entry.loggedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}</div>}
+                        {entry.lastEditedBy && <div style={{ fontSize: 9, color: C.textMut, fontWeight: 400, marginTop: 2, borderTop: `1px solid ${C.border}`, paddingTop: 2 }}>edited by {entry.lastEditedBy}{entry.lastEditedAt && <span> · {new Date(entry.lastEditedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })} {new Date(entry.lastEditedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}</span>}</div>}
                       </td>
                       {canEdit && (
                         <td style={{ padding: "9px 12px", textAlign: "center" }}>
