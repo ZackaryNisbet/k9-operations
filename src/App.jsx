@@ -16307,16 +16307,18 @@ function EODPage({ data, save, nav }) {
   const [editSections, setEditSections] = useState({});
   const [focusedSecId, setFocusedSecId] = useState(null); // which section textarea is focused
   const lastSavedSecRef = useRef({}); // track what we last saved, to detect remote vs local
+  const userEditedRef = useRef(false); // track if user has actually typed anything
   useEffect(() => {
     const obj = {};
     entry.sections.forEach(s => { obj[s.id] = s.content; });
     setEditSections(obj);
     lastSavedSecRef.current = { ...obj };
+    userEditedRef.current = false;
   }, [viewDate]);
   // Merge remote changes into sections the user is NOT currently focused on
-  const existingSectionsKey = existing ? JSON.stringify(existing.sections?.map(s => s.id + ":" + (s.content || "").length)) : "";
+  const existingSectionsKey = existing ? JSON.stringify((existing.sections || []).map(s => s.id + ":" + (s.content || "").length)) : "";
   useEffect(() => {
-    if (!existing) return;
+    if (!existing || !existing.sections) return;
     setEditSections(prev => {
       const next = { ...prev };
       let changed = false;
@@ -16324,6 +16326,7 @@ function EODPage({ data, save, nav }) {
         // If this section differs from what we last saved AND user isn't focused on it, take remote version
         if (s.id !== focusedSecId && s.content !== lastSavedSecRef.current[s.id]) {
           next[s.id] = s.content;
+          lastSavedSecRef.current[s.id] = s.content; // update ref so we don't re-trigger
           changed = true;
         }
       });
@@ -16331,7 +16334,7 @@ function EODPage({ data, save, nav }) {
     });
   }, [existingSectionsKey]);
 
-  const updateSection = (secId, content) => { setEditSections(prev => ({ ...prev, [secId]: content })); };
+  const updateSection = (secId, content) => { userEditedRef.current = true; setEditSections(prev => ({ ...prev, [secId]: content })); };
 
   // Track which text section is being actively edited (click-to-edit)
   const [editingCheckItem, setEditingCheckItem] = useState(null); // { secId, idx }
@@ -16478,9 +16481,9 @@ function EODPage({ data, save, nav }) {
     lastSavedSecRef.current = savedObj;
     save({ ...data, eodEntries: entries });
   }, [editSections, activeMentions, entry, viewDate, data, template, staffName]);
-  // Debounced auto-save: triggers 800ms after last edit
+  // Debounced auto-save: triggers 800ms after last user edit (skips programmatic changes)
   useEffect(() => {
-    if (isLocked) return;
+    if (isLocked || !userEditedRef.current) return;
     if (eodAutoSaveRef.current) clearTimeout(eodAutoSaveRef.current);
     eodAutoSaveRef.current = setTimeout(() => { saveEOD(); }, 800);
     return () => { if (eodAutoSaveRef.current) clearTimeout(eodAutoSaveRef.current); };
