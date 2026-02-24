@@ -544,7 +544,11 @@ export function useData(profile) {
     }
 
     channel.subscribe();
-    return () => { supabase.removeChannel(channel); };
+
+    // Polling fallback: reload every 30s to catch changes if real-time misses them
+    const poll = setInterval(() => load(), 30000);
+
+    return () => { supabase.removeChannel(channel); clearInterval(poll); };
   }, [locationId]);
 
   // ── SAVE ──
