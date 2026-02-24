@@ -4534,8 +4534,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           <>{complianceBlocked && <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,fontSize:12,color:"#DC2626",fontWeight:600,marginRight:8}}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             Resolve: {complianceFailures.join(", ")}
-          </div>}</>
-          <Btn variant="success" onClick={()=>handleSave(true, false)} icon={<I.LogIn/>} disabled={complianceBlocked} style={complianceBlocked ? {opacity:0.5,cursor:"not-allowed"} : {}} title={complianceBlocked ? "Resolve: " + complianceFailures.join(", ") : ""}>Check In</Btn>
+          </div>}
+          <Btn variant="success" onClick={()=>handleSave(true, false)} icon={<I.LogIn/>} disabled={complianceBlocked} style={complianceBlocked ? {opacity:0.5,cursor:"not-allowed"} : {}} title={complianceBlocked ? "Resolve: " + complianceFailures.join(", ") : ""}>Check In</Btn></>
         ) : (
           <Btn onClick={()=>handleSave(false, false)}>Save Changes</Btn>
         ))}
