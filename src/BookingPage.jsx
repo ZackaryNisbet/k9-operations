@@ -215,7 +215,18 @@ body{font-family:'GT Eesti',system-ui,-apple-system,sans-serif;background:${B.bg
 .bk-addon-card{background:#fff;border:2px solid ${B.border};border-radius:16px;padding:20px;transition:all .3s;cursor:pointer}
 .bk-addon-card:hover{border-color:${B.gold};transform:translateY(-2px)}.bk-addon-card.added{border-color:${B.suc};background:${B.suc}08}
 
-@media(max-width:768px){.bk-btn{padding:14px 28px;font-size:15px}.bk-cta-card{min-width:auto;padding:20px 24px}}
+@media(max-width:768px){
+  .bk-btn{padding:14px 28px;font-size:15px}
+  .bk-cta-card{min-width:auto;padding:20px 24px}
+  .bk-input{font-size:16px !important}
+  .bk-page [style*="grid-template-columns: 1fr 1fr"]{grid-template-columns:1fr !important}
+  .bk-page [style*="grid-template-columns: repeat(2"]{grid-template-columns:1fr !important}
+}
+@media(max-width:480px){
+  .bk-btn{padding:12px 20px;font-size:14px;width:100%}
+  .bk-cta-card{padding:16px 18px}
+  .bk-addon-card{padding:14px}
+}
 `;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -846,8 +857,9 @@ export default function BookingPage() {
     subtotal = Math.max(0, subtotal - discount);
 
     const depositPct = locationData.pricing.paymentRules?.boarding?.depositPercent || 50;
-    const deposit = Math.round(subtotal * depositPct / 100);
-    return { nights, rate, roomCost, bathCost, addOnCost, subtotal, discount, deposit, balance: subtotal - deposit, depositPct, multiDogDiscount };
+    const deposit = Math.round(subtotal * depositPct / 100 * 100) / 100;
+    const balance = Math.round((subtotal - deposit) * 100) / 100;
+    return { nights, rate, roomCost, bathCost, addOnCost, subtotal, discount, deposit, balance, depositPct, multiDogDiscount };
   }, [locationData, selectedRoom, checkIn, checkOut, selectedBath, selectedAddOns, isExistingClient, existingClientData, dogCount]);
 
   // Room recommendation logic
@@ -1236,7 +1248,7 @@ export default function BookingPage() {
                     : serviceType === 'tour' ? 'Pick a day and we\'ll show you available time slots.'
                     : "Pick a day to bring your pup in for some fun."}
                 </p>
-                <div style={{ display: 'flex', gap: 24, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 32 }}>
+                <div className="bk-mobile-stack" style={{ display: 'flex', gap: 24, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 32 }}>
                   {serviceType === 'tour' ? (
                     <BookingCalendar
                       label="Tour Date"
