@@ -2,6 +2,7 @@
 -- IGNITE LEAD IMPORT: Supabase RPC function
 -- Receives parsed Ignite email fields, deduplicates, and
 -- creates a new client in the Conversion tab if not found.
+-- UPDATED: Uses normalized k9_clients table (not settings blob)
 -- Run this in Supabase SQL Editor (Dashboard > SQL Editor > New Query)
 -- ============================================================
 
@@ -12,12 +13,10 @@ DECLARE
   loc_slug TEXT;
   profile_name TEXT;
   existing_data JSONB;
-  clients_arr JSONB;
   leads_arr JSONB;
   client_email TEXT;
   client_phone TEXT;
-  existing_client JSONB;
-  new_client JSONB;
+  existing_client_record RECORD;
   new_id TEXT;
   today TEXT;
   lead_log JSONB;
@@ -100,26 +99,23 @@ BEGIN
   client_phone := regexp_replace(COALESCE(p_fields->>'phone', ''), '\D', '', 'g');
 
   existing_data := COALESCE(loc.data, '{}'::jsonb);
-  clients_arr := COALESCE(existing_data->'clients', '[]'::jsonb);
   leads_arr := COALESCE(existing_data->'igniteLeads', '[]'::jsonb);
 
   -- ────────────────────────────────────────────────────────
-  -- 4. Check for existing client by email or phone
+  -- 4. Check for existing client in k9_clients table
   -- ────────────────────────────────────────────────────────
-  SELECT elem INTO existing_client
-  FROM jsonb_array_elements(clients_arr) elem
-  WHERE (
-    client_email != ''
-    AND lower(trim(COALESCE(elem->'fields'->>'email', ''))) = client_email
-  )
-  OR (
-    client_phone != ''
-    AND length(client_phone) >= 7
-    AND regexp_replace(COALESCE(elem->'fields'->>'phone', ''), '\D', '', 'g') = client_phone
-  )
+  SELECT id INTO existing_client_record
+  FROM k9_clients
+  WHERE location_id = loc.id
+    AND (
+      (client_email != '' AND lower(trim(COALESCE(email, ''))) = client_email)
+      OR
+      (client_phone != '' AND length(client_phone) >= 7
+       AND regexp_replace(COALESCE(phone, ''), '\D', '', 'g') = client_phone)
+    )
   LIMIT 1;
 
-  IF existing_client IS NOT NULL THEN
+  IF existing_client_record.id IS NOT NULL THEN
     -- Log the duplicate
     lead_log := jsonb_build_object(
       'receivedAt', now()::text,
@@ -129,7 +125,7 @@ BEGIN
       'phone', COALESCE(p_fields->>'phone', ''),
       'source', COALESCE(p_fields->>'source', ''),
       'action', 'duplicate',
-      'matchedClientId', existing_client->>'id',
+      'matchedClientId', existing_client_record.id,
       'leadId', COALESCE(p_fields->>'leadId', '')
     );
 
@@ -144,32 +140,35 @@ BEGIN
     RETURN jsonb_build_object(
       'success', true,
       'action', 'duplicate',
-      'clientId', existing_client->>'id',
+      'clientId', existing_client_record.id,
       'message', 'Client already exists'
     );
   END IF;
 
   -- ────────────────────────────────────────────────────────
-  -- 5. Create new client
+  -- 5. Create new client in k9_clients table
   -- ────────────────────────────────────────────────────────
   new_id := substr(md5(random()::text || clock_timestamp()::text), 1, 9);
   today := to_char(NOW() AT TIME ZONE 'America/New_York', 'YYYY-MM-DD');
 
-  -- Build notes from Ignite fields
-  new_client := jsonb_build_object(
-    'id', new_id,
-    'fields', jsonb_build_object(
-      'first_name', COALESCE(p_fields->>'firstName', ''),
-      'last_name', COALESCE(p_fields->>'lastName', ''),
-      'email', COALESCE(p_fields->>'email', ''),
-      'phone', client_phone,
-      'notes', 'Received ' || to_char(NOW() AT TIME ZONE 'America/New_York', 'MM/DD/YY'),
-      'referral_source', 'Ignite'
-    ),
-    'createdAt', today,
-    'agreements', '{}'::jsonb,
-    'igniteData', p_fields,
-    'lifecycle', jsonb_build_object(
+  INSERT INTO k9_clients (
+    id, location_id,
+    first_name, last_name, email, phone,
+    notes, referral_source,
+    created_at_app,
+    lifecycle, lifecycle_events,
+    agreements,
+    custom_fields
+  ) VALUES (
+    new_id, loc.id,
+    COALESCE(p_fields->>'firstName', ''),
+    COALESCE(p_fields->>'lastName', ''),
+    COALESCE(p_fields->>'email', ''),
+    client_phone,
+    'Received ' || to_char(NOW() AT TIME ZONE 'America/New_York', 'MM/DD/YY'),
+    'Ignite',
+    today,
+    jsonb_build_object(
       'conversion', jsonb_build_object(
         'notes', '',
         'followUpDate', today,
@@ -187,17 +186,20 @@ BEGIN
       'coldDate', '',
       'coldFrom', ''
     ),
-    'lifecycleEvents', jsonb_build_array(
+    jsonb_build_array(
       jsonb_build_object(
         'event', 'ignite_lead',
         'date', today,
         'details', 'Auto-imported from Ignite (' || COALESCE(p_fields->>'source', 'unknown') || ')'
       )
-    )
+    ),
+    '{}'::jsonb,
+    -- Store igniteData in custom_fields so it's accessible in the app
+    jsonb_build_object('igniteData', p_fields)
   );
 
   -- ────────────────────────────────────────────────────────
-  -- 6. Save: append client + log the lead
+  -- 6. Log the lead event in settings blob
   -- ────────────────────────────────────────────────────────
   lead_log := jsonb_build_object(
     'receivedAt', now()::text,
@@ -213,11 +215,7 @@ BEGIN
 
   UPDATE locations
   SET data = jsonb_set(
-    jsonb_set(
-      existing_data,
-      '{clients}',
-      clients_arr || jsonb_build_array(new_client)
-    ),
+    existing_data,
     '{igniteLeads}',
     leads_arr || jsonb_build_array(lead_log)
   )
