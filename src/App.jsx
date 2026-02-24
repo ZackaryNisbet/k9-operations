@@ -80,11 +80,11 @@ const PAGE_SLUGS = {
   "settings-closed-dates":"settings/closed-dates", "settings-policies":"settings/policies", "settings-compliance-rules":"settings/compliance-rules",
   "settings-booking-settings":"settings/booking-settings",
   "settings-legal":"settings/legal", "settings-hotkeys":"settings/hotkeys", "settings-reset":"settings/reset",
-  "enterprise-locations":"locations", "enterprise-operations":"oversight", "enterprise-packages":"packages", "enterprise-users":"users",
+  "enterprise-locations":"locations", "enterprise-operations":"oversight", "enterprise-packages":"packages", "enterprise-users":"users", "enterprise-management":"management",
 };
 const SLUG_TO_PAGE = {};
 Object.entries(PAGE_SLUGS).forEach(([k,v]) => { if (!k.startsWith("enterprise-")) SLUG_TO_PAGE[v] = k; });
-const ENT_SLUG_TO_PAGE = { locations:"enterprise-locations", oversight:"enterprise-operations", packages:"enterprise-packages", users:"enterprise-users" };
+const ENT_SLUG_TO_PAGE = { locations:"enterprise-locations", oversight:"enterprise-operations", packages:"enterprise-packages", users:"enterprise-users", management:"enterprise-management" };
 
 function buildUrl(locSlug, pg, prms, dataRef) {
   const slug = PAGE_SLUGS[pg] || pg;
@@ -2266,7 +2266,7 @@ const NEW_LOCATION_DEFAULTS = {
   clients: [], dogs: [], reservations: [], messages: [], teamMembers: [],
   packages: [], packageSales: [], crmEntries: [], eodEntries: [], dailyOps: [],
   evaluations: [], onlineBookings: [], payments: [], auditLog: [], closedDates: [],
-  pendingInvites: [], attendanceRoster: [], attendanceEntries: [],
+  pendingInvites: [], attendanceRoster: [], attendanceEntries: [], attendanceAuditLog: [],
   clientFields: DEF_CLIENT_FIELDS, dogFields: DEF_DOG_FIELDS,
   agreements: DEF_AGREEMENTS, dogTags: DEF_DOG_TAGS,
   requiredVaccines: DEF_REQUIRED_VACCINES,
@@ -14333,7 +14333,6 @@ function OperationsHub({ data, save, nav, profile }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
             {[
               { id: "mgmt-attendance", label: "Attendance Tracker", desc: "Track tardies, call-outs, and no-shows", active: true },
-              { id: null, label: "Write-Ups & Counseling", desc: "Document progressive discipline", active: false },
               { id: null, label: "Incident Reports", desc: "Log workplace incidents", active: false },
             ].map((tool, i) => (
               <div key={i}
@@ -14370,7 +14369,6 @@ function OperationsHub({ data, save, nav, profile }) {
 function ManagementHub({ data, save, nav, profile }) {
   const mgmtTools = [
     { id: "mgmt-attendance", label: "Attendance Tracker", desc: "Track tardies, call-outs, and no-shows with automatic summaries", icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 14l2 2 4-4"/></svg>, status: "active" },
-    { id: null, label: "Write-Ups & Counseling", desc: "Document progressive discipline and corrective actions", icon: <I.FileText />, status: "coming_soon" },
     { id: null, label: "Incident Reports", desc: "Log and track workplace incidents and investigations", icon: <I.AlertTriangle />, status: "coming_soon" },
   ];
   return (
@@ -14401,6 +14399,7 @@ function ManagementHub({ data, save, nav, profile }) {
   );
 }
 
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ATTENDANCE TRACKER PAGE
 // ═══════════════════════════════════════════════════════════════════════════
@@ -14413,24 +14412,51 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
   const canEdit = hp("edit_attendance") || hp("edit_daily_ops");
   const canEditRoster = hp("edit_roster") || hp("edit_daily_ops");
   const today = new Date().toISOString().slice(0, 10);
-  const todayDisplay = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" });
+  const userName = profile?.full_name || profile?.email || "Unknown";
+  const userInitials = (profile?.full_name || "").split(" ").map(n => n[0]).join("").toUpperCase() || "—";
 
   // Attendance data from data store
   const roster = data.attendanceRoster || [];
   const entries = data.attendanceEntries || [];
+  const auditLog = data.attendanceAuditLog || [];
   const activeRoster = roster.filter(r => !r.endDate);
+  const inactiveRoster = roster.filter(r => !!r.endDate);
+
+  // ── Audit Logging Helper ──
+  const logAudit = (action, category, details, prev, next) => {
+    const entry = {
+      id: "aal_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+      timestamp: new Date().toISOString(),
+      userId: profile?.id || "unknown",
+      userName,
+      userInitials,
+      action,
+      category,
+      details,
+      previousValue: prev || null,
+      newValue: next || null,
+    };
+    return [...auditLog, entry];
+  };
+
+  const saveWithAudit = (changes, action, category, details, prev, next) => {
+    const newAudit = logAudit(action, category, details, prev, next);
+    save({ ...data, ...changes, attendanceAuditLog: newAudit });
+  };
 
   const tabs = [
     { id: "roster", label: "Roster" },
     { id: "input", label: "Attendance Log" },
     { id: "summary", label: "Summary" },
     { id: "policy", label: "Policy Reference" },
+    { id: "audit", label: "Audit Log" },
   ];
 
   // ── Roster Tab ──
   function RosterTab() {
-    const [editing, setEditing] = useState(null);
     const [showAdd, setShowAdd] = useState(false);
+    const [editingField, setEditingField] = useState(null); // { id, field }
+    const [editValue, setEditValue] = useState("");
     const [form, setForm] = useState({ name: "", title: "", phone: "", email: "", startDate: today });
     const [sortCol, setSortCol] = useState("name");
     const [sortDir, setSortDir] = useState("asc");
@@ -14450,34 +14476,120 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
     const toggleSort = (col) => { if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(col); setSortDir("asc"); } };
     const sortIcon = (col) => col === sortCol ? (sortDir === "asc" ? <I.SortAsc /> : <I.SortDesc />) : <I.SortNone />;
 
-    const saveRoster = (newRoster) => save({ ...data, attendanceRoster: newRoster });
-
     const addMember = () => {
       if (!form.name.trim()) return;
       const newMember = { id: "ar_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8), ...form, name: form.name.trim(), createdAt: new Date().toISOString() };
-      saveRoster([...roster, newMember]);
+      saveWithAudit(
+        { attendanceRoster: [...roster, newMember] },
+        "ADD_ROSTER_MEMBER", "Roster",
+        `Added team member: ${form.name.trim()} (${form.title || "No title"})`,
+        null,
+        { name: form.name.trim(), title: form.title, phone: form.phone, email: form.email, startDate: form.startDate }
+      );
       setForm({ name: "", title: "", phone: "", email: "", startDate: today });
       setShowAdd(false);
     };
 
-    const updateMember = (id, updates) => { saveRoster(roster.map(r => r.id === id ? { ...r, ...updates } : r)); setEditing(null); };
+    const startEdit = (memberId, field, currentValue) => {
+      setEditingField({ id: memberId, field });
+      setEditValue(currentValue || "");
+    };
+
+    const commitEdit = (memberId, field) => {
+      const member = roster.find(r => r.id === memberId);
+      if (!member) return;
+      const oldVal = member[field] || "";
+      const newVal = editValue.trim();
+      if (oldVal === newVal) { setEditingField(null); return; }
+      const fieldLabel = { name: "Name", title: "Title", phone: "Phone", email: "Email" }[field] || field;
+      const newRoster = roster.map(r => r.id === memberId ? { ...r, [field]: newVal } : r);
+      // If name changed, also update attendance entries to match
+      let newEntries = entries;
+      if (field === "name" && oldVal !== newVal) {
+        newEntries = entries.map(e => e.name === oldVal ? { ...e, name: newVal } : e);
+      }
+      saveWithAudit(
+        { attendanceRoster: newRoster, attendanceEntries: newEntries },
+        "EDIT_ROSTER_FIELD", "Roster",
+        `Updated ${fieldLabel} for ${member.name}: "${oldVal}" → "${newVal}"`,
+        { [field]: oldVal },
+        { [field]: newVal }
+      );
+      setEditingField(null);
+    };
+
+    const setEndDate = (memberId, endDate) => {
+      const member = roster.find(r => r.id === memberId);
+      if (!member) return;
+      const newRoster = roster.map(r => r.id === memberId ? { ...r, endDate } : r);
+      saveWithAudit(
+        { attendanceRoster: newRoster },
+        "SET_END_DATE", "Roster",
+        `Set end date for ${member.name}: ${endDate}`,
+        { endDate: member.endDate || null },
+        { endDate }
+      );
+    };
+
+    const clearEndDate = (memberId) => {
+      const member = roster.find(r => r.id === memberId);
+      if (!member) return;
+      const newRoster = roster.map(r => r.id === memberId ? { ...r, endDate: undefined } : r);
+      saveWithAudit(
+        { attendanceRoster: newRoster },
+        "REACTIVATE_MEMBER", "Roster",
+        `Reactivated ${member.name} (cleared end date ${member.endDate})`,
+        { endDate: member.endDate },
+        { endDate: null }
+      );
+    };
+
+    const setStartDate = (memberId, startDate) => {
+      const member = roster.find(r => r.id === memberId);
+      if (!member) return;
+      const oldDate = member.startDate;
+      const newRoster = roster.map(r => r.id === memberId ? { ...r, startDate } : r);
+      saveWithAudit(
+        { attendanceRoster: newRoster },
+        "EDIT_ROSTER_FIELD", "Roster",
+        `Updated Start Date for ${member.name}: "${oldDate}" → "${startDate}"`,
+        { startDate: oldDate },
+        { startDate }
+      );
+    };
 
     const cols = [
-      { id: "name", label: "Name", w: "18%" },
+      { id: "name", label: "Name", w: "17%", editable: true },
       { id: "status", label: "Status", w: "9%" },
-      { id: "title", label: "Title", w: "17%" },
-      { id: "phone", label: "Phone", w: "13%" },
-      { id: "email", label: "Email", w: "19%" },
+      { id: "title", label: "Title", w: "16%", editable: true },
+      { id: "phone", label: "Phone", w: "12%", editable: true },
+      { id: "email", label: "Email", w: "18%", editable: true },
       { id: "startDate", label: "Start Date", w: "10%" },
       { id: "endDate", label: "End Date", w: "10%" },
       { id: "days", label: "Days", w: "4%" },
     ];
 
+    const isEditing = (id, field) => editingField && editingField.id === id && editingField.field === field;
+    const inputSt = { padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${C.pri}`, fontSize: 12, fontFamily: "inherit", width: "100%", boxSizing: "border-box", outline: "none" };
+
     return (
       <div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 600, color: C.textMut }}>{todayDisplay}</div>
+          <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 12 }}>
+              <div style={{ padding: "6px 14px", borderRadius: 8, background: "#D1FAE5", display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: "#059669" }}>{activeRoster.length}</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#059669" }}>Active</span>
+              </div>
+              <div style={{ padding: "6px 14px", borderRadius: 8, background: "#FEE2E2", display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: "#DC2626" }}>{inactiveRoster.length}</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: "#DC2626" }}>Inactive</span>
+              </div>
+              <div style={{ padding: "6px 14px", borderRadius: 8, background: C.bg, display: "flex", alignItems: "center", gap: 6 }}>
+                <span style={{ fontSize: 16, fontWeight: 800, color: C.text }}>{roster.length}</span>
+                <span style={{ fontSize: 11, fontWeight: 600, color: C.textMut }}>Total</span>
+              </div>
+            </div>
           </div>
           {canEditRoster && <Btn variant="primary" icon={<I.Plus />} onClick={() => setShowAdd(true)}>Add Team Member</Btn>}
         </div>
@@ -14486,12 +14598,15 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
         {showAdd && (
           <Card style={{ marginBottom: 16, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>New Team Member</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
               <input placeholder="Full Name *" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
               <input placeholder="Title" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
               <input placeholder="Phone" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
               <input placeholder="Email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
-              <input type="date" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
+            </div>
+            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Start Date:</span>
+              <MiniDatePicker value={form.startDate} onChange={v => setForm({ ...form, startDate: v || today })} />
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
               <Btn variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Btn>
@@ -14516,33 +14631,68 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
               <tbody>
                 {sorted.map((member, idx) => {
                   const isActive = !member.endDate;
-                  const days = Math.floor((Date.now() - new Date(member.startDate).getTime()) / 86400000);
+                  const endTs = member.endDate ? new Date(member.endDate + "T12:00:00").getTime() : Date.now();
+                  const days = Math.max(0, Math.floor((endTs - new Date(member.startDate).getTime()) / 86400000));
                   const bgColor = idx % 2 === 0 ? "#E8F0FE" : "#FFFFFF";
-                  const isEd = editing === member.id;
                   return (
                     <tr key={member.id} style={{ background: bgColor, transition: "background 0.1s" }}
                       onMouseEnter={e => e.currentTarget.style.background = "#dde8f8"}
                       onMouseLeave={e => e.currentTarget.style.background = bgColor}>
-                      <td style={{ padding: "9px 12px", fontWeight: 500 }}>{member.name}</td>
-                      <td style={{ padding: "9px 12px", textAlign: "center" }}>
-                        <span style={{ fontWeight: 700, fontSize: 11, padding: "2px 8px", borderRadius: 10, background: isActive ? "#D1FAE5" : "#FEE2E2", color: isActive ? "#059669" : "#DC2626" }}>{isActive ? "Active" : "Inactive"}</span>
+                      {/* Name */}
+                      <td style={{ padding: "9px 12px", fontWeight: 500 }}>
+                        {isEditing(member.id, "name") ? (
+                          <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={() => commitEdit(member.id, "name")} onKeyDown={e => { if (e.key === "Enter") commitEdit(member.id, "name"); if (e.key === "Escape") setEditingField(null); }} style={inputSt} />
+                        ) : (
+                          <span onClick={() => canEditRoster && startEdit(member.id, "name", member.name)} style={{ cursor: canEditRoster ? "pointer" : "default" }} title={canEditRoster ? "Click to edit" : ""}>{member.name}</span>
+                        )}
                       </td>
-                      <td style={{ padding: "9px 12px", textAlign: "center", color: C.textSec }}>{member.title || "—"}</td>
-                      <td style={{ padding: "9px 12px", textAlign: "center", color: C.textSec }}>{member.phone || "—"}</td>
-                      <td style={{ padding: "9px 12px", textAlign: "center", color: C.textSec, fontSize: 11 }}>{member.email || "—"}</td>
-                      <td style={{ padding: "9px 12px", textAlign: "center" }}>{member.startDate ? new Date(member.startDate + "T12:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "—"}</td>
+                      {/* Status */}
+                      <td style={{ padding: "9px 12px", textAlign: "center" }}>
+                        <span onClick={() => { if (canEditRoster && !isActive) clearEndDate(member.id); }} style={{ fontWeight: 700, fontSize: 11, padding: "2px 8px", borderRadius: 10, background: isActive ? "#D1FAE5" : "#FEE2E2", color: isActive ? "#059669" : "#DC2626", cursor: canEditRoster && !isActive ? "pointer" : "default" }} title={canEditRoster && !isActive ? "Click to reactivate" : ""}>{isActive ? "Active" : "Inactive"}</span>
+                      </td>
+                      {/* Title */}
+                      <td style={{ padding: "9px 12px", textAlign: "center", color: C.textSec }}>
+                        {isEditing(member.id, "title") ? (
+                          <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={() => commitEdit(member.id, "title")} onKeyDown={e => { if (e.key === "Enter") commitEdit(member.id, "title"); if (e.key === "Escape") setEditingField(null); }} style={inputSt} />
+                        ) : (
+                          <span onClick={() => canEditRoster && startEdit(member.id, "title", member.title)} style={{ cursor: canEditRoster ? "pointer" : "default" }} title={canEditRoster ? "Click to edit" : ""}>{member.title || "—"}</span>
+                        )}
+                      </td>
+                      {/* Phone */}
+                      <td style={{ padding: "9px 12px", textAlign: "center", color: C.textSec }}>
+                        {isEditing(member.id, "phone") ? (
+                          <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={() => commitEdit(member.id, "phone")} onKeyDown={e => { if (e.key === "Enter") commitEdit(member.id, "phone"); if (e.key === "Escape") setEditingField(null); }} style={inputSt} />
+                        ) : (
+                          <span onClick={() => canEditRoster && startEdit(member.id, "phone", member.phone)} style={{ cursor: canEditRoster ? "pointer" : "default" }} title={canEditRoster ? "Click to edit" : ""}>{member.phone || "—"}</span>
+                        )}
+                      </td>
+                      {/* Email */}
+                      <td style={{ padding: "9px 12px", textAlign: "center", color: C.textSec, fontSize: 11 }}>
+                        {isEditing(member.id, "email") ? (
+                          <input autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={() => commitEdit(member.id, "email")} onKeyDown={e => { if (e.key === "Enter") commitEdit(member.id, "email"); if (e.key === "Escape") setEditingField(null); }} style={inputSt} />
+                        ) : (
+                          <span onClick={() => canEditRoster && startEdit(member.id, "email", member.email)} style={{ cursor: canEditRoster ? "pointer" : "default" }} title={canEditRoster ? "Click to edit" : ""}>{member.email || "—"}</span>
+                        )}
+                      </td>
+                      {/* Start Date */}
+                      <td style={{ padding: "9px 12px", textAlign: "center" }}>
+                        {canEditRoster ? (
+                          <MiniDatePicker value={member.startDate} onChange={v => { if (v) setStartDate(member.id, v); }} />
+                        ) : (
+                          member.startDate ? new Date(member.startDate + "T12:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "—"
+                        )}
+                      </td>
+                      {/* End Date */}
                       <td style={{ padding: "9px 12px", textAlign: "center" }}>
                         {canEditRoster && isActive ? (
-                          isEd ? (
-                            <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
-                              <input type="date" style={{ fontSize: 11, padding: "2px 4px", borderRadius: 4, border: `1px solid ${C.border}` }} onChange={e => { if (e.target.value) updateMember(member.id, { endDate: e.target.value }); }} />
-                              <button onClick={() => setEditing(null)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, fontSize: 10 }}>✕</button>
-                            </div>
-                          ) : (
-                            <button onClick={() => setEditing(member.id)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, fontSize: 11, fontWeight: 600, textDecoration: "underline", fontFamily: "inherit" }}>Set</button>
-                          )
-                        ) : member.endDate ? new Date(member.endDate + "T12:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "—"}
+                          <MiniDatePicker value="" onChange={v => { if (v) setEndDate(member.id, v); }} placeholder="Set..." />
+                        ) : canEditRoster && !isActive ? (
+                          <MiniDatePicker value={member.endDate} onChange={v => { if (v) { const m = roster.find(r => r.id === member.id); const old = m?.endDate; const newRoster = roster.map(r => r.id === member.id ? { ...r, endDate: v } : r); saveWithAudit({ attendanceRoster: newRoster }, "EDIT_ROSTER_FIELD", "Roster", `Updated End Date for ${member.name}: "${old}" → "${v}"`, { endDate: old }, { endDate: v }); } }} />
+                        ) : (
+                          member.endDate ? new Date(member.endDate + "T12:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "—"
+                        )}
                       </td>
+                      {/* Days */}
                       <td style={{ padding: "9px 12px", textAlign: "center", fontWeight: 600 }}>{days}</td>
                     </tr>
                   );
@@ -14558,35 +14708,84 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
     );
   }
 
-  // ── Input Tab ──
+  // ── Input Tab (Attendance Log) ──
   function InputTab() {
     const [showAdd, setShowAdd] = useState(false);
-    const [form, setForm] = useState({ name: "", type: "", date: today, coverage: "No", notes: "", loggedBy: (profile?.full_name || "").split(" ").map(n => n[0]).join("").toUpperCase() || "—" });
+    const [form, setForm] = useState({ name: "", type: "", date: today, coverage: "No", notes: "", loggedBy: userInitials });
+    const [editingEntry, setEditingEntry] = useState(null);
+    const [editForm, setEditForm] = useState({});
 
-    const saveEntries = (newEntries) => save({ ...data, attendanceEntries: newEntries });
     const sortedEntries = useMemo(() => [...entries].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || "").localeCompare(a.createdAt || "")), [entries]);
 
     const addEntry = () => {
       if (!form.name || !form.type || !form.date) return;
       const newEntry = { id: "ae_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8), ...form, createdAt: new Date().toISOString() };
-      saveEntries([...entries, newEntry]);
-      setForm({ name: "", type: "", date: today, coverage: "No", notes: "", loggedBy: form.loggedBy });
+      saveWithAudit(
+        { attendanceEntries: [...entries, newEntry] },
+        "ADD_ATTENDANCE_ENTRY", "Attendance Log",
+        `Logged ${form.type} for ${form.name} on ${form.date}`,
+        null,
+        { name: form.name, type: form.type, date: form.date, coverage: form.coverage, notes: form.notes }
+      );
+      setForm({ name: "", type: "", date: today, coverage: "No", notes: "", loggedBy: userInitials });
       setShowAdd(false);
     };
 
-    const deleteEntry = (id) => saveEntries(entries.filter(e => e.id !== id));
+    const deleteEntry = (entry) => {
+      saveWithAudit(
+        { attendanceEntries: entries.filter(e => e.id !== entry.id) },
+        "DELETE_ATTENDANCE_ENTRY", "Attendance Log",
+        `Deleted ${entry.type} entry for ${entry.name} on ${entry.date}`,
+        { name: entry.name, type: entry.type, date: entry.date, coverage: entry.coverage, notes: entry.notes },
+        null
+      );
+    };
+
+    const startEditEntry = (entry) => {
+      setEditingEntry(entry.id);
+      setEditForm({ name: entry.name, type: entry.type, date: entry.date, coverage: entry.coverage || "No", notes: entry.notes || "" });
+    };
+
+    const commitEditEntry = (entryId) => {
+      const original = entries.find(e => e.id === entryId);
+      if (!original) return;
+      const changes = [];
+      if (editForm.name !== original.name) changes.push(`Name: "${original.name}" → "${editForm.name}"`);
+      if (editForm.type !== original.type) changes.push(`Type: "${original.type}" → "${editForm.type}"`);
+      if (editForm.date !== original.date) changes.push(`Date: "${original.date}" → "${editForm.date}"`);
+      if (editForm.coverage !== (original.coverage || "No")) changes.push(`Coverage: "${original.coverage || "No"}" → "${editForm.coverage}"`);
+      if (editForm.notes !== (original.notes || "")) changes.push(`Notes updated`);
+      if (changes.length === 0) { setEditingEntry(null); return; }
+      const newEntries = entries.map(e => e.id === entryId ? { ...e, ...editForm, lastEditedBy: userInitials, lastEditedAt: new Date().toISOString() } : e);
+      saveWithAudit(
+        { attendanceEntries: newEntries },
+        "EDIT_ATTENDANCE_ENTRY", "Attendance Log",
+        `Edited entry for ${original.name}: ${changes.join("; ")}`,
+        { name: original.name, type: original.type, date: original.date, coverage: original.coverage, notes: original.notes },
+        { ...editForm }
+      );
+      setEditingEntry(null);
+    };
+
+    const selectSt = { padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${C.pri}`, fontSize: 11, fontFamily: "inherit", background: C.surface, outline: "none" };
+    const editInputSt = { padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${C.pri}`, fontSize: 11, fontFamily: "inherit", width: "100%", boxSizing: "border-box", outline: "none" };
 
     return (
       <div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: C.textSec, fontStyle: "italic" }}>Enter one row per incident.</div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+            <div style={{ padding: "6px 14px", borderRadius: 8, background: C.bg, display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 16, fontWeight: 800, color: C.text }}>{entries.length}</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: C.textMut }}>Total Entries</span>
+            </div>
+          </div>
           {canEdit && <Btn variant="primary" icon={<I.Plus />} onClick={() => setShowAdd(true)}>Log Incident</Btn>}
         </div>
 
         {showAdd && (
           <Card style={{ marginBottom: 16, padding: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>New Attendance Entry</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
               <select value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: C.surface }}>
                 <option value="">Select Employee...</option>
                 {activeRoster.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
@@ -14595,11 +14794,14 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
                 <option value="">Absence Type...</option>
                 {ATTENDANCE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select>
-              <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
               <select value={form.coverage} onChange={e => setForm({ ...form, coverage: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: C.surface }}>
                 <option value="No">Coverage: No</option>
                 <option value="Yes">Coverage: Yes</option>
               </select>
+            </div>
+            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Shift Date:</span>
+              <MiniDatePicker value={form.date} onChange={v => setForm({ ...form, date: v || today })} />
             </div>
             <div style={{ marginTop: 12 }}>
               <textarea placeholder="Notes (optional)" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
@@ -14623,27 +14825,80 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
                   <th style={{ padding: "10px 12px", textAlign: "center", color: "#fff", fontWeight: 700, fontSize: 11 }}>Coverage?</th>
                   <th style={{ padding: "10px 12px", textAlign: "left", color: "#fff", fontWeight: 700, fontSize: 11 }}>Notes</th>
                   <th style={{ padding: "10px 12px", textAlign: "center", color: "#fff", fontWeight: 700, fontSize: 11 }}>Logged By</th>
-                  {canEdit && <th style={{ padding: "10px 12px", textAlign: "center", color: "#fff", fontWeight: 700, fontSize: 11, width: 40 }}></th>}
+                  {canEdit && <th style={{ padding: "10px 12px", textAlign: "center", color: "#fff", fontWeight: 700, fontSize: 11, width: 70 }}>Actions</th>}
                 </tr>
               </thead>
               <tbody>
-                {sortedEntries.map((entry, idx) => (
-                  <tr key={entry.id} style={{ background: idx % 2 === 0 ? "#F8F9FA" : "#FFFFFF" }}>
-                    <td style={{ padding: "9px 12px", fontWeight: 500 }}>{entry.name}</td>
-                    <td style={{ padding: "9px 12px", textAlign: "center" }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: (ATTENDANCE_TYPE_COLORS[entry.type] || "#999") + "20", color: ATTENDANCE_TYPE_COLORS[entry.type] || "#999" }}>{entry.type}</span>
-                    </td>
-                    <td style={{ padding: "9px 12px", textAlign: "center" }}>{entry.date ? new Date(entry.date + "T12:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "—"}</td>
-                    <td style={{ padding: "9px 12px", textAlign: "center", fontWeight: 600, color: entry.coverage === "Yes" ? C.suc : C.dan }}>{entry.coverage || "No"}</td>
-                    <td style={{ padding: "9px 12px", color: C.textSec, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={entry.notes}>{entry.notes || "—"}</td>
-                    <td style={{ padding: "9px 12px", textAlign: "center", fontWeight: 600 }}>{entry.loggedBy || "—"}</td>
-                    {canEdit && <td style={{ padding: "9px 12px", textAlign: "center" }}>
-                      <button onClick={() => deleteEntry(entry.id)} style={{ border: "none", background: "none", cursor: "pointer", color: C.dan, opacity: 0.5, fontSize: 12 }} title="Delete entry">
-                        <I.Trash />
-                      </button>
-                    </td>}
-                  </tr>
-                ))}
+                {sortedEntries.map((entry, idx) => {
+                  const isEd = editingEntry === entry.id;
+                  return (
+                    <tr key={entry.id} style={{ background: idx % 2 === 0 ? "#F8F9FA" : "#FFFFFF" }}>
+                      <td style={{ padding: "9px 12px", fontWeight: 500 }}>
+                        {isEd ? (
+                          <select value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} style={selectSt}>
+                            {activeRoster.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                          </select>
+                        ) : entry.name}
+                      </td>
+                      <td style={{ padding: "9px 12px", textAlign: "center" }}>
+                        {isEd ? (
+                          <select value={editForm.type} onChange={e => setEditForm({ ...editForm, type: e.target.value })} style={selectSt}>
+                            {ATTENDANCE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                          </select>
+                        ) : (
+                          <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: (ATTENDANCE_TYPE_COLORS[entry.type] || "#999") + "20", color: ATTENDANCE_TYPE_COLORS[entry.type] || "#999" }}>{entry.type}</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "9px 12px", textAlign: "center" }}>
+                        {isEd ? (
+                          <MiniDatePicker value={editForm.date} onChange={v => setEditForm({ ...editForm, date: v || editForm.date })} />
+                        ) : (
+                          entry.date ? new Date(entry.date + "T12:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "—"
+                        )}
+                      </td>
+                      <td style={{ padding: "9px 12px", textAlign: "center" }}>
+                        {isEd ? (
+                          <select value={editForm.coverage} onChange={e => setEditForm({ ...editForm, coverage: e.target.value })} style={selectSt}>
+                            <option value="No">No</option>
+                            <option value="Yes">Yes</option>
+                          </select>
+                        ) : (
+                          <span style={{ fontWeight: 600, color: entry.coverage === "Yes" ? C.suc : C.dan }}>{entry.coverage || "No"}</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "9px 12px", color: C.textSec, maxWidth: 300 }}>
+                        {isEd ? (
+                          <input value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} style={editInputSt} placeholder="Notes..." />
+                        ) : (
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }} title={entry.notes}>{entry.notes || "—"}</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "9px 12px", textAlign: "center", fontWeight: 600 }}>
+                        {entry.loggedBy || "—"}
+                        {entry.lastEditedBy && <div style={{ fontSize: 9, color: C.textMut, fontWeight: 400 }}>edited: {entry.lastEditedBy}</div>}
+                      </td>
+                      {canEdit && (
+                        <td style={{ padding: "9px 12px", textAlign: "center" }}>
+                          {isEd ? (
+                            <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                              <button onClick={() => commitEditEntry(entry.id)} style={{ border: "none", background: "none", cursor: "pointer", color: C.suc, fontSize: 14 }} title="Save">✓</button>
+                              <button onClick={() => setEditingEntry(null)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, fontSize: 12 }} title="Cancel">✕</button>
+                            </div>
+                          ) : (
+                            <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                              <button onClick={() => startEditEntry(entry)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, opacity: 0.6, fontSize: 11 }} title="Edit entry">
+                                <I.Edit />
+                              </button>
+                              <button onClick={() => deleteEntry(entry)} style={{ border: "none", background: "none", cursor: "pointer", color: C.dan, opacity: 0.5, fontSize: 11 }} title="Delete entry">
+                                <I.Trash />
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
                 {entries.length === 0 && (
                   <tr><td colSpan={canEdit ? 7 : 6} style={{ padding: 40, textAlign: "center", color: C.textMut, fontSize: 13 }}>No attendance entries yet. Click "Log Incident" to record an occurrence.</td></tr>
                 )}
@@ -14685,9 +14940,6 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
 
     return (
       <div>
-        <div style={{ marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: C.textMut }}>{todayDisplay}</div>
-        </div>
         <Card style={{ overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
@@ -14815,14 +15067,142 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
     );
   }
 
+  // ── Audit Log Tab ──
+  function AuditTab() {
+    const [filterCategory, setFilterCategory] = useState("all");
+    const [filterUser, setFilterUser] = useState("all");
+    const [searchQuery, setSearchQuery] = useState("");
+    const [expandedEntry, setExpandedEntry] = useState(null);
+
+    const categories = useMemo(() => [...new Set(auditLog.map(e => e.category))].sort(), [auditLog]);
+    const users = useMemo(() => [...new Set(auditLog.map(e => e.userName))].sort(), [auditLog]);
+
+    const filteredLog = useMemo(() => {
+      return [...auditLog]
+        .filter(e => filterCategory === "all" || e.category === filterCategory)
+        .filter(e => filterUser === "all" || e.userName === filterUser)
+        .filter(e => {
+          if (!searchQuery) return true;
+          const q = searchQuery.toLowerCase();
+          return (e.details || "").toLowerCase().includes(q) || (e.action || "").toLowerCase().includes(q) || (e.userName || "").toLowerCase().includes(q);
+        })
+        .sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+    }, [auditLog, filterCategory, filterUser, searchQuery]);
+
+    const actionColors = {
+      ADD_ROSTER_MEMBER: { bg: "#D1FAE5", color: "#059669", label: "Added" },
+      EDIT_ROSTER_FIELD: { bg: "#DBEAFE", color: "#2563EB", label: "Edited" },
+      SET_END_DATE: { bg: "#FEE2E2", color: "#DC2626", label: "Deactivated" },
+      REACTIVATE_MEMBER: { bg: "#D1FAE5", color: "#059669", label: "Reactivated" },
+      ADD_ATTENDANCE_ENTRY: { bg: "#FEF3C7", color: "#D97706", label: "Logged" },
+      EDIT_ATTENDANCE_ENTRY: { bg: "#DBEAFE", color: "#2563EB", label: "Edited" },
+      DELETE_ATTENDANCE_ENTRY: { bg: "#FEE2E2", color: "#DC2626", label: "Deleted" },
+    };
+
+    const formatTs = (ts) => {
+      if (!ts) return "—";
+      const d = new Date(ts);
+      return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + " at " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+    };
+
+    return (
+      <div>
+        {/* Filters */}
+        <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: C.textMut }}>Category:</span>
+            <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 11, fontFamily: "inherit", background: C.surface }}>
+              <option value="all">All</option>
+              {categories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: C.textMut }}>User:</span>
+            <select value={filterUser} onChange={e => setFilterUser(e.target.value)} style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 11, fontFamily: "inherit", background: C.surface }}>
+              <option value="all">All</option>
+              {users.map(u => <option key={u} value={u}>{u}</option>)}
+            </select>
+          </div>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <input placeholder="Search audit log..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} style={{ width: "100%", padding: "5px 10px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 11, fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+          <div style={{ fontSize: 11, color: C.textMut, fontWeight: 600 }}>{filteredLog.length} entries</div>
+        </div>
+
+        {/* Log entries */}
+        <Card style={{ overflow: "hidden" }}>
+          {filteredLog.length === 0 ? (
+            <div style={{ padding: 40, textAlign: "center", color: C.textMut, fontSize: 13 }}>
+              {auditLog.length === 0 ? "No audit log entries yet. All changes to the Attendance Tracker will be recorded here." : "No entries match your filters."}
+            </div>
+          ) : (
+            <div style={{ maxHeight: 600, overflowY: "auto" }}>
+              {filteredLog.map((entry, idx) => {
+                const ac = actionColors[entry.action] || { bg: C.bg, color: C.textSec, label: entry.action };
+                const isExpanded = expandedEntry === entry.id;
+                return (
+                  <div key={entry.id} style={{ borderBottom: idx < filteredLog.length - 1 ? `1px solid ${C.borderLight}` : "none", padding: "12px 16px", cursor: "pointer", background: isExpanded ? C.bg : "transparent", transition: "background 0.1s" }}
+                    onClick={() => setExpandedEntry(isExpanded ? null : entry.id)}
+                    onMouseEnter={e => { if (!isExpanded) e.currentTarget.style.background = "#FAFBFC"; }}
+                    onMouseLeave={e => { if (!isExpanded) e.currentTarget.style.background = "transparent"; }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                      {/* Timestamp + User */}
+                      <div style={{ width: 160, flexShrink: 0 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{formatTs(entry.timestamp)}</div>
+                        <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>by {entry.userName} ({entry.userInitials})</div>
+                      </div>
+                      {/* Action badge */}
+                      <div style={{ flexShrink: 0 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: ac.bg, color: ac.color, textTransform: "uppercase", letterSpacing: "0.03em" }}>{ac.label}</span>
+                      </div>
+                      {/* Category */}
+                      <div style={{ flexShrink: 0, width: 100 }}>
+                        <span style={{ fontSize: 10, fontWeight: 600, color: C.textMut, textTransform: "uppercase" }}>{entry.category}</span>
+                      </div>
+                      {/* Details */}
+                      <div style={{ flex: 1, fontSize: 12, color: C.text, lineHeight: 1.5 }}>
+                        {entry.details}
+                      </div>
+                      {/* Expand indicator */}
+                      <div style={{ flexShrink: 0, fontSize: 10, color: C.textMut, transition: "transform 0.15s", transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)" }}>▶</div>
+                    </div>
+                    {/* Expanded detail */}
+                    {isExpanded && (entry.previousValue || entry.newValue) && (
+                      <div style={{ marginTop: 12, marginLeft: 172, display: "flex", gap: 20, fontSize: 11 }}>
+                        {entry.previousValue && (
+                          <div style={{ flex: 1, padding: 10, borderRadius: 8, background: "#FEE2E2", border: "1px solid #FECACA" }}>
+                            <div style={{ fontWeight: 700, color: "#DC2626", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>Previous Value</div>
+                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'GT Eesti', monospace", fontSize: 11, color: "#7F1D1D" }}>{JSON.stringify(entry.previousValue, null, 2)}</pre>
+                          </div>
+                        )}
+                        {entry.newValue && (
+                          <div style={{ flex: 1, padding: 10, borderRadius: 8, background: "#D1FAE5", border: "1px solid #A7F3D0" }}>
+                            <div style={{ fontWeight: 700, color: "#059669", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>New Value</div>
+                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'GT Eesti', monospace", fontSize: 11, color: "#064E3B" }}>{JSON.stringify(entry.newValue, null, 2)}</pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: "0 8px" }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
-        <button onClick={() => nav("management")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, display: "flex", alignItems: "center", padding: 4 }}><I.Back /></button>
+        <button onClick={() => nav("operations")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, display: "flex", alignItems: "center", padding: 4 }}><I.Back /></button>
         <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Attendance Tracker</h2>
       </div>
-      <div style={{ fontSize: 12, color: C.textSec, marginBottom: 20, marginLeft: 36 }}>K9 Resorts Demo</div>
+      <div style={{ fontSize: 12, color: C.textSec, marginBottom: 20, marginLeft: 36 }}>
+        {(data?.locationName) || "Location"}
+      </div>
 
       {/* Tab bar */}
       <div style={{ display: "flex", gap: 2, marginBottom: 20, borderBottom: `2px solid ${C.borderLight}`, paddingBottom: 0 }}>
@@ -14839,9 +15219,11 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
       {tab === "input" && <InputTab />}
       {tab === "summary" && <SummaryTab />}
       {tab === "policy" && <PolicyTab />}
+      {tab === "audit" && <AuditTab />}
     </div>
   );
 }
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // DAILY OPERATIONS PAGE
@@ -21040,6 +21422,158 @@ function LMSPage({ data, save, nav, profile }) {
           )}
         </Modal>
       )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ENTERPRISE — Management (Attendance Aggregation)
+// ═══════════════════════════════════════════════════════════════════════════
+function EnterpriseManagementPage({ data, save, nav, profile, allLocations }) {
+  const [locationDataMap, setLocationDataMap] = useState({});
+  const [loading, setLoading] = useState(true);
+  const locations = (allLocations || []).filter(l => !l.isEnterprise);
+
+  useEffect(() => {
+    setLoading(true);
+    supabase.rpc('get_locations_ops_data').then(({ data: result, error }) => {
+      if (error) { console.error('Enterprise mgmt data error:', error); setLoading(false); return; }
+      const map = {};
+      (result || []).forEach(loc => { map[loc.id] = loc; });
+      setLocationDataMap(map);
+      setLoading(false);
+    });
+  }, []);
+
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+
+  const locationStats = useMemo(() => {
+    return locations.map(loc => {
+      const locData = locationDataMap[loc.id];
+      const entries = locData?.attendanceEntries || locData?.data?.attendanceEntries || [];
+      const roster = locData?.attendanceRoster || locData?.data?.attendanceRoster || [];
+      const activeCount = roster.filter(r => !r.endDate).length;
+      const byType = {};
+      ATTENDANCE_TYPES.forEach(type => {
+        const allTime = entries.filter(e => e.type === type).length;
+        const last30 = entries.filter(e => e.type === type && e.date > thirtyDaysAgo).length;
+        byType[type] = { allTime, last30 };
+      });
+      const total30 = ATTENDANCE_TYPES.reduce((sum, t) => sum + byType[t].last30, 0);
+      const totalAll = ATTENDANCE_TYPES.reduce((sum, t) => sum + byType[t].allTime, 0);
+      return { ...loc, byType, total30, totalAll, activeCount, entryCount: entries.length };
+    }).sort((a, b) => b.totalAll - a.totalAll);
+  }, [locations, locationDataMap, thirtyDaysAgo]);
+
+  const grandTotals = useMemo(() => {
+    const gt = {};
+    ATTENDANCE_TYPES.forEach(type => {
+      gt[type] = {
+        last30: locationStats.reduce((s, l) => s + l.byType[type].last30, 0),
+        allTime: locationStats.reduce((s, l) => s + l.byType[type].allTime, 0),
+      };
+    });
+    gt.total30 = locationStats.reduce((s, l) => s + l.total30, 0);
+    gt.totalAll = locationStats.reduce((s, l) => s + l.totalAll, 0);
+    gt.totalActive = locationStats.reduce((s, l) => s + l.activeCount, 0);
+    return gt;
+  }, [locationStats]);
+
+  if (loading) return (
+    <div style={{ padding: "60px 40px", textAlign: "center" }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: C.textMut }}>Loading attendance data across all locations...</div>
+    </div>
+  );
+
+  return (
+    <div style={{ padding: "0 8px" }}>
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0, marginBottom: 4 }}>Management</h2>
+        <p style={{ fontSize: 13, color: C.textSec, margin: 0 }}>Aggregated attendance metrics across all locations.</p>
+      </div>
+
+      {/* Quick stats */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+        <div style={{ padding: "10px 18px", borderRadius: 10, background: C.surface, border: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>{locations.length}</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.textMut }}>Locations</span>
+        </div>
+        <div style={{ padding: "10px 18px", borderRadius: 10, background: "#D1FAE5", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 20, fontWeight: 800, color: "#059669" }}>{grandTotals.totalActive}</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#059669" }}>Active Employees</span>
+        </div>
+        <div style={{ padding: "10px 18px", borderRadius: 10, background: "#FEF3C7", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 20, fontWeight: 800, color: "#D97706" }}>{grandTotals.total30}</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "#D97706" }}>Incidents (30 Days)</span>
+        </div>
+        <div style={{ padding: "10px 18px", borderRadius: 10, background: C.surface, border: `1.5px solid ${C.border}`, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 20, fontWeight: 800, color: C.text }}>{grandTotals.totalAll}</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.textMut }}>Incidents (All Time)</span>
+        </div>
+      </div>
+
+      {/* Aggregated table by location */}
+      <Card style={{ overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+            <thead>
+              <tr>
+                <th rowSpan={2} style={{ padding: "8px 10px", background: "#1B3A5C", color: "#fff", fontWeight: 700, textAlign: "left", fontSize: 11, verticalAlign: "bottom", borderRight: "1px solid rgba(255,255,255,0.1)" }}>Resort</th>
+                <th rowSpan={2} style={{ padding: "8px 10px", background: "#1B3A5C", color: "#fff", fontWeight: 700, textAlign: "center", fontSize: 10, verticalAlign: "bottom", borderRight: "1px solid rgba(255,255,255,0.1)" }}>Active Staff</th>
+                {ATTENDANCE_TYPES.map(type => (
+                  <th key={type} colSpan={2} style={{ padding: "6px 8px", background: ATTENDANCE_TYPE_COLORS[type], color: "#fff", fontWeight: 700, textAlign: "center", fontSize: 10, borderRight: "1px solid rgba(255,255,255,0.2)" }}>{type}</th>
+                ))}
+                <th colSpan={2} style={{ padding: "6px 8px", background: "#1B3A5C", color: "#fff", fontWeight: 700, textAlign: "center", fontSize: 10 }}>Total Marks</th>
+              </tr>
+              <tr>
+                {ATTENDANCE_TYPES.map(type => (
+                  <React.Fragment key={type}>
+                    <th style={{ padding: "5px 6px", background: "#2C3E50", color: "#fff", fontWeight: 600, textAlign: "center", fontSize: 9 }}>30 Days</th>
+                    <th style={{ padding: "5px 6px", background: "#2C3E50", color: "#fff", fontWeight: 600, textAlign: "center", fontSize: 9, borderRight: "1px solid rgba(255,255,255,0.1)" }}>All Time</th>
+                  </React.Fragment>
+                ))}
+                <th style={{ padding: "5px 6px", background: "#2C3E50", color: "#fff", fontWeight: 600, textAlign: "center", fontSize: 9 }}>30 Days</th>
+                <th style={{ padding: "5px 6px", background: "#2C3E50", color: "#fff", fontWeight: 600, textAlign: "center", fontSize: 9 }}>All Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {locationStats.map((loc, idx) => (
+                <tr key={loc.id} style={{ background: idx % 2 === 0 ? "#F8F9FA" : "#FFFFFF" }}>
+                  <td style={{ padding: "8px 10px", fontWeight: 600, borderRight: "1px solid #E5E7EB", color: C.pri, cursor: "pointer" }} onClick={() => { if (loc.slug) nav("mgmt-attendance"); }}>{loc.name}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 600, borderRight: "1px solid #E5E7EB", color: C.text }}>{loc.activeCount || "—"}</td>
+                  {ATTENDANCE_TYPES.map(type => (
+                    <React.Fragment key={type}>
+                      <td style={{ padding: "6px 8px", textAlign: "center", color: loc.byType[type].last30 > 0 ? C.text : C.textMut, fontWeight: loc.byType[type].last30 > 0 ? 700 : 400 }}>{loc.byType[type].last30 || "—"}</td>
+                      <td style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #E5E7EB", color: loc.byType[type].allTime > 0 ? C.text : C.textMut, fontWeight: loc.byType[type].allTime > 0 ? 700 : 400 }}>{loc.byType[type].allTime || "—"}</td>
+                    </React.Fragment>
+                  ))}
+                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, background: "#EBF0F7", color: loc.total30 > 0 ? C.text : C.textMut }}>{loc.total30 || "—"}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, background: "#EBF0F7", color: loc.totalAll > 0 ? C.text : C.textMut }}>{loc.totalAll || "—"}</td>
+                </tr>
+              ))}
+              {locationStats.length === 0 && (
+                <tr><td colSpan={4 + ATTENDANCE_TYPES.length * 2} style={{ padding: 40, textAlign: "center", color: C.textMut, fontSize: 12 }}>No locations found.</td></tr>
+              )}
+            </tbody>
+            {locationStats.length > 0 && (
+              <tfoot>
+                <tr style={{ background: "#1B3A5C" }}>
+                  <td style={{ padding: "8px 10px", fontWeight: 700, color: "#fff" }}>All Locations</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#fff", borderRight: "1px solid rgba(255,255,255,0.1)" }}>{grandTotals.totalActive}</td>
+                  {ATTENDANCE_TYPES.map(type => (
+                    <React.Fragment key={type}>
+                      <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#fff" }}>{grandTotals[type].last30 || "—"}</td>
+                      <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#fff", borderRight: "1px solid rgba(255,255,255,0.1)" }}>{grandTotals[type].allTime || "—"}</td>
+                    </React.Fragment>
+                  ))}
+                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#fff" }}>{grandTotals.total30 || "—"}</td>
+                  <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#fff" }}>{grandTotals.totalAll || "—"}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -27945,7 +28479,7 @@ export default function App() {
       packages: [], packageSales: [], agreements: [], dogTags: [],
       auditLog: [], closedDates: [], dailyOps: [], eodEntries: [],
       evaluations: [], onlineBookings: [], payments: [], requiredVaccines: [],
-      attendanceRoster: [], attendanceEntries: [],
+      attendanceRoster: [], attendanceEntries: [], attendanceAuditLog: [],
       roles: DEFAULT_ROLES,
       clientFields: DEF_CLIENT_FIELDS, dogFields: DEF_DOG_FIELDS,
       rooms: {},
@@ -28396,6 +28930,7 @@ export default function App() {
       case "enterprise-locations": return "Location Management";
       case "enterprise-operations": return "Operations Oversight";
       case "enterprise-packages": return "Package Management";
+      case "enterprise-management": return "Management";
       default: return pg;
     }
   }, [data]);
@@ -28437,6 +28972,7 @@ export default function App() {
       { id:"enterprise-operations",label:"Operations Oversight",icon:<I.Clipboard/> },
       { id:"enterprise-packages",label:"Package Management",icon:<I.ShoppingCart/> },
       { id:"enterprise-users",label:"User Management",icon:<I.Users/> },
+      { id:"enterprise-management",label:"Management",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 14l2 2 4-4"/></svg> },
     ]},
   ];
   const navSections = isEnterprise ? enterpriseNavSections : locationNavSections;
@@ -28455,6 +28991,7 @@ export default function App() {
     if (page === "enterprise-operations") return isEnterpriseRole ? <EnterpriseOperationsPage data={data} save={save} nav={nav} profile={profile} handleLocationChange={handleLocationChange} allLocations={allLocations}/> : entDenied;
     if (page === "enterprise-packages") return isEnterpriseRole ? <EnterprisePackagesPage data={data} save={save} allLocations={allLocations}/> : entDenied;
     if (page === "enterprise-users") return isEnterpriseRole ? <EnterpriseUsersPage profile={profile} allLocations={allLocations}/> : entDenied;
+    if (page === "enterprise-management") return isEnterpriseRole ? <EnterpriseManagementPage data={data} save={save} nav={nav} profile={profile} allLocations={allLocations}/> : entDenied;
     if (isOpsPage) {
       const oc = opsChildren.find(c => c.id === page);
       return <DailyOpsPage data={data} save={save} sub={oc ? oc.sub : "opening"} nav={nav} profile={profile}/>;
