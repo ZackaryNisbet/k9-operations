@@ -2292,6 +2292,14 @@ const NEW_LOCATION_DEFAULTS = {
     { id: "mt4", name: "Thank You", body: "Thank you for choosing K9 Resorts, {clientName}! We loved having {dogName} stay with us. We'd appreciate a review if you have a moment. See you next time!", active: true },
   ],
   roles: DEFAULT_ROLES,
+  openingTemplate: DEF_OPENING_TEMPLATE,
+  feTemplate: DEF_FE_TEMPLATE,
+  beTemplate: DEF_BE_TEMPLATE,
+  closingTemplate: DEF_CLOSING_TEMPLATE,
+  runCardConfig: {},
+  runCardTemplates: [],
+  automations: { enabled: false, dailyCap: 50, tiers: [], reminderLog: [] },
+  resortInfo: {},
   _initialized: true,
 };
 
@@ -11254,6 +11262,22 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
     const closedSet = new Set((data.closedDates || []).map(cd => cd.date));
     if(closedSet.has(checkIn)){const cd=(data.closedDates||[]).find(c=>c.date===checkIn);errs.checkIn=`Resort is closed on this date${cd?.label?` (${cd.label})`:""}`;}
     if(type==="boarding"&&closedSet.has(checkOut)){const cd=(data.closedDates||[]).find(c=>c.date===checkOut);errs.checkOut=`Resort is closed on this date${cd?.label?` (${cd.label})`:""}`;}
+    // Duplicate / overlap check: warn if any selected dog is already checked-in or has an overlapping reservation
+    const ci = checkIn; const co = checkOut || checkIn;
+    for (const did of selectedDogs) {
+      const dogName = (data.dogs.find(d => d.id === did)?.fields?.name) || "This dog";
+      const existing = (data.reservations || []).filter(r => r.dogId === did && r.status !== "cancelled" && r.status !== "checked-out");
+      const checkedIn = existing.find(r => r.status === "checked-in");
+      if (checkedIn) {
+        errs.dogs = `${dogName} is currently checked in (${checkedIn.type}, ${checkedIn.checkIn}). Check them out first or edit the existing reservation.`;
+        break;
+      }
+      const overlapping = existing.find(r => r.status === "upcoming" && r.checkIn <= co && (r.checkOut || r.checkIn) >= ci);
+      if (overlapping) {
+        errs.dogs = `${dogName} already has an upcoming ${overlapping.type} reservation overlapping these dates (${overlapping.checkIn}${overlapping.checkOut && overlapping.checkOut !== overlapping.checkIn ? " – " + overlapping.checkOut : ""}). Edit or cancel that reservation first.`;
+        break;
+      }
+    }
     if(Object.keys(errs).length>0){setErrors(errs);return;}
 
     // Daycare eval gate: auto-convert to evaluation if any dog lacks a locked eval
@@ -16300,12 +16324,18 @@ function EODPage({ data, save, nav }) {
       updateSection(mentionState.sectionId, newContent);
       setTimeout(() => { if (mentionState.inputEl) { mentionState.inputEl.focus(); const newPos = before.length + tag.length + 1; mentionState.inputEl.setSelectionRange(newPos, newPos); } }, 10);
     }
-    // Record mention
+    // Record mention and auto-save so it shows on profiles immediately
     const mention = { id: gid(), entityType: entity.type, entityId: entity.id, entityName: entity.name, sectionId: mentionState.sectionId, createdAt: new Date().toISOString() };
-    const existingMentions = [...(entry.mentions || [])];
-    existingMentions.push(mention);
-    entry.mentions = existingMentions;
+    const updatedMentions = [...(entry.mentions || []), mention];
+    entry.mentions = updatedMentions;
     setMentionState(null);
+    // Auto-save the EOD entry with the new mention
+    const sections = template.map(t => ({ id: t.id, content: editSections[t.id] || "" }));
+    const newEntry = { ...entry, sections, mentions: updatedMentions, history: [...(entry.history || []), { ts: new Date().toISOString(), action: "mention_added", mentionName: entity.name }] };
+    const entries = [...(data.eodEntries || [])];
+    const eIdx = entries.findIndex(e => e.date === viewDate);
+    if (eIdx >= 0) entries[eIdx] = newEntry; else entries.push(newEntry);
+    save({ ...data, eodEntries: entries });
   };
 
   const handleKeyDown = (secId, e) => {
@@ -21023,10 +21053,12 @@ function OnlineBookingsPage({ data, save, nav, profile, addGlobalToast, allLocat
       id: resId, clientId, dogId, type: isBoarding ? "boarding" : "evaluation",
       checkIn: isBoarding ? booking.checkIn : booking.evalDate,
       checkOut: isBoarding ? booking.checkOut : booking.evalDate,
-      checkInTime: isBoarding ? "" : (booking.evalTime || ""),
-      checkOutTime: "",
+      checkInTime: booking.checkInTime || (isBoarding ? "12:00" : (booking.evalTime || "10:00")),
+      checkOutTime: booking.checkOutTime || (isBoarding ? "12:00" : (booking.evalTime || "11:00")),
       status: "upcoming",
       ...(isBoarding ? { roomType: booking.roomType || "", room: "" } : { daycareSize: "large" }),
+      parentDestination: booking.client?.parentDestination || "",
+      belongings: "",
       notes: `[Online Booking ${booking.id}] ${booking.notes || ""}`.trim(),
       ...(isBoarding && booking.pricing ? { pricing: booking.pricing } : {}),
       careOverrides: isBoarding ? { bath_type: booking.dog?.bathType || "", feeding: booking.dog?.feedingNotes || "", medications: booking.dog?.medicationNotes || "" } : {},
