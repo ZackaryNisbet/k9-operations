@@ -557,10 +557,13 @@ export function useData(profile) {
     setIsEmpty(false);
     if (!locationId) return;
 
+    // Block load() immediately so real-time reloads don't overwrite local state
+    // before the debounced DB write commits
+    savingRef.current = true;
+
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 
     saveTimeoutRef.current = setTimeout(async () => {
-      savingRef.current = true;
       try {
         const prev = prevDataRef.current || {};
         prevDataRef.current = newData;

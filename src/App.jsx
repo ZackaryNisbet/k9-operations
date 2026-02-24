@@ -14531,14 +14531,20 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
     { id: "audit", label: "Audit Log" },
   ];
 
-  // ── Roster Tab ──
+  // ── Roster Tab (state lifted to parent to survive re-renders) ──
+  const [rosterShowAdd, setRosterShowAdd] = useState(false);
+  const [rosterEditingField, setRosterEditingField] = useState(null);
+  const [rosterEditValue, setRosterEditValue] = useState("");
+  const [rosterForm, setRosterForm] = useState({ name: "", title: "", phone: "", email: "", startDate: today });
+  const [rosterSortCol, setRosterSortCol] = useState("name");
+  const [rosterSortDir, setRosterSortDir] = useState("asc");
   function RosterTab() {
-    const [showAdd, setShowAdd] = useState(false);
-    const [editingField, setEditingField] = useState(null); // { id, field }
-    const [editValue, setEditValue] = useState("");
-    const [form, setForm] = useState({ name: "", title: "", phone: "", email: "", startDate: today });
-    const [sortCol, setSortCol] = useState("name");
-    const [sortDir, setSortDir] = useState("asc");
+    const showAdd = rosterShowAdd, setShowAdd = setRosterShowAdd;
+    const editingField = rosterEditingField, setEditingField = setRosterEditingField;
+    const editValue = rosterEditValue, setEditValue = setRosterEditValue;
+    const form = rosterForm, setForm = setRosterForm;
+    const sortCol = rosterSortCol, setSortCol = setRosterSortCol;
+    const sortDir = rosterSortDir, setSortDir = setRosterSortDir;
 
     const sorted = useMemo(() => {
       return [...roster].sort((a, b) => {
@@ -21313,9 +21319,25 @@ function OnlineBookingsPage({ data, save, nav, profile, addGlobalToast, allLocat
     // Create dog
     const dogId = gid();
     const newDog = { id: dogId, clientId, tags: [], fields: { name: booking.dog?.name || "", breed: booking.dog?.breed || "", weight: booking.dog?.weight || "", sex: booking.dog?.sex || "", spayed_neutered: booking.dog?.spayedNeutered || "", dob: booking.dog?.dob || "", bath_type: booking.dog?.bathType || "", temperament: "" } };
-    // Create reservation
+    // Create reservation — auto-assign room number from available rooms
     const resId = gid();
     const isBoarding = booking.type === "boarding";
+    let assignedRoom = "";
+    if (isBoarding && booking.roomType) {
+      const allRooms = Array.isArray(data.rooms?.[booking.roomType]) ? data.rooms[booking.roomType] : [];
+      const bCheckIn = booking.checkIn || "";
+      const bCheckOut = booking.checkOut || "";
+      // Find rooms occupied during these dates
+      const occupiedRooms = new Set(
+        (data.reservations || []).filter(r =>
+          r.type === "boarding" && r.roomType === booking.roomType && r.room &&
+          r.status !== "cancelled" && r.status !== "checked-out" &&
+          r.checkIn < bCheckOut && r.checkOut > bCheckIn
+        ).map(r => r.room)
+      );
+      // Assign first available room
+      assignedRoom = allRooms.find(rm => !occupiedRooms.has(rm)) || allRooms[0] || "";
+    }
     const newRes = {
       id: resId, clientId, dogId, type: isBoarding ? "boarding" : "evaluation",
       checkIn: isBoarding ? booking.checkIn : booking.evalDate,
@@ -21323,7 +21345,7 @@ function OnlineBookingsPage({ data, save, nav, profile, addGlobalToast, allLocat
       checkInTime: booking.checkInTime || (isBoarding ? "" : (booking.evalTime || "10:00")),
       checkOutTime: booking.checkOutTime || (isBoarding ? "" : (booking.evalTime || "11:00")),
       status: "upcoming",
-      ...(isBoarding ? { roomType: booking.roomType || "", room: "" } : { daycareSize: "large" }),
+      ...(isBoarding ? { roomType: booking.roomType || "", room: assignedRoom } : { daycareSize: "large" }),
       parentDestination: booking.client?.parentDestination || "",
       belongings: "",
       notes: `[Online Booking ${booking.id}] ${booking.notes || ""}`.trim(),
@@ -21341,7 +21363,7 @@ function OnlineBookingsPage({ data, save, nav, profile, addGlobalToast, allLocat
       reservations: [...data.reservations, newRes],
       onlineBookings: updated,
     });
-    if (addGlobalToast) addGlobalToast("Booking accepted — client, dog, and reservation created", "success");
+    if (addGlobalToast) addGlobalToast(`Booking accepted — client, dog, and reservation created${assignedRoom ? ` (Room ${assignedRoom})` : ""}`, "success");
   };
 
   const declineBooking = async (bookingId) => {
