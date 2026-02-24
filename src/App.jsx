@@ -14321,7 +14321,7 @@ function OperationsHub({ data, save, nav, profile }) {
       })}
 
       {/* Management Section */}
-      {hp("view_management") && (
+      {(hp("view_management") || hp("view_daily_ops")) && (
         <div style={{ marginBottom: 32 }}>
           <div style={{ margin: "8px 0 18px", height: 1, background: C.borderLight }} />
           <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
@@ -28461,8 +28461,8 @@ export default function App() {
     // Permission-gated routing
     const hp = (k) => hasPermission(profile, data, k);
     const denied = <div style={{padding:"60px 40px",textAlign:"center"}}><div style={{fontSize:36,marginBottom:12}}>🔒</div><div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:6}}>Access Restricted</div><div style={{fontSize:14,color:C.textSec}}>You don't have permission to view this page. Contact your admin to update your role.</div></div>;
-    if (page === "management") return hp("view_management") ? <ManagementHub data={data} save={save} nav={nav} profile={profile}/> : denied;
-    if (page === "mgmt-attendance") return hp("view_management") ? <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile}/> : denied;
+    if (page === "management") return (hp("view_management") || hp("view_daily_ops")) ? <ManagementHub data={data} save={save} nav={nav} profile={profile}/> : denied;
+    if (page === "mgmt-attendance") return (hp("view_management") || hp("view_daily_ops")) ? <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile}/> : denied;
     switch(page) {
       case "operations": return hp("view_daily_ops") ? <OperationsHub data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "dashboard": return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
