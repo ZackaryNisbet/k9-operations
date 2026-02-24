@@ -833,7 +833,15 @@ export default function BookingPage() {
   const stepEnterTime = useRef(Date.now());
   const draftTimer = useRef(null);
 
-  // Load data
+  // Load data (and refresh function for availability checks)
+  const refreshLocationData = useCallback(async () => {
+    if (!slug) return;
+    try {
+      const { data, error: e } = await supabase.rpc('get_public_booking_data', { p_slug: slug });
+      if (e) throw e;
+      if (data?.success) setLocationData(data);
+    } catch (err) { /* silent refresh */ }
+  }, [slug]);
   useEffect(() => {
     if (!slug) { setError('No location specified'); setLoading(false); return; }
     (async () => {
@@ -918,7 +926,9 @@ export default function BookingPage() {
     setCurrentPage(page);
     setPageHistory(h => [...h, page]);
     window.scrollTo(0, 0);
-  }, []);
+    // Refresh location data when entering availability to get fresh room counts
+    if (page === 'availability') refreshLocationData();
+  }, [refreshLocationData]);
 
   const goBack = useCallback(() => {
     if (pageHistory.length <= 1) {
@@ -1469,6 +1479,7 @@ export default function BookingPage() {
                   style={{ opacity: (serviceType === 'tour' ? !tourDate : (!checkIn || (serviceType === 'boarding' && !checkOut))) ? 0.4 : 1 }}
                   onClick={() => {
                     if (serviceType === 'daycare') { setCheckOut(checkIn); }
+                    refreshLocationData(); // Refresh to get latest room availability
                     setAvailStep(2);
                   }}>
                   {serviceType === 'tour' ? 'See Available Times' : serviceType === 'daycare' ? 'Check Availability' : 'See Available Rooms'} <Icons.Arrow size={18} />
