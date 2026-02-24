@@ -13942,12 +13942,16 @@ function OperationsHub({ data, save, nav, profile }) {
     const clients = data.clients || [];
     const payments = data.payments || [];
 
-    // Overdue follow-ups: followUpDate exists and is before viewDate
+    // Overdue follow-ups: only count clients actually in conversion or retention stages
+    // This matches the Customer Lifecycle page's clientTabMap stage logic
     let overdueFollowUps = 0;
     let dueTodayFollowUps = 0;
     clients.forEach(c => {
-      const convFu = c.lifecycle?.conversion?.followUpDate || "";
-      const retFu = c.lifecycle?.retention?.followUpDate || "";
+      const tab = clientTabMap[c.id];
+      // Only count conversion follow-ups for clients in conversion stage
+      const convFu = (tab?.isConversion && c.lifecycle?.conversion?.followUpDate) || "";
+      // Only count retention follow-ups for clients in retention stage
+      const retFu = (tab?.isRetention && c.lifecycle?.retention?.followUpDate) || "";
       const fu = convFu || retFu;
       if (fu && fu < viewDate) overdueFollowUps++;
       if (fu && fu === viewDate) dueTodayFollowUps++;
@@ -14009,7 +14013,7 @@ function OperationsHub({ data, save, nav, profile }) {
       newCustomersToday,
       newPayingToday,
     };
-  }, [data, viewDate]);
+  }, [data, viewDate, clientTabMap]);
 
   const groups = [
     { key: "daily", label: "Daily Operations", items: OPERATIONS_CATALOG.filter(c => c.frequency === "daily") },
@@ -14195,7 +14199,7 @@ function OperationsHub({ data, save, nav, profile }) {
                   <div style={{ background: tp.overdueFollowUps > 0 ? C.danLt : C.surface, borderRadius: 12, padding: "14px 16px", border: `1.5px solid ${tp.overdueFollowUps > 0 ? C.dan + "40" : C.border}` }}>
                     <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Overdue Follow-Ups</div>
                     <div style={{ fontSize: 24, fontWeight: 800, color: tp.overdueFollowUps > 0 ? C.dan : C.suc, lineHeight: 1 }}>{tp.overdueFollowUps}</div>
-                    {tp.overdueFollowUps > 0 && <div style={{ fontSize: 11, color: C.dan, marginTop: 3, fontWeight: 600 }}>need attention</div>}
+                    {tp.overdueFollowUps > 0 && <div style={{ fontSize: 11, color: C.dan, marginTop: 3, fontWeight: 600 }}>overdue</div>}
                   </div>
                   {/* Due Today */}
                   <div style={{ background: tp.dueTodayFollowUps > 0 ? C.warnLt : C.surface, borderRadius: 12, padding: "14px 16px", border: `1.5px solid ${tp.dueTodayFollowUps > 0 ? C.warn + "40" : C.border}` }}>
@@ -21053,8 +21057,8 @@ function OnlineBookingsPage({ data, save, nav, profile, addGlobalToast, allLocat
       id: resId, clientId, dogId, type: isBoarding ? "boarding" : "evaluation",
       checkIn: isBoarding ? booking.checkIn : booking.evalDate,
       checkOut: isBoarding ? booking.checkOut : booking.evalDate,
-      checkInTime: booking.checkInTime || (isBoarding ? "12:00" : (booking.evalTime || "10:00")),
-      checkOutTime: booking.checkOutTime || (isBoarding ? "12:00" : (booking.evalTime || "11:00")),
+      checkInTime: booking.checkInTime || (isBoarding ? "" : (booking.evalTime || "10:00")),
+      checkOutTime: booking.checkOutTime || (isBoarding ? "" : (booking.evalTime || "11:00")),
       status: "upcoming",
       ...(isBoarding ? { roomType: booking.roomType || "", room: "" } : { daycareSize: "large" }),
       parentDestination: booking.client?.parentDestination || "",
