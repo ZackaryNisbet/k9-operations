@@ -385,6 +385,116 @@ function BkSelect({ label, required, options, ...props }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// BREED SEARCH DROPDOWN (matches internal app's BreedSearch)
+// ═══════════════════════════════════════════════════════════════════════════
+const DEF_BREEDS = [
+  "Unknown / Not Sure","Mixed Breed","Affenpinscher","Afghan Hound","Airedale Terrier","Akita","Alaskan Malamute",
+  "American Bulldog","American Cocker Spaniel","American Eskimo Dog","American Pit Bull Terrier",
+  "American Staffordshire Terrier","Australian Cattle Dog","Australian Shepherd","Australian Terrier",
+  "Basenji","Basset Hound","Beagle","Bearded Collie","Belgian Malinois","Bernedoodle",
+  "Bernese Mountain Dog","Bichon Frise","Bloodhound","Border Collie","Border Terrier","Boston Terrier",
+  "Boxer","Brittany","Brussels Griffon","Bull Terrier","Bulldog","Bullmastiff",
+  "Cairn Terrier","Cane Corso","Cardigan Welsh Corgi","Cavalier King Charles Spaniel",
+  "Chesapeake Bay Retriever","Chihuahua","Chinese Crested","Chinese Shar-Pei","Chow Chow",
+  "Cockapoo","Cocker Spaniel","Collie","Coton de Tulear","Dachshund","Dalmatian",
+  "Doberman Pinscher","Dogo Argentino","Dogue de Bordeaux","Dutch Shepherd",
+  "English Bulldog","English Cocker Spaniel","English Setter","English Springer Spaniel",
+  "Finnish Spitz","Flat-Coated Retriever","Fox Terrier","French Bulldog",
+  "German Pinscher","German Shepherd","German Shorthaired Pointer","Giant Schnauzer",
+  "Golden Retriever","Goldendoodle","Gordon Setter","Great Dane","Great Pyrenees","Greyhound",
+  "Havanese","Ibizan Hound","Icelandic Sheepdog","Irish Setter","Irish Terrier",
+  "Irish Water Spaniel","Irish Wolfhound","Italian Greyhound","Jack Ashford Terrier",
+  "Japanese Chin","Keeshond","Kerry Blue Terrier","Labradoodle","Labrador Retriever",
+  "Leonberger","Lhasa Apso","Maltese","Maltipoo","Mastiff",
+  "Miniature Australian Shepherd","Miniature Pinscher","Miniature Poodle","Miniature Schnauzer",
+  "Morkie","Newfoundland","Norfolk Terrier","Norwegian Elkhound","Norwich Terrier",
+  "Nova Scotia Duck Tolling Retriever","Old English Sheepdog","Papillon","Peekapoo",
+  "Pekingese","Pembroke Welsh Corgi","Pointer","Pomeranian","Pomsky","Poodle",
+  "Portuguese Water Dog","Pug","Puggle","Rat Terrier","Rhodesian Ridgeback","Rottweiler",
+  "Saint Bernard","Saluki","Samoyed","Schnoodle","Ellisonish Terrier","Shetland Sheepdog",
+  "Shiba Inu","Shih Tzu","Shih-Poo","Siberian Husky","Silky Terrier",
+  "Soft Coated Wheaten Terrier","Staffordshire Bull Terrier","Standard Poodle","Standard Schnauzer",
+  "Tibetan Mastiff","Tibetan Spaniel","Tibetan Terrier","Toy Fox Terrier","Toy Poodle",
+  "Vizsla","Weimaraner","Welsh Springer Spaniel","Welsh Terrier","West Highland White Terrier",
+  "Whippet","Wire Fox Terrier","Xoloitzcuintli","Yorkipoo","Yorkshire Terrier","Other"
+];
+
+function BkBreedSearch({ value, onChange, breeds }) {
+  const [q, setQ] = useState(value || '');
+  const [open, setOpen] = useState(false);
+  const [hlIdx, setHlIdx] = useState(0);
+  const ref = useRef(null);
+  const listRef = useRef(null);
+  const allBreeds = breeds && breeds.length > 0 ? breeds : DEF_BREEDS;
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return allBreeds.slice(0, 20);
+    return allBreeds.filter(b => b.toLowerCase().includes(s)).slice(0, 20);
+  }, [q, allBreeds]);
+
+  useEffect(() => { setHlIdx(0); }, [q]);
+
+  // Sync external value changes (e.g. returning client pre-fill)
+  useEffect(() => { if (value !== q) setQ(value || ''); }, [value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  // Scroll highlighted item into view
+  useEffect(() => {
+    if (!open || !listRef.current) return;
+    const items = listRef.current.children;
+    if (items[hlIdx]) items[hlIdx].scrollIntoView({ block: 'nearest' });
+  }, [hlIdx, open]);
+
+  const select = (b) => { setQ(b); onChange(b); setOpen(false); };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHlIdx(i => Math.min(i + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHlIdx(i => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter' && open && filtered.length > 0) { e.preventDefault(); select(filtered[hlIdx]); }
+    else if (e.key === 'Escape') { setOpen(false); }
+  };
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <label className="bk-label">Breed <span style={{ color: B.err }}>*</span></label>
+      <input className="bk-input" value={q}
+        onChange={e => { setQ(e.target.value); onChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)} onKeyDown={handleKeyDown}
+        placeholder="Search breeds…"
+        autoComplete="off" />
+      {open && filtered.length > 0 && (
+        <div ref={listRef} style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4,
+          background: '#fff', border: `2px solid ${B.border}`, borderRadius: 12,
+          boxShadow: '0 12px 40px rgba(0,0,0,0.12)', zIndex: 100,
+          maxHeight: 220, overflow: 'auto'
+        }}>
+          {filtered.map((b, i) => (
+            <button key={b} onClick={() => select(b)} onMouseEnter={() => setHlIdx(i)}
+              style={{
+                display: 'block', width: '100%', padding: '10px 16px', border: 'none',
+                background: hlIdx === i ? B.navy + '10' : 'transparent',
+                cursor: 'pointer', fontFamily: "'GT Eesti', sans-serif", textAlign: 'left',
+                fontSize: 14, fontWeight: b === 'Unknown / Not Sure' || b === 'Mixed Breed' ? 700 : 500,
+                color: hlIdx === i ? B.navy : B.text, transition: 'background 0.1s'
+              }}>
+              {b === 'Unknown / Not Sure' && <span style={{ color: B.textMut, fontSize: 12 }}>⚡ </span>}{b}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MINI CALENDAR COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════
 function BookingCalendar({ label, value, onChange, minDate, required }) {
@@ -843,7 +953,18 @@ export default function BookingPage() {
     let bathCost = 0;
     if (selectedBath && locationData.pricing.addOns?.[selectedBath]) bathCost = locationData.pricing.addOns[selectedBath];
     let addOnCost = 0;
-    selectedAddOns.forEach(a => { addOnCost += (locationData.pricing.addOns?.[a] || 0) * nights; });
+    selectedAddOns.forEach(a => {
+      const unitPrice = locationData.pricing.addOns?.[a] || 0;
+      const isPerNight = PER_NIGHT_ADDONS.some(p => a.toLowerCase().includes(p.toLowerCase()));
+      if (isPerNight) {
+        addOnCost += unitPrice * nights;
+      } else {
+        // One-time add-on: use selected dates count, or all nights if none selected
+        const selDates = addOnDates[a];
+        const dayCount = selDates && selDates.length > 0 ? selDates.length : nights;
+        addOnCost += unitPrice * dayCount;
+      }
+    });
     let subtotal = roomCost + bathCost + addOnCost;
 
     // ISSUE 4: Apply recurring discount to self-booking if existing client
@@ -860,7 +981,7 @@ export default function BookingPage() {
     const deposit = Math.round(subtotal * depositPct / 100 * 100) / 100;
     const balance = Math.round((subtotal - deposit) * 100) / 100;
     return { nights, rate, roomCost, bathCost, addOnCost, subtotal, discount, deposit, balance, depositPct, multiDogDiscount };
-  }, [locationData, selectedRoom, checkIn, checkOut, selectedBath, selectedAddOns, isExistingClient, existingClientData, dogCount]);
+  }, [locationData, selectedRoom, checkIn, checkOut, selectedBath, selectedAddOns, addOnDates, isExistingClient, existingClientData, dogCount]);
 
   // Room recommendation logic
   const computeRecommendation = useCallback(() => {
@@ -1850,7 +1971,7 @@ export default function BookingPage() {
                 <p style={{ color: B.textSec, fontSize: 15, marginBottom: 28 }}>Help us get to know your furry family member.</p>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
                   <BkInput label="Dog's Name" required value={dog.name} onChange={e => setDog({ ...dog, name: e.target.value })} placeholder="Buddy" />
-                  <BkInput label="Breed" required value={dog.breed} onChange={e => setDog({ ...dog, breed: e.target.value })} placeholder="Golden Retriever" />
+                  <BkBreedSearch value={dog.breed} onChange={v => setDog({ ...dog, breed: v })} breeds={locationData?.breedOptions} />
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 16 }}>
                   <BkInput label="Weight (lbs)" type="number" value={dog.weight || dogWeight} onChange={e => setDog({ ...dog, weight: e.target.value })} placeholder="65" />
@@ -2134,7 +2255,7 @@ export default function BookingPage() {
                       {['Standard Bath', ...BATH_OPTIONS.filter(b => b !== 'Standard Bath')].map(b => (
                         <div key={b} className={`bk-chip ${selectedBath === b ? 'selected' : ''}`} style={{ padding: '10px 18px', fontSize: 14 }}
                           onClick={() => setSelectedBath(b)}>
-                          {b}{b === 'Standard Bath' && ' (Required)'}
+                          {b}
                         </div>
                       ))}
                     </div>
@@ -2217,12 +2338,18 @@ export default function BookingPage() {
                             <span style={{ fontWeight: 600 }}>{fmtCurrency(pricing.bathCost)}</span>
                           </div>
                         )}
-                        {selectedAddOns.map(a => (
-                          <div key={a} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 14 }}>
-                            <span>{a} × {pricing.nights} days</span>
-                            <span style={{ fontWeight: 600 }}>{fmtCurrency((loc?.pricing?.addOns?.[a] || 0) * pricing.nights)}</span>
-                          </div>
-                        ))}
+                        {selectedAddOns.map(a => {
+                          const unitPrice = loc?.pricing?.addOns?.[a] || 0;
+                          const isPerNight = PER_NIGHT_ADDONS.some(p => a.toLowerCase().includes(p.toLowerCase()));
+                          const selDates = addOnDates[a];
+                          const dayCount = isPerNight ? pricing.nights : (selDates && selDates.length > 0 ? selDates.length : pricing.nights);
+                          return (
+                            <div key={a} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 14 }}>
+                              <span>{a} × {dayCount} {dayCount === 1 ? 'day' : 'days'}</span>
+                              <span style={{ fontWeight: 600 }}>{fmtCurrency(unitPrice * dayCount)}</span>
+                            </div>
+                          );
+                        })}
                         {/* Recurring discount for existing clients */}
                         {isExistingClient && existingClientData?.client?.recurringDiscountId && (() => {
                           const disc = existingClientData.discounts?.find(d => d.id === existingClientData.client.recurringDiscountId);
@@ -2571,7 +2698,7 @@ export default function BookingPage() {
                     style={{ padding: '10px 16px', fontSize: 13, cursor: 'pointer' }}
                     onClick={() => setSelectedBath(b)}
                   >
-                    {b}{b === 'Standard Bath' && ' (Required)'}
+                    {b}
                   </div>
                 ))}
               </div>
