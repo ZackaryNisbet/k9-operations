@@ -16262,7 +16262,7 @@ function EODSearchOverlay({ data, onClose, onSelectDate }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-function EODPage({ data, save, nav }) {
+function EODPage({ data, save, nav, profile }) {
   const td = todayStr();
   const [viewDate, setViewDate] = useState(td);
   const isToday = viewDate === td;
@@ -16338,6 +16338,17 @@ function EODPage({ data, save, nav }) {
 
   // Track which text section is being actively edited (click-to-edit)
   const [editingCheckItem, setEditingCheckItem] = useState(null); // { secId, idx }
+
+  // Audit log panel — audit entries live inside entry.history with type:"audit"
+  const [showAuditLog, setShowAuditLog] = useState(false);
+  const [expandedAuditId, setExpandedAuditId] = useState(null);
+  const eodAuditEntries = useMemo(() => (entry.history || []).filter(h => h.type === "audit").sort((a, b) => (b.ts || "").localeCompare(a.ts || "")), [entry.history]);
+  const mkAudit = (auditAction, details, prev, next) => ({
+    ts: new Date().toISOString(), type: "audit",
+    id: "eodal_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+    userId: profile?.id || "unknown", userName: profile?.full_name || profile?.email || "Staff",
+    auditAction, details, previousValue: prev || null, newValue: next || null,
+  });
 
   // @ Mention system
   const [mentionState, setMentionState] = useState(null); // { sectionId, query, cursorPos, inputEl }
@@ -16435,7 +16446,10 @@ function EODPage({ data, save, nav }) {
     const savedObj = {};
     freshSections.forEach(s => { savedObj[s.id] = s.content; });
     lastSavedSecRef.current = savedObj;
-    const newEntry = { ...entry, sections: freshSections, mentions: updatedMentions, history: [...(entry.history || []), { ts: new Date().toISOString(), action: "mention_added", mentionName: entity.name }] };
+    // Audit: log mention into history
+    const tplSec = template.find(tp => tp.id === secIdForMention);
+    const mentionHistory = [...(entry.history || []), mkAudit("ADD_MENTION", `Mentioned @${entity.name} (${entity.type}) in "${tplSec?.label || secIdForMention}"`, null, { entityName: entity.name, entityType: entity.type, section: tplSec?.label || secIdForMention })];
+    const newEntry = { ...entry, sections: freshSections, mentions: updatedMentions, history: mentionHistory };
     const entries = [...(data.eodEntries || [])];
     const eIdx = entries.findIndex(e => e.date === viewDate);
     if (eIdx >= 0) entries[eIdx] = newEntry; else entries.push(newEntry);
@@ -16463,24 +16477,32 @@ function EODPage({ data, save, nav }) {
   const staffName = profile?.full_name || profile?.email || "Staff";
   const saveEOD = useCallback(() => {
     const prevSections = entry.sections || [];
+    const newHistory = [...(entry.history || [])];
     const sections = template.map(t => {
       const content = editSections[t.id] || "";
       const prev = prevSections.find(s => s.id === t.id);
-      // Track who last edited this section (only update attribution if content changed)
       const prevContent = prev?.content || "";
       const editedBy = content !== prevContent ? { name: staffName, at: new Date().toISOString() } : (prev?.editedBy || null);
+      // Audit: log section edits into history
+      if (content !== prevContent && prevContent.trim() !== "" && content.trim() !== "") {
+        const tpl = template.find(tp => tp.id === t.id);
+        newHistory.push(mkAudit("EDIT_SECTION", `Edited "${tpl?.label || t.id}" section`, prevContent.length > 200 ? prevContent.slice(0, 200) + "..." : prevContent, content.length > 200 ? content.slice(0, 200) + "..." : content));
+      } else if (content.trim() && !prevContent.trim()) {
+        const tpl = template.find(tp => tp.id === t.id);
+        newHistory.push(mkAudit("ADD_CONTENT", `Added content to "${tpl?.label || t.id}" section`, null, content.length > 200 ? content.slice(0, 200) + "..." : content));
+      }
       return { id: t.id, content, ...(editedBy ? { editedBy } : {}) };
     });
-    const newEntry = { ...entry, sections, mentions: activeMentions, history: [...(entry.history || []), { ts: new Date().toISOString(), action: "saved" }] };
+    newHistory.push({ ts: new Date().toISOString(), action: "saved" });
+    const newEntry = { ...entry, sections, mentions: activeMentions, history: newHistory };
     const entries = [...(data.eodEntries || [])];
     const idx = entries.findIndex(e => e.date === viewDate);
     if (idx >= 0) entries[idx] = newEntry; else entries.push(newEntry);
-    // Track what we saved so we can detect remote changes later
     const savedObj = {};
     sections.forEach(s => { savedObj[s.id] = s.content; });
     lastSavedSecRef.current = savedObj;
     save({ ...data, eodEntries: entries });
-  }, [editSections, activeMentions, entry, viewDate, data, template, staffName]);
+  }, [editSections, activeMentions, entry, viewDate, data, template, staffName, profile]);
   // Debounced auto-save: triggers 800ms after last user edit (skips programmatic changes)
   useEffect(() => {
     if (isLocked || !userEditedRef.current) return;
@@ -16491,16 +16513,17 @@ function EODPage({ data, save, nav }) {
 
   // Lock/unlock
   const toggleLock = async () => {
-    if (isPastDay && isLocked) return; // Cannot unlock prior days
+    if (isPastDay && isLocked) return;
     const entries = [...(data.eodEntries || [])];
     const idx = entries.findIndex(e => e.date === viewDate);
     if (idx >= 0) {
-      entries[idx] = { ...entries[idx], locked: !entries[idx].locked, history: [...(entries[idx].history || []), { ts: new Date().toISOString(), action: entries[idx].locked ? "unlocked" : "locked" }] };
+      const wasLocked = entries[idx].locked;
+      const lockHistory = [...(entries[idx].history || []), mkAudit(wasLocked ? "UNLOCK_DAY" : "LOCK_DAY", wasLocked ? `Unlocked EOD for ${viewDate}` : `Locked EOD for ${viewDate}`, wasLocked ? "Locked" : "Unlocked", wasLocked ? "Unlocked" : "Locked")];
+      entries[idx] = { ...entries[idx], locked: !wasLocked, history: lockHistory };
       await save({ ...data, eodEntries: entries });
     } else {
-      // Save first then lock
       const sections = template.map(t => ({ id: t.id, content: editSections[t.id] || "" }));
-      entries.push({ ...entry, sections, locked: true, history: [...(entry.history || []), { ts: new Date().toISOString(), action: "locked" }] });
+      entries.push({ ...entry, sections, locked: true, history: [...(entry.history || []), mkAudit("LOCK_DAY", `Locked EOD for ${viewDate}`, null, "Locked")] });
       await save({ ...data, eodEntries: entries });
     }
   };
@@ -16969,11 +16992,78 @@ function EODPage({ data, save, nav }) {
         })}
       </div>
 
-      {/* Bottom lock bar */}
-      {!isLocked && (
-        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20, padding: "16px 0", borderTop: `1px solid ${C.borderLight}` }}>
-          <Btn variant="secondary" onClick={toggleLock}>Lock Day</Btn>
-        </div>
+      {/* Bottom bar */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 20, padding: "16px 0", borderTop: `1px solid ${C.borderLight}` }}>
+        <Btn variant="secondary" size="sm" onClick={() => setShowAuditLog(v => !v)} icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>}>
+          {showAuditLog ? "Hide Audit Log" : "Audit Log"} {eodAuditEntries.length > 0 && `(${eodAuditEntries.length})`}
+        </Btn>
+        {!isLocked && <Btn variant="secondary" onClick={toggleLock}>Lock Day</Btn>}
+      </div>
+
+      {/* Audit Log Panel */}
+      {showAuditLog && (
+        <Card style={{ marginTop: 8, marginBottom: 20, overflow: "hidden" }}>
+          <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Audit Log</div>
+              <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>{viewDateLabel} — {eodAuditEntries.length} audit {eodAuditEntries.length === 1 ? "entry" : "entries"}</div>
+            </div>
+          </div>
+          {eodAuditEntries.length === 0 ? (
+            <div style={{ padding: 40, textAlign: "center", color: C.textMut, fontSize: 13 }}>
+              No audit entries yet for this day. All edits, mentions, and lock/unlock actions will be recorded here.
+            </div>
+          ) : (
+            <div style={{ maxHeight: 500, overflowY: "auto" }}>
+              {eodAuditEntries.map((ae, idx) => {
+                const actionColors = {
+                  EDIT_SECTION: { bg: "#DBEAFE", color: "#2563EB", label: "Edited" },
+                  ADD_CONTENT: { bg: "#D1FAE5", color: "#059669", label: "Added" },
+                  ADD_MENTION: { bg: "#EDE9FE", color: "#7C3AED", label: "Mention" },
+                  LOCK_DAY: { bg: "#FEF3C7", color: "#D97706", label: "Locked" },
+                  UNLOCK_DAY: { bg: "#FEE2E2", color: "#DC2626", label: "Unlocked" },
+                };
+                const ac = actionColors[ae.auditAction] || { bg: C.bg, color: C.textSec, label: ae.auditAction || "Action" };
+                const formatTs = (ts) => { if (!ts) return "—"; const d = new Date(ts); return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true }); };
+                const expanded = expandedAuditId === (ae.id || idx);
+                return (
+                  <div key={ae.id || idx} style={{ borderBottom: idx < eodAuditEntries.length - 1 ? `1px solid ${C.borderLight}` : "none", padding: "12px 20px", cursor: ae.previousValue || ae.newValue ? "pointer" : "default", transition: "background 0.1s" }}
+                    onClick={() => { if (ae.previousValue || ae.newValue) setExpandedAuditId(expanded ? null : (ae.id || idx)); }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "#FAFBFC"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                      <div style={{ width: 90, flexShrink: 0 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{formatTs(ae.ts)}</div>
+                        <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ae.userName}</div>
+                      </div>
+                      <div style={{ flexShrink: 0 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: ac.bg, color: ac.color, textTransform: "uppercase", letterSpacing: "0.03em" }}>{ac.label}</span>
+                      </div>
+                      <div style={{ flex: 1, fontSize: 12, color: C.text, lineHeight: 1.5 }}>{ae.details}</div>
+                      {(ae.previousValue || ae.newValue) && <div style={{ flexShrink: 0, fontSize: 10, color: C.textMut, transition: "transform 0.15s", transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}>▶</div>}
+                    </div>
+                    {expanded && (ae.previousValue || ae.newValue) && (
+                      <div style={{ marginTop: 10, marginLeft: 102, display: "flex", gap: 16, fontSize: 11 }}>
+                        {ae.previousValue && (
+                          <div style={{ flex: 1, padding: 10, borderRadius: 8, background: "#FEE2E2", border: "1px solid #FECACA" }}>
+                            <div style={{ fontWeight: 700, color: "#DC2626", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>Previous</div>
+                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit", fontSize: 11, color: "#7F1D1D" }}>{typeof ae.previousValue === "string" ? ae.previousValue : JSON.stringify(ae.previousValue, null, 2)}</pre>
+                          </div>
+                        )}
+                        {ae.newValue && (
+                          <div style={{ flex: 1, padding: 10, borderRadius: 8, background: "#D1FAE5", border: "1px solid #A7F3D0" }}>
+                            <div style={{ fontWeight: 700, color: "#059669", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>New</div>
+                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "inherit", fontSize: 11, color: "#064E3B" }}>{typeof ae.newValue === "string" ? ae.newValue : JSON.stringify(ae.newValue, null, 2)}</pre>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
       )}
 
       {/* Search Overlay */}
