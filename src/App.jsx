@@ -8577,7 +8577,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const handleSaveNote = async () => {
     if (!newNote.trim()) return;
     setNoteSaving(true);
-    const entry = { id: gid(), text: newNote.trim(), createdAt: new Date().toISOString(), authorName: profile?.full_name || profile?.email || "Staff" };
+    const entry = { id: gid(), text: newNote.trim(), timestamp: new Date().toISOString(), addedBy: profile?.full_name || profile?.email || "Staff" };
     const updated = { ...client, clientNotes: [...(client.clientNotes || []), entry] };
     await save({ ...data, clients: data.clients.map(c => c.id === clientId ? updated : c) });
     setNewNote("");
@@ -9014,8 +9014,8 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             <Card style={{padding:"14px 18px",marginBottom:16}}>
               <div style={{fontSize:12,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:8}}>Add Internal Note</div>
               <div style={{display:"flex",gap:8}}>
-                <input value={newNote} onChange={e=>setNewNote(e.target.value)} placeholder="Type a note..." style={{flex:1,padding:"10px 14px",borderRadius:10,border:`1.5px solid ${C.border}`,fontSize:14,fontFamily:"inherit",background:C.bg,color:C.text,outline:"none"}} onKeyDown={e=>{if(e.key==="Enter"&&newNote.trim())handleAddNote();}} />
-                <Btn size="sm" onClick={handleAddNote} disabled={!newNote.trim()||noteSaving}>Add</Btn>
+                <input value={newNote} onChange={e=>setNewNote(e.target.value)} placeholder="Type a note..." style={{flex:1,padding:"10px 14px",borderRadius:10,border:`1.5px solid ${C.border}`,fontSize:14,fontFamily:"inherit",background:C.bg,color:C.text,outline:"none"}} onKeyDown={e=>{if(e.key==="Enter"&&newNote.trim())handleSaveNote();}} />
+                <Btn size="sm" onClick={handleSaveNote} disabled={!newNote.trim()||noteSaving}>Add</Btn>
               </div>
             </Card>
 
@@ -16391,11 +16391,9 @@ function EODPage({ data, save, nav }) {
     const updatedMentions = [...activeMentions, mention];
     // Update local mentions state SYNCHRONOUSLY so hyperlinks render instantly on re-render
     setLocalMentions(updatedMentions);
-    // Flip back to preview mode so hyperlink renders immediately
-    const wasTextarea = mentionState.checklistIdx == null && !mentionState.isAddInput;
+    // Stay in edit mode so user can keep typing after the mention
     const wasChecklist = mentionState.checklistIdx != null && mentionState.checklistIdx >= 0;
     setMentionState(null);
-    if (wasTextarea) setEditingSecId(null);
     if (wasChecklist) setEditingCheckItem(null);
     // Auto-save the EOD entry with the new mention
     const sections = template.map(t => ({ id: t.id, content: editSections[t.id] || "" }));

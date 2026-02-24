@@ -981,7 +981,7 @@ export default function BookingPage() {
     const deposit = Math.round(subtotal * depositPct / 100 * 100) / 100;
     const balance = Math.round((subtotal - deposit) * 100) / 100;
     return { nights, rate, roomCost, bathCost, addOnCost, subtotal, discount, deposit, balance, depositPct, multiDogDiscount };
-  }, [locationData, selectedRoom, checkIn, checkOut, selectedBath, selectedAddOns, addOnDates, isExistingClient, existingClientData, dogCount]);
+  }, [locationData, selectedRoom, checkIn, checkOut, selectedBath, selectedAddOns, isExistingClient, existingClientData, dogCount]);
 
   // Room recommendation logic
   const computeRecommendation = useCallback(() => {
@@ -2338,18 +2338,12 @@ export default function BookingPage() {
                             <span style={{ fontWeight: 600 }}>{fmtCurrency(pricing.bathCost)}</span>
                           </div>
                         )}
-                        {selectedAddOns.map(a => {
-                          const unitPrice = loc?.pricing?.addOns?.[a] || 0;
-                          const isPerNight = PER_NIGHT_ADDONS.some(p => a.toLowerCase().includes(p.toLowerCase()));
-                          const selDates = addOnDates[a];
-                          const dayCount = isPerNight ? pricing.nights : (selDates && selDates.length > 0 ? selDates.length : pricing.nights);
-                          return (
-                            <div key={a} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 14 }}>
-                              <span>{a} × {dayCount} {dayCount === 1 ? 'day' : 'days'}</span>
-                              <span style={{ fontWeight: 600 }}>{fmtCurrency(unitPrice * dayCount)}</span>
-                            </div>
-                          );
-                        })}
+                        {selectedAddOns.map(a => (
+                          <div key={a} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, fontSize: 14 }}>
+                            <span>{a} × {pricing.nights} days</span>
+                            <span style={{ fontWeight: 600 }}>{fmtCurrency((loc?.pricing?.addOns?.[a] || 0) * pricing.nights)}</span>
+                          </div>
+                        ))}
                         {/* Recurring discount for existing clients */}
                         {isExistingClient && existingClientData?.client?.recurringDiscountId && (() => {
                           const disc = existingClientData.discounts?.find(d => d.id === existingClientData.client.recurringDiscountId);
