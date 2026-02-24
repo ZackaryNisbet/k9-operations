@@ -49,6 +49,10 @@ function clientToRow(c, locationId) {
   if (c.agreements !== undefined) row.agreements = c.agreements;
   if (c.questionnaireResponses !== undefined) row.questionnaire_responses = c.questionnaireResponses;
   if (c.notificationPrefs !== undefined) row.notification_prefs = c.notificationPrefs;
+  // Preserve igniteData (Ignite lead import data) in custom_fields
+  if (c.igniteData !== undefined) {
+    row.custom_fields = { ...(row.custom_fields || {}), igniteData: c.igniteData };
+  }
   // Custom fields: anything in fields.* not in the known set
   const custom = {};
   for (const [k, v] of Object.entries(f)) {
@@ -74,6 +78,11 @@ function rowToClient(r) {
   if (r.agreements) c.agreements = r.agreements;
   if (r.questionnaire_responses) c.questionnaireResponses = r.questionnaire_responses;
   if (r.notification_prefs) c.notificationPrefs = r.notification_prefs;
+  // Restore igniteData as top-level property (used by lifecycle page)
+  if (fields.igniteData) {
+    c.igniteData = fields.igniteData;
+    delete fields.igniteData;
+  }
   return c;
 }
 
