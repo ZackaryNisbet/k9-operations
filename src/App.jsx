@@ -16860,13 +16860,14 @@ function EODPage({ data, save, nav, profile }) {
                 {!isLocked && (() => {
                   const prevSec = (prevDayEntry?.sections || []).find(s => s.id === sec.id);
                   const prevContent = prevSec?.content || "";
-                  if (!prevContent.trim()) return null;
+                  const hasPrev = prevContent.trim().length > 0;
                   return (
-                    <button onClick={(e) => { e.stopPropagation(); if (!content.trim() || window.confirm(`Replace current content in "${sec.title || sec.label}" with content from ${new Date(prevDateStr + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}?`)) { updateSection(sec.id, prevContent); } }}
+                    <button disabled={!hasPrev}
+                      onClick={(e) => { e.stopPropagation(); if (!hasPrev) return; if (!content.trim() || window.confirm(`Replace current content in "${sec.title || sec.label}" with content from ${new Date(prevDateStr + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}?`)) { updateSection(sec.id, prevContent); } }}
                       onDoubleClick={(e) => e.stopPropagation()}
-                      title={`Copy from ${new Date(prevDateStr + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}`}
-                      style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: C.surface, cursor: "pointer", fontSize: 10, fontWeight: 600, color: C.textSec, fontFamily: "inherit", transition: "all 0.15s", whiteSpace: "nowrap" }}
-                      onMouseEnter={e => { e.currentTarget.style.background = C.priLt; e.currentTarget.style.color = C.pri; e.currentTarget.style.borderColor = C.pri; }}
+                      title={hasPrev ? `Copy from ${new Date(prevDateStr + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}` : "No content from previous day"}
+                      style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: C.surface, cursor: hasPrev ? "pointer" : "not-allowed", fontSize: 10, fontWeight: 600, color: C.textSec, fontFamily: "inherit", transition: "all 0.15s", whiteSpace: "nowrap", opacity: hasPrev ? 1 : 0.4 }}
+                      onMouseEnter={e => { if (hasPrev) { e.currentTarget.style.background = C.priLt; e.currentTarget.style.color = C.pri; e.currentTarget.style.borderColor = C.pri; } }}
                       onMouseLeave={e => { e.currentTarget.style.background = C.surface; e.currentTarget.style.color = C.textSec; e.currentTarget.style.borderColor = C.border; }}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                       Copy prev day
