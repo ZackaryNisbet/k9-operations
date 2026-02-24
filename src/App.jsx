@@ -14319,6 +14319,47 @@ function OperationsHub({ data, save, nav, profile }) {
           </div>
         );
       })}
+
+      {/* Management Section */}
+      {hp("view_management") && (
+        <div style={{ marginBottom: 32 }}>
+          <div style={{ margin: "8px 0 18px", height: 1, background: C.borderLight }} />
+          <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+            Management
+            <span style={{ fontSize: 12, fontWeight: 500, color: C.textMut, marginLeft: 4 }}>
+              (Administrative Tools)
+            </span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
+            {[
+              { id: "mgmt-attendance", label: "Attendance Tracker", desc: "Track tardies, call-outs, and no-shows", active: true },
+              { id: null, label: "Write-Ups & Counseling", desc: "Document progressive discipline", active: false },
+              { id: null, label: "Incident Reports", desc: "Log workplace incidents", active: false },
+            ].map((tool, i) => (
+              <div key={i}
+                onClick={() => tool.id && nav(tool.id)}
+                style={{
+                  background: C.surface, borderRadius: 14, padding: "18px 20px",
+                  border: `1.5px solid ${tool.active ? C.pri + "40" : C.border}`,
+                  cursor: tool.active ? "pointer" : "default",
+                  opacity: tool.active ? 1 : 0.55,
+                  transition: "all 0.2s",
+                  position: "relative",
+                }}
+                onMouseEnter={e => { if (tool.active) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)"; }}}
+                onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}
+              >
+                <div style={{ marginBottom: 6 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{tool.label}</div>
+                  <div style={{ fontSize: 12, color: C.textSec, marginTop: 3 }}>{tool.desc}</div>
+                </div>
+                {!tool.active && <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: "#F3F4F6", color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.04em" }}>Coming Soon</span>}
+                {tool.active && <span style={{ position: "absolute", top: 18, right: 16, color: C.textMut, fontSize: 16 }}>›</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -28128,8 +28169,6 @@ export default function App() {
   // (navTooltip removed — auto-expand sidebar replaces it)
   const [rptActiveReport, setRptActiveReport] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [opsExpanded, setOpsExpanded] = useState(false);
-  const [mgmtExpanded, setMgmtExpanded] = useState(false);
 
   // Fetch team accounts for quick-switch
   useEffect(() => {
@@ -28371,9 +28410,6 @@ export default function App() {
     {id:"ops-pp",label:"PP Checklist",sub:"pp"},
     {id:"ops-closing",label:"Closing",sub:"closing"},
   ];
-  const mgmtChildren = [
-    {id:"mgmt-attendance",label:"Attendance Tracker"},
-  ];
   const locationNavSections = [
     { label:null, items:[
       { id:"dashboard",label:"Dashboard",icon:<I.Dashboard/>,hotkey:"1" },
@@ -28383,8 +28419,7 @@ export default function App() {
       { id:"messages",label:"Messages",icon:<I.MessageSquare/>,hotkey:"4" },
     ]},
     { label:null, items:[
-      { id:"operations",label:"Operations",icon:<I.Clipboard/>,hotkey:"6",children:opsChildren },
-      { id:"management",label:"Management",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 14l2 2 4-4"/></svg>,children:mgmtChildren },
+      { id:"operations",label:"Operations",icon:<I.Clipboard/>,hotkey:"6" },
       { id:"lms",label:"Learning",icon:<I.GraduationCap/> },
     ]},
     { label:null, items:[
@@ -28409,7 +28444,7 @@ export default function App() {
   const isOpsPage = page.startsWith("ops-");
   const isMgmtPage = page.startsWith("mgmt-") || page === "management";
   const isSettingsSubPage = page.startsWith("settings-");
-  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":isMgmtPage?"management":isSettingsSubPage||page==="settings"?"settings":["dashboard","clients","reservations","online-bookings","messages","reports","ai","lms"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog","questionnaire"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
+  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"||isMgmtPage?"operations":isSettingsSubPage||page==="settings"?"settings":["dashboard","clients","reservations","online-bookings","messages","reports","ai","lms"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog","questionnaire"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
 
   function renderPage() {
     // Enterprise pages — gated to owner/enterprise_admin
@@ -28423,11 +28458,11 @@ export default function App() {
       const oc = opsChildren.find(c => c.id === page);
       return <DailyOpsPage data={data} save={save} sub={oc ? oc.sub : "opening"} nav={nav} profile={profile}/>;
     }
-    if (page === "management") return hp("view_management") ? <ManagementHub data={data} save={save} nav={nav} profile={profile}/> : denied;
-    if (page === "mgmt-attendance") return hp("view_management") ? <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile}/> : denied;
     // Permission-gated routing
     const hp = (k) => hasPermission(profile, data, k);
     const denied = <div style={{padding:"60px 40px",textAlign:"center"}}><div style={{fontSize:36,marginBottom:12}}>🔒</div><div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:6}}>Access Restricted</div><div style={{fontSize:14,color:C.textSec}}>You don't have permission to view this page. Contact your admin to update your role.</div></div>;
+    if (page === "management") return hp("view_management") ? <ManagementHub data={data} save={save} nav={nav} profile={profile}/> : denied;
+    if (page === "mgmt-attendance") return hp("view_management") ? <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile}/> : denied;
     switch(page) {
       case "operations": return hp("view_daily_ops") ? <OperationsHub data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "dashboard": return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
@@ -28510,16 +28545,11 @@ export default function App() {
             <div key={si}>
               {sec.label && sbExpanded && <div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}
               {!sec.label && si > 0 && <div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}
-              {sec.items.filter(item => { const perm = NAV_PERM_MAP[item.id]; return !perm || hasPermission(profile, data, perm); }).map(item=>{const act=activeNav===item.id;const hasKids=!!item.children;const itemExp=item.id==="operations"?opsExpanded:item.id==="management"?mgmtExpanded:false;const toggleExp=()=>{if(item.id==="operations"){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("operations");}else if(item.id==="management"){setMgmtExpanded(!mgmtExpanded);if(!mgmtExpanded&&!isMgmtPage)nav("management");}};
+              {sec.items.filter(item => { const perm = NAV_PERM_MAP[item.id]; return !perm || hasPermission(profile, data, perm); }).map(item=>{const act=activeNav===item.id;
                 return(<div key={item.id}>
-                  <button onMouseEnter={e=>{if(!act)e.currentTarget.style.background="rgba(175,141,84,0.08)";}} onMouseLeave={e=>{if(!act)e.currentTarget.style.background="transparent";}} onClick={()=>{if(hasKids){toggleExp();}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"8px 14px 8px 28px":"10px 14px",justifyContent:"flex-start",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"background 0.12s, color 0.12s",whiteSpace:"nowrap",position:"relative",boxSizing:"border-box"}}>
-                    <span style={{flexShrink:0,width:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{item.icon}</span>{sbExpanded&&<><span style={{flex:1,textAlign:"left",overflow:"hidden"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'GT Eesti',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.15s",transform:itemExp?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
+                  <button onMouseEnter={e=>{if(!act)e.currentTarget.style.background="rgba(175,141,84,0.08)";}} onMouseLeave={e=>{if(!act)e.currentTarget.style.background="transparent";}} onClick={()=>nav(item.id)} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"8px 14px 8px 28px":"10px 14px",justifyContent:"flex-start",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"background 0.12s, color 0.12s",whiteSpace:"nowrap",position:"relative",boxSizing:"border-box"}}>
+                    <span style={{flexShrink:0,width:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{item.icon}</span>{sbExpanded&&<><span style={{flex:1,textAlign:"left",overflow:"hidden"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'GT Eesti',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}</>}
                   </button>
-                  {hasKids&&itemExp&&sbExpanded&&<div style={{marginLeft:20,marginBottom:4}}>
-                    {item.children.map(ch=>{const chAct=page===ch.id;return(<button key={ch.id} onMouseEnter={e=>{if(!chAct)e.currentTarget.style.background="rgba(175,141,84,0.06)";}} onMouseLeave={e=>{if(!chAct)e.currentTarget.style.background="transparent";}} onClick={()=>nav(ch.id)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 12px",border:"none",borderRadius:8,background:chAct?"rgba(175,141,84,0.12)":"transparent",color:chAct?C.acc:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:chAct?600:400,cursor:"pointer",marginBottom:1,fontFamily:"inherit",transition:"background 0.12s, color 0.12s",whiteSpace:"nowrap"}}>
-                      <span style={{width:4,height:4,borderRadius:2,background:chAct?C.acc:"rgba(255,255,255,0.2)",flexShrink:0}}/>{ch.label}
-                    </button>);})}
-                  </div>}
                 </div>);
               })}
             </div>
@@ -28605,7 +28635,7 @@ export default function App() {
         <K9LogoMini size={28}/>
       </div>
 
-      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} allLocations={allLocations} profile={profile} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}{sec.items.map(item=>{const hasKids=!!item.children;const mItemExp=item.id==="operations"?opsExpanded:item.id==="management"?mgmtExpanded:false;const mToggleExp=()=>{if(item.id==="operations"){setOpsExpanded(!opsExpanded);if(!opsExpanded)nav("operations");}else if(item.id==="management"){setMgmtExpanded(!mgmtExpanded);if(!mgmtExpanded)nav("management");}};return(<div key={item.id}><button onClick={()=>{if(hasKids){mToggleExp();}else{nav(item.id);setMobileMenuOpen(false);}}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(175,141,84,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span>{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:mItemExp?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</button>{hasKids&&mItemExp&&<div style={{marginLeft:28,marginBottom:4}}>{item.children.map(ch=>(<button key={ch.id} onClick={()=>{nav(ch.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 12px",border:"none",borderRadius:8,background:page===ch.id?"rgba(175,141,84,0.12)":"transparent",color:page===ch.id?C.acc:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:page===ch.id?600:400,cursor:"pointer",marginBottom:2,fontFamily:"inherit"}}><span style={{width:4,height:4,borderRadius:2,background:page===ch.id?C.acc:"rgba(255,255,255,0.2)"}}/>{ch.label}</button>))}</div>}</div>);})}</div>))}</div></div>}
+      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} allLocations={allLocations} profile={profile} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}{sec.items.map(item=>(<div key={item.id}><button onClick={()=>{nav(item.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(175,141,84,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span></button></div>))}</div>))}</div></div>}
 
       {/* Main */}
       <div className="main-content" style={{flex:1,overflow:"auto",padding:"28px 32px",scrollbarGutter:"stable"}}>
