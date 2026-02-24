@@ -69,6 +69,7 @@ const PAGE_SLUGS = {
   messages:"messages", payments:"payments", operations:"operations",
   "ops-opening":"ops/opening", "ops-fe":"ops/front-end", "ops-be":"ops/back-end", "ops-rooms":"ops/rooms",
   "ops-pictures":"ops/pictures", "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
+  management:"management", "mgmt-attendance":"management/attendance",
   eod:"eod", ai:"ai", settings:"settings", "evaluation-form":"evaluation", "online-bookings":"bookings",
   "settings-team":"settings/team-management", "settings-roles":"settings/roles",
   "settings-fields":"settings/fields", "settings-tags":"settings/tags", "settings-vaccines":"settings/vaccines",
@@ -968,6 +969,11 @@ const PERMISSION_CATEGORIES = [
     {key:"edit_dropdowns",label:"Edit Dropdown Lists",desc:"Customize breed, food, medication dropdowns"},
     {key:"reset_data",label:"Reset Data",desc:"Reset all data back to demo dataset"},
   ]},
+  { key:"management", label:"Management", permissions:[
+    {key:"view_management",label:"View Management",desc:"Access management tools (attendance, etc.)"},
+    {key:"edit_attendance",label:"Edit Attendance",desc:"Log and edit attendance records"},
+    {key:"edit_roster",label:"Edit Roster",desc:"Add or modify team roster entries"},
+  ]},
   { key:"ai", label:"AI Features", permissions:[
     {key:"use_ai",label:"Use AI Command",desc:"Access and use the AI chat assistant"},
   ]},
@@ -998,6 +1004,7 @@ const DEFAULT_ROLES = [
       view_payment_history:true,collect_payment:true,issue_refund:true,
       edit_daily_ops:true,lock_daily_ops:true,edit_eod:true,lock_eod:true,
       edit_tours:true,edit_evaluations:true,
+      view_management:true,edit_attendance:true,edit_roster:true,
       view_message_threads:true,send_messages:true,
       edit_pricing:true,edit_fields:true,edit_tags_config:true,edit_vaccines_config:true,edit_agreements:true,
       edit_eod_template:true,edit_ops_template:true,edit_dropdowns:true,use_ai:true,
@@ -2217,6 +2224,38 @@ function generateDemoData() {
     payments: generateDemoPayments(clients, reservations),
     pendingInvites: [],
     roles: DEFAULT_ROLES,
+    attendanceRoster: (() => {
+      const demoStaff = [
+        { name: "Sarah Mitchell", title: "General Manager", phone: "555-100-0001", email: "sarah.mitchell@k9demo.com", startDate: "2024-03-15" },
+        { name: "James Park", title: "Assistant Manager", phone: "555-100-0002", email: "james.park@k9demo.com", startDate: "2024-06-01" },
+        { name: "Emily Rodriguez", title: "Supervisor", phone: "555-100-0003", email: "emily.rodriguez@k9demo.com", startDate: "2024-08-20" },
+        { name: "Tyler Brooks", title: "Supervisor", phone: "555-100-0004", email: "tyler.brooks@k9demo.com", startDate: "2024-09-10" },
+        { name: "Megan Foster", title: "Customer Service Representative", phone: "555-100-0005", email: "megan.foster@k9demo.com", startDate: "2024-11-01" },
+        { name: "David Kim", title: "Customer Service Representative", phone: "555-100-0006", email: "david.kim@k9demo.com", startDate: "2025-01-15" },
+        { name: "Ashley Nguyen", title: "Pet Care Technician", phone: "555-100-0007", email: "ashley.nguyen@k9demo.com", startDate: "2025-02-01" },
+        { name: "Brandon Torres", title: "Pet Care Technician", phone: "555-100-0008", email: "brandon.torres@k9demo.com", startDate: "2025-03-10" },
+        { name: "Jessica Wang", title: "Pet Care Technician", phone: "555-100-0009", email: "jessica.wang@k9demo.com", startDate: "2025-04-22" },
+        { name: "Chris Martinez", title: "Pet Care Technician", phone: "555-100-0010", email: "chris.martinez@k9demo.com", startDate: "2025-06-15" },
+        { name: "Lauren Hughes", title: "Pet Care Technician", phone: "555-100-0011", email: "lauren.hughes@k9demo.com", startDate: "2025-08-01" },
+        { name: "Ryan Cooper", title: "Pet Care Technician", phone: "555-100-0012", email: "ryan.cooper@k9demo.com", startDate: "2025-10-05", endDate: "2026-01-20" },
+      ];
+      return demoStaff.map((s, i) => ({ id: "ar_demo_" + (i + 1), ...s }));
+    })(),
+    attendanceEntries: (() => {
+      const demoEntries = [
+        { name: "Brandon Torres", type: "Late Call Out (<2 hrs)", date: "2026-02-16", coverage: "No", notes: "Notified at 9:45 AM for a 10 AM shift. Car trouble.", loggedBy: "SM" },
+        { name: "James Park", type: "Early Release", date: "2026-02-18", coverage: "No", notes: "Family emergency. Left at 8:45 AM from a double shift.", loggedBy: "SM" },
+        { name: "Megan Foster", type: "Late Call Out (<2 hrs)", date: "2026-02-18", coverage: "No", notes: "Called at 6:50 AM for 7 AM shift.", loggedBy: "SM" },
+        { name: "Jessica Wang", type: "Late Call Out (<2 hrs)", date: "2026-02-19", coverage: "No", notes: "Woke up sick, called 30 min before shift.", loggedBy: "JP" },
+        { name: "Lauren Hughes", type: "Call Out (2+ hrs)", date: "2026-02-23", coverage: "No", notes: "Doctor appointment, notified day before.", loggedBy: "JP" },
+        { name: "Ashley Nguyen", type: "Tardy", date: "2026-02-20", coverage: "No", notes: "Arrived 12 minutes late. Traffic.", loggedBy: "ER" },
+        { name: "Chris Martinez", type: "No Call / No Show", date: "2026-02-14", coverage: "No", notes: "Did not report and did not contact anyone.", loggedBy: "SM" },
+        { name: "Chris Martinez", type: "Tardy", date: "2026-02-21", coverage: "No", notes: "8 minutes late.", loggedBy: "TB" },
+        { name: "Tyler Brooks", type: "Call Out (2+ hrs)", date: "2026-02-10", coverage: "Yes", notes: "Sick, found coverage from Emily.", loggedBy: "SM" },
+        { name: "David Kim", type: "Tardy", date: "2026-02-12", coverage: "No", notes: "Arrived 6 minutes late.", loggedBy: "JP" },
+      ];
+      return demoEntries.map((e, i) => ({ id: "ae_demo_" + (i + 1), ...e, createdAt: new Date(e.date + "T12:00:00").toISOString() }));
+    })(),
   };
 }
 
@@ -2227,7 +2266,7 @@ const NEW_LOCATION_DEFAULTS = {
   clients: [], dogs: [], reservations: [], messages: [], teamMembers: [],
   packages: [], packageSales: [], crmEntries: [], eodEntries: [], dailyOps: [],
   evaluations: [], onlineBookings: [], payments: [], auditLog: [], closedDates: [],
-  pendingInvites: [],
+  pendingInvites: [], attendanceRoster: [], attendanceEntries: [],
   clientFields: DEF_CLIENT_FIELDS, dogFields: DEF_DOG_FIELDS,
   agreements: DEF_AGREEMENTS, dogTags: DEF_DOG_TAGS,
   requiredVaccines: DEF_REQUIRED_VACCINES,
@@ -2614,7 +2653,7 @@ function getRoleColor(profile, data) {
 const NAV_PERM_MAP = {
   dashboard:"view_dashboard", reservations:"view_calendar", clients:"view_clients",
   messages:"view_messages", payments:"view_payments",
-  operations:"view_daily_ops", "daily-ops":"view_daily_ops", eod:"view_eod", ai:"view_ai", settings:"view_settings", lms:"view_dashboard",
+  operations:"view_daily_ops", "daily-ops":"view_daily_ops", eod:"view_eod", management:"view_management", ai:"view_ai", settings:"view_settings", lms:"view_dashboard",
 };
 
 // ─── Itemized Receipt ───────────────────────────────────────────────────────
@@ -14280,6 +14319,485 @@ function OperationsHub({ data, save, nav, profile }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MANAGEMENT HUB
+// ═══════════════════════════════════════════════════════════════════════════
+function ManagementHub({ data, save, nav, profile }) {
+  const mgmtTools = [
+    { id: "mgmt-attendance", label: "Attendance Tracker", desc: "Track tardies, call-outs, and no-shows with automatic summaries", icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 14l2 2 4-4"/></svg>, status: "active" },
+    { id: null, label: "Write-Ups & Counseling", desc: "Document progressive discipline and corrective actions", icon: <I.FileText />, status: "coming_soon" },
+    { id: null, label: "Incident Reports", desc: "Log and track workplace incidents and investigations", icon: <I.AlertTriangle />, status: "coming_soon" },
+  ];
+  return (
+    <div style={{ padding: "0 8px" }}>
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0, marginBottom: 4 }}>Management</h2>
+        <p style={{ fontSize: 13, color: C.textSec, margin: 0 }}>Administrative tools for team oversight and documentation.</p>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16 }}>
+        {mgmtTools.map((tool, i) => (
+          <div key={i} onClick={() => tool.id && nav(tool.id)}
+            style={{ background: C.surface, borderRadius: 14, padding: "22px 24px", border: `1.5px solid ${tool.status === "active" ? C.pri + "40" : C.border}`, cursor: tool.id ? "pointer" : "default", opacity: tool.status === "coming_soon" ? 0.55 : 1, transition: "all 0.2s", position: "relative" }}
+            onMouseEnter={e => { if (tool.id) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)"; }}}
+            onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
+              <div style={{ width: 44, height: 44, borderRadius: 12, background: tool.status === "active" ? C.priLt : C.bg, display: "flex", alignItems: "center", justifyContent: "center", color: tool.status === "active" ? C.pri : C.textMut, flexShrink: 0 }}>{tool.icon}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>{tool.label}</div>
+                <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5 }}>{tool.desc}</div>
+                {tool.status === "coming_soon" && <span style={{ display: "inline-block", marginTop: 8, fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: "#F3F4F6", color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.04em" }}>Coming Soon</span>}
+              </div>
+              {tool.id && <span style={{ color: C.textMut, fontSize: 18, marginTop: 2 }}>›</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ATTENDANCE TRACKER PAGE
+// ═══════════════════════════════════════════════════════════════════════════
+const ATTENDANCE_TYPES = ["Tardy", "Early Release", "Call Out (2+ hrs)", "Late Call Out (<2 hrs)", "No Call / No Show"];
+const ATTENDANCE_TYPE_COLORS = { "Tardy": "#F0AD4E", "Early Release": "#E67E22", "Call Out (2+ hrs)": "#E74C3C", "Late Call Out (<2 hrs)": "#C0392B", "No Call / No Show": "#922B21" };
+
+function AttendanceTrackerPage({ data, save, nav, profile }) {
+  const [tab, setTab] = useState("roster");
+  const hp = (k) => hasPermission(profile, data, k);
+  const canEdit = hp("edit_attendance");
+  const canEditRoster = hp("edit_roster");
+  const today = new Date().toISOString().slice(0, 10);
+  const todayDisplay = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" });
+
+  // Attendance data from data store
+  const roster = data.attendanceRoster || [];
+  const entries = data.attendanceEntries || [];
+  const activeRoster = roster.filter(r => !r.endDate);
+
+  const tabs = [
+    { id: "roster", label: "Roster" },
+    { id: "input", label: "Attendance Log" },
+    { id: "summary", label: "Summary" },
+    { id: "policy", label: "Policy Reference" },
+  ];
+
+  // ── Roster Tab ──
+  function RosterTab() {
+    const [editing, setEditing] = useState(null);
+    const [showAdd, setShowAdd] = useState(false);
+    const [form, setForm] = useState({ name: "", title: "", phone: "", email: "", startDate: today });
+    const [sortCol, setSortCol] = useState("name");
+    const [sortDir, setSortDir] = useState("asc");
+
+    const sorted = useMemo(() => {
+      return [...roster].sort((a, b) => {
+        let va, vb;
+        if (sortCol === "status") { va = a.endDate ? "Inactive" : "Active"; vb = b.endDate ? "Inactive" : "Active"; }
+        else if (sortCol === "days") { va = Math.floor((Date.now() - new Date(a.startDate).getTime()) / 86400000); vb = Math.floor((Date.now() - new Date(b.startDate).getTime()) / 86400000); }
+        else { va = (a[sortCol] || "").toLowerCase(); vb = (b[sortCol] || "").toLowerCase(); }
+        if (va < vb) return sortDir === "asc" ? -1 : 1;
+        if (va > vb) return sortDir === "asc" ? 1 : -1;
+        return 0;
+      });
+    }, [roster, sortCol, sortDir]);
+
+    const toggleSort = (col) => { if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc"); else { setSortCol(col); setSortDir("asc"); } };
+    const sortIcon = (col) => col === sortCol ? (sortDir === "asc" ? <I.SortAsc /> : <I.SortDesc />) : <I.SortNone />;
+
+    const saveRoster = (newRoster) => save({ ...data, attendanceRoster: newRoster });
+
+    const addMember = () => {
+      if (!form.name.trim()) return;
+      const newMember = { id: "ar_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8), ...form, name: form.name.trim(), createdAt: new Date().toISOString() };
+      saveRoster([...roster, newMember]);
+      setForm({ name: "", title: "", phone: "", email: "", startDate: today });
+      setShowAdd(false);
+    };
+
+    const updateMember = (id, updates) => { saveRoster(roster.map(r => r.id === id ? { ...r, ...updates } : r)); setEditing(null); };
+
+    const cols = [
+      { id: "name", label: "Name", w: "18%" },
+      { id: "status", label: "Status", w: "9%" },
+      { id: "title", label: "Title", w: "17%" },
+      { id: "phone", label: "Phone", w: "13%" },
+      { id: "email", label: "Email", w: "19%" },
+      { id: "startDate", label: "Start Date", w: "10%" },
+      { id: "endDate", label: "End Date", w: "10%" },
+      { id: "days", label: "Days", w: "4%" },
+    ];
+
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: C.textMut }}>{todayDisplay}</div>
+          </div>
+          {canEditRoster && <Btn variant="primary" icon={<I.Plus />} onClick={() => setShowAdd(true)}>Add Team Member</Btn>}
+        </div>
+
+        {/* Add member form */}
+        {showAdd && (
+          <Card style={{ marginBottom: 16, padding: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>New Team Member</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr", gap: 12 }}>
+              <input placeholder="Full Name *" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
+              <input placeholder="Title" value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
+              <input placeholder="Phone" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
+              <input placeholder="Email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
+              <input type="date" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+              <Btn variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Btn>
+              <Btn variant="primary" onClick={addMember}>Add</Btn>
+            </div>
+          </Card>
+        )}
+
+        {/* Roster table */}
+        <Card style={{ overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: "#1B3A5C" }}>
+                  {cols.map(col => (
+                    <th key={col.id} onClick={() => toggleSort(col.id)} style={{ padding: "10px 12px", textAlign: col.id === "name" ? "left" : "center", color: "#fff", fontWeight: 700, fontSize: 11, cursor: "pointer", whiteSpace: "nowrap", width: col.w, userSelect: "none", letterSpacing: "0.03em" }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{col.label} {sortIcon(col.id)}</span>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((member, idx) => {
+                  const isActive = !member.endDate;
+                  const days = Math.floor((Date.now() - new Date(member.startDate).getTime()) / 86400000);
+                  const bgColor = idx % 2 === 0 ? "#E8F0FE" : "#FFFFFF";
+                  const isEd = editing === member.id;
+                  return (
+                    <tr key={member.id} style={{ background: bgColor, transition: "background 0.1s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#dde8f8"}
+                      onMouseLeave={e => e.currentTarget.style.background = bgColor}>
+                      <td style={{ padding: "9px 12px", fontWeight: 500 }}>{member.name}</td>
+                      <td style={{ padding: "9px 12px", textAlign: "center" }}>
+                        <span style={{ fontWeight: 700, fontSize: 11, padding: "2px 8px", borderRadius: 10, background: isActive ? "#D1FAE5" : "#FEE2E2", color: isActive ? "#059669" : "#DC2626" }}>{isActive ? "Active" : "Inactive"}</span>
+                      </td>
+                      <td style={{ padding: "9px 12px", textAlign: "center", color: C.textSec }}>{member.title || "—"}</td>
+                      <td style={{ padding: "9px 12px", textAlign: "center", color: C.textSec }}>{member.phone || "—"}</td>
+                      <td style={{ padding: "9px 12px", textAlign: "center", color: C.textSec, fontSize: 11 }}>{member.email || "—"}</td>
+                      <td style={{ padding: "9px 12px", textAlign: "center" }}>{member.startDate ? new Date(member.startDate + "T12:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "—"}</td>
+                      <td style={{ padding: "9px 12px", textAlign: "center" }}>
+                        {canEditRoster && isActive ? (
+                          isEd ? (
+                            <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                              <input type="date" style={{ fontSize: 11, padding: "2px 4px", borderRadius: 4, border: `1px solid ${C.border}` }} onChange={e => { if (e.target.value) updateMember(member.id, { endDate: e.target.value }); }} />
+                              <button onClick={() => setEditing(null)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, fontSize: 10 }}>✕</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setEditing(member.id)} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, fontSize: 11, fontWeight: 600, textDecoration: "underline", fontFamily: "inherit" }}>Set</button>
+                          )
+                        ) : member.endDate ? new Date(member.endDate + "T12:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "—"}
+                      </td>
+                      <td style={{ padding: "9px 12px", textAlign: "center", fontWeight: 600 }}>{days}</td>
+                    </tr>
+                  );
+                })}
+                {roster.length === 0 && (
+                  <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: C.textMut, fontSize: 13 }}>No team members yet. Click "Add Team Member" to get started.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  // ── Input Tab ──
+  function InputTab() {
+    const [showAdd, setShowAdd] = useState(false);
+    const [form, setForm] = useState({ name: "", type: "", date: today, coverage: "No", notes: "", loggedBy: (profile?.full_name || "").split(" ").map(n => n[0]).join("").toUpperCase() || "—" });
+
+    const saveEntries = (newEntries) => save({ ...data, attendanceEntries: newEntries });
+    const sortedEntries = useMemo(() => [...entries].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.createdAt || "").localeCompare(a.createdAt || "")), [entries]);
+
+    const addEntry = () => {
+      if (!form.name || !form.type || !form.date) return;
+      const newEntry = { id: "ae_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8), ...form, createdAt: new Date().toISOString() };
+      saveEntries([...entries, newEntry]);
+      setForm({ name: "", type: "", date: today, coverage: "No", notes: "", loggedBy: form.loggedBy });
+      setShowAdd(false);
+    };
+
+    const deleteEntry = (id) => saveEntries(entries.filter(e => e.id !== id));
+
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div style={{ fontSize: 12, color: C.textSec, fontStyle: "italic" }}>Enter one row per incident.</div>
+          {canEdit && <Btn variant="primary" icon={<I.Plus />} onClick={() => setShowAdd(true)}>Log Incident</Btn>}
+        </div>
+
+        {showAdd && (
+          <Card style={{ marginBottom: 16, padding: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>New Attendance Entry</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
+              <select value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: C.surface }}>
+                <option value="">Select Employee...</option>
+                {activeRoster.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+              </select>
+              <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: C.surface }}>
+                <option value="">Absence Type...</option>
+                {ATTENDANCE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit" }} />
+              <select value={form.coverage} onChange={e => setForm({ ...form, coverage: e.target.value })} style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: C.surface }}>
+                <option value="No">Coverage: No</option>
+                <option value="Yes">Coverage: Yes</option>
+              </select>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <textarea placeholder="Notes (optional)" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} rows={2} style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end", alignItems: "center" }}>
+              <span style={{ fontSize: 11, color: C.textMut, marginRight: "auto" }}>Logged by: {form.loggedBy}</span>
+              <Btn variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Btn>
+              <Btn variant="primary" onClick={addEntry}>Save Entry</Btn>
+            </div>
+          </Card>
+        )}
+
+        <Card style={{ overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: "#1B3A5C" }}>
+                  <th style={{ padding: "10px 12px", textAlign: "left", color: "#fff", fontWeight: 700, fontSize: 11 }}>Name</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center", color: "#fff", fontWeight: 700, fontSize: 11 }}>Absence Type</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center", color: "#fff", fontWeight: 700, fontSize: 11 }}>Shift Date</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center", color: "#fff", fontWeight: 700, fontSize: 11 }}>Coverage?</th>
+                  <th style={{ padding: "10px 12px", textAlign: "left", color: "#fff", fontWeight: 700, fontSize: 11 }}>Notes</th>
+                  <th style={{ padding: "10px 12px", textAlign: "center", color: "#fff", fontWeight: 700, fontSize: 11 }}>Logged By</th>
+                  {canEdit && <th style={{ padding: "10px 12px", textAlign: "center", color: "#fff", fontWeight: 700, fontSize: 11, width: 40 }}></th>}
+                </tr>
+              </thead>
+              <tbody>
+                {sortedEntries.map((entry, idx) => (
+                  <tr key={entry.id} style={{ background: idx % 2 === 0 ? "#F8F9FA" : "#FFFFFF" }}>
+                    <td style={{ padding: "9px 12px", fontWeight: 500 }}>{entry.name}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "center" }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: (ATTENDANCE_TYPE_COLORS[entry.type] || "#999") + "20", color: ATTENDANCE_TYPE_COLORS[entry.type] || "#999" }}>{entry.type}</span>
+                    </td>
+                    <td style={{ padding: "9px 12px", textAlign: "center" }}>{entry.date ? new Date(entry.date + "T12:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "—"}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "center", fontWeight: 600, color: entry.coverage === "Yes" ? C.suc : C.dan }}>{entry.coverage || "No"}</td>
+                    <td style={{ padding: "9px 12px", color: C.textSec, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={entry.notes}>{entry.notes || "—"}</td>
+                    <td style={{ padding: "9px 12px", textAlign: "center", fontWeight: 600 }}>{entry.loggedBy || "—"}</td>
+                    {canEdit && <td style={{ padding: "9px 12px", textAlign: "center" }}>
+                      <button onClick={() => deleteEntry(entry.id)} style={{ border: "none", background: "none", cursor: "pointer", color: C.dan, opacity: 0.5, fontSize: 12 }} title="Delete entry">
+                        <I.Trash />
+                      </button>
+                    </td>}
+                  </tr>
+                ))}
+                {entries.length === 0 && (
+                  <tr><td colSpan={canEdit ? 7 : 6} style={{ padding: 40, textAlign: "center", color: C.textMut, fontSize: 13 }}>No attendance entries yet. Click "Log Incident" to record an occurrence.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  // ── Summary Tab ──
+  function SummaryTab() {
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const summaryData = useMemo(() => {
+      return activeRoster.map(member => {
+        const memberEntries = entries.filter(e => e.name === member.name);
+        const byType = {};
+        ATTENDANCE_TYPES.forEach(type => {
+          const allTime = memberEntries.filter(e => e.type === type).length;
+          const last30 = memberEntries.filter(e => e.type === type && e.date > thirtyDaysAgo).length;
+          byType[type] = { allTime, last30 };
+        });
+        const total30 = ATTENDANCE_TYPES.reduce((sum, t) => sum + byType[t].last30, 0);
+        const totalAll = ATTENDANCE_TYPES.reduce((sum, t) => sum + byType[t].allTime, 0);
+        return { ...member, byType, total30, totalAll };
+      }).sort((a, b) => b.totalAll - a.totalAll);
+    }, [activeRoster, entries, thirtyDaysAgo]);
+
+    const grandTotals = useMemo(() => {
+      const gt = {};
+      ATTENDANCE_TYPES.forEach(type => {
+        gt[type] = { last30: summaryData.reduce((s, m) => s + m.byType[type].last30, 0), allTime: summaryData.reduce((s, m) => s + m.byType[type].allTime, 0) };
+      });
+      gt.total30 = summaryData.reduce((s, m) => s + m.total30, 0);
+      gt.totalAll = summaryData.reduce((s, m) => s + m.totalAll, 0);
+      return gt;
+    }, [summaryData]);
+
+    return (
+      <div>
+        <div style={{ marginBottom: 16, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.textMut }}>{todayDisplay}</div>
+        </div>
+        <Card style={{ overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead>
+                <tr>
+                  <th rowSpan={2} style={{ padding: "8px 10px", background: "#1B3A5C", color: "#fff", fontWeight: 700, textAlign: "left", fontSize: 11, verticalAlign: "bottom", borderRight: "1px solid rgba(255,255,255,0.1)" }}>Name</th>
+                  {ATTENDANCE_TYPES.map(type => (
+                    <th key={type} colSpan={2} style={{ padding: "6px 8px", background: ATTENDANCE_TYPE_COLORS[type], color: "#fff", fontWeight: 700, textAlign: "center", fontSize: 10, borderRight: "1px solid rgba(255,255,255,0.2)" }}>{type}</th>
+                  ))}
+                  <th colSpan={2} style={{ padding: "6px 8px", background: "#1B3A5C", color: "#fff", fontWeight: 700, textAlign: "center", fontSize: 10 }}>Total Marks</th>
+                </tr>
+                <tr>
+                  {ATTENDANCE_TYPES.map(type => (
+                    <React.Fragment key={type}>
+                      <th style={{ padding: "5px 6px", background: "#2C3E50", color: "#fff", fontWeight: 600, textAlign: "center", fontSize: 9 }}>30 Days</th>
+                      <th style={{ padding: "5px 6px", background: "#2C3E50", color: "#fff", fontWeight: 600, textAlign: "center", fontSize: 9, borderRight: "1px solid rgba(255,255,255,0.1)" }}>All Time</th>
+                    </React.Fragment>
+                  ))}
+                  <th style={{ padding: "5px 6px", background: "#2C3E50", color: "#fff", fontWeight: 600, textAlign: "center", fontSize: 9 }}>30 Days</th>
+                  <th style={{ padding: "5px 6px", background: "#2C3E50", color: "#fff", fontWeight: 600, textAlign: "center", fontSize: 9 }}>All Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summaryData.map((member, idx) => (
+                  <tr key={member.id} style={{ background: idx % 2 === 0 ? "#F8F9FA" : "#FFFFFF" }}>
+                    <td style={{ padding: "8px 10px", fontWeight: 500, borderRight: "1px solid #E5E7EB" }}>{member.name}</td>
+                    {ATTENDANCE_TYPES.map(type => (
+                      <React.Fragment key={type}>
+                        <td style={{ padding: "6px 8px", textAlign: "center", color: member.byType[type].last30 > 0 ? C.text : C.textMut, fontWeight: member.byType[type].last30 > 0 ? 700 : 400 }}>{member.byType[type].last30 || "—"}</td>
+                        <td style={{ padding: "6px 8px", textAlign: "center", borderRight: "1px solid #E5E7EB", color: member.byType[type].allTime > 0 ? C.text : C.textMut, fontWeight: member.byType[type].allTime > 0 ? 700 : 400 }}>{member.byType[type].allTime || "—"}</td>
+                      </React.Fragment>
+                    ))}
+                    <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, background: "#EBF0F7", color: member.total30 > 0 ? C.text : C.textMut }}>{member.total30 || "—"}</td>
+                    <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, background: "#EBF0F7", color: member.totalAll > 0 ? C.text : C.textMut }}>{member.totalAll || "—"}</td>
+                  </tr>
+                ))}
+                {summaryData.length === 0 && (
+                  <tr><td colSpan={2 + ATTENDANCE_TYPES.length * 2 + 2} style={{ padding: 40, textAlign: "center", color: C.textMut, fontSize: 12 }}>No active roster members. Add team members in the Roster tab first.</td></tr>
+                )}
+              </tbody>
+              {summaryData.length > 0 && (
+                <tfoot>
+                  <tr style={{ background: "#1B3A5C" }}>
+                    <td style={{ padding: "8px 10px", fontWeight: 700, color: "#fff" }}>Total</td>
+                    {ATTENDANCE_TYPES.map(type => (
+                      <React.Fragment key={type}>
+                        <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#fff" }}>{grandTotals[type].last30 || "—"}</td>
+                        <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#fff", borderRight: "1px solid rgba(255,255,255,0.1)" }}>{grandTotals[type].allTime || "—"}</td>
+                      </React.Fragment>
+                    ))}
+                    <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#fff" }}>{grandTotals.total30 || "—"}</td>
+                    <td style={{ padding: "6px 8px", textAlign: "center", fontWeight: 700, color: "#fff" }}>{grandTotals.totalAll || "—"}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  // ── Policy Tab ──
+  function PolicyTab() {
+    const sections = [
+      {
+        title: "ATTENDANCE TYPES",
+        subtitle: "Use these categories when logging incidents on the Attendance Log tab. Listed from least to most severe.",
+        items: [
+          { type: "Tardy", def: "Employee arrived 5 or more minutes after their scheduled shift start time." },
+          { type: "Early Release", def: "Employee left their shift before the scheduled end time (and was not sent home early by a MOD due to overstaffing)." },
+          { type: "Call Out (2+ hrs)", def: "Employee called out at least 2 hours before shift start." },
+          { type: "Late Call Out (<2 hrs)", def: "Employee called out with less than 2 hours notice before shift start. This is a violation of company policy." },
+          { type: "No Call / No Show", def: "Employee did not report to work and did not contact management at all." },
+        ],
+      },
+      {
+        title: "PROGRESSIVE COUNSELING PROCESS",
+        subtitle: "Discipline escalates with repeated violations. Each step requires documentation. Always consult your director when counseling is required.",
+        items: [
+          { type: "1. Verbal Warning (Documented)", def: "2 tardies OR 1 uncovered call-out in a rolling 30-day period. Document the conversation and save in employee file." },
+          { type: "2. Written Warning", def: "Repeated incidents or any new attendance violation within 60 days of the Verbal Warning. Requires a formal written document signed by the employee." },
+          { type: "3. Final Written Warning", def: "Ongoing attendance issues despite previous counseling steps. Employee is made aware that any further violation will result in termination." },
+          { type: "4. Termination", def: "Repeated violations after Final Written Warning, or a single major offense such as a No Call / No Show." },
+        ],
+      },
+      {
+        title: "IMPORTANT NOTES",
+        subtitle: null,
+        items: [
+          { type: "Emergencies", def: "Emergency situations will be reviewed on a case-by-case basis in partnership with HR. Documentation may be required (e.g., hospital discharge, doctor's note, return-to-work release)." },
+          { type: "Voluntary Resignation", def: "An employee who fails to report to work or call in for 3 or more consecutive scheduled shifts is considered to have voluntarily resigned their employment." },
+          { type: "Coverage Responsibility", def: "Employees are expected to actively seek coverage from other trained staff when calling out. Failure to attempt coverage may result in formal counseling." },
+        ],
+      },
+    ];
+
+    return (
+      <div>
+        {sections.map((section, si) => (
+          <Card key={si} style={{ marginBottom: 20, overflow: "hidden" }}>
+            <div style={{ background: "#1B3A5C", padding: "12px 18px" }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#fff", letterSpacing: "0.03em" }}>{section.title}</div>
+            </div>
+            {section.subtitle && <div style={{ padding: "10px 18px", fontSize: 12, color: C.textSec, fontStyle: "italic", borderBottom: `1px solid ${C.borderLight}` }}>{section.subtitle}</div>}
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: "#2C3E50" }}>
+                  <th style={{ padding: "8px 18px", textAlign: "center", color: "#fff", fontWeight: 700, fontSize: 11, width: si === 0 ? "22%" : "28%" }}>{si === 0 ? "Type" : "Step"}</th>
+                  <th style={{ padding: "8px 18px", textAlign: "center", color: "#fff", fontWeight: 700, fontSize: 11 }}>{si === 0 ? "Definition & When to Use" : "Trigger"}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {section.items.map((item, idx) => (
+                  <tr key={idx} style={{ background: idx % 2 === 0 ? "#F8F9FA" : "#FFFFFF" }}>
+                    <td style={{ padding: "12px 18px", fontWeight: 700, textAlign: "center", verticalAlign: "top", fontSize: 12, borderRight: `1px solid ${C.borderLight}` }}>{item.type}</td>
+                    <td style={{ padding: "12px 18px", fontSize: 12, lineHeight: 1.6, color: C.textSec }}>{item.def}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "0 8px" }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
+        <button onClick={() => nav("management")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, display: "flex", alignItems: "center", padding: 4 }}><I.Back /></button>
+        <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Attendance Tracker</h2>
+      </div>
+      <div style={{ fontSize: 12, color: C.textSec, marginBottom: 20, marginLeft: 36 }}>K9 Resorts Demo</div>
+
+      {/* Tab bar */}
+      <div style={{ display: "flex", gap: 2, marginBottom: 20, borderBottom: `2px solid ${C.borderLight}`, paddingBottom: 0 }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            style={{ padding: "10px 20px", border: "none", borderBottom: `3px solid ${tab === t.id ? C.pri : "transparent"}`, background: tab === t.id ? C.priLt : "transparent", color: tab === t.id ? C.pri : C.textSec, fontWeight: tab === t.id ? 700 : 500, fontSize: 13, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", borderRadius: "8px 8px 0 0", marginBottom: -2 }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      {tab === "roster" && <RosterTab />}
+      {tab === "input" && <InputTab />}
+      {tab === "summary" && <SummaryTab />}
+      {tab === "policy" && <PolicyTab />}
     </div>
   );
 }
@@ -27832,6 +28350,8 @@ export default function App() {
         const evDog = evRes ? (data?.dogs||[]).find(d => d.id === evRes.dogId) : null;
         return evDog ? `Evaluate ${evDog.fields.name}` : "Evaluation Form";
       }
+      case "management": return "Management";
+      case "mgmt-attendance": return "Attendance Tracker";
       case "enterprise-locations": return "Location Management";
       case "enterprise-operations": return "Operations Oversight";
       case "enterprise-packages": return "Package Management";
@@ -27850,6 +28370,10 @@ export default function App() {
     {id:"ops-pp",label:"PP Checklist",sub:"pp"},
     {id:"ops-closing",label:"Closing",sub:"closing"},
   ];
+  const [mgmtExpanded, setMgmtExpanded] = useState(false);
+  const mgmtChildren = [
+    {id:"mgmt-attendance",label:"Attendance Tracker"},
+  ];
   const locationNavSections = [
     { label:null, items:[
       { id:"dashboard",label:"Dashboard",icon:<I.Dashboard/>,hotkey:"1" },
@@ -27859,7 +28383,8 @@ export default function App() {
       { id:"messages",label:"Messages",icon:<I.MessageSquare/>,hotkey:"4" },
     ]},
     { label:null, items:[
-      { id:"operations",label:"Operations",icon:<I.Clipboard/>,hotkey:"6" },
+      { id:"operations",label:"Operations",icon:<I.Clipboard/>,hotkey:"6",children:opsChildren },
+      { id:"management",label:"Management",icon:<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 14l2 2 4-4"/></svg>,children:mgmtChildren },
       { id:"lms",label:"Learning",icon:<I.GraduationCap/> },
     ]},
     { label:null, items:[
@@ -27882,8 +28407,9 @@ export default function App() {
   // Flat list for lookups
   const navItems = navSections.flatMap(s => s.items);
   const isOpsPage = page.startsWith("ops-");
+  const isMgmtPage = page.startsWith("mgmt-") || page === "management";
   const isSettingsSubPage = page.startsWith("settings-");
-  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":isSettingsSubPage||page==="settings"?"settings":["dashboard","clients","reservations","online-bookings","messages","reports","ai","lms"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog","questionnaire"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
+  const activeNav = isEnterprise ? page : isOpsPage||page==="eod"||page==="operations"?"operations":isMgmtPage?"management":isSettingsSubPage||page==="settings"?"settings":["dashboard","clients","reservations","online-bookings","messages","reports","ai","lms"].includes(page)?page:["client-detail","new-client","dog-detail","new-dog","questionnaire"].includes(page)?"clients":["new-reservation","unified-new"].includes(page)?"reservations":page==="evaluation-form"?"dashboard":"dashboard";
 
   function renderPage() {
     // Enterprise pages — gated to owner/enterprise_admin
@@ -27897,6 +28423,8 @@ export default function App() {
       const oc = opsChildren.find(c => c.id === page);
       return <DailyOpsPage data={data} save={save} sub={oc ? oc.sub : "opening"} nav={nav} profile={profile}/>;
     }
+    if (page === "management") return hp("view_management") ? <ManagementHub data={data} save={save} nav={nav} profile={profile}/> : denied;
+    if (page === "mgmt-attendance") return hp("view_management") ? <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile}/> : denied;
     // Permission-gated routing
     const hp = (k) => hasPermission(profile, data, k);
     const denied = <div style={{padding:"60px 40px",textAlign:"center"}}><div style={{fontSize:36,marginBottom:12}}>🔒</div><div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:6}}>Access Restricted</div><div style={{fontSize:14,color:C.textSec}}>You don't have permission to view this page. Contact your admin to update your role.</div></div>;
@@ -27982,12 +28510,12 @@ export default function App() {
             <div key={si}>
               {sec.label && sbExpanded && <div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}
               {!sec.label && si > 0 && <div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}
-              {sec.items.filter(item => { const perm = NAV_PERM_MAP[item.id]; return !perm || hasPermission(profile, data, perm); }).map(item=>{const act=activeNav===item.id;const hasKids=!!item.children;
+              {sec.items.filter(item => { const perm = NAV_PERM_MAP[item.id]; return !perm || hasPermission(profile, data, perm); }).map(item=>{const act=activeNav===item.id;const hasKids=!!item.children;const itemExp=item.id==="operations"?opsExpanded:item.id==="management"?mgmtExpanded:false;const toggleExp=()=>{if(item.id==="operations"){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("operations");}else if(item.id==="management"){setMgmtExpanded(!mgmtExpanded);if(!mgmtExpanded&&!isMgmtPage)nav("management");}};
                 return(<div key={item.id}>
-                  <button onMouseEnter={e=>{if(!act)e.currentTarget.style.background="rgba(175,141,84,0.08)";}} onMouseLeave={e=>{if(!act)e.currentTarget.style.background="transparent";}} onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"8px 14px 8px 28px":"10px 14px",justifyContent:"flex-start",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"background 0.12s, color 0.12s",whiteSpace:"nowrap",position:"relative",boxSizing:"border-box"}}>
-                    <span style={{flexShrink:0,width:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{item.icon}</span>{sbExpanded&&<><span style={{flex:1,textAlign:"left",overflow:"hidden"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'GT Eesti',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.15s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
+                  <button onMouseEnter={e=>{if(!act)e.currentTarget.style.background="rgba(175,141,84,0.08)";}} onMouseLeave={e=>{if(!act)e.currentTarget.style.background="transparent";}} onClick={()=>{if(hasKids){toggleExp();}else nav(item.id);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"8px 14px 8px 28px":"10px 14px",justifyContent:"flex-start",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"background 0.12s, color 0.12s",whiteSpace:"nowrap",position:"relative",boxSizing:"border-box"}}>
+                    <span style={{flexShrink:0,width:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{item.icon}</span>{sbExpanded&&<><span style={{flex:1,textAlign:"left",overflow:"hidden"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'GT Eesti',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}{hasKids&&<span style={{fontSize:10,transition:"transform 0.15s",transform:itemExp?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</>}
                   </button>
-                  {hasKids&&opsExpanded&&sbExpanded&&<div style={{marginLeft:20,marginBottom:4}}>
+                  {hasKids&&itemExp&&sbExpanded&&<div style={{marginLeft:20,marginBottom:4}}>
                     {item.children.map(ch=>{const chAct=page===ch.id;return(<button key={ch.id} onMouseEnter={e=>{if(!chAct)e.currentTarget.style.background="rgba(175,141,84,0.06)";}} onMouseLeave={e=>{if(!chAct)e.currentTarget.style.background="transparent";}} onClick={()=>nav(ch.id)} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"7px 12px",border:"none",borderRadius:8,background:chAct?"rgba(175,141,84,0.12)":"transparent",color:chAct?C.acc:"rgba(255,255,255,0.4)",fontSize:12,fontWeight:chAct?600:400,cursor:"pointer",marginBottom:1,fontFamily:"inherit",transition:"background 0.12s, color 0.12s",whiteSpace:"nowrap"}}>
                       <span style={{width:4,height:4,borderRadius:2,background:chAct?C.acc:"rgba(255,255,255,0.2)",flexShrink:0}}/>{ch.label}
                     </button>);})}
@@ -28077,7 +28605,7 @@ export default function App() {
         <K9LogoMini size={28}/>
       </div>
 
-      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} allLocations={allLocations} profile={profile} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}{sec.items.map(item=>{const hasKids=!!item.children;return(<div key={item.id}><button onClick={()=>{if(hasKids){setOpsExpanded(!opsExpanded);if(!opsExpanded&&!isOpsPage)nav("ops-opening");}else{nav(item.id);setMobileMenuOpen(false);}}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(175,141,84,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span>{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:opsExpanded?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</button>{hasKids&&opsExpanded&&<div style={{marginLeft:28,marginBottom:4}}>{item.children.map(ch=>(<button key={ch.id} onClick={()=>{nav(ch.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 12px",border:"none",borderRadius:8,background:page===ch.id?"rgba(175,141,84,0.12)":"transparent",color:page===ch.id?C.acc:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:page===ch.id?600:400,cursor:"pointer",marginBottom:2,fontFamily:"inherit"}}><span style={{width:4,height:4,borderRadius:2,background:page===ch.id?C.acc:"rgba(255,255,255,0.2)"}}/>{ch.label}</button>))}</div>}</div>);})}</div>))}</div></div>}
+      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} allLocations={allLocations} profile={profile} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}{sec.items.map(item=>{const hasKids=!!item.children;const mItemExp=item.id==="operations"?opsExpanded:item.id==="management"?mgmtExpanded:false;const mToggleExp=()=>{if(item.id==="operations"){setOpsExpanded(!opsExpanded);if(!opsExpanded)nav("operations");}else if(item.id==="management"){setMgmtExpanded(!mgmtExpanded);if(!mgmtExpanded)nav("management");}};return(<div key={item.id}><button onClick={()=>{if(hasKids){mToggleExp();}else{nav(item.id);setMobileMenuOpen(false);}}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(175,141,84,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span>{hasKids&&<span style={{fontSize:10,transition:"transform 0.2s",transform:mItemExp?"rotate(90deg)":"rotate(0deg)"}}>▶</span>}</button>{hasKids&&mItemExp&&<div style={{marginLeft:28,marginBottom:4}}>{item.children.map(ch=>(<button key={ch.id} onClick={()=>{nav(ch.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"8px 12px",border:"none",borderRadius:8,background:page===ch.id?"rgba(175,141,84,0.12)":"transparent",color:page===ch.id?C.acc:"rgba(255,255,255,0.4)",fontSize:13,fontWeight:page===ch.id?600:400,cursor:"pointer",marginBottom:2,fontFamily:"inherit"}}><span style={{width:4,height:4,borderRadius:2,background:page===ch.id?C.acc:"rgba(255,255,255,0.2)"}}/>{ch.label}</button>))}</div>}</div>);})}</div>))}</div></div>}
 
       {/* Main */}
       <div className="main-content" style={{flex:1,overflow:"auto",padding:"28px 32px",scrollbarGutter:"stable"}}>
