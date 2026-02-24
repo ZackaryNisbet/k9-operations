@@ -21487,37 +21487,22 @@ function EnterpriseManagementPage({ data, save, nav, profile, allLocations }) {
 
   useEffect(() => {
     setLoading(true);
-    // Try direct table query first (gets full data JSON), fall back to RPC
-    const locIds = locations.map(l => l.id);
-    if (locIds.length === 0) { setLoading(false); return; }
-    supabase.from('locations').select('id, data').in('id', locIds).then(({ data: rows, error }) => {
-      if (error) {
-        console.warn('Direct locations query failed, falling back to RPC:', error);
-        // Fallback: use the RPC
-        supabase.rpc('get_locations_ops_data').then(({ data: result, error: rpcErr }) => {
-          if (rpcErr) { console.error('Enterprise mgmt RPC error:', rpcErr); setLoading(false); return; }
-          const map = {};
-          (result || []).forEach(loc => { map[loc.id] = loc.data || loc; });
-          setLocationDataMap(map);
-          setLoading(false);
-        });
-        return;
-      }
+    supabase.rpc('get_locations_ops_data').then(({ data: result, error }) => {
+      if (error) { console.error('Enterprise mgmt data error:', error); setLoading(false); return; }
       const map = {};
-      (rows || []).forEach(row => { map[row.id] = row.data || {}; });
+      (result || []).forEach(loc => { map[loc.id] = loc; });
       setLocationDataMap(map);
       setLoading(false);
     });
-  }, [locations.length]);
+  }, []);
 
   const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
 
   const locationStats = useMemo(() => {
     return locations.map(loc => {
       const locData = locationDataMap[loc.id] || {};
-      // Handle both shapes: data at top level OR nested under .data
-      const entries = locData.attendanceEntries || locData.data?.attendanceEntries || [];
-      const roster = locData.attendanceRoster || locData.data?.attendanceRoster || [];
+      const entries = locData.attendanceEntries || [];
+      const roster = locData.attendanceRoster || [];
       const activeCount = roster.filter(r => !r.endDate).length;
       const byType = {};
       ATTENDANCE_TYPES.forEach(type => {
