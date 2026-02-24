@@ -14410,8 +14410,8 @@ const ATTENDANCE_TYPE_COLORS = { "Tardy": "#F0AD4E", "Early Release": "#E67E22",
 function AttendanceTrackerPage({ data, save, nav, profile }) {
   const [tab, setTab] = useState("roster");
   const hp = (k) => hasPermission(profile, data, k);
-  const canEdit = hp("edit_attendance");
-  const canEditRoster = hp("edit_roster");
+  const canEdit = hp("edit_attendance") || hp("edit_daily_ops");
+  const canEditRoster = hp("edit_roster") || hp("edit_daily_ops");
   const today = new Date().toISOString().slice(0, 10);
   const todayDisplay = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" });
 
@@ -27945,6 +27945,7 @@ export default function App() {
       packages: [], packageSales: [], agreements: [], dogTags: [],
       auditLog: [], closedDates: [], dailyOps: [], eodEntries: [],
       evaluations: [], onlineBookings: [], payments: [], requiredVaccines: [],
+      attendanceRoster: [], attendanceEntries: [],
       roles: DEFAULT_ROLES,
       clientFields: DEF_CLIENT_FIELDS, dogFields: DEF_DOG_FIELDS,
       rooms: {},
