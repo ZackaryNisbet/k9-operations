@@ -164,7 +164,10 @@ BEGIN
       'openingTemplate', data->'openingTemplate',
       'feTemplate', data->'feTemplate',
       'beTemplate', data->'beTemplate',
-      'closingTemplate', data->'closingTemplate'
+      'closingTemplate', data->'closingTemplate',
+      'attendanceRoster', COALESCE(data->'attendanceRoster', '[]'::jsonb),
+      'attendanceEntries', COALESCE(data->'attendanceEntries', '[]'::jsonb),
+      'attendanceAuditLog', COALESCE(data->'attendanceAuditLog', '[]'::jsonb)
     )), '[]'::jsonb)
     FROM locations
   );
