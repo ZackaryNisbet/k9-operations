@@ -9046,8 +9046,9 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                 <div style={{display:"flex",flexDirection:"column",gap:6}}>
                   {eodMentions.map((m, i) => {
                     const dogName = m.entityType === "dog" ? dn(m.entityId) : null;
-                    const sectionLabel = m.sections ? m.sections.find(s => s.content && s.content.includes(`@${m.entityType === "dog" ? dogName : client.fields.first_name}`))?.label : null;
-                    const preview = m.context || m.text || (m.sections ? m.sections.filter(s => s.content).map(s => s.content).join(" ").slice(0, 120) : "");
+                    const tpl = (data.eodTemplate || DEF_EOD_TEMPLATE).find(t => t.id === m.sectionId);
+                    const sec = (m.sections || []).find(s => s.id === m.sectionId);
+                    const preview = sec && sec.content ? sec.content.slice(0, 150) : "";
                     return (
                       <Card key={`eod-${i}`} style={{padding:"10px 16px",borderLeft:`3px solid ${C.acc}`,cursor:"pointer"}} hoverable onClick={() => nav("eod")}>
                         <div style={{display:"flex",alignItems:"flex-start",gap:10}}>
@@ -9058,7 +9059,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                             <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:2,flexWrap:"wrap"}}>
                               <span style={{fontSize:13,fontWeight:700,color:C.text}}>{fmtDate(m.date)}</span>
                               {dogName && <Badge color="primary" size="sm">{dogName}</Badge>}
-                              {sectionLabel && <Badge color="default" size="sm">{sectionLabel}</Badge>}
+                              {tpl && <Badge color="default" size="sm">{tpl.emoji} {tpl.label}</Badge>}
                             </div>
                             <div style={{fontSize:13,color:C.textSec,lineHeight:1.4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{preview || "EOD mention"}</div>
                           </div>
@@ -16296,6 +16297,12 @@ function EODPage({ data, save, nav }) {
   const isPastDay = viewDate < td;
   const isLocked = isPastDay || (existing ? existing.locked : false);
 
+  // Local mentions state — updated synchronously so hyperlinks render instantly
+  // (entry.mentions from data is async and may lag behind after save)
+  const [localMentions, setLocalMentions] = useState(null);
+  useEffect(() => { setLocalMentions(null); }, [existing]);
+  const activeMentions = localMentions ?? (entry.mentions || []);
+
   // Section content management
   const [editSections, setEditSections] = useState({});
   useEffect(() => {
@@ -16308,6 +16315,7 @@ function EODPage({ data, save, nav }) {
 
   // Track which text section is being actively edited (click-to-edit)
   const [editingSecId, setEditingSecId] = useState(null);
+  const [editingCheckItem, setEditingCheckItem] = useState(null); // { secId, idx }
 
   // @ Mention system
   const [mentionState, setMentionState] = useState(null); // { sectionId, query, cursorPos, inputEl }
@@ -16379,10 +16387,16 @@ function EODPage({ data, save, nav }) {
       setTimeout(() => { if (mentionState.inputEl) { mentionState.inputEl.focus(); const newPos = before.length + tag.length + 1; mentionState.inputEl.setSelectionRange(newPos, newPos); } }, 10);
     }
     // Record mention and auto-save so it shows on profiles immediately
-    const mention = { id: gid(), entityType: entity.type, entityId: entity.id, entityName: entity.name, sectionId: mentionState.sectionId, createdAt: new Date().toISOString() };
-    const updatedMentions = [...(entry.mentions || []), mention];
-    entry.mentions = updatedMentions;
+    const mention = { id: gid(), entityType: entity.type, entityId: entity.id, entityName: entity.name, sectionId: mentionState.sectionId, createdAt: new Date().toISOString(), ...(entity.clientId ? { clientId: entity.clientId } : {}) };
+    const updatedMentions = [...activeMentions, mention];
+    // Update local mentions state SYNCHRONOUSLY so hyperlinks render instantly on re-render
+    setLocalMentions(updatedMentions);
+    // Flip back to preview mode so hyperlink renders immediately
+    const wasTextarea = mentionState.checklistIdx == null && !mentionState.isAddInput;
+    const wasChecklist = mentionState.checklistIdx != null && mentionState.checklistIdx >= 0;
     setMentionState(null);
+    if (wasTextarea) setEditingSecId(null);
+    if (wasChecklist) setEditingCheckItem(null);
     // Auto-save the EOD entry with the new mention
     const sections = template.map(t => ({ id: t.id, content: editSections[t.id] || "" }));
     const newEntry = { ...entry, sections, mentions: updatedMentions, history: [...(entry.history || []), { ts: new Date().toISOString(), action: "mention_added", mentionName: entity.name }] };
@@ -16411,7 +16425,7 @@ function EODPage({ data, save, nav }) {
   // Save EOD
   const saveEOD = async () => {
     const sections = template.map(t => ({ id: t.id, content: editSections[t.id] || "" }));
-    const newEntry = { ...entry, sections, history: [...(entry.history || []), { ts: new Date().toISOString(), action: "saved" }] };
+    const newEntry = { ...entry, sections, mentions: activeMentions, history: [...(entry.history || []), { ts: new Date().toISOString(), action: "saved" }] };
     const entries = [...(data.eodEntries || [])];
     const idx = entries.findIndex(e => e.date === viewDate);
     if (idx >= 0) entries[idx] = newEntry; else entries.push(newEntry);
@@ -16687,7 +16701,7 @@ function EODPage({ data, save, nav }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {template.map(sec => {
           const content = editSections[sec.id] ?? "";
-          const secMentions = (entry.mentions || []).filter(m => m.sectionId === sec.id);
+          const secMentions = activeMentions.filter(m => m.sectionId === sec.id);
           const isChecklist = (sec.type || "text") === "checklist";
 
           // Checklist helpers
@@ -16747,8 +16761,8 @@ function EODPage({ data, save, nav }) {
                             <button onClick={() => !isLocked && toggleCheckItem(idx)} style={{ width: 20, height: 20, borderRadius: 6, border: `2px solid ${item.checked ? C.suc : C.border}`, background: item.checked ? C.suc : "transparent", cursor: isLocked ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, flexShrink: 0, transition: "all 0.15s" }}>
                               {item.checked && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>}
                             </button>
-                            {!isLocked ? (
-                              <input value={item.label} onChange={e => {
+                            {!isLocked && editingCheckItem && editingCheckItem.secId === sec.id && editingCheckItem.idx === idx ? (
+                              <input autoFocus value={item.label} onChange={e => {
                                   const pos = e.target.selectionStart;
                                   const el = e.target;
                                   editCheckItem(idx, e.target.value);
@@ -16763,9 +16777,10 @@ function EODPage({ data, save, nav }) {
                                   } else if (mentionState && mentionState.sectionId === sec.id) { setMentionState(null); }
                                 }}
                                 onKeyDown={e => handleKeyDown(sec.id, e)}
+                                onBlur={() => { if (!mentionState || mentionState.sectionId !== sec.id) setEditingCheckItem(null); }}
                                 style={{ flex: 1, border: "none", outline: "none", fontSize: 13, fontFamily: "inherit", color: item.checked ? C.textMut : C.text, textDecoration: item.checked ? "line-through" : "none", background: "transparent", padding: 0 }} />
                             ) : (
-                              <span style={{ flex: 1, fontSize: 13, color: item.checked ? C.textMut : C.text, textDecoration: item.checked ? "line-through" : "none" }}>{renderContent(item.label, entry.mentions, sec.id)}</span>
+                              <span onClick={() => { if (!isLocked) setEditingCheckItem({ secId: sec.id, idx }); }} style={{ flex: 1, fontSize: 13, color: item.checked ? C.textMut : C.text, textDecoration: item.checked ? "line-through" : "none", cursor: isLocked ? "default" : "text" }}>{renderContent(item.label, activeMentions, sec.id)}</span>
                             )}
                             {!isLocked && (
                               <button onClick={() => removeCheckItem(idx)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, padding: "2px 4px", fontSize: 14, lineHeight: 1, opacity: 0.5, transition: "opacity 0.1s" }}
@@ -16826,7 +16841,7 @@ function EODPage({ data, save, nav }) {
                 ) : isLocked ? (
                   /* ── TEXT MODE: LOCKED ── */
                   <div style={{ fontSize: 13, color: C.text, lineHeight: 1.6, minHeight: 24 }}>
-                    {renderContent(content, entry.mentions, sec.id)}
+                    {renderContent(content, activeMentions, sec.id)}
                   </div>
                 ) : editingSecId === sec.id ? (
                   /* ── TEXT MODE: ACTIVELY EDITING ── */
@@ -16858,7 +16873,7 @@ function EODPage({ data, save, nav }) {
                 ) : (
                   /* ── TEXT MODE: UNLOCKED PREVIEW (click to edit) ── */
                   <div onClick={() => setEditingSecId(sec.id)} style={{ fontSize: 13, color: C.text, lineHeight: 1.6, minHeight: 24, cursor: "text", borderRadius: 6 }}>
-                    {content ? renderContent(content, entry.mentions, sec.id) : <span style={{ color: C.textMut, fontStyle: "italic" }}>{sec.defaultContent || "Click to edit…"}</span>}
+                    {content ? renderContent(content, activeMentions, sec.id) : <span style={{ color: C.textMut, fontStyle: "italic" }}>{sec.defaultContent || "Click to edit…"}</span>}
                   </div>
                 )}
               </div>
