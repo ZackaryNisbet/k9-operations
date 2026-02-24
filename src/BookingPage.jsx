@@ -914,6 +914,8 @@ export default function BookingPage() {
           bathType: selectedBath,
         },
         checkIn, checkOut,
+        checkInTime: checkInTime && checkInTime !== 'unknown' ? checkInTime : '',
+        checkOutTime: checkOutTime && checkOutTime !== 'unknown' ? checkOutTime : '',
         roomType: selectedRoom,
         notes: bookingNotes,
         pricing: pricing ? { ...pricing, total: pricing.subtotal } : {},
@@ -1267,6 +1269,39 @@ export default function BookingPage() {
                 {serviceType === 'boarding' && checkIn && checkOut && countNights(checkIn, checkOut) > 0 && (
                   <div style={{ fontSize: 15, color: B.navy, fontWeight: 600, marginBottom: 24 }}>
                     {countNights(checkIn, checkOut)} night{countNights(checkIn, checkOut) > 1 ? 's' : ''} · {fmtDate(checkIn)} → {fmtDate(checkOut)}
+                  </div>
+                )}
+                {/* Drop-off / Pick-up time selection */}
+                {serviceType === 'boarding' && checkIn && checkOut && (
+                  <div style={{ display: 'flex', gap: 24, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 32 }}>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: B.navy, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>Drop-off Time</div>
+                      {checkInTime && checkInTime !== 'unknown' ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <input type="time" value={checkInTime} onChange={e => setCheckInTime(e.target.value)} className="bk-input" style={{ padding: '12px 16px', fontSize: 16, textAlign: 'center', width: 160 }} />
+                          <button onClick={() => setCheckInTime('')} style={{ background: 'none', border: 'none', color: B.textMut, cursor: 'pointer', fontSize: 18, padding: 4 }} title="Clear">&times;</button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button className="bk-chip" style={checkInTime === 'unknown' ? { borderColor: B.navy, background: B.navy + '10', color: B.navy } : {}} onClick={() => setCheckInTime('unknown')}>I don't know yet</button>
+                          <button className="bk-chip" onClick={() => setCheckInTime('09:00')}>Choose a time</button>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: B.navy, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>Pick-up Time</div>
+                      {checkOutTime && checkOutTime !== 'unknown' ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <input type="time" value={checkOutTime} onChange={e => setCheckOutTime(e.target.value)} className="bk-input" style={{ padding: '12px 16px', fontSize: 16, textAlign: 'center', width: 160 }} />
+                          <button onClick={() => setCheckOutTime('')} style={{ background: 'none', border: 'none', color: B.textMut, cursor: 'pointer', fontSize: 18, padding: 4 }} title="Clear">&times;</button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button className="bk-chip" style={checkOutTime === 'unknown' ? { borderColor: B.navy, background: B.navy + '10', color: B.navy } : {}} onClick={() => setCheckOutTime('unknown')}>I don't know yet</button>
+                          <button className="bk-chip" onClick={() => setCheckOutTime('12:00')}>Choose a time</button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
                 {/* Daycare capacity check */}
