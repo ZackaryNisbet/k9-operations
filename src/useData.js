@@ -461,9 +461,19 @@ export function useData(profile) {
   const prevDataRef = useRef(null);
   const savingRef = useRef(false);
 
+  // ── Track previous locationId to detect switches ──
+  const prevLocationId = useRef(locationId);
+
   // ── LOAD ──
   useEffect(() => {
     if (!locationId) { setLoading(false); return; }
+
+    // When location changes, immediately clear stale data to prevent cross-location leak
+    if (prevLocationId.current && prevLocationId.current !== locationId) {
+      setData(null);
+      prevDataRef.current = null;
+    }
+    prevLocationId.current = locationId;
     setLoading(true);
 
     const load = async () => {
