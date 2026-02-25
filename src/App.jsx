@@ -3496,15 +3496,15 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
     // Build section HTML map for positioned layout
     const sectionHtmlMap = {
-      header: `<div class="header"><div class="pic">${picHtml}</div><div class="header-info"><div><span class="dog-name">${dName}</span> <span class="owner-last">${cLast}</span><span style="margin-left:12px;" class="room-badge">| ${roomLabel}, ${roomNum}</span></div><div class="info-line">&bull; ${breed}${ageStr ? ", " + ageStr : ""}${sexStr ? " " + sexStr : ""}</div><div class="info-line">&bull; ${cFirst} ${cLast} ${cPhoneStr ? "(" + cPhoneStr + ")" : ""}</div><div style="font-size:14px;font-weight:700;margin:8px 0 4px;">${resType} | ${roomLabel}${inclNote}: ${fmtD(ciDate)}, ${fmtT(ciTime)} - <strong>${fmtD(coDate)}, ${fmtT(coTime)}</strong></div></div></div>`,
+      header: `<div class="header"><div class="pic">${picHtml}</div><div class="header-info"><div><span class="dog-name">${dName}</span> <span class="owner-last">${cLast}</span><span style="margin-left:12px;" class="room-badge">| ${roomLabel}, ${roomNum}</span></div><div class="info-line">&bull; ${breed}${ageStr ? ", " + ageStr : ""}${sexStr ? " " + sexStr : ""}</div><div class="info-line">&bull; ${cFirst} ${cLast} ${cPhoneStr ? cPhoneStr : ""}</div><div style="font-size:14px;font-weight:700;margin:8px 0 4px;">${resType} | ${roomLabel}${inclNote}: ${fmtD(ciDate)}, ${fmtT(ciTime)} - <strong>${fmtD(coDate)}, ${fmtT(coTime)}</strong></div></div></div>`,
       dogInfo: `<div class="info-line">&bull; ${breed}${ageStr ? ", " + ageStr : ""}${weight ? ", " + weight : ""}${sexStr ? " " + sexStr : ""}</div>`,
-      ownerContact: `<div class="info-line">&bull; ${cFirst} ${cLast} ${cPhoneStr ? "(" + cPhoneStr + ")" : ""}</div>`,
+      ownerContact: `<div class="info-line">&bull; ${cFirst} ${cLast} ${cPhoneStr ? cPhoneStr : ""}</div>`,
       resDates: `<div style="font-size:14px;font-weight:700;margin:4px 0;">${resType} | ${roomLabel}${inclNote}: ${fmtD(ciDate)}, ${fmtT(ciTime)} - <strong>${fmtD(coDate)}, ${fmtT(coTime)}</strong></div>`,
       belongings: show("showBelongings") && belongings ? `<div class="info-line">&bull; <strong>Describe pets belongings</strong> ${belongings}</div>` : "",
       fedToday: show("showFedToday") ? `<div class="info-line">&bull; <strong>Has your pet been fed today?</strong> ${fedToday || ""}</div>` : "",
       medsToday: show("showMedsToday") ? `<div class="info-line">&bull; <strong>Has your pet had medications today?</strong> ${medsToday || ""}</div>` : "",
       tags: (show("showDogTags") || hasMeds || hasFeeding || hasBath) ? `<div class="tag-row">${show("showDogTags") ? tagNames.map(t => `<span class="tag">${t}</span>`).join("") : ""}${hasMeds ? `<span class="icon-badge">💊Meds:</span>` : ""}${hasFeeding ? `<span class="icon-badge">🍽Food from Home:</span>` : ""}${hasBath ? `<span class="icon-badge">🛁${bathType} Bath:</span>` : ""}</div>` : "",
-      emergency: show("showEmergencyContact") && (ecNameVal || ecPhoneStr) ? `<div style="margin:6px 0;font-size:12px;"><strong>Emergency Contact:</strong> ${ecNameVal} ${ecPhoneStr ? "(" + ecPhoneStr + ")" : ""}</div>` : "",
+      emergency: show("showEmergencyContact") && (ecNameVal || ecPhoneStr) ? `<div style="margin:6px 0;font-size:12px;"><strong>Emergency Contact:</strong> ${ecNameVal} ${ecPhoneStr ? ecPhoneStr : ""}</div>` : "",
       notes: show("showNotes") && notes ? `<div style="margin:6px 0;font-size:12px;"><strong>Notes:</strong> ${notes}</div>` : "",
       feeding: show("showFeeding") && hasFeeding ? `<div class="section-header">FOOD: ${feedingSchedules.some(s => (s.foodType||"").toLowerCase().includes("home")) ? "FFH - Food From Home" : feedingSchedules[0]?.foodType || ""}</div>${feedingSummaryHtml}` : "",
       activityGrid: show("showActivityGrid") && gridHtml ? gridHtml : "",
@@ -4153,6 +4153,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             // Use live payment data for collected amount (more reliable than stored amountCollected)
             const collected = resPmts.length > 0 ? (totalPaid - totalRefunded) : (reservation.amountCollected || 0);
             const outstanding = Math.max(0, adjTotal - collected);
+            const overpayment = collected > adjTotal ? Math.round((collected - adjTotal) * 100) / 100 : 0;
             const depositRequired = Math.round(adjTotal * 0.5 * 100) / 100;
             const depositMet = collected >= depositRequired;
             const fullPaymentMet = collected >= adjTotal;
@@ -4215,9 +4216,14 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                     <span style={{fontSize:13,fontWeight:700,color:collected <= 0 ? C.dan : depositMet ? C.suc : C.acc,fontVariantNumeric:"tabular-nums"}}>{fmt(collected)}</span>
                   </div>
                   <div style={{display:"flex",justifyContent:"space-between"}}>
-                    <span style={{fontSize:13,color:outstanding>0?C.text:C.suc,fontWeight:outstanding>0?600:600}}>{outstanding>0?"Balance Due":"Paid in Full"}</span>
-                    <span style={{fontSize:13,fontWeight:800,color:outstanding>0?C.text:C.suc,fontVariantNumeric:"tabular-nums"}}>{outstanding>0?fmt(outstanding):"✓"}</span>
+                    <span style={{fontSize:13,color:outstanding>0?C.text:overpayment>0?C.warn:C.suc,fontWeight:600}}>{outstanding>0?"Balance Due":overpayment>0?"Credit (Overpayment)":"Paid in Full"}</span>
+                    <span style={{fontSize:13,fontWeight:800,color:outstanding>0?C.text:overpayment>0?C.warn:C.suc,fontVariantNumeric:"tabular-nums"}}>{outstanding>0?fmt(outstanding):overpayment>0?fmt(overpayment):"✓"}</span>
                   </div>
+                  {overpayment > 0 && (
+                    <div style={{marginTop:8,padding:"8px 12px",background:C.warnLt,borderRadius:8,border:`1px solid ${C.warn}30`,fontSize:12,fontWeight:600,color:C.warn}}>
+                      Stay shortened — {fmt(overpayment)} overpaid. Consider issuing a refund.
+                    </div>
+                  )}
 
                   {/* Warnings — subtle inline */}
                   {isCheckInMode && !depositMet && <div style={{marginTop:10,fontSize:12,fontWeight:600,color:C.dan}}>50% deposit required to check in (min ${fmt(depositRequired)})</div>}
