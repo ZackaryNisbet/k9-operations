@@ -3035,7 +3035,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     const allAgrSigned = reqAgrs.every(a => agrSigned(client, a.id));
     if (!vaxStatus.ok) failures.push("Vaccines");
     if (!ageStatus.ok) failures.push("Dog Age");
-    if (!snStatus.ok) failures.push("Spay/Neuter");
+    // Spay/Neuter is visual-only — does NOT block check-in/out per K9 Resorts policy
+    // (Intact dogs can enter the building; they just can't participate in group play if over 10 months)
     if (!allAgrSigned) failures.push("Agreements");
     if (!client?.fields?.emergency_contact && !client?.fields?.emergencyContact) failures.push("Emergency Contact");
     return failures;
@@ -3144,8 +3145,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       }
       const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
       if (!ageStatus.ok) errs.compliance_age = ageStatus.reason || "Dog does not meet age requirements";
-      const snStatus = getSpayNeuterCompliance(dog);
-      if (!snStatus.ok) errs.compliance_spay = snStatus.reason || "Intact dog must be Private Play";
+      // Spay/Neuter is visual-only — does NOT block check-in per K9 Resorts policy
+      // (Intact dogs can enter the building; they just can't participate in group play if over 10 months)
       if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     }
     // Compliance gate for ALL reservation types (daycare, evaluation, etc.)
@@ -3980,15 +3981,38 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                       <div style={{fontSize:10,color:C.textMut,marginTop:4}}>Max age: {(data.resortPolicies||{}).maxDogAge||13} years. Grandfathered after {(data.resortPolicies||{}).grandfatherVisitThreshold||10} visits.</div>
                     </div>
                   </CheckItem>
-                  <CheckItem ok={snStatus.ok} label="Spay/Neuter" expandKey="sn"
-                    detail={snStatus.ok?(snStatus.status==="Neutered"||snStatus.status==="Spayed"?snStatus.status:(snStatus.privatePlay?"Intact (Private Play)":snStatus.status||"N/A")):`Intact — ${snStatus.reason}`}>
+                  <CheckItem ok={snStatus.ok} warn={!snStatus.ok} label="Spay/Neuter" expandKey="sn"
+                    detail={snStatus.ok?(snStatus.status==="Neutered"||snStatus.status==="Spayed"?snStatus.status:(snStatus.privatePlay?"Intact (Private Play)":snStatus.status||"N/A")):`Intact — No group play`}>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      <span style={{color:snStatus.ok?C.suc:C.dan,fontSize:11}}>
+                      <span style={{color:snStatus.ok?C.suc:C.acc,fontSize:11}}>
                         {snStatus.status==="Neutered"||snStatus.status==="Spayed"?`${snStatus.status}`:`Intact${snStatus.ageMonths!=null?` (${snStatus.ageMonths} months old)`:""}`}
                         {snStatus.privatePlay&&" — Private Play assigned"}
-                        {!snStatus.ok&&` — ${snStatus.reason}`}
+                        {!snStatus.ok&&" — Cannot participate in group play (can still check in)"}
                       </span>
-                      <div style={{fontSize:10,color:C.textMut,marginTop:2}}>Intact dogs 10+ months old must be assigned to Private Play.</div>
+                      <div style={{fontSize:10,color:C.textMut,marginTop:2}}>Intact dogs 10+ months old cannot participate in group play but CAN be checked in.</div>
+                      <div style={{display:"flex",alignItems:"center",gap:6,marginTop:2}}>
+                        <span style={{fontSize:10,color:C.textSec,fontWeight:600,minWidth:50}}>Status</span>
+                        <select value={dog.fields?.spayed_neutered||""} style={{flex:1,fontSize:11,padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontFamily:"inherit",outline:"none",cursor:"pointer"}}
+                          onChange={async(e)=>{await save({...data,dogs:data.dogs.map(d=>d.id===dog.id?{...d,fields:{...d.fields,spayed_neutered:e.target.value}}:d)});}}>
+                          <option value="">Unknown</option>
+                          <option value="Neutered">Neutered</option>
+                          <option value="Spayed">Spayed</option>
+                          <option value="Intact">Intact</option>
+                        </select>
+                      </div>
+                      {!snStatus.ok && (
+                        <button onClick={async()=>{
+                          const curTags = dog.tags || [];
+                          if (!curTags.includes("tag_pp")) {
+                            const newTags = [...curTags.filter(t => t !== "tag_eval" && t !== "tag_lp" && t !== "tag_sp"), "tag_pp"];
+                            await save({...data, dogs: data.dogs.map(d => d.id === dog.id ? {...d, tags: newTags} : d)});
+                          }
+                        }} style={{padding:"6px 12px",borderRadius:6,border:`1.5px solid ${C.pri}`,background:`${C.pri}08`,color:C.pri,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",width:"fit-content"}}
+                          onMouseEnter={e=>{e.currentTarget.style.background=C.pri;e.currentTarget.style.color="#fff";}}
+                          onMouseLeave={e=>{e.currentTarget.style.background=`${C.pri}08`;e.currentTarget.style.color=C.pri;}}>
+                          Assign Private Play
+                        </button>
+                      )}
                     </div>
                   </CheckItem>
                 </div>
@@ -4533,7 +4557,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             </button>
           </>
         )}
-        <Btn variant="secondary" onClick={onClose}>Close</Btn>
+        <Btn variant="secondary" onClick={() => { if (!isReadOnly) { handleSave(false, false); } onClose(); }}>Close{!isReadOnly ? " & Save" : ""}</Btn>
         {isCheckOutMode ? (
           <Btn variant="accent" onClick={()=>handleSave(false, true)} icon={<I.LogOut/>}>Check Out</Btn>
         ) : !isReadOnly && (isCheckInMode ? (
@@ -6433,11 +6457,12 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                       if (rule.appliesTo === "custom") return (rule.apptTypes || []).includes(apptType);
                       return true;
                     };
+                    // Spay/neuter is visual-only — does NOT block check-in per K9 Resorts policy
                     const dcGreen = [
-                      {id:"vaccines",ok:vaxStatus.ok},{id:"emergency_contact",ok:ecOk},{id:"agreements",ok:agrOk},{id:"dog_age",ok:ageStatus.ok},{id:"spay_neuter",ok:snStatus.ok}
+                      {id:"vaccines",ok:vaxStatus.ok},{id:"emergency_contact",ok:ecOk},{id:"agreements",ok:agrOk},{id:"dog_age",ok:ageStatus.ok}
                     ].every(c => !isCheckRequired(c.id, "group_daycare") || c.ok);
                     const dbGreen = [
-                      {id:"vaccines",ok:vaxStatus.ok},{id:"emergency_contact",ok:ecOk},{id:"agreements",ok:agrOk},{id:"dog_age",ok:ageStatus.ok},{id:"spay_neuter",ok:snStatus.ok}
+                      {id:"vaccines",ok:vaxStatus.ok},{id:"emergency_contact",ok:ecOk},{id:"agreements",ok:agrOk},{id:"dog_age",ok:ageStatus.ok}
                     ].every(c => !isCheckRequired(c.id, "dayboarding") || c.ok);
                     return <>
                     <div style={{display:"flex",gap:8,marginBottom:8}}>
@@ -12327,20 +12352,20 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                     <div style={{fontSize:10,color:C.textMut,marginTop:4}}>Max age: {(data.resortPolicies||{}).maxDogAge||13} years. Grandfathered after {(data.resortPolicies||{}).grandfatherVisitThreshold||10} visits.</div>
                   </div>
                 </CheckItem>
-                <CheckItem ok={allSnOk} label="Spay/Neuter" expandKey="sn"
-                  detail={allSnOk?snResults.map(s=>`${s.dog.fields.name}: ${s.status.status==="Neutered"||s.status.status==="Spayed"?s.status.status:(s.status.privatePlay?"Intact (PP)":s.status.status||"N/A")}`).join(", ")||"N/A":snResults.filter(s=>!s.status.ok).map(s=>`${s.dog.fields.name}: Intact`).join(", ")}>
+                <CheckItem ok={allSnOk} warn={!allSnOk} label="Spay/Neuter" expandKey="sn"
+                  detail={allSnOk?snResults.map(s=>`${s.dog.fields.name}: ${s.status.status==="Neutered"||s.status.status==="Spayed"?s.status.status:(s.status.privatePlay?"Intact (PP)":s.status.status||"N/A")}`).join(", ")||"N/A":snResults.filter(s=>!s.status.ok).map(s=>`${s.dog.fields.name}: Intact — No group play`).join(", ")}>
                   <div style={{display:"flex",flexDirection:"column",gap:6}}>
                     {snResults.map(s=>(
                       <div key={s.dog.id} style={{fontSize:12}}>
                         <span style={{fontWeight:700,color:C.text}}>{s.dog.fields.name}</span>
-                        <span style={{color:s.status.ok?C.suc:C.dan,marginLeft:8}}>
+                        <span style={{color:s.status.ok?C.suc:C.acc,marginLeft:8}}>
                           {s.status.status==="Neutered"||s.status.status==="Spayed"?s.status.status:`Intact${s.status.ageMonths!=null?` (${s.status.ageMonths}mo)`:""}`}
                           {s.status.privatePlay&&" — Private Play"}
-                          {!s.status.ok&&` — ${s.status.reason}`}
+                          {!s.status.ok&&" — Cannot participate in group play"}
                         </span>
                       </div>
                     ))}
-                    <div style={{fontSize:10,color:C.textMut,marginTop:4}}>Intact dogs 10+ months old must be assigned to Private Play.</div>
+                    <div style={{fontSize:10,color:C.textMut,marginTop:4}}>Intact dogs 10+ months old cannot participate in group play but CAN be checked in.</div>
                   </div>
                 </CheckItem>
               </div>
@@ -24166,6 +24191,19 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
   const [dogs, setDogs] = useState([{ id: gid(), fields: {}, tags: ["tag_eval"] }]);
   const [dogErrors, setDogErrors] = useState({});
 
+  // Per-dog add-ons and bath selection: { [dogIdx]: { selectedBath, postBathReturn, selectedAddOns: [] } }
+  const [dogAddOns, setDogAddOns] = useState({});
+  const [expandedAddOns, setExpandedAddOns] = useState({});
+  // Per-dog care expanded state
+  const [careExpanded, setCareExpanded] = useState(true);
+
+  // Emergency contact local draft state — prevents focus loss when typing
+  // Syncs to clientFields on blur so compliance check updates after field exit
+  const [ecDraftName, setEcDraftName] = useState(clientFields.emergency_contact || "");
+  const [ecDraftPhone, setEcDraftPhone] = useState(clientFields.emergency_phone || "");
+  const syncEcName = () => setClientFields(prev => ({ ...prev, emergency_contact: ecDraftName }));
+  const syncEcPhone = () => setClientFields(prev => ({ ...prev, emergency_phone: ecDraftPhone }));
+
   // Reservation fields
   const [type, setType] = useState("boarding");
   const [roomType, setRoomType] = useState("Luxury Suite");
@@ -24293,6 +24331,8 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
 
   // Final save — create everything
   const handleCreateAll = async () => {
+    // Sync EC draft fields to clientFields before save
+    const finalClientFields = { ...clientFields, emergency_contact: ecDraftName, emergency_phone: ecDraftPhone };
     // Validate dogs
     const dErrs = {};
     dogs.forEach((dog, i) => {
@@ -24307,8 +24347,8 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
     if (type === "boarding" && checkOut < checkIn) rErrs.checkOut = "Must be after check-in";
     if (Object.keys(rErrs).length > 0) { setResErrors(rErrs); return; }
 
-    // Create client
-    const newClient = { id: gid(), fields: { ...clientFields, phone: (clientFields.phone || "").replace(/\D/g, "") }, createdAt: todayStr(), agreements: {} };
+    // Create client (use finalClientFields which includes EC draft values)
+    const newClient = { id: gid(), fields: { ...finalClientFields, phone: (finalClientFields.phone || "").replace(/\D/g, "") }, createdAt: todayStr(), agreements: {} };
 
     // Create dogs
     const newDogs = dogs.map(d => ({ id: d.id, clientId: newClient.id, fields: { ...d.fields }, tags: d.tags }));
@@ -24331,7 +24371,15 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
         ...(type === "evaluation" ? { evalResult: "pending" } : {}),
         checkIn, checkOut: type === "boarding" ? checkOut : checkIn,
         checkInTime, checkOutTime, status: "upcoming", notes,
-        careOverrides: {},
+        careOverrides: {
+          feedingSchedules: dog?.fields?.feedingSchedules || [],
+          medicationSchedules: dog?.fields?.medicationSchedules || [],
+          feeding: summarizeFeeding(dog?.fields?.feedingSchedules || []),
+          medications: summarizeMeds(dog?.fields?.medicationSchedules || []),
+          ...(dogAddOns[idx]?.selectedBath ? { bath_type: dogAddOns[idx].selectedBath } : {}),
+          ...(dogAddOns[idx]?.postBathReturn ? { postBathReturn: dogAddOns[idx].postBathReturn } : {}),
+        },
+        ...(dogAddOns[idx]?.selectedAddOns?.length > 0 ? { selectedAddOns: dogAddOns[idx].selectedAddOns } : {}),
         pricing: resPricing,
         bookingSource: "phone",
         createdAt: new Date().toISOString(),
@@ -24361,12 +24409,14 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
 
   // Create client + dogs only (skip reservation)
   const handleCreateClientOnly = async () => {
+    // Sync EC draft fields
+    const finalClientFields2 = { ...clientFields, emergency_contact: ecDraftName, emergency_phone: ecDraftPhone };
     // Validate client fields at the selected action level
     const actionLevel = selectedAction || "create";
-    const cErrs = validateFields(data.clientFields, clientFields, actionLevel);
+    const cErrs = validateFields(data.clientFields, finalClientFields2, actionLevel);
     if (Object.keys(cErrs).length > 0) { setClientErrors(cErrs); return; }
     // Create client
-    const newClient = { id: gid(), fields: { ...clientFields, phone: (clientFields.phone || "").replace(/\D/g, "") }, createdAt: todayStr(), agreements: {} };
+    const newClient = { id: gid(), fields: { ...finalClientFields2, phone: (finalClientFields2.phone || "").replace(/\D/g, "") }, createdAt: todayStr(), agreements: {} };
     // Only create dogs if they have meaningful data (at least a name)
     const dogsWithData = dogs.filter(d => d.fields && d.fields.name && d.fields.name.trim());
     const newDogs = dogsWithData.map(d => ({ id: d.id, clientId: newClient.id, fields: { ...d.fields }, tags: d.tags }));
@@ -24587,6 +24637,76 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                 )}
               </div>
             )}
+            {/* Per-Dog Care Instructions (bath, feeding, meds) — same as existing client flow */}
+            {dogs.length > 0 && (selectedAction === "reservation" || selectedAction === "eval") && (
+              <div style={{ marginTop: 16 }}>
+                <button onClick={() => setCareExpanded(!careExpanded)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", padding: 0, marginBottom: careExpanded ? 12 : 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: type === "boarding" ? C.textSec : C.textMut, letterSpacing: "0.03em", textTransform: "uppercase" }}>Care Instructions per Dog</span>
+                  {type !== "boarding" && <span style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>(optional for {type === "daycare" ? "daycare" : type === "evaluation" ? "evaluations" : "this type"})</span>}
+                  <span style={{ fontSize: 10, color: C.textMut, marginLeft: "auto" }}>{careExpanded ? "▲" : "▼"}</span>
+                </button>
+                {careExpanded && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                    {dogs.map((dog, idx) => {
+                      const feedingSchedules = dog.fields.feedingSchedules || [];
+                      const medicationSchedules = dog.fields.medicationSchedules || [];
+                      return (
+                        <div key={dog.id} style={{ padding: "16px 20px", borderRadius: 12, border: `1.5px solid ${C.border}`, background: C.bg }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                            <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{dog.fields.name || `Dog ${idx + 1}`}</span>
+                            <span style={{ fontSize: 12, color: C.textSec }}>{dog.fields.breed || ""}</span>
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                            <div>
+                              <FeedingScheduleEditor schedules={feedingSchedules} onChange={v => updateDogField(idx, "feedingSchedules", v)} data={data} dogWeight={parseFloat(dog.fields.weight) || 0} dogName={dog.fields.name || `Dog ${idx + 1}`} dogId={dog.id} onWeightUpdate={(wt) => { updateDogField(idx, "weight", String(wt)); updateDogField(idx, "weightLastUpdated", new Date().toISOString().slice(0, 10)); }} />
+                            </div>
+                            <div>
+                              <MedicationScheduleEditor schedules={medicationSchedules} onChange={v => updateDogField(idx, "medicationSchedules", v)} data={data} checkIn={checkIn} checkOut={checkOut} save={save} />
+                            </div>
+                            {type === "boarding" && countNights(checkIn, checkOut) >= 2 && <div>
+                              <div style={{ padding: "10px 14px", borderRadius: 10, border: `1.5px dashed ${C.acc}`, background: C.acc + "08", marginBottom: 10, fontSize: 12, lineHeight: 1.5, color: C.textSec }}>
+                                <strong style={{ color: C.text }}>Bathing Policy:</strong> K9 Resorts requires all dogs boarding 2 or more nights receive a bath to ensure every pup goes home smelling and feeling great.
+                              </div>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 6 }}>Bathing Type <span style={{ color: C.dan }}>*</span></div>
+                              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                {BATH_OPTS.map(opt => {
+                                  const sel = (dogAddOns[idx]?.selectedBath || "") === opt;
+                                  return <button key={opt} onClick={() => {
+                                    setDogAddOns(prev => {
+                                      const prevAddOns = (prev[idx]?.selectedAddOns || []).filter(a => !a.endsWith(" Bath"));
+                                      return { ...prev, [idx]: { ...prev[idx], selectedBath: sel ? "" : opt, selectedAddOns: sel ? prevAddOns : [...prevAddOns, `${opt} Bath`] } };
+                                    });
+                                  }} style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${sel ? C.pri : C.border}`, background: sel ? C.priLt : "transparent", color: sel ? C.pri : C.textSec, fontSize: 12, fontWeight: sel ? 700 : 500, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", display: "flex", alignItems: "center", gap: 4 }}>
+                                    {sel && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>}
+                                    {opt}
+                                  </button>;
+                                })}
+                              </div>
+                              {!(dog.tags || []).includes("tag_pp") && (dogAddOns[idx]?.selectedBath) && (
+                                <div style={{ marginTop: 12 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 6 }}>After Bath on Checkout Day</div>
+                                  <div style={{ fontSize: 11, color: C.textMut, marginBottom: 6 }}>Where should we return {dog.fields.name || `Dog ${idx + 1}`} after their bath?</div>
+                                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                    {[{ v: "Return to Group", icon: "👥" }, { v: "Return to Room", icon: "🏠" }].map(opt => {
+                                      const sel = (dogAddOns[idx]?.postBathReturn || "") === opt.v;
+                                      return <button key={opt.v} onClick={() => setDogAddOns(prev => ({ ...prev, [idx]: { ...prev[idx], postBathReturn: sel ? "" : opt.v } }))} style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${sel ? C.pri : C.border}`, background: sel ? C.priLt : "transparent", color: sel ? C.pri : C.textSec, fontSize: 12, fontWeight: sel ? 700 : 500, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", display: "flex", alignItems: "center", gap: 4 }}>
+                                        {sel && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>}
+                                        {opt.icon} {opt.v}
+                                      </button>;
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Reservation Compliance for new clients */}
             {dogs.length > 0 && (() => {
               const vaxResults = dogs.map(dog => ({ dog, status: getVaxStatus(dog, data.requiredVaccines, data.resortPolicies) }));
@@ -24650,8 +24770,14 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                     )}
                     {renderCI(!!(clientFields.emergency_contact && clientFields.emergency_phone), false, "Emergency Contact", (clientFields.emergency_contact && clientFields.emergency_phone) ? clientFields.emergency_contact : "Not provided", "ec",
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        <Inp label="Emergency Contact Name" value={clientFields.emergency_contact || ""} onChange={v => setClientFields(prev => ({ ...prev, emergency_contact: v }))} />
-                        <Inp label="Emergency Phone" type="tel" value={clientFields.emergency_phone || ""} onChange={v => setClientFields(prev => ({ ...prev, emergency_phone: v }))} />
+                        <label style={{ display: "block" }}>
+                          <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, letterSpacing: "0.03em", textTransform: "uppercase" }}>Emergency Contact Name</span>
+                          <input type="text" value={ecDraftName} onChange={e => setEcDraftName(e.target.value)} onBlur={syncEcName} placeholder="Full name" style={{ width: "100%", padding: "10px 14px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" }} onFocus={e => e.target.style.borderColor = C.pri} />
+                        </label>
+                        <label style={{ display: "block" }}>
+                          <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, letterSpacing: "0.03em", textTransform: "uppercase" }}>Emergency Phone</span>
+                          <input type="tel" value={fmtPhoneInput(ecDraftPhone)} onChange={e => setEcDraftPhone(e.target.value.replace(/\D/g, '').slice(0, 10))} onBlur={syncEcPhone} placeholder="(555) 123-4567" maxLength={14} style={{ width: "100%", padding: "10px 14px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit", color: C.text, background: C.surface, outline: "none", boxSizing: "border-box" }} onFocus={e => e.target.style.borderColor = C.pri} />
+                        </label>
                       </div>
                     )}
                     {renderCI(allAgrSigned, false, "Agreements", reqAgrs.length > 0 ? `${reqAgrs.length} unsigned (new client)` : "None required", "agr",
@@ -24691,22 +24817,32 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                         <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>Max age: {(data.resortPolicies || {}).maxDogAge || 13} years.</div>
                       </div>
                     )}
-                    {renderCI(allSnOk, false, "Spay/Neuter",
+                    {renderCI(allSnOk, !allSnOk, "Spay/Neuter",
                       allSnOk ? snResults.map(s => `${s.dog.fields.name || "Dog"}: ${s.status.status === "Neutered" || s.status.status === "Spayed" ? s.status.status : (s.status.privatePlay ? "Intact (PP)" : s.status.status || "N/A")}`).join(", ") || "N/A"
-                        : snResults.filter(s => !s.status.ok).map(s => `${s.dog.fields.name || "Dog"}: Intact`).join(", "),
+                        : snResults.filter(s => !s.status.ok).map(s => `${s.dog.fields.name || "Dog"}: No group play`).join(", "),
                       "sn",
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                         {snResults.map((s, si) => (
                           <div key={si} style={{ fontSize: 12 }}>
                             <span style={{ fontWeight: 700, color: C.text }}>{s.dog.fields.name || `Dog ${si + 1}`}</span>
-                            <span style={{ color: s.status.ok ? C.suc : C.dan, marginLeft: 8 }}>
+                            <span style={{ color: s.status.ok ? C.suc : C.acc, marginLeft: 8 }}>
                               {s.status.status === "Neutered" || s.status.status === "Spayed" ? s.status.status : `Intact${s.status.ageMonths != null ? ` (${s.status.ageMonths}mo)` : ""}`}
                               {s.status.privatePlay && " — Private Play"}
-                              {!s.status.ok && ` — ${s.status.reason}`}
+                              {!s.status.ok && " — Cannot participate in group play"}
                             </span>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                              <span style={{ fontSize: 10, color: C.textSec, fontWeight: 600, minWidth: 50 }}>Status</span>
+                              <select value={s.dog.fields?.spayed_neutered || ""} style={{ flex: 1, fontSize: 11, padding: "5px 8px", borderRadius: 6, border: `1px solid ${C.border}`, fontFamily: "inherit", outline: "none", cursor: "pointer" }}
+                                onChange={e => { updateDogField(si, "spayed_neutered", e.target.value); }}>
+                                <option value="">Unknown</option>
+                                <option value="Neutered">Neutered</option>
+                                <option value="Spayed">Spayed</option>
+                                <option value="Intact">Intact</option>
+                              </select>
+                            </div>
                           </div>
                         ))}
-                        <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>Intact dogs 10+ months old must be assigned to Private Play.</div>
+                        <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>Intact dogs 10+ months old cannot participate in group play but CAN be checked in.</div>
                       </div>
                     )}
                   </div>
