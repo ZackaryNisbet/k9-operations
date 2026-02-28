@@ -3022,7 +3022,10 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     }
   }, [activityLog]);
 
-  const isReadOnly = reservation.status === "checked-out" || reservation.status === "cancelled" || reservation.status === "checked-in";
+  const isCheckedIn = reservation.status === "checked-in";
+  const isReadOnly = reservation.status === "checked-out" || reservation.status === "cancelled" || isCheckedIn;
+  // Dates/times remain editable when checked in (early departure, extended stay)
+  const datesLocked = reservation.status === "checked-out" || reservation.status === "cancelled";
   // Compliance gate: compute if any compliance checks are red (failed)
   const complianceFailures = (() => {
     if (!isCheckInMode) return [];
@@ -4023,7 +4026,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           {/* Read-only banner for completed/active reservations */}
           {isReadOnly && <div style={{padding:"10px 14px",borderRadius:8,background:C.bg,border:`1.5px solid ${C.border}`,marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-            <span style={{fontSize:12,fontWeight:600,color:C.textMut}}>{reservation.status === "checked-in" ? "This reservation is checked in. Details are locked — use the Activities tab to track daily care." : "This reservation is complete. All details are read-only."}</span>
+            <span style={{fontSize:12,fontWeight:600,color:C.textMut}}>{isCheckedIn ? "This reservation is checked in. Most details are locked — dates/times can still be adjusted for early departures or extended stays." : "This reservation is complete. All details are read-only."}</span>
           </div>}
 
           {/* EOD Mentions During Stay */}
@@ -4060,13 +4063,17 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             );
           })()}
 
-          {/* Section: Dates */}
+          {/* Section: Dates — remain editable when checked in (early departure / extended stay) */}
           {secHeader("Reservation Dates")}
+          {isCheckedIn && <div style={{padding:"8px 12px",borderRadius:8,background:C.priLt,border:`1.5px solid ${C.pri}30`,marginBottom:10,display:"flex",alignItems:"center",gap:6}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+            <span style={{fontSize:11,fontWeight:600,color:C.pri}}>Dates & times can still be adjusted for early departures or extended stays.</span>
+          </div>}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12}}>
-            <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn} disabled={isReadOnly}/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
-            <Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime} disabled={isReadOnly}/>
-            <div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} disabled={isReadOnly}/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
-            <Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime} disabled={isReadOnly}/>
+            <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn} disabled={datesLocked}/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
+            <Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime} disabled={datesLocked}/>
+            <div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} disabled={datesLocked}/>{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
+            <Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime} disabled={datesLocked}/>
           </div>
 
           {/* Section: Check-In Requirements (boarding only) */}
@@ -4557,9 +4564,11 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             </button>
           </>
         )}
-        <Btn variant="secondary" onClick={() => { if (!isReadOnly) { handleSave(false, false); } onClose(); }}>Close{!isReadOnly ? " & Save" : ""}</Btn>
+        <Btn variant="secondary" onClick={() => { if (!isReadOnly || isCheckedIn) { handleSave(false, false); } onClose(); }}>Close{(!isReadOnly || isCheckedIn) ? " & Save" : ""}</Btn>
         {isCheckOutMode ? (
           <Btn variant="accent" onClick={()=>handleSave(false, true)} icon={<I.LogOut/>}>Check Out</Btn>
+        ) : isCheckedIn ? (
+          <Btn onClick={()=>handleSave(false, false)}>Save Date Changes</Btn>
         ) : !isReadOnly && (isCheckInMode ? (
           <>{complianceBlocked && <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,fontSize:12,color:"#DC2626",fontWeight:600,marginRight:8}}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
