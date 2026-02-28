@@ -3017,8 +3017,22 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   useEffect(() => {
     const cur = JSON.stringify(activityLog);
     if (cur !== activityLogInitRef.current) {
+      const prev = JSON.parse(activityLogInitRef.current);
+      // Find what changed
+      const actDiffs = [];
+      const allKeys = new Set([...Object.keys(prev), ...Object.keys(activityLog)]);
+      allKeys.forEach(key => {
+        const oldEntry = prev[key] || {};
+        const newEntry = activityLog[key] || {};
+        if (JSON.stringify(oldEntry) !== JSON.stringify(newEntry)) {
+          const [dateStr, colName] = key.split("|");
+          const label = (colName || key).replace(/_/g, " ");
+          actDiffs.push({field: label, oldVal: oldEntry.administered ? "Done" : "—", newVal: newEntry.administered ? "Done" : "—"});
+        }
+      });
       activityLogInitRef.current = cur;
-      save({ ...data, reservations: data.reservations.map(r => r.id === reservation.id ? { ...r, activityLog } : r) });
+      const auditEntry = actDiffs.length > 0 ? [buildAuditEntry(reservation.id, "Updated Activity Log", actDiffs, profile)] : [];
+      save({ ...data, auditLog: [...(data.auditLog || []), ...auditEntry], reservations: data.reservations.map(r => r.id === reservation.id ? { ...r, activityLog } : r) });
     }
   }, [activityLog]);
 
@@ -3209,6 +3223,9 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
   const confirmConflict = async (updateProfiles) => {
     let newData = { ...data };
+    const auditLogs = [];
+    const fmtNow = new Date().toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",hour12:true});
+    const userName = profile ? (profile.full_name || profile.email || "Staff") : "Staff";
     if (updateProfiles) {
       const dogChanges = pendingChanges.filter(c => c.type === "dog");
       if (dogChanges.length) {
@@ -3218,6 +3235,9 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           dogChanges.forEach(c => { fields[c.field] = c.newVal; });
           return { ...d, fields };
         });
+        // Audit profile updates
+        const profileDiffs = dogChanges.map(c => ({field: c.label || c.field, oldVal: (typeof c.oldVal === "object" ? (c.oldLabel || JSON.stringify(c.oldVal)) : c.oldVal) || "(empty)", newVal: (typeof c.newVal === "object" ? (c.newLabel || JSON.stringify(c.newVal)) : c.newVal) || "(empty)"}));
+        if (profileDiffs.length > 0) auditLogs.push(buildAuditEntry(reservation.id, "Updated Dog Profile", profileDiffs, profile));
       }
       const clientChanges = pendingChanges.filter(c => c.type === "client");
       if (clientChanges.length) {
@@ -3227,13 +3247,41 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           clientChanges.forEach(ch => { fields[ch.field] = ch.newVal; });
           return { ...cl, fields };
         });
+        // Audit client profile updates
+        const clientDiffs = clientChanges.map(c => ({field: c.label || c.field, oldVal: c.oldVal || "(empty)", newVal: c.newVal || "(empty)"}));
+        if (clientDiffs.length > 0) auditLogs.push(buildAuditEntry(reservation.id, "Updated Client Profile", clientDiffs, profile));
       }
     }
     const updatedRes = buildUpdatedRes();
     const doCheckIn = pendingAction === "checkin";
     const doCheckOut = pendingAction === "checkout";
-    const merged = doCheckIn ? { ...updatedRes, status: "checked-in" } : doCheckOut ? { ...updatedRes, status: "checked-out" } : updatedRes;
+    const merged = doCheckIn ? { ...updatedRes, status: "checked-in", actualCheckInTime: new Date().toISOString(), checkedInBy: userName } : doCheckOut ? { ...updatedRes, status: "checked-out", actualCheckOutTime: new Date().toISOString(), checkedOutBy: userName } : updatedRes;
+    // Audit the reservation action (check-in, check-out, or update)
+    if (doCheckIn) auditLogs.push(buildAuditEntry(reservation.id, "Checked In", [{field:"Status",oldVal:"Upcoming",newVal:"Checked In"},{field:"Actual Check-In",oldVal:"—",newVal:fmtNow},{field:"Checked In By",oldVal:"—",newVal:userName}], profile));
+    if (doCheckOut) auditLogs.push(buildAuditEntry(reservation.id, "Checked Out", [{field:"Status",oldVal:"Checked In",newVal:"Checked Out"},{field:"Actual Check-Out",oldVal:"—",newVal:fmtNow},{field:"Checked Out By",oldVal:"—",newVal:userName}], profile));
+    if (!doCheckIn && !doCheckOut) {
+      const diffs = [];
+      if (updatedRes.parentDestination !== reservation.parentDestination) diffs.push({field:"Parent Destination",oldVal:reservation.parentDestination||"(empty)",newVal:updatedRes.parentDestination||"(empty)"});
+      if (updatedRes.belongings !== reservation.belongings) diffs.push({field:"Belongings",oldVal:reservation.belongings||"(empty)",newVal:updatedRes.belongings||"(empty)"});
+      if (updatedRes.checkIn !== reservation.checkIn) diffs.push({field:"Check-In Date",oldVal:reservation.checkIn,newVal:updatedRes.checkIn});
+      if (updatedRes.checkOut !== reservation.checkOut) diffs.push({field:"Check-Out Date",oldVal:reservation.checkOut,newVal:updatedRes.checkOut});
+      if (updatedRes.checkInTime !== reservation.checkInTime) diffs.push({field:"Check-In Time",oldVal:reservation.checkInTime,newVal:updatedRes.checkInTime});
+      if (updatedRes.checkOutTime !== reservation.checkOutTime) diffs.push({field:"Check-Out Time",oldVal:reservation.checkOutTime,newVal:updatedRes.checkOutTime});
+      if (updatedRes.notes !== reservation.notes) diffs.push({field:"Notes",oldVal:reservation.notes||"(empty)",newVal:updatedRes.notes||"(empty)"});
+      const oldCare = reservation.careOverrides || {}; const newCare = updatedRes.careOverrides || {};
+      if ((newCare.bath_type||"") !== (oldCare.bath_type||"")) diffs.push({field:"Bath Type",oldVal:oldCare.bath_type||"(none)",newVal:newCare.bath_type||"(none)"});
+      if ((newCare.feeding||"") !== (oldCare.feeding||"")) diffs.push({field:"Feeding Instructions",oldVal:oldCare.feeding||"(none)",newVal:newCare.feeding||"(none)"});
+      if ((newCare.medications||"") !== (oldCare.medications||"")) diffs.push({field:"Medications",oldVal:oldCare.medications||"(none)",newVal:newCare.medications||"(none)"});
+      if ((newCare.postBathReturn||"") !== (oldCare.postBathReturn||"")) diffs.push({field:"Post-Bath Return",oldVal:oldCare.postBathReturn||"(none)",newVal:newCare.postBathReturn||"(none)"});
+      const oldEc = reservation.emergencyContactOverride || {}; const newEc = updatedRes.emergencyContactOverride || {};
+      if ((newEc.name||"") !== (oldEc.name||"")) diffs.push({field:"Emergency Contact",oldVal:oldEc.name||"(profile default)",newVal:newEc.name||"(profile default)"});
+      if ((newEc.phone||"") !== (oldEc.phone||"")) diffs.push({field:"Emergency Phone",oldVal:oldEc.phone||"(profile default)",newVal:newEc.phone||"(profile default)"});
+      if ((updatedRes.fedToday||"") !== (reservation.fedToday||"")) diffs.push({field:"Fed Today",oldVal:reservation.fedToday||"(empty)",newVal:updatedRes.fedToday||"(empty)"});
+      if ((updatedRes.medsToday||"") !== (reservation.medsToday||"")) diffs.push({field:"Meds Today",oldVal:reservation.medsToday||"(empty)",newVal:updatedRes.medsToday||"(empty)"});
+      if (diffs.length > 0) auditLogs.push(buildAuditEntry(reservation.id, "Updated Reservation", diffs, profile));
+    }
     newData.reservations = newData.reservations.map(r => r.id === reservation.id ? merged : r);
+    newData.auditLog = [...(newData.auditLog || []), ...auditLogs];
     await save(newData);
     setShowConflict(false);
     if (doCheckIn) { setShowPrintPrompt(true); } else { onClose(); }
@@ -4614,17 +4662,6 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
               status: "checked-in",
               actualCheckInTime: new Date().toISOString(),
               checkedInBy: profile ? (profile.full_name || profile.email || "Staff") : "Staff",
-              auditLog: [
-                ...(reservation.auditLog || []),
-                {
-                  timestamp: new Date().toISOString(),
-                  action: "reservation_date_adjusted",
-                  by: profile ? (profile.full_name || profile.email || "Staff") : "Staff",
-                  details: [
-                    { field: "Check-in Date", oldVal: oldCheckIn, newVal: newCheckIn }
-                  ]
-                }
-              ]
             };
 
             // Check compliance with new date
@@ -6560,6 +6597,19 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               if (updatedRes.checkOutTime !== bRes.checkOutTime) diffs.push({field:"Check-Out Time",oldVal:bRes.checkOutTime,newVal:updatedRes.checkOutTime});
               if (updatedRes.notes !== bRes.notes) diffs.push({field:"Notes",oldVal:bRes.notes||"(empty)",newVal:updatedRes.notes||"(empty)"});
               if (updatedRes.discountType !== bRes.discountType || updatedRes.discountValue !== bRes.discountValue) diffs.push({field:"Discount",oldVal:bRes.discountType&&bRes.discountValue?`${bRes.discountType} ${bRes.discountValue}`:"None",newVal:updatedRes.discountType&&updatedRes.discountValue?`${updatedRes.discountType} ${updatedRes.discountValue}`:"None"});
+              // Care override changes
+              const oldCare = bRes.careOverrides || {}; const newCare = updatedRes.careOverrides || {};
+              if ((newCare.bath_type||"") !== (oldCare.bath_type||"")) diffs.push({field:"Bath Type",oldVal:oldCare.bath_type||"(none)",newVal:newCare.bath_type||"(none)"});
+              if ((newCare.feeding||"") !== (oldCare.feeding||"")) diffs.push({field:"Feeding Instructions",oldVal:oldCare.feeding||"(none)",newVal:newCare.feeding||"(none)"});
+              if ((newCare.medications||"") !== (oldCare.medications||"")) diffs.push({field:"Medications",oldVal:oldCare.medications||"(none)",newVal:newCare.medications||"(none)"});
+              if ((newCare.postBathReturn||"") !== (oldCare.postBathReturn||"")) diffs.push({field:"Post-Bath Return",oldVal:oldCare.postBathReturn||"(none)",newVal:newCare.postBathReturn||"(none)"});
+              // Emergency contact override changes
+              const oldEc = bRes.emergencyContactOverride || {}; const newEc = updatedRes.emergencyContactOverride || {};
+              if ((newEc.name||"") !== (oldEc.name||"")) diffs.push({field:"Emergency Contact",oldVal:oldEc.name||"(profile default)",newVal:newEc.name||"(profile default)"});
+              if ((newEc.phone||"") !== (oldEc.phone||"")) diffs.push({field:"Emergency Phone",oldVal:oldEc.phone||"(profile default)",newVal:newEc.phone||"(profile default)"});
+              // Fed/Meds today
+              if ((updatedRes.fedToday||"") !== (bRes.fedToday||"")) diffs.push({field:"Fed Today",oldVal:bRes.fedToday||"(empty)",newVal:updatedRes.fedToday||"(empty)"});
+              if ((updatedRes.medsToday||"") !== (bRes.medsToday||"")) diffs.push({field:"Meds Today",oldVal:bRes.medsToday||"(empty)",newVal:updatedRes.medsToday||"(empty)"});
               if (diffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Updated Reservation", diffs, profile));
             }
             // Also log check-in/out detail changes
@@ -6567,6 +6617,23 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               const ciDiffs = [];
               if (updatedRes.parentDestination && updatedRes.parentDestination !== bRes.parentDestination) ciDiffs.push({field:"Parent Destination",oldVal:bRes.parentDestination||"(empty)",newVal:updatedRes.parentDestination});
               if (updatedRes.belongings && updatedRes.belongings !== bRes.belongings) ciDiffs.push({field:"Belongings",oldVal:bRes.belongings||"(empty)",newVal:updatedRes.belongings});
+              // Date/time adjustments at check-in (e.g. early check-in date adjustment)
+              if (updatedRes.checkIn !== bRes.checkIn) ciDiffs.push({field:"Check-In Date",oldVal:bRes.checkIn,newVal:updatedRes.checkIn});
+              if (updatedRes.checkOut !== bRes.checkOut) ciDiffs.push({field:"Check-Out Date",oldVal:bRes.checkOut,newVal:updatedRes.checkOut});
+              if (updatedRes.checkInTime !== bRes.checkInTime) ciDiffs.push({field:"Check-In Time",oldVal:bRes.checkInTime,newVal:updatedRes.checkInTime});
+              if (updatedRes.checkOutTime !== bRes.checkOutTime) ciDiffs.push({field:"Check-Out Time",oldVal:bRes.checkOutTime,newVal:updatedRes.checkOutTime});
+              if (updatedRes.notes !== bRes.notes) ciDiffs.push({field:"Notes",oldVal:bRes.notes||"(empty)",newVal:updatedRes.notes||"(empty)"});
+              // Care details provided at check-in
+              const ciOldCare = bRes.careOverrides || {}; const ciNewCare = updatedRes.careOverrides || {};
+              if ((ciNewCare.bath_type||"") !== (ciOldCare.bath_type||"")) ciDiffs.push({field:"Bath Type",oldVal:ciOldCare.bath_type||"(none)",newVal:ciNewCare.bath_type||"(none)"});
+              if ((ciNewCare.feeding||"") !== (ciOldCare.feeding||"")) ciDiffs.push({field:"Feeding Instructions",oldVal:ciOldCare.feeding||"(none)",newVal:ciNewCare.feeding||"(none)"});
+              if ((ciNewCare.medications||"") !== (ciOldCare.medications||"")) ciDiffs.push({field:"Medications",oldVal:ciOldCare.medications||"(none)",newVal:ciNewCare.medications||"(none)"});
+              if ((ciNewCare.postBathReturn||"") !== (ciOldCare.postBathReturn||"")) ciDiffs.push({field:"Post-Bath Return",oldVal:ciOldCare.postBathReturn||"(none)",newVal:ciNewCare.postBathReturn||"(none)"});
+              const ciOldEc = bRes.emergencyContactOverride || {}; const ciNewEc = updatedRes.emergencyContactOverride || {};
+              if ((ciNewEc.name||"") !== (ciOldEc.name||"")) ciDiffs.push({field:"Emergency Contact",oldVal:ciOldEc.name||"(profile default)",newVal:ciNewEc.name});
+              if ((ciNewEc.phone||"") !== (ciOldEc.phone||"")) ciDiffs.push({field:"Emergency Phone",oldVal:ciOldEc.phone||"(profile default)",newVal:ciNewEc.phone});
+              if ((updatedRes.fedToday||"") !== (bRes.fedToday||"")) ciDiffs.push({field:"Fed Today",oldVal:bRes.fedToday||"(empty)",newVal:updatedRes.fedToday});
+              if ((updatedRes.medsToday||"") !== (bRes.medsToday||"")) ciDiffs.push({field:"Meds Today",oldVal:bRes.medsToday||"(empty)",newVal:updatedRes.medsToday});
               if (ciDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Filled Check-In Details", ciDiffs, profile));
             }
             const newAuditLog = [...(data.auditLog || []), ...auditLogs];
@@ -9174,6 +9241,19 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               if (updatedRes.checkOutTime !== bRes.checkOutTime) diffs.push({field:"Check-Out Time",oldVal:bRes.checkOutTime,newVal:updatedRes.checkOutTime});
               if (updatedRes.notes !== bRes.notes) diffs.push({field:"Notes",oldVal:bRes.notes||"(empty)",newVal:updatedRes.notes||"(empty)"});
               if (updatedRes.discountType !== bRes.discountType || updatedRes.discountValue !== bRes.discountValue) diffs.push({field:"Discount",oldVal:bRes.discountType&&bRes.discountValue?`${bRes.discountType} ${bRes.discountValue}`:"None",newVal:updatedRes.discountType&&updatedRes.discountValue?`${updatedRes.discountType} ${updatedRes.discountValue}`:"None"});
+              // Care override changes
+              const oldCare = bRes.careOverrides || {}; const newCare = updatedRes.careOverrides || {};
+              if ((newCare.bath_type||"") !== (oldCare.bath_type||"")) diffs.push({field:"Bath Type",oldVal:oldCare.bath_type||"(none)",newVal:newCare.bath_type||"(none)"});
+              if ((newCare.feeding||"") !== (oldCare.feeding||"")) diffs.push({field:"Feeding Instructions",oldVal:oldCare.feeding||"(none)",newVal:newCare.feeding||"(none)"});
+              if ((newCare.medications||"") !== (oldCare.medications||"")) diffs.push({field:"Medications",oldVal:oldCare.medications||"(none)",newVal:newCare.medications||"(none)"});
+              if ((newCare.postBathReturn||"") !== (oldCare.postBathReturn||"")) diffs.push({field:"Post-Bath Return",oldVal:oldCare.postBathReturn||"(none)",newVal:newCare.postBathReturn||"(none)"});
+              // Emergency contact override changes
+              const oldEc = bRes.emergencyContactOverride || {}; const newEc = updatedRes.emergencyContactOverride || {};
+              if ((newEc.name||"") !== (oldEc.name||"")) diffs.push({field:"Emergency Contact",oldVal:oldEc.name||"(profile default)",newVal:newEc.name||"(profile default)"});
+              if ((newEc.phone||"") !== (oldEc.phone||"")) diffs.push({field:"Emergency Phone",oldVal:oldEc.phone||"(profile default)",newVal:newEc.phone||"(profile default)"});
+              // Fed/Meds today
+              if ((updatedRes.fedToday||"") !== (bRes.fedToday||"")) diffs.push({field:"Fed Today",oldVal:bRes.fedToday||"(empty)",newVal:updatedRes.fedToday||"(empty)"});
+              if ((updatedRes.medsToday||"") !== (bRes.medsToday||"")) diffs.push({field:"Meds Today",oldVal:bRes.medsToday||"(empty)",newVal:updatedRes.medsToday||"(empty)"});
               if (diffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Updated Reservation", diffs, profile));
             }
             // Also log check-in/out detail changes
@@ -9181,6 +9261,23 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               const ciDiffs = [];
               if (updatedRes.parentDestination && updatedRes.parentDestination !== bRes.parentDestination) ciDiffs.push({field:"Parent Destination",oldVal:bRes.parentDestination||"(empty)",newVal:updatedRes.parentDestination});
               if (updatedRes.belongings && updatedRes.belongings !== bRes.belongings) ciDiffs.push({field:"Belongings",oldVal:bRes.belongings||"(empty)",newVal:updatedRes.belongings});
+              // Date/time adjustments at check-in (e.g. early check-in date adjustment)
+              if (updatedRes.checkIn !== bRes.checkIn) ciDiffs.push({field:"Check-In Date",oldVal:bRes.checkIn,newVal:updatedRes.checkIn});
+              if (updatedRes.checkOut !== bRes.checkOut) ciDiffs.push({field:"Check-Out Date",oldVal:bRes.checkOut,newVal:updatedRes.checkOut});
+              if (updatedRes.checkInTime !== bRes.checkInTime) ciDiffs.push({field:"Check-In Time",oldVal:bRes.checkInTime,newVal:updatedRes.checkInTime});
+              if (updatedRes.checkOutTime !== bRes.checkOutTime) ciDiffs.push({field:"Check-Out Time",oldVal:bRes.checkOutTime,newVal:updatedRes.checkOutTime});
+              if (updatedRes.notes !== bRes.notes) ciDiffs.push({field:"Notes",oldVal:bRes.notes||"(empty)",newVal:updatedRes.notes||"(empty)"});
+              // Care details provided at check-in
+              const ciOldCare = bRes.careOverrides || {}; const ciNewCare = updatedRes.careOverrides || {};
+              if ((ciNewCare.bath_type||"") !== (ciOldCare.bath_type||"")) ciDiffs.push({field:"Bath Type",oldVal:ciOldCare.bath_type||"(none)",newVal:ciNewCare.bath_type||"(none)"});
+              if ((ciNewCare.feeding||"") !== (ciOldCare.feeding||"")) ciDiffs.push({field:"Feeding Instructions",oldVal:ciOldCare.feeding||"(none)",newVal:ciNewCare.feeding||"(none)"});
+              if ((ciNewCare.medications||"") !== (ciOldCare.medications||"")) ciDiffs.push({field:"Medications",oldVal:ciOldCare.medications||"(none)",newVal:ciNewCare.medications||"(none)"});
+              if ((ciNewCare.postBathReturn||"") !== (ciOldCare.postBathReturn||"")) ciDiffs.push({field:"Post-Bath Return",oldVal:ciOldCare.postBathReturn||"(none)",newVal:ciNewCare.postBathReturn||"(none)"});
+              const ciOldEc = bRes.emergencyContactOverride || {}; const ciNewEc = updatedRes.emergencyContactOverride || {};
+              if ((ciNewEc.name||"") !== (ciOldEc.name||"")) ciDiffs.push({field:"Emergency Contact",oldVal:ciOldEc.name||"(profile default)",newVal:ciNewEc.name});
+              if ((ciNewEc.phone||"") !== (ciOldEc.phone||"")) ciDiffs.push({field:"Emergency Phone",oldVal:ciOldEc.phone||"(profile default)",newVal:ciNewEc.phone});
+              if ((updatedRes.fedToday||"") !== (bRes.fedToday||"")) ciDiffs.push({field:"Fed Today",oldVal:bRes.fedToday||"(empty)",newVal:updatedRes.fedToday});
+              if ((updatedRes.medsToday||"") !== (bRes.medsToday||"")) ciDiffs.push({field:"Meds Today",oldVal:bRes.medsToday||"(empty)",newVal:updatedRes.medsToday});
               if (ciDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Filled Check-In Details", ciDiffs, profile));
             }
             // Deduct coupons from package sales if applied
@@ -13771,6 +13868,19 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
               if (updatedRes.checkOutTime !== bRes.checkOutTime) diffs.push({field:"Check-Out Time",oldVal:bRes.checkOutTime,newVal:updatedRes.checkOutTime});
               if (updatedRes.notes !== bRes.notes) diffs.push({field:"Notes",oldVal:bRes.notes||"(empty)",newVal:updatedRes.notes||"(empty)"});
               if (updatedRes.discountType !== bRes.discountType || updatedRes.discountValue !== bRes.discountValue) diffs.push({field:"Discount",oldVal:bRes.discountType&&bRes.discountValue?`${bRes.discountType} ${bRes.discountValue}`:"None",newVal:updatedRes.discountType&&updatedRes.discountValue?`${updatedRes.discountType} ${updatedRes.discountValue}`:"None"});
+              // Care override changes
+              const oldCare = bRes.careOverrides || {}; const newCare = updatedRes.careOverrides || {};
+              if ((newCare.bath_type||"") !== (oldCare.bath_type||"")) diffs.push({field:"Bath Type",oldVal:oldCare.bath_type||"(none)",newVal:newCare.bath_type||"(none)"});
+              if ((newCare.feeding||"") !== (oldCare.feeding||"")) diffs.push({field:"Feeding Instructions",oldVal:oldCare.feeding||"(none)",newVal:newCare.feeding||"(none)"});
+              if ((newCare.medications||"") !== (oldCare.medications||"")) diffs.push({field:"Medications",oldVal:oldCare.medications||"(none)",newVal:newCare.medications||"(none)"});
+              if ((newCare.postBathReturn||"") !== (oldCare.postBathReturn||"")) diffs.push({field:"Post-Bath Return",oldVal:oldCare.postBathReturn||"(none)",newVal:newCare.postBathReturn||"(none)"});
+              // Emergency contact override changes
+              const oldEc = bRes.emergencyContactOverride || {}; const newEc = updatedRes.emergencyContactOverride || {};
+              if ((newEc.name||"") !== (oldEc.name||"")) diffs.push({field:"Emergency Contact",oldVal:oldEc.name||"(profile default)",newVal:newEc.name||"(profile default)"});
+              if ((newEc.phone||"") !== (oldEc.phone||"")) diffs.push({field:"Emergency Phone",oldVal:oldEc.phone||"(profile default)",newVal:newEc.phone||"(profile default)"});
+              // Fed/Meds today
+              if ((updatedRes.fedToday||"") !== (bRes.fedToday||"")) diffs.push({field:"Fed Today",oldVal:bRes.fedToday||"(empty)",newVal:updatedRes.fedToday||"(empty)"});
+              if ((updatedRes.medsToday||"") !== (bRes.medsToday||"")) diffs.push({field:"Meds Today",oldVal:bRes.medsToday||"(empty)",newVal:updatedRes.medsToday||"(empty)"});
               if (diffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Updated Reservation", diffs, profile));
             }
             // Also log check-in/out detail changes
@@ -13778,6 +13888,23 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
               const ciDiffs = [];
               if (updatedRes.parentDestination && updatedRes.parentDestination !== bRes.parentDestination) ciDiffs.push({field:"Parent Destination",oldVal:bRes.parentDestination||"(empty)",newVal:updatedRes.parentDestination});
               if (updatedRes.belongings && updatedRes.belongings !== bRes.belongings) ciDiffs.push({field:"Belongings",oldVal:bRes.belongings||"(empty)",newVal:updatedRes.belongings});
+              // Date/time adjustments at check-in (e.g. early check-in date adjustment)
+              if (updatedRes.checkIn !== bRes.checkIn) ciDiffs.push({field:"Check-In Date",oldVal:bRes.checkIn,newVal:updatedRes.checkIn});
+              if (updatedRes.checkOut !== bRes.checkOut) ciDiffs.push({field:"Check-Out Date",oldVal:bRes.checkOut,newVal:updatedRes.checkOut});
+              if (updatedRes.checkInTime !== bRes.checkInTime) ciDiffs.push({field:"Check-In Time",oldVal:bRes.checkInTime,newVal:updatedRes.checkInTime});
+              if (updatedRes.checkOutTime !== bRes.checkOutTime) ciDiffs.push({field:"Check-Out Time",oldVal:bRes.checkOutTime,newVal:updatedRes.checkOutTime});
+              if (updatedRes.notes !== bRes.notes) ciDiffs.push({field:"Notes",oldVal:bRes.notes||"(empty)",newVal:updatedRes.notes||"(empty)"});
+              // Care details provided at check-in
+              const ciOldCare = bRes.careOverrides || {}; const ciNewCare = updatedRes.careOverrides || {};
+              if ((ciNewCare.bath_type||"") !== (ciOldCare.bath_type||"")) ciDiffs.push({field:"Bath Type",oldVal:ciOldCare.bath_type||"(none)",newVal:ciNewCare.bath_type||"(none)"});
+              if ((ciNewCare.feeding||"") !== (ciOldCare.feeding||"")) ciDiffs.push({field:"Feeding Instructions",oldVal:ciOldCare.feeding||"(none)",newVal:ciNewCare.feeding||"(none)"});
+              if ((ciNewCare.medications||"") !== (ciOldCare.medications||"")) ciDiffs.push({field:"Medications",oldVal:ciOldCare.medications||"(none)",newVal:ciNewCare.medications||"(none)"});
+              if ((ciNewCare.postBathReturn||"") !== (ciOldCare.postBathReturn||"")) ciDiffs.push({field:"Post-Bath Return",oldVal:ciOldCare.postBathReturn||"(none)",newVal:ciNewCare.postBathReturn||"(none)"});
+              const ciOldEc = bRes.emergencyContactOverride || {}; const ciNewEc = updatedRes.emergencyContactOverride || {};
+              if ((ciNewEc.name||"") !== (ciOldEc.name||"")) ciDiffs.push({field:"Emergency Contact",oldVal:ciOldEc.name||"(profile default)",newVal:ciNewEc.name});
+              if ((ciNewEc.phone||"") !== (ciOldEc.phone||"")) ciDiffs.push({field:"Emergency Phone",oldVal:ciOldEc.phone||"(profile default)",newVal:ciNewEc.phone});
+              if ((updatedRes.fedToday||"") !== (bRes.fedToday||"")) ciDiffs.push({field:"Fed Today",oldVal:bRes.fedToday||"(empty)",newVal:updatedRes.fedToday});
+              if ((updatedRes.medsToday||"") !== (bRes.medsToday||"")) ciDiffs.push({field:"Meds Today",oldVal:bRes.medsToday||"(empty)",newVal:updatedRes.medsToday});
               if (ciDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Filled Check-In Details", ciDiffs, profile));
             }
             // Deduct coupons from package sales if applied
