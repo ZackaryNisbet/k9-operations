@@ -2577,7 +2577,10 @@ function DiscountPicker({ discounts, onSelect, clientId, data }) {
 function CalendarPicker({ label, value, onChange, required, disabled, min, max, extraContent }) {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState("days");
+  const [typedVal, setTypedVal] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
   const ref = useRef(null);
+  const inputRef = useRef(null);
   const parsed = value ? new Date(value + "T12:00:00") : new Date();
   const [vMonth, setVMonth] = useState(parsed.getMonth());
   const [vYear, setVYear] = useState(parsed.getFullYear());
@@ -2589,8 +2592,8 @@ function CalendarPicker({ label, value, onChange, required, disabled, min, max, 
   const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const prev = () => { if (view === "years") setYrPage(p => p - 12); else if (view === "months") setVYear(y => y - 1); else { if (vMonth === 0) { setVMonth(11); setVYear(y => y - 1); } else setVMonth(m => m - 1); } };
   const next = () => { if (view === "years") setYrPage(p => p + 12); else if (view === "months") setVYear(y => y + 1); else { if (vMonth === 11) { setVMonth(0); setVYear(y => y + 1); } else setVMonth(m => m + 1); } };
-  const pick = (day) => { const m = String(vMonth + 1).padStart(2, "0"); const d = String(day).padStart(2, "0"); onChange(`${vYear}-${m}-${d}`); setOpen(false); };
-  const display = value ? new Date(value + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+  const pick = (day) => { const m = String(vMonth + 1).padStart(2, "0"); const d = String(day).padStart(2, "0"); onChange(`${vYear}-${m}-${d}`); setOpen(false); setIsTyping(false); };
+  const display = value ? new Date(value + "T12:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" }) : "";
   const td = new Date().toISOString().slice(0, 10);
   const headerLabel = view === "years" ? `${yrPage} – ${yrPage + 11}` : view === "months" ? String(vYear) : ml;
   const headerClick = () => { if (view === "days") { setYrPage(Math.floor(vYear / 12) * 12); setView("years"); } else if (view === "months") { setYrPage(Math.floor(vYear / 12) * 12); setView("years"); } };
@@ -2598,13 +2601,69 @@ function CalendarPicker({ label, value, onChange, required, disabled, min, max, 
   const curYr = new Date().getFullYear(); const curMo = new Date().getMonth();
   const selYr = value ? new Date(value + "T12:00:00").getFullYear() : -1;
   const selMo = value ? new Date(value + "T12:00:00").getMonth() : -1;
+  // Auto-format typed date input as MM/DD/YYYY
+  const fmtTypedDate = (raw) => {
+    const digits = raw.replace(/\D/g, "").slice(0, 8);
+    if (digits.length <= 2) return digits;
+    if (digits.length <= 4) return digits.slice(0, 2) + "/" + digits.slice(2);
+    return digits.slice(0, 2) + "/" + digits.slice(2, 4) + "/" + digits.slice(4);
+  };
+  const parseTypedDate = (str) => {
+    const parts = str.split("/");
+    if (parts.length !== 3) return null;
+    const [mm, dd, yyyy] = parts;
+    if (!mm || !dd || !yyyy || yyyy.length !== 4) return null;
+    const m = parseInt(mm, 10); const d = parseInt(dd, 10); const y = parseInt(yyyy, 10);
+    if (m < 1 || m > 12 || d < 1 || d > 31 || y < 1900 || y > 2100) return null;
+    const dim = new Date(y, m, 0).getDate();
+    if (d > dim) return null;
+    return `${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+  };
+  const handleTypedChange = (e) => {
+    const formatted = fmtTypedDate(e.target.value);
+    setTypedVal(formatted);
+    if (formatted.length === 10) {
+      const parsed = parseTypedDate(formatted);
+      if (parsed) {
+        const valid = (!min || parsed >= min) && (!max || parsed <= max);
+        if (valid) { onChange(parsed); const pd = new Date(parsed + "T12:00:00"); setVMonth(pd.getMonth()); setVYear(pd.getFullYear()); }
+      }
+    }
+  };
+  const handleTypedBlur = () => {
+    setIsTyping(false);
+    if (typedVal.length === 10) {
+      const parsed = parseTypedDate(typedVal);
+      if (parsed) { const valid = (!min || parsed >= min) && (!max || parsed <= max); if (valid) onChange(parsed); }
+    }
+    setTypedVal("");
+  };
+  const handleTypedKeyDown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); handleTypedBlur(); inputRef.current?.blur(); }
+    if (e.key === "Escape") { setIsTyping(false); setTypedVal(""); inputRef.current?.blur(); }
+  };
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, letterSpacing: "0.03em", textTransform: "uppercase" }}>{label}{required && <span style={{ color: C.dan }}> *</span>}</div>
-      <button onClick={() => { if (!disabled) setOpen(!open); }} style={{ width: "100%", padding: "10px 14px", border: `1.5px solid ${open ? C.pri : C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit", color: value ? C.text : C.textMut, background: disabled ? C.bg : C.surface, cursor: disabled ? "default" : "pointer", textAlign: "left", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "border 0.15s", outline: "none", ...(disabled ? { opacity: 0.55, pointerEvents: "none" } : {}) }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>{display || "Select date\u2026"}{value && !disabled && <span onClick={(e) => { e.stopPropagation(); onChange(""); }} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 9, background: C.bg, color: C.textMut, fontSize: 12, cursor: "pointer", lineHeight: 1, flexShrink: 0 }} onMouseEnter={e => { e.currentTarget.style.background = C.danLt; e.currentTarget.style.color = C.dan; }} onMouseLeave={e => { e.currentTarget.style.background = C.bg; e.currentTarget.style.color = C.textMut; }}>×</span>}</span>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-      </button>
+      <div style={{ width: "100%", padding: "10px 14px", border: `1.5px solid ${open || isTyping ? C.pri : C.border}`, borderRadius: 10, fontSize: 14, fontFamily: "inherit", color: value ? C.text : C.textMut, background: disabled ? C.bg : C.surface, textAlign: "left", display: "flex", alignItems: "center", justifyContent: "space-between", transition: "border 0.15s", boxSizing: "border-box", ...(disabled ? { opacity: 0.55, pointerEvents: "none" } : {}) }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
+          <input
+            ref={inputRef}
+            value={isTyping ? typedVal : display}
+            placeholder="MM/DD/YYYY"
+            onFocus={() => { setIsTyping(true); setTypedVal(display); }}
+            onBlur={handleTypedBlur}
+            onChange={handleTypedChange}
+            onKeyDown={handleTypedKeyDown}
+            disabled={disabled}
+            style={{ border: "none", outline: "none", background: "transparent", fontSize: 14, fontFamily: "inherit", color: C.text, width: "100%", padding: 0 }}
+          />
+          {value && !disabled && <span onClick={(e) => { e.stopPropagation(); onChange(""); setTypedVal(""); setIsTyping(false); }} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 9, background: C.bg, color: C.textMut, fontSize: 12, cursor: "pointer", lineHeight: 1, flexShrink: 0 }} onMouseEnter={e => { e.currentTarget.style.background = C.danLt; e.currentTarget.style.color = C.dan; }} onMouseLeave={e => { e.currentTarget.style.background = C.bg; e.currentTarget.style.color = C.textMut; }}>×</span>}
+        </span>
+        <button onClick={(e) => { e.preventDefault(); if (!disabled) setOpen(!open); }} style={{ border: "none", background: "transparent", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", flexShrink: 0 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        </button>
+      </div>
       {extraContent}
       {open && (
         <div style={{ position: "absolute", top: "100%", left: 0, marginTop: 6, zIndex: 100, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.15)", padding: 16, width: 280 }}>
@@ -8831,7 +8890,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                         <VaxIcon dog={dog} requiredVaccines={data.requiredVaccines} policies={data.resortPolicies} />
                         <DogTagChips dog={dog} dogTags={data.dogTags} size="sm" />
                       </div>
-                      <div style={{fontSize:12,color:C.textSec}}>{dog.fields.breed}{dog.fields.weight?` \u00B7 ${dog.fields.weight} lbs`:""}{dog.fields.dob ? ` \u00B7 ${calcAge(dog.fields.dob)}` : ""}{` \u00B7 ${fixedLabel(dog)}`}</div>
+                      <div style={{fontSize:12,color:C.textSec}}>{dog.fields.breed}{dog.fields.weight?` \u00B7 ${dog.fields.weight} lbs`:""}{dog.fields.dob ? ` \u00B7 ${calcAge(dog.fields.dob)} old` : ""}{` \u00B7 ${fixedLabel(dog)}`}</div>
                     </div>
                     <span style={{color:C.textMut}}><I.ChevronRight/></span>
                   </div>
@@ -9854,7 +9913,8 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
                   </Tip>
                 ); })()}
               </div>
-              <div style={{fontSize:14,color:C.textSec,marginTop:2}}>{dog.fields.breed}{dog.fields.weight?` · ${dog.fields.weight} lbs`:""}{dog.fields.sex?` · ${dog.fields.sex}`:""}{dog.fields.dob ? ` · ${calcAge(dog.fields.dob)}` : ""}{` · ${fixedLabel(dog)}`}</div>
+              <div style={{fontSize:14,color:C.textSec,marginTop:2}}>{dog.fields.breed}{dog.fields.weight?` · ${dog.fields.weight} lbs`:""}{dog.fields.sex?` · ${dog.fields.sex}`:""}{dog.fields.dob ? ` · ${calcAge(dog.fields.dob)} old` : ""}{` · ${fixedLabel(dog)}`}</div>
+              {dog.fields.dob && <div style={{fontSize:12,color:C.pri,fontWeight:600,marginTop:2}}>🎂 Born {new Date(dog.fields.dob+"T12:00:00").toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}</div>}
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
                 <Tip text={dog.daycareGroupOverride ? `Daycare group manually set to ${dog.daycareGroupOverride}` : `Auto-classified by weight (${dog.fields.weight || "?"} lbs, threshold: 35 lbs)`}>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: getDogDaycareSize(dog) === "large" ? C.priLt : C.sucLt, color: getDogDaycareSize(dog) === "large" ? C.pri : C.suc, cursor: "default" }}>
@@ -10938,6 +10998,11 @@ function DogFormFields({ fields, dogFields, data, errors, onChange, feedingSched
           <div key={f.id} style={f.type === "checkbox" ? { display: "flex", alignItems: "end" } : {}}>
             {f.id === "breed" ? null : (
               <Inp label={f.name} type={f.type} value={fields[f.id] || ""} onChange={v => onChange(f.id, v)} required={isFieldRequired(f, action || "reservation")} options={f.options} />
+            )}
+            {f.id === "dob" && fields.dob && calcAge(fields.dob) && (
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.pri, marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                <span>🎂</span> {calcAge(fields.dob)} old
+              </div>
             )}
             {errors[f.id] && <div style={{ color: C.dan, fontSize: 12, marginTop: 4, fontWeight: 600 }}>{errors[f.id]}</div>}
           </div>
@@ -26993,6 +27058,39 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
 
   const filteredClientDirectoryData = useMemo(() => applyReportFilters(clientDirectoryData, rptFilters, RPT_FILTER_FIELDS.clients || []), [clientDirectoryData, rptFilters]);
 
+  // Birthday report
+  const [bdayRange, setBdayRange] = useState("30");
+  const birthdayData = useMemo(() => {
+    const today = new Date();
+    const rangeDays = bdayRange === "7" ? 7 : bdayRange === "30" ? 30 : bdayRange === "90" ? 90 : 365;
+    const endDate = new Date(today); endDate.setDate(endDate.getDate() + rangeDays);
+    return (allDogs || [])
+      .filter(d => d.fields?.dob)
+      .map(d => {
+        const dob = new Date(d.fields.dob + "T12:00:00");
+        const nextBday = new Date(today.getFullYear(), dob.getMonth(), dob.getDate());
+        if (nextBday < today) nextBday.setFullYear(nextBday.getFullYear() + 1);
+        // Also check if bday is today
+        const isToday = nextBday.toDateString() === today.toDateString();
+        if (nextBday > endDate && !isToday) return null;
+        const daysUntil = Math.round((nextBday - today) / 86400000);
+        const age = calcAge(d.fields.dob);
+        const turningAge = nextBday.getFullYear() - dob.getFullYear();
+        const client = getClient(d.clientId);
+        return {
+          id: d.id, dogName: d.fields.name || "—", breed: d.fields.breed || "—",
+          dob: d.fields.dob,
+          clientName: client ? `${client.fields?.first_name || ""} ${client.fields?.last_name || ""}`.trim() : "—",
+          clientId: d.clientId, phone: client?.fields?.phone || "—",
+          currentAge: age, turningAge,
+          nextBirthday: nextBday.toISOString().slice(0, 10),
+          daysUntil: isToday ? 0 : daysUntil,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.daysUntil - b.daysUntil);
+  }, [allDogs, allClients, bdayRange]);
+
 
   // ═══ PRE-FILTERED SOURCE DATA FOR ANALYTICS ═══
   const rptFilteredRes = useMemo(() => {
@@ -27392,6 +27490,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     { id: "dayboarding", label: "Day Boarding", desc: "Day boarding visits" },
     { id: "cancellations", label: "Cancellations", desc: "Cancelled reservations" },
     { id: "unpaid-deposits", label: "Unpaid Deposits", desc: "Outstanding deposit balances" },
+    { id: "birthdays", label: "Upcoming Birthdays", desc: "Dog birthdays coming up" },
     { id: "clients", label: "Client Directory", desc: "All clients with aggregated metrics" },
   ];
 
@@ -27800,6 +27899,80 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
                         <td style={{ padding: "8px 12px", textAlign: "right", color: C.acc, fontWeight: 600 }}>${r.depositReq.toFixed(2)}</td>
                         <td style={{ padding: "8px 12px", textAlign: "right", color: r.collected > 0 ? C.suc : C.textMut }}>${r.collected.toFixed(2)}</td>
                         <td style={{ padding: "8px 12px", textAlign: "right", color: C.dan, fontWeight: 700 }}>${r.outstanding.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ENTITY: Upcoming Birthdays */}
+        {activeReport === "birthdays" && (
+          <div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+              {[{ v: "7", l: "Next 7 Days" }, { v: "30", l: "Next 30 Days" }, { v: "90", l: "Next 90 Days" }, { v: "365", l: "Next Year" }].map(opt => (
+                <button key={opt.v} onClick={() => setBdayRange(opt.v)} style={{
+                  padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${bdayRange === opt.v ? C.pri : C.border}`,
+                  background: bdayRange === opt.v ? C.pri : C.surface, color: bdayRange === opt.v ? "#fff" : C.text,
+                  fontWeight: 600, fontSize: 13, cursor: "pointer", transition: "all 0.15s"
+                }}>{opt.l}</button>
+              ))}
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, marginBottom: 24 }}>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Total Birthdays</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, letterSpacing: "-0.02em" }}>{birthdayData.length}</div>
+              </div>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Today's Birthdays</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.acc, letterSpacing: "-0.02em" }}>{birthdayData.filter(d => d.daysUntil === 0).length}</div>
+              </div>
+              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>This Week</div>
+                <div style={{ fontSize: 28, fontWeight: 800, color: C.info, letterSpacing: "-0.02em" }}>{birthdayData.filter(d => d.daysUntil <= 7).length}</div>
+              </div>
+            </div>
+
+            {birthdayData.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 40, color: C.textMut }}>No upcoming birthdays in this range</div>
+            ) : (
+              <div style={{ overflowX: "auto", borderRadius: 12, border: `1.5px solid ${C.border}` }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: C.surfaceAlt, borderBottom: `2px solid ${C.border}` }}>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Breed</th>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
+                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Phone</th>
+                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Birthday</th>
+                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Turning</th>
+                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Days Until</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {birthdayData.map(d => (
+                      <tr key={d.id} style={{
+                        borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer",
+                        background: d.daysUntil === 0 ? `${C.acc}15` : "transparent"
+                      }} onClick={() => nav("client-detail", { clientId: d.clientId })}>
+                        <td style={{ padding: "8px 12px", fontWeight: 600, color: C.text }}>
+                          {d.daysUntil === 0 && <span style={{ marginRight: 4 }}>🎂</span>}{d.dogName}
+                        </td>
+                        <td style={{ padding: "8px 12px", color: C.textSec }}>{d.breed}</td>
+                        <td style={{ padding: "8px 12px", color: C.text }}>{d.clientName}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", color: C.textSec }}>{d.phone}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", color: C.text, fontWeight: 600 }}>
+                          {new Date(d.dob + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                        </td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", color: C.pri, fontWeight: 700 }}>
+                          {d.turningAge} {d.turningAge === 1 ? "yr" : "yrs"}
+                        </td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: d.daysUntil === 0 ? C.acc : d.daysUntil <= 7 ? C.warn : C.textSec }}>
+                          {d.daysUntil === 0 ? "Today!" : d.daysUntil === 1 ? "Tomorrow" : `${d.daysUntil} days`}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
