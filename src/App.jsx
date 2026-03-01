@@ -5341,8 +5341,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   };
   const handleCheckOut = async (rid) => {
     const res = data.reservations.find(r=>r.id===rid);
-    // Boarding/dayboarding: open preview modal for checkout (payment gate)
-    if (res && (res.type === "boarding" || res.type === "dayboarding")) {
+    // Boarding/dayboarding/daycare: open preview modal for checkout (payment gate)
+    if (res && (res.type === "boarding" || res.type === "dayboarding" || res.type === "daycare")) {
       setBoardingPreviewId(rid);
       return;
     }
@@ -6165,7 +6165,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                             {/* Dog + Client */}
                             <div style={{ minWidth: 0 }}>
                               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                                <button onClick={() => nav("dog-detail", { clientId: row.clientId, dogId: row.dogId })} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}>
+                                <button onClick={e => { e.stopPropagation(); nav("dog-detail", { clientId: row.clientId, dogId: row.dogId }); }} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}>
                                   <span style={{ fontSize: 13, fontWeight: 700, color: C.pri, textDecoration: "underline", textDecorationColor: C.pri + "40" }}>{dName}</span>
                                 </button>
                                 <span style={{ fontSize: 12, color: C.textSec }}>{cLast}</span>
@@ -6187,7 +6187,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                               {row.qty || "—"}
                             </div>
                             {/* Administered Checkbox */}
-                            <div>
+                            <div onClick={e => e.stopPropagation()}>
                               <label style={{ display: "flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
                                 <input type="checkbox" checked={administered} style={{ accentColor: C.suc, width: 16, height: 16, cursor: "pointer" }}
                                   onChange={e => {
@@ -6203,7 +6203,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                               </label>
                             </div>
                             {/* Administered By */}
-                            <div>
+                            <div onClick={e => e.stopPropagation()}>
                               {administered && entry.by ? (
                                 <div>
                                   <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{entry.by}</div>
@@ -6214,7 +6214,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                               )}
                             </div>
                             {/* % Eaten / Bath Type */}
-                            <div>
+                            <div onClick={e => e.stopPropagation()}>
                               {row.type === "feeding" ? (
                                 <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
                                   {CONSUMPTION_OPTS.map(opt => {
