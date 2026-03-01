@@ -671,7 +671,16 @@ const countHours = (tIn, tOut) => {
   return Math.max(0, (h2 * 60 + m2 - h1 * 60 - m1) / 60);
 };
 
-function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, dogs, dogProfiles, pricing, isSecondDogSameRoom, roomSegments, reservation, appliedCoupons }) {
+// Get add-on price map from addOnRules or legacy pricing
+function getAddOnPrices(dataOrPricing, addOnRules) {
+  if (addOnRules && addOnRules.length > 0) {
+    return Object.fromEntries(addOnRules.map(r => [r.name, Number(r.price) || 0]));
+  }
+  const p = dataOrPricing || {};
+  return { ...DEF_PRICING.addOns, ...(p.addOns || {}) };
+}
+
+function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, dogs, dogProfiles, pricing, isSecondDogSameRoom, roomSegments, reservation, appliedCoupons, addOnRules }) {
   const p = pricing || DEF_PRICING;
   const lines = [];
   let subtotal = 0;
@@ -4268,7 +4277,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false, reservation });
             // Append bath add-on if bath type is selected and 2+ nights
             if (bathType && countNights(checkIn,checkOut) >= 2) {
-              const addOnPrices = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
+              const addOnPrices = getAddOnPrices(data.pricing, data.addOnRules);
               const bathKey = `${bathType} Bath`;
               const bathRate = addOnPrices[bathKey] ?? 0;
               if (bathRate > 0) {
@@ -4279,7 +4288,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             }
             // Also append any saved selectedAddOns from the reservation (non-bath add-ons)
             if (reservation.selectedAddOns && Array.isArray(reservation.selectedAddOns)) {
-              const addOnPrices2 = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
+              const addOnPrices2 = getAddOnPrices(data.pricing, data.addOnRules);
               reservation.selectedAddOns.filter(a => !a.endsWith(" Bath")).forEach(addon => {
                 const rate = addOnPrices2[addon] ?? 0;
                 if (rate > 0) {
@@ -5606,7 +5615,9 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [addOnPopup]);
-  const availableAddOns = Object.keys({ ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) });
+  const availableAddOns = (data.addOnRules || []).length > 0
+    ? (data.addOnRules || []).map(r => r.name)
+    : Object.keys({ ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) });
   const toggleResAddOn = async (resId, addon) => {
     const res = data.reservations.find(r => r.id === resId);
     if (!res) return;
@@ -5974,7 +5985,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {addOnsSummary.map(item => {
-                  const addonPrices = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
+                  const addonPrices = getAddOnPrices(data.pricing, data.addOnRules);
                   const price = addonPrices[item.name] ?? 0;
                   const totalRev = price * item.count;
                   return (
@@ -6407,7 +6418,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
         const res = data.reservations.find(r => r.id === addOnPopup.resId);
         if (!res) return null;
         const resAddOns = res.addOns || [];
-        const addonPrices = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
+        const addonRulesMap = Object.fromEntries((data.addOnRules || []).map(r => [r.name, r.price]));
+        const addonPrices = (data.addOnRules || []).length > 0 ? addonRulesMap : { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
         return ReactDOM.createPortal(
           <div ref={addOnPopupRef} style={{ position: "fixed", left: Math.min(addOnPopup.x, window.innerWidth - 260), top: Math.min(addOnPopup.y, window.innerHeight - 400), zIndex: 9999, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.18)", padding: "8px 0", minWidth: 240, maxHeight: 400, overflowY: "auto", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>
             <div style={{ padding: "6px 14px 8px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: `1px solid ${C.borderLight}` }}>Add-Ons</div>
@@ -11186,6 +11198,33 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   // Per-dog add-ons: { [dogId]: { bath_type, ... } }
   const [dogAddOns, setDogAddOns] = useState({});
   const [expandedAddOns, setExpandedAddOns] = useState({});
+  // Auto-apply add-on rules when type or dogs change
+  useEffect(() => {
+    if (!type || selectedDogs.length === 0) return;
+    const autoRules = (data.addOnRules || []).filter(r => {
+      if (!r.autoApply) return false;
+      if (r.serviceTypes && r.serviceTypes.length > 0 && !r.serviceTypes.includes(type)) return false;
+      return true;
+    });
+    if (autoRules.length === 0) return;
+    setDogAddOns(prev => {
+      const next = { ...prev };
+      for (const did of selectedDogs) {
+        const dog = data.dogs.find(d => d.id === did);
+        const dogTags = dog?.tags || [];
+        const matched = autoRules.filter(r => {
+          if (r.tagIds && r.tagIds.length > 0) return r.tagIds.some(tid => dogTags.includes(tid));
+          return true; // empty tagIds = all dogs
+        }).map(r => r.name);
+        if (matched.length > 0) {
+          const curr = next[did]?.selectedAddOns || [];
+          const merged = [...new Set([...curr, ...matched])];
+          next[did] = { ...next[did], selectedAddOns: merged };
+        }
+      }
+      return next;
+    });
+  }, [type, selectedDogs.join(",")]);
   // Add-on date selection popup: { dogId, addon, prevState }
   const [addOnDatePopup, setAddOnDatePopup] = useState(null);
   // Per-dog room config
@@ -11607,7 +11646,22 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           ...(dogAddOns[did]?.selectedBath ? { bath_type: dogAddOns[did].selectedBath } : {}),
           ...(dogAddOns[did]?.postBathReturn ? { postBathReturn: dogAddOns[did].postBathReturn } : {}),
         },
-        selectedAddOns: (dogAddOns[did]?.selectedAddOns || []),
+        selectedAddOns: (() => {
+          const manual = dogAddOns[did]?.selectedAddOns || [];
+          const autoRules = (data.addOnRules || []).filter(r => {
+            if (!r.autoApply) return false;
+            // Check service type match (empty = all)
+            if (r.serviceTypes && r.serviceTypes.length > 0 && !r.serviceTypes.includes(type)) return false;
+            // Check tag match (empty = all dogs)
+            if (r.tagIds && r.tagIds.length > 0) {
+              const dogTags = dog?.tags || [];
+              if (!r.tagIds.some(tid => dogTags.includes(tid))) return false;
+            }
+            return true;
+          }).map(r => r.name);
+          // Merge without duplicates
+          return [...new Set([...manual, ...autoRules])];
+        })(),
         pricing: resPricing,
         ...(isSecondInRoom ? {isSecondDogSameRoom: true} : {}),
         ...(resDiscountType !== "none" && resDiscountValue > 0 ? { discountType: resDiscountType, discountValue: resDiscountValue, discountId: resDiscountId || undefined } : {}),
@@ -11754,7 +11808,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   // Live pricing calculation
   const livePricing = useMemo(() => {
     if (!type || selectedDogs.length === 0) return null;
-    const addOnPrices = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
+    const addOnPrices = getAddOnPrices(data.pricing, data.addOnRules);
     // Helper: append selected add-on line items for a dog
     const appendAddOns = (result, did) => {
       const dog = data.dogs.find(d => d.id === did);
@@ -12681,7 +12735,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                           <div style={{marginTop:8,padding:"12px 16px",borderRadius:8,border:`1px solid ${C.borderLight}`,background:C.surface}}>
                             <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:8}}>Add-Ons</div>
                             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,alignItems:"stretch"}}>
-                              {Object.entries({...DEF_PRICING.addOns,...((data.pricing||{}).addOns||{})}).map(([addon,price])=>{
+                              {Object.entries(getAddOnPrices(data.pricing, data.addOnRules)).map(([addon,price])=>{
                                 const isBathAddon = addon.endsWith(" Bath");
                                 const hasBathSelected = !!dogAddOns[did]?.selectedBath;
                                 // Skip bath add-ons if a bath is already selected (show "Add Another Bath" instead)
@@ -18243,6 +18297,43 @@ function RunCardConfigTab({ data, save }) {
 }
 function PricingTab({ data, save }) {
   const p = data.pricing || DEF_PRICING;
+  const [editingAddOn, setEditingAddOn] = useState(null); // null or { id?, name, price, serviceTypes:[], tagIds:[], autoApply }
+  const [addOnConfirmDelete, setAddOnConfirmDelete] = useState(null);
+  const SERVICE_TYPE_OPTIONS = [
+    { id: "boarding", label: "Boarding" },
+    { id: "dayboarding", label: "Day Board" },
+    { id: "daycare", label: "Daycare" },
+    { id: "evaluation", label: "Evaluation" },
+    { id: "tour", label: "Tour" },
+  ];
+  const allAddOnRules = data.addOnRules || [];
+  const dogTags = data.dogTags || [];
+
+  const saveAddOnRule = async (rule) => {
+    const rules = [...allAddOnRules];
+    const idx = rules.findIndex(r => r.id === rule.id);
+    if (idx >= 0) rules[idx] = rule; else rules.push({ ...rule, id: rule.id || gid() });
+    // Also sync into pricing.addOns for backward compat
+    const nextPricing = JSON.parse(JSON.stringify(p));
+    if (!nextPricing.addOns) nextPricing.addOns = {};
+    nextPricing.addOns[rule.name] = Number(rule.price) || 0;
+    await save({ ...data, addOnRules: rules, pricing: nextPricing });
+    setEditingAddOn(null);
+  };
+  const deleteAddOnRule = async (ruleId) => {
+    const rule = allAddOnRules.find(r => r.id === ruleId);
+    const rules = allAddOnRules.filter(r => r.id !== ruleId);
+    // Remove from pricing.addOns too
+    if (rule) {
+      const nextPricing = JSON.parse(JSON.stringify(p));
+      if (nextPricing.addOns) { delete nextPricing.addOns[rule.name]; }
+      await save({ ...data, addOnRules: rules, pricing: nextPricing });
+    } else {
+      await save({ ...data, addOnRules: rules });
+    }
+    setAddOnConfirmDelete(null);
+  };
+
   const update = async (path, val) => {
     const next = JSON.parse(JSON.stringify(p));
     const keys = path.split(".");
@@ -18322,11 +18413,138 @@ function PricingTab({ data, save }) {
         })}
       </Card>
 
-      {/* Add-Ons */}
+      {/* Add-Ons Management */}
       <Card style={{ padding: "24px 28px", marginBottom: 16 }}>
-        {sectionTitle("Add-Ons", "All available add-ons including baths, food handling, medications, and extras. Pricing is per stay.")}
-        {Object.keys({ ...DEF_PRICING.addOns, ...(p.addOns || {}) }).map(addon =>
-          rateRow(addon, `addOns.${addon}`, (p.addOns || {})[addon] ?? (DEF_PRICING.addOns || {})[addon] ?? 0, "0")
+        {sectionTitle("Add-Ons", "Create, edit, and manage add-ons. Assign service types and dog tags to auto-apply add-ons to matching reservations.")}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {allAddOnRules.map(rule => (
+            <div key={rule.id} style={{ padding: "12px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{rule.name}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.suc }}>${Number(rule.price || 0).toFixed(2)}</span>
+                  {rule.autoApply && <span style={{ fontSize: 9, fontWeight: 700, background: C.warn + "20", color: C.warn, padding: "2px 6px", borderRadius: 6 }}>AUTO-APPLY</span>}
+                </div>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {(rule.serviceTypes || []).length > 0 ? rule.serviceTypes.map(st => {
+                    const label = SERVICE_TYPE_OPTIONS.find(o => o.id === st)?.label || st;
+                    return <span key={st} style={{ fontSize: 10, background: C.priO, color: C.pri, padding: "1px 6px", borderRadius: 6, fontWeight: 600 }}>{label}</span>;
+                  }) : <span style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>All service types</span>}
+                  {(rule.tagIds || []).length > 0 && rule.tagIds.map(tid => {
+                    const tag = dogTags.find(t => t.id === tid);
+                    const tc = tag ? TAG_COLORS[tag.colorIdx % TAG_COLORS.length] : { bg: C.surfaceHover, text: C.textMut };
+                    return <span key={tid} style={{ fontSize: 10, background: tc.bg, color: tc.text, padding: "1px 6px", borderRadius: 6, fontWeight: 600 }}>{tag?.name || tid}</span>;
+                  })}
+                  {(rule.tagIds || []).length === 0 && <span style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>All tags</span>}
+                </div>
+              </div>
+              <button onClick={() => setEditingAddOn({ ...rule })} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Edit2 size={14} /></button>
+              {addOnConfirmDelete === rule.id ? (
+                <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                  <button onClick={() => deleteAddOnRule(rule.id)} style={{ padding: "3px 8px", borderRadius: 6, border: "none", background: C.dan, color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Confirm</button>
+                  <button onClick={() => setAddOnConfirmDelete(null)} style={{ padding: "3px 8px", borderRadius: 6, border: `1px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                </div>
+              ) : (
+                <button onClick={() => setAddOnConfirmDelete(rule.id)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Trash2 size={14} /></button>
+              )}
+            </div>
+          ))}
+          {allAddOnRules.length === 0 && (
+            <div style={{ textAlign: "center", padding: 20, color: C.textMut, fontSize: 13, fontStyle: "italic" }}>No add-ons configured. Click below to create your first add-on.</div>
+          )}
+        </div>
+        <button onClick={() => setEditingAddOn({ id: "", name: "", price: 0, serviceTypes: [], tagIds: [], autoApply: false })}
+          style={{ marginTop: 12, padding: "10px 16px", borderRadius: 8, border: `1.5px dashed ${C.border}`, background: "transparent", color: C.pri, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", width: "100%", transition: "all 0.15s" }}>
+          + Add New Add-On
+        </button>
+
+        {/* Add-On Editor Modal */}
+        {editingAddOn && ReactDOM.createPortal(
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }} onClick={() => setEditingAddOn(null)}>
+            <div onClick={e => e.stopPropagation()} style={{ background: C.surface, borderRadius: 16, padding: "28px 32px", width: 480, maxHeight: "80vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+              <h3 style={{ margin: "0 0 20px", fontSize: 18, fontWeight: 800, color: C.text }}>{editingAddOn.id ? "Edit Add-On" : "New Add-On"}</h3>
+
+              {/* Name */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 4, display: "block" }}>Add-On Name *</label>
+                <input value={editingAddOn.name} onChange={e => setEditingAddOn(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="e.g. Pamper Package" style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 14, fontWeight: 600, color: C.text, fontFamily: "inherit", boxSizing: "border-box" }} />
+              </div>
+
+              {/* Price */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 4, display: "block" }}>Price ($)</label>
+                <input type="number" value={editingAddOn.price} onChange={e => setEditingAddOn(prev => ({ ...prev, price: e.target.value === "" ? 0 : Number(e.target.value) }))}
+                  placeholder="0" style={{ width: 120, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 14, fontWeight: 600, color: C.text, fontFamily: "inherit", textAlign: "right" }} />
+              </div>
+
+              {/* Service Types */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 6, display: "block" }}>Service Types <span style={{ fontWeight: 400, fontStyle: "italic" }}>(which service types does this add-on apply to?)</span></label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {SERVICE_TYPE_OPTIONS.map(opt => {
+                    const sel = (editingAddOn.serviceTypes || []).includes(opt.id);
+                    return (
+                      <button key={opt.id} onClick={() => setEditingAddOn(prev => {
+                        const curr = prev.serviceTypes || [];
+                        return { ...prev, serviceTypes: sel ? curr.filter(s => s !== opt.id) : [...curr, opt.id] };
+                      })}
+                        style={{ padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${sel ? C.pri : C.border}`, background: sel ? C.pri : "transparent", color: sel ? "#fff" : C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>Leave empty = applies to all service types</div>
+              </div>
+
+              {/* Dog Tags */}
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 6, display: "block" }}>Dog Tags <span style={{ fontWeight: 400, fontStyle: "italic" }}>(which dog tags trigger this add-on?)</span></label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {dogTags.map(tag => {
+                    const sel = (editingAddOn.tagIds || []).includes(tag.id);
+                    const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
+                    return (
+                      <button key={tag.id} onClick={() => setEditingAddOn(prev => {
+                        const curr = prev.tagIds || [];
+                        return { ...prev, tagIds: sel ? curr.filter(t => t !== tag.id) : [...curr, tag.id] };
+                      })}
+                        style={{ padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${sel ? tc.text : C.border}`, background: sel ? tc.bg : "transparent", color: sel ? tc.text : C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
+                        {tag.name}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>Leave empty = applies to all dogs regardless of tags</div>
+              </div>
+
+              {/* Auto-Apply Toggle */}
+              <div style={{ marginBottom: 20, display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}` }}>
+                <div onClick={() => setEditingAddOn(prev => ({ ...prev, autoApply: !prev.autoApply }))}
+                  style={{ width: 36, height: 20, borderRadius: 10, background: editingAddOn.autoApply ? C.suc : C.border, cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+                  <div style={{ width: 16, height: 16, borderRadius: 8, background: "#fff", position: "absolute", top: 2, left: editingAddOn.autoApply ? 18 : 2, transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Auto-Apply</div>
+                  <div style={{ fontSize: 11, color: C.textSec }}>Automatically add this to matching reservations when created</div>
+                </div>
+              </div>
+
+              {/* Actions */}
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={() => setEditingAddOn(null)} style={{ padding: "10px 20px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
+                <button onClick={() => {
+                  if (!editingAddOn.name.trim()) return;
+                  saveAddOnRule({ ...editingAddOn, id: editingAddOn.id || gid() });
+                }} disabled={!editingAddOn.name.trim()}
+                  style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: editingAddOn.name.trim() ? C.pri : C.border, color: "#fff", fontSize: 13, fontWeight: 700, cursor: editingAddOn.name.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
+                  {editingAddOn.id ? "Save Changes" : "Create Add-On"}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
         )}
       </Card>
 
@@ -18398,7 +18616,11 @@ function PricingTab({ data, save }) {
           if ((p.daycareRates?.fullDay || 0) > 0) allServices.push({ name: "Full Day Daycare", category: "Daycare" });
           if ((p.daycareRates?.halfDay || 0) > 0) allServices.push({ name: "Half Day Daycare", category: "Daycare" });
           if ((p.dayboardingRate || 0) > 0) allServices.push({ name: "Day Boarding", category: "Daycare" });
-          Object.keys(p.addOns || {}).forEach(svc => { if ((p.addOns[svc] || 0) > 0) allServices.push({ name: svc, category: "Add-On" }); });
+          if ((data.addOnRules || []).length > 0) {
+            (data.addOnRules || []).forEach(r => { if ((r.price || 0) > 0) allServices.push({ name: r.name, category: "Add-On" }); });
+          } else {
+            Object.keys(p.addOns || {}).forEach(svc => { if ((p.addOns[svc] || 0) > 0) allServices.push({ name: svc, category: "Add-On" }); });
+          }
           const descs = data.serviceDescriptions || {};
           const defaults = {
             "Luxury Suite": "Our most spacious cage-free suite featuring Kuranda luxury bedding, flat-screen TV tuned to Dog TV, glass privacy doors, and a sound-resistant environment.",
@@ -18731,7 +18953,7 @@ function CreatePackageWizard({ data, save, onClose }) {
     } else if (selectedCategory === "Add-Ons") {
       const bathTypes = ["Standard Bath", "Hypo Bath", "Medicated Bath", "Whitening Bath", "Fresh N' Clean Bath"];
       let hasBath = false;
-      Object.entries(pricing.addOns || {}).forEach(([key, rate]) => {
+      Object.entries(getAddOnPrices(pricing, data.addOnRules)).forEach(([key, rate]) => {
         if (bathTypes.includes(key)) {
           if (!hasBath) {
             services.push({ name: "Bath (All Types)", unitLabel: "unit", rate });
@@ -20845,7 +21067,7 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
           else if (pkg.serviceName === "Half Day Daycare") unitRate = pricing.daycareRates?.halfDay || 0;
           else if (pkg.serviceName === "Day Boarding") unitRate = pricing.dayboardingRate || 0;
         } else {
-          unitRate = (pricing.addOns || {})[pkg.serviceName] || 0;
+          unitRate = getAddOnPrices(pricing, data.addOnRules)[pkg.serviceName] || 0;
         }
         const retailValue = unitRate * pkg.quantity;
         let packagePrice = retailValue;
@@ -27191,7 +27413,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
 
     const reservations = data.reservations || [];
     const pricing = data.pricing || DEF_PRICING;
-    const addOnPrices = { ...DEF_PRICING.addOns, ...(pricing.addOns || {}) };
+    const addOnPrices = getAddOnPrices(pricing, data.addOnRules);
     const boardingRates = { ...DEF_PRICING.boardingRates, ...(pricing.boardingRates || {}) };
     const daycareRates = { ...DEF_PRICING.daycareRates, ...(pricing.daycareRates || {}) };
     const dayboardingRate = pricing.dayboardingRate ?? DEF_PRICING.dayboardingRate;
@@ -29397,6 +29619,19 @@ export default function App() {
   }, [rawData?._initialized, rawData?.dogTags]);
   // Auto-initialize roles system for existing data that predates the permissions feature
   useEffect(() => { if (data && !data.roles) { save({ ...data, roles: DEFAULT_ROLES }); } }, [data?.roles]);
+
+  // ═══ Auto-migration: convert legacy pricing.addOns into addOnRules ═══
+  useEffect(() => {
+    if (!data || data.addOnRules) return; // already migrated
+    const legacyAddOns = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
+    const rules = Object.entries(legacyAddOns).map(([name, price]) => ({
+      id: gid(), name, price: Number(price) || 0, serviceTypes: [], tagIds: [], autoApply: false,
+    }));
+    if (rules.length > 0) {
+      console.log('[K9] Migrating legacy add-ons to addOnRules:', rules.length);
+      save({ ...data, addOnRules: rules });
+    }
+  }, [data?.addOnRules]);
 
   // ═══ Auto-migration: ensure every dog has exactly ONE tag + proper eval/reservation support ═══
   // Classified dogs (LP/SP/PP) MUST have: a locked eval form + at least one prior reservation.
