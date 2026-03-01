@@ -4952,8 +4952,6 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const inHouse = data.reservations.filter(r=>r.status==="checked-in"&&r.checkIn<=vd&&r.checkOut>=vd);
   const goingHome = data.reservations.filter(r=>r.status==="checked-in"&&r.checkOut===vd);
   const checkedOut = data.reservations.filter(r=>r.status==="checked-out"&&r.checkOut===vd);
-  const cancelled = data.reservations.filter(r=>r.status==="cancelled"&&(r.checkIn===vd||r.checkOut===vd||(r.checkIn<=vd&&r.checkOut>=vd)||r.cancelledAt?.startsWith(vd)));
-
   // ═══ Auto-cancel expired reservations (check-in date passed without check-in) ═══
   useEffect(() => {
     const today = todayStr();
@@ -5251,22 +5249,6 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     }
     directCheckIn(rid);
   };
-  const reactivateReservation = async (rid) => {
-    const res = data.reservations.find(r => r.id === rid);
-    if (!res || res.status !== "cancelled") return;
-    const auditEntry = buildAuditEntry(rid, "Re-activated Reservation", [
-      {field:"Status", oldVal:"Cancelled", newVal:"Upcoming"},
-      {field:"Re-activated By", oldVal:"—", newVal: profile ? (profile.full_name || profile.email || "Staff") : "Staff"},
-      {field:"Originally Cancelled", oldVal:"—", newVal: res.cancelledBy === "System (Auto)" ? "Auto-cancelled (check-in date lapsed)" : `Manual cancel by ${res.cancelledBy || "Unknown"}`},
-    ], profile);
-    await save({
-      ...data,
-      auditLog: [...(data.auditLog || []), auditEntry],
-      reservations: data.reservations.map(r => r.id === rid ? {
-        ...r, status: "upcoming", reactivatedAt: new Date().toISOString(), reactivatedBy: profile ? (profile.full_name || profile.email || "Staff") : "Staff",
-      } : r)
-    });
-  };
   const handleCheckOut = async (rid) => {
     const res = data.reservations.find(r=>r.id===rid);
     // Boarding/dayboarding: open preview modal for checkout (payment gate)
@@ -5380,37 +5362,20 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const fInHouse = useMemo(() => inHouse.filter(r => searchMatch(r, sq) && typeMatch(r)), [inHouse, sq, searchMatch, typeFilterActive, typeFilters]);
   const fGoingHome = useMemo(() => goingHome.filter(r => searchMatch(r, sq) && typeMatch(r)), [goingHome, sq, searchMatch, typeFilterActive, typeFilters]);
   const fCheckedOut = useMemo(() => checkedOut.filter(r => searchMatch(r, sq) && typeMatch(r)), [checkedOut, sq, searchMatch, typeFilterActive, typeFilters]);
-  const fCancelled = useMemo(() => cancelled.filter(r => searchMatch(r, sq) && typeMatch(r)), [cancelled, sq, searchMatch, typeFilterActive, typeFilters]);
+
 
   const isFiltering = !!sq || typeFilterActive;
 
   // Auto-switch to first tab with results when filtering
   useEffect(() => {
     if (!isFiltering || activeTab === "activities") return;
-    const current = activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : activeTab === "cancelled" ? fCancelled : fCheckedOut;
+    const current = activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : fCheckedOut;
     if (current.length > 0) return;
     if (fExpected.length > 0) setActiveTab("expected");
     else if (fInHouse.length > 0) setActiveTab("inhouse");
     else if (fGoingHome.length > 0) setActiveTab("goinghome");
     else if (fCheckedOut.length > 0) setActiveTab("checkedout");
-    else if (fCancelled.length > 0) setActiveTab("cancelled");
-  }, [isFiltering, fExpected.length, fInHouse.length, fGoingHome.length, fCheckedOut.length, fCancelled.length]);
-  // Unpaid deposits: all upcoming/checked-in boarding/dayboarding reservations where deposit < 50% of total
-  const unpaidDeposits = useMemo(() => {
-    return data.reservations.filter(r => {
-      if (r.status !== "upcoming" && r.status !== "checked-in") return false;
-      if (r.type !== "boarding" && r.type !== "dayboarding") return false;
-      const pmts = (data.payments || []).filter(p => p.reservationId === r.id && p.status === "completed" && p.type !== "refund");
-      const refs = (data.payments || []).filter(p => p.reservationId === r.id && (p.type === "refund" || p.status === "refunded"));
-      const collected = pmts.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) - refs.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-      const pricing = data.pricing || DEF_PRICING;
-      const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
-      const rate = (pricing.boardingRates || {})[r.roomType] || 0;
-      const est = rate * nights;
-      const depositReq = Math.round(est * 0.5 * 100) / 100;
-      return collected < depositReq;
-    });
-  }, [data.reservations, data.payments, data.pricing]);
+  }, [isFiltering, fExpected.length, fInHouse.length, fGoingHome.length, fCheckedOut.length]);
 
   const tabs = [
     { id: "expected", label: "Expected", count: isFiltering ? fExpected.length : expected.length, total: expected.length, color: C.info },
@@ -5418,11 +5383,9 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     { id: "goinghome", label: "Going Home", count: isFiltering ? fGoingHome.length : goingHome.length, total: goingHome.length, color: C.acc },
     { id: "checkedout", label: "Checked Out", count: isFiltering ? fCheckedOut.length : checkedOut.length, total: checkedOut.length, color: C.textSec },
     { id: "activities", label: "Activities", count: filteredActivities.filter(r => !r.logEntry?.administered).length, total: allActivities.length, color: C.acc },
-    { id: "unpaid", label: "Unpaid Deposits", count: unpaidDeposits.length, total: unpaidDeposits.length, color: C.dan },
-    { id: "cancelled", label: "Cancelled", count: isFiltering ? fCancelled.length : cancelled.length, total: cancelled.length, color: "#888" },
   ];
 
-  const rawItems = activeTab === "activities" || activeTab === "unpaid" ? [] : activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : activeTab === "cancelled" ? fCancelled : fCheckedOut;
+  const rawItems = activeTab === "activities" ? [] : activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : fCheckedOut;
 
   const handleSort = (col) => {
     if (sortCol === col) { setSortDir(d => d === "asc" ? "desc" : "asc"); }
@@ -5928,69 +5891,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
         </div>
 
         {/* ═══ ACTIVITIES TAB ═══ */}
-        {activeTab === "unpaid" ? (
-          <div style={{padding:16}}>
-            {unpaidDeposits.length === 0 ? (
-              <div style={{textAlign:"center",padding:32,color:C.textSec,fontSize:14}}>All deposits are up to date!</div>
-            ) : (
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-                <thead>
-                  <tr style={{borderBottom:`2px solid ${C.border}`,textAlign:"left"}}>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Client</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Dog</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Dates</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Room</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Est. Total</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Deposit Req.</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Collected</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Outstanding</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {unpaidDeposits.map(r => {
-                    const client = data.clients.find(x => x.id === r.clientId);
-                    const dog = data.dogs.find(x => x.id === r.dogId);
-                    const payments = (data.payments || []).filter(p => p.reservationId === r.id && p.type !== "refund");
-                    const collected = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-                    const pricing = data.pricing || DEF_PRICING;
-                    const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
-                    const rate = (pricing.boardingRates || {})[r.roomType] || 0;
-                    const est = rate * nights;
-                    const depositReq = Math.round(est * 0.5 * 100) / 100;
-                    const outstanding = Math.max(0, depositReq - collected);
-                    return (
-                      <tr key={r.id} onClick={() => nav("client", { clientId: r.clientId })} style={{borderBottom:`1px solid ${C.borderLight}`,cursor:"pointer",transition:"background 0.1s"}} onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                        <td style={{padding:"10px 12px",fontWeight:600,color:C.text}}>{client ? `${client.fields.first_name||""} ${client.fields.last_name||""}`.trim() : "—"}</td>
-                        <td style={{padding:"10px 12px",color:C.text}}>{dog?.fields.name || "—"}</td>
-                        <td style={{padding:"10px 12px",color:C.textSec,fontSize:12}}>{fmtDate(r.checkIn)} — {fmtDate(r.checkOut)}</td>
-                        <td style={{padding:"10px 12px",color:C.textSec}}>{r.roomType || "—"}</td>
-                        <td style={{padding:"10px 12px",textAlign:"right",color:C.text}}>${est.toFixed(2)}</td>
-                        <td style={{padding:"10px 12px",textAlign:"right",color:C.acc,fontWeight:600}}>${depositReq.toFixed(2)}</td>
-                        <td style={{padding:"10px 12px",textAlign:"right",color:collected > 0 ? C.suc : C.textMut}}>${collected.toFixed(2)}</td>
-                        <td style={{padding:"10px 12px",textAlign:"right",color:C.dan,fontWeight:700}}>${outstanding.toFixed(2)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr style={{borderTop:`2px solid ${C.border}`}}>
-                    <td colSpan={7} style={{padding:"10px 12px",fontWeight:700,color:C.text,textAlign:"right"}}>Total Outstanding:</td>
-                    <td style={{padding:"10px 12px",textAlign:"right",fontWeight:800,color:C.dan,fontSize:15}}>${unpaidDeposits.reduce((sum, r) => {
-                      const payments = (data.payments || []).filter(p => p.reservationId === r.id && p.type !== "refund");
-                      const collected = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
-                      const pricing = data.pricing || DEF_PRICING;
-                      const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
-                      const rate = (pricing.boardingRates || {})[r.roomType] || 0;
-                      const est = rate * nights;
-                      const depositReq = Math.round(est * 0.5 * 100) / 100;
-                      return sum + Math.max(0, depositReq - collected);
-                    }, 0).toFixed(2)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            )}
-          </div>
-        ) : activeTab === "activities" ? (
+        {activeTab === "activities" ? (
           <div>
             {/* Print Bath Schedule Button */}
             {(() => {
@@ -6353,7 +6254,6 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                               <Btn size="sm" variant="accent" onClick={() => handleCheckOut(res.id)} icon={<I.LogOut/>}>Out</Btn>
                             )}
                             {activeTab === "checkedout" && <Badge color="default" size="sm">Done</Badge>}
-                            {activeTab === "cancelled" && <Btn size="sm" variant="primary" onClick={() => reactivateReservation(res.id)} icon={<I.RefreshCw/>}>Re-activate</Btn>}
                           </div>
                         </div>
                       );
@@ -8716,6 +8616,23 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     await save(cdCoData);
   };
 
+  const reactivateReservation = async (rid) => {
+    const res = data.reservations.find(r => r.id === rid);
+    if (!res || res.status !== "cancelled") return;
+    const auditEntry = buildAuditEntry(rid, "Re-activated Reservation", [
+      {field:"Status", oldVal:"Cancelled", newVal:"Upcoming"},
+      {field:"Re-activated By", oldVal:"—", newVal: profile ? (profile.full_name || profile.email || "Staff") : "Staff"},
+      {field:"Originally Cancelled", oldVal:"—", newVal: res.cancelledBy === "System (Auto)" ? "Auto-cancelled (check-in date lapsed)" : `Manual cancel by ${res.cancelledBy || "Unknown"}`},
+    ], profile);
+    await save({
+      ...data,
+      auditLog: [...(data.auditLog || []), auditEntry],
+      reservations: data.reservations.map(r => r.id === rid ? {
+        ...r, status: "upcoming", reactivatedAt: new Date().toISOString(), reactivatedBy: profile ? (profile.full_name || profile.email || "Staff") : "Staff",
+      } : r)
+    });
+  };
+
   const dn=(did)=>{const d=data.dogs.find(x=>x.id===did);return d?d.fields.name:"Unknown";};
   const tl=(t)=>t==="boarding"?"Boarding":t==="dayboarding"?"Day Board":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
   const sc=(s)=>s==="checked-in"?"success":s==="upcoming"?"info":"default";
@@ -8763,6 +8680,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const upcomingRes = reservations.filter(r => r.status === "upcoming");
   const currentRes = reservations.filter(r => r.status === "checked-in");
   const pastRes = reservations.filter(r => r.status === "checked-out");
+  const cancelledRes = reservations.filter(r => r.status === "cancelled");
 
   // Tab config
   const clientNotes = client.clientNotes || [];
@@ -8801,11 +8719,16 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             {res.actualCheckOutTime && <div style={{fontSize:9,color:C.textMut,fontStyle:"italic",textAlign:"right"}}>actual: {new Date(res.actualCheckOutTime).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}</div>}
           </div>
         </div>
-        <div style={{display:"flex",gap:6}}>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
           {res.status==="upcoming"&&<Btn size="sm" variant="success" onClick={e=>{e.stopPropagation();handleCheckIn(res.id);}} icon={<I.LogIn/>}>Check In</Btn>}
           {res.status==="checked-in"&&<Btn size="sm" variant="accent" onClick={e=>{e.stopPropagation();handleCheckOut(res.id);}} icon={<I.LogOut/>}>Check Out</Btn>}
+          {res.status==="cancelled"&&<Btn size="sm" variant="primary" onClick={e=>{e.stopPropagation();reactivateReservation(res.id);}} icon={<I.RefreshCw/>}>Re-activate</Btn>}
         </div>
       </div>
+      {res.status==="cancelled"&&<div style={{marginTop:8,padding:"8px 12px",borderRadius:8,background:C.dan+"08",border:`1px solid ${C.dan}20`}}>
+        <div style={{fontSize:11,color:C.dan,fontWeight:700}}>Cancelled {res.cancelledAt ? new Date(res.cancelledAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : ""}</div>
+        <div style={{fontSize:11,color:C.textSec,marginTop:2}}>{res.cancelledBy==="System (Auto)"?"Auto-cancelled — check-in date lapsed":`Cancelled by ${res.cancelledBy||"Unknown"}`}{res.cancelReason&&res.cancelledBy!=="System (Auto)"?` · ${res.cancelReason}`:""}</div>
+      </div>}
     </Card>
   );
 
@@ -8932,6 +8855,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                 { id: "upcoming", label: "Upcoming", count: upcomingRes.length, color: C.info },
                 { id: "current", label: "Current", count: currentRes.length, color: C.suc },
                 { id: "past", label: "Past", count: pastRes.length, color: C.textMut },
+                ...(cancelledRes.length > 0 ? [{ id: "cancelled", label: "Cancelled", count: cancelledRes.length, color: C.dan }] : []),
               ].map(st => {
                 const active = resSubTab === st.id;
                 return (
@@ -8948,7 +8872,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             </div>
             {/* Reservation list */}
             {(() => {
-              const list = resSubTab === "upcoming" ? upcomingRes : resSubTab === "current" ? currentRes : pastRes;
+              const list = resSubTab === "upcoming" ? upcomingRes : resSubTab === "current" ? currentRes : resSubTab === "cancelled" ? cancelledRes : pastRes;
               return list.length === 0 ? (
                 <Card style={{textAlign:"center",padding:32}}><div style={{fontSize:14,color:C.textSec}}>No {resSubTab} reservations</div></Card>
               ) : (
@@ -23396,71 +23320,8 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
       ) : tab === "unpaid-deposits" ? (
         <div style={{ padding: 24 }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Unpaid Deposits Report</div>
-          <div style={{ fontSize: 12, color: C.textSec, marginBottom: 16 }}>View outstanding deposit balances for upcoming boarding reservations</div>
-          {unpaidDeposits.length === 0 ? (
-            <Card style={{ padding: "40px 20px", textAlign: "center" }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: C.suc, marginBottom: 8 }}>All deposits are up to date!</div>
-              <p style={{ fontSize: 12, color: C.textSec, margin: 0 }}>No outstanding deposit balances found.</p>
-            </Card>
-          ) : (
-            <Card>
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
-                <thead>
-                  <tr style={{borderBottom:`2px solid ${C.border}`,textAlign:"left"}}>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Client</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Dog</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Dates</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em"}}>Room</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Est. Total</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Deposit Req.</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Collected</th>
-                    <th style={{padding:"10px 12px",fontWeight:700,color:C.textSec,fontSize:11,textTransform:"uppercase",letterSpacing:"0.04em",textAlign:"right"}}>Outstanding</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {unpaidDeposits.map(r => {
-                    const client = data.clients.find(x => x.id === r.clientId);
-                    const dog = data.dogs.find(x => x.id === r.dogId);
-                    const payments = (data.payments || []).filter(p => p.reservationId === r.id && p.type !== "refund");
-                    const collected = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-                    const pricing = data.pricing || DEF_PRICING;
-                    const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
-                    const rate = (pricing.boardingRates || {})[r.roomType] || 0;
-                    const est = rate * nights;
-                    const depositReq = Math.round(est * 0.5 * 100) / 100;
-                    const outstanding = Math.max(0, depositReq - collected);
-                    return (
-                      <tr key={r.id} onClick={() => nav("client", { clientId: r.clientId })} style={{borderBottom:`1px solid ${C.borderLight}`,cursor:"pointer",transition:"background 0.1s"}} onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                        <td style={{padding:"10px 12px",fontWeight:600,color:C.text}}>{client ? `${client.fields.first_name||""} ${client.fields.last_name||""}`.trim() : "—"}</td>
-                        <td style={{padding:"10px 12px",color:C.text}}>{dog?.fields.name || "—"}</td>
-                        <td style={{padding:"10px 12px",color:C.textSec,fontSize:12}}>{fmtDate(r.checkIn)} — {fmtDate(r.checkOut)}</td>
-                        <td style={{padding:"10px 12px",color:C.textSec}}>{r.roomType || "—"}</td>
-                        <td style={{padding:"10px 12px",textAlign:"right",color:C.text}}>${est.toFixed(2)}</td>
-                        <td style={{padding:"10px 12px",textAlign:"right",color:C.acc,fontWeight:600}}>${depositReq.toFixed(2)}</td>
-                        <td style={{padding:"10px 12px",textAlign:"right",color:collected > 0 ? C.suc : C.textMut}}>${collected.toFixed(2)}</td>
-                        <td style={{padding:"10px 12px",textAlign:"right",color:C.dan,fontWeight:700}}>${outstanding.toFixed(2)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr style={{borderTop:`2px solid ${C.border}`}}>
-                    <td colSpan={7} style={{padding:"10px 12px",fontWeight:700,color:C.text,textAlign:"right"}}>Total Outstanding:</td>
-                    <td style={{padding:"10px 12px",textAlign:"right",fontWeight:800,color:C.dan,fontSize:15}}>${unpaidDeposits.reduce((sum, r) => {
-                      const payments = (data.payments || []).filter(p => p.reservationId === r.id && p.type !== "refund");
-                      const collected = payments.reduce((s, p) => s + (parseFloat(p.amount) || 0), 0);
-                      const pricing = data.pricing || DEF_PRICING;
-                      const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
-                      const rate = (pricing.boardingRates || {})[r.roomType] || 0;
-                      const est = rate * nights;
-                      const depositReq = Math.round(est * 0.5 * 100) / 100;
-                      return sum + Math.max(0, depositReq - collected);
-                    }, 0).toFixed(2)}</td>
-                  </tr>
-                </tfoot>
-              </table>
-            </Card>
-          )}
+          <div style={{ fontSize: 12, color: C.textSec, marginBottom: 16 }}>This report has moved to the Reports page.</div>
+          <Btn variant="primary" onClick={() => nav("reports")}>Go to Reports</Btn>
         </div>
 
       ) : tab === "eod" ? (
@@ -27052,6 +26913,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
           originalCheckOut: r.checkOut || "—",
           cancelledAt: r.cancelledAt?.split("T")[0] || "—",
           cancelledBy: r.cancelledBy || "—",
+          cancelReason: r.cancelledBy === "System (Auto)" ? "Auto (day lapsed)" : "Manual",
           daysBeforeService,
           notes: r.notes || "—",
         };
@@ -27100,6 +26962,35 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   const filteredToursData = useMemo(() => applyReportFilters(toursData, rptFilters, RPT_FILTER_FIELDS.tours || []), [toursData, rptFilters]);
   const filteredDayboardingData = useMemo(() => applyReportFilters(dayboardingData, rptFilters, RPT_FILTER_FIELDS.dayboarding || []), [dayboardingData, rptFilters]);
   const filteredCancellationsData = useMemo(() => applyReportFilters(cancellationsData, rptFilters, RPT_FILTER_FIELDS.cancellations || []), [cancellationsData, rptFilters]);
+
+  const unpaidDepositsData = useMemo(() => {
+    const pricing = data.pricing || DEF_PRICING;
+    return (allRes || [])
+      .filter(r => (r.status === "upcoming" || r.status === "checked-in") && (r.type === "boarding" || r.type === "dayboarding"))
+      .map(r => {
+        const dog = getDog(r.dogId);
+        const client = getClient(r.clientId);
+        const pmts = (data.payments || []).filter(p => p.reservationId === r.id && p.status === "completed" && p.type !== "refund");
+        const refs = (data.payments || []).filter(p => p.reservationId === r.id && (p.type === "refund" || p.status === "refunded"));
+        const collected = pmts.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) - refs.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+        const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
+        const rate = (pricing.boardingRates || {})[r.roomType] || 0;
+        const est = rate * nights;
+        const depositReq = Math.round(est * 0.5 * 100) / 100;
+        const outstanding = Math.max(0, depositReq - collected);
+        if (collected >= depositReq) return null;
+        return {
+          id: r.id, clientId: r.clientId,
+          clientName: client ? `${client.fields?.first_name || ""} ${client.fields?.last_name || ""}`.trim() : "—",
+          dogName: dog?.fields?.name || "—",
+          checkIn: r.checkIn || "—", checkOut: r.checkOut || "—",
+          roomType: r.roomType || "—", status: r.status,
+          estTotal: est, depositReq, collected, outstanding,
+        };
+      })
+      .filter(Boolean);
+  }, [allRes, data.payments, data.pricing]);
+
   const filteredClientDirectoryData = useMemo(() => applyReportFilters(clientDirectoryData, rptFilters, RPT_FILTER_FIELDS.clients || []), [clientDirectoryData, rptFilters]);
 
 
@@ -27500,6 +27391,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     { id: "tours", label: "Tours", desc: "Facility tours given" },
     { id: "dayboarding", label: "Day Boarding", desc: "Day boarding visits" },
     { id: "cancellations", label: "Cancellations", desc: "Cancelled reservations" },
+    { id: "unpaid-deposits", label: "Unpaid Deposits", desc: "Outstanding deposit balances" },
     { id: "clients", label: "Client Directory", desc: "All clients with aggregated metrics" },
   ];
 
@@ -27804,6 +27696,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
                     <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Cancelled</th>
                     <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Days Before</th>
                     <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Cancelled By</th>
+                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Reason</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -27817,6 +27710,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
                       <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.dan, fontWeight: 600 }}>{fmtD(r.cancelledAt)}</td>
                       <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: r.daysBeforeService > 7 ? C.suc : r.daysBeforeService > 0 ? C.warn : C.dan }}>{r.daysBeforeService}</td>
                       <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.cancelledBy}</td>
+                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, fontWeight: 600, color: r.cancelReason === "Auto (day lapsed)" ? C.acc : C.textSec }}>{r.cancelReason}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -27864,6 +27758,54 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
                 </tbody>
               </table>
             </div>
+          </div>
+        )}
+
+        {activeReport === "unpaid-deposits" && (
+          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Unpaid Deposits ({unpaidDepositsData.length})</span>
+              {unpaidDepositsData.length > 0 && <span style={{ fontSize: 13, fontWeight: 800, color: C.dan }}>Total Outstanding: ${unpaidDepositsData.reduce((s, r) => s + r.outstanding, 0).toFixed(2)}</span>}
+            </div>
+            {unpaidDepositsData.length === 0 ? (
+              <div style={{ padding: "40px 20px", textAlign: "center" }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: C.suc, marginBottom: 8 }}>All deposits are up to date!</div>
+                <div style={{ fontSize: 12, color: C.textSec }}>No outstanding deposit balances found.</div>
+              </div>
+            ) : (
+              <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
+                      <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
+                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Dates</th>
+                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Room</th>
+                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Status</th>
+                      <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Est. Total</th>
+                      <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Deposit Req.</th>
+                      <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Collected</th>
+                      <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Outstanding</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {unpaidDepositsData.map(r => (
+                      <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer" }} onClick={() => nav("client-detail", { clientId: r.clientId })}>
+                        <td style={{ padding: "8px 12px", fontWeight: 600, color: C.text }}>{r.clientName}</td>
+                        <td style={{ padding: "8px 12px", color: C.text }}>{r.dogName}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.checkIn)} — {fmtD(r.checkOut)}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", color: C.textSec }}>{r.roomType}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, fontWeight: 600, color: r.status === "checked-in" ? C.suc : C.info, textTransform: "capitalize" }}>{r.status === "checked-in" ? "In House" : "Upcoming"}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", color: C.text }}>${r.estTotal.toFixed(2)}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", color: C.acc, fontWeight: 600 }}>${r.depositReq.toFixed(2)}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", color: r.collected > 0 ? C.suc : C.textMut }}>${r.collected.toFixed(2)}</td>
+                        <td style={{ padding: "8px 12px", textAlign: "right", color: C.dan, fontWeight: 700 }}>${r.outstanding.toFixed(2)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 
