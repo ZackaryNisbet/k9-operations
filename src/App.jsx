@@ -3123,7 +3123,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
   const isCheckedIn = reservation.status === "checked-in";
   const isReadOnly = reservation.status === "checked-out" || reservation.status === "cancelled" || isCheckedIn;
-  // Dates/times remain editable when checked in (early departure, extended stay)
+  // Dates/times remain editable when checked in (late check-in corrections, early departure, extended stay)
   const datesLocked = reservation.status === "checked-out" || reservation.status === "cancelled";
   // Compliance gate: compute if any compliance checks are red (failed)
   const complianceFailures = (() => {
@@ -6744,6 +6744,15 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               if ((updatedRes.medsToday||"") !== (bRes.medsToday||"")) ciDiffs.push({field:"Meds Today",oldVal:bRes.medsToday||"(empty)",newVal:updatedRes.medsToday});
               if (ciDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Filled Check-In Details", ciDiffs, profile));
             }
+            // Also log date/time changes made during checkout
+            if (doCheckOut) {
+              const coDiffs = [];
+              if (updatedRes.checkIn !== bRes.checkIn) coDiffs.push({field:"Check-In Date",oldVal:bRes.checkIn,newVal:updatedRes.checkIn});
+              if (updatedRes.checkOut !== bRes.checkOut) coDiffs.push({field:"Check-Out Date",oldVal:bRes.checkOut,newVal:updatedRes.checkOut});
+              if (updatedRes.checkInTime !== bRes.checkInTime) coDiffs.push({field:"Check-In Time",oldVal:bRes.checkInTime,newVal:updatedRes.checkInTime});
+              if (updatedRes.checkOutTime !== bRes.checkOutTime) coDiffs.push({field:"Check-Out Time",oldVal:bRes.checkOutTime,newVal:updatedRes.checkOutTime});
+              if (coDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Adjusted Dates at Check-Out", coDiffs, profile));
+            }
             const newAuditLog = [...(data.auditLog || []), ...auditLogs];
             await save({ ...data, auditLog: newAuditLog, packageSales: updatedPackageSales, reservations: data.reservations.map(r => r.id === bRes.id ? merged : r) });
             addDashToast({ dogName: bDog.fields.name, action: doCheckIn ? "checked in" : doCheckOut ? "checked out" : "updated", oldVal: doCheckIn ? "Upcoming" : doCheckOut ? "Checked In" : "Previous", newVal: doCheckIn ? "Checked In" : doCheckOut ? "Checked Out" : "Saved", undoRes: origCopy });
@@ -9411,6 +9420,14 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               if ((updatedRes.fedToday||"") !== (bRes.fedToday||"")) ciDiffs.push({field:"Fed Today",oldVal:bRes.fedToday||"(empty)",newVal:updatedRes.fedToday});
               if ((updatedRes.medsToday||"") !== (bRes.medsToday||"")) ciDiffs.push({field:"Meds Today",oldVal:bRes.medsToday||"(empty)",newVal:updatedRes.medsToday});
               if (ciDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Filled Check-In Details", ciDiffs, profile));
+            }
+            if (doCheckOut) {
+              const coDiffs = [];
+              if (updatedRes.checkIn !== bRes.checkIn) coDiffs.push({field:"Check-In Date",oldVal:bRes.checkIn,newVal:updatedRes.checkIn});
+              if (updatedRes.checkOut !== bRes.checkOut) coDiffs.push({field:"Check-Out Date",oldVal:bRes.checkOut,newVal:updatedRes.checkOut});
+              if (updatedRes.checkInTime !== bRes.checkInTime) coDiffs.push({field:"Check-In Time",oldVal:bRes.checkInTime,newVal:updatedRes.checkInTime});
+              if (updatedRes.checkOutTime !== bRes.checkOutTime) coDiffs.push({field:"Check-Out Time",oldVal:bRes.checkOutTime,newVal:updatedRes.checkOutTime});
+              if (coDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Adjusted Dates at Check-Out", coDiffs, profile));
             }
             // Deduct coupons from package sales if applied
             let updatedPackageSales = [...(data.packageSales || [])];
@@ -14087,6 +14104,14 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
               if ((updatedRes.fedToday||"") !== (bRes.fedToday||"")) ciDiffs.push({field:"Fed Today",oldVal:bRes.fedToday||"(empty)",newVal:updatedRes.fedToday});
               if ((updatedRes.medsToday||"") !== (bRes.medsToday||"")) ciDiffs.push({field:"Meds Today",oldVal:bRes.medsToday||"(empty)",newVal:updatedRes.medsToday});
               if (ciDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Filled Check-In Details", ciDiffs, profile));
+            }
+            if (doCheckOut) {
+              const coDiffs = [];
+              if (updatedRes.checkIn !== bRes.checkIn) coDiffs.push({field:"Check-In Date",oldVal:bRes.checkIn,newVal:updatedRes.checkIn});
+              if (updatedRes.checkOut !== bRes.checkOut) coDiffs.push({field:"Check-Out Date",oldVal:bRes.checkOut,newVal:updatedRes.checkOut});
+              if (updatedRes.checkInTime !== bRes.checkInTime) coDiffs.push({field:"Check-In Time",oldVal:bRes.checkInTime,newVal:updatedRes.checkInTime});
+              if (updatedRes.checkOutTime !== bRes.checkOutTime) coDiffs.push({field:"Check-Out Time",oldVal:bRes.checkOutTime,newVal:updatedRes.checkOutTime});
+              if (coDiffs.length > 0) auditLogs.push(buildAuditEntry(bRes.id, "Adjusted Dates at Check-Out", coDiffs, profile));
             }
             // Deduct coupons from package sales if applied
             let updatedPackageSales = [...(data.packageSales || [])];
