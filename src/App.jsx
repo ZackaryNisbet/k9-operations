@@ -2487,6 +2487,23 @@ function MiniDatePicker({ value, onChange, style: extraStyle, min, max, disabled
   );
 }
 
+// Stable compliance CheckItem — defined at module level so React doesn't unmount/remount on every render
+function ComplianceCheckItem({ok, warn, label, detail, expandKey, expanded, onToggle, children}) {
+  return (
+    <div style={{flex:"1 1 0",minWidth:0}}>
+      <button onClick={()=>onToggle(expandKey)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${ok?C.suc+"60":warn?C.acc+"60":C.dan+"60"}`,background:ok?C.suc+"12":warn?C.acc+"12":C.dan+"12",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}}>
+          <span style={{fontSize:14}}>{ok?"✓":warn?"⚠":"✗"}</span>
+          <span style={{fontSize:12,fontWeight:700,color:ok?C.suc:warn?C.acc:C.dan}}>{label}</span>
+          <span style={{fontSize:9,color:C.textMut,marginLeft:"auto"}}>{expanded?"▲":"▼"}</span>
+        </div>
+        <div style={{fontSize:10,color:C.textSec,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{detail}</div>
+      </button>
+      {expanded&&children&&<div style={{marginTop:6,padding:"10px 12px",borderRadius:8,border:`1px solid ${C.border}`,background:C.surface}}>{children}</div>}
+    </div>
+  );
+}
+
 // Format raw digits into (xxx) xxx-xxxx
 function fmtPhoneInput(val) {
   const d = (val || '').replace(/\D/g, '').slice(0, 10);
@@ -3055,7 +3072,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     // Spay/Neuter is visual-only — does NOT block check-in/out per K9 Resorts policy
     // (Intact dogs can enter the building; they just can't participate in group play if over 10 months)
     if (!allAgrSigned) failures.push("Agreements");
-    if (!client?.fields?.emergency_contact && !client?.fields?.emergencyContact) failures.push("Emergency Contact");
+    if (!ecName?.trim() || !ecPhone?.trim() || (ecPhone||"").replace(/\D/g,"").length < 10) failures.push("Emergency Contact");
     return failures;
   })();
   const complianceBlocked = complianceFailures.length > 0;
@@ -3152,7 +3169,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         const issues = [...(vaxStatus.expired || []), ...(vaxStatus.missing || [])].map(v => v.replace(/_/g, " "));
         errs.compliance_vaccines = `Vaccines not compliant: ${issues.join(", ")}`;
       }
-      if (!ecName?.trim() || !ecPhone?.trim()) errs.compliance_ec = "Emergency contact name and phone are required";
+      if (!ecName?.trim() || !ecPhone?.trim()) { errs.compliance_ec = "Emergency contact name and phone are required"; } else if ((ecPhone||"").replace(/\D/g,"").length < 10) { errs.compliance_ec = "Emergency contact phone must be a full 10-digit number"; }
       const agreements = data.agreements || DEF_AGREEMENTS;
       const reqAgrs = agreements.filter(a => a.required !== false);
       const allAgrSigned = reqAgrs.every(a => agrSigned(client, a.id));
@@ -3189,7 +3206,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         const issues = [...(vaxStatus.expired || []), ...(vaxStatus.missing || [])].map(v => v.replace(/_/g, " "));
         errs.compliance_vaccines = `Vaccines not compliant: ${issues.join(", ")}`;
       }
-      if (!ecName?.trim() || !ecPhone?.trim()) errs.compliance_ec = "Emergency contact name and phone are required";
+      if (!ecName?.trim() || !ecPhone?.trim()) { errs.compliance_ec = "Emergency contact name and phone are required"; } else if ((ecPhone||"").replace(/\D/g,"").length < 10) { errs.compliance_ec = "Emergency contact phone must be a full 10-digit number"; }
       const agreements = data.agreements || DEF_AGREEMENTS;
       const reqAgrs = agreements.filter(a => a.required !== false);
       const allAgrSigned = reqAgrs.every(a => agrSigned(client, a.id));
@@ -3940,24 +3957,12 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
             const snStatus = getSpayNeuterCompliance(dog);
             const allAgrSigned = reqAgrs.every(a=>agrSigned(client,a.id));
-            const CheckItem = ({ok,warn,label,detail,expandKey,children})=>(
-              <div style={{flex:"1 1 0",minWidth:0}}>
-                <button onClick={()=>setComplianceExpand(prev=>prev===expandKey?null:expandKey)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${ok?C.suc+"60":warn?C.acc+"60":C.dan+"60"}`,background:ok?C.suc+"12":warn?C.acc+"12":C.dan+"12",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
-                    <span style={{fontSize:14}}>{ok?"✓":warn?"⚠":"✗"}</span>
-                    <span style={{fontSize:12,fontWeight:700,color:ok?C.suc:warn?C.acc:C.dan}}>{label}</span>
-                    <span style={{fontSize:9,color:C.textMut,marginLeft:"auto"}}>{complianceExpand===expandKey?"▲":"▼"}</span>
-                  </div>
-                  <div style={{fontSize:10,color:C.textSec,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{detail}</div>
-                </button>
-                {complianceExpand===expandKey&&children&&<div style={{marginTop:6,padding:"10px 12px",borderRadius:8,border:`1px solid ${C.border}`,background:C.surface}}>{children}</div>}
-              </div>
-            );
+            const toggleExpand = (key) => setComplianceExpand(prev => prev === key ? null : key);
             return (
               <div style={{marginBottom:20}}>
                 <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Reservation Compliance</div>
                 <div style={{display:"flex",gap:8,flexWrap:"nowrap"}}>
-                  <CheckItem ok={vaxStatus.ok} label="Vaccines" expandKey="vax"
+                  <ComplianceCheckItem ok={vaxStatus.ok} label="Vaccines" expandKey="vax" expanded={complianceExpand==="vax"} onToggle={toggleExpand}
                     detail={vaxStatus.ok?"All up to date":`${[...vaxStatus.expired,...vaxStatus.missing].length} issue${[...vaxStatus.expired,...vaxStatus.missing].length>1?"s":""}`}>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
                       {vaxStatus.ok ? (
@@ -3984,15 +3989,18 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                         );
                       })}
                     </div>
-                  </CheckItem>
-                  <CheckItem ok={!!(ecName&&ecPhone)} label="Emergency Contact" expandKey="ec"
+                  </ComplianceCheckItem>
+                  <ComplianceCheckItem ok={!!(ecName?.trim()&&ecPhone?.trim()&&(ecPhone||"").replace(/\D/g,"").length>=10)} label="Emergency Contact" expandKey="ec" expanded={complianceExpand==="ec"} onToggle={toggleExpand}
                     detail={ecName ? ecName : "Not on file"}>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      <Inp label="Contact Name" value={ecName} onChange={setEcName} disabled={isReadOnly}/>
-                      <Inp label="Contact Phone" type="tel" value={ecPhone} onChange={setEcPhone} disabled={isReadOnly}/>
+                      <div><div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"}}>CONTACT NAME</div>
+                      <input value={ecName} onChange={e=>setEcName(e.target.value)} disabled={isReadOnly} placeholder="Contact name..." style={{width:"100%",padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:14,fontFamily:"inherit",color:C.text,background:C.surface,outline:"none",boxSizing:"border-box",...(isReadOnly?{opacity:0.55,pointerEvents:"none",background:C.bg}:{})}}/></div>
+                      <div><div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"}}>CONTACT PHONE</div>
+                      <input value={ecPhone} onChange={e=>setEcPhone(fmtPhoneInput(e.target.value))} disabled={isReadOnly} placeholder="(555) 555-5555" style={{width:"100%",padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:14,fontFamily:"inherit",color:C.text,background:C.surface,outline:"none",boxSizing:"border-box",...(isReadOnly?{opacity:0.55,pointerEvents:"none",background:C.bg}:{})}}/></div>
+                      {(ecPhone||"").replace(/\D/g,"").length > 0 && (ecPhone||"").replace(/\D/g,"").length < 10 && <div style={{fontSize:11,color:C.dan,fontWeight:600}}>Phone must be a full 10-digit number</div>}
                     </div>
-                  </CheckItem>
-                  <CheckItem ok={allAgrSigned} label="Agreements" expandKey="agr"
+                  </ComplianceCheckItem>
+                  <ComplianceCheckItem ok={allAgrSigned} label="Agreements" expandKey="agr" expanded={complianceExpand==="agr"} onToggle={toggleExpand}
                     detail={allAgrSigned?"All signed":reqAgrs.filter(a=>!agrSigned(client,a.id)).map(a=>a.name).join(", ")+" unsigned"}>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
                       {reqAgrs.map(agr=>{
@@ -4016,8 +4024,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                         );
                       })}
                     </div>
-                  </CheckItem>
-                  <CheckItem ok={ageStatus.ok} warn={ageStatus.grandfathered} label="Dog Age" expandKey="age"
+                  </ComplianceCheckItem>
+                  <ComplianceCheckItem ok={ageStatus.ok} warn={ageStatus.grandfathered} label="Dog Age" expandKey="age" expanded={complianceExpand==="age"} onToggle={toggleExpand}
                     detail={ageStatus.age?`${ageStatus.age}yr${ageStatus.grandfathered?" (Grandfathered)":""}`:ageStatus.ok?"N/A":`${ageStatus.age}yr — ${ageStatus.reason}`}>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
                       {ageStatus.age ? (
@@ -4031,8 +4039,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                       )}
                       <div style={{fontSize:10,color:C.textMut,marginTop:4}}>Max age: {(data.resortPolicies||{}).maxDogAge||13} years. Grandfathered after {(data.resortPolicies||{}).grandfatherVisitThreshold||10} visits.</div>
                     </div>
-                  </CheckItem>
-                  <CheckItem ok={snStatus.ok} warn={!snStatus.ok} label="Spay/Neuter" expandKey="sn"
+                  </ComplianceCheckItem>
+                  <ComplianceCheckItem ok={snStatus.ok} warn={!snStatus.ok} label="Spay/Neuter" expandKey="sn" expanded={complianceExpand==="sn"} onToggle={toggleExpand}
                     detail={snStatus.ok?(snStatus.status==="Neutered"||snStatus.status==="Spayed"?snStatus.status:(snStatus.privatePlay?"Intact (Private Play)":snStatus.status||"N/A")):`Intact — No group play`}>
                     <div style={{display:"flex",flexDirection:"column",gap:6}}>
                       <span style={{color:snStatus.ok?C.suc:C.acc,fontSize:11}}>
@@ -4065,7 +4073,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                         </button>
                       )}
                     </div>
-                  </CheckItem>
+                  </ComplianceCheckItem>
                 </div>
               </div>
             );
@@ -4666,7 +4674,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
             // Check compliance with new date
             const errs = {};
-            if (!ecName?.trim() || !ecPhone?.trim()) errs.compliance_ec = "Emergency contact name and phone are required";
+            if (!ecName?.trim() || !ecPhone?.trim()) { errs.compliance_ec = "Emergency contact name and phone are required"; } else if ((ecPhone||"").replace(/\D/g,"").length < 10) { errs.compliance_ec = "Emergency contact phone must be a full 10-digit number"; }
             const agreements = data.agreements || DEF_AGREEMENTS;
             const reqAgrs = agreements.filter(a => a.required !== false);
             const allAgrSigned = reqAgrs.every(a => agrSigned(client, a.id));
@@ -12353,24 +12361,12 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           const allAgeOk = ageResults.every(a=>a.status.ok);
           const snResults = dogs.map(dog=>({dog,status:getSpayNeuterCompliance(dog)}));
           const allSnOk = snResults.every(s=>s.status.ok);
-          const CheckItem = ({ok,warn,label,detail,expandKey,children})=>(
-            <div style={{flex:"1 1 0",minWidth:0}}>
-              <button onClick={()=>setComplianceExpand(prev=>prev===expandKey?null:expandKey)} style={{width:"100%",padding:"10px 12px",borderRadius:10,border:`1.5px solid ${ok?C.suc+"60":warn?C.acc+"60":C.dan+"60"}`,background:ok?C.suc+"12":warn?C.acc+"12":C.dan+"12",cursor:"pointer",fontFamily:"inherit",textAlign:"left"}}>
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  <span style={{fontSize:14}}>{ok?"✓":warn?"⚠":"✗"}</span>
-                  <span style={{fontSize:12,fontWeight:700,color:ok?C.suc:warn?C.acc:C.dan}}>{label}</span>
-                  <span style={{fontSize:9,color:C.textMut,marginLeft:"auto"}}>{complianceExpand===expandKey?"▲":"▼"}</span>
-                </div>
-                <div style={{fontSize:10,color:C.textSec,marginTop:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{detail}</div>
-              </button>
-              {complianceExpand===expandKey&&children&&<div style={{marginTop:6,padding:"10px 12px",borderRadius:8,border:`1px solid ${C.border}`,background:C.surface}}>{children}</div>}
-            </div>
-          );
+          const toggleExpand = (key) => setComplianceExpand(prev => prev === key ? null : key);
           return (
             <div style={{marginTop:20}}>
               <div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:8,letterSpacing:"0.03em",textTransform:"uppercase"}}>Reservation Compliance</div>
               <div style={{display:"flex",gap:8,flexWrap:"nowrap"}}>
-                <CheckItem ok={allVaxOk} label="Vaccines" expandKey="vax"
+                <ComplianceCheckItem ok={allVaxOk} label="Vaccines" expandKey="vax" expanded={complianceExpand==="vax"} onToggle={toggleExpand}
                   detail={allVaxOk?"All up to date":vaxResults.filter(v=>!v.status.ok).map(v=>`${v.dog.fields.name}: ${[...v.status.expired,...v.status.missing].length} issue${[...v.status.expired,...v.status.missing].length>1?"s":""}`).join(", ")}>
                   <div style={{display:"flex",flexDirection:"column",gap:6}}>
                     {vaxResults.map(v=>(
@@ -12401,17 +12397,20 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                       </div>
                     ))}
                   </div>
-                </CheckItem>
-                <CheckItem ok={!!(ecOverride.name&&ecOverride.phone)} warn={ecModified} label="Emergency Contact" expandKey="ec"
+                </ComplianceCheckItem>
+                <ComplianceCheckItem ok={!!(ecOverride.name?.trim()&&ecOverride.phone?.trim()&&(ecOverride.phone||"").replace(/\D/g,"").length>=10)} warn={ecModified} label="Emergency Contact" expandKey="ec" expanded={complianceExpand==="ec"} onToggle={toggleExpand}
                   detail={ecOverride.name ? `${ecOverride.name}${ecModified?" (Modified)":""}` : "Not on file"}>
                   <div style={{display:"flex",flexDirection:"column",gap:6}}>
                     {ecModified && <div style={{fontSize:11,color:C.acc,fontWeight:600}}>Modified from profile</div>}
-                    <Inp label="Emergency Contact Name" type="text" value={ecOverride.name} onChange={v=>setEcOverride(prev=>({...prev,name:v}))}/>
-                    <Inp label="Emergency Phone" type="tel" value={ecOverride.phone} onChange={v=>setEcOverride(prev=>({...prev,phone:v}))}/>
+                    <div><div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"}}>EMERGENCY CONTACT NAME</div>
+                    <input value={ecOverride.name} onChange={e=>setEcOverride(prev=>({...prev,name:e.target.value}))} placeholder="Contact name..." style={{width:"100%",padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:14,fontFamily:"inherit",color:C.text,background:C.surface,outline:"none",boxSizing:"border-box"}}/></div>
+                    <div><div style={{fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"}}>EMERGENCY PHONE</div>
+                    <input value={ecOverride.phone} onChange={e=>setEcOverride(prev=>({...prev,phone:fmtPhoneInput(e.target.value)}))} placeholder="(555) 555-5555" style={{width:"100%",padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:14,fontFamily:"inherit",color:C.text,background:C.surface,outline:"none",boxSizing:"border-box"}}/></div>
                     {hasEmergency && !ecModified && <div style={{fontSize:11,color:C.suc,fontWeight:600}}>Contact on file — update above if needed</div>}
+                    {(ecOverride.phone||"").replace(/\D/g,"").length > 0 && (ecOverride.phone||"").replace(/\D/g,"").length < 10 && <div style={{fontSize:11,color:C.dan,fontWeight:600}}>Phone must be a full 10-digit number</div>}
                   </div>
-                </CheckItem>
-                <CheckItem ok={allAgrSigned} label="Agreement" expandKey="agr"
+                </ComplianceCheckItem>
+                <ComplianceCheckItem ok={allAgrSigned} label="Agreement" expandKey="agr" expanded={complianceExpand==="agr"} onToggle={toggleExpand}
                   detail={allAgrSigned?"All signed":reqAgrs.filter(a=>!agrSigned(client,a.id)).map(a=>a.name).join(", ")+" unsigned"}>
                   <div style={{display:"flex",flexDirection:"column",gap:6}}>
                     {reqAgrs.map(agr=>{
@@ -12435,8 +12434,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                       );
                     })}
                   </div>
-                </CheckItem>
-                <CheckItem ok={allAgeOk} warn={ageResults.some(a=>a.status.grandfathered)} label="Dog Age" expandKey="age"
+                </ComplianceCheckItem>
+                <ComplianceCheckItem ok={allAgeOk} warn={ageResults.some(a=>a.status.grandfathered)} label="Dog Age" expandKey="age" expanded={complianceExpand==="age"} onToggle={toggleExpand}
                   detail={ageResults.every(a=>!a.status.age||a.status.ok)
                     ?ageResults.map(a=>a.status.age?`${a.dog.fields.name}: ${a.status.age}yr${a.status.grandfathered?" (Grandfathered)":""}`:null).filter(Boolean).join(", ")||"N/A"
                     :ageResults.filter(a=>!a.status.ok).map(a=>`${a.dog.fields.name}: ${a.status.age}yr — ${a.status.reason}`).join(", ")}>
@@ -12457,8 +12456,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                     ))}
                     <div style={{fontSize:10,color:C.textMut,marginTop:4}}>Max age: {(data.resortPolicies||{}).maxDogAge||13} years. Grandfathered after {(data.resortPolicies||{}).grandfatherVisitThreshold||10} visits.</div>
                   </div>
-                </CheckItem>
-                <CheckItem ok={allSnOk} warn={!allSnOk} label="Spay/Neuter" expandKey="sn"
+                </ComplianceCheckItem>
+                <ComplianceCheckItem ok={allSnOk} warn={!allSnOk} label="Spay/Neuter" expandKey="sn" expanded={complianceExpand==="sn"} onToggle={toggleExpand}
                   detail={allSnOk?snResults.map(s=>`${s.dog.fields.name}: ${s.status.status==="Neutered"||s.status.status==="Spayed"?s.status.status:(s.status.privatePlay?"Intact (PP)":s.status.status||"N/A")}`).join(", ")||"N/A":snResults.filter(s=>!s.status.ok).map(s=>`${s.dog.fields.name}: Intact — No group play`).join(", ")}>
                   <div style={{display:"flex",flexDirection:"column",gap:6}}>
                     {snResults.map(s=>(
@@ -12473,7 +12472,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                     ))}
                     <div style={{fontSize:10,color:C.textMut,marginTop:4}}>Intact dogs 10+ months old cannot participate in group play but CAN be checked in.</div>
                   </div>
-                </CheckItem>
+                </ComplianceCheckItem>
               </div>
             </div>
           );
@@ -24730,7 +24729,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
               <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn} required />{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{resErrors.checkIn && <div style={{ color: C.dan, fontSize: 12, marginTop: 4, fontWeight: 600 }}>{resErrors.checkIn}</div>}</div>
               <div><Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime} /></div>
-              {type === "boarding" && <div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} required />{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{resErrors.checkOut && <div style={{ color: C.dan, fontSize: 12, marginTop: 4, fontWeight: 600 }}>{resErrors.checkOut}</div>}</div>}
+              {type === "boarding" && <div><Inp label="Check-Out Date" type="date" value={checkOut} onChange={setCheckOut} required />{checkOut&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkOut+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}{checkIn&&checkOut&&<div style={{fontSize:11,fontWeight:600,color:C.textSec,marginTop:2}}>Nights: {countNights(checkIn,checkOut)}</div>}{resErrors.checkOut && <div style={{ color: C.dan, fontSize: 12, marginTop: 4, fontWeight: 600 }}>{resErrors.checkOut}</div>}</div>}
               {type === "boarding" && <div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime} /></div>}
               {type !== "boarding" && <div><Inp label="Check-Out Time" type="time" value={checkOutTime} onChange={setCheckOutTime} /></div>}
             </div>
