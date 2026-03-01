@@ -4969,12 +4969,13 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const [showCalendar, setShowCalendar] = useState(false);
   const [showSummaryDetail, setShowSummaryDetail] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [addOnsView, setAddOnsView] = useState(false);
   const [typeFilters, setTypeFilters] = useState(new Set());
-  const toggleTypeFilter = (type) => setTypeFilters(prev => {
+  const toggleTypeFilter = (type) => { setAddOnsView(false); setTypeFilters(prev => {
     const next = new Set(prev);
     if (next.has(type)) next.delete(type); else next.add(type);
     return next;
-  });
+  }); };
   const typeFilterActive = typeFilters.size > 0;
   const typeMatch = (r) => !typeFilterActive || typeFilters.has(r.type);
 
@@ -5011,6 +5012,27 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const inHouse = data.reservations.filter(r=>r.status==="checked-in"&&r.checkIn<=vd&&r.checkOut>=vd);
   const goingHome = data.reservations.filter(r=>r.status==="checked-in"&&r.checkOut===vd);
   const checkedOut = data.reservations.filter(r=>r.status==="checked-out"&&r.checkOut===vd);
+
+  // ═══ Add-Ons Summary (for in-house dogs) ═══
+  const addOnsSummary = useMemo(() => {
+    const counts = {};
+    const details = {};
+    for (const res of inHouse) {
+      const dog = data.dogs.find(d => d.id === res.dogId);
+      const client = data.clients.find(c => c.id === res.clientId);
+      const dogName = dog?.fields?.name || "Unknown";
+      const clientName = client ? `${client.fields?.first_name || ""} ${client.fields?.last_name || ""}`.trim() : "Unknown";
+      for (const addon of (res.addOns || [])) {
+        counts[addon] = (counts[addon] || 0) + 1;
+        if (!details[addon]) details[addon] = [];
+        details[addon].push({ resId: res.id, dogName, clientName, clientId: res.clientId, dogId: res.dogId });
+      }
+    }
+    return Object.entries(counts)
+      .map(([name, count]) => ({ name, count, dogs: details[name] }))
+      .sort((a, b) => b.count - a.count);
+  }, [inHouse, data.dogs, data.clients]);
+
   // ═══ Auto-cancel expired reservations (check-in date passed without check-in) ═══
   useEffect(() => {
     const today = todayStr();
@@ -5928,13 +5950,64 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                         </button>
                       );
                     })}
-                    {typeFilterActive && <button onClick={() => setTypeFilters(new Set())} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: "0 2px", display: "flex", alignItems: "center", fontFamily: "inherit" }} title="Clear filters"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+                    <span style={{ width: 1, height: 18, background: C.border, margin: "0 2px" }} />
+                    <button onClick={() => { setAddOnsView(v => !v); if (!addOnsView) { setTypeFilters(new Set()); } }}
+                      style={{ padding: "4px 10px", borderRadius: 8, border: `1.5px solid ${addOnsView ? C.warn : C.border}`, background: addOnsView ? C.warn : "transparent", color: addOnsView ? "#fff" : C.textMut, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", whiteSpace: "nowrap", letterSpacing: "0.01em" }}>
+                      Add-Ons
+                    </button>
+                    {(typeFilterActive || addOnsView) && <button onClick={() => { setTypeFilters(new Set()); setAddOnsView(false); }} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: "0 2px", display: "flex", alignItems: "center", fontFamily: "inherit" }} title="Clear filters"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
                   </>
                 )}
               </div>
             </div>
           );
         })()}
+        {/* ═══ ADD-ONS SUMMARY VIEW ═══ */}
+        {addOnsView ? (
+          <div style={{ padding: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: C.text }}>Active Add-Ons</h3>
+              <span style={{ fontSize: 12, color: C.textMut, fontWeight: 500 }}>across {inHouse.length} in-house {inHouse.length === 1 ? "dog" : "dogs"}</span>
+            </div>
+            {addOnsSummary.length === 0 ? (
+              <div style={{ textAlign: "center", padding: 40, color: C.textMut, fontSize: 14 }}>No add-ons currently active for in-house dogs</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {addOnsSummary.map(item => {
+                  const addonPrices = { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
+                  const price = addonPrices[item.name] ?? 0;
+                  const totalRev = price * item.count;
+                  return (
+                    <div key={item.name} style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface, overflow: "hidden" }}>
+                      <div style={{ display: "flex", alignItems: "center", padding: "14px 16px", gap: 12 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minWidth: 40, height: 40, borderRadius: 10, background: C.warn + "18", color: C.warn, fontSize: 18, fontWeight: 800 }}>{item.count}</div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{item.name}</div>
+                          <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>${price.toFixed(2)} each · ${totalRev.toFixed(2)} total revenue</div>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: "50%" }}>
+                          {item.dogs.map((d, i) => (
+                            <span key={i} onClick={() => nav("client-detail", { clientId: d.clientId })}
+                              style={{ fontSize: 11, background: C.priO, color: C.pri, padding: "3px 8px", borderRadius: 8, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.15s" }}
+                              onMouseEnter={e => { e.target.style.background = C.pri; e.target.style.color = "#fff"; }}
+                              onMouseLeave={e => { e.target.style.background = C.priO; e.target.style.color = C.pri; }}>
+                              {d.dogName} ({d.clientName.split(" ").pop()})
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                <div style={{ marginTop: 12, padding: "12px 16px", borderRadius: 10, background: C.surfaceAlt, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>Total active add-ons</span>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: C.pri }}>{addOnsSummary.reduce((s, i) => s + i.count, 0)}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+        <>
         {/* Tab Bar */}
         <div style={{ display: "flex", borderBottom: `2px solid ${C.borderLight}`, background: C.bg }}>
           {tabs.map(tab => {
@@ -6323,6 +6396,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
             })
           )}
         </div>
+        </>
+        )}
         </>
         )}
       </Card>
