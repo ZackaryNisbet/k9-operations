@@ -680,7 +680,7 @@ function getAddOnPrices(dataOrPricing, addOnRules) {
   return { ...DEF_PRICING.addOns, ...(p.addOns || {}) };
 }
 
-function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, dogs, dogProfiles, pricing, isSecondDogSameRoom, roomSegments, reservation, appliedCoupons, addOnRules }) {
+function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, dogs, dogProfiles, pricing, isSecondDogSameRoom, roomSegments, reservation, appliedCoupons, addOnRules, actualCheckInTime }) {
   const p = pricing || DEF_PRICING;
   const lines = [];
   let subtotal = 0;
@@ -753,9 +753,15 @@ function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime
     lines.push({ label: `Day Boarding — ${roomType}`, rate, qty: 1, total: rate });
     subtotal += rate;
   } else if (type === "daycare") {
-    const hrs = countHours(checkInTime, checkOutTime);
     const threshold = p.halfDayThreshold || 5;
-    const isHalf = hrs < threshold;
+    let isHalf;
+    if (actualCheckInTime) {
+      const elapsedMins = (Date.now() - new Date(actualCheckInTime).getTime()) / 60000;
+      isHalf = elapsedMins < threshold * 60;
+    } else {
+      const hrs = countHours(checkInTime, checkOutTime);
+      isHalf = hrs < threshold;
+    }
     const rate = isHalf ? (p.daycareRates || {}).halfDay || 0 : (p.daycareRates || {}).fullDay || 0;
     lines.push({ label: `Daycare — ${isHalf ? "Half" : "Full"} Day`, rate, qty: 1, total: rate });
     subtotal += rate;
@@ -3191,7 +3197,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
   // Calculate adjusted total for deposit/payment gating
   const getAdjustedTotal = () => {
-    const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false, reservation });
+    const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false, reservation, actualCheckInTime: reservation?.actualCheckInTime });
     let adjT = pr.total;
     if (discountType === "percent" && discountValue > 0) adjT = Math.max(0, adjT - Math.round(adjT * (discountValue / 100) * 100) / 100);
     else if (discountType === "flat" && discountValue > 0) adjT = Math.max(0, adjT - Math.min(discountValue, adjT));
@@ -3219,7 +3225,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       if (!belongings.trim()) errs.belongings = "Required — list items brought from home";
       // Deposit gate: 50% required based on nightly rate only (not add-ons/surcharges)
       // Calculate nightly rate separately from add-ons
-      const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false, reservation });
+      const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false, reservation, actualCheckInTime: reservation?.actualCheckInTime });
       const nightlyRateLines = pr.lineItems.filter(l => !l.isAddon && !l.isSurcharge && !l.isDiscount);
       const nightlyRateTotal = nightlyRateLines.reduce((sum, l) => sum + l.total, 0);
       // Apply discount to nightly rate before calculating 50%
@@ -4193,6 +4199,16 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
             <span style={{fontSize:11,fontWeight:600,color:C.pri}}>Dates & times can still be adjusted for early departures or extended stays.</span>
           </div>}
+          {isCheckOutMode && reservation.actualCheckInTime && <div style={{padding:"10px 14px",borderRadius:8,background:"#f0fdf4",border:"1.5px solid #bbf7d0",marginBottom:10,display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <div>
+              <div style={{fontSize:10,fontWeight:700,color:"#16a34a",textTransform:"uppercase",letterSpacing:0.5,marginBottom:2}}>Actual Check-In</div>
+              <div style={{fontSize:14,fontWeight:700,color:C.text}}>{new Date(reservation.actualCheckInTime).toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"})} at {new Date(reservation.actualCheckInTime).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}</div>
+            </div>
+            <div>
+              <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:0.5,marginBottom:2}}>Elapsed</div>
+              <div style={{fontSize:14,fontWeight:700,color:C.text}}>{(() => { const mins = Math.floor((Date.now() - new Date(reservation.actualCheckInTime).getTime()) / 60000); const h = Math.floor(mins / 60); const m = mins % 60; return h > 0 ? `${h}h ${m}m` : `${m}m`; })()}</div>
+            </div>
+          </div>}
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:12}}>
             <div><Inp label="Check-In Date" type="date" value={checkIn} onChange={setCheckIn} disabled={datesLocked}/>{checkIn&&<div style={{fontSize:11,color:C.pri,fontWeight:600,marginTop:2}}>{new Date(checkIn+"T00:00:00").toLocaleDateString("en-US",{weekday:"long",month:"short",day:"numeric"})}</div>}</div>
             <Inp label="Check-In Time" type="time" value={checkInTime} onChange={setCheckInTime} disabled={datesLocked}/>
@@ -4274,7 +4290,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 
           {/* ─── RECEIPT ─── Clean, unified receipt section ─── */}
           {(() => {
-            const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false, reservation });
+            const pr = calcReservationPricing({ type: reservation.type || "boarding", roomType: reservation.roomType, checkIn, checkOut, checkInTime, checkOutTime, dogs: [dog], dogProfiles: data.dogs, pricing: data.pricing, isSecondDogSameRoom: false, reservation, actualCheckInTime: reservation?.actualCheckInTime });
             // Append bath add-on if bath type is selected and 2+ nights
             if (bathType && countNights(checkIn,checkOut) >= 2) {
               const addOnPrices = getAddOnPrices(data.pricing, data.addOnRules);
@@ -6349,21 +6365,33 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                           </div>
                           {/* In Date */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
-                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtDate(res.checkIn)}</span>
+                            {res.actualCheckInTime ? <>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtDate(new Date(res.actualCheckInTime).toISOString().split("T")[0])}</span>
+                              {new Date(res.actualCheckInTime).toISOString().split("T")[0] !== res.checkIn && <div style={{ fontSize: 10, color: C.textMut, textDecoration: "line-through" }}>sched: {fmtDate(res.checkIn)}</div>}
+                            </> : <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtDate(res.checkIn)}</span>}
                           </div>
                           {/* In Time */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
-                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkInTime)}</span>
-                            {res.actualCheckInTime && <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>actual: {new Date(res.actualCheckInTime).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>}
+                            {res.actualCheckInTime ? <>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{new Date(res.actualCheckInTime).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                              <div style={{ fontSize: 10, color: C.textMut, textDecoration: "line-through" }}>sched: {fmtTime(res.checkInTime)}</div>
+                            </> : <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkInTime)}</span>}
                           </div>
                           {/* Out Date */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
-                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtDate(res.checkOut)}</span>
+                            {res.actualCheckOutTime ? <>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtDate(new Date(res.actualCheckOutTime).toISOString().split("T")[0])}</span>
+                              {new Date(res.actualCheckOutTime).toISOString().split("T")[0] !== res.checkOut && <div style={{ fontSize: 10, color: C.textMut, textDecoration: "line-through" }}>sched: {fmtDate(res.checkOut)}</div>}
+                            </> : <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtDate(res.checkOut)}</span>}
                           </div>
                           {/* Out Time */}
                           <div style={{ fontVariantNumeric: "tabular-nums" }}>
-                            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkOutTime)}</span>
-                            {res.actualCheckOutTime && <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>actual: {new Date(res.actualCheckOutTime).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</div>}
+                            {res.actualCheckOutTime ? <>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{new Date(res.actualCheckOutTime).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                              <div style={{ fontSize: 10, color: C.textMut, textDecoration: "line-through" }}>sched: {fmtTime(res.checkOutTime)}</div>
+                            </> : <>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{fmtTime(res.checkOutTime)}</span>
+                            </>}
                           </div>
                           {/* Add-Ons */}
                           <div style={{ position: "relative" }}>
@@ -11651,6 +11679,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         isSecondDogSameRoom: isSecondInRoom,
         roomSegments: dogSegments.length > 0 ? dogSegments : undefined,
         appliedCoupons: appliedCoupons,
+        reservation: { actualCheckInTime: reservation?.actualCheckInTime },
       });
       return {
         id:gid(),clientId,dogId:did,type,
@@ -11866,6 +11895,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           dogs: dog ? [dog] : [], dogProfiles: data.dogs, pricing: data.pricing,
           isSecondDogSameRoom: isSecond,
           roomSegments: dogSegs.length > 0 ? dogSegs : undefined,
+          reservation: { actualCheckInTime: reservation?.actualCheckInTime },
         });
         combined.lineItems.push(...(dog ? [{label: dog.fields.name, isDogHeader: true}] : []), ...pr.lineItems);
         combined.subtotal += pr.subtotal;
@@ -11905,6 +11935,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
       dogs: dog ? [dog] : [], dogProfiles: data.dogs, pricing: data.pricing,
       isSecondDogSameRoom: false,
       roomSegments: singleSegs.length > 0 ? singleSegs : undefined,
+      reservation: { actualCheckInTime: reservation?.actualCheckInTime },
     });
     // Append manual add-ons
     appendAddOns(result, did);
@@ -24790,6 +24821,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
           type, roomType, checkIn, checkOut, checkInTime, checkOutTime,
           dogs: [dog], dogProfiles: dogs, pricing: data.pricing,
           isSecondDogSameRoom: idx > 0,
+          reservation: { actualCheckInTime: undefined },
         });
         combined.lineItems.push(...pr.lineItems);
         combined.subtotal += pr.subtotal;
@@ -24812,6 +24844,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
       type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize,
       dogs: [dogs[0]], dogProfiles: dogs, pricing: data.pricing,
       isSecondDogSameRoom: false,
+      reservation: { actualCheckInTime: undefined },
     });
   }, [type, roomType, checkIn, checkOut, checkInTime, checkOutTime, daycareSize, phase, JSON.stringify(dogs.map(d => d.id))]);
 
@@ -24849,6 +24882,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
         checkInTime, checkOutTime, daycareSize: autoDaycareSize,
         dogs: dog ? [dog] : [], dogProfiles: newDogs, pricing: data.pricing,
         isSecondDogSameRoom: type === "boarding" && idx > 0,
+        reservation: { actualCheckInTime: undefined },
       });
       return {
         id: gid(), clientId: newClient.id, dogId: did, type,
@@ -29138,6 +29172,7 @@ function AIPage({ data, save, nav }) {
             type: params.type, roomType: params.roomType, checkIn: params.startDate, checkOut: checkOut,
             checkInTime: "08:00", checkOutTime: "18:00", dogs: dummyDogs, dogProfiles: [],
             pricing: data.settings?.pricing || DEF_PRICING, isSecondDogSameRoom: params.sameRoom && params.dogCount > 1,
+            reservation: { actualCheckInTime: undefined },
           });
         } catch (e) { pricing = null; }
         setIsTyping(false);
