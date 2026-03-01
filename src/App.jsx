@@ -18460,87 +18460,126 @@ function PricingTab({ data, save }) {
 
         {/* Add-On Editor Modal */}
         {editingAddOn && ReactDOM.createPortal(
-          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }} onClick={() => setEditingAddOn(null)}>
-            <div onClick={e => e.stopPropagation()} style={{ background: C.surface, borderRadius: 16, padding: "28px 32px", width: 480, maxHeight: "80vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
-              <h3 style={{ margin: "0 0 20px", fontSize: 18, fontWeight: 800, color: C.text }}>{editingAddOn.id ? "Edit Add-On" : "New Add-On"}</h3>
-
-              {/* Name */}
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 4, display: "block" }}>Add-On Name *</label>
-                <input value={editingAddOn.name} onChange={e => setEditingAddOn(prev => ({ ...prev, name: e.target.value }))}
-                  placeholder="e.g. Pamper Package" style={{ width: "100%", padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 14, fontWeight: 600, color: C.text, fontFamily: "inherit", boxSizing: "border-box" }} />
-              </div>
-
-              {/* Price */}
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 4, display: "block" }}>Price ($)</label>
-                <input type="number" value={editingAddOn.price} onChange={e => setEditingAddOn(prev => ({ ...prev, price: e.target.value === "" ? 0 : Number(e.target.value) }))}
-                  placeholder="0" style={{ width: 120, padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 14, fontWeight: 600, color: C.text, fontFamily: "inherit", textAlign: "right" }} />
-              </div>
-
-              {/* Service Types */}
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 6, display: "block" }}>Service Types <span style={{ fontWeight: 400, fontStyle: "italic" }}>(which service types does this add-on apply to?)</span></label>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {SERVICE_TYPE_OPTIONS.map(opt => {
-                    const sel = (editingAddOn.serviceTypes || []).includes(opt.id);
-                    return (
-                      <button key={opt.id} onClick={() => setEditingAddOn(prev => {
-                        const curr = prev.serviceTypes || [];
-                        return { ...prev, serviceTypes: sel ? curr.filter(s => s !== opt.id) : [...curr, opt.id] };
-                      })}
-                        style={{ padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${sel ? C.pri : C.border}`, background: sel ? C.pri : "transparent", color: sel ? "#fff" : C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
-                        {opt.label}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>Leave empty = applies to all service types</div>
-              </div>
-
-              {/* Dog Tags */}
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: C.textSec, marginBottom: 6, display: "block" }}>Dog Tags <span style={{ fontWeight: 400, fontStyle: "italic" }}>(which dog tags trigger this add-on?)</span></label>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {dogTags.map(tag => {
-                    const sel = (editingAddOn.tagIds || []).includes(tag.id);
-                    const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
-                    return (
-                      <button key={tag.id} onClick={() => setEditingAddOn(prev => {
-                        const curr = prev.tagIds || [];
-                        return { ...prev, tagIds: sel ? curr.filter(t => t !== tag.id) : [...curr, tag.id] };
-                      })}
-                        style={{ padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${sel ? tc.text : C.border}`, background: sel ? tc.bg : "transparent", color: sel ? tc.text : C.textMut, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
-                        {tag.name}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>Leave empty = applies to all dogs regardless of tags</div>
-              </div>
-
-              {/* Auto-Apply Toggle */}
-              <div style={{ marginBottom: 20, display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}` }}>
-                <div onClick={() => setEditingAddOn(prev => ({ ...prev, autoApply: !prev.autoApply }))}
-                  style={{ width: 36, height: 20, borderRadius: 10, background: editingAddOn.autoApply ? C.suc : C.border, cursor: "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
-                  <div style={{ width: 16, height: 16, borderRadius: 8, background: "#fff", position: "absolute", top: 2, left: editingAddOn.autoApply ? 18 : 2, transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
-                </div>
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,10,30,0.55)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }} onClick={() => setEditingAddOn(null)}>
+            <div onClick={e => e.stopPropagation()} style={{ background: C.surface, borderRadius: 20, width: 500, maxHeight: "85vh", overflowY: "auto", boxShadow: "0 24px 80px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,0,0,0.06)" }}>
+              {/* Header */}
+              <div style={{ padding: "24px 28px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Auto-Apply</div>
-                  <div style={{ fontSize: 11, color: C.textSec }}>Automatically add this to matching reservations when created</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: C.text, letterSpacing: "-0.02em", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>{editingAddOn.id ? "Edit Add-On" : "New Add-On"}</div>
+                  <div style={{ fontSize: 12, color: C.textMut, marginTop: 2, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>Configure pricing, service types, and auto-apply rules</div>
                 </div>
+                <button onClick={() => setEditingAddOn(null)} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: C.surfaceHover, color: C.textMut, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontFamily: "inherit" }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
               </div>
 
-              {/* Actions */}
-              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                <button onClick={() => setEditingAddOn(null)} style={{ padding: "10px 20px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
-                <button onClick={() => {
-                  if (!editingAddOn.name.trim()) return;
-                  saveAddOnRule({ ...editingAddOn, id: editingAddOn.id || gid() });
-                }} disabled={!editingAddOn.name.trim()}
-                  style={{ padding: "10px 24px", borderRadius: 10, border: "none", background: editingAddOn.name.trim() ? C.pri : C.border, color: "#fff", fontSize: 13, fontWeight: 700, cursor: editingAddOn.name.trim() ? "pointer" : "default", fontFamily: "inherit" }}>
-                  {editingAddOn.id ? "Save Changes" : "Create Add-On"}
-                </button>
+              <div style={{ padding: "20px 28px 28px" }}>
+                {/* Name + Price row */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 140px", gap: 12, marginBottom: 20 }}>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, display: "block", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>Name</label>
+                    <input value={editingAddOn.name} onChange={e => setEditingAddOn(prev => ({ ...prev, name: e.target.value }))}
+                      autoFocus placeholder="Pamper Package"
+                      style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: `1.5px solid ${editingAddOn.name.trim() ? C.border : C.dan + "60"}`, background: C.bg, fontSize: 14, fontWeight: 600, color: C.text, fontFamily: "'GT Eesti', -apple-system, sans-serif", boxSizing: "border-box", outline: "none", transition: "border-color 0.15s" }}
+                      onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = editingAddOn.name.trim() ? C.border : C.dan + "60"} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, display: "block", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>Price</label>
+                    <div style={{ position: "relative" }}>
+                      <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>$</span>
+                      <input type="number" min="0" step="0.01" value={editingAddOn.price || ""} onChange={e => {
+                        const val = e.target.value === "" ? 0 : Math.max(0, Number(e.target.value));
+                        setEditingAddOn(prev => ({ ...prev, price: val }));
+                      }}
+                        placeholder="0.00"
+                        style={{ width: "100%", padding: "11px 14px 11px 28px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 14, fontWeight: 700, color: C.text, fontFamily: "'GT Eesti', -apple-system, sans-serif", boxSizing: "border-box", outline: "none", transition: "border-color 0.15s" }}
+                        onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Divider */}
+                <div style={{ height: 1, background: C.borderLight, margin: "0 -28px 20px", width: "calc(100% + 56px)" }} />
+
+                {/* Service Types */}
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 8 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>Applies to Services</label>
+                    {(editingAddOn.serviceTypes || []).length === 0 && <span style={{ fontSize: 10, color: C.suc, fontWeight: 600, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>All types</span>}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {SERVICE_TYPE_OPTIONS.map(opt => {
+                      const sel = (editingAddOn.serviceTypes || []).includes(opt.id);
+                      return (
+                        <button key={opt.id} onClick={() => setEditingAddOn(prev => {
+                          const curr = prev.serviceTypes || [];
+                          return { ...prev, serviceTypes: sel ? curr.filter(s => s !== opt.id) : [...curr, opt.id] };
+                        })}
+                          style={{ padding: "8px 16px", borderRadius: 20, border: `1.5px solid ${sel ? C.pri : C.border}`, background: sel ? C.pri : C.bg, color: sel ? "#fff" : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'GT Eesti', -apple-system, sans-serif", transition: "all 0.15s", letterSpacing: "0.01em" }}>
+                          {sel && <span style={{ marginRight: 4 }}>&#10003;</span>}{opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Dog Tags */}
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 8 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>Applies to Dog Tags</label>
+                    {(editingAddOn.tagIds || []).length === 0 && <span style={{ fontSize: 10, color: C.suc, fontWeight: 600, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>All dogs</span>}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {dogTags.map(tag => {
+                      const sel = (editingAddOn.tagIds || []).includes(tag.id);
+                      const tc = TAG_COLORS[tag.colorIdx % TAG_COLORS.length];
+                      return (
+                        <button key={tag.id} onClick={() => setEditingAddOn(prev => {
+                          const curr = prev.tagIds || [];
+                          return { ...prev, tagIds: sel ? curr.filter(t => t !== tag.id) : [...curr, tag.id] };
+                        })}
+                          style={{ padding: "8px 16px", borderRadius: 20, border: `1.5px solid ${sel ? tc.text : C.border}`, background: sel ? tc.bg : C.bg, color: sel ? tc.text : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'GT Eesti', -apple-system, sans-serif", transition: "all 0.15s" }}>
+                          {sel && <span style={{ marginRight: 4 }}>&#10003;</span>}{tag.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Divider */}
+                <div style={{ height: 1, background: C.borderLight, margin: "0 -28px 20px", width: "calc(100% + 56px)" }} />
+
+                {/* Auto-Apply Toggle */}
+                <div style={{ marginBottom: 24, display: "flex", alignItems: "center", gap: 12, padding: "16px 18px", borderRadius: 14, background: editingAddOn.autoApply ? `${C.suc}08` : C.bg, border: `1.5px solid ${editingAddOn.autoApply ? C.suc + "40" : C.borderLight}`, cursor: "pointer", transition: "all 0.2s" }}
+                  onClick={() => setEditingAddOn(prev => ({ ...prev, autoApply: !prev.autoApply }))}>
+                  <div style={{ width: 44, height: 24, borderRadius: 12, background: editingAddOn.autoApply ? C.suc : C.border, position: "relative", transition: "background 0.2s", flexShrink: 0 }}>
+                    <div style={{ width: 18, height: 18, borderRadius: 9, background: "#fff", position: "absolute", top: 3, left: editingAddOn.autoApply ? 23 : 3, transition: "left 0.2s cubic-bezier(0.4,0,0.2,1)", boxShadow: "0 1px 4px rgba(0,0,0,0.15)" }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>Auto-Apply to Matching Reservations</div>
+                    <div style={{ fontSize: 11, color: C.textMut, marginTop: 1, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>
+                      {editingAddOn.autoApply
+                        ? `Will auto-add to ${(editingAddOn.serviceTypes || []).length > 0 ? (editingAddOn.serviceTypes || []).map(s => SERVICE_TYPE_OPTIONS.find(o => o.id === s)?.label || s).join(", ") : "all"} reservations` + ((editingAddOn.tagIds || []).length > 0 ? ` for ${(editingAddOn.tagIds || []).map(t => dogTags.find(d => d.id === t)?.name || t).join(", ")} dogs` : "")
+                        : "When enabled, this add-on attaches automatically when service type and tags match"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => setEditingAddOn(null)}
+                    style={{ flex: 1, padding: "12px 20px", borderRadius: 12, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'GT Eesti', -apple-system, sans-serif", transition: "all 0.15s" }}
+                    onMouseEnter={e => e.target.style.background = C.surfaceHover} onMouseLeave={e => e.target.style.background = "transparent"}>
+                    Cancel
+                  </button>
+                  <button onClick={() => {
+                    if (!editingAddOn.name.trim()) return;
+                    saveAddOnRule({ ...editingAddOn, id: editingAddOn.id || gid(), price: Math.max(0, Number(editingAddOn.price) || 0) });
+                  }} disabled={!editingAddOn.name.trim()}
+                    style={{ flex: 2, padding: "12px 24px", borderRadius: 12, border: "none", background: editingAddOn.name.trim() ? C.pri : C.border, color: "#fff", fontSize: 13, fontWeight: 700, cursor: editingAddOn.name.trim() ? "pointer" : "default", fontFamily: "'GT Eesti', -apple-system, sans-serif", transition: "all 0.15s", boxShadow: editingAddOn.name.trim() ? "0 4px 12px rgba(0,40,100,0.2)" : "none" }}>
+                    {editingAddOn.id ? "Save Changes" : "Create Add-On"}
+                  </button>
+                </div>
               </div>
             </div>
           </div>,
