@@ -5282,7 +5282,14 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   };
   const dismissDashToast = (id) => setDashToasts(prev => prev.filter(x => x.id !== id));
   const undoDashToast = async (toast) => {
-    await save({ ...data, reservations: data.reservations.map(r => r.id === toast.undoRes.id ? toast.undoRes : r) });
+    const currentRes = data.reservations.find(r => r.id === toast.undoRes.id);
+    const undoAction = toast.action?.includes("checked in") ? "Undo Check-In" : toast.action?.includes("checked out") ? "Undo Check-Out" : "Undo Action";
+    const diffs = [];
+    if (currentRes && currentRes.status !== toast.undoRes.status) {
+      diffs.push({ field: "Status", oldVal: currentRes.status === "checked-in" ? "Checked In" : currentRes.status === "checked-out" ? "Checked Out" : currentRes.status, newVal: toast.undoRes.status === "upcoming" ? "Upcoming" : toast.undoRes.status === "checked-in" ? "Checked In" : toast.undoRes.status });
+    }
+    const auditEntry = buildAuditEntry(toast.undoRes.id, undoAction, diffs.length > 0 ? diffs : [{ field: "Action", oldVal: toast.action || "Change", newVal: "Reverted" }], profile);
+    await save({ ...data, auditLog: [...(data.auditLog || []), auditEntry], reservations: data.reservations.map(r => r.id === toast.undoRes.id ? toast.undoRes : r) });
     dismissDashToast(toast.id);
   };
 
@@ -13221,10 +13228,20 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
   const dismissToast = (id) => setToasts(prev => prev.filter(x => x.id !== id));
   const handleUndo = async (toast) => {
     if (toast.undoRes.id === "__optimize__") {
-      // Undo full optimize: restore all reservations
-      await save({ ...data, reservations: toast.undoRes._prevReservations });
+      const auditEntry = buildAuditEntry("__optimize__", "Undo Optimize", [{ field: "Action", oldVal: "Optimized", newVal: "Reverted" }], profile);
+      await save({ ...data, auditLog: [...(data.auditLog || []), auditEntry], reservations: toast.undoRes._prevReservations });
     } else {
-      await save({ ...data, reservations: data.reservations.map(r => r.id === toast.undoRes.id ? toast.undoRes : r) });
+      const currentRes = data.reservations.find(r => r.id === toast.undoRes.id);
+      const undoAction = toast.action?.includes("checked in") ? "Undo Check-In" : toast.action?.includes("checked out") ? "Undo Check-Out" : toast.action?.includes("transferred") ? "Undo Transfer" : "Undo Action";
+      const diffs = [];
+      if (currentRes && currentRes.status !== toast.undoRes.status) {
+        diffs.push({ field: "Status", oldVal: currentRes.status === "checked-in" ? "Checked In" : currentRes.status === "checked-out" ? "Checked Out" : currentRes.status, newVal: toast.undoRes.status === "upcoming" ? "Upcoming" : toast.undoRes.status === "checked-in" ? "Checked In" : toast.undoRes.status });
+      }
+      if (currentRes && currentRes.room !== toast.undoRes.room) {
+        diffs.push({ field: "Room", oldVal: currentRes.room || "—", newVal: toast.undoRes.room || "—" });
+      }
+      const auditEntry = buildAuditEntry(toast.undoRes.id, undoAction, diffs.length > 0 ? diffs : [{ field: "Action", oldVal: toast.action || "Change", newVal: "Reverted" }], profile);
+      await save({ ...data, auditLog: [...(data.auditLog || []), auditEntry], reservations: data.reservations.map(r => r.id === toast.undoRes.id ? toast.undoRes : r) });
     }
     dismissToast(toast.id);
   };
