@@ -4952,6 +4952,25 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const inHouse = data.reservations.filter(r=>r.status==="checked-in"&&r.checkIn<=vd&&r.checkOut>=vd);
   const goingHome = data.reservations.filter(r=>r.status==="checked-in"&&r.checkOut===vd);
   const checkedOut = data.reservations.filter(r=>r.status==="checked-out"&&r.checkOut===vd);
+  const cancelled = data.reservations.filter(r=>r.status==="cancelled"&&(r.checkIn===vd||r.checkOut===vd||(r.checkIn<=vd&&r.checkOut>=vd)||r.cancelledAt?.startsWith(vd)));
+
+  // ═══ Auto-cancel expired reservations (check-in date passed without check-in) ═══
+  useEffect(() => {
+    const today = todayStr();
+    const expired = data.reservations.filter(r => r.status === "upcoming" && r.checkIn < today);
+    if (expired.length === 0) return;
+    const auditEntries = expired.map(r => buildAuditEntry(r.id, "Auto-Cancelled", [{field:"Status",oldVal:"Upcoming",newVal:"Cancelled"},{field:"Reason",oldVal:"—",newVal:"Check-in date lapsed without check-in"}], null));
+    save({
+      ...data,
+      auditLog: [...(data.auditLog || []), ...auditEntries],
+      reservations: data.reservations.map(r => {
+        if (r.status === "upcoming" && r.checkIn < today) {
+          return { ...r, status: "cancelled", cancelledAt: new Date().toISOString(), cancelledBy: "System (Auto)", cancelReason: "Check-in date lapsed" };
+        }
+        return r;
+      })
+    });
+  }, []);
 
   // ═══ Activities Hub — aggregate all feeding/meds/baths for in-house dogs today ═══
   const actStaffName = profile ? (profile.full_name || profile.email || "Staff") : "Staff";
@@ -5062,15 +5081,17 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     // Stagger saves row-by-row so checkboxes check off in sync with the highlight
     const snapshot = [...pendingActivities];
     let runningReservations = [...data.reservations];
+    const bulkAuditEntries = [];
     for (let i = 0; i < snapshot.length; i++) {
       const row = snapshot[i];
       const logKey = `${today}|${row.colKey}`;
       const logData = { administered: true, by: actStaffName, at: new Date().toISOString() };
       if (row.type === "feeding") logData.consumption = "100%";
+      bulkAuditEntries.push(buildAuditEntry(row.reservationId, "Updated Activity", [{field:`Activity: ${row.colKey.replace(/_/g," ")}`, oldVal:"—", newVal:"Done"}], profile));
       // Update the accumulator with this single row
       runningReservations = runningReservations.map(r => r.id === row.reservationId ? { ...r, activityLog: { ...(r.activityLog || {}), [logKey]: { ...(r.activityLog || {})[logKey], ...logData } } } : r);
       // Save triggers re-render → this row's checkbox checks off
-      save({ ...data, reservations: runningReservations });
+      save({ ...data, auditLog: [...(data.auditLog || []), ...bulkAuditEntries], reservations: runningReservations });
       setBulkAnimatedIds(prev => new Set([...prev, row.id]));
       if (i < snapshot.length - 1) await new Promise(r => setTimeout(r, 120));
     }
@@ -5089,7 +5110,12 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
 
   const updateActivityLog = (reservationId, colKey, updates) => {
     const logKey = `${todayStr()}|${colKey}`;
-    save({ ...data, reservations: data.reservations.map(r => r.id === reservationId ? { ...r, activityLog: { ...(r.activityLog || {}), [logKey]: { ...(r.activityLog || {})[logKey], ...updates } } } : r) });
+    const oldEntry = (data.reservations.find(r => r.id === reservationId)?.activityLog || {})[logKey] || {};
+    const diffs = [];
+    if (updates.administered !== undefined && updates.administered !== oldEntry.administered) diffs.push({field:`Activity: ${colKey.replace(/_/g," ")}`, oldVal: oldEntry.administered ? "Done" : "—", newVal: updates.administered ? "Done" : "—"});
+    if (updates.consumption !== undefined && updates.consumption !== (oldEntry.consumption || "")) diffs.push({field:`Consumption: ${colKey.replace(/_/g," ")}`, oldVal: oldEntry.consumption || "—", newVal: updates.consumption || "—"});
+    const auditEntries = diffs.length > 0 ? [buildAuditEntry(reservationId, "Updated Activity", diffs, profile)] : [];
+    save({ ...data, auditLog: [...(data.auditLog || []), ...auditEntries], reservations: data.reservations.map(r => r.id === reservationId ? { ...r, activityLog: { ...(r.activityLog || {}), [logKey]: { ...(r.activityLog || {})[logKey], ...updates } } } : r) });
   };
 
   // Facility capacity calculations
@@ -5225,6 +5251,22 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     }
     directCheckIn(rid);
   };
+  const reactivateReservation = async (rid) => {
+    const res = data.reservations.find(r => r.id === rid);
+    if (!res || res.status !== "cancelled") return;
+    const auditEntry = buildAuditEntry(rid, "Re-activated Reservation", [
+      {field:"Status", oldVal:"Cancelled", newVal:"Upcoming"},
+      {field:"Re-activated By", oldVal:"—", newVal: profile ? (profile.full_name || profile.email || "Staff") : "Staff"},
+      {field:"Originally Cancelled", oldVal:"—", newVal: res.cancelledBy === "System (Auto)" ? "Auto-cancelled (check-in date lapsed)" : `Manual cancel by ${res.cancelledBy || "Unknown"}`},
+    ], profile);
+    await save({
+      ...data,
+      auditLog: [...(data.auditLog || []), auditEntry],
+      reservations: data.reservations.map(r => r.id === rid ? {
+        ...r, status: "upcoming", reactivatedAt: new Date().toISOString(), reactivatedBy: profile ? (profile.full_name || profile.email || "Staff") : "Staff",
+      } : r)
+    });
+  };
   const handleCheckOut = async (rid) => {
     const res = data.reservations.find(r=>r.id===rid);
     // Boarding/dayboarding: open preview modal for checkout (payment gate)
@@ -5338,19 +5380,21 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
   const fInHouse = useMemo(() => inHouse.filter(r => searchMatch(r, sq) && typeMatch(r)), [inHouse, sq, searchMatch, typeFilterActive, typeFilters]);
   const fGoingHome = useMemo(() => goingHome.filter(r => searchMatch(r, sq) && typeMatch(r)), [goingHome, sq, searchMatch, typeFilterActive, typeFilters]);
   const fCheckedOut = useMemo(() => checkedOut.filter(r => searchMatch(r, sq) && typeMatch(r)), [checkedOut, sq, searchMatch, typeFilterActive, typeFilters]);
+  const fCancelled = useMemo(() => cancelled.filter(r => searchMatch(r, sq) && typeMatch(r)), [cancelled, sq, searchMatch, typeFilterActive, typeFilters]);
 
   const isFiltering = !!sq || typeFilterActive;
 
   // Auto-switch to first tab with results when filtering
   useEffect(() => {
     if (!isFiltering || activeTab === "activities") return;
-    const current = activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : fCheckedOut;
+    const current = activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : activeTab === "cancelled" ? fCancelled : fCheckedOut;
     if (current.length > 0) return;
     if (fExpected.length > 0) setActiveTab("expected");
     else if (fInHouse.length > 0) setActiveTab("inhouse");
     else if (fGoingHome.length > 0) setActiveTab("goinghome");
     else if (fCheckedOut.length > 0) setActiveTab("checkedout");
-  }, [isFiltering, fExpected.length, fInHouse.length, fGoingHome.length, fCheckedOut.length]);
+    else if (fCancelled.length > 0) setActiveTab("cancelled");
+  }, [isFiltering, fExpected.length, fInHouse.length, fGoingHome.length, fCheckedOut.length, fCancelled.length]);
   // Unpaid deposits: all upcoming/checked-in boarding/dayboarding reservations where deposit < 50% of total
   const unpaidDeposits = useMemo(() => {
     return data.reservations.filter(r => {
@@ -5375,9 +5419,10 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     { id: "checkedout", label: "Checked Out", count: isFiltering ? fCheckedOut.length : checkedOut.length, total: checkedOut.length, color: C.textSec },
     { id: "activities", label: "Activities", count: filteredActivities.filter(r => !r.logEntry?.administered).length, total: allActivities.length, color: C.acc },
     { id: "unpaid", label: "Unpaid Deposits", count: unpaidDeposits.length, total: unpaidDeposits.length, color: C.dan },
+    { id: "cancelled", label: "Cancelled", count: isFiltering ? fCancelled.length : cancelled.length, total: cancelled.length, color: "#888" },
   ];
 
-  const rawItems = activeTab === "activities" || activeTab === "unpaid" ? [] : activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : fCheckedOut;
+  const rawItems = activeTab === "activities" || activeTab === "unpaid" ? [] : activeTab === "expected" ? fExpected : activeTab === "inhouse" ? fInHouse : activeTab === "goinghome" ? fGoingHome : activeTab === "cancelled" ? fCancelled : fCheckedOut;
 
   const handleSort = (col) => {
     if (sortCol === col) { setSortDir(d => d === "asc" ? "desc" : "asc"); }
@@ -6065,7 +6110,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                         const cLast = row.client?.fields.last_name || "";
                         const dName = row.dog?.fields.name || "Unknown";
                         return (
-                          <div key={row.id} style={{ display: "grid", gridTemplateColumns: actGrid, padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center", background: administered ? C.suc + "08" : "transparent", transition: "background 0.3s", ...(justAnimated ? { background: C.suc + "22", boxShadow: `inset 4px 0 0 ${C.suc}`, transition: "background 0.6s ease-out, box-shadow 0.6s ease-out" } : {}) }}
+                          <div key={row.id} style={{ display: "grid", gridTemplateColumns: actGrid, padding: "10px 12px", borderBottom: `1px solid ${C.borderLight}`, alignItems: "center", background: administered ? C.suc + "08" : "transparent", transition: "background 0.3s", cursor: "pointer", ...(justAnimated ? { background: C.suc + "22", boxShadow: `inset 4px 0 0 ${C.suc}`, transition: "background 0.6s ease-out, box-shadow 0.6s ease-out" } : {}) }}
+                            onClick={() => setBoardingPreviewId(row.reservationId)}
                             onMouseEnter={e => { if (!administered) e.currentTarget.style.background = C.surfaceHover; }}
                             onMouseLeave={e => { e.currentTarget.style.background = administered ? C.suc + "08" : "transparent"; }}>
                             {/* Time */}
@@ -6307,6 +6353,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                               <Btn size="sm" variant="accent" onClick={() => handleCheckOut(res.id)} icon={<I.LogOut/>}>Out</Btn>
                             )}
                             {activeTab === "checkedout" && <Badge color="default" size="sm">Done</Badge>}
+                            {activeTab === "cancelled" && <Btn size="sm" variant="primary" onClick={() => reactivateReservation(res.id)} icon={<I.RefreshCw/>}>Re-activate</Btn>}
                           </div>
                         </div>
                       );
