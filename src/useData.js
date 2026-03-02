@@ -6,59 +6,59 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from './supabaseClient';
 
 // ============================================================
-// Normalized data hook — 12 tables with REAL columns
-// Entities → individual tables with proper columns
-// Config/settings → locations.data
+// Normalized data hook — V2 schema (60 tables, UUID PKs)
+// Entities → individual tables with real columns
+// Child data (vaccines, weight, feeding, meds, lifecycle, agreements, questionnaires) → separate tables
+// Settings → location_* tables (fully migrated, no JSONB fallback)
 // ============================================================
 
 // ── Column mappings: JS object field → DB column name ──
-// "known fields" are mapped to real columns; anything else → custom_fields JSONB
 
 const CLIENT_FIELDS = {
   phone: 'phone', first_name: 'first_name', last_name: 'last_name',
-  email: 'email', address: 'address',
-  emergency_contact: 'emergency_contact', emergency_phone: 'emergency_phone',
-  vet_name: 'vet_name', vet_phone: 'vet_phone',
+  email: 'email',
+  address: 'address_street1',
+  addressStreet2: 'address_street2',
+  addressCity: 'address_city',
+  addressState: 'address_state',
+  addressZip: 'address_zip',
   notes: 'notes', referral_source: 'referral_source',
 };
 
 const DOG_FIELDS = {
-  name: 'name', breed: 'breed', weight: 'weight', dob: 'dob',
-  sex: 'sex', spayed_neutered: 'spayed_neutered', color: 'color',
-  bath_type: 'bath_type', temperament: 'temperament',
-  rabies_exp: 'rabies_exp', bordetella_exp: 'bordetella_exp',
-  dhpp_exp: 'dhpp_exp', canine_flu_exp: 'canine_flu_exp',
-  profilePic: 'profile_pic', weightLastUpdated: 'weight_last_updated',
-  feedingSchedules: 'feeding_schedules', medicationSchedules: 'medication_schedules',
-  weightLog: 'weight_log',
+  name: 'name', breed: 'breed', color: 'color',
+  sex: 'sex', spayed_neutered: 'spayed_neutered',
+  dob: 'date_of_birth',
+  weight: 'latest_weight',
+  weightLastUpdated: 'latest_weight_date',
+  bathType: 'preferred_bath_type',
+  temperament: 'temperament_notes',
+  profilePic: 'profile_pic_url',
 };
 
-// ── Convert app JS object → flat DB row ──
+// ── Convert app JS object ↔ flat DB row ──
 
 function clientToRow(c, locationId) {
   const f = c.fields || {};
   const row = { id: c.id, location_id: locationId };
-  // Map known fields
   for (const [jsKey, col] of Object.entries(CLIENT_FIELDS)) {
     if (f[jsKey] !== undefined) row[col] = f[jsKey];
   }
-  // Top-level properties
-  if (c.createdAt !== undefined) row.created_at_app = c.createdAt;
-  if (c.lifecycle !== undefined) row.lifecycle = c.lifecycle;
-  if (c.lifecycleEvents !== undefined) row.lifecycle_events = c.lifecycleEvents;
-  if (c.agreements !== undefined) row.agreements = c.agreements;
-  if (c.questionnaireResponses !== undefined) row.questionnaire_responses = c.questionnaireResponses;
-  if (c.notificationPrefs !== undefined) row.notification_prefs = c.notificationPrefs;
-  // Preserve igniteData (Ignite lead import data) in custom_fields
-  if (c.igniteData !== undefined) {
-    row.custom_fields = { ...(row.custom_fields || {}), igniteData: c.igniteData };
+  // Extract lifecycle_stage from complex lifecycle object or simple string
+  if (c.lifecycle !== undefined) {
+    row.lifecycle_stage = typeof c.lifecycle === 'string'
+      ? c.lifecycle
+      : (c.lifecycle?.stage || c.lifecycle?.status || 'prospect');
+    // Store full lifecycle tracking object in lifecycle_data JSONB
+    if (typeof c.lifecycle === 'object') row.lifecycle_data = c.lifecycle;
   }
-  // Custom fields: anything in fields.* not in the known set
-  const custom = {};
-  for (const [k, v] of Object.entries(f)) {
-    if (!CLIENT_FIELDS[k]) custom[k] = v;
-  }
-  if (Object.keys(custom).length > 0) row.custom_fields = custom;
+  if (c.preferredVetId) row.preferred_vet_id = c.preferredVetId;
+  if (c.notificationPrefs) row.notification_prefs = c.notificationPrefs;
+  // Direct columns for formerly-overflowed data
+  if (c.savedCards !== undefined) row.saved_cards = c.savedCards;
+  if (c.clientNotes !== undefined) row.client_notes = c.clientNotes;
+  if (c.recurringDiscountId !== undefined) row.recurring_discount_id = c.recurringDiscountId;
+
   return row;
 }
 
@@ -67,22 +67,23 @@ function rowToClient(r) {
   for (const [jsKey, col] of Object.entries(CLIENT_FIELDS)) {
     if (r[col] != null) fields[jsKey] = r[col];
   }
-  // Merge custom fields back into fields
-  if (r.custom_fields) {
-    for (const [k, v] of Object.entries(r.custom_fields)) fields[k] = v;
-  }
   const c = { id: r.id, fields };
-  if (r.created_at_app) c.createdAt = r.created_at_app;
-  if (r.lifecycle) c.lifecycle = r.lifecycle;
-  if (r.lifecycle_events) c.lifecycleEvents = r.lifecycle_events;
-  if (r.agreements) c.agreements = r.agreements;
-  if (r.questionnaire_responses) c.questionnaireResponses = r.questionnaire_responses;
+  if (r.created_at) c.createdAt = r.created_at;
+  if (r.preferred_vet_id) c.preferredVetId = r.preferred_vet_id;
+  if (r.first_service_date) c.firstServiceDate = r.first_service_date;
+  if (r.last_service_date) c.lastServiceDate = r.last_service_date;
   if (r.notification_prefs) c.notificationPrefs = r.notification_prefs;
-  // Restore igniteData as top-level property (used by lifecycle page)
-  if (fields.igniteData) {
-    c.igniteData = fields.igniteData;
-    delete fields.igniteData;
+  // Direct columns (no longer overflow)
+  if (r.saved_cards) c.savedCards = r.saved_cards;
+  if (r.client_notes) c.clientNotes = r.client_notes;
+  if (r.recurring_discount_id) c.recurringDiscountId = r.recurring_discount_id;
+  // Lifecycle: prefer lifecycle_data JSONB, fall back to lifecycle_stage string
+  if (r.lifecycle_data && Object.keys(r.lifecycle_data).length > 0) {
+    c.lifecycle = r.lifecycle_data;
+  } else if (r.lifecycle_stage) {
+    c.lifecycle = r.lifecycle_stage;
   }
+
   return c;
 }
 
@@ -90,26 +91,10 @@ function dogToRow(d, locationId) {
   const f = d.fields || {};
   const row = { id: d.id, location_id: locationId, client_id: d.clientId || null };
   for (const [jsKey, col] of Object.entries(DOG_FIELDS)) {
-    const val = f[jsKey];
-    if (val !== undefined) {
-      // JSONB columns need to stay as objects/arrays
-      if (col === 'feeding_schedules' || col === 'medication_schedules' || col === 'weight_log') {
-        row[col] = val;
-      } else {
-        row[col] = val;
-      }
-    }
+    if (f[jsKey] !== undefined) row[col] = f[jsKey];
   }
-  if (d.tags !== undefined) row.tags = d.tags;
-  if (d.vaccines !== undefined) row.vaccines = d.vaccines;
   if (d.daycareGroupOverride !== undefined) row.daycare_group_override = d.daycareGroupOverride;
-  if (d.questionnaireResponses !== undefined) row.questionnaire_responses = d.questionnaireResponses;
-  // Custom fields
-  const custom = {};
-  for (const [k, v] of Object.entries(f)) {
-    if (!DOG_FIELDS[k]) custom[k] = v;
-  }
-  if (Object.keys(custom).length > 0) row.custom_fields = custom;
+  if (d.vetId) row.vet_id = d.vetId;
   return row;
 }
 
@@ -118,71 +103,59 @@ function rowToDog(r) {
   for (const [jsKey, col] of Object.entries(DOG_FIELDS)) {
     if (r[col] != null) fields[jsKey] = r[col];
   }
-  if (r.custom_fields) {
-    for (const [k, v] of Object.entries(r.custom_fields)) fields[k] = v;
-  }
   const d = { id: r.id, clientId: r.client_id, fields };
-  if (r.tags) d.tags = r.tags;
-  if (r.vaccines) d.vaccines = r.vaccines;
   if (r.daycare_group_override) d.daycareGroupOverride = r.daycare_group_override;
-  if (r.questionnaire_responses) d.questionnaireResponses = r.questionnaire_responses;
+  if (r.current_tag) d.currentTag = r.current_tag;
+  if (r.is_active != null) d.isActive = r.is_active;
+  if (r.vet_id) d.vetId = r.vet_id;
   return d;
 }
 
 function reservationToRow(res, locationId) {
   return {
     id: res.id, location_id: locationId,
-    client_id: res.clientId || null, dog_id: res.dogId || null,
-    type: res.type || null, room_type: res.roomType || null, room: res.room || null,
-    check_in: res.checkIn || null, check_out: res.checkOut || null,
-    check_in_time: res.checkInTime || null, check_out_time: res.checkOutTime || null,
-    daycare_size: res.daycareSize || null, status: res.status || null,
-    eval_result: res.evalResult || null, notes: res.notes || null,
-    parent_destination: res.parentDestination || null, belongings: res.belongings || null,
-    discount_type: res.discountType || null,
-    discount_value: res.discountValue != null ? res.discountValue : null,
-    total_price: res.totalPrice != null ? res.totalPrice : null,
-    amount_collected: res.amountCollected != null ? res.amountCollected : null,
-    fed_today: res.fedToday || null, meds_today: res.medsToday || null,
-    cancelled_at: res.cancelledAt || null, cancelled_by: res.cancelledBy || null,
-    actual_check_out_time: res.actualCheckOutTime || null,
-    checked_out_by: res.checkedOutBy || null,
-    care_overrides: res.careOverrides || null,
-    emergency_contact_override: res.emergencyContactOverride || null,
-    selected_add_ons: res.selectedAddOns || null,
-    activity_log: res.activityLog || null,
+    client_id: res.clientId || null,
+    dog_id: res.dogId || null,
+    service_type: res.type || res.serviceType || null,
+    room_unit_id: res.roomUnitId || null,
+    status: res.status || null,
+    check_in_date: res.checkIn || res.checkInDate || null,
+    check_out_date: res.checkOut || res.checkOutDate || null,
+    check_in_at: res.checkInTime || res.checkInAt || null,
+    check_out_at: res.checkOutTime || res.checkOutAt || null,
+    price_snapshot: res.priceSnapshot || null,
+    rate_per_night: res.ratePerNight != null ? res.ratePerNight : null,
+    deposit_amount: res.depositAmount != null ? res.depositAmount : null,
+    deposit_paid: res.depositPaid ?? false,
+    total_estimated: res.totalPrice != null ? res.totalPrice : (res.totalEstimated != null ? res.totalEstimated : null),
+    add_ons: res.selectedAddOns || res.addOns || null,
+    picked_up_by_contact_id: res.pickedUpByContactId || null,
+    picked_up_by_name: res.pickedUpByName || null,
+    notes: res.notes || null,
+    invoice_id: res.invoiceId || null,
   };
 }
 
 function rowToReservation(r) {
   const res = { id: r.id, clientId: r.client_id, dogId: r.dog_id };
-  if (r.type) res.type = r.type;
-  if (r.room_type) res.roomType = r.room_type;
-  if (r.room) res.room = r.room;
-  if (r.check_in) res.checkIn = r.check_in;
-  if (r.check_out) res.checkOut = r.check_out;
-  if (r.check_in_time) res.checkInTime = r.check_in_time;
-  if (r.check_out_time) res.checkOutTime = r.check_out_time;
-  if (r.daycare_size) res.daycareSize = r.daycare_size;
+  if (r.service_type) res.type = r.service_type;
+  if (r.room_unit_id) res.roomUnitId = r.room_unit_id;
   if (r.status) res.status = r.status;
-  if (r.eval_result) res.evalResult = r.eval_result;
+  if (r.check_in_date) res.checkIn = r.check_in_date;
+  if (r.check_out_date) res.checkOut = r.check_out_date;
+  if (r.check_in_at) res.checkInTime = r.check_in_at;
+  if (r.check_out_at) res.checkOutTime = r.check_out_at;
+  if (r.price_snapshot) res.priceSnapshot = r.price_snapshot;
+  if (r.rate_per_night != null) res.ratePerNight = Number(r.rate_per_night);
+  if (r.deposit_amount != null) res.depositAmount = Number(r.deposit_amount);
+  if (r.deposit_paid != null) res.depositPaid = r.deposit_paid;
+  if (r.total_estimated != null) res.totalPrice = Number(r.total_estimated);
+  if (r.add_ons) res.selectedAddOns = r.add_ons;
+  if (r.picked_up_by_contact_id) res.pickedUpByContactId = r.picked_up_by_contact_id;
+  if (r.picked_up_by_name) res.pickedUpByName = r.picked_up_by_name;
   if (r.notes) res.notes = r.notes;
-  if (r.parent_destination) res.parentDestination = r.parent_destination;
-  if (r.belongings) res.belongings = r.belongings;
-  if (r.discount_type) res.discountType = r.discount_type;
-  if (r.discount_value != null) res.discountValue = Number(r.discount_value);
-  if (r.total_price != null) res.totalPrice = Number(r.total_price);
-  if (r.amount_collected != null) res.amountCollected = Number(r.amount_collected);
-  if (r.fed_today) res.fedToday = r.fed_today;
-  if (r.meds_today) res.medsToday = r.meds_today;
-  if (r.cancelled_at) res.cancelledAt = r.cancelled_at;
-  if (r.cancelled_by) res.cancelledBy = r.cancelled_by;
-  if (r.actual_check_out_time) res.actualCheckOutTime = r.actual_check_out_time;
-  if (r.checked_out_by) res.checkedOutBy = r.checked_out_by;
-  if (r.care_overrides) res.careOverrides = r.care_overrides;
-  if (r.emergency_contact_override) res.emergencyContactOverride = r.emergency_contact_override;
-  if (r.selected_add_ons) res.selectedAddOns = r.selected_add_ons;
-  if (r.activity_log) res.activityLog = r.activity_log;
+  if (r.invoice_id) res.invoiceId = r.invoice_id;
+  if (r.created_at) res.createdAt = r.created_at;
   return res;
 }
 
@@ -191,7 +164,9 @@ function evaluationToRow(e, locationId) {
     id: e.id, location_id: locationId,
     dog_id: e.dogId || null, client_id: e.clientId || null,
     reservation_id: e.reservationId || null,
-    date: e.date || null, evaluator_name: e.evaluatorName || null,
+    date: e.date || null,
+    evaluator_id: e.evaluatorId || null,
+    evaluator_name: e.evaluatorName || null,
     eval_type: e.evalType || null, has_experience: e.hasExperience ?? null,
     total_score: e.totalScore != null ? e.totalScore : null,
     max_score: e.maxScore != null ? e.maxScore : null,
@@ -207,6 +182,7 @@ function rowToEvaluation(r) {
   if (r.client_id) e.clientId = r.client_id;
   if (r.reservation_id) e.reservationId = r.reservation_id;
   if (r.date) e.date = r.date;
+  if (r.evaluator_id) e.evaluatorId = r.evaluator_id;
   if (r.evaluator_name) e.evaluatorName = r.evaluator_name;
   if (r.eval_type) e.evalType = r.eval_type;
   if (r.has_experience != null) e.hasExperience = r.has_experience;
@@ -224,75 +200,63 @@ function rowToEvaluation(r) {
 function paymentToRow(p, locationId) {
   return {
     id: p.id, location_id: locationId,
-    client_id: p.clientId || null, reservation_id: p.reservationId || null,
-    amount: p.amount != null ? p.amount : null, type: p.type || null,
-    method: p.method || null, card_last4: p.cardLast4 || null,
-    status: p.status || null, note: p.note || null,
-    timestamp: p.timestamp || null,
-    stripe_payment_intent_id: p.stripePaymentIntentId || null,
-    stripe_refund_id: p.stripeRefundId || null,
-    processed_by: p.processedBy || null,
+    invoice_id: p.invoiceId || null,
+    client_id: p.clientId || null,
+    amount: p.amount != null ? p.amount : null,
+    payment_method: p.method || p.paymentMethod || null,
+    external_transaction_id: p.stripePaymentIntentId || p.externalTransactionId || null,
+    status: p.status || null,
+    processed_at: p.timestamp || p.processedAt || null,
   };
 }
 
 function rowToPayment(r) {
   const p = { id: r.id };
+  if (r.invoice_id) p.invoiceId = r.invoice_id;
   if (r.client_id) p.clientId = r.client_id;
-  if (r.reservation_id) p.reservationId = r.reservation_id;
   if (r.amount != null) p.amount = Number(r.amount);
-  if (r.type) p.type = r.type;
-  if (r.method) p.method = r.method;
-  if (r.card_last4) p.cardLast4 = r.card_last4;
+  if (r.payment_method) { p.method = r.payment_method; p.paymentMethod = r.payment_method; }
+  if (r.external_transaction_id) p.stripePaymentIntentId = r.external_transaction_id;
   if (r.status) p.status = r.status;
-  if (r.note) p.note = r.note;
-  if (r.timestamp) p.timestamp = r.timestamp;
-  if (r.stripe_payment_intent_id) p.stripePaymentIntentId = r.stripe_payment_intent_id;
-  if (r.stripe_refund_id) p.stripeRefundId = r.stripe_refund_id;
-  if (r.processed_by) p.processedBy = r.processed_by;
+  if (r.processed_at) { p.timestamp = r.processed_at; p.processedAt = r.processed_at; }
+  if (r.created_at) p.createdAt = r.created_at;
   return p;
 }
 
-function packageToRow(pkg, locationId) {
+function packageToRow(pkg, _locationId) {
   return {
-    id: pkg.id, location_id: locationId,
-    name: pkg.name || null, description: pkg.description || null,
-    service_category: pkg.serviceCategory || null, service_name: pkg.serviceName || null,
+    id: pkg.id,
+    name: pkg.name || null,
+    description: pkg.description || null,
+    package_type: pkg.packageType || 'standard',
+    service_category: pkg.serviceCategory || null,
+    service_names: pkg.serviceNames || (pkg.serviceName ? [pkg.serviceName] : null),
+    discount_type: pkg.discountType || pkg.pricingMode || null,
+    discount_value: pkg.discountValue != null ? pkg.discountValue : (pkg.discountPct || pkg.discountDollar || null),
     quantity: pkg.quantity != null ? pkg.quantity : null,
-    pricing_mode: pkg.pricingMode || null,
-    discount_pct: pkg.discountPct != null ? pkg.discountPct : null,
-    discount_dollar: pkg.discountDollar != null ? pkg.discountDollar : null,
-    package_price: pkg.packagePrice != null ? pkg.packagePrice : null,
-    retail_value: pkg.retailValue != null ? pkg.retailValue : null,
-    unit_price: pkg.unitPrice != null ? pkg.unitPrice : null,
-    savings: pkg.savings != null ? pkg.savings : null,
-    savings_per_unit: pkg.savingsPerUnit != null ? pkg.savingsPerUnit : null,
     expiration_type: pkg.expirationType || null,
     expiration_days: pkg.expirationDays != null ? pkg.expirationDays : null,
-    expiration_date: pkg.expirationDate || null,
+    is_active: pkg.isActive ?? true,
     available_online: pkg.availableOnline ?? false,
-    fields: pkg,
   };
 }
 
 function rowToPackage(r) {
-  // Start from fields JSONB if present (enterprise push stores full object there)
-  const p = { ...(r.fields && typeof r.fields === 'object' ? r.fields : {}), id: r.id };
+  const p = { id: r.id };
   if (r.name) p.name = r.name;
   if (r.description) p.description = r.description;
+  if (r.package_type) p.packageType = r.package_type;
   if (r.service_category) p.serviceCategory = r.service_category;
-  if (r.service_name) p.serviceName = r.service_name;
+  if (r.service_names) {
+    p.serviceNames = r.service_names;
+    p.serviceName = Array.isArray(r.service_names) ? r.service_names[0] : r.service_names;
+  }
+  if (r.discount_type) { p.discountType = r.discount_type; p.pricingMode = r.discount_type; }
+  if (r.discount_value != null) p.discountValue = Number(r.discount_value);
   if (r.quantity != null) p.quantity = Number(r.quantity);
-  if (r.pricing_mode) p.pricingMode = r.pricing_mode;
-  if (r.discount_pct != null) p.discountPct = Number(r.discount_pct);
-  if (r.discount_dollar != null) p.discountDollar = Number(r.discount_dollar);
-  if (r.package_price != null) p.packagePrice = Number(r.package_price);
-  if (r.retail_value != null) p.retailValue = Number(r.retail_value);
-  if (r.unit_price != null) p.unitPrice = Number(r.unit_price);
-  if (r.savings != null) p.savings = Number(r.savings);
-  if (r.savings_per_unit != null) p.savingsPerUnit = Number(r.savings_per_unit);
   if (r.expiration_type) p.expirationType = r.expiration_type;
   if (r.expiration_days != null) p.expirationDays = Number(r.expiration_days);
-  if (r.expiration_date) p.expirationDate = r.expiration_date;
+  if (r.is_active != null) p.isActive = r.is_active;
   if (r.available_online != null) p.availableOnline = r.available_online;
   return p;
 }
@@ -300,11 +264,14 @@ function rowToPackage(r) {
 function packageSaleToRow(ps, locationId) {
   return {
     id: ps.id, location_id: locationId,
-    client_id: ps.clientId || null, package_id: ps.packageId || null,
-    quantity: ps.quantity != null ? ps.quantity : null,
-    used: ps.used != null ? ps.used : 0,
+    client_id: ps.clientId || null,
+    package_id: ps.packageId || null,
+    quantity_total: ps.quantity || ps.quantityTotal || null,
+    quantity_used: ps.used || ps.quantityUsed || 0,
     purchase_date: ps.purchaseDate || null,
-    package_name: ps.packageName || null,
+    expiration_date: ps.expirationDate || null,
+    amount_paid: ps.amountPaid != null ? ps.amountPaid : null,
+    status: ps.status || 'active',
   };
 }
 
@@ -312,10 +279,12 @@ function rowToPackageSale(r) {
   const ps = { id: r.id };
   if (r.client_id) ps.clientId = r.client_id;
   if (r.package_id) ps.packageId = r.package_id;
-  if (r.quantity != null) ps.quantity = Number(r.quantity);
-  if (r.used != null) ps.used = Number(r.used);
+  if (r.quantity_total != null) { ps.quantity = Number(r.quantity_total); ps.quantityTotal = Number(r.quantity_total); }
+  if (r.quantity_used != null) { ps.used = Number(r.quantity_used); ps.quantityUsed = Number(r.quantity_used); }
   if (r.purchase_date) ps.purchaseDate = r.purchase_date;
-  if (r.package_name) ps.packageName = r.package_name;
+  if (r.expiration_date) ps.expirationDate = r.expiration_date;
+  if (r.amount_paid != null) ps.amountPaid = Number(r.amount_paid);
+  if (r.status) ps.status = r.status;
   return ps;
 }
 
@@ -323,10 +292,15 @@ function messageToRow(m, locationId) {
   return {
     id: m.id, location_id: locationId,
     client_id: m.clientId || null,
-    direction: m.direction || null, channel: m.channel || null,
-    body: m.body || null, timestamp: m.timestamp || null,
-    status: m.status || null, read_at: m.readAt || null,
-    twilio_sid: m.twilioSid || null, template_id: m.templateId || null,
+    direction: m.direction || null,
+    channel: m.channel || null,
+    message_type: m.messageType || null,
+    body: m.body || null,
+    to_phone: m.toPhone || null,
+    from_phone: m.fromPhone || null,
+    status: m.status || null,
+    external_id: m.twilioSid || m.externalId || null,
+    sent_at: m.timestamp || m.sentAt || null,
   };
 }
 
@@ -335,33 +309,42 @@ function rowToMessage(r) {
   if (r.client_id) m.clientId = r.client_id;
   if (r.direction) m.direction = r.direction;
   if (r.channel) m.channel = r.channel;
+  if (r.message_type) m.messageType = r.message_type;
   if (r.body) m.body = r.body;
-  if (r.timestamp) m.timestamp = r.timestamp;
+  if (r.to_phone) m.toPhone = r.to_phone;
+  if (r.from_phone) m.fromPhone = r.from_phone;
   if (r.status) m.status = r.status;
-  if (r.read_at) m.readAt = r.read_at;
-  if (r.twilio_sid) m.twilioSid = r.twilio_sid;
-  if (r.template_id) m.templateId = r.template_id;
+  if (r.external_id) { m.twilioSid = r.external_id; m.externalId = r.external_id; }
+  if (r.sent_at) { m.timestamp = r.sent_at; m.sentAt = r.sent_at; }
+  if (r.created_at) m.createdAt = r.created_at;
   return m;
 }
 
 function auditToRow(a, locationId) {
   return {
     id: a.id, location_id: locationId,
-    reservation_id: a.reservationId || null,
-    timestamp: a.timestamp || null,
-    user_name: a.userName || null,
+    table_name: a.tableName || 'k9_reservations',
+    record_id: a.reservationId || a.recordId || null,
     action: a.action || null,
-    details: a.details || null,
+    field_name: a.fieldName || null,
+    old_value: a.oldValue || null,
+    new_value: a.details
+      ? (typeof a.details === 'string' ? a.details : JSON.stringify(a.details))
+      : (a.newValue || null),
+    changed_by: a.changedBy || null,
   };
 }
 
 function rowToAudit(r) {
   const a = { id: r.id };
-  if (r.reservation_id) a.reservationId = r.reservation_id;
-  if (r.timestamp) a.timestamp = r.timestamp;
-  if (r.user_name) a.userName = r.user_name;
+  if (r.table_name) a.tableName = r.table_name;
+  if (r.record_id) { a.recordId = r.record_id; a.reservationId = r.record_id; }
   if (r.action) a.action = r.action;
-  if (r.details) a.details = r.details;
+  if (r.field_name) a.fieldName = r.field_name;
+  if (r.old_value) a.oldValue = r.old_value;
+  if (r.new_value) { a.newValue = r.new_value; a.details = r.new_value; }
+  if (r.changed_by) { a.changedBy = r.changed_by; a.userName = r.changed_by; }
+  if (r.created_at) { a.timestamp = r.created_at; a.createdAt = r.created_at; }
   return a;
 }
 
@@ -388,49 +371,737 @@ function rowToDailyOps(r) {
   return d;
 }
 
-function reminderToRow(rem, locationId) {
-  return {
-    id: rem.id, location_id: locationId,
-    client_id: rem.clientId || null, dog_id: rem.dogId || null,
-    vaccine_type: rem.vaccineType || null, status: rem.status || null,
-    sent_at: rem.sentAt || null, message: rem.message || null,
-    phone_number: rem.phoneNumber || null,
+
+// ============================================================
+// SETTINGS ADAPTERS — location_* table ↔ app data shape
+// ============================================================
+// Each adapter has:
+//   load(rows) → app format  (transform raw query results)
+//   save(locationId, prev, next) → write changes to table
+
+// Generic helper: diff array-of-objects and write changes
+async function saveArraySetting(table, locationId, prev, next, appToRow) {
+  const diff = diffArrays(prev, next);
+  if (!diff.hasChanges) return;
+  const ops = [];
+  if (diff.adds.length + diff.updates.length > 0) {
+    const rows = [...diff.adds, ...diff.updates].map(item => appToRow(item, locationId));
+    ops.push(supabase.from(table).upsert(rows, { onConflict: 'id' }));
+  }
+  if (diff.deletes.length > 0) {
+    ops.push(supabase.from(table).delete().in('id', diff.deletes.map(i => i.id)));
+  }
+  for (const op of ops) {
+    const { error } = await op;
+    if (error) console.error(`Settings save ${table}:`, error);
+  }
+}
+
+// --- Pricing: location_pricing → data.pricing ---
+// Table rows: { category, sub_category, price }
+// App format: { boardingRates: { "Luxury Suite": 100 }, daycareRates: { fullDay: 50, halfDay: 30 }, privatePlaySurcharge: 20, dayboardingRate: 40 }
+function loadPricing(rows) {
+  if (!rows || rows.length === 0) return undefined; // let app use default
+  const pricing = { boardingRates: {}, daycareRates: {} };
+  for (const r of rows) {
+    if (r.effective_to) continue; // skip expired prices
+    const p = Number(r.price);
+    if (r.category === 'boarding') pricing.boardingRates[r.sub_category] = p;
+    else if (r.category === 'daycare') {
+      if (r.sub_category === 'full_day') pricing.daycareRates.fullDay = p;
+      else if (r.sub_category === 'half_day') pricing.daycareRates.halfDay = p;
+    }
+    else if (r.category === 'misc_fee') {
+      if (r.sub_category === 'private_play_surcharge') pricing.privatePlaySurcharge = p;
+      else if (r.sub_category === 'day_boarding') pricing.dayboardingRate = p;
+      else pricing[r.sub_category] = p;
+    }
+    else if (r.category === 'surcharge') {
+      if (!pricing.surcharges) pricing.surcharges = {};
+      pricing.surcharges[r.sub_category] = p;
+    }
+  }
+  return pricing;
+}
+
+async function savePricing(locationId, prev, next) {
+  if (JSON.stringify(prev) === JSON.stringify(next)) return;
+  if (!next) return;
+  // Flatten the pricing object into rows
+  const rows = [];
+  const mkRow = (cat, sub, price) => ({
+    id: undefined, location_id: locationId,
+    category: cat, sub_category: sub, price,
+    effective_from: new Date().toISOString().slice(0, 10),
+  });
+  if (next.boardingRates) {
+    for (const [name, price] of Object.entries(next.boardingRates)) {
+      if (price != null) rows.push(mkRow('boarding', name, price));
+    }
+  }
+  if (next.daycareRates) {
+    if (next.daycareRates.fullDay != null) rows.push(mkRow('daycare', 'full_day', next.daycareRates.fullDay));
+    if (next.daycareRates.halfDay != null) rows.push(mkRow('daycare', 'half_day', next.daycareRates.halfDay));
+  }
+  if (next.privatePlaySurcharge != null) rows.push(mkRow('misc_fee', 'private_play_surcharge', next.privatePlaySurcharge));
+  if (next.dayboardingRate != null) rows.push(mkRow('misc_fee', 'day_boarding', next.dayboardingRate));
+  if (next.surcharges) {
+    for (const [name, price] of Object.entries(next.surcharges)) {
+      if (price != null) rows.push(mkRow('surcharge', name, price));
+    }
+  }
+  // Delete all current active prices for this location, then insert fresh
+  await supabase.from('location_pricing').delete().eq('location_id', locationId).is('effective_to', null);
+  if (rows.length > 0) {
+    const { error } = await supabase.from('location_pricing').insert(rows);
+    if (error) console.error('Save pricing:', error);
+  }
+}
+
+// --- Rooms: location_room_types + location_room_units → data.rooms ---
+// App format: { "Luxury Suite": ["LS1", "LS2"], "Executive Room": ["ER1"] }
+function loadRooms(typeRows, unitRows) {
+  if (!typeRows || typeRows.length === 0) return undefined;
+  const rooms = {};
+  const typeMap = {};
+  for (const t of typeRows) { typeMap[t.id] = t.name; rooms[t.name] = []; }
+  for (const u of (unitRows || [])) {
+    const typeName = typeMap[u.room_type_id];
+    if (typeName && rooms[typeName]) rooms[typeName].push(u.unit_name);
+  }
+  return rooms;
+}
+
+async function saveRooms(locationId, prev, next) {
+  if (JSON.stringify(prev) === JSON.stringify(next)) return;
+  if (!next) return;
+  // Get current room types to find IDs
+  const { data: existingTypes } = await supabase.from('location_room_types')
+    .select('id, name').eq('location_id', locationId);
+  const existingMap = new Map((existingTypes || []).map(t => [t.name, t.id]));
+  const nextTypes = Object.keys(next);
+
+  // Delete removed types (cascade deletes units)
+  for (const [name, id] of existingMap) {
+    if (!nextTypes.includes(name)) {
+      await supabase.from('location_room_types').delete().eq('id', id);
+    }
+  }
+  // Upsert types and their units
+  for (let i = 0; i < nextTypes.length; i++) {
+    const typeName = nextTypes[i];
+    const units = next[typeName] || [];
+    let typeId = existingMap.get(typeName);
+    if (!typeId) {
+      const { data: ins } = await supabase.from('location_room_types')
+        .insert({ location_id: locationId, name: typeName, sort_order: i }).select('id').single();
+      typeId = ins?.id;
+    }
+    if (!typeId) continue;
+    // Replace all units for this type
+    await supabase.from('location_room_units').delete().eq('room_type_id', typeId);
+    if (units.length > 0) {
+      await supabase.from('location_room_units').insert(
+        units.map(name => ({ room_type_id: typeId, location_id: locationId, unit_name: name }))
+      );
+    }
+  }
+}
+
+// --- Dog Tags: location_dog_tags → data.dogTags ---
+function loadDogTags(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  return rows.map(r => ({ id: r.id, name: r.name, colorIdx: r.color_idx, tagCode: r.tag_code }));
+}
+async function saveDogTags(locationId, prev, next) {
+  await saveArraySetting('location_dog_tags', locationId, prev, next,
+    (t, lid) => ({ id: t.id, location_id: lid, tag_code: t.tagCode || t.id, name: t.name, color_idx: t.colorIdx || 0 }));
+}
+
+// --- Required Vaccines: location_required_vaccines → data.requiredVaccines ---
+// App format: array of vaccine code strings like ["rabies_exp", "dhpp_exp"]
+function loadRequiredVaccines(rows, vaccineTypes) {
+  if (!rows || rows.length === 0) return undefined;
+  const typeMap = new Map((vaccineTypes || []).map(vt => [vt.id, vt.code]));
+  return rows.filter(r => r.is_required).map(r => {
+    const code = typeMap.get(r.vaccine_type_id);
+    return code ? code + '_exp' : r.vaccine_type_id;
+  });
+}
+async function saveRequiredVaccines(locationId, prev, next, vaccineTypes) {
+  if (JSON.stringify(prev) === JSON.stringify(next)) return;
+  if (!next) return;
+  const codeToId = new Map((vaccineTypes || []).map(vt => [vt.code + '_exp', vt.id]));
+  // Delete all and re-insert
+  await supabase.from('location_required_vaccines').delete().eq('location_id', locationId);
+  const rows = next.map(code => ({
+    location_id: locationId, vaccine_type_id: codeToId.get(code) || code, is_required: true,
+  })).filter(r => r.vaccine_type_id);
+  if (rows.length > 0) {
+    const { error } = await supabase.from('location_required_vaccines').insert(rows);
+    if (error) console.error('Save required vaccines:', error);
+  }
+}
+
+// --- Closed Dates: location_closed_dates → data.closedDates ---
+function loadClosedDates(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  return rows.map(r => ({ id: r.id, date: r.closed_date, label: r.reason }));
+}
+async function saveClosedDates(locationId, prev, next) {
+  await saveArraySetting('location_closed_dates', locationId, prev, next,
+    (cd, lid) => ({ id: cd.id, location_id: lid, closed_date: cd.date, reason: cd.label || null }));
+}
+
+// --- Policies: location_policies → data.resortPolicies ---
+// Table: key-value rows { policy_key, policy_value }
+// App: { maxDogAge: 15, cancellationNoticeDays: 48, vaccineGraceDays: 14, ... }
+function loadPolicies(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  const policies = {};
+  for (const r of rows) {
+    if (r.effective_to) continue;
+    const val = r.policy_value;
+    // Try to parse as number or boolean
+    if (val === 'true') policies[r.policy_key] = true;
+    else if (val === 'false') policies[r.policy_key] = false;
+    else if (!isNaN(Number(val))) policies[r.policy_key] = Number(val);
+    else policies[r.policy_key] = val;
+  }
+  return policies;
+}
+async function savePolicies(locationId, prev, next) {
+  if (JSON.stringify(prev) === JSON.stringify(next)) return;
+  if (!next) return;
+  await supabase.from('location_policies').delete().eq('location_id', locationId).is('effective_to', null);
+  const rows = Object.entries(next).map(([key, value]) => ({
+    location_id: locationId, policy_key: key, policy_value: String(value),
+    effective_from: new Date().toISOString().slice(0, 10),
+  }));
+  if (rows.length > 0) {
+    const { error } = await supabase.from('location_policies').insert(rows);
+    if (error) console.error('Save policies:', error);
+  }
+}
+
+// --- Message Templates: location_message_templates → data.messageTemplates ---
+function loadMessageTemplates(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  return rows.map(r => ({ id: r.id, name: r.template_name, body: r.body, active: r.is_active }));
+}
+async function saveMessageTemplates(locationId, prev, next) {
+  await saveArraySetting('location_message_templates', locationId, prev, next,
+    (t, lid) => ({ id: t.id, location_id: lid, template_name: t.name, body: t.body, is_active: t.active ?? true }));
+}
+
+// --- EOD Template: location_eod_sections → data.eodTemplate ---
+function loadEodTemplate(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  return rows.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0)).map(r => ({
+    id: r.id, title: r.title, emoji: r.emoji, type: r.section_type, defaultContent: r.default_content,
+  }));
+}
+async function saveEodTemplate(locationId, prev, next) {
+  await saveArraySetting('location_eod_sections', locationId, prev, next,
+    (s, lid) => ({
+      id: s.id, location_id: lid, section_code: s.id, section_type: s.type || 'text',
+      emoji: s.emoji, title: s.title, default_content: s.defaultContent, sort_order: next?.indexOf(s) || 0,
+    }));
+}
+
+// --- Agreements: agreements table → data.agreements ---
+function loadAgreements(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  return rows.map(r => ({
+    id: r.id, name: r.title, body: r.content, required: r.is_current,
+    version: r.version, updatedAt: r.created_at,
+  }));
+}
+async function saveAgreements(locationId, prev, next) {
+  await saveArraySetting('agreements', locationId, prev, next,
+    (a, lid) => ({
+      id: a.id, location_id: lid, title: a.name, content: a.body || '',
+      version: a.version || 1, is_current: a.required ?? true,
+    }));
+}
+
+// --- Add-ons: location_add_ons → data.addOnRules ---
+function loadAddOns(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  return rows.map(r => ({ id: r.id, name: r.name, price: Number(r.price), active: r.is_active }));
+}
+async function saveAddOns(locationId, prev, next) {
+  await saveArraySetting('location_add_ons', locationId, prev, next,
+    (a, lid) => ({ id: a.id, location_id: lid, name: a.name, price: a.price || 0, is_active: a.active ?? true }));
+}
+
+// --- Food Types: location_food_types → data.foodTypes ---
+function loadFoodTypes(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  return rows.map(r => ({ id: r.id, name: r.name, price: Number(r.price || 0) }));
+}
+async function saveFoodTypes(locationId, prev, next) {
+  await saveArraySetting('location_food_types', locationId, prev, next,
+    (f, lid) => ({ id: f.id, location_id: lid, name: f.name, price: f.price || 0 }));
+}
+
+// --- Field Definitions: location_field_definitions → data.fieldDefinitions / data.customFields ---
+function loadFieldDefinitions(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  return rows.map(r => ({
+    id: r.id, entityType: r.entity_type, fieldCode: r.field_code, fieldName: r.field_name,
+    fieldType: r.field_type, fieldOrder: r.field_order, isLocked: r.is_locked,
+    options: r.options, requiredFor: r.required_for,
+  }));
+}
+async function saveFieldDefinitions(locationId, prev, next) {
+  await saveArraySetting('location_field_definitions', locationId, prev, next,
+    (f, lid) => ({
+      id: f.id, location_id: lid, entity_type: f.entityType || 'dog',
+      field_code: f.fieldCode || f.id, field_name: f.fieldName || f.name || '',
+      field_type: f.fieldType || 'text', field_order: f.fieldOrder || 0,
+      is_locked: f.isLocked || false, options: f.options, required_for: f.requiredFor,
+    }));
+}
+
+// --- Automations: location_automations → data.automations ---
+// Single-row table with JSONB tiers
+function loadAutomations(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  const r = rows[0];
+  return { id: r.id, enabled: r.is_enabled, dailyCap: r.daily_cap, tiers: r.tiers || [] };
+}
+async function saveAutomations(locationId, prev, next) {
+  if (JSON.stringify(prev) === JSON.stringify(next)) return;
+  if (!next) return;
+  const row = {
+    location_id: locationId, is_enabled: next.enabled ?? false,
+    daily_cap: next.dailyCap || 50, tiers: next.tiers || [],
   };
+  if (next.id) row.id = next.id;
+  const { error } = await supabase.from('location_automations').upsert(row, { onConflict: next.id ? 'id' : 'location_id' });
+  if (error) console.error('Save automations:', error);
 }
 
-function rowToReminder(r) {
-  const rem = { id: r.id };
-  if (r.client_id) rem.clientId = r.client_id;
-  if (r.dog_id) rem.dogId = r.dog_id;
-  if (r.vaccine_type) rem.vaccineType = r.vaccine_type;
-  if (r.status) rem.status = r.status;
-  if (r.sent_at) rem.sentAt = r.sent_at;
-  if (r.message) rem.message = r.message;
-  if (r.phone_number) rem.phoneNumber = r.phone_number;
-  return rem;
+// --- Run Card Templates: location_run_card_templates → data.runCardTemplates + data.runCardConfig ---
+function loadRunCardTemplates(rows) {
+  if (!rows || rows.length === 0) return { templates: undefined, config: undefined };
+  const r = rows[0];
+  return { templates: r.templates || [], config: r.config || {} };
+}
+async function saveRunCardTemplates(locationId, prev, next, prevConfig, nextConfig) {
+  const changed = JSON.stringify(prev) !== JSON.stringify(next) || JSON.stringify(prevConfig) !== JSON.stringify(nextConfig);
+  if (!changed) return;
+  // Get existing row ID
+  const { data: existing } = await supabase.from('location_run_card_templates')
+    .select('id').eq('location_id', locationId).limit(1).single();
+  const row = {
+    location_id: locationId,
+    templates: next || [],
+    config: nextConfig || {},
+  };
+  if (existing?.id) row.id = existing.id;
+  const { error } = await supabase.from('location_run_card_templates').upsert(row, { onConflict: existing?.id ? 'id' : 'location_id' });
+  if (error) console.error('Save run card templates:', error);
+}
+
+// --- Attendance: location_attendance → data.attendanceRoster + data.attendanceEntries ---
+function loadAttendance(rows) {
+  if (!rows || rows.length === 0) return { roster: undefined, entries: undefined };
+  const roster = rows.flatMap(r => r.roster || []);
+  const entries = rows.flatMap(r => r.entries || []);
+  return { roster, entries };
+}
+async function saveAttendance(locationId, prevRoster, nextRoster, prevEntries, nextEntries) {
+  const rosterChanged = JSON.stringify(prevRoster) !== JSON.stringify(nextRoster);
+  const entriesChanged = JSON.stringify(prevEntries) !== JSON.stringify(nextEntries);
+  if (!rosterChanged && !entriesChanged) return;
+  // Upsert a single row with today's date
+  const today = new Date().toISOString().slice(0, 10);
+  const row = { location_id: locationId, date: today, roster: nextRoster || [], entries: nextEntries || [] };
+  const { error } = await supabase.from('location_attendance').upsert(row, { onConflict: 'id' });
+  if (error) console.error('Save attendance:', error);
+}
+
+// --- Payment Rules: location_payment_rules → data.paymentRules ---
+function loadPaymentRules(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  return rows.filter(r => !r.effective_to).map(r => ({
+    id: r.id, serviceType: r.service_type, payAt: r.pay_at,
+    depositPercent: r.deposit_percent, depositRefundable: r.deposit_refundable,
+  }));
+}
+async function savePaymentRules(locationId, prev, next) {
+  await saveArraySetting('location_payment_rules', locationId, prev, next,
+    (r, lid) => ({
+      id: r.id, location_id: lid, service_type: r.serviceType, pay_at: r.payAt,
+      deposit_percent: r.depositPercent || 0, deposit_refundable: r.depositRefundable ?? false,
+      effective_from: new Date().toISOString().slice(0, 10),
+    }));
+}
+
+// --- Task Templates: location_task_templates → data.taskTemplates ---
+function loadTaskTemplates(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  const result = {};
+  for (const r of rows) { result[r.template_type] = r.items || []; }
+  return result;
+}
+async function saveTaskTemplates(locationId, prev, next) {
+  if (JSON.stringify(prev) === JSON.stringify(next)) return;
+  if (!next) return;
+  for (const [type, items] of Object.entries(next)) {
+    const { error } = await supabase.from('location_task_templates').upsert({
+      location_id: locationId, template_type: type, items: items || [],
+    }, { onConflict: 'id' });
+    if (error) console.error(`Save task template ${type}:`, error);
+  }
+}
+
+// --- Checklists: location_checklists → data.checklists ---
+function loadChecklists(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  const result = {};
+  for (const r of rows) { result[r.checklist_type] = { id: r.id, items: r.items || [] }; }
+  return result;
+}
+async function saveChecklists(locationId, prev, next) {
+  if (JSON.stringify(prev) === JSON.stringify(next)) return;
+  if (!next) return;
+  for (const [type, val] of Object.entries(next)) {
+    const row = { location_id: locationId, checklist_type: type, items: val?.items || val || [] };
+    if (val?.id) row.id = val.id;
+    const { error } = await supabase.from('location_checklists').upsert(row, { onConflict: val?.id ? 'id' : 'location_id' });
+    if (error) console.error(`Save checklist ${type}:`, error);
+  }
+}
+
+// --- Dropdown Options: dropdown_options → data.dropdownOptions ---
+function loadDropdownOptions(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  const result = {};
+  for (const r of rows) {
+    if (!result[r.category]) result[r.category] = [];
+    result[r.category].push({ id: r.id, value: r.value, sortOrder: r.sort_order });
+  }
+  return result;
+}
+async function saveDropdownOptions(locationId, prev, next) {
+  if (JSON.stringify(prev) === JSON.stringify(next)) return;
+  if (!next) return;
+  // Flatten all categories into rows
+  const allRows = [];
+  for (const [category, items] of Object.entries(next)) {
+    for (const item of (items || [])) {
+      allRows.push({ id: item.id, location_id: locationId, category, value: item.value, sort_order: item.sortOrder || 0 });
+    }
+  }
+  // Delete existing and insert fresh
+  await supabase.from('dropdown_options').delete().eq('location_id', locationId);
+  if (allRows.length > 0) {
+    const { error } = await supabase.from('dropdown_options').insert(allRows);
+    if (error) console.error('Save dropdown options:', error);
+  }
 }
 
 
-// ── Entity table config ──
+// --- Facility Settings: location_facility_settings → data.facilitySettings ---
+function loadFacilitySettings(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  const r = rows[0];
+  return { largeDogDaycareSF: r.large_dog_daycare_sf, smallDogDaycareSF: r.small_dog_daycare_sf };
+}
+async function saveFacilitySettings(locationId, prev, next) {
+  if (JSON.stringify(prev) === JSON.stringify(next)) return;
+  if (!next) return;
+  const row = {
+    location_id: locationId,
+    large_dog_daycare_sf: next.largeDogDaycareSF ?? 3600,
+    small_dog_daycare_sf: next.smallDogDaycareSF ?? 2400,
+    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from('location_facility_settings').upsert(row, { onConflict: 'location_id' });
+  if (error) console.error('Save facility settings:', error);
+}
+
+// --- Resort Info: location_resort_info → data.resortInfo ---
+function loadResortInfo(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  return rows[0].info || {};
+}
+async function saveResortInfo(locationId, prev, next) {
+  if (JSON.stringify(prev) === JSON.stringify(next)) return;
+  if (!next) return;
+  const row = { location_id: locationId, info: next, updated_at: new Date().toISOString() };
+  const { error } = await supabase.from('location_resort_info').upsert(row, { onConflict: 'location_id' });
+  if (error) console.error('Save resort info:', error);
+}
+
+// --- Mass Text History: location_mass_text_history → data.massTextHistory ---
+function loadMassTextHistory(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  return rows.map(r => ({
+    id: r.id, message: r.message, recipients: r.recipients || [],
+    recipientCount: r.recipient_count, sentBy: r.sent_by, sentAt: r.sent_at,
+  }));
+}
+async function saveMassTextHistory(locationId, prev, next) {
+  if (JSON.stringify(prev) === JSON.stringify(next)) return;
+  if (!next) return;
+  const diff = diffArrays(prev, next);
+  if (!diff.hasChanges) return;
+  for (const item of [...diff.adds, ...diff.updates]) {
+    const { error } = await supabase.from('location_mass_text_history').upsert({
+      id: item.id, location_id: locationId, message: item.message,
+      recipients: item.recipients || [], recipient_count: item.recipientCount || item.recipients?.length || 0,
+      sent_by: item.sentBy, sent_at: item.sentAt || new Date().toISOString(),
+    }, { onConflict: 'id' });
+    if (error) console.error('Save mass text history:', error);
+  }
+}
+
+// --- Pending Invites: location_pending_invites → data.pendingInvites ---
+function loadPendingInvites(rows) {
+  if (!rows || rows.length === 0) return [];
+  return rows.map(r => ({ id: r.id, email: r.email, role: r.role, invitedBy: r.invited_by, createdAt: r.created_at }));
+}
+async function savePendingInvites(locationId, prev, next) {
+  const diff = diffArrays(prev, next);
+  if (!diff.hasChanges) return;
+  if (diff.adds.length > 0) {
+    const rows = diff.adds.map(i => ({
+      id: i.id, location_id: locationId, email: i.email, role: i.role, invited_by: i.invitedBy,
+    }));
+    const { error } = await supabase.from('location_pending_invites').insert(rows);
+    if (error) console.error('Save pending invites:', error);
+  }
+  if (diff.deletes.length > 0) {
+    const { error } = await supabase.from('location_pending_invites').delete().in('id', diff.deletes.map(i => i.id));
+    if (error) console.error('Delete pending invites:', error);
+  }
+}
+
+// --- Attendance Audit Log: location_attendance_audit → data.attendanceAuditLog ---
+function loadAttendanceAuditLog(rows) {
+  if (!rows || rows.length === 0) return [];
+  return rows.map(r => ({
+    id: r.id, action: r.action, details: r.details, performedBy: r.performed_by, createdAt: r.created_at,
+  }));
+}
+async function saveAttendanceAuditLog(locationId, prev, next) {
+  const diff = diffArrays(prev, next);
+  if (!diff.hasChanges) return;
+  if (diff.adds.length > 0) {
+    const rows = diff.adds.map(e => ({
+      id: e.id, location_id: locationId, action: e.action, details: e.details, performed_by: e.performedBy,
+    }));
+    const { error } = await supabase.from('location_attendance_audit').insert(rows);
+    if (error) console.error('Save attendance audit:', error);
+  }
+}
+
+// --- Client Lifecycle Events: client_lifecycle_events → client.lifecycleEvents ---
+function attachLifecycleEvents(clients, eventRows) {
+  const byClient = {};
+  for (const r of (eventRows || [])) {
+    if (!byClient[r.client_id]) byClient[r.client_id] = [];
+    byClient[r.client_id].push({
+      id: r.id, event: r.event_type, date: r.created_at,
+      details: r.event_data?.details || '', ...(r.event_data || {}),
+    });
+  }
+  for (const client of clients) {
+    const events = byClient[client.id];
+    if (events && events.length > 0) client.lifecycleEvents = events;
+  }
+}
+
+async function saveLifecycleEvents(locationId, prevClients, newClients) {
+  for (const client of (newClients || [])) {
+    const prevClient = (prevClients || []).find(c => c.id === client.id);
+    const prevEvents = prevClient?.lifecycleEvents || [];
+    const newEvents = client.lifecycleEvents || [];
+    if (newEvents.length > prevEvents.length) {
+      const added = newEvents.slice(prevEvents.length);
+      const rows = added.map(e => ({
+        id: e.id || crypto.randomUUID(),
+        client_id: client.id, event_type: e.event,
+        event_data: { details: e.details, reservationId: e.reservationId },
+        created_at: e.date || new Date().toISOString(),
+      }));
+      if (rows.length > 0) {
+        const { error } = await supabase.from('client_lifecycle_events').insert(rows);
+        if (error) console.error('Insert lifecycle events:', error);
+      }
+    }
+  }
+}
+
+// --- Agreement Signing Records: agreement_log → client.agreements ---
+function attachAgreementSignings(clients, logRows) {
+  const byClient = {};
+  for (const r of (logRows || [])) {
+    if (!byClient[r.client_id]) byClient[r.client_id] = {};
+    byClient[r.client_id][r.agreement_id] = {
+      signed: r.status === 'signed' || !!r.signed_at,
+      date: r.signed_at || r.created_at,
+      logId: r.id,
+      status: r.status,
+    };
+  }
+  for (const client of clients) {
+    const signings = byClient[client.id];
+    if (signings && Object.keys(signings).length > 0) client.agreements = signings;
+  }
+}
+
+async function saveAgreementSignings(locationId, prevClients, newClients) {
+  for (const client of (newClients || [])) {
+    const prevClient = (prevClients || []).find(c => c.id === client.id);
+    const prevAgr = prevClient?.agreements || {};
+    const newAgr = client.agreements || {};
+    if (JSON.stringify(prevAgr) === JSON.stringify(newAgr)) continue;
+    // Find newly signed or changed entries
+    for (const [agrId, data] of Object.entries(newAgr)) {
+      const prev = prevAgr[agrId];
+      if (JSON.stringify(prev) === JSON.stringify(data)) continue;
+      if (data.logId) {
+        // Update existing log entry
+        const { error } = await supabase.from('agreement_log').update({
+          status: data.signed ? 'signed' : 'pending',
+          signed_at: data.signed ? (data.date || new Date().toISOString()) : null,
+        }).eq('id', data.logId);
+        if (error) console.error('Update agreement_log:', error);
+      } else {
+        // Insert new log entry
+        const { error } = await supabase.from('agreement_log').insert({
+          id: crypto.randomUUID(),
+          agreement_id: agrId, client_id: client.id, location_id: locationId,
+          status: data.signed ? 'signed' : 'pending',
+          signed_at: data.signed ? (data.date || new Date().toISOString()) : null,
+        });
+        if (error) console.error('Insert agreement_log:', error);
+      }
+    }
+  }
+}
+
+// --- Questionnaire Responses: questionnaire_log → client.questionnaireResponses ---
+function attachQuestionnaireResponses(clients, logRows) {
+  const byClient = {};
+  for (const r of (logRows || [])) {
+    if (!byClient[r.client_id]) byClient[r.client_id] = {};
+    const key = r.questionnaire_id || r.id;
+    byClient[r.client_id][key] = {
+      logId: r.id, responses: r.responses, status: r.status,
+      completedAt: r.completed_at, dogId: r.dog_id,
+    };
+  }
+  for (const client of clients) {
+    const resps = byClient[client.id];
+    if (resps && Object.keys(resps).length > 0) client.questionnaireResponses = resps;
+  }
+}
+
+async function saveQuestionnaireResponses(locationId, prevClients, newClients) {
+  for (const client of (newClients || [])) {
+    const prevClient = (prevClients || []).find(c => c.id === client.id);
+    const prevQR = prevClient?.questionnaireResponses || {};
+    const newQR = client.questionnaireResponses || {};
+    if (JSON.stringify(prevQR) === JSON.stringify(newQR)) continue;
+    for (const [qId, data] of Object.entries(newQR)) {
+      const prev = prevQR[qId];
+      if (JSON.stringify(prev) === JSON.stringify(data)) continue;
+      if (data.logId) {
+        const { error } = await supabase.from('questionnaire_log').update({
+          responses: data.responses, status: data.status || (data.completedAt ? 'completed' : 'pending'),
+          completed_at: data.completedAt,
+        }).eq('id', data.logId);
+        if (error) console.error('Update questionnaire_log:', error);
+      } else {
+        const { error } = await supabase.from('questionnaire_log').insert({
+          id: crypto.randomUUID(),
+          questionnaire_id: qId !== data.logId ? qId : null,
+          client_id: client.id, location_id: locationId,
+          dog_id: data.dogId || null,
+          responses: data.responses, status: data.status || 'completed',
+          completed_at: data.completedAt || new Date().toISOString(),
+        });
+        if (error) console.error('Insert questionnaire_log:', error);
+      }
+    }
+  }
+}
+
+// --- Outbound Links: outbound_links table (3.6 Twilio-ready) ---
+function loadOutboundLinks(rows) {
+  if (!rows || rows.length === 0) return [];
+  return rows.map(r => ({
+    id: r.id, linkType: r.link_type, relatedId: r.related_id,
+    clientId: r.client_id, expiresAt: r.expires_at,
+    firstViewedAt: r.first_viewed_at, viewCount: r.view_count, createdAt: r.created_at,
+  }));
+}
+async function saveOutboundLinks(locationId, prev, next) {
+  const diff = diffArrays(prev, next);
+  if (!diff.hasChanges) return;
+  if (diff.adds.length > 0) {
+    const rows = diff.adds.map(l => ({
+      id: l.id || crypto.randomUUID(), link_type: l.linkType,
+      related_id: l.relatedId, client_id: l.clientId,
+      location_id: locationId, expires_at: l.expiresAt,
+    }));
+    const { error } = await supabase.from('outbound_links').insert(rows);
+    if (error) console.error('Insert outbound_links:', error);
+  }
+  if (diff.updates.length > 0) {
+    for (const l of diff.updates) {
+      const { error } = await supabase.from('outbound_links').update({
+        first_viewed_at: l.firstViewedAt, view_count: l.viewCount,
+      }).eq('id', l.id);
+      if (error) console.error('Update outbound_links:', error);
+    }
+  }
+}
+
+// ============================================================
+// ENTITY + SETTINGS TABLE CONFIG
+// ============================================================
+
 const ENTITIES = {
-  clients:      { table: 'k9_clients',       toRow: clientToRow,      fromRow: rowToClient,      select: '*' },
-  dogs:         { table: 'k9_dogs',          toRow: dogToRow,         fromRow: rowToDog,          select: '*' },
-  reservations: { table: 'k9_reservations',  toRow: reservationToRow, fromRow: rowToReservation,  select: '*' },
-  evaluations:  { table: 'k9_evaluations',   toRow: evaluationToRow,  fromRow: rowToEvaluation,   select: '*' },
-  payments:     { table: 'k9_payments',      toRow: paymentToRow,     fromRow: rowToPayment,      select: '*' },
-  packages:     { table: 'k9_packages',      toRow: packageToRow,     fromRow: rowToPackage,      select: '*' },
-  packageSales: { table: 'k9_package_sales', toRow: packageSaleToRow, fromRow: rowToPackageSale,  select: '*' },
-  messages:     { table: 'k9_messages',      toRow: messageToRow,     fromRow: rowToMessage,      select: '*' },
-  auditLog:     { table: 'k9_audit_log',     toRow: auditToRow,       fromRow: rowToAudit,        select: '*' },
+  clients:      { table: 'k9_clients',          toRow: clientToRow,      fromRow: rowToClient,      select: '*' },
+  dogs:         { table: 'k9_dogs',             toRow: dogToRow,         fromRow: rowToDog,          select: '*' },
+  reservations: { table: 'k9_reservations',     toRow: reservationToRow, fromRow: rowToReservation,  select: '*' },
+  evaluations:  { table: 'k9_evaluations_v2',   toRow: evaluationToRow,  fromRow: rowToEvaluation,   select: '*' },
+  payments:     { table: 'k9_payments',         toRow: paymentToRow,     fromRow: rowToPayment,      select: '*' },
+  packages:     { table: 'enterprise_packages', toRow: packageToRow,     fromRow: rowToPackage,      select: '*', global: true },
+  packageSales: { table: 'k9_package_sales_v2', toRow: packageSaleToRow, fromRow: rowToPackageSale,  select: '*' },
+  messages:     { table: 'k9_messages',         toRow: messageToRow,     fromRow: rowToMessage,      select: '*' },
+  auditLog:     { table: 'audit_log',           toRow: auditToRow,       fromRow: rowToAudit,        select: '*' },
 };
 
-const DAILY_OPS_TABLE = 'k9_daily_ops';
-const REMINDER_TABLE = 'k9_reminder_log';
+const DAILY_OPS_TABLE = 'k9_daily_ops_v2';
 
-// All entity keys that should NOT be written to the settings blob
+// Keys that go to entity tables (NOT settings)
 const ENTITY_KEYS = new Set([
   ...Object.keys(ENTITIES),
-  'eodEntries', 'dailyOps', 'reminderLog',
+  'eodEntries', 'dailyOps',
+  'dogVaccines', 'weightLog', 'feedingSchedules', 'medicationSchedules',
+  'dogTagHistory', 'clientContacts', 'locationRoles',
+  '_invoices', '_invoiceLineItems',
+  'outboundLinks', // 3.6 outbound_links table
+]);
+
+// ALL settings keys — every key maps to a dedicated location_* table (no JSONB fallback)
+const MIGRATED_SETTINGS_KEYS = new Set([
+  'pricing', 'rooms', 'dogTags', 'requiredVaccines', 'closedDates',
+  'resortPolicies', 'messageTemplates', 'eodTemplate', 'agreements',
+  'addOnRules', 'foodTypes', 'fieldDefinitions', 'automations',
+  'runCardTemplates', 'runCardConfig', 'attendanceRoster', 'attendanceEntries',
+  'paymentRules', 'taskTemplates', 'checklists', 'dropdownOptions',
+  // Formerly unmigrated — now have dedicated tables
+  'facilitySettings', 'resortInfo', 'massTextHistory',
+  'pendingInvites', 'attendanceAuditLog',
 ]);
 
 // ── Diff: compare arrays by id ──
@@ -461,14 +1132,12 @@ export function useData(profile) {
   const prevDataRef = useRef(null);
   const savingRef = useRef(false);
 
-  // ── Track previous locationId to detect switches ──
   const prevLocationId = useRef(locationId);
 
   // ── LOAD ──
   useEffect(() => {
     if (!locationId) { setLoading(false); return; }
 
-    // When location changes, immediately clear stale data to prevent cross-location leak
     if (prevLocationId.current && prevLocationId.current !== locationId) {
       setData(null);
       prevDataRef.current = null;
@@ -481,39 +1150,238 @@ export function useData(profile) {
       setLoadError(false);
       try {
         const [
-          locRes, clientsRes, dogsRes, resRes, evalRes, opsRes,
-          payRes, pkgRes, pkgSaleRes, msgRes, auditRes, remRes,
+          // Core entities
+          clientsRes, dogsRes, resRes, evalRes, opsRes,
+          payRes, pkgRes, pkgSaleRes, msgRes, auditRes,
+          // Dog child tables
+          vaccinesRes, weightRes, feedingRes, medsRes, tagHistRes,
+          // Client child tables
+          contactsRes, lifecycleEventsRes, agreementLogRes, questionnaireLogRes,
+          // Roles
+          rolesRes,
+          // Settings tables
+          pricingRes, roomTypesRes, roomUnitsRes, dogTagsRes, reqVaccRes,
+          closedRes, policiesRes, msgTplRes, eodSecRes, agreementsRes,
+          addOnsRes, foodTypesRes, fieldDefsRes, automationsRes,
+          runCardRes, attendanceRes, payRulesRes, taskTplRes,
+          checklistsRes, dropdownRes, vaccineTypesRes,
+          // Newly migrated settings tables
+          facilitySettingsRes, resortInfoRes, massTextHistRes,
+          pendingInvitesRes, attendanceAuditRes,
+          // Outbound links (3.6)
+          outboundLinksRes,
         ] = await Promise.all([
-          supabase.from('locations').select('data').eq('id', locationId).single(),
+          // Core entities
           supabase.from('k9_clients').select('*').eq('location_id', locationId).order('created_at'),
           supabase.from('k9_dogs').select('*').eq('location_id', locationId).order('created_at'),
           supabase.from('k9_reservations').select('*').eq('location_id', locationId).order('created_at'),
-          supabase.from('k9_evaluations').select('*').eq('location_id', locationId).order('created_at'),
+          supabase.from('k9_evaluations_v2').select('*').eq('location_id', locationId).order('created_at'),
           supabase.from(DAILY_OPS_TABLE).select('*').eq('location_id', locationId).order('created_at'),
           supabase.from('k9_payments').select('*').eq('location_id', locationId).order('created_at'),
-          supabase.from('k9_packages').select('*').eq('location_id', locationId).order('created_at'),
-          supabase.from('k9_package_sales').select('*').eq('location_id', locationId).order('created_at'),
+          supabase.from('enterprise_packages').select('*').order('created_at'),
+          supabase.from('k9_package_sales_v2').select('*').eq('location_id', locationId).order('created_at'),
           supabase.from('k9_messages').select('*').eq('location_id', locationId).order('created_at'),
-          supabase.from('k9_audit_log').select('*').eq('location_id', locationId).order('created_at'),
-          supabase.from(REMINDER_TABLE).select('*').eq('location_id', locationId).order('created_at'),
+          supabase.from('audit_log').select('*').eq('location_id', locationId).order('created_at'),
+          // Dog child tables
+          supabase.from('dog_vaccines').select('*'),
+          supabase.from('weight_log').select('*'),
+          supabase.from('feeding_schedules').select('*'),
+          supabase.from('medication_schedules').select('*'),
+          supabase.from('dog_tag_history').select('*'),
+          // Client child tables
+          supabase.from('client_contacts').select('*').eq('location_id', locationId),
+          supabase.from('client_lifecycle_events').select('*'),
+          supabase.from('agreement_log').select('*').eq('location_id', locationId),
+          supabase.from('questionnaire_log').select('*').eq('location_id', locationId),
+          // Roles
+          supabase.from('location_roles').select('*').eq('location_id', locationId),
+          // Settings tables
+          supabase.from('location_pricing').select('*').eq('location_id', locationId),
+          supabase.from('location_room_types').select('*').eq('location_id', locationId).order('sort_order'),
+          supabase.from('location_room_units').select('*').eq('location_id', locationId),
+          supabase.from('location_dog_tags').select('*').eq('location_id', locationId).order('sort_order'),
+          supabase.from('location_required_vaccines').select('*').eq('location_id', locationId),
+          supabase.from('location_closed_dates').select('*').eq('location_id', locationId),
+          supabase.from('location_policies').select('*').eq('location_id', locationId),
+          supabase.from('location_message_templates').select('*').eq('location_id', locationId),
+          supabase.from('location_eod_sections').select('*').eq('location_id', locationId).order('sort_order'),
+          supabase.from('agreements').select('*').eq('location_id', locationId),
+          supabase.from('location_add_ons').select('*').eq('location_id', locationId),
+          supabase.from('location_food_types').select('*').eq('location_id', locationId),
+          supabase.from('location_field_definitions').select('*').eq('location_id', locationId).order('field_order'),
+          supabase.from('location_automations').select('*').eq('location_id', locationId),
+          supabase.from('location_run_card_templates').select('*').eq('location_id', locationId),
+          supabase.from('location_attendance').select('*').eq('location_id', locationId),
+          supabase.from('location_payment_rules').select('*').eq('location_id', locationId),
+          supabase.from('location_task_templates').select('*').eq('location_id', locationId),
+          supabase.from('location_checklists').select('*').eq('location_id', locationId),
+          supabase.from('dropdown_options').select('*').eq('location_id', locationId),
+          supabase.from('vaccine_types').select('*'),
+          // Newly migrated settings tables
+          supabase.from('location_facility_settings').select('*').eq('location_id', locationId),
+          supabase.from('location_resort_info').select('*').eq('location_id', locationId),
+          supabase.from('location_mass_text_history').select('*').eq('location_id', locationId).order('sent_at', { ascending: false }),
+          supabase.from('location_pending_invites').select('*').eq('location_id', locationId),
+          supabase.from('location_attendance_audit').select('*').eq('location_id', locationId).order('created_at'),
+          // Outbound links (3.6)
+          supabase.from('outbound_links').select('*').eq('location_id', locationId),
         ]);
 
         if (savingRef.current) return;
 
-        if (locRes.error) {
-          console.error('Failed to load location:', locRes.error);
-          setLoadError(true); setLoading(false); return;
-        }
+        // Load settings from dedicated tables (no JSONB fallback)
+        const vaccineTypes = vaccineTypesRes.data || [];
+        const pricing = loadPricing(pricingRes.data);
+        const rooms = loadRooms(roomTypesRes.data, roomUnitsRes.data);
+        const dogTags = loadDogTags(dogTagsRes.data);
+        const requiredVaccines = loadRequiredVaccines(reqVaccRes.data, vaccineTypes);
+        const closedDates = loadClosedDates(closedRes.data);
+        const resortPolicies = loadPolicies(policiesRes.data);
+        const messageTemplates = loadMessageTemplates(msgTplRes.data);
+        const eodTemplate = loadEodTemplate(eodSecRes.data);
+        const agreementDefs = loadAgreements(agreementsRes.data);
+        const addOnRules = loadAddOns(addOnsRes.data);
+        const foodTypes = loadFoodTypes(foodTypesRes.data);
+        const fieldDefinitions = loadFieldDefinitions(fieldDefsRes.data);
+        const automationsData = loadAutomations(automationsRes.data);
+        const runCard = loadRunCardTemplates(runCardRes.data);
+        const attendance = loadAttendance(attendanceRes.data);
+        const paymentRules = loadPaymentRules(payRulesRes.data);
+        const taskTemplates = loadTaskTemplates(taskTplRes.data);
+        const checklists = loadChecklists(checklistsRes.data);
+        const dropdownOptions = loadDropdownOptions(dropdownRes.data);
+        // Newly migrated settings
+        const facilitySettings = loadFacilitySettings(facilitySettingsRes.data);
+        const resortInfo = loadResortInfo(resortInfoRes.data);
+        const massTextHistory = loadMassTextHistory(massTextHistRes.data);
+        const pendingInvites = loadPendingInvites(pendingInvitesRes.data);
+        const attendanceAuditLog = loadAttendanceAuditLog(attendanceAuditRes.data);
 
-        const settings = locRes.data?.data || {};
+        // Build settings object (all from tables, no fallback)
+        const settings = {};
+        const setIfDefined = (key, val) => { if (val !== undefined) settings[key] = val; };
+        setIfDefined('pricing', pricing);
+        setIfDefined('rooms', rooms);
+        setIfDefined('dogTags', dogTags);
+        setIfDefined('requiredVaccines', requiredVaccines);
+        setIfDefined('closedDates', closedDates);
+        setIfDefined('resortPolicies', resortPolicies);
+        setIfDefined('messageTemplates', messageTemplates);
+        setIfDefined('eodTemplate', eodTemplate);
+        setIfDefined('agreements', agreementDefs);
+        setIfDefined('addOnRules', addOnRules);
+        setIfDefined('foodTypes', foodTypes);
+        setIfDefined('fieldDefinitions', fieldDefinitions);
+        if (automationsData) settings.automations = automationsData;
+        if (runCard.templates !== undefined) settings.runCardTemplates = runCard.templates;
+        if (runCard.config !== undefined) settings.runCardConfig = runCard.config;
+        if (attendance.roster !== undefined) settings.attendanceRoster = attendance.roster;
+        if (attendance.entries !== undefined) settings.attendanceEntries = attendance.entries;
+        setIfDefined('paymentRules', paymentRules);
+        setIfDefined('taskTemplates', taskTemplates);
+        setIfDefined('checklists', checklists);
+        setIfDefined('dropdownOptions', dropdownOptions);
+        // Newly migrated settings (always set, even if empty defaults)
+        settings.facilitySettings = facilitySettings || { largeDogDaycareSF: 3600, smallDogDaycareSF: 2400 };
+        settings.resortInfo = resortInfo || {};
+        settings.massTextHistory = massTextHistory || [];
+        settings.pendingInvites = pendingInvites || [];
+        settings.attendanceAuditLog = attendanceAuditLog || [];
 
         // Convert DB rows → app JS objects
         const allOps = (opsRes.data || []).map(rowToDailyOps);
+        const dogs = (dogsRes.data || []).map(rowToDog);
+
+        // Build dog child data maps
+        const dogIdSet = new Set(dogs.map(d => d.id));
+        const groupByDog = (rows) => {
+          const map = {};
+          for (const r of (rows || [])) {
+            if (!dogIdSet.has(r.dog_id)) continue;
+            if (!map[r.dog_id]) map[r.dog_id] = [];
+            map[r.dog_id].push(r);
+          }
+          return map;
+        };
+
+        const vaccinesByDog = groupByDog(vaccinesRes.data);
+        const weightByDog = groupByDog(weightRes.data);
+        const feedingByDog = groupByDog(feedingRes.data);
+        const medsByDog = groupByDog(medsRes.data);
+        const tagsByDog = groupByDog(tagHistRes.data);
+
+        // Transform child table rows → app-expected format on dog objects
+        for (const dog of dogs) {
+          const vRows = vaccinesByDog[dog.id] || [];
+          for (const v of vRows) {
+            const vt = vaccineTypes.find(t => t.id === v.vaccine_type_id);
+            if (vt) dog.fields[vt.code + '_exp'] = v.expiration_date;
+          }
+          dog._vaccineRows = vRows;
+
+          const wRows = (weightByDog[dog.id] || []).sort((a, b) =>
+            (a.recorded_at || '').localeCompare(b.recorded_at || ''));
+          dog.fields.weightLog = wRows.map(w => ({
+            id: w.id, date: w.recorded_at, weight: w.weight_lbs,
+            reason: w.notes, by: w.recorded_by,
+          }));
+          if (wRows.length > 0) {
+            dog.fields.weight = String(wRows[wRows.length - 1].weight_lbs);
+            dog.fields.weightLastUpdated = wRows[wRows.length - 1].recorded_at;
+          }
+
+          const fRows = feedingByDog[dog.id] || [];
+          dog.fields.feedingSchedules = fRows.map(f => ({
+            id: f.id, foodType: f.food_type || f.food_type_id || '',
+            mealTime: f.meal_time || '', portion: f.portion || '',
+            notes: f.notes || '', active: f.is_active ?? true,
+          }));
+
+          const mRows = medsByDog[dog.id] || [];
+          dog.fields.medicationSchedules = mRows.map(m => ({
+            id: m.id, name: m.medication_name || '', dosage: m.dosage || '',
+            frequency: m.frequency || '', startDate: m.start_date,
+            endDate: m.end_date, notes: m.notes || '',
+          }));
+
+          const tRows = tagsByDog[dog.id] || [];
+          dog.tags = tRows.filter(t => !t.removed_date).map(t => t.tag_code);
+          dog._tagRows = tRows;
+        }
+
+        // Build client objects with child data from dedicated tables
+        const clients = (clientsRes.data || []).map(rowToClient);
+
+        // Attach emergency contacts
+        const contactRows = contactsRes.data || [];
+        const contactsByClient = {};
+        for (const ct of contactRows) {
+          if (!contactsByClient[ct.client_id]) contactsByClient[ct.client_id] = [];
+          contactsByClient[ct.client_id].push(ct);
+        }
+        for (const client of clients) {
+          const contacts = contactsByClient[client.id] || [];
+          const ec = contacts.find(ct => ct.contact_type === 'emergency') || contacts[0];
+          if (ec) {
+            client.fields.emergency_contact = ec.name || '';
+            client.fields.emergency_phone = ec.phone || '';
+          }
+          client._contactRows = contacts;
+        }
+
+        // Attach lifecycle events from client_lifecycle_events table
+        attachLifecycleEvents(clients, lifecycleEventsRes.data);
+        // Attach agreement signing records from agreement_log table
+        attachAgreementSignings(clients, agreementLogRes.data);
+        // Attach questionnaire responses from questionnaire_log table
+        attachQuestionnaireResponses(clients, questionnaireLogRes.data);
 
         const assembled = {
+          // All settings (from dedicated location_* tables)
           ...settings,
-          clients: (clientsRes.data || []).map(rowToClient),
-          dogs: (dogsRes.data || []).map(rowToDog),
+          // Core entities
+          clients,
+          dogs,
           reservations: (resRes.data || []).map(rowToReservation),
           evaluations: (evalRes.data || []).map(rowToEvaluation),
           eodEntries: allOps.filter(d => d.type === 'eod'),
@@ -523,14 +1391,12 @@ export function useData(profile) {
           packageSales: (pkgSaleRes.data || []).map(rowToPackageSale),
           messages: (msgRes.data || []).map(rowToMessage),
           auditLog: (auditRes.data || []).map(rowToAudit),
+          // Child/lookup data
+          clientContacts: contactsRes.data || [],
+          locationRoles: rolesRes.data || [],
+          outboundLinks: loadOutboundLinks(outboundLinksRes.data),
+          _vaccineTypes: vaccineTypes,
         };
-
-        const reminderDocs = (remRes.data || []).map(rowToReminder);
-        if (assembled.automations) {
-          assembled.automations = { ...assembled.automations, reminderLog: reminderDocs };
-        } else if (reminderDocs.length > 0) {
-          assembled.automations = { reminderLog: reminderDocs };
-        }
 
         if (Object.keys(assembled).length > 0) {
           prevDataRef.current = assembled;
@@ -548,25 +1414,37 @@ export function useData(profile) {
     load();
 
     // ── Real-time: reload on any relevant table change ──
-    const tables = [
-      'k9_clients', 'k9_dogs', 'k9_reservations', 'k9_evaluations',
-      DAILY_OPS_TABLE, 'k9_payments', 'k9_packages', 'k9_package_sales',
-      'k9_messages', 'k9_audit_log',
+    const entityTables = [
+      'k9_clients', 'k9_dogs', 'k9_reservations', 'k9_evaluations_v2',
+      DAILY_OPS_TABLE, 'k9_payments', 'k9_package_sales_v2',
+      'k9_messages', 'audit_log',
+      'dog_vaccines', 'weight_log', 'feeding_schedules',
+      'medication_schedules', 'dog_tag_history', 'client_contacts',
+      'client_lifecycle_events', 'agreement_log', 'questionnaire_log',
+      'outbound_links',
+    ];
+    const settingsTables = [
+      'location_roles', 'location_pricing', 'location_room_types', 'location_room_units',
+      'location_dog_tags', 'location_required_vaccines', 'location_closed_dates',
+      'location_policies', 'location_message_templates', 'location_eod_sections',
+      'agreements', 'location_add_ons', 'location_food_types',
+      'location_field_definitions', 'location_automations', 'location_run_card_templates',
+      'location_attendance', 'location_payment_rules', 'location_task_templates',
+      'location_checklists', 'dropdown_options',
+      'location_facility_settings', 'location_resort_info', 'location_mass_text_history',
+      'location_pending_invites', 'location_attendance_audit',
     ];
 
     let channel = supabase
-      .channel(`location-${locationId}`)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'locations', filter: `id=eq.${locationId}` }, () => load());
+      .channel(`location-${locationId}`);
 
-    for (const tbl of tables) {
-      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl, filter: `location_id=eq.${locationId}` }, () => load());
+    for (const tbl of [...entityTables, ...settingsTables]) {
+      channel = channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, () => load());
     }
+    channel = channel.on('postgres_changes', { event: '*', schema: 'public', table: 'enterprise_packages' }, () => load());
 
     channel.subscribe();
-
-    // Polling fallback: reload every 30s to catch changes if real-time misses them
     const poll = setInterval(() => load(), 30000);
-
     return () => { supabase.removeChannel(channel); clearInterval(poll); };
   }, [locationId]);
 
@@ -576,10 +1454,7 @@ export function useData(profile) {
     setIsEmpty(false);
     if (!locationId) return;
 
-    // Block load() immediately so real-time reloads don't overwrite local state
-    // before the debounced DB write commits
     savingRef.current = true;
-
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
 
     saveTimeoutRef.current = setTimeout(async () => {
@@ -587,8 +1462,7 @@ export function useData(profile) {
         const prev = prevDataRef.current || {};
         prevDataRef.current = newData;
 
-        // Helper: diff + build upsert/delete ops for one entity key
-        const buildOps = (key, table, toRow) => {
+        const buildOps = (key, table, toRow, isGlobal) => {
           const ops = [];
           const oldArr = prev[key];
           const newArr = newData[key];
@@ -596,7 +1470,9 @@ export function useData(profile) {
           const diff = diffArrays(oldArr, newArr);
           if (!diff.hasChanges) return ops;
           if (diff.adds.length > 0 || diff.updates.length > 0) {
-            const rows = [...diff.adds, ...diff.updates].map(item => toRow(item, locationId));
+            const rows = [...diff.adds, ...diff.updates].map(item =>
+              isGlobal ? toRow(item) : toRow(item, locationId)
+            );
             ops.push(supabase.from(table).upsert(rows, { onConflict: 'id' })
               .then(({ error }) => { if (error) console.error(`Upsert ${key}:`, error); }));
           }
@@ -607,69 +1483,234 @@ export function useData(profile) {
           return ops;
         };
 
-        // ── Write in FK-safe tiers (parents before children) ──
-
-        // Tier 1: no entity FKs — clients, packages
+        // ── Entity writes in FK-safe tiers ──
         const t1 = [
           ...buildOps('clients', 'k9_clients', clientToRow),
-          ...buildOps('packages', 'k9_packages', packageToRow),
+          ...buildOps('packages', 'enterprise_packages', packageToRow, true),
         ];
         if (t1.length) await Promise.all(t1);
 
-        // Tier 2: depends on clients — dogs
         const t2 = buildOps('dogs', 'k9_dogs', dogToRow);
         if (t2.length) await Promise.all(t2);
 
-        // Tier 3: depends on clients + dogs + packages — reservations, packageSales, messages
         const t3 = [
           ...buildOps('reservations', 'k9_reservations', reservationToRow),
-          ...buildOps('packageSales', 'k9_package_sales', packageSaleToRow),
+          ...buildOps('packageSales', 'k9_package_sales_v2', packageSaleToRow),
           ...buildOps('messages', 'k9_messages', messageToRow),
         ];
         if (t3.length) await Promise.all(t3);
 
-        // Tier 4: depends on dogs + reservations — evaluations, payments, auditLog, dailyOps
         const t4 = [
-          ...buildOps('evaluations', 'k9_evaluations', evaluationToRow),
+          ...buildOps('evaluations', 'k9_evaluations_v2', evaluationToRow),
           ...buildOps('payments', 'k9_payments', paymentToRow),
-          ...buildOps('auditLog', 'k9_audit_log', auditToRow),
+          ...buildOps('auditLog', 'audit_log', auditToRow),
           ...buildOps('eodEntries', DAILY_OPS_TABLE, dailyOpsToRow),
           ...buildOps('dailyOps', DAILY_OPS_TABLE, dailyOpsToRow),
         ];
 
-        // Reminder log
-        const oldRemLog = prev.automations?.reminderLog;
-        const newRemLog = newData.automations?.reminderLog;
-        if (oldRemLog !== newRemLog) {
-          const diff = diffArrays(oldRemLog, newRemLog);
-          if (diff.hasChanges) {
-            if (diff.adds.length > 0 || diff.updates.length > 0) {
-              const rows = [...diff.adds, ...diff.updates].map(item => reminderToRow(item, locationId));
-              t4.push(supabase.from(REMINDER_TABLE).upsert(rows, { onConflict: 'id' })
-                .then(({ error }) => { if (error) console.error('Upsert reminders:', error); }));
+        // ── Dog child table saves (transform app format → DB rows) ──
+        const vaccineTypes = newData._vaccineTypes || prev._vaccineTypes || [];
+        const vacCodeToId = new Map(vaccineTypes.map(vt => [vt.code + '_exp', vt.id]));
+        const VACCINE_FIELDS = ['rabies_exp', 'dhpp_exp', 'bordetella_exp', 'canine_flu_exp'];
+
+        for (const dog of (newData.dogs || [])) {
+          const prevDog = (prev.dogs || []).find(d => d.id === dog.id);
+          const f = dog.fields || {};
+          const pf = prevDog?.fields || {};
+
+          // --- Vaccines: dog.fields.{vax}_exp → dog_vaccines rows ---
+          for (const vField of VACCINE_FIELDS) {
+            if (f[vField] !== pf[vField] && f[vField]) {
+              const vtId = vacCodeToId.get(vField);
+              if (!vtId) continue;
+              const existing = (dog._vaccineRows || []).find(v => v.vaccine_type_id === vtId);
+              t4.push(supabase.from('dog_vaccines').upsert({
+                id: existing?.id || crypto.randomUUID(),
+                dog_id: dog.id, vaccine_type_id: vtId,
+                expiration_date: f[vField],
+              }, { onConflict: 'id' })
+                .then(({ error }) => { if (error) console.error('Upsert vaccine:', error); }));
             }
-            if (diff.deletes.length > 0) {
-              t4.push(supabase.from(REMINDER_TABLE).delete().in('id', diff.deletes.map(i => i.id))
-                .then(({ error }) => { if (error) console.error('Delete reminders:', error); }));
+          }
+
+          // --- Weight log: dog.fields.weightLog → weight_log rows ---
+          const oldWL = pf.weightLog || [];
+          const newWL = f.weightLog || [];
+          if (newWL.length > oldWL.length) {
+            // New entries added (app always appends)
+            const newEntries = newWL.slice(oldWL.length);
+            const rows = newEntries.map(e => ({
+              id: e.id || crypto.randomUUID(),
+              dog_id: dog.id, weight_lbs: Number(e.weight),
+              recorded_at: e.date || new Date().toISOString(),
+              recorded_by: e.by || null, notes: e.reason || null,
+            }));
+            if (rows.length > 0) {
+              t4.push(supabase.from('weight_log').insert(rows)
+                .then(({ error }) => { if (error) console.error('Insert weight_log:', error); }));
+            }
+          }
+
+          // --- Feeding schedules: dog.fields.feedingSchedules → feeding_schedules rows ---
+          if (JSON.stringify(f.feedingSchedules) !== JSON.stringify(pf.feedingSchedules)) {
+            const schedRows = (f.feedingSchedules || []).map(s => ({
+              id: s.id || crypto.randomUUID(),
+              dog_id: dog.id, food_type: s.foodType || '',
+              meal_time: s.mealTime || '', portion: s.portion || '',
+              notes: s.notes || '', is_active: s.active ?? true,
+            }));
+            // Delete all and re-insert for this dog
+            t4.push(
+              supabase.from('feeding_schedules').delete().eq('dog_id', dog.id)
+                .then(() => schedRows.length > 0
+                  ? supabase.from('feeding_schedules').insert(schedRows)
+                      .then(({ error }) => { if (error) console.error('Insert feeding:', error); })
+                  : null)
+            );
+          }
+
+          // --- Medication schedules: dog.fields.medicationSchedules → medication_schedules rows ---
+          if (JSON.stringify(f.medicationSchedules) !== JSON.stringify(pf.medicationSchedules)) {
+            const medRows = (f.medicationSchedules || []).map(m => ({
+              id: m.id || crypto.randomUUID(),
+              dog_id: dog.id, medication_name: m.name || '',
+              dosage: m.dosage || '', frequency: m.frequency || '',
+              start_date: m.startDate || null, end_date: m.endDate || null,
+              notes: m.notes || '', is_active: true,
+            }));
+            t4.push(
+              supabase.from('medication_schedules').delete().eq('dog_id', dog.id)
+                .then(() => medRows.length > 0
+                  ? supabase.from('medication_schedules').insert(medRows)
+                      .then(({ error }) => { if (error) console.error('Insert meds:', error); })
+                  : null)
+            );
+          }
+
+          // --- Tags: dog.tags string array → dog_tag_history rows ---
+          const oldTags = new Set(prevDog?.tags || []);
+          const newTags = new Set(dog.tags || []);
+          // Added tags
+          for (const tag of newTags) {
+            if (!oldTags.has(tag)) {
+              t4.push(supabase.from('dog_tag_history').insert({
+                id: crypto.randomUUID(), dog_id: dog.id, tag_code: tag,
+                assigned_date: new Date().toISOString().slice(0, 10),
+              }).then(({ error }) => { if (error) console.error('Insert tag:', error); }));
+            }
+          }
+          // Removed tags
+          for (const tag of oldTags) {
+            if (!newTags.has(tag)) {
+              const row = (dog._tagRows || []).find(t => t.tag_code === tag && !t.removed_date);
+              if (row) {
+                t4.push(supabase.from('dog_tag_history').update({
+                  removed_date: new Date().toISOString().slice(0, 10),
+                }).eq('id', row.id)
+                  .then(({ error }) => { if (error) console.error('Remove tag:', error); }));
+              }
             }
           }
         }
 
-        // Settings → locations.data
-        const settingsOnly = {};
-        for (const [key, value] of Object.entries(newData)) {
-          if (ENTITY_KEYS.has(key)) continue;
-          if (key === 'automations' && value) {
-            const { reminderLog, ...autoSettings } = value;
-            settingsOnly[key] = autoSettings;
-          } else {
-            settingsOnly[key] = value;
+        // ── Client contacts: emergency_contact/phone → client_contacts table ──
+        for (const client of (newData.clients || [])) {
+          const prevClient = (prev.clients || []).find(c => c.id === client.id);
+          const ecName = client.fields?.emergency_contact;
+          const ecPhone = client.fields?.emergency_phone;
+          const prevEcName = prevClient?.fields?.emergency_contact;
+          const prevEcPhone = prevClient?.fields?.emergency_phone;
+          if (ecName !== prevEcName || ecPhone !== prevEcPhone) {
+            if (ecName || ecPhone) {
+              const existing = (client._contactRows || []).find(c => c.contact_type === 'emergency');
+              t4.push(supabase.from('client_contacts').upsert({
+                id: existing?.id || crypto.randomUUID(),
+                client_id: client.id, location_id: locationId,
+                contact_type: 'emergency', name: ecName || '',
+                phone: ecPhone || '',
+              }, { onConflict: 'id' })
+                .then(({ error }) => { if (error) console.error('Upsert client contact:', error); }));
+            }
           }
         }
-        t4.push(supabase.from('locations').update({ data: settingsOnly }).eq('id', locationId)
-          .then(({ error }) => { if (error) console.error('Save settings:', error); }));
+
+        // ── Invoice saves (created on checkout) ──
+        const newInvoices = newData._invoices || [];
+        const prevInvoices = prev._invoices || [];
+        if (newInvoices.length > prevInvoices.length) {
+          const added = newInvoices.slice(prevInvoices.length);
+          for (const inv of added) {
+            t4.push(supabase.from('invoices').insert({
+              id: inv.id, location_id: locationId,
+              client_id: inv.clientId, reservation_id: inv.reservationId,
+              invoice_number: inv.invoiceNumber,
+              total_amount: inv.totalAmount, status: inv.status || 'draft',
+              due_date: inv.dueDate, paid_at: inv.paidAt,
+            }).then(({ error }) => { if (error) console.error('Insert invoice:', error); }));
+          }
+        }
+        const newLineItems = newData._invoiceLineItems || [];
+        const prevLineItems = prev._invoiceLineItems || [];
+        if (newLineItems.length > prevLineItems.length) {
+          const added = newLineItems.slice(prevLineItems.length);
+          const rows = added.map(li => ({
+            id: li.id, invoice_id: li.invoiceId,
+            description: li.description, quantity: li.quantity || 1,
+            unit_price: li.unitPrice, total_price: li.totalPrice,
+            item_type: li.itemType,
+          }));
+          t4.push(supabase.from('invoice_line_items').insert(rows)
+            .then(({ error }) => { if (error) console.error('Insert line items:', error); }));
+        }
 
         if (t4.length) await Promise.all(t4);
+
+        // ── Migrated settings saves (to location_* tables) ──
+        // (vaccineTypes already defined above for dog child table saves)
+        const settingsSaves = [];
+
+        if (prev.pricing !== newData.pricing) settingsSaves.push(savePricing(locationId, prev.pricing, newData.pricing));
+        if (prev.rooms !== newData.rooms) settingsSaves.push(saveRooms(locationId, prev.rooms, newData.rooms));
+        if (prev.dogTags !== newData.dogTags) settingsSaves.push(saveDogTags(locationId, prev.dogTags, newData.dogTags));
+        if (prev.requiredVaccines !== newData.requiredVaccines) settingsSaves.push(saveRequiredVaccines(locationId, prev.requiredVaccines, newData.requiredVaccines, vaccineTypes));
+        if (prev.closedDates !== newData.closedDates) settingsSaves.push(saveClosedDates(locationId, prev.closedDates, newData.closedDates));
+        if (prev.resortPolicies !== newData.resortPolicies) settingsSaves.push(savePolicies(locationId, prev.resortPolicies, newData.resortPolicies));
+        if (prev.messageTemplates !== newData.messageTemplates) settingsSaves.push(saveMessageTemplates(locationId, prev.messageTemplates, newData.messageTemplates));
+        if (prev.eodTemplate !== newData.eodTemplate) settingsSaves.push(saveEodTemplate(locationId, prev.eodTemplate, newData.eodTemplate));
+        if (prev.agreements !== newData.agreements) settingsSaves.push(saveAgreements(locationId, prev.agreements, newData.agreements));
+        if (prev.addOnRules !== newData.addOnRules) settingsSaves.push(saveAddOns(locationId, prev.addOnRules, newData.addOnRules));
+        if (prev.foodTypes !== newData.foodTypes) settingsSaves.push(saveFoodTypes(locationId, prev.foodTypes, newData.foodTypes));
+        if (prev.fieldDefinitions !== newData.fieldDefinitions) settingsSaves.push(saveFieldDefinitions(locationId, prev.fieldDefinitions, newData.fieldDefinitions));
+        if (prev.automations !== newData.automations) settingsSaves.push(saveAutomations(locationId, prev.automations, newData.automations));
+        if (prev.runCardTemplates !== newData.runCardTemplates || prev.runCardConfig !== newData.runCardConfig) {
+          settingsSaves.push(saveRunCardTemplates(locationId, prev.runCardTemplates, newData.runCardTemplates, prev.runCardConfig, newData.runCardConfig));
+        }
+        if (prev.attendanceRoster !== newData.attendanceRoster || prev.attendanceEntries !== newData.attendanceEntries) {
+          settingsSaves.push(saveAttendance(locationId, prev.attendanceRoster, newData.attendanceRoster, prev.attendanceEntries, newData.attendanceEntries));
+        }
+        if (prev.paymentRules !== newData.paymentRules) settingsSaves.push(savePaymentRules(locationId, prev.paymentRules, newData.paymentRules));
+        if (prev.taskTemplates !== newData.taskTemplates) settingsSaves.push(saveTaskTemplates(locationId, prev.taskTemplates, newData.taskTemplates));
+        if (prev.checklists !== newData.checklists) settingsSaves.push(saveChecklists(locationId, prev.checklists, newData.checklists));
+        if (prev.dropdownOptions !== newData.dropdownOptions) settingsSaves.push(saveDropdownOptions(locationId, prev.dropdownOptions, newData.dropdownOptions));
+        // Newly migrated settings saves
+        if (prev.facilitySettings !== newData.facilitySettings) settingsSaves.push(saveFacilitySettings(locationId, prev.facilitySettings, newData.facilitySettings));
+        if (prev.resortInfo !== newData.resortInfo) settingsSaves.push(saveResortInfo(locationId, prev.resortInfo, newData.resortInfo));
+        if (prev.massTextHistory !== newData.massTextHistory) settingsSaves.push(saveMassTextHistory(locationId, prev.massTextHistory, newData.massTextHistory));
+        if (prev.pendingInvites !== newData.pendingInvites) settingsSaves.push(savePendingInvites(locationId, prev.pendingInvites, newData.pendingInvites));
+        if (prev.attendanceAuditLog !== newData.attendanceAuditLog) settingsSaves.push(saveAttendanceAuditLog(locationId, prev.attendanceAuditLog, newData.attendanceAuditLog));
+
+        if (settingsSaves.length > 0) await Promise.all(settingsSaves);
+
+        // ── Client child table saves (lifecycle events, agreement signings, questionnaire responses) ──
+        const clientChildSaves = [];
+        clientChildSaves.push(saveLifecycleEvents(locationId, prev.clients, newData.clients));
+        clientChildSaves.push(saveAgreementSignings(locationId, prev.clients, newData.clients));
+        clientChildSaves.push(saveQuestionnaireResponses(locationId, prev.clients, newData.clients));
+        // Outbound links (3.6)
+        if (prev.outboundLinks !== newData.outboundLinks) {
+          clientChildSaves.push(saveOutboundLinks(locationId, prev.outboundLinks, newData.outboundLinks));
+        }
+        if (clientChildSaves.length > 0) await Promise.all(clientChildSaves);
 
       } catch (err) {
         console.error('Save failed:', err);
