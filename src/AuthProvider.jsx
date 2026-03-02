@@ -115,11 +115,8 @@ export function AuthProvider({ children }) {
 
   const refreshProfile = async () => {
     if (!user) return;
-    const { data: updated } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
+    const { data: rpcRows } = await supabase.rpc('get_my_profile');
+    const updated = rpcRows?.[0] || null;
     if (updated) setProfile(updated);
   };
 
