@@ -47,11 +47,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const fetchProfile = async (userId) => {
-    const { data: existing } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
+    const { data: rpcRows } = await supabase.rpc('get_my_profile');
+    const existing = rpcRows?.[0] || null;
 
     if (existing) {
       setProfile(existing);
