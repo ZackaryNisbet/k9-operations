@@ -348,6 +348,27 @@ function rowToAudit(r) {
   return a;
 }
 
+// ── Vets: vets table ↔ app format ──
+function vetToRow(v, locationId) {
+  return {
+    id: v.id, location_id: locationId,
+    vet_name: v.vetName || v.name || null,
+    clinic_name: v.clinicName || null,
+    phone: v.phone || null,
+    email: v.email || null,
+    notes: v.notes || null,
+    is_active: v.isActive ?? true,
+  };
+}
+
+function rowToVet(r) {
+  return {
+    id: r.id, vetName: r.vet_name, clinicName: r.clinic_name,
+    phone: r.phone, email: r.email, notes: r.notes,
+    isActive: r.is_active ?? true, createdAt: r.created_at,
+  };
+}
+
 function dailyOpsToRow(d, locationId) {
   return {
     id: d.id, location_id: locationId,
@@ -947,6 +968,8 @@ function attachAgreementSignings(clients, logRows) {
       date: r.signed_at || r.created_at,
       logId: r.id,
       status: r.status,
+      sentAt: r.sent_at || r.created_at,
+      messageId: r.message_id || null,
     };
   }
   for (const client of clients) {
@@ -962,23 +985,30 @@ async function saveAgreementSignings(locationId, prevClients, newClients) {
     const newAgr = client.agreements || {};
     if (JSON.stringify(prevAgr) === JSON.stringify(newAgr)) continue;
     // Find newly signed or changed entries
-    for (const [agrId, data] of Object.entries(newAgr)) {
+    for (const [agrId, entry] of Object.entries(newAgr)) {
       const prev = prevAgr[agrId];
-      if (JSON.stringify(prev) === JSON.stringify(data)) continue;
-      if (data.logId) {
+      if (JSON.stringify(prev) === JSON.stringify(entry)) continue;
+      // Preserve exact status from app (sent, pending, signed)
+      const dbStatus = entry.signed ? 'signed' : (entry.status || 'pending');
+      if (entry.logId) {
         // Update existing log entry
         const { error } = await supabase.from('agreement_log').update({
-          status: data.signed ? 'signed' : 'pending',
-          signed_at: data.signed ? (data.date || new Date().toISOString()) : null,
-        }).eq('id', data.logId);
+          status: dbStatus,
+          signed_at: entry.signed ? (entry.date || new Date().toISOString()) : null,
+          sent_via: entry.sentVia || null,
+          message_id: entry.messageId || null,
+        }).eq('id', entry.logId);
         if (error) console.error('Update agreement_log:', error);
       } else {
         // Insert new log entry
         const { error } = await supabase.from('agreement_log').insert({
           id: crypto.randomUUID(),
           agreement_id: agrId, client_id: client.id, location_id: locationId,
-          status: data.signed ? 'signed' : 'pending',
-          signed_at: data.signed ? (data.date || new Date().toISOString()) : null,
+          status: dbStatus,
+          signed_at: entry.signed ? (entry.date || new Date().toISOString()) : null,
+          sent_via: entry.sentVia || null,
+          sent_at: entry.sentAt || null,
+          message_id: entry.messageId || null,
         });
         if (error) console.error('Insert agreement_log:', error);
       }
@@ -1064,6 +1094,38 @@ async function saveOutboundLinks(locationId, prev, next) {
   }
 }
 
+// --- Questionnaires: questionnaires table → data.questionnaires ---
+function loadQuestionnaires(rows) {
+  if (!rows || rows.length === 0) return undefined;
+  return rows.map(r => ({
+    id: r.id, title: r.title, version: r.version || 1,
+    questions: r.questions || [], isCurrent: r.is_current ?? true,
+    createdBy: r.created_by, createdAt: r.created_at,
+  }));
+}
+
+async function saveQuestionnaires(locationId, prev, next) {
+  if (JSON.stringify(prev) === JSON.stringify(next)) return;
+  const diff = diffArrays(prev, next);
+  if (!diff.hasChanges) return;
+  if (diff.adds.length + diff.updates.length > 0) {
+    const rows = [...diff.adds, ...diff.updates].map(q => ({
+      id: q.id || crypto.randomUUID(),
+      location_id: locationId,
+      title: q.title, version: q.version || 1,
+      questions: q.questions || [],
+      is_current: q.isCurrent ?? true,
+      created_by: q.createdBy || null,
+    }));
+    const { error } = await supabase.from('questionnaires').upsert(rows, { onConflict: 'id' });
+    if (error) console.error('Save questionnaires:', error);
+  }
+  if (diff.deletes.length > 0) {
+    const { error } = await supabase.from('questionnaires').delete().in('id', diff.deletes.map(d => d.id));
+    if (error) console.error('Delete questionnaires:', error);
+  }
+}
+
 // ============================================================
 // ENTITY + SETTINGS TABLE CONFIG
 // ============================================================
@@ -1078,6 +1140,7 @@ const ENTITIES = {
   packageSales: { table: 'k9_package_sales_v2', toRow: packageSaleToRow, fromRow: rowToPackageSale,  select: '*' },
   messages:     { table: 'k9_messages',         toRow: messageToRow,     fromRow: rowToMessage,      select: '*' },
   auditLog:     { table: 'audit_log',           toRow: auditToRow,       fromRow: rowToAudit,        select: '*' },
+  vets:         { table: 'vets',               toRow: vetToRow,         fromRow: rowToVet,          select: '*' },
 };
 
 const DAILY_OPS_TABLE = 'k9_daily_ops_v2';
@@ -1102,6 +1165,7 @@ const MIGRATED_SETTINGS_KEYS = new Set([
   // Formerly unmigrated — now have dedicated tables
   'facilitySettings', 'resortInfo', 'massTextHistory',
   'pendingInvites', 'attendanceAuditLog',
+  'questionnaires', // questionnaire designer templates
 ]);
 
 // ── Diff: compare arrays by id ──
@@ -1170,6 +1234,10 @@ export function useData(profile) {
           pendingInvitesRes, attendanceAuditRes,
           // Outbound links (3.6)
           outboundLinksRes,
+          // Vets
+          vetsRes,
+          // Questionnaire templates
+          questionnairesRes,
         ] = await Promise.all([
           // Core entities
           supabase.from('k9_clients').select('*').eq('location_id', locationId).order('created_at'),
@@ -1225,6 +1293,10 @@ export function useData(profile) {
           supabase.from('location_attendance_audit').select('*').eq('location_id', locationId).order('created_at'),
           // Outbound links (3.6)
           supabase.from('outbound_links').select('*').eq('location_id', locationId),
+          // Vets
+          supabase.from('vets').select('*').eq('location_id', locationId).order('vet_name'),
+          // Questionnaire templates
+          supabase.from('questionnaires').select('*').eq('location_id', locationId).order('created_at'),
         ]);
 
         if (savingRef.current) return;
@@ -1287,6 +1359,9 @@ export function useData(profile) {
         settings.massTextHistory = massTextHistory || [];
         settings.pendingInvites = pendingInvites || [];
         settings.attendanceAuditLog = attendanceAuditLog || [];
+        // Questionnaire templates
+        const questionnaireTemplates = loadQuestionnaires(questionnairesRes.data);
+        if (questionnaireTemplates) settings.questionnaires = questionnaireTemplates;
 
         // Convert DB rows → app JS objects
         const allOps = (opsRes.data || []).map(rowToDailyOps);
@@ -1395,6 +1470,7 @@ export function useData(profile) {
           clientContacts: contactsRes.data || [],
           locationRoles: rolesRes.data || [],
           outboundLinks: loadOutboundLinks(outboundLinksRes.data),
+          vets: (vetsRes.data || []).map(rowToVet),
           _vaccineTypes: vaccineTypes,
         };
 
@@ -1421,7 +1497,7 @@ export function useData(profile) {
       'dog_vaccines', 'weight_log', 'feeding_schedules',
       'medication_schedules', 'dog_tag_history', 'client_contacts',
       'client_lifecycle_events', 'agreement_log', 'questionnaire_log',
-      'outbound_links',
+      'outbound_links', 'vets',
     ];
     const settingsTables = [
       'location_roles', 'location_pricing', 'location_room_types', 'location_room_units',
@@ -1433,6 +1509,7 @@ export function useData(profile) {
       'location_checklists', 'dropdown_options',
       'location_facility_settings', 'location_resort_info', 'location_mass_text_history',
       'location_pending_invites', 'location_attendance_audit',
+      'questionnaires',
     ];
 
     let channel = supabase
@@ -1487,6 +1564,7 @@ export function useData(profile) {
         const t1 = [
           ...buildOps('clients', 'k9_clients', clientToRow),
           ...buildOps('packages', 'enterprise_packages', packageToRow, true),
+          ...buildOps('vets', 'vets', vetToRow),
         ];
         if (t1.length) await Promise.all(t1);
 
@@ -1698,6 +1776,7 @@ export function useData(profile) {
         if (prev.massTextHistory !== newData.massTextHistory) settingsSaves.push(saveMassTextHistory(locationId, prev.massTextHistory, newData.massTextHistory));
         if (prev.pendingInvites !== newData.pendingInvites) settingsSaves.push(savePendingInvites(locationId, prev.pendingInvites, newData.pendingInvites));
         if (prev.attendanceAuditLog !== newData.attendanceAuditLog) settingsSaves.push(saveAttendanceAuditLog(locationId, prev.attendanceAuditLog, newData.attendanceAuditLog));
+        if (prev.questionnaires !== newData.questionnaires) settingsSaves.push(saveQuestionnaires(locationId, prev.questionnaires, newData.questionnaires));
 
         if (settingsSaves.length > 0) await Promise.all(settingsSaves);
 
