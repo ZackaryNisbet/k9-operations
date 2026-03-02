@@ -2792,6 +2792,8 @@ function _resolveRole(profile, data) {
 
 function hasPermission(profile, data, permKey) {
   if (!profile || !data) return true; // graceful fallback during loading
+  // Owner and enterprise_admin always have full access
+  if (profile.role === 'owner' || profile.role === 'enterprise_admin') return true;
   const locationRoles = data.locationRoles || [];
   const legacyRoles = data.roles || [];
   if (locationRoles.length === 0 && legacyRoles.length === 0) return true; // no roles system yet
