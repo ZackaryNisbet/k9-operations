@@ -2588,6 +2588,39 @@ function DiscountPicker({ discounts, onSelect, clientId, data }) {
   );
 }
 
+// Manual discount entry (shown when no configured discounts are available)
+function ManualDiscountEntry({ onApply }) {
+  const [open, setOpen] = useState(false);
+  const [dType, setDType] = useState("percent");
+  const [dVal, setDVal] = useState("");
+  const ref = useRef(null);
+  useEffect(() => { if (!open) return; const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, [open]);
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
+      <button onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", color: C.pri, fontSize: 12, fontWeight: 700, fontFamily: "inherit", transition: "all 0.15s" }} onMouseEnter={e => e.currentTarget.style.borderColor = C.pri} onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>
+        Add Discount
+      </button>
+      {open && (
+        <div style={{ position: "absolute", bottom: "100%", left: 0, marginBottom: 6, zIndex: 100, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.15)", padding: 16, minWidth: 260 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Manual Discount</div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+            {["percent", "flat"].map(t => (
+              <button key={t} onClick={() => setDType(t)} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: `1.5px solid ${dType === t ? C.pri : C.border}`, background: dType === t ? C.priLt : "transparent", color: dType === t ? C.pri : C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                {t === "percent" ? "%" : "$"}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input type="number" min="0" step={dType === "percent" ? "1" : "0.01"} value={dVal} onChange={e => setDVal(e.target.value)} placeholder={dType === "percent" ? "10" : "5.00"} style={{ flex: 1, padding: "8px 12px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 14, color: C.text, background: C.bg, outline: "none", fontFamily: "inherit" }}/>
+            <button onClick={() => { const v = parseFloat(dVal); if (v > 0) { onApply(dType, v); setOpen(false); setDVal(""); } }} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: C.pri, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Apply</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Custom styled calendar date picker — matches dashboard calendar appearance
 function CalendarPicker({ label, value, onChange, required, disabled, min, max, extraContent }) {
   const [open, setOpen] = useState(false);
@@ -3088,8 +3121,19 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   const [cancelRefundOption, setCancelRefundOption] = useState("keep");
   const [cancelCouponOption, setCancelCouponOption] = useState("return");
   const [showPrintPrompt, setShowPrintPrompt] = useState(false);
-  const [showPayForm, setShowPayForm] = useState(false);
-  const [payFormDefaults, setPayFormDefaults] = useState(null);
+  // Payment accordion state
+  const [payExpanded, setPayExpanded] = useState(false);
+  const [payMode, setPayMode] = useState("pay"); // "pay" or "refund"
+  const [payMethod, setPayMethod] = useState("card");
+  const [paySelectedCard, setPaySelectedCard] = useState(null); // saved card id or "new"
+  const [payCard4, setPayCard4] = useState("");
+  const [payCardBrand, setPayCardBrand] = useState("visa");
+  const [paySaveCard, setPaySaveCard] = useState(true);
+  const [payAmount, setPayAmount] = useState("");
+  const [payTip, setPayTip] = useState("");
+  const [payNote, setPayNote] = useState("");
+  const [payStaff, setPayStaff] = useState(profile ? (profile.full_name || profile.email || "").split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0,3) : "");
+  const [payErr, setPayErr] = useState("");
   const [expandedLines, setExpandedLines] = useState({});
   const [discountType, setDiscountType] = useState(reservation.discountType || "none"); // "none", "percent", "flat"
   const [discountValue, setDiscountValue] = useState(reservation.discountValue || 0);
@@ -3376,6 +3420,87 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     await save(newData);
     setShowConflict(false);
     if (doCheckIn) { setShowPrintPrompt(true); } else { onClose(); }
+  };
+
+  const handlePaymentSubmit = async () => {
+    if (!payAmount || parseFloat(payAmount) <= 0) { setPayErr("Enter a valid amount"); return; }
+    if (!payStaff) { setPayErr("Staff initials required"); return; }
+    if (payMode !== "refund" && payMethod === "card" && payCard4.length < 4) { setPayErr("Enter last 4 digits of card"); return; }
+
+    // Create payment object
+    const payment = {
+      id: gid(),
+      reservationId: reservation.id,
+      clientId: client.id,
+      amount: parseFloat(payAmount) + (payTip && parseFloat(payTip) > 0 ? parseFloat(payTip) : 0),
+      type: payMode === "refund" ? "refund" : "payment",
+      method: payMode === "refund" ? "card" : payMethod,
+      cardLast4: payMethod === "card" && payMode !== "refund" ? payCard4 : null,
+      status: payMode === "refund" ? "refunded" : "completed",
+      note: (payTip && parseFloat(payTip) > 0 ? `Tip: $${parseFloat(payTip).toFixed(2)}` : "") + (payNote ? (payTip && parseFloat(payTip) > 0 ? " | " : "") + payNote : ""),
+      timestamp: new Date().toISOString(),
+      stripePaymentIntentId: null,
+      stripeRefundId: null,
+      processedBy: payStaff,
+    };
+
+    // If new card and save card is checked, add to client's savedCards
+    let updatedClients = data.clients;
+    if (payMode !== "refund" && payMethod === "card" && (paySelectedCard === "new" || (!paySelectedCard && (client.savedCards || []).length === 0)) && paySaveCard) {
+      const newCard = {
+        id: gid(),
+        brand: payCardBrand,
+        last4: payCard4,
+        expMonth: new Date().getMonth() + 1,
+        expYear: new Date().getFullYear(),
+        isDefault: (client.savedCards || []).length === 0,
+        stripePaymentMethodId: null,
+        createdAt: new Date().toISOString(),
+      };
+      updatedClients = data.clients.map(c => c.id === client.id ? { ...c, savedCards: [...(c.savedCards || []), newCard] } : c);
+    }
+
+    // Update payments and recalculate collected amount
+    const payments = [...(data.payments || []), payment];
+    const resPmts = payments.filter(p => p.reservationId === reservation.id && p.status === "completed" && p.type !== "refund");
+    const resRefunds = payments.filter(p => p.reservationId === reservation.id && (p.type === "refund" || p.status === "refunded"));
+    const newCollected = resPmts.reduce((s, p) => s + p.amount, 0) - resRefunds.reduce((s, p) => s + p.amount, 0);
+
+    // Calculate deposit requirement
+    const pricing = data.pricing || DEF_PRICING;
+    const nights = Math.max(1, countNights(reservation.checkIn, reservation.checkOut));
+    const rate = (pricing.boardingRates || {})[reservation.roomType] || 0;
+    const estTotal = rate * nights;
+    const depReq = Math.round(estTotal * 0.5 * 100) / 100;
+    const noDeposit = newCollected < depReq;
+
+    // Create audit entry
+    const pmtAudit = buildAuditEntry(
+      reservation.id,
+      payment.type === "refund" ? "Issued Refund" : "Collected Payment",
+      [{
+        field: payment.type === "refund" ? "Refund" : "Payment",
+        oldVal: `$${(reservation.amountCollected || 0).toFixed(2)} collected`,
+        newVal: `$${payment.amount.toFixed(2)} ${payment.type} via ${payment.method}${payment.method === "card" ? " ····" + payment.cardLast4 : ""}`,
+      }],
+      profile
+    );
+
+    // Save everything
+    await save({
+      ...data,
+      payments,
+      clients: updatedClients,
+      auditLog: [...(data.auditLog || []), pmtAudit],
+      reservations: data.reservations.map(r => r.id === reservation.id ? { ...r, amountCollected: newCollected, noDeposit } : r),
+    });
+
+    // Reset and collapse accordion
+    setPayExpanded(false);
+    setPayAmount("");
+    setPayTip("");
+    setPayNote("");
+    setPayErr("");
   };
 
   const secHeader = (label) => <div style={{fontSize:11,fontWeight:700,color:C.textMut,letterSpacing:"0.05em",textTransform:"uppercase",marginBottom:10,marginTop:20}}>{label}</div>;
@@ -4368,9 +4493,13 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                     </div>
                   )}
                   {/* Add discount link */}
-                  {!hasDiscount && !isReadOnly && configuredDiscounts.length > 0 && (
+                  {!hasDiscount && !isReadOnly && (
                     <div style={{marginBottom:8,position:"relative"}}>
-                      <DiscountPicker discounts={configuredDiscounts} clientId={reservation.clientId} data={data} onSelect={(d) => { setDiscountType(d.type === "percentage" ? "percent" : "flat"); setDiscountValue(d.value); setSelectedDiscountId(d.id); }}/>
+                      {configuredDiscounts.length > 0 ? (
+                        <DiscountPicker discounts={configuredDiscounts} clientId={reservation.clientId} data={data} onSelect={(d) => { setDiscountType(d.type === "percentage" ? "percent" : "flat"); setDiscountValue(d.value); setSelectedDiscountId(d.id); }}/>
+                      ) : (
+                        <ManualDiscountEntry onApply={(type, value) => { setDiscountType(type); setDiscountValue(value); setSelectedDiscountId(null); }}/>
+                      )}
                     </div>
                   )}
                   {/* Total */}
@@ -4473,21 +4602,157 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                     </div>
                   )}
 
-                  {/* Payment action — allow on checked-in too, only hide for checked-out/cancelled */}
+                  {/* Payment accordion — inline expansion */}
                   {reservation.status !== "checked-out" && reservation.status !== "cancelled" && (
-                    <div style={{display:"flex",gap:8,marginTop:14}}>
-                      <button onClick={()=>{
-                        if (isCheckInMode) { const depAmt = Math.max(0, depositRequired - collected); setPayFormDefaults({ amount: depAmt > 0 ? depAmt.toFixed(2) : "", type: "deposit" }); }
-                        else if (isCheckOutMode) { setPayFormDefaults({ amount: outstanding > 0 ? outstanding.toFixed(2) : "", type: "payment" }); }
-                        else { setPayFormDefaults(null); }
-                        setShowPayForm(true);
-                      }} style={{padding:"8px 16px",borderRadius:10,border:"none",background:C.pri,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6,transition:"opacity 0.15s"}}
-                        onMouseEnter={e=>e.currentTarget.style.opacity="0.9"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
-                        <I.DollarSign/>{isCheckInMode?"Collect Deposit":isCheckOutMode?"Collect Balance":"Collect Payment"}
-                      </button>
-                      {totalPaid>0&&<button onClick={()=>{setPayFormDefaults({type:"refund"});setShowPayForm(true);}} style={{padding:"8px 16px",borderRadius:10,border:`1px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
-                        <I.RefreshCw/>Refund
-                      </button>}
+                    <div style={{marginTop:14}}>
+                      {/* Toggle buttons */}
+                      <div style={{display:"flex",gap:8}}>
+                        <button onClick={() => {
+                          if (payExpanded && payMode === "pay") { setPayExpanded(false); return; }
+                          setPayMode("pay");
+                          const depAmt = isCheckInMode ? Math.max(0, depositRequired - collected) : outstanding > 0 ? outstanding : 0;
+                          setPayAmount(depAmt > 0 ? depAmt.toFixed(2) : "");
+                          setPayMethod("card");
+                          setPaySelectedCard(null);
+                          setPayCard4("");
+                          setPayCardBrand("visa");
+                          setPayTip("");
+                          setPayNote("");
+                          setPayErr("");
+                          setPayExpanded(true);
+                        }} style={{padding:"8px 16px",borderRadius:10,border:"none",background:C.pri,color:"#fff",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6,transition:"opacity 0.15s"}}
+                          onMouseEnter={e=>e.currentTarget.style.opacity="0.9"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+                          <I.DollarSign/>{isCheckInMode?"Collect Deposit":isCheckOutMode?"Collect Balance":"Collect Payment"}
+                        </button>
+                        {totalPaid>0&&<button onClick={() => {
+                          if (payExpanded && payMode === "refund") { setPayExpanded(false); return; }
+                          setPayMode("refund");
+                          setPayAmount("");
+                          setPayMethod("card");
+                          setPayErr("");
+                          setPayExpanded(true);
+                        }} style={{padding:"8px 16px",borderRadius:10,border:`1px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6}}>
+                          <I.RefreshCw/>Refund
+                        </button>}
+                      </div>
+
+                      {/* Accordion content */}
+                      <div style={{overflow:"hidden",maxHeight:payExpanded?1200:0,transition:"max-height 0.3s ease",opacity:payExpanded?1:0,transitionProperty:"max-height, opacity"}}>
+                        <div style={{padding:"16px 0 0"}}>
+                          {payErr && <div style={{color:C.dan,fontSize:13,fontWeight:600,marginBottom:12,padding:"8px 12px",background:C.danLt,borderRadius:8}}>{payErr}</div>}
+
+                          {/* Amount */}
+                          <div style={{marginBottom:12}}>
+                            <label style={{fontSize:11,fontWeight:600,color:C.textSec,display:"block",marginBottom:4}}>Amount</label>
+                            <div style={{position:"relative"}}>
+                              <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",color:C.textMut,fontWeight:600}}>$</span>
+                              <input type="number" step="0.01" value={payAmount} onChange={e=>{setPayAmount(e.target.value);setPayErr("");}} placeholder="0.00" style={{width:"100%",padding:"8px 12px 8px 28px",border:`1px solid ${C.border}`,borderRadius:8,fontSize:14,color:C.text,background:C.surface,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+                            </div>
+                          </div>
+
+                          {payMode !== "refund" && <>
+                            {/* Payment Method pills */}
+                            <div style={{marginBottom:12}}>
+                              <label style={{fontSize:11,fontWeight:600,color:C.textSec,display:"block",marginBottom:6}}>Method</label>
+                              <div style={{display:"flex",gap:6}}>
+                                {[{v:"card",l:"Card",icon:<I.CreditCard size={14}/>},{v:"cash",l:"Cash",icon:<I.DollarSign size={14}/>},{v:"check",l:"Check",icon:<I.FileText size={14}/>}].map(m=>(
+                                  <button key={m.v} onClick={()=>{setPayMethod(m.v);setPaySelectedCard(null);}} style={{flex:1,padding:"8px 0",borderRadius:8,border:`1.5px solid ${payMethod===m.v?C.pri:C.border}`,background:payMethod===m.v?C.priLt:"transparent",color:payMethod===m.v?C.pri:C.textSec,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",justifyContent:"center",gap:6,transition:"all 0.15s"}}>
+                                    {m.icon}{m.l}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Card selection */}
+                            {payMethod === "card" && (() => {
+                              const savedCards = client.savedCards || [];
+                              return (
+                                <div style={{marginBottom:12}}>
+                                  {savedCards.length > 0 && <>
+                                    <label style={{fontSize:11,fontWeight:600,color:C.textSec,display:"block",marginBottom:6}}>Saved Cards</label>
+                                    <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:8}}>
+                                      {savedCards.map(card => (
+                                        <button key={card.id} onClick={()=>{setPaySelectedCard(card.id);setPayCard4(card.last4);setPayCardBrand(card.brand);}} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:8,border:`1.5px solid ${paySelectedCard===card.id?C.pri:C.border}`,background:paySelectedCard===card.id?C.priLt:C.surface,cursor:"pointer",fontFamily:"inherit",textAlign:"left",width:"100%",transition:"all 0.15s"}}>
+                                          <div style={{width:32,height:20,borderRadius:4,background:C.bg,border:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:800,color:C.textSec,textTransform:"uppercase",flexShrink:0}}>{card.brand?.slice(0,4)||"Card"}</div>
+                                          <span style={{fontSize:12,fontWeight:600,color:C.text}}>····{card.last4}</span>
+                                          <span style={{fontSize:11,color:C.textMut}}>{String(card.expMonth).padStart(2,"0")}/{String(card.expYear).slice(-2)}</span>
+                                          {card.isDefault && <span style={{fontSize:9,fontWeight:700,color:C.suc,background:C.sucLt,padding:"2px 6px",borderRadius:4,textTransform:"uppercase",whiteSpace:"nowrap"}}>Default</span>}
+                                          <div style={{marginLeft:"auto",flexShrink:0}}>
+                                            {paySelectedCard===card.id ? <svg width="16" height="16" viewBox="0 0 24 24" fill={C.pri} stroke="white" strokeWidth="3"><circle cx="12" cy="12" r="10"/><polyline points="8 12 11 15 16 9"/></svg> : <div style={{width:16,height:16,borderRadius:8,border:`2px solid ${C.border}`}}/>}
+                                          </div>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </>}
+
+                                  {/* New card option or default if no saved cards */}
+                                  <button onClick={()=>setPaySelectedCard("new")} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:8,border:`1.5px dashed ${paySelectedCard==="new"||(!paySelectedCard&&savedCards.length===0)?C.pri:C.border}`,background:paySelectedCard==="new"||(!paySelectedCard&&savedCards.length===0)?C.priLt:C.surface,cursor:"pointer",fontFamily:"inherit",width:"100%",textAlign:"left",transition:"all 0.15s"}}>
+                                    <div style={{width:32,height:20,borderRadius:4,border:`1.5px dashed ${C.pri}`,display:"flex",alignItems:"center",justifyContent:"center",color:C.pri,flexShrink:0}}><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></div>
+                                    <span style={{fontSize:12,fontWeight:600,color:C.pri}}>New Card</span>
+                                    <div style={{marginLeft:"auto",flexShrink:0}}>
+                                      {(paySelectedCard==="new"||(!paySelectedCard&&savedCards.length===0)) ? <svg width="16" height="16" viewBox="0 0 24 24" fill={C.pri} stroke="white" strokeWidth="3"><circle cx="12" cy="12" r="10"/><polyline points="8 12 11 15 16 9"/></svg> : <div style={{width:16,height:16,borderRadius:8,border:`2px solid ${C.border}`}}/>}
+                                    </div>
+                                  </button>
+
+                                  {/* New card fields */}
+                                  {(paySelectedCard === "new" || (!paySelectedCard && savedCards.length === 0)) && (
+                                    <div style={{marginTop:10,padding:"12px",background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}>
+                                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                                        <div>
+                                          <label style={{fontSize:11,fontWeight:600,color:C.textSec,display:"block",marginBottom:4}}>Last 4 Digits</label>
+                                          <input maxLength={4} value={payCard4} onChange={e=>setPayCard4(e.target.value.replace(/\D/g,"").slice(0,4))} placeholder="0000" style={{width:"100%",padding:"8px 10px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:13,color:C.text,background:C.surface,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+                                        </div>
+                                        <div>
+                                          <label style={{fontSize:11,fontWeight:600,color:C.textSec,display:"block",marginBottom:4}}>Brand</label>
+                                          <div style={{display:"flex",gap:4}}>
+                                            {["visa","mc","amex","disc"].map(b=>(
+                                              <button key={b} onClick={()=>setPayCardBrand(b)} style={{flex:1,padding:"7px 0",borderRadius:6,border:`1.5px solid ${payCardBrand===b?C.pri:C.border}`,background:payCardBrand===b?C.priLt:"transparent",color:payCardBrand===b?C.pri:C.textMut,fontSize:9,fontWeight:700,cursor:"pointer",fontFamily:"inherit",textTransform:"uppercase",transition:"all 0.15s"}}>{b}</button>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <label style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer",fontSize:11,fontWeight:600,color:C.text}}>
+                                        <input type="checkbox" checked={paySaveCard} onChange={e=>setPaySaveCard(e.target.checked)} style={{accentColor:C.pri,width:15,height:15,cursor:"pointer"}}/>
+                                        Save card on file
+                                      </label>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </>}
+
+                          {/* Staff + Tip row */}
+                          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+                            <div>
+                              <label style={{fontSize:11,fontWeight:600,color:C.textSec,display:"block",marginBottom:4}}>Staff Initials</label>
+                              <input maxLength={3} value={payStaff} onChange={e=>setPayStaff(e.target.value.toUpperCase())} placeholder="e.g. ZN" style={{width:"100%",padding:"8px 10px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:13,color:C.text,background:C.surface,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+                            </div>
+                            <div>
+                              <label style={{fontSize:11,fontWeight:600,color:C.textSec,display:"block",marginBottom:4}}>Tip ($)</label>
+                              <input type="number" step="0.01" value={payTip} onChange={e=>setPayTip(e.target.value)} placeholder="0.00" style={{width:"100%",padding:"8px 10px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:13,color:C.text,background:C.surface,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+                            </div>
+                          </div>
+
+                          {/* Note */}
+                          <div style={{marginBottom:12}}>
+                            <label style={{fontSize:11,fontWeight:600,color:C.textSec,display:"block",marginBottom:4}}>Note (optional)</label>
+                            <input value={payNote} onChange={e=>setPayNote(e.target.value)} placeholder="Optional note..." style={{width:"100%",padding:"8px 10px",border:`1px solid ${C.border}`,borderRadius:6,fontSize:13,color:C.text,background:C.surface,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+                          </div>
+
+                          {/* Action buttons */}
+                          <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+                            <button onClick={()=>setPayExpanded(false)} style={{padding:"8px 16px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"opacity 0.15s"}}
+                              onMouseEnter={e=>e.currentTarget.style.opacity="0.7"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+                              Cancel
+                            </button>
+                            <button onClick={handlePaymentSubmit} style={{padding:"8px 16px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"opacity 0.15s"}}
+                              onMouseEnter={e=>e.currentTarget.style.opacity="0.9"} onMouseLeave={e=>e.currentTarget.style.opacity="1"}>
+                              {payMode==="refund"?"Issue Refund":"Confirm Payment"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -4645,34 +4910,6 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             ));
           })()}
         </div>
-      )}
-
-      {/* Payment Form Modal */}
-      {showPayForm && (
-        <PaymentFormModal
-          onClose={()=>{setShowPayForm(false);setPayFormDefaults(null);}}
-          client={client}
-          reservation={reservation}
-          defaultAmount={payFormDefaults?.amount}
-          defaultType={payFormDefaults?.type}
-          profile={profile}
-          onSave={async (pmt) => {
-            const payments = [...(data.payments||[]), pmt];
-            const resPmts = payments.filter(p => p.reservationId === reservation.id && p.status === "completed" && p.type !== "refund");
-            const resRefunds = payments.filter(p => p.reservationId === reservation.id && (p.type === "refund" || p.status === "refunded"));
-            const newCollected = resPmts.reduce((s, p) => s + p.amount, 0) - resRefunds.reduce((s, p) => s + p.amount, 0);
-            // Update noDeposit flag based on whether deposit requirement is met after this payment/refund
-            const pricing = data.pricing || DEF_PRICING;
-            const nights = Math.max(1, countNights(reservation.checkIn, reservation.checkOut));
-            const rate = (pricing.boardingRates || {})[reservation.roomType] || 0;
-            const estTotal = rate * nights;
-            const depReq = Math.round(estTotal * 0.5 * 100) / 100;
-            const noDeposit = newCollected < depReq;
-            const pmtAudit = buildAuditEntry(reservation.id, pmt.type === "refund" ? "Issued Refund" : "Collected Payment", [{field:pmt.type==="refund"?"Refund":"Payment",oldVal:`$${(reservation.amountCollected||0).toFixed(2)} collected`,newVal:`$${pmt.amount.toFixed(2)} ${pmt.type} via ${pmt.method}${pmt.method==="card"?" ····"+pmt.cardLast4:""}`}], profile);
-            await save({...data, payments, auditLog: [...(data.auditLog||[]), pmtAudit], reservations: data.reservations.map(r => r.id === reservation.id ? {...r, amountCollected: newCollected, noDeposit} : r)});
-            setShowPayForm(false);
-          }}
-        />
       )}
 
       {/* Footer */}
@@ -6738,6 +6975,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               if ((newCare.bath_type||"") !== (oldCare.bath_type||"")) diffs.push({field:"Bath Type",oldVal:oldCare.bath_type||"(none)",newVal:newCare.bath_type||"(none)"});
               if ((newCare.feeding||"") !== (oldCare.feeding||"")) diffs.push({field:"Feeding Instructions",oldVal:oldCare.feeding||"(none)",newVal:newCare.feeding||"(none)"});
               if ((newCare.medications||"") !== (oldCare.medications||"")) diffs.push({field:"Medications",oldVal:oldCare.medications||"(none)",newVal:newCare.medications||"(none)"});
+              if (JSON.stringify(newCare.feedingSchedules||[]) !== JSON.stringify(oldCare.feedingSchedules||[]) && (newCare.feeding||"") === (oldCare.feeding||"")) diffs.push({field:"Feeding Schedules",oldVal:"(modified)",newVal:"(updated)"});
+              if (JSON.stringify(newCare.medicationSchedules||[]) !== JSON.stringify(oldCare.medicationSchedules||[]) && (newCare.medications||"") === (oldCare.medications||"")) diffs.push({field:"Medication Schedules",oldVal:"(modified)",newVal:"(updated)"});
               if ((newCare.postBathReturn||"") !== (oldCare.postBathReturn||"")) diffs.push({field:"Post-Bath Return",oldVal:oldCare.postBathReturn||"(none)",newVal:newCare.postBathReturn||"(none)"});
               // Emergency contact override changes
               const oldEc = bRes.emergencyContactOverride || {}; const newEc = updatedRes.emergencyContactOverride || {};
@@ -9415,6 +9654,8 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               if ((newCare.bath_type||"") !== (oldCare.bath_type||"")) diffs.push({field:"Bath Type",oldVal:oldCare.bath_type||"(none)",newVal:newCare.bath_type||"(none)"});
               if ((newCare.feeding||"") !== (oldCare.feeding||"")) diffs.push({field:"Feeding Instructions",oldVal:oldCare.feeding||"(none)",newVal:newCare.feeding||"(none)"});
               if ((newCare.medications||"") !== (oldCare.medications||"")) diffs.push({field:"Medications",oldVal:oldCare.medications||"(none)",newVal:newCare.medications||"(none)"});
+              if (JSON.stringify(newCare.feedingSchedules||[]) !== JSON.stringify(oldCare.feedingSchedules||[]) && (newCare.feeding||"") === (oldCare.feeding||"")) diffs.push({field:"Feeding Schedules",oldVal:"(modified)",newVal:"(updated)"});
+              if (JSON.stringify(newCare.medicationSchedules||[]) !== JSON.stringify(oldCare.medicationSchedules||[]) && (newCare.medications||"") === (oldCare.medications||"")) diffs.push({field:"Medication Schedules",oldVal:"(modified)",newVal:"(updated)"});
               if ((newCare.postBathReturn||"") !== (oldCare.postBathReturn||"")) diffs.push({field:"Post-Bath Return",oldVal:oldCare.postBathReturn||"(none)",newVal:newCare.postBathReturn||"(none)"});
               // Emergency contact override changes
               const oldEc = bRes.emergencyContactOverride || {}; const newEc = updatedRes.emergencyContactOverride || {};
@@ -11679,7 +11920,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         isSecondDogSameRoom: isSecondInRoom,
         roomSegments: dogSegments.length > 0 ? dogSegments : undefined,
         appliedCoupons: appliedCoupons,
-        reservation: { actualCheckInTime: reservation?.actualCheckInTime },
+        reservation: { actualCheckInTime: undefined },
       });
       return {
         id:gid(),clientId,dogId:did,type,
@@ -11895,7 +12136,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
           dogs: dog ? [dog] : [], dogProfiles: data.dogs, pricing: data.pricing,
           isSecondDogSameRoom: isSecond,
           roomSegments: dogSegs.length > 0 ? dogSegs : undefined,
-          reservation: { actualCheckInTime: reservation?.actualCheckInTime },
+          reservation: { actualCheckInTime: undefined },
         });
         combined.lineItems.push(...(dog ? [{label: dog.fields.name, isDogHeader: true}] : []), ...pr.lineItems);
         combined.subtotal += pr.subtotal;
@@ -11935,7 +12176,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
       dogs: dog ? [dog] : [], dogProfiles: data.dogs, pricing: data.pricing,
       isSecondDogSameRoom: false,
       roomSegments: singleSegs.length > 0 ? singleSegs : undefined,
-      reservation: { actualCheckInTime: reservation?.actualCheckInTime },
+      reservation: { actualCheckInTime: undefined },
     });
     // Append manual add-ons
     appendAddOns(result, did);
@@ -12873,11 +13114,15 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                     <span style={{fontSize:15,fontWeight:800,color:C.text}}>${adjTotal.toFixed(2)}</span>
                   </div>
                 </>)}
-                {!hasDiscount && configuredDiscounts.length > 0 && (<DiscountPicker discounts={configuredDiscounts} clientId={clientId} data={data} onSelect={(d) => {
-                  setResDiscountType(d.type === "percentage" ? "percent" : "flat");
-                  setResDiscountValue(d.value);
-                  setResDiscountId(d.id);
-                }}/>)}
+                {!hasDiscount && (() => {
+                  if (configuredDiscounts.length > 0) return <DiscountPicker discounts={configuredDiscounts} clientId={clientId} data={data} onSelect={(d) => {
+                    setResDiscountType(d.type === "percentage" ? "percent" : "flat");
+                    setResDiscountValue(d.value);
+                    setResDiscountId(d.id);
+                  }}/>;
+                  // Manual discount entry when no configured discounts
+                  return <ManualDiscountEntry onApply={(type, value) => { setResDiscountType(type); setResDiscountValue(value); setResDiscountId(null); }}/>;
+                })()}
               </div>);
             })()}
 
@@ -14102,6 +14347,8 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
               if ((newCare.bath_type||"") !== (oldCare.bath_type||"")) diffs.push({field:"Bath Type",oldVal:oldCare.bath_type||"(none)",newVal:newCare.bath_type||"(none)"});
               if ((newCare.feeding||"") !== (oldCare.feeding||"")) diffs.push({field:"Feeding Instructions",oldVal:oldCare.feeding||"(none)",newVal:newCare.feeding||"(none)"});
               if ((newCare.medications||"") !== (oldCare.medications||"")) diffs.push({field:"Medications",oldVal:oldCare.medications||"(none)",newVal:newCare.medications||"(none)"});
+              if (JSON.stringify(newCare.feedingSchedules||[]) !== JSON.stringify(oldCare.feedingSchedules||[]) && (newCare.feeding||"") === (oldCare.feeding||"")) diffs.push({field:"Feeding Schedules",oldVal:"(modified)",newVal:"(updated)"});
+              if (JSON.stringify(newCare.medicationSchedules||[]) !== JSON.stringify(oldCare.medicationSchedules||[]) && (newCare.medications||"") === (oldCare.medications||"")) diffs.push({field:"Medication Schedules",oldVal:"(modified)",newVal:"(updated)"});
               if ((newCare.postBathReturn||"") !== (oldCare.postBathReturn||"")) diffs.push({field:"Post-Bath Return",oldVal:oldCare.postBathReturn||"(none)",newVal:newCare.postBathReturn||"(none)"});
               // Emergency contact override changes
               const oldEc = bRes.emergencyContactOverride || {}; const newEc = updatedRes.emergencyContactOverride || {};
