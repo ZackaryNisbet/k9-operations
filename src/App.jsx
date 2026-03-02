@@ -81,7 +81,7 @@ const PAGE_SLUGS = {
   "settings-eod":"settings/eod", "settings-daily-ops":"settings/daily-ops", "settings-run-card":"settings/run-card",
   "settings-resort-info":"settings/resort-info", "settings-facility":"settings/facility", "settings-rooms":"settings/rooms",
   "settings-closed-dates":"settings/closed-dates", "settings-policies":"settings/policies", "settings-compliance-rules":"settings/compliance-rules",
-  "settings-booking-settings":"settings/booking-settings",
+  "settings-booking-settings":"settings/booking-settings", "settings-vets":"settings/vets",
   "settings-legal":"settings/legal", "settings-hotkeys":"settings/hotkeys", "settings-reset":"settings/reset",
   "enterprise-locations":"locations", "enterprise-operations":"oversight", "enterprise-packages":"packages", "enterprise-users":"users", "enterprise-management":"management",
 };
@@ -1411,10 +1411,8 @@ const DEF_CLIENT_FIELDS = [
   { id:"address",name:"Address",type:"text",requiredFor:[],locked:false,order:4 },
   { id:"emergency_contact",name:"Emergency Contact",type:"text",requiredFor:[],locked:false,order:5 },
   { id:"emergency_phone",name:"Emergency Phone",type:"tel",requiredFor:[],locked:false,order:6 },
-  { id:"vet_name",name:"Veterinarian Name",type:"text",requiredFor:[],locked:false,order:7 },
-  { id:"vet_phone",name:"Veterinarian Phone",type:"tel",requiredFor:[],locked:false,order:8 },
-  { id:"notes",name:"Notes",type:"textarea",requiredFor:[],locked:false,order:9 },
-  { id:"referral_source",name:"Referral Source",type:"select",requiredFor:[],locked:false,order:10,options:["Friend/Family","Google","Social Media","Website","Walk-In","Vet Referral","Other"] },
+  { id:"notes",name:"Notes",type:"textarea",requiredFor:[],locked:false,order:7 },
+  { id:"referral_source",name:"Referral Source",type:"select",requiredFor:[],locked:false,order:8,options:["Friend/Family","Google","Social Media","Website","Walk-In","Vet Referral","Other"] },
 ];
 
 const DEF_DOG_FIELDS = [
@@ -1495,8 +1493,6 @@ const DEF_QUESTIONNAIRE = {
         { id: "owner_name", label: "Owner Name", type: "text", required: true },
         { id: "emergency_contact_name", label: "Emergency Contact Name", type: "text", required: true },
         { id: "emergency_contact_phone", label: "Emergency Contact Phone", type: "phone", required: true },
-        { id: "vet_name", label: "Veterinarian Name", type: "text", required: false },
-        { id: "vet_phone", label: "Veterinarian Phone", type: "phone", required: false },
       ],
     },
   ],
@@ -1759,7 +1755,6 @@ function generateDemoData() {
         address: ri(1,999)+" "+rp(STR)+", "+rp(CTY),
         emergency_contact: rp(FN)+" "+rp(LN),
         emergency_phone: "847555"+String(ri(1000,9999)),
-        vet_name: rp(VET), vet_phone: "847555"+String(ri(1000,9999)),
         notes: srand()>0.7 ? rp(["Prefers text communication","Travels frequently, regular boarder","Also has cat at home","First-time pet owner","Referred by friend","VIP client","Works from home","Prefers morning drop-off","Wants daily photo updates",""]) : ""
       },
       createdAt: addD(today, -ri(1,365)),
@@ -9022,6 +9017,15 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const [newNote, setNewNote] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
   const [textNotify, setTextNotify] = useState(null);
+  const [vetSearch, setVetSearch] = useState("");
+  const [vetDropOpen, setVetDropOpen] = useState(false);
+  const vetDropRef = useRef(null);
+  useEffect(() => {
+    if (!vetDropOpen) return;
+    const handler = (e) => { if (vetDropRef.current && !vetDropRef.current.contains(e.target)) setVetDropOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [vetDropOpen]);
 
   if (!client) return <div style={{padding:40,textAlign:"center",color:C.textSec}}>Client not found</div>;
 
@@ -9044,10 +9048,42 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     setTextNotify(null);
   };
 
-  const toggleAgreement = async (agrId) => {
+  const sendAgreementLink = async (agrId) => {
+    const agr = (data.agreements || []).find(a => a.id === agrId);
+    if (!agr) return;
+    const linkId = crypto.randomUUID();
+    const msgId = gid();
+    const clientName = (client.fields?.first_name || '').trim();
+    const agrName = agr.name || 'Agreement';
+    const now = new Date().toISOString();
+
+    const newLink = {
+      id: linkId, linkType: 'agreement', relatedId: agrId,
+      clientId: clientId, expiresAt: new Date(Date.now() + 30*86400000).toISOString(),
+      viewCount: 0,
+    };
+
+    const newMsg = {
+      id: msgId, clientId: clientId, direction: 'outbound', channel: 'sms',
+      body: `Hi ${clientName}, please review and sign the ${agrName} agreement for K9 Resorts: k9operations.com/sign/${linkId}`,
+      sentAt: now, sentBy: 'Staff', status: 'sent', _simulated: true,
+    };
+
+    // Update agreement_log via client.agreements
     const agrs = { ...(client.agreements || {}) };
-    const current = agrSigned(client, agrId);
-    agrs[agrId] = current ? false : { signed: true, date: todayStr() };
+    agrs[agrId] = { signed: false, date: null, status: 'sent', sentAt: now, logId: linkId, messageId: msgId };
+
+    await save({
+      ...data,
+      clients: data.clients.map(c => c.id === clientId ? { ...c, agreements: agrs } : c),
+      outboundLinks: [...(data.outboundLinks || []), newLink],
+      messages: [...(data.messages || []), newMsg],
+    });
+  };
+
+  const markAgreementSigned = async (agrId) => {
+    const agrs = { ...(client.agreements || {}) };
+    agrs[agrId] = { signed: true, date: todayStr(), status: 'signed' };
     await save({...data, clients: data.clients.map(c => c.id === clientId ? { ...c, agreements: agrs } : c)});
   };
 
@@ -9245,20 +9281,124 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
         <div style={{ marginBottom: 16, padding: "14px 18px", background: C.bg, borderRadius: 12 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Agreement Status</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {data.agreements.map(agr => {
-              const info = agrSigned(client, agr.id);
-              const done = !!info;
-              const dateFmt = info && info.date ? new Date(info.date + "T00:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }) : null;
-              return (
-                <div key={agr.id} onClick={() => toggleAgreement(agr.id)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: done ? C.sucLt : C.danLt, border: `1.5px solid ${done ? "#A7F3D0" : "#FECACA"}`, cursor: "pointer", transition: "all 0.15s" }}>
-                  {done ? <span style={{ color: C.suc }}><I.CheckCircle /></span> : <span style={{ color: C.dan }}><I.XCircle /></span>}
-                  <span style={{ fontSize: 13, fontWeight: 600, color: done ? C.suc : C.dan }}>{agr.name}</span>
-                  {done && dateFmt && <span style={{ fontSize: 11, color: C.textMut }}>Signed {dateFmt}</span>}
-                  {!done && <span style={{ fontSize: 10, fontWeight: 500, color: C.textMut }}>(click to mark signed)</span>}
-                </div>
-              );
+                        {data.agreements.map(agr => {
+              // Read directly from client.agreements (not through agrSigned which returns null for unsigned)
+              const raw = client.agreements && client.agreements[agr.id];
+              const isSigned = raw && (raw === true || raw.signed === true);
+              const isPending = raw && !isSigned && (raw.status === 'sent' || raw.status === 'pending');
+              const dateFmt = raw && raw.date ? new Date(raw.date + "T00:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }) : null;
+              const sentFmt = raw && raw.sentAt ? new Date(raw.sentAt).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }) : null;
+
+              if (isSigned) {
+                // Green pill with CheckCircle and date
+                return (
+                  <div key={agr.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: C.sucLt, border: `1.5px solid #A7F3D0` }}>
+                    <span style={{ color: C.suc }}><I.CheckCircle /></span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: C.suc }}>{agr.name}</span>
+                    {dateFmt && <span style={{ fontSize: 11, color: C.textMut }}>Signed {dateFmt}</span>}
+                  </div>
+                );
+              } else if (isPending) {
+                // Amber/yellow pill with Clock icon and "Mark Signed" link
+                return (
+                  <div key={agr.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: "#FEF3C7", border: "1.5px solid #F59E0B40" }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#92400E" }}>{agr.name}</span>
+                    <span style={{ fontSize: 11, color: "#78350F" }}>Pending</span>
+                    {sentFmt && <span style={{ fontSize: 10, color: "#B45309" }}>sent {sentFmt}</span>}
+                    <button onClick={() => markAgreementSigned(agr.id)} style={{ fontSize: 10, fontWeight: 600, color: "#D97706", background: "none", border: "none", cursor: "pointer", padding: "2px 4px", marginLeft: 4, textDecoration: "underline" }}>Mark Signed</button>
+                  </div>
+                );
+              } else {
+                // Blue pill with "Send Agreement" button
+                return (
+                  <button key={agr.id} onClick={() => sendAgreementLink(agr.id)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: C.priLt, border: `1.5px solid ${C.pri}40`, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}
+                    onMouseEnter={e => { e.currentTarget.style.background = C.pri; e.currentTarget.style.color = "#fff"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = C.priLt; e.currentTarget.style.color = "inherit"; }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                      <line x1="22" y1="2" x2="11" y2="13" />
+                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                    </svg>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>Send {agr.name}</span>
+                  </button>
+                );
+              }
             })}
+
           </div>
+        </div>
+
+        {/* Preferred Veterinarian Section */}
+        <div style={{ marginBottom: 16, padding: "14px 18px", background: C.bg, borderRadius: 12, position: "relative" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Preferred Veterinarian</div>
+          <div ref={vetDropRef} style={{ position: "relative" }}>
+            <input
+              type="text"
+              value={vetSearch}
+              onChange={(e) => setVetSearch(e.target.value)}
+              onFocus={() => setVetDropOpen(true)}
+              placeholder="Search veterinarians..."
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }}
+            />
+            {vetDropOpen && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 8, zIndex: 10, maxHeight: 300, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}>
+                {(() => {
+                  const filtered = (data.vets || []).filter(v => v.isActive !== false && (v.vetName || '').toLowerCase().includes(vetSearch.toLowerCase()));
+                  return (
+                    <div>
+                      {filtered.map(vet => (
+                        <div
+                          key={vet.id}
+                          onClick={async () => {
+                            await save({ ...data, clients: data.clients.map(c => c.id === clientId ? { ...c, preferredVetId: vet.id } : c) });
+                            setVetSearch("");
+                            setVetDropOpen(false);
+                          }}
+                          style={{ padding: "10px 12px", cursor: "pointer", borderBottom: `1px solid ${C.borderLight}`, transition: "background 0.1s" }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = C.priLt}
+                          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                        >
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{vet.vetName}</div>
+                          {vet.clinicName && <div style={{ fontSize: 12, color: C.textSec }}>{vet.clinicName}</div>}
+                          {vet.phone && <div style={{ fontSize: 11, color: C.textMut }}>{vet.phone}</div>}
+                        </div>
+                      ))}
+                      {filtered.length === 0 && <div style={{ padding: "10px 12px", color: C.textMut, fontSize: 13 }}>No vets found</div>}
+                      {/* Add New Vet inline */}
+                      <div
+                        onClick={async () => {
+                          const name = vetSearch.trim();
+                          if (!name) return;
+                          const newVet = { id: crypto.randomUUID(), vetName: name, clinicName: '', phone: '', email: '', notes: '', isActive: true };
+                          await save({ ...data, vets: [...(data.vets || []), newVet], clients: data.clients.map(c => c.id === clientId ? { ...c, preferredVetId: newVet.id } : c) });
+                          setVetSearch("");
+                          setVetDropOpen(false);
+                        }}
+                        style={{ padding: "10px 12px", cursor: "pointer", borderTop: `1.5px solid ${C.border}`, background: C.priLt, transition: "background 0.1s", display: "flex", alignItems: "center", gap: 6 }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = C.pri + "20"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = C.priLt}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>{vetSearch.trim() ? `Add "${vetSearch.trim()}" as new vet` : "Add New Vet"}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+          {client.preferredVetId && (() => {
+            const vet = (data.vets || []).find(v => v.id === client.preferredVetId);
+            return vet ? (
+              <div style={{ marginTop: 8, padding: "8px 12px", background: C.priLt, borderRadius: 6, border: `1px solid ${C.pri}20` }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.pri }}>{vet.vetName}</div>
+                {vet.clinicName && <div style={{ fontSize: 11, color: C.text }}>{vet.clinicName}</div>}
+              </div>
+            ) : null;
+          })()}
         </div>
 
         {/* Other fields */}
@@ -10267,6 +10407,15 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
   const [editMedSchedules, setEditMedSchedules] = useState([]);
   const [sentQuestionnaire, setSentQuestionnaire] = useState(false);
   const [ppConfirm, setPpConfirm] = useState(null); // { reservations, daysLeft }
+  const [dogVetSearch, setDogVetSearch] = useState("");
+  const [dogVetDropOpen, setDogVetDropOpen] = useState(false);
+  const dogVetDropRef = useRef(null);
+  useEffect(() => {
+    if (!dogVetDropOpen) return;
+    const handler = (e) => { if (dogVetDropRef.current && !dogVetDropRef.current.contains(e.target)) setDogVetDropOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [dogVetDropOpen]);
 
   if (!dog||!client) return <div style={{padding:40,textAlign:"center",color:C.textSec}}>Dog not found</div>;
 
@@ -10314,16 +10463,39 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
   };
 
   const sendQuestionnaireText = async () => {
-    const clientName = `${client.fields.first_name || ""} ${client.fields.last_name || ""}`.trim();
-    const phone = client.fields.phone || client.fields.mobile || "";
-    const msg = {
-      id: gid(), type: "outbound", channel: "sms",
-      to: phone, toName: clientName,
-      body: `Hi ${(client.fields.first_name || "").trim()}, this is K9 Resorts! Please fill out the "Getting to Know Your Dog" questionnaire for ${dog.fields.name} before your visit. You can complete it at the resort or let us know if you have any questions!`,
-      sentAt: new Date().toISOString(),
-      sentBy: "Staff", status: "sent",
+    const currentQ = (data.questionnaires || []).find(q => q.isCurrent) || DEF_QUESTIONNAIRE;
+    const linkId = uuid();
+    const msgId = gid();
+    const clientName = (client.fields?.first_name || "").trim();
+    const dogName = dog.fields?.name || "your dog";
+    const now = new Date().toISOString();
+
+    const newLink = {
+      id: linkId,
+      linkType: "questionnaire",
+      relatedId: currentQ.id,
+      clientId: client.id,
+      expiresAt: new Date(Date.now() + 30*86400000).toISOString(),
+      viewCount: 0,
     };
-    await save({ ...data, messages: [...(data.messages || []), msg] });
+
+    const newMsg = {
+      id: msgId,
+      clientId: client.id,
+      direction: "outbound",
+      channel: "sms",
+      body: `Hi ${clientName}, please complete the "Getting to Know Your Dog" questionnaire for ${dogName} before your visit: k9operations.com/form/${linkId}`,
+      sentAt: now,
+      sentBy: "Staff",
+      status: "sent",
+      _simulated: true,
+    };
+
+    await save({
+      ...data,
+      outboundLinks: [...(data.outboundLinks || []), newLink],
+      messages: [...(data.messages || []), newMsg],
+    });
     setSentQuestionnaire(true);
     setTimeout(() => setSentQuestionnaire(false), 3000);
   };
@@ -10487,8 +10659,8 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
       <h3 style={{margin:"0 0 12px",fontSize:17,fontWeight:700,color:C.text}}>Vaccine Records</h3>
       <Card style={{padding:0,overflow:"hidden",marginBottom:20}}>
         {/* Table header */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 140px 140px",padding:"10px 20px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.05em"}}>
-          <div>Vaccine</div><div>Expiration</div><div>Updated By</div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 140px 140px 120px",padding:"10px 20px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.05em"}}>
+          <div>Vaccine</div><div>Expiration</div><div>Updated By</div><div>Actions</div>
         </div>
         {/* Rows - only required vaccines */}
         {(data.requiredVaccines || DEF_REQUIRED_VACCINES).map(vId => {
@@ -10499,7 +10671,7 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
           const soon = val && !exp && (new Date(val + "T00:00:00") - new Date()) < 30 * 86400000;
           const ok = val && !exp;
           return (
-            <div key={vId} style={{display:"grid",gridTemplateColumns:"1fr 140px 140px",padding:"12px 20px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center"}}>
+            <div key={vId} style={{display:"grid",gridTemplateColumns:"1fr 140px 140px 120px",padding:"12px 20px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center"}}>
               <div style={{display:"flex",alignItems:"center",gap:8}}>
                 <span style={{color:exp||!val?C.dan:soon?C.warn:C.suc,display:"inline-flex"}}>{ok?<I.VaxOk/>:<I.VaxBad/>}</span>
                 <span style={{fontSize:14,fontWeight:600,color:C.text}}>{vaxDef.name}</span>
@@ -10509,6 +10681,26 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
               </div>
               <div style={{fontSize:13,fontWeight:600,color:exp||!val?C.dan:soon?C.warn:C.text}}>{val?fmtDate(val):"—"}</div>
               <div style={{fontSize:12,color:C.textMut,fontStyle:"italic"}}>—</div>
+              <label style={{cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4,padding:"3px 8px",borderRadius:6,background:C.priLt,color:C.pri,fontSize:11,fontWeight:600}}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Upload
+                <input type="file" accept="image/*,.pdf" style={{display:"none"}} onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  try {
+                    const filePath = `${dogId}/${vId}_${Date.now()}.${file.name.split('.').pop()}`;
+                    const { error } = await supabase.storage.from("vaccine-records").upload(filePath, file);
+                    if (!error) {
+                      addGlobalToast?.({ type:"success", message:`Vaccine record uploaded for ${vaxDef.name}` });
+                    } else {
+                      addGlobalToast?.({ type:"error", message:"Upload failed — check if Storage bucket exists" });
+                    }
+                  } catch (err) {
+                    addGlobalToast?.({ type:"error", message:"Storage not configured yet" });
+                  }
+                  e.target.value = "";
+                }} />
+              </label>
             </div>
           );
         })}
@@ -10610,7 +10802,6 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
                 <input type="file" accept="image/*" id="dogPicUpload" style={{ display: "none" }} onChange={e => {
                   const file = e.target.files?.[0];
                   if (!file) return;
-                  // Resize to max 400px and compress
                   const reader = new FileReader();
                   reader.onload = (ev) => {
                     const img = new Image();
@@ -10620,7 +10811,18 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
                       if (w > maxDim || h > maxDim) { const r = Math.min(maxDim / w, maxDim / h); w = Math.round(w * r); h = Math.round(h * r); }
                       const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
                       canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-                      setEditProfilePic(canvas.toDataURL("image/jpeg", 0.8));
+                      canvas.toBlob(async (blob) => {
+                        try {
+                          const filePath = `${dogId}/${Date.now()}.jpg`;
+                          const { error } = await supabase.storage.from("dog-profile-pics").upload(filePath, blob, { contentType: "image/jpeg", upsert: true });
+                          if (!error) {
+                            const { data: urlData } = supabase.storage.from("dog-profile-pics").getPublicUrl(filePath);
+                            setEditProfilePic(urlData.publicUrl);
+                            return;
+                          }
+                        } catch (err) { console.warn("Storage upload failed, using base64:", err); }
+                        setEditProfilePic(canvas.toDataURL("image/jpeg", 0.8));
+                      }, "image/jpeg", 0.8);
                     };
                     img.src = ev.target.result;
                   };
@@ -10651,6 +10853,76 @@ function DogDetailPage({ data, save, clientId, dogId, nav }) {
               </button>
             ))}
           </div>
+        </div>
+        {/* Dog's Vet */}
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 8 }}>Dog's Vet</div>
+          <div ref={dogVetDropRef} style={{ position: "relative" }}>
+            <input
+              type="text"
+              value={dogVetSearch}
+              onChange={(e) => setDogVetSearch(e.target.value)}
+              onFocus={() => setDogVetDropOpen(true)}
+              placeholder="Search veterinarians..."
+              style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }}
+            />
+            {dogVetDropOpen && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 4, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 8, zIndex: 10, maxHeight: 300, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}>
+                {(() => {
+                  const filtered = (data.vets || []).filter(v => v.isActive !== false && (v.vetName || '').toLowerCase().includes(dogVetSearch.toLowerCase()));
+                  return (
+                    <div>
+                      {filtered.map(vet => (
+                        <div
+                          key={vet.id}
+                          onClick={() => {
+                            setEditFields({ ...editFields, vetId: vet.id });
+                            setDogVetSearch("");
+                            setDogVetDropOpen(false);
+                          }}
+                          style={{ padding: "10px 12px", cursor: "pointer", borderBottom: `1px solid ${C.borderLight}`, transition: "background 0.1s" }}
+                          onMouseEnter={(e) => e.currentTarget.style.background = C.priLt}
+                          onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                        >
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{vet.vetName}</div>
+                          {vet.clinicName && <div style={{ fontSize: 12, color: C.textSec }}>{vet.clinicName}</div>}
+                          {vet.phone && <div style={{ fontSize: 11, color: C.textMut }}>{vet.phone}</div>}
+                        </div>
+                      ))}
+                      {filtered.length === 0 && <div style={{ padding: "10px 12px", color: C.textMut, fontSize: 13 }}>No vets found</div>}
+                      {/* Add New Vet inline */}
+                      <div
+                        onClick={async () => {
+                          const name = dogVetSearch.trim();
+                          if (!name) return;
+                          const newVet = { id: crypto.randomUUID(), vetName: name, clinicName: '', phone: '', email: '', notes: '', isActive: true };
+                          await save({ ...data, vets: [...(data.vets || []), newVet] });
+                          setEditFields({ ...editFields, vetId: newVet.id });
+                          setDogVetSearch("");
+                          setDogVetDropOpen(false);
+                        }}
+                        style={{ padding: "10px 12px", cursor: "pointer", borderTop: `1.5px solid ${C.border}`, background: C.priLt, transition: "background 0.1s", display: "flex", alignItems: "center", gap: 6 }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = C.pri + "20"}
+                        onMouseLeave={(e) => e.currentTarget.style.background = C.priLt}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>{dogVetSearch.trim() ? `Add "${dogVetSearch.trim()}" as new vet` : "Add New Vet"}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+          {editFields.vetId && (() => {
+            const vet = (data.vets || []).find(v => v.id === editFields.vetId);
+            return vet ? (
+              <div style={{ marginTop: 8, padding: "8px 12px", background: C.priLt, borderRadius: 6, border: `1px solid ${C.pri}20` }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: C.pri }}>{vet.vetName}</div>
+                {vet.clinicName && <div style={{ fontSize: 11, color: C.text }}>{vet.clinicName}</div>}
+              </div>
+            ) : null;
+          })()}
         </div>
         <DogFormFields fields={editFields} dogFields={data.dogFields} data={data} errors={{}} onChange={(id,v)=>setEditFields({...editFields,[id]:v})} feedingSchedules={editFeedingSchedules} onFeedingChange={setEditFeedingSchedules} medSchedules={editMedSchedules} onMedChange={setEditMedSchedules} dogId={dogId} onWeightUpdate={(wt, reason) => {
           const now = new Date().toISOString().slice(0,10);
@@ -17820,82 +18092,349 @@ function EODPage({ data, save, nav, profile }) {
 // RUN CARD CONFIG TAB
 // ═══════════════════════════════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════════════════════════════
+// VET DIRECTORY TAB
+// ═══════════════════════════════════════════════════════════════════════════
+function VetDirectoryTab({ data, save }) {
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [showInactive, setShowInactive] = useState(false);
+  const [newVet, setNewVet] = useState({ vetName: "", clinicName: "", phone: "", email: "", notes: "" });
+
+  const handleAddVet = async () => {
+    if (!newVet.vetName.trim()) {
+      addGlobalToast?.({ type: "error", message: "Vet name is required" });
+      return;
+    }
+    const vet = {
+      id: crypto.randomUUID(),
+      vetName: newVet.vetName,
+      clinicName: newVet.clinicName,
+      phone: newVet.phone,
+      email: newVet.email,
+      notes: newVet.notes,
+      isActive: true,
+      createdAt: new Date().toISOString()
+    };
+    await save({ ...data, vets: [...(data.vets || []), vet] });
+    setNewVet({ vetName: "", clinicName: "", phone: "", email: "", notes: "" });
+    setShowAddForm(false);
+    addGlobalToast?.({ type: "success", message: "Vet added successfully" });
+  };
+
+  const handleUpdateVet = async (vetId, updates) => {
+    await save({
+      ...data,
+      vets: (data.vets || []).map(v => v.id === vetId ? { ...v, ...updates } : v)
+    });
+    setEditingId(null);
+  };
+
+  const handleToggleActive = async (vetId, isActive) => {
+    await handleUpdateVet(vetId, { isActive: !isActive });
+  };
+
+  const vets = (data.vets || []).filter(v => showInactive || v.isActive !== false);
+
+  return (
+    <div style={{ padding: "24px 28px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 4 }}>Veterinarian Directory</div>
+          <div style={{ fontSize: 13, color: C.textSec }}>Manage veterinarian contacts referenced in client and dog profiles</div>
+        </div>
+        <Btn onClick={() => setShowAddForm(!showAddForm)} icon={<I.Plus />} size="sm">Add Vet</Btn>
+      </div>
+
+      {showAddForm && (
+        <Card style={{ padding: "20px 24px", marginBottom: 20, background: C.priLt, border: `1.5px solid ${C.pri}40` }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+            <input type="text" placeholder="Vet Name" value={newVet.vetName} onChange={(e) => setNewVet({ ...newVet, vetName: e.target.value })} style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+            <input type="text" placeholder="Clinic Name" value={newVet.clinicName} onChange={(e) => setNewVet({ ...newVet, clinicName: e.target.value })} style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+            <input type="tel" placeholder="Phone" value={newVet.phone} onChange={(e) => setNewVet({ ...newVet, phone: e.target.value })} style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+            <input type="email" placeholder="Email" value={newVet.email} onChange={(e) => setNewVet({ ...newVet, email: e.target.value })} style={{ padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none" }} />
+          </div>
+          <textarea placeholder="Notes" value={newVet.notes} onChange={(e) => setNewVet({ ...newVet, notes: e.target.value })} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 13, fontFamily: "inherit", outline: "none", minHeight: 80, marginBottom: 16, boxSizing: "border-box", resize: "vertical" }} />
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" onClick={() => setShowAddForm(false)}>Cancel</Btn>
+            <Btn onClick={handleAddVet}>Save Vet</Btn>
+          </div>
+        </Card>
+      )}
+
+      {/* Show Inactive Toggle */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, padding: "10px 14px", background: C.bg, borderRadius: 8 }}>
+        <input
+          type="checkbox"
+          checked={showInactive}
+          onChange={(e) => setShowInactive(e.target.checked)}
+          style={{ cursor: "pointer", width: 16, height: 16 }}
+        />
+        <label style={{ fontSize: 13, color: C.text, cursor: "pointer", flex: 1 }}>Show inactive vets</label>
+      </div>
+
+      {/* Vets Table */}
+      {vets.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", background: C.bg, borderRadius: 12 }}>
+          <div style={{ fontSize: 14, color: C.textSec, marginBottom: 8 }}>No veterinarians yet</div>
+          <div style={{ fontSize: 12, color: C.textMut }}>Add your first vet to get started</div>
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: `2px solid ${C.border}` }}>
+                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em" }}>Vet Name</th>
+                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em" }}>Clinic</th>
+                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em" }}>Phone</th>
+                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em" }}>Clients Using</th>
+                <th style={{ padding: "12px 16px", textAlign: "left", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em" }}>Status</th>
+                <th style={{ padding: "12px 16px", textAlign: "right", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em" }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {vets.map(vet => {
+                const clientCount = (data.clients || []).filter(c => c.preferredVetId === vet.id).length + (data.dogs || []).filter(d => d.vetId === vet.id).length;
+                const isEditing = editingId === vet.id;
+                return (
+                  <tr key={vet.id} style={{ borderBottom: `1px solid ${C.borderLight}`, background: !vet.isActive ? `${C.danLt}20` : "transparent", transition: "background 0.15s" }}>
+                    {isEditing ? (
+                      <>
+                        <td style={{ padding: "12px 16px" }}><input type="text" value={vet.vetName} onChange={(e) => handleUpdateVet(vet.id, { vetName: e.target.value })} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 12, fontFamily: "inherit", outline: "none" }} /></td>
+                        <td style={{ padding: "12px 16px" }}><input type="text" value={vet.clinicName} onChange={(e) => handleUpdateVet(vet.id, { clinicName: e.target.value })} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 12, fontFamily: "inherit", outline: "none" }} /></td>
+                        <td style={{ padding: "12px 16px" }}><input type="tel" value={vet.phone} onChange={(e) => handleUpdateVet(vet.id, { phone: e.target.value })} style={{ width: "100%", padding: "6px 8px", borderRadius: 6, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontSize: 12, fontFamily: "inherit", outline: "none" }} /></td>
+                        <td style={{ padding: "12px 16px", textAlign: "center" }}><span style={{ fontSize: 14, fontWeight: 700, color: C.pri }}>{clientCount}</span></td>
+                        <td style={{ padding: "12px 16px" }}><button onClick={() => handleToggleActive(vet.id, vet.isActive)} style={{ padding: "4px 10px", borderRadius: 6, border: "none", background: vet.isActive ? C.suc : C.dan, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{vet.isActive ? "Active" : "Inactive"}</button></td>
+                        <td style={{ padding: "12px 16px", textAlign: "right" }}><Btn onClick={() => setEditingId(null)} size="xs" variant="secondary">Done</Btn></td>
+                      </>
+                    ) : (
+                      <>
+                        <td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 600, color: C.text }}>{vet.vetName}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: C.textSec }}>{vet.clinicName || "—"}</td>
+                        <td style={{ padding: "12px 16px", fontSize: 13, color: C.textSec }}>{vet.phone || "—"}</td>
+                        <td style={{ padding: "12px 16px", textAlign: "center" }}><span style={{ fontSize: 14, fontWeight: 700, color: C.pri }}>{clientCount}</span></td>
+                        <td style={{ padding: "12px 16px" }}><span style={{ display: "inline-block", padding: "4px 10px", borderRadius: 6, background: vet.isActive ? C.sucLt : C.danLt, color: vet.isActive ? C.suc : C.dan, fontSize: 11, fontWeight: 600 }}>{vet.isActive ? "Active" : "Inactive"}</span></td>
+                        <td style={{ padding: "12px 16px", textAlign: "right" }}><Btn onClick={() => setEditingId(vet.id)} size="xs" variant="ghost" icon={<I.Edit2 />}></Btn></td>
+                      </>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // QUESTIONNAIRE SETTINGS TAB
 // ═══════════════════════════════════════════════════════════════════════════
 function QuestionnaireSettingsTab({ data, save }) {
-  const template = data.questionnaireTemplate || DEF_QUESTIONNAIRE;
-  const allSections = [...(template.clientSections || []), ...(template.dogSections || [])];
-  const [disabledFields, setDisabledFields] = useState(() => new Set(template.disabledFields || []));
-  const [disabledSections, setDisabledSections] = useState(() => new Set(template.disabledSections || []));
-  const [templateName, setTemplateName] = useState(template.name || "Getting to Know Your Dog");
+  const questionnaires = data.questionnaires || [];
+  const currentQ = questionnaires.find(q => q.isCurrent) || DEF_QUESTIONNAIRE;
+  const [editingId, setEditingId] = useState(null);
+  const [editData, setEditData] = useState(null);
 
-  const toggleField = async (fid) => {
-    const next = new Set(disabledFields);
-    if (next.has(fid)) next.delete(fid); else next.add(fid);
-    setDisabledFields(next);
-    await save({ ...data, questionnaireTemplate: { ...template, disabledFields: [...next] } });
+  const startEdit = (qId) => {
+    const q = questionnaires.find(x => x.id === qId);
+    if (q) {
+      setEditingId(qId);
+      setEditData(JSON.parse(JSON.stringify(q)));
+    }
   };
 
-  const toggleSection = async (sid) => {
-    const next = new Set(disabledSections);
-    if (next.has(sid)) next.delete(sid); else next.add(sid);
-    setDisabledSections(next);
-    await save({ ...data, questionnaireTemplate: { ...template, disabledSections: [...next] } });
+  const saveEdit = async () => {
+    if (!editData) return;
+    const updated = questionnaires.map(q => q.id === editingId ? editData : q);
+    await save({ ...data, questionnaires: updated });
+    setEditingId(null);
+    setEditData(null);
   };
 
-  const saveName = async () => {
-    await save({ ...data, questionnaireTemplate: { ...template, name: templateName } });
+  const createNewVersion = async () => {
+    const newId = uuid();
+    const maxVer = Math.max(0, ...questionnaires.map(q => q.version || 1));
+    const newVersion = maxVer + 1;
+    const newQ = {
+      ...JSON.parse(JSON.stringify(currentQ)),
+      id: newId,
+      version: newVersion,
+      isCurrent: true,
+      createdAt: new Date().toISOString(),
+    };
+    const updated = questionnaires.map(q => ({ ...q, isCurrent: false }));
+    updated.push(newQ);
+    await save({ ...data, questionnaires: updated });
   };
 
+  const deleteQ = async (qId) => {
+    const updated = questionnaires.filter(q => q.id !== qId);
+    await save({ ...data, questionnaires: updated });
+  };
+
+  const setCurrent = async (qId) => {
+    const updated = questionnaires.map(q => ({ ...q, isCurrent: q.id === qId }));
+    await save({ ...data, questionnaires: updated });
+  };
+
+  // Editor view
+  if (editingId && editData) {
+    const allSections = [...(editData.clientSections || []), ...(editData.dogSections || [])];
+    const updateSection = (sIdx, updates) => {
+      const newSections = [...(editData.clientSections || []), ...(editData.dogSections || [])];
+      newSections[sIdx] = { ...newSections[sIdx], ...updates };
+      const clientCount = editData.clientSections?.length || 0;
+      setEditData({
+        ...editData,
+        clientSections: newSections.slice(0, clientCount),
+        dogSections: newSections.slice(clientCount),
+      });
+    };
+
+    const addQuestion = (sIdx) => {
+      const newSections = [...(editData.clientSections || []), ...(editData.dogSections || [])];
+      const section = newSections[sIdx];
+      const newField = {
+        id: `field_${uuid()}`,
+        label: "New Question",
+        type: "text",
+        required: false,
+      };
+      section.fields = [...(section.fields || []), newField];
+      updateSection(sIdx, section);
+    };
+
+    const removeQuestion = (sIdx, fIdx) => {
+      const newSections = [...(editData.clientSections || []), ...(editData.dogSections || [])];
+      const section = newSections[sIdx];
+      section.fields = section.fields.filter((_, i) => i !== fIdx);
+      updateSection(sIdx, section);
+    };
+
+    const updateField = (sIdx, fIdx, updates) => {
+      const newSections = [...(editData.clientSections || []), ...(editData.dogSections || [])];
+      const section = newSections[sIdx];
+      section.fields[fIdx] = { ...section.fields[fIdx], ...updates };
+      updateSection(sIdx, section);
+    };
+
+    return (
+      <div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+          <button onClick={() => { setEditingId(null); setEditData(null); }} style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", cursor: "pointer", color: C.pri, fontSize: 13, fontWeight: 600, padding: "6px 0", fontFamily: "inherit" }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+            Back
+          </button>
+        </div>
+
+        <Card style={{ padding: "24px 28px", marginBottom: 20 }}>
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>Questionnaire Title</label>
+            <input type="text" value={editData.title || editData.name || ""} onChange={e => setEditData({ ...editData, title: e.target.value, name: e.target.value })} style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" }} />
+          </div>
+          <div>
+            <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>Version</label>
+            <div style={{ padding: "8px 12px", borderRadius: 8, background: C.bg, fontSize: 14, color: C.text, fontWeight: 600 }}>v{editData.version || 1}</div>
+          </div>
+        </Card>
+
+        {allSections.map((section, sIdx) => (
+          <Card key={section.id} style={{ marginBottom: 16, padding: "20px 24px" }}>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: C.textMut, textTransform: "uppercase", display: "block", marginBottom: 4 }}>Section Title</label>
+              <input type="text" value={section.title || ""} onChange={e => updateSection(sIdx, { title: e.target.value })} style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" }} />
+            </div>
+
+            {(section.fields || []).map((field, fIdx) => (
+              <div key={field.id} style={{ padding: "12px", marginBottom: 8, background: C.bg, borderRadius: 8, border: `1px solid ${C.border}` }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 150px 80px", gap: 12, marginBottom: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: C.textMut, display: "block", marginBottom: 2 }}>Label</label>
+                    <input type="text" value={field.label || ""} onChange={e => updateField(sIdx, fIdx, { label: e.target.value })} style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", boxSizing: "border-box" }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: C.textMut, display: "block", marginBottom: 2 }}>Type</label>
+                    <select value={field.type || "text"} onChange={e => updateField(sIdx, fIdx, { type: e.target.value })} style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", boxSizing: "border-box" }}>
+                      <option value="text">Text</option>
+                      <option value="textarea">Textarea</option>
+                      <option value="select">Select</option>
+                      <option value="multiselect">Multi-select</option>
+                      <option value="radio">Radio</option>
+                      <option value="checkbox">Checkbox</option>
+                      <option value="date">Date</option>
+                    </select>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-end" }}>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: C.textMut, display: "block", marginBottom: 2, width: "100%" }}>Required</label>
+                    <button onClick={() => updateField(sIdx, fIdx, { required: !field.required })} style={{ width: "100%", padding: "6px 10px", borderRadius: 6, background: field.required ? C.pri : C.border, border: "none", color: field.required ? "#fff" : C.text, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                      {field.required ? "Yes" : "No"}
+                    </button>
+                  </div>
+                </div>
+                {(field.type === "select" || field.type === "multiselect" || field.type === "radio") && (
+                  <div style={{ marginBottom: 8 }}>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: C.textMut, display: "block", marginBottom: 4 }}>Options (comma-separated)</label>
+                    <input type="text" value={(field.options || []).join(", ")} onChange={e => updateField(sIdx, fIdx, { options: e.target.value.split(",").map(s => s.trim()).filter(s => s) })} style={{ width: "100%", padding: "6px 10px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", boxSizing: "border-box" }} placeholder="Option 1, Option 2, Option 3" />
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <button onClick={() => removeQuestion(sIdx, fIdx)} style={{ padding: "4px 12px", borderRadius: 6, background: C.danLt, border: "none", color: C.dan, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+            <Btn size="sm" variant="secondary" onClick={() => addQuestion(sIdx)} icon={<I.Plus />}>Add Question</Btn>
+          </Card>
+        ))}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
+          <Btn variant="secondary" onClick={() => { setEditingId(null); setEditData(null); }}>Cancel</Btn>
+          <Btn onClick={saveEdit}>Save Changes</Btn>
+        </div>
+      </div>
+    );
+  }
+
+  // List view
   return (
     <div>
       <Card style={{ padding: "24px 28px", marginBottom: 20 }}>
-        <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Questionnaire Settings</div>
-        <div style={{ fontSize: 13, color: C.textSec, marginBottom: 20 }}>Customize which sections and fields appear on the "Getting to Know Your Dog" form. Disabled items will be hidden from staff.</div>
-
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ fontSize: 13, fontWeight: 600, color: C.text, display: "block", marginBottom: 6 }}>Questionnaire Name</label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input type="text" value={templateName} onChange={e => setTemplateName(e.target.value)} style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 14, fontFamily: "inherit" }} />
-            <Btn variant="secondary" size="sm" onClick={saveName}>Update</Btn>
-          </div>
-        </div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 4 }}>Questionnaire Templates</div>
+        <div style={{ fontSize: 13, color: C.textSec, marginBottom: 16 }}>Manage and create versions of the "Getting to Know Your Dog" questionnaire.</div>
+        <Btn onClick={createNewVersion}>Create New Version</Btn>
       </Card>
 
-      {allSections.map(section => {
-        const sectionOff = disabledSections.has(section.id);
-        return (
-          <Card key={section.id} style={{ marginBottom: 12, opacity: sectionOff ? 0.5 : 1 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: sectionOff ? "none" : `1px solid ${C.borderLight}` }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{section.title}</span>
-                <span style={{ fontSize: 12, color: C.textMut }}>({section.fields.length} fields)</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {questionnaires.map(q => (
+          <Card key={q.id} style={{ padding: "16px 20px", cursor: "pointer" }} onClick={() => startEdit(q.id)}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{q.title || q.name || "Untitled"}</span>
+                  <span style={{ fontSize: 12, color: C.textMut }}>v{q.version || 1}</span>
+                  {q.isCurrent && <span style={{ padding: "2px 8px", borderRadius: 4, background: C.sucLt, color: C.suc, fontSize: 10, fontWeight: 700 }}>Current</span>}
+                </div>
+                <div style={{ fontSize: 12, color: C.textSec }}>
+                  {((q.clientSections || []).length + (q.dogSections || []).length)} sections,{" "}
+                  {((q.clientSections || []).concat(q.dogSections || []).reduce((sum, s) => sum + (s.fields || []).length, 0))} questions
+                </div>
               </div>
-              <button onClick={() => toggleSection(section.id)} style={{ position: "relative", width: 40, height: 22, borderRadius: 11, background: sectionOff ? C.border : C.pri, border: "none", cursor: "pointer", transition: "background 0.2s" }}>
-                <div style={{ position: "absolute", top: 2, left: sectionOff ? 2 : 20, width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
-              </button>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {!q.isCurrent && (
+                  <Btn size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); setCurrent(q.id); }}>
+                    Set as Current
+                  </Btn>
+                )}
+                <Btn size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); deleteQ(q.id); }}>
+                  Delete
+                </Btn>
+              </div>
             </div>
-            {!sectionOff && (
-              <div style={{ padding: "8px 20px 12px" }}>
-                {section.fields.map(field => {
-                  const fieldOff = disabledFields.has(field.id);
-                  return (
-                    <div key={field.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${C.borderLight}` }}>
-                      <div>
-                        <span style={{ fontSize: 13, color: fieldOff ? C.textMut : C.text }}>{field.label}</span>
-                        <span style={{ fontSize: 11, color: C.textMut, marginLeft: 8 }}>{field.type}{field.required ? " · required" : ""}</span>
-                      </div>
-                      <button onClick={() => toggleField(field.id)} style={{ position: "relative", width: 36, height: 20, borderRadius: 10, background: fieldOff ? C.border : C.suc, border: "none", cursor: "pointer", transition: "background 0.2s" }}>
-                        <div style={{ position: "absolute", top: 2, left: fieldOff ? 2 : 18, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s" }} />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </Card>
-        );
-      })}
+        ))}
+      </div>
     </div>
   );
 }
@@ -23601,6 +24140,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
       { id: "tags", label: "Dog Tags", desc: "Create color-coded tags for daycare, private play, etc.", keywords: "tags labels categories private play daycare" },
       { id: "dropdowns", label: "Dropdown Lists", desc: "Customize dropdown options for breeds, food types, etc.", keywords: "dropdowns lists options breeds food bath medication" },
       { id: "questionnaire", label: "Questionnaire", desc: "Customize the Getting to Know Your Dog questionnaire", keywords: "questionnaire form dog intake application getting to know" },
+      { id: "vets", label: "Vet Directory", desc: "Manage veterinarian contacts referenced in client and dog profiles", keywords: "vet veterinarian directory clinic doctor animal hospital" },
     ]},
     { label: "Compliance", items: [
       { id: "vaccines", label: "Vaccines", desc: "Configure required vaccinations and expiration tracking", keywords: "vaccines rabies bordetella dhpp flu required" },
@@ -24128,6 +24668,8 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
           <AgreementsPage data={data} save={save} />
         ) : tab === "questionnaire" ? (
           <QuestionnaireSettingsTab data={data} save={save} />
+        ) : tab === "vets" ? (
+          <VetDirectoryTab data={data} save={save} />
         ) : tab === "pricing" ? (
         <PricingTab data={data} save={save} />
 
@@ -26186,6 +26728,12 @@ function MessagesPage({ data, save, nav }) {
                 onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.borderColor = C.border; }}>
                 Profile
               </button>
+            </div>
+
+            {/* SMS Simulation Banner */}
+            <div style={{ background: "#FEF3C7", border: "1px solid #F59E0B40", borderRadius: 10, padding: "10px 16px", margin: "0 0 12px", display: "flex", alignItems: "center", gap: 8 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span style={{ fontSize: 13, color: "#92400E" }}>SMS simulation mode — no Twilio integration active. Outbound messages are stored locally only.</span>
             </div>
 
             {/* Thread Messages */}

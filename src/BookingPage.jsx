@@ -2917,8 +2917,9 @@ export default function BookingPage() {
           fieldMap.emergency_contact = editFields.emergencyContact || '';
           fieldMap.emergency_phone = editFields.emergencyPhone || '';
         } else if (section === 'vet') {
-          fieldMap.vet_name = editFields.vetName || '';
-          fieldMap.vet_phone = editFields.vetPhone || '';
+          // Vet info stored as notes (preferred_vet_id is set by staff from Vet Directory)
+          const vetNote = [editFields.vetName, editFields.vetPhone].filter(Boolean).join(' — ');
+          if (vetNote) fieldMap.notes = (editFields.notes ? editFields.notes + '\n' : '') + 'Vet: ' + vetNote;
         }
         const locId = acct?.locationId;
         if (locId) {
