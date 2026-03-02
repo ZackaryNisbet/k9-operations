@@ -8,6 +8,9 @@ import { useData } from "./useData";
 import { useAuth } from "./AuthProvider";
 import { supabase } from "./supabaseClient";
 
+// ─── UUID helper for all new record IDs ──
+const uuid = () => crypto.randomUUID();
+
 // ─── Icons ──────────────────────────────────────────────────────────────────
 const I = {
   Dashboard: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>,
@@ -236,7 +239,7 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
 
 
 // ─── Utilities ──────────────────────────────────────────────────────────────
-const gid = () => Math.random().toString(36).substr(2, 9);
+const gid = () => crypto.randomUUID();
 
 // Smart dog name formatter for message templates
 function formatDogNames(dogs) {
@@ -406,7 +409,7 @@ const buildVaccineReminders = (data) => {
     }
 
     reminders.push({
-      id: "rem_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+      id: uuid(),
       clientId: client.id,
       dogIds: [...new Set(items.map(i => i.dog.id))],
       dogNames,
@@ -2760,33 +2763,58 @@ function Modal({title,onClose,children,wide,fullWidth}) {
 }
 
 // ─── Permission Helper ──────────────────────────────────────────────────────
+// Legacy role map for backwards compat with profiles.role string
 const LEGACY_ROLE_MAP = { owner:"role_owner", enterprise_admin:"role_enterprise_admin", manager:"role_manager", staff:"role_staff" };
+// New role code map for location_roles table (7-role system)
+const ROLE_CODE_MAP = { pct:"pct", csr:"csr", supervisor:"supervisor", manager:"manager", regional:"regional", admin:"admin", developer:"developer" };
+
+function _resolveRole(profile, data) {
+  if (!profile || !data) return null;
+  // First try: match via locationRoles from location_roles table (new system)
+  const locationRoles = data.locationRoles || [];
+  if (locationRoles.length > 0) {
+    // Try matching by profile.role as role_code
+    let role = locationRoles.find(r => r.role_code === profile.role);
+    if (role) return role;
+    // Try matching by legacy role map
+    const legacyId = LEGACY_ROLE_MAP[profile.role];
+    if (legacyId) {
+      // Map legacy IDs to new role codes: owner→admin, manager→manager, staff→csr, enterprise_admin→developer
+      const legacyToCode = { role_owner:"admin", role_manager:"manager", role_staff:"csr", role_enterprise_admin:"developer" };
+      const code = legacyToCode[legacyId];
+      if (code) role = locationRoles.find(r => r.role_code === code);
+      if (role) return role;
+    }
+  }
+  // Fallback: use data.roles (settings JSONB) with legacy mapping
+  if (data.roles && data.roles.length > 0) {
+    let roleId = profile.role;
+    if (LEGACY_ROLE_MAP[roleId]) roleId = LEGACY_ROLE_MAP[roleId];
+    return data.roles.find(r => r.id === roleId) || null;
+  }
+  return null;
+}
 
 function hasPermission(profile, data, permKey) {
   if (!profile || !data) return true; // graceful fallback during loading
-  if (!data.roles || data.roles.length === 0) return true; // no roles system yet
-  // Map legacy string role → role ID
-  let roleId = profile.role;
-  if (LEGACY_ROLE_MAP[roleId]) roleId = LEGACY_ROLE_MAP[roleId];
-  const role = data.roles.find(r => r.id === roleId);
+  const locationRoles = data.locationRoles || [];
+  const legacyRoles = data.roles || [];
+  if (locationRoles.length === 0 && legacyRoles.length === 0) return true; // no roles system yet
+  const role = _resolveRole(profile, data);
   if (!role) return true; // unknown role = allow (graceful)
-  return role.permissions[permKey] === true;
+  return role.permissions?.[permKey] === true;
 }
 
 function getRoleName(profile, data) {
-  if (!profile || !data || !data.roles) return profile?.role || "staff";
-  let roleId = profile.role;
-  if (LEGACY_ROLE_MAP[roleId]) roleId = LEGACY_ROLE_MAP[roleId];
-  const role = data.roles.find(r => r.id === roleId);
+  if (!profile || !data) return profile?.role || "staff";
+  const role = _resolveRole(profile, data);
   return role ? role.name : (profile.role || "Staff");
 }
 
 function getRoleColor(profile, data) {
-  if (!profile || !data || !data.roles) return "default";
-  let roleId = profile.role;
-  if (LEGACY_ROLE_MAP[roleId]) roleId = LEGACY_ROLE_MAP[roleId];
-  const role = data.roles.find(r => r.id === roleId);
-  return role ? role.color : "default";
+  if (!profile || !data) return "default";
+  const role = _resolveRole(profile, data);
+  return role ? (role.color || "default") : "default";
 }
 
 // NAV_PERM_MAP: maps sidebar nav IDs to required view permissions
@@ -3414,6 +3442,40 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       if ((updatedRes.fedToday||"") !== (reservation.fedToday||"")) diffs.push({field:"Fed Today",oldVal:reservation.fedToday||"(empty)",newVal:updatedRes.fedToday||"(empty)"});
       if ((updatedRes.medsToday||"") !== (reservation.medsToday||"")) diffs.push({field:"Meds Today",oldVal:reservation.medsToday||"(empty)",newVal:updatedRes.medsToday||"(empty)"});
       if (diffs.length > 0) auditLogs.push(buildAuditEntry(reservation.id, "Updated Reservation", diffs, profile));
+    }
+    // Create invoice on checkout
+    if (doCheckOut) {
+      const pricing = data.pricing || DEF_PRICING;
+      const nights = Math.max(1, countNights(merged.checkIn, merged.checkOut));
+      const rate = merged.ratePerNight || (pricing.boardingRates || {})[merged.roomType] || 0;
+      const totalEst = merged.totalPrice || (rate * nights);
+      const invoiceId = uuid();
+      const invoice = {
+        id: invoiceId, reservationId: reservation.id, clientId: client.id,
+        invoiceNumber: `INV-${Date.now()}`,
+        totalAmount: totalEst, status: 'paid',
+        dueDate: todayStr(), paidAt: new Date().toISOString(),
+      };
+      const lineItem = {
+        id: uuid(), invoiceId,
+        description: `${merged.type === 'boarding' ? 'Boarding' : 'Daycare'} — ${merged.roomType || 'Standard'}`,
+        quantity: nights, unitPrice: rate, totalPrice: totalEst,
+        itemType: merged.type || 'boarding',
+      };
+      // Add selected add-ons as line items
+      const addOnLineItems = (merged.selectedAddOns || []).map(ao => ({
+        id: uuid(), invoiceId,
+        description: `Add-on: ${ao.name || ao}`,
+        quantity: 1, unitPrice: ao.price || 0, totalPrice: ao.price || 0,
+        itemType: 'add_on',
+      }));
+      newData._invoices = [...(newData._invoices || []), invoice];
+      newData._invoiceLineItems = [...(newData._invoiceLineItems || []), lineItem, ...addOnLineItems];
+      // Link existing payments for this reservation to the invoice
+      newData.payments = (newData.payments || []).map(p =>
+        p.reservationId === reservation.id && !p.invoiceId ? { ...p, invoiceId } : p
+      );
+      merged.invoiceId = invoiceId;
     }
     newData.reservations = newData.reservations.map(r => r.id === reservation.id ? merged : r);
     newData.auditLog = [...(newData.auditLog || []), ...auditLogs];
@@ -15155,7 +15217,7 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
   // ── Audit Logging Helper ──
   const logAudit = (action, category, details, prev, next) => {
     const entry = {
-      id: "aal_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+      id: uuid(),
       timestamp: new Date().toISOString(),
       userId: profile?.id || "unknown",
       userName,
@@ -15214,7 +15276,7 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
 
     const addMember = () => {
       if (!form.name.trim()) return;
-      const newMember = { id: "ar_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8), ...form, name: form.name.trim(), createdAt: new Date().toISOString() };
+      const newMember = { id: uuid(), ...form, name: form.name.trim(), createdAt: new Date().toISOString() };
       saveWithAudit(
         { attendanceRoster: [...roster, newMember] },
         "ADD_ROSTER_MEMBER", "Roster",
@@ -15455,7 +15517,7 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
 
     const addEntry = () => {
       if (!form.name || !form.type || !form.date) return;
-      const newEntry = { id: "ae_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8), ...form, loggedBy: userName, loggedAt: new Date().toISOString(), createdAt: new Date().toISOString() };
+      const newEntry = { id: uuid(), ...form, loggedBy: userName, loggedAt: new Date().toISOString(), createdAt: new Date().toISOString() };
       saveWithAudit(
         { attendanceEntries: [...entries, newEntry] },
         "ADD_ATTENDANCE_ENTRY", "Attendance Log",
@@ -17006,7 +17068,7 @@ function EODPage({ data, save, nav, profile }) {
   const eodAuditEntries = useMemo(() => (entry.history || []).filter(h => h.type === "audit").sort((a, b) => (b.ts || "").localeCompare(a.ts || "")), [entry.history]);
   const mkAudit = (auditAction, details, prev, next) => ({
     ts: new Date().toISOString(), type: "audit",
-    id: "eodal_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+    id: uuid(),
     userId: profile?.id || "unknown", userName: profile?.full_name || profile?.email || "Staff",
     auditAction, details, previousValue: prev || null, newValue: next || null,
   });
@@ -17920,7 +17982,7 @@ function RunCardConfigTab({ data, save }) {
       const sl = rcCfg.sectionLayout;
       const migrated = [];
       const placed = new Set();
-      const mkId = () => "el_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6);
+      const mkId = () => uuid();
       const mkEl = (vid, ov) => {
         if (placed.has(vid) && vid !== "separator" && vid !== "labelCustom") return;
         placed.add(vid);
@@ -18010,7 +18072,7 @@ function RunCardConfigTab({ data, save }) {
     // If non-Custom variable already on canvas, don't add duplicate
     if (varDef.category !== "Custom" && localElements.some(el => el.varId === varDef.id)) return;
     const newEl = {
-      id: "el_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+      id: uuid(),
       varId: varDef.id,
       x: snap(x || 20),
       y: snap(y || (localElements.length > 0 ? Math.max(...localElements.map(e => e.y + (e.h || 24))) + 8 : 20)),
@@ -18183,7 +18245,7 @@ function RunCardConfigTab({ data, save }) {
   const duplicateElement = useCallback((elId) => {
     const el = localElements.find(x => x.id === elId);
     if (!el) return;
-    const newEl = { ...el, id: "el_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6), x: el.x + 16, y: el.y + 16 };
+    const newEl = { ...el, id: uuid(), x: el.x + 16, y: el.y + 16 };
     saveElements([...localElements, newEl]);
     setSelected(newEl.id);
   }, [localElements, saveElements]);
@@ -18205,7 +18267,7 @@ function RunCardConfigTab({ data, save }) {
   // ═══════════════════════════════════════════════════════════════
   const saveAsTemplate = async () => {
     if (!tplName.trim()) return;
-    const newTpl = { id: "tpl_" + Date.now(), name: tplName.trim(), isDefault: templates.length === 0, config: { ...cfg, elements: [...localElements] } };
+    const newTpl = { id: uuid(), name: tplName.trim(), isDefault: templates.length === 0, config: { ...cfg, elements: [...localElements] } };
     await save({ ...data, runCardTemplates: [...templates, newTpl] });
     setTplName("");
   };
@@ -18236,7 +18298,7 @@ function RunCardConfigTab({ data, save }) {
       const v = VARIABLES.find(x => x.id === varId);
       if (!v) return;
       const el = {
-        id: "el_" + Date.now() + "_" + Math.random().toString(36).slice(2, 6),
+        id: uuid(),
         varId: v.id, x: overrides?.x ?? 20, y: overrides?.y ?? y,
         w: overrides?.w ?? v.defaultW ?? 200, h: overrides?.h ?? v.defaultH ?? (v.type === "photo" ? 120 : v.type === "grid" ? 80 : 24),
         fontSize: overrides?.fontSize ?? v.defaultFontSize ?? 12, bold: overrides?.bold ?? v.defaultBold ?? false,
@@ -20616,16 +20678,33 @@ function TeamTab({ profile, data, save }) {
 
   const fetchTeam = async () => {
     setTeamLoading(true);
-    const { data: members, error } = await supabase
-      .from("profiles")
-      .select("*")
+    // Load team via profile_locations junction table
+    const { data: plRows, error: plErr } = await supabase
+      .from("profile_locations")
+      .select("profile_id, role_id")
       .eq("location_id", profile.location_id);
-    if (!error) setTeam(members || []);
-    else setTeam([profile]); // Fallback: show at least current user
+    if (!plErr && plRows && plRows.length > 0) {
+      const profileIds = plRows.map(r => r.profile_id);
+      const { data: members, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .in("id", profileIds);
+      if (!error) setTeam(members || []);
+      else setTeam([profile]);
+    } else {
+      // Fallback: try legacy query
+      const { data: members, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("location_id", profile.location_id);
+      if (!error) setTeam(members || []);
+      else setTeam([profile]);
+    }
     setTeamLoading(false);
   };
 
   const updateRole = async (userId, newRole) => {
+    // Update both profiles.role (legacy) and profile_locations.role_id (new system)
     const { error } = await supabase.from("profiles").update({ role: newRole }).eq("id", userId);
     if (error) console.error("Failed to update role:", error);
     fetchTeam();
@@ -21414,10 +21493,20 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
     const successLocs = [];
     for (const locId of pushLocations) {
       try {
-        // Get location pricing from settings blob for dynamic pricing calculation
-        const { data: locRow } = await supabase.from('locations').select('data').eq('id', locId).single();
-        const locData = locRow?.data || {};
-        const pricing = locData.pricing || {};
+        // Get location pricing from location_pricing table
+        const { data: pricingRows } = await supabase.from('location_pricing').select('*').eq('location_id', locId).is('effective_to', null);
+        const pricing = { boardingRates: {}, daycareRates: {} };
+        for (const r of (pricingRows || [])) {
+          const p = Number(r.price);
+          if (r.category === 'boarding') pricing.boardingRates[r.sub_category] = p;
+          else if (r.category === 'daycare') {
+            if (r.sub_category === 'full_day') pricing.daycareRates = { ...pricing.daycareRates, fullDay: p };
+            else if (r.sub_category === 'half_day') pricing.daycareRates = { ...pricing.daycareRates, halfDay: p };
+          } else if (r.category === 'misc_fee') {
+            if (r.sub_category === 'day_boarding') pricing.dayboardingRate = p;
+            else pricing[r.sub_category] = p;
+          }
+        }
         let unitRate = 0;
         if (pkg.serviceCategory === "Boarding") {
           unitRate = (pricing.boardingRates || {})[pkg.serviceName] || 0;
@@ -23448,31 +23537,44 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
       // Use profile.location_id (locationId from useData isn't in scope here)
       const loc = profile.location_id;
       // Delete from all entity tables in FK-safe order (children first)
+      // Tier 4: deepest children (no dependents)
       await Promise.all([
-        supabase.from('k9_reminder_log').delete().eq('location_id', loc),
-        supabase.from('k9_audit_log').delete().eq('location_id', loc),
+        supabase.from('audit_log').delete().eq('location_id', loc),
         supabase.from('k9_messages').delete().eq('location_id', loc),
-        supabase.from('k9_daily_ops').delete().eq('location_id', loc),
+        supabase.from('k9_daily_ops_v2').delete().eq('location_id', loc),
+        supabase.from('checkout_log').delete().neq('id', '00000000-0000-0000-0000-000000000000'), // no location_id, delete via reservation
+        supabase.from('invoice_line_items').delete().neq('id', '00000000-0000-0000-0000-000000000000'), // cascades from invoices
       ]);
+      // Tier 3: evaluations, payments, package sales, invoices
       await Promise.all([
-        supabase.from('k9_evaluations').delete().eq('location_id', loc),
+        supabase.from('k9_evaluations_v2').delete().eq('location_id', loc),
         supabase.from('k9_payments').delete().eq('location_id', loc),
-        supabase.from('k9_package_sales').delete().eq('location_id', loc),
+        supabase.from('k9_package_sales_v2').delete().eq('location_id', loc),
+        supabase.from('invoices').delete().eq('location_id', loc),
       ]);
+      // Tier 2: reservations, dog child tables
       await supabase.from('k9_reservations').delete().eq('location_id', loc);
       await Promise.all([
-        supabase.from('k9_vaccine_records').delete().eq('location_id', loc),
+        supabase.from('dog_vaccines').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('weight_log').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('feeding_schedules').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('feeding_logs').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('medication_schedules').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('medication_logs').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('dog_tag_history').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('dog_incidents').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
+        supabase.from('dog_media').delete().neq('id', '00000000-0000-0000-0000-000000000000'),
         supabase.from('k9_dogs').delete().eq('location_id', loc),
       ]);
+      // Tier 1: clients (cascades contacts, lifecycle events)
       await Promise.all([
+        supabase.from('client_contacts').delete().eq('location_id', loc),
         supabase.from('k9_clients').delete().eq('location_id', loc),
-        supabase.from('k9_packages').delete().eq('location_id', loc),
       ]);
-      // Also clear booking drafts (anonymous visitor data in Conversion tab)
-      if (locationSlug) await supabase.from('booking_drafts').delete().eq('location_slug', locationSlug);
+      // Also clear booking drafts
+      if (locationSlug) await supabase.from('booking_drafts_v2').delete().eq('location_id', loc);
       // Reset in-memory state to empty arrays
-      const empty = { ...data, clients: [], dogs: [], reservations: [], evaluations: [], eodEntries: [], dailyOps: [], payments: [], packages: [], packageSales: [], messages: [], auditLog: [] };
-      if (empty.automations) empty.automations = { ...empty.automations, reminderLog: [] };
+      const empty = { ...data, clients: [], dogs: [], reservations: [], evaluations: [], eodEntries: [], dailyOps: [], payments: [], packages: [], packageSales: [], messages: [], auditLog: [], clientContacts: [] };
       await save(empty);
     } catch (err) { console.error('Erase failed:', err); }
     setErasing(false);
@@ -23582,7 +23684,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
             await updateAuto({ tiers: newTiers });
           };
           const addTier = async () => {
-            const newId = "t_" + Date.now();
+            const newId = uuid();
             const newTier = { id: newId, name: "New Tier", dayStart: 0, dayEnd: 0, priority: "low", enabled: true, template: "Hi {ownerFirst}, {dogName}'s {vaccineName} vaccine expires on {expiryDate}. Please update your records with {locationName}!" };
             await updateAuto({ tiers: [...tiers, newTier] });
           };

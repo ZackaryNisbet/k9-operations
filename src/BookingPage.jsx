@@ -232,7 +232,7 @@ body{font-family:'GT Eesti',system-ui,-apple-system,sans-serif;background:${B.bg
 // ═══════════════════════════════════════════════════════════════════════════
 // UTILITY FUNCTIONS
 // ═══════════════════════════════════════════════════════════════════════════
-function gid() { return 'bk_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+function gid() { return crypto.randomUUID(); }
 
 function getMinDate(days = 1) {
   const d = new Date(); d.setDate(d.getDate() + days);
@@ -2947,7 +2947,7 @@ export default function BookingPage() {
         const locId = acct?.locationId;
         if (locId) {
               const newVaccine = {
-                id: Date.now().toString(),
+                id: gid(),
                 name: vaccineUploadName,
                 expirationDate: vaccineUploadExpiry || null,
                 uploadedAt: new Date().toISOString(),
@@ -3519,7 +3519,7 @@ export default function BookingPage() {
                           <button onClick={() => {
                             // Add purchased package to the local packages list
                             const newPkg = {
-                              id: Date.now().toString(),
+                              id: gid(),
                               name: pkgCheckout.pkg.name,
                               packageName: pkgCheckout.pkg.name,
                               quantity: (pkgCheckout.pkg.quantity || 1) * pkgCheckout.qty,
