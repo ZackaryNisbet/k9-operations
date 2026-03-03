@@ -22796,8 +22796,12 @@ function OnlineBookingsPage({ data, save, nav, profile, addGlobalToast, allLocat
   const bookingUrl = currentLoc ? `${window.location.origin}/book/${currentLoc.slug || "demo"}` : "";
 
   const updateBooking = async (bookingId, updates) => {
-    const updated = bookings.map(b => b.id === bookingId ? { ...b, ...updates } : b);
-    await save({ ...data, onlineBookings: updated });
+    // Write directly to online_bookings table
+    const dbUpdates = {};
+    if (updates.status !== undefined) dbUpdates.status = updates.status;
+    if (updates.processedAt !== undefined) dbUpdates.processed_at = updates.processedAt;
+    if (updates.declineReason !== undefined) dbUpdates.decline_reason = updates.declineReason;
+    await supabase.from('online_bookings').update(dbUpdates).eq('id', bookingId);
   };
 
   const acceptBooking = async (booking) => {
@@ -22842,15 +22846,15 @@ function OnlineBookingsPage({ data, save, nav, profile, addGlobalToast, allLocat
       bookingSource: "online",
       createdAt: new Date().toISOString(),
     };
-    // Save everything
-    const updated = (data.onlineBookings || []).map(b => b.id === booking.id ? { ...b, status: "accepted", processedAt: new Date().toISOString() } : b);
+    // Save client, dog, reservation through normal save
     await save({
       ...data,
       clients: [...data.clients, newClient],
       dogs: [...data.dogs, newDog],
       reservations: [...data.reservations, newRes],
-      onlineBookings: updated,
     });
+    // Update booking status directly in online_bookings table
+    await supabase.from('online_bookings').update({ status: 'accepted', processed_at: new Date().toISOString() }).eq('id', booking.id);
     if (addGlobalToast) addGlobalToast(`Booking accepted — client, dog, and reservation created${assignedRoom ? ` (Room ${assignedRoom})` : ""}`, "success");
   };
 
