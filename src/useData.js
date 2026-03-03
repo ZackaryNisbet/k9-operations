@@ -1238,6 +1238,8 @@ export function useData(profile) {
           vetsRes,
           // Questionnaire templates
           questionnairesRes,
+          // Online bookings
+          onlineBookingsRes,
         ] = await Promise.all([
           // Core entities
           supabase.from('k9_clients').select('*').eq('location_id', locationId).order('created_at'),
@@ -1297,6 +1299,8 @@ export function useData(profile) {
           supabase.from('vets').select('*').eq('location_id', locationId).order('vet_name'),
           // Questionnaire templates
           supabase.from('questionnaires').select('*').eq('location_id', locationId).order('created_at'),
+          // Online bookings
+          supabase.from('online_bookings').select('*').eq('location_id', locationId).order('submitted_at', { ascending: false }),
         ]);
 
         if (savingRef.current) return;
@@ -1472,6 +1476,16 @@ export function useData(profile) {
           outboundLinks: loadOutboundLinks(outboundLinksRes.data),
           vets: (vetsRes.data || []).map(rowToVet),
           _vaccineTypes: vaccineTypes,
+          // Online bookings from dedicated table
+          onlineBookings: (onlineBookingsRes.data || []).map(r => ({
+            id: r.id, status: r.status, submittedAt: r.submitted_at,
+            processedAt: r.processed_at, declineReason: r.decline_reason,
+            type: r.reservation_type, checkIn: r.check_in, checkOut: r.check_out,
+            roomType: r.room_type, tourTime: r.tour_time, daycareSize: r.daycare_size,
+            client: { firstName: r.client_first_name, lastName: r.client_last_name, phone: r.client_phone, email: r.client_email, emergencyContact: r.emergency_contact, emergencyPhone: r.emergency_phone },
+            dog: { name: r.dog_name, breed: r.dog_breed, weight: r.dog_weight, sex: r.dog_sex, spayedNeutered: r.dog_spayed_neutered, dob: r.dog_dob, bathType: r.dog_bath_type },
+            notes: r.notes, addOns: r.add_ons || [],
+          })),
         };
 
         if (Object.keys(assembled).length > 0) {
@@ -1497,7 +1511,7 @@ export function useData(profile) {
       'dog_vaccines', 'weight_log', 'feeding_schedules',
       'medication_schedules', 'dog_tag_history', 'client_contacts',
       'client_lifecycle_events', 'agreement_log', 'questionnaire_log',
-      'outbound_links', 'vets',
+      'outbound_links', 'vets', 'online_bookings',
     ];
     const settingsTables = [
       'location_roles', 'location_pricing', 'location_room_types', 'location_room_units',
