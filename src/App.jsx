@@ -266,7 +266,7 @@ const getVaxStatus = (dog, requiredVaccines, policies) => {
   const pol = policies || {};
   const graceDays = pol.vaccineGraceDays ?? 7;
   const warningDays = pol.vaccineWarningDays ?? 30;
-  const now = new Date();
+  const now = getSimulatedNow(); // Time Travel aware
   const expired = [], missing = [], expiringSoon = [], graceperiod = [];
   for (const vId of rv) {
     const val = dog.fields[vId];
@@ -298,7 +298,7 @@ const buildVaccineReminders = (data) => {
   const clients = data.clients || [];
   const allVaccineIds = (data.requiredVaccines || ["rabies_exp", "dhpp_exp", "bordetella_exp"]);
   const vaccineNames = { rabies_exp: "Rabies", dhpp_exp: "Distemper (DHPP)", bordetella_exp: "Bordetella", canine_flu_exp: "Canine Influenza" };
-  const now = new Date();
+  const now = getSimulatedNow(); // Time Travel aware
   const todayStr = now.toISOString().slice(0, 10);
 
   // Build set of already-sent (clientId + dogId + vaccineId + tierId) combos
@@ -441,7 +441,7 @@ const getDogAgeCompliance = (dog, policies, reservations) => {
   if (pol.ageCheckEnabled === false) return { ok: true };
   const dob = dog.fields?.dob;
   if (!dob) return { ok: true };
-  const b = new Date(dob + "T00:00:00"), now = new Date();
+  const b = new Date(dob + "T00:00:00"), now = getSimulatedNow(); // Time Travel aware
   let ageYears = now.getFullYear() - b.getFullYear();
   if (now.getMonth() < b.getMonth() || (now.getMonth() === b.getMonth() && now.getDate() < b.getDate())) ageYears--;
   const maxAge = pol.maxDogAge ?? 13;
@@ -463,7 +463,7 @@ const getSpayNeuterCompliance = (dog) => {
   // Intact or unknown — check age
   const dob = dog.fields?.dob;
   if (!dob) return { ok: true, status: sn || "Unknown" };
-  const b = new Date(dob + "T00:00:00"), now = new Date();
+  const b = new Date(dob + "T00:00:00"), now = getSimulatedNow(); // Time Travel aware
   let months = (now.getFullYear() - b.getFullYear()) * 12 + (now.getMonth() - b.getMonth());
   if (now.getDate() < b.getDate()) months--;
   if (months < 10) return { ok: true, status: "Intact", ageMonths: months };
@@ -479,7 +479,7 @@ const getSpayNeuterCompliance = (dog) => {
 // Dog age from dob
 const calcAge = (dob) => {
   if (!dob) return null;
-  const b = new Date(dob + "T00:00:00"), now = new Date();
+  const b = new Date(dob + "T00:00:00"), now = getSimulatedNow(); // Time Travel aware
   let y = now.getFullYear() - b.getFullYear();
   let m = now.getMonth() - b.getMonth();
   if (m < 0 || (m === 0 && now.getDate() < b.getDate())) { y--; m += 12; }
@@ -506,7 +506,8 @@ const getDogDaycareSize = (dog) => {
   return w < 35 ? "small" : "large";
 };
 
-const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+const todayStr = () => { const d = (window.__K9_TIME_TRAVEL__ ? new Date(window.__K9_TIME_TRAVEL__ + "T12:00:00") : new Date()); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; };
+const getSimulatedNow = () => window.__K9_TIME_TRAVEL__ ? new Date(window.__K9_TIME_TRAVEL__ + "T12:00:00") : new Date();
 const formatTime12hr = (t) => { if (!t) return ""; const [h, m] = t.split(":").map(Number); if (isNaN(h)) return t; const suffix = h >= 12 ? "PM" : "AM"; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m || 0).padStart(2, "0")} ${suffix}`; };
 const addDays = (d, n) => { const dt = new Date(d + "T12:00:00"); dt.setDate(dt.getDate() + n); return dt.toISOString().split("T")[0]; };
 const getMonday = (d) => { const dt = new Date(d + "T12:00:00"); const day = dt.getDay(); const diff = day === 0 ? -6 : 1 - day; dt.setDate(dt.getDate() + diff); return dt.toISOString().split("T")[0]; };
@@ -629,7 +630,7 @@ const EVAL_SECTIONS = [
 const EVAL_SCORE_PTS = { green:3, yellow:2, red:1 };
 const getEvalAgeBucket = (dob) => {
   if (!dob) return null;
-  const b = new Date(dob + "T00:00:00"), now = new Date();
+  const b = new Date(dob + "T00:00:00"), now = getSimulatedNow(); // Time Travel aware
   const ageMonths = (now - b) / (30.44 * 24 * 60 * 60 * 1000);
   if (ageMonths < 5) return "under5m";
   if (ageMonths < 6) return "5to6m";
@@ -31014,6 +31015,25 @@ export default function App() {
     }
   }, [TOP_LEVEL_PAGES]);
 
+  // ═══ Time Travel (Developer Tool) ═══
+  const isDevUser = profile?.role === 'owner' || profile?.role === 'enterprise_admin';
+  const [timeTravelDate, setTimeTravelDate] = useState(() => {
+    try { return sessionStorage.getItem("k9_timetravel") || ""; } catch { return ""; }
+  });
+  const [timeTravelOpen, setTimeTravelOpen] = useState(false);
+  const updateTimeTravel = useCallback((dateStr) => {
+    setTimeTravelDate(dateStr);
+    window.__K9_TIME_TRAVEL__ = dateStr || null;
+    try {
+      if (dateStr) sessionStorage.setItem("k9_timetravel", dateStr);
+      else sessionStorage.removeItem("k9_timetravel");
+    } catch {}
+  }, []);
+  useEffect(() => {
+    if (isDevUser && timeTravelDate) window.__K9_TIME_TRAVEL__ = timeTravelDate;
+    return () => { window.__K9_TIME_TRAVEL__ = null; };
+  }, []);
+
   // ═══ New Overlay ═══
   const [showNewOverlay, setShowNewOverlay] = useState(false);
   const openNew = useCallback(() => setShowNewOverlay(true), []);
@@ -31227,7 +31247,7 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-    <div style={{display:"flex",height:"100vh",fontFamily:"'GT Eesti', -apple-system, sans-serif",background:C.bg,overflow:"hidden"}}>
+    <div style={{display:"flex",height: isDevUser && timeTravelDate ? "calc(100vh - 32px)" : "100vh",marginTop: isDevUser && timeTravelDate ? 32 : 0,fontFamily:"'GT Eesti', -apple-system, sans-serif",background:C.bg,overflow:"hidden"}}>
       <style>{`
         @font-face{font-family:'Canela';font-weight:700;font-style:normal;src:url('/fonts/Canela-Bold-Web.woff2') format('woff2'),url('/fonts/Canela-Bold-Web.woff') format('woff'),url('/fonts/Canela-Bold.otf') format('opentype');font-display:swap;}
         @font-face{font-family:'Canela';font-weight:700;font-style:italic;src:url('/fonts/Canela-BoldItalic-Web.woff2') format('woff2'),url('/fonts/Canela-BoldItalic-Web.woff') format('woff'),url('/fonts/Canela-BoldItalic.otf') format('opentype');font-display:swap;}
@@ -31394,6 +31414,56 @@ export default function App() {
         </div>
       </div>
 
+
+      {/* ═══ Time Travel Banner ═══ */}
+      {isDevUser && timeTravelDate && (
+        <div style={{position:"fixed",top:0,left:0,right:0,height:32,background:"#DC2626",color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,zIndex:10000,letterSpacing:0.5,fontFamily:"inherit"}}>
+          ⚠ TIME TRAVEL ACTIVE — Simulating {(() => { try { const d = new Date(timeTravelDate + "T12:00:00"); return d.toLocaleDateString("en-US",{weekday:"short",month:"long",day:"numeric",year:"numeric"}); } catch { return timeTravelDate; } })()} (real: {new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})})
+          <button onClick={() => updateTimeTravel("")} style={{marginLeft:16,padding:"2px 10px",borderRadius:4,border:"1px solid rgba(255,255,255,0.5)",background:"transparent",color:"white",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>Clear</button>
+        </div>
+      )}
+
+      {/* ═══ Time Travel Toolbar ═══ */}
+      {isDevUser && (
+        <div style={{position:"fixed",bottom:24,left:24,zIndex:9998,fontFamily:"inherit"}}>
+          {!timeTravelOpen ? (
+            <button onClick={() => setTimeTravelOpen(true)} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 16px",borderRadius:24,border:timeTravelDate ? "2px solid #DC2626" : "1px solid #d1d5db",background:timeTravelDate ? "#FEF2F2" : "#fff",color:timeTravelDate ? "#DC2626" : "#374151",fontSize:12,fontWeight:600,cursor:"pointer",boxShadow:"0 4px 12px rgba(0,0,0,0.12)",fontFamily:"inherit",transition:"all 0.2s"}}>
+              <span style={{fontSize:16}}>🕐</span>
+              {timeTravelDate ? `Simulating: ${timeTravelDate}` : "Time Travel"}
+            </button>
+          ) : (
+            <div style={{width:320,background:"#fff",border:timeTravelDate ? "2px solid #DC2626" : "1px solid #d1d5db",borderRadius:16,padding:20,boxShadow:"0 12px 32px rgba(0,0,0,0.18)"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:18}}>🕐</span>
+                  <span style={{fontSize:14,fontWeight:700,color:"#111"}}>Time Travel</span>
+                  <span style={{fontSize:10,padding:"2px 6px",borderRadius:4,background:"#EFF6FF",color:"#1D4ED8",fontWeight:600}}>DEV</span>
+                </div>
+                <button onClick={() => setTimeTravelOpen(false)} style={{width:24,height:24,borderRadius:12,border:"none",background:"#f3f4f6",cursor:"pointer",fontSize:14,fontWeight:700,color:"#6b7280",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"inherit"}}>×</button>
+              </div>
+              <div style={{fontSize:11,color:"#6b7280",marginBottom:10}}>Override the app's date for testing. DB writes still use real time.</div>
+              <input type="date" value={timeTravelDate} onChange={e => updateTimeTravel(e.target.value)} style={{width:"100%",padding:"8px 12px",borderRadius:8,border:"1px solid #d1d5db",fontSize:13,fontFamily:"inherit",marginBottom:12,boxSizing:"border-box"}} />
+              <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
+                {[["Today",""],["+ 1d",1],["+ 7d",7],["+ 30d",30],["+ 90d",90]].map(([label,days]) => (
+                  <button key={label} onClick={() => {
+                    if (days === "") { updateTimeTravel(""); return; }
+                    const d = new Date(); d.setDate(d.getDate() + days);
+                    updateTimeTravel(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`);
+                  }} style={{padding:"5px 10px",borderRadius:6,border:"1px solid #e5e7eb",background:days === "" ? "#f3f4f6" : "#fff",fontSize:11,fontWeight:600,cursor:"pointer",color:days === "" ? "#DC2626" : "#374151",fontFamily:"inherit"}}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {timeTravelDate && (
+                <div style={{padding:"8px 10px",borderRadius:8,background:"#FEF2F2",border:"1px solid #FECACA",fontSize:11,color:"#DC2626",fontWeight:600,textAlign:"center"}}>
+                  Active: {timeTravelDate} → {(() => { try { return new Date(timeTravelDate+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric",year:"numeric"}); } catch { return timeTravelDate; } })()}
+                </div>
+              )}
+              <div style={{fontSize:10,color:"#9ca3af",marginTop:8,textAlign:"center"}}>Real date: {new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"})}</div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ═══ Global Toast ═══ */}
       {globalToasts.length > 0 && (
