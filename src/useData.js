@@ -981,9 +981,10 @@ function attachAgreementSignings(clients, logRows) {
   const byClient = {};
   for (const r of (logRows || [])) {
     if (!byClient[r.client_id]) byClient[r.client_id] = {};
+    const rawDate = r.signed_at || r.created_at;
     byClient[r.client_id][r.agreement_id] = {
       signed: r.status === 'signed' || !!r.signed_at,
-      date: r.signed_at || r.created_at,
+      date: rawDate ? rawDate.slice(0, 10) : null,
       logId: r.id,
       status: r.status,
       sentAt: r.sent_at || r.created_at,
@@ -1458,9 +1459,9 @@ export function useData(profile) {
         }
         for (const client of clients) {
           const contacts = contactsByClient[client.id] || [];
-          const ec = contacts.find(ct => ct.contact_type === 'emergency') || contacts[0];
+          const ec = contacts.find(ct => ct.is_emergency_contact) || contacts[0];
           if (ec) {
-            client.fields.emergency_contact = ec.name || '';
+            client.fields.emergency_contact = [ec.first_name, ec.last_name].filter(Boolean).join(' ') || '';
             client.fields.emergency_phone = ec.phone || '';
           }
           client._contactRows = contacts;
@@ -1487,7 +1488,9 @@ export function useData(profile) {
           packages: (pkgRes.data || []).map(rowToPackage),
           packageSales: (pkgSaleRes.data || []).map(rowToPackageSale),
           messages: (msgRes.data || []).map(rowToMessage),
-          auditLog: (auditRes.data || []).map(rowToAudit),
+          auditLog: (auditRes.data || [])
+            .filter(r => !['INSERT','UPDATE','DELETE'].includes(r.action))  // skip DB-trigger duplicates
+            .map(rowToAudit),
           // Child/lookup data
           clientContacts: contactsRes.data || [],
           locationRoles: rolesRes.data || [],
@@ -1732,12 +1735,17 @@ export function useData(profile) {
           const prevEcPhone = prevClient?.fields?.emergency_phone;
           if (ecName !== prevEcName || ecPhone !== prevEcPhone) {
             if (ecName || ecPhone) {
-              const existing = (client._contactRows || []).find(c => c.contact_type === 'emergency');
+              const existing = (client._contactRows || []).find(c => c.is_emergency_contact);
+              // Split ecName into first/last for the client_contacts table schema
+              const nameParts = (ecName || '').trim().split(/\s+/);
+              const ecFirst = nameParts[0] || '';
+              const ecLast = nameParts.slice(1).join(' ') || '';
               t4.push(supabase.from('client_contacts').upsert({
                 id: existing?.id || crypto.randomUUID(),
                 client_id: client.id, location_id: locationId,
-                contact_type: 'emergency', name: ecName || '',
+                first_name: ecFirst, last_name: ecLast,
                 phone: ecPhone || '',
+                is_emergency_contact: true,
               }, { onConflict: 'id' })
                 .then(({ error }) => { if (error) console.error('Upsert client contact:', error); }));
             }

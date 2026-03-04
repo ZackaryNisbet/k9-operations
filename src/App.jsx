@@ -3101,11 +3101,13 @@ function DogPicHover({ dog, size = 20 }) {
 // AUDIT LOG HELPER
 // ═══════════════════════════════════════════════════════════════════════════
 function buildAuditEntry(reservationId, action, details, profile) {
+  const name = profile ? (profile.full_name || profile.email || "Staff") : "System";
   return {
     id: gid(),
     reservationId,
     timestamp: new Date().toISOString(),
-    userName: profile ? (profile.full_name || profile.email || "Staff") : "System",
+    userName: name,
+    changedBy: name,
     action,
     details: details || [],
   };
@@ -4509,8 +4511,9 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             const collected = resPmts.length > 0 ? (totalPaid - totalRefunded) : (reservation.amountCollected || 0);
             const outstanding = Math.max(0, adjTotal - collected);
             const overpayment = collected > adjTotal ? Math.round((collected - adjTotal) * 100) / 100 : 0;
-            const depositRequired = Math.round(adjTotal * 0.5 * 100) / 100;
-            const depositMet = collected >= depositRequired;
+            const needsDeposit = reservation.type === "boarding" || reservation.type === "dayboarding";
+            const depositRequired = needsDeposit ? Math.round(adjTotal * 0.5 * 100) / 100 : 0;
+            const depositMet = !needsDeposit || collected >= depositRequired;
             const fullPaymentMet = collected >= adjTotal;
             const fmt = (v) => v < 0 ? `-$${Math.abs(v).toFixed(2)}` : `$${v.toFixed(2)}`;
             const configuredDiscounts = (data.discounts || []).filter(d => d.active !== false);
@@ -4672,9 +4675,18 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
                           const depAmt = isCheckInMode ? Math.max(0, depositRequired - collected) : outstanding > 0 ? outstanding : 0;
                           setPayAmount(depAmt > 0 ? depAmt.toFixed(2) : "");
                           setPayMethod("card");
-                          setPaySelectedCard(null);
-                          setPayCard4("");
-                          setPayCardBrand("visa");
+                          // Auto-select saved card if available (fixes B.9)
+                          const _savedCards = client.savedCards || [];
+                          const _defCard = _savedCards.find(c => c.isDefault) || _savedCards[0];
+                          if (_defCard) {
+                            setPaySelectedCard(_defCard.id);
+                            setPayCard4(_defCard.last4 || "");
+                            setPayCardBrand(_defCard.brand || "visa");
+                          } else {
+                            setPaySelectedCard("new");
+                            setPayCard4("");
+                            setPayCardBrand("visa");
+                          }
                           setPayTip("");
                           setPayNote("");
                           setPayErr("");
