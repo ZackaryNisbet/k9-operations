@@ -18215,7 +18215,7 @@ function VetDirectoryTab({ data, save }) {
                         <td style={{ padding: "12px 16px", fontSize: 13, color: C.textSec }}>{vet.phone || "—"}</td>
                         <td style={{ padding: "12px 16px", textAlign: "center" }}><span style={{ fontSize: 14, fontWeight: 700, color: C.pri }}>{clientCount}</span></td>
                         <td style={{ padding: "12px 16px" }}><span style={{ display: "inline-block", padding: "4px 10px", borderRadius: 6, background: vet.isActive ? C.sucLt : C.danLt, color: vet.isActive ? C.suc : C.dan, fontSize: 11, fontWeight: 600 }}>{vet.isActive ? "Active" : "Inactive"}</span></td>
-                        <td style={{ padding: "12px 16px", textAlign: "right" }}><Btn onClick={() => setEditingId(vet.id)} size="xs" variant="ghost" icon={<I.Edit2 />}></Btn></td>
+                        <td style={{ padding: "12px 16px", textAlign: "right" }}><Btn onClick={() => setEditingId(vet.id)} size="xs" variant="ghost" icon={<I.Edit />}></Btn></td>
                       </>
                     )}
                   </tr>
@@ -19361,14 +19361,14 @@ function PricingTab({ data, save }) {
                   {(rule.tagIds || []).length === 0 && <span style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>All tags</span>}
                 </div>
               </div>
-              <button onClick={() => setEditingAddOn({ ...rule })} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Edit2 size={14} /></button>
+              <button onClick={() => setEditingAddOn({ ...rule })} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Edit /></button>
               {addOnConfirmDelete === rule.id ? (
                 <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
                   <button onClick={() => deleteAddOnRule(rule.id)} style={{ padding: "3px 8px", borderRadius: 6, border: "none", background: C.dan, color: "#fff", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>Confirm</button>
                   <button onClick={() => setAddOnConfirmDelete(null)} style={{ padding: "3px 8px", borderRadius: 6, border: `1px solid ${C.border}`, background: "transparent", color: C.textMut, fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Cancel</button>
                 </div>
               ) : (
-                <button onClick={() => setAddOnConfirmDelete(rule.id)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Trash2 size={14} /></button>
+                <button onClick={() => setAddOnConfirmDelete(rule.id)} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 4 }}><I.Trash /></button>
               )}
             </div>
           ))}
