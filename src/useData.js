@@ -116,45 +116,61 @@ function reservationToRow(res, locationId) {
     id: res.id, location_id: locationId,
     client_id: res.clientId || null,
     dog_id: res.dogId || null,
-    service_type: res.type || res.serviceType || null,
-    room_unit_id: res.roomUnitId || null,
+    type: res.type || res.serviceType || null,
+    room_type: res.roomType || res.roomUnitId || null,
+    room: res.room || null,
     status: res.status || null,
-    check_in_date: res.checkIn || res.checkInDate || null,
-    check_out_date: res.checkOut || res.checkOutDate || null,
-    check_in_at: res.checkInTime || res.checkInAt || null,
-    check_out_at: res.checkOutTime || res.checkOutAt || null,
-    price_snapshot: res.priceSnapshot || null,
-    rate_per_night: res.ratePerNight != null ? res.ratePerNight : null,
-    deposit_amount: res.depositAmount != null ? res.depositAmount : null,
-    deposit_paid: res.depositPaid ?? false,
-    total_estimated: res.totalPrice != null ? res.totalPrice : (res.totalEstimated != null ? res.totalEstimated : null),
-    add_ons: res.selectedAddOns || res.addOns || null,
-    picked_up_by_contact_id: res.pickedUpByContactId || null,
-    picked_up_by_name: res.pickedUpByName || null,
+    check_in: res.checkIn || res.checkInDate || null,
+    check_out: res.checkOut || res.checkOutDate || null,
+    check_in_time: res.checkInTime || res.checkInAt || null,
+    check_out_time: res.checkOutTime || res.checkOutAt || null,
+    daycare_size: res.daycareSize || null,
     notes: res.notes || null,
-    invoice_id: res.invoiceId || null,
+    total_price: res.totalPrice != null ? res.totalPrice : (res.totalEstimated != null ? res.totalEstimated : null),
+    amount_collected: res.amountCollected != null ? res.amountCollected : null,
+    discount_type: res.discountType || null,
+    discount_value: res.discountValue != null ? res.discountValue : null,
+    selected_add_ons: res.selectedAddOns || res.addOns || null,
+    care_overrides: res.careOverrides || null,
+    emergency_contact_override: res.emergencyContactOverride || null,
+    activity_log: res.activityLog || null,
+    custom_fields: res.customFields || null,
+    parent_destination: res.parentDestination || null,
+    belongings: res.belongings || null,
+    eval_result: res.evalResult || null,
   };
 }
 
 function rowToReservation(r) {
   const res = { id: r.id, clientId: r.client_id, dogId: r.dog_id };
-  if (r.service_type) res.type = r.service_type;
-  if (r.room_unit_id) res.roomUnitId = r.room_unit_id;
+  if (r.type) res.type = r.type;
+  if (r.room_type) res.roomType = r.room_type;
+  if (r.room) res.room = r.room;
   if (r.status) res.status = r.status;
-  if (r.check_in_date) res.checkIn = r.check_in_date;
-  if (r.check_out_date) res.checkOut = r.check_out_date;
-  if (r.check_in_at) res.checkInTime = r.check_in_at;
-  if (r.check_out_at) res.checkOutTime = r.check_out_at;
-  if (r.price_snapshot) res.priceSnapshot = r.price_snapshot;
-  if (r.rate_per_night != null) res.ratePerNight = Number(r.rate_per_night);
-  if (r.deposit_amount != null) res.depositAmount = Number(r.deposit_amount);
-  if (r.deposit_paid != null) res.depositPaid = r.deposit_paid;
-  if (r.total_estimated != null) res.totalPrice = Number(r.total_estimated);
-  if (r.add_ons) res.selectedAddOns = r.add_ons;
-  if (r.picked_up_by_contact_id) res.pickedUpByContactId = r.picked_up_by_contact_id;
-  if (r.picked_up_by_name) res.pickedUpByName = r.picked_up_by_name;
+  if (r.check_in) res.checkIn = r.check_in;
+  if (r.check_out) res.checkOut = r.check_out;
+  if (r.check_in_time) res.checkInTime = r.check_in_time;
+  if (r.check_out_time) res.checkOutTime = r.check_out_time;
+  if (r.daycare_size) res.daycareSize = r.daycare_size;
+  if (r.total_price != null) res.totalPrice = Number(r.total_price);
+  if (r.amount_collected != null) res.amountCollected = Number(r.amount_collected);
+  if (r.discount_type) res.discountType = r.discount_type;
+  if (r.discount_value != null) res.discountValue = Number(r.discount_value);
+  if (r.selected_add_ons) res.selectedAddOns = r.selected_add_ons;
+  if (r.care_overrides) res.careOverrides = r.care_overrides;
+  if (r.emergency_contact_override) res.emergencyContactOverride = r.emergency_contact_override;
+  if (r.activity_log) res.activityLog = r.activity_log;
+  if (r.custom_fields) res.customFields = r.custom_fields;
+  if (r.parent_destination) res.parentDestination = r.parent_destination;
+  if (r.belongings) res.belongings = r.belongings;
+  if (r.eval_result) res.evalResult = r.eval_result;
   if (r.notes) res.notes = r.notes;
-  if (r.invoice_id) res.invoiceId = r.invoice_id;
+  if (r.fed_today) res.fedToday = r.fed_today;
+  if (r.meds_today) res.medsToday = r.meds_today;
+  if (r.cancelled_at) res.cancelledAt = r.cancelled_at;
+  if (r.cancelled_by) res.cancelledBy = r.cancelled_by;
+  if (r.actual_check_out_time) res.actualCheckOutTime = r.actual_check_out_time;
+  if (r.checked_out_by) res.checkedOutBy = r.checked_out_by;
   if (r.created_at) res.createdAt = r.created_at;
   return res;
 }
