@@ -254,6 +254,10 @@ function packageToRow(pkg, _locationId) {
     quantity: pkg.quantity != null ? pkg.quantity : null,
     expiration_type: pkg.expirationType || null,
     expiration_days: pkg.expirationDays != null ? pkg.expirationDays : null,
+    unit_rate: pkg.unitRate != null ? pkg.unitRate : null,
+    retail_value: pkg.retailValue != null ? pkg.retailValue : null,
+    package_price: pkg.packagePrice != null ? pkg.packagePrice : null,
+    savings: pkg.savings != null ? pkg.savings : null,
     is_active: pkg.isActive ?? true,
     available_online: pkg.availableOnline ?? false,
   };
@@ -274,8 +278,13 @@ function rowToPackage(r) {
   if (r.quantity != null) p.quantity = Number(r.quantity);
   if (r.expiration_type) p.expirationType = r.expiration_type;
   if (r.expiration_days != null) p.expirationDays = Number(r.expiration_days);
+  if (r.unit_rate != null) p.unitRate = Number(r.unit_rate);
+  if (r.retail_value != null) p.retailValue = Number(r.retail_value);
+  if (r.package_price != null) p.packagePrice = Number(r.package_price);
+  if (r.savings != null) p.savings = Number(r.savings);
   if (r.is_active != null) p.isActive = r.is_active;
   if (r.available_online != null) p.availableOnline = r.available_online;
+  if (r.created_at) p.createdAt = r.created_at.slice(0, 10);
   return p;
 }
 
