@@ -18108,7 +18108,7 @@ function EODPage({ data, save, nav, profile }) {
 // ═══════════════════════════════════════════════════════════════════════════
 // VET DIRECTORY TAB
 // ═══════════════════════════════════════════════════════════════════════════
-function VetDirectoryTab({ data, save }) {
+function VetDirectoryTab({ data, save, addGlobalToast }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [showInactive, setShowInactive] = useState(false);
@@ -24687,7 +24687,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
         ) : tab === "questionnaire" ? (
           <QuestionnaireSettingsTab data={data} save={save} />
         ) : tab === "vets" ? (
-          <VetDirectoryTab data={data} save={save} />
+          <VetDirectoryTab data={data} save={save} addGlobalToast={addGlobalToast} />
         ) : tab === "pricing" ? (
         <PricingTab data={data} save={save} />
 
