@@ -1565,7 +1565,7 @@ export function useData(profile) {
               isGlobal ? toRow(item) : toRow(item, locationId)
             );
             ops.push(supabase.from(table).upsert(rows, { onConflict: 'id' })
-              .then(({ error }) => { if (error) console.error(`Upsert ${key}:`, error); }));
+              .then(({ error, status, statusText }) => { if (error) console.error(`Upsert ${key}:`, JSON.stringify({ code: error.code, msg: error.message, details: error.details, hint: error.hint, status, statusText, table, rowCount: rows.length, rowKeys: Object.keys(rows[0] || {}) })); }));
           }
           if (diff.deletes.length > 0) {
             ops.push(supabase.from(table).delete().in('id', diff.deletes.map(i => i.id))
