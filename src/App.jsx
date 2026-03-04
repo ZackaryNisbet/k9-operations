@@ -3140,6 +3140,15 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   const [postBathReturn, setPostBathReturn] = useState(reservation.careOverrides?.postBathReturn || "");
   const [ecName, setEcName] = useState(reservation.emergencyContactOverride?.name ?? clientEcName);
   const [ecPhone, setEcPhone] = useState(reservation.emergencyContactOverride?.phone ?? clientEcPhone);
+  // B.12 fix: Sync ecName/ecPhone when client profile is updated externally (e.g. "Update Profile(s)" button)
+  useEffect(() => {
+    const curClientEc = client.fields.emergency_contact || "";
+    const curClientEcPhone = client.fields.emergency_phone || "";
+    if (!reservation.emergencyContactOverride) {
+      if (curClientEc && curClientEc !== ecName) setEcName(curClientEc);
+      if (curClientEcPhone && curClientEcPhone !== ecPhone) setEcPhone(curClientEcPhone);
+    }
+  }, [client.fields.emergency_contact, client.fields.emergency_phone]);
   const [notes, setNotes] = useState(reservation.notes || "");
   const [errors, setErrors] = useState({});
   const [showConflict, setShowConflict] = useState(false);
@@ -3222,6 +3231,25 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     return failures;
   })();
   const complianceBlocked = complianceFailures.length > 0;
+  // B.10 fix: Compute checkout payment gate (disable button like check-in does for compliance)
+  const checkoutPaymentBlocked = (() => {
+    if (!isCheckOutMode) return false;
+    const adjTotal = getAdjustedTotal();
+    if (adjTotal <= 0) return false;
+    const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id && p.status !== "voided");
+    const totalPaid = resPmts.filter(p => p.type !== "refund" && p.status !== "refunded").reduce((s, p) => s + p.amount, 0);
+    const totalRefunded = resPmts.filter(p => p.type === "refund" || p.status === "refunded").reduce((s, p) => s + p.amount, 0);
+    const collected = resPmts.length > 0 ? (totalPaid - totalRefunded) : (reservation.amountCollected || 0);
+    return collected < adjTotal;
+  })();
+  const checkoutOutstanding = checkoutPaymentBlocked ? (() => {
+    const adjTotal = getAdjustedTotal();
+    const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id && p.status !== "voided");
+    const totalPaid = resPmts.filter(p => p.type !== "refund" && p.status !== "refunded").reduce((s, p) => s + p.amount, 0);
+    const totalRefunded = resPmts.filter(p => p.type === "refund" || p.status === "refunded").reduce((s, p) => s + p.amount, 0);
+    const collected = resPmts.length > 0 ? (totalPaid - totalRefunded) : (reservation.amountCollected || 0);
+    return Math.max(0, adjTotal - collected);
+  })() : 0;
   const BATH_OPTS = data.bathTypeOptions || ["Standard","Hypo","Medicated","Whitening"];
   const profileFeedingSchedules = dog.fields.feedingSchedules ?? [];
   const profileMedicationSchedules = dog.fields.medicationSchedules ?? [];
@@ -5015,7 +5043,11 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
         )}
         <Btn variant="secondary" onClick={() => { if (!isReadOnly || isCheckedIn) { handleSave(false, false); } onClose(); }}>Close{(!isReadOnly || isCheckedIn) ? " & Save" : ""}</Btn>
         {isCheckOutMode ? (
-          <Btn variant="accent" onClick={()=>handleSave(false, true)} icon={<I.LogOut/>}>Check Out</Btn>
+          <>{checkoutPaymentBlocked && <div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",background:"#FEF2F2",border:"1px solid #FECACA",borderRadius:8,fontSize:12,color:"#DC2626",fontWeight:600,marginRight:8}}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            Collect ${checkoutOutstanding.toFixed(2)} to check out
+          </div>}
+          <Btn variant="accent" onClick={()=>handleSave(false, true)} icon={<I.LogOut/>} disabled={checkoutPaymentBlocked} style={checkoutPaymentBlocked ? {opacity:0.5,cursor:"not-allowed"} : {}} title={checkoutPaymentBlocked ? `Full payment required — $${checkoutOutstanding.toFixed(2)} outstanding` : ""}>Check Out</Btn></>
         ) : isCheckedIn ? (
           <Btn onClick={()=>handleSave(false, false)}>Save Date Changes</Btn>
         ) : !isReadOnly && (isCheckInMode ? (
