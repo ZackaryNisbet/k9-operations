@@ -216,18 +216,14 @@ function rowToEvaluation(r) {
 function paymentToRow(p, locationId) {
   return {
     id: p.id, location_id: locationId,
+    invoice_id: p.invoiceId || null,
     reservation_id: p.reservationId || null,
     client_id: p.clientId || null,
     amount: p.amount != null ? p.amount : null,
-    type: p.type || 'payment',
-    method: p.method || p.paymentMethod || null,
-    card_last4: p.cardLast4 || null,
+    payment_method: p.method || p.paymentMethod || null,
+    external_transaction_id: p.stripePaymentIntentId || p.externalTransactionId || null,
     status: p.status || null,
-    note: p.note || null,
-    timestamp: p.timestamp || p.processedAt || null,
-    stripe_payment_intent_id: p.stripePaymentIntentId || null,
-    stripe_refund_id: p.stripeRefundId || null,
-    processed_by: p.processedBy || null,
+    processed_at: p.timestamp || p.processedAt || null,
   };
 }
 
@@ -235,16 +231,12 @@ function rowToPayment(r) {
   const p = { id: r.id };
   if (r.reservation_id) p.reservationId = r.reservation_id;
   if (r.client_id) p.clientId = r.client_id;
+  if (r.invoice_id) p.invoiceId = r.invoice_id;
   if (r.amount != null) p.amount = Number(r.amount);
-  if (r.type) p.type = r.type;
-  if (r.method) { p.method = r.method; p.paymentMethod = r.method; }
-  if (r.card_last4) p.cardLast4 = r.card_last4;
+  if (r.payment_method) { p.method = r.payment_method; p.paymentMethod = r.payment_method; }
   if (r.status) p.status = r.status;
-  if (r.note) p.note = r.note;
-  if (r.timestamp) { p.timestamp = r.timestamp; p.processedAt = r.timestamp; }
-  if (r.stripe_payment_intent_id) p.stripePaymentIntentId = r.stripe_payment_intent_id;
-  if (r.stripe_refund_id) p.stripeRefundId = r.stripe_refund_id;
-  if (r.processed_by) p.processedBy = r.processed_by;
+  if (r.processed_at) { p.timestamp = r.processed_at; p.processedAt = r.processed_at; }
+  if (r.external_transaction_id) p.stripePaymentIntentId = r.external_transaction_id;
   if (r.created_at) p.createdAt = r.created_at;
   return p;
 }
