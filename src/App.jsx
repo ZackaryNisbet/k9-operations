@@ -19628,7 +19628,7 @@ function PricingTab({ data, save }) {
   );
 }
 
-function PackagesSection({ data, save }) {
+function PackagesSection({ data, save, nav, profile }) {
   const [showCreate, setShowCreate] = useState(false);
   const [showSell, setShowSell] = useState(false);
   const [expandedPkg, setExpandedPkg] = useState(null);
@@ -24693,7 +24693,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
         <PricingTab data={data} save={save} />
 
       ) : tab === "packages" ? (
-        <PackagesSection data={data} save={save} />
+        <PackagesSection data={data} save={save} nav={nav} profile={profile} />
 
       ) : tab === "discounts" ? (
         <DiscountsSection data={data} save={save} />
