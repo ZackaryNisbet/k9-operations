@@ -20029,7 +20029,7 @@ function CreatePackageWizard({ data, save, onClose }) {
     }
 
     const newPkg = {
-      id: "pkg_" + gid(),
+      id: gid(),
       packageType,
       serviceName: svcNames,
       serviceNames: selectedServices.map(s => s.name),
@@ -22077,7 +22077,7 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
         else if (pkg.discountType === "fixed") packagePrice = retailValue - (pkg.discountValue || 0);
         const savings = Math.max(0, retailValue - packagePrice);
         const localPkg = {
-          id: "pkg_" + gid(), name: pkg.name, description: pkg.description,
+          id: gid(), name: pkg.name, description: pkg.description,
           serviceCategory: pkg.serviceCategory, serviceName: pkg.serviceName,
           serviceNames: pkg.serviceNames || [pkg.serviceName],
           packageType: pkg.packageType || "standard",
