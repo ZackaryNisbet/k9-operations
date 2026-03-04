@@ -5331,6 +5331,9 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
 function DashboardPage({ data, save, nav, onNew, profile }) {
   const td = todayStr();
   const [viewDate, setViewDate] = useState(td);
+  // Time Travel: sync dashboard to simulated date when it changes
+  const prevTdRef = useRef(td);
+  useEffect(() => { if (td !== prevTdRef.current) { setViewDate(td); prevTdRef.current = td; } }, [td]);
   const [activeTab, setActiveTab] = useState("expected");
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
