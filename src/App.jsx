@@ -3231,25 +3231,6 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     return failures;
   })();
   const complianceBlocked = complianceFailures.length > 0;
-  // B.10 fix: Compute checkout payment gate (disable button like check-in does for compliance)
-  const checkoutPaymentBlocked = (() => {
-    if (!isCheckOutMode) return false;
-    const adjTotal = getAdjustedTotal();
-    if (adjTotal <= 0) return false;
-    const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id && p.status !== "voided");
-    const totalPaid = resPmts.filter(p => p.type !== "refund" && p.status !== "refunded").reduce((s, p) => s + p.amount, 0);
-    const totalRefunded = resPmts.filter(p => p.type === "refund" || p.status === "refunded").reduce((s, p) => s + p.amount, 0);
-    const collected = resPmts.length > 0 ? (totalPaid - totalRefunded) : (reservation.amountCollected || 0);
-    return collected < adjTotal;
-  })();
-  const checkoutOutstanding = checkoutPaymentBlocked ? (() => {
-    const adjTotal = getAdjustedTotal();
-    const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id && p.status !== "voided");
-    const totalPaid = resPmts.filter(p => p.type !== "refund" && p.status !== "refunded").reduce((s, p) => s + p.amount, 0);
-    const totalRefunded = resPmts.filter(p => p.type === "refund" || p.status === "refunded").reduce((s, p) => s + p.amount, 0);
-    const collected = resPmts.length > 0 ? (totalPaid - totalRefunded) : (reservation.amountCollected || 0);
-    return Math.max(0, adjTotal - collected);
-  })() : 0;
   const BATH_OPTS = data.bathTypeOptions || ["Standard","Hypo","Medicated","Whitening"];
   const profileFeedingSchedules = dog.fields.feedingSchedules ?? [];
   const profileMedicationSchedules = dog.fields.medicationSchedules ?? [];
@@ -3303,6 +3284,26 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     else if (discountType === "flat" && discountValue > 0) adjT = Math.max(0, adjT - Math.min(discountValue, adjT));
     return Math.round(adjT * 100) / 100;
   };
+
+  // B.10 fix: Compute checkout payment gate (disable button like check-in does for compliance)
+  const checkoutPaymentBlocked = (() => {
+    if (!isCheckOutMode) return false;
+    const adjTotal = getAdjustedTotal();
+    if (adjTotal <= 0) return false;
+    const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id && p.status !== "voided");
+    const totalPaid = resPmts.filter(p => p.type !== "refund" && p.status !== "refunded").reduce((s, p) => s + p.amount, 0);
+    const totalRefunded = resPmts.filter(p => p.type === "refund" || p.status === "refunded").reduce((s, p) => s + p.amount, 0);
+    const collected = resPmts.length > 0 ? (totalPaid - totalRefunded) : (reservation.amountCollected || 0);
+    return collected < adjTotal;
+  })();
+  const checkoutOutstanding = checkoutPaymentBlocked ? (() => {
+    const adjTotal = getAdjustedTotal();
+    const resPmts = (data.payments || []).filter(p => p.reservationId === reservation.id && p.status !== "voided");
+    const totalPaid = resPmts.filter(p => p.type !== "refund" && p.status !== "refunded").reduce((s, p) => s + p.amount, 0);
+    const totalRefunded = resPmts.filter(p => p.type === "refund" || p.status === "refunded").reduce((s, p) => s + p.amount, 0);
+    const collected = resPmts.length > 0 ? (totalPaid - totalRefunded) : (reservation.amountCollected || 0);
+    return Math.max(0, adjTotal - collected);
+  })() : 0;
 
   const handleSave = (doCheckIn, doCheckOut) => {
     // Check for early check-in (trying to check in before reservation date)
