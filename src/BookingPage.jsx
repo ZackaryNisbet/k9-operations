@@ -1113,7 +1113,7 @@ export default function BookingPage() {
   );
 
   const loc = locationData;
-  const locName = loc?.location_name || 'K9 Resorts';
+  const locName = loc?.location_name || loc?.name || 'K9 Resorts';
 
   // ═════════════════════════════════════════════════════════════════════════
   // SPLASH PAGE
