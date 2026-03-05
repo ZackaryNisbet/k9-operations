@@ -344,6 +344,7 @@ function messageToRow(m, locationId) {
     status: m.status || null,
     external_id: m.twilioSid || m.externalId || null,
     sent_at: m.timestamp || m.sentAt || null,
+    sent_by: m.sentBy || null,
   };
 }
 
@@ -359,6 +360,7 @@ function rowToMessage(r) {
   if (r.status) m.status = r.status;
   if (r.external_id) { m.twilioSid = r.external_id; m.externalId = r.external_id; }
   if (r.sent_at) { m.timestamp = r.sent_at; m.sentAt = r.sent_at; }
+  if (r.sent_by) m.sentBy = r.sent_by;
   if (r.created_at) m.createdAt = r.created_at;
   return m;
 }
@@ -1034,6 +1036,7 @@ function attachAgreementSignings(clients, logRows) {
       logId: r.id,
       status: r.status,
       sentAt: r.sent_at || r.created_at,
+      sentBy: r.sent_by || null,
       messageId: r.message_id || null,
     };
   }
@@ -1061,6 +1064,8 @@ async function saveAgreementSignings(locationId, prevClients, newClients) {
           status: dbStatus,
           signed_at: entry.signed ? (entry.date || new Date().toISOString()) : null,
           sent_via: entry.sentVia || null,
+          sent_by: entry.sentBy || null,
+          sent_at: entry.sentAt || null,
           message_id: entry.messageId || null,
         }).eq('id', entry.logId);
         if (error) console.error('Update agreement_log:', error);
@@ -1072,6 +1077,7 @@ async function saveAgreementSignings(locationId, prevClients, newClients) {
           status: dbStatus,
           signed_at: entry.signed ? (entry.date || new Date().toISOString()) : null,
           sent_via: entry.sentVia || null,
+          sent_by: entry.sentBy || null,
           sent_at: entry.sentAt || null,
           message_id: entry.messageId || null,
         });
