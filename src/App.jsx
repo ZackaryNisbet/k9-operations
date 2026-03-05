@@ -9107,6 +9107,48 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const [editing, setEditing] = useState(false);
   const [editFields, setEditFields] = useState({});
   const [editRecurringDiscountId, setEditRecurringDiscountId] = useState(null);
+  const [inlineFields, setInlineFields] = useState(() => ({...client.fields}));
+  const [inlineRecurringDiscountId, setInlineRecurringDiscountId] = useState(client.recurringDiscountId || null);
+  const [inlineDirty, setInlineDirty] = useState(false);
+  const [inlineSaving, setInlineSaving] = useState(false);
+  // Keep inline fields in sync when client changes externally
+  useEffect(() => {
+    if (!inlineDirty) {
+      setInlineFields({...client.fields});
+      setInlineRecurringDiscountId(client.recurringDiscountId || null);
+    }
+  }, [client.fields, client.recurringDiscountId]);
+  const updateInlineField = (fid, val) => { setInlineFields(prev => ({...prev, [fid]: val})); setInlineDirty(true); };
+  const saveInlineEdit = async () => {
+    setInlineSaving(true);
+    // Build audit diffs
+    const diffs = [];
+    data.clientFields.forEach(f => {
+      const oldVal = client.fields[f.id] || "";
+      const newVal = inlineFields[f.id] || "";
+      if (oldVal !== newVal) diffs.push({ field: f.name, oldVal: oldVal || "(empty)", newVal: newVal || "(empty)" });
+    });
+    if ((client.recurringDiscountId || null) !== (inlineRecurringDiscountId || null)) {
+      const oldDisc = (data.discounts || []).find(d => d.id === client.recurringDiscountId);
+      const newDisc = (data.discounts || []).find(d => d.id === inlineRecurringDiscountId);
+      diffs.push({ field: "Recurring Discount", oldVal: oldDisc ? oldDisc.name : "None", newVal: newDisc ? newDisc.name : "None" });
+    }
+    const auditEntries = diffs.length > 0 ? [{
+      id: gid(), tableName: 'k9_clients', recordId: clientId, reservationId: clientId,
+      timestamp: new Date().toISOString(),
+      userName: profile ? (profile.full_name || profile.email || "Staff") : "System",
+      changedBy: profile ? (profile.full_name || profile.email || "Staff") : "System",
+      action: "Updated Client Profile", details: diffs,
+    }] : [];
+    await save({
+      ...data,
+      clients: data.clients.map(c => c.id === clientId ? { ...c, fields: inlineFields, recurringDiscountId: inlineRecurringDiscountId || null } : c),
+      auditLog: [...(data.auditLog || []), ...auditEntries],
+    });
+    setInlineDirty(false);
+    setInlineSaving(false);
+  };
+  const cancelInlineEdit = () => { setInlineFields({...client.fields}); setInlineRecurringDiscountId(client.recurringDiscountId || null); setInlineDirty(false); };
   const [activeTab, setActiveTab] = useState("dogs");
   const [resSubTab, setResSubTab] = useState("upcoming");
   const [newNote, setNewNote] = useState("");
@@ -9333,6 +9375,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     { id: "packages", label: "Packages", count: activePkgCount, color: "#EC4899" },
     { id: "lifecycle", label: "Lifecycle", count: (() => { const le = (client.lifecycleEvents || []).length; const cu = (client.lifecycle?.conversion?.updates || []).length; const ru = (client.lifecycle?.retention?.updates || []).length; return le + cu + ru; })(), color: "#8B5CF6" },
     { id: "notes", label: "Notes", count: notesCount, color: "#F59E0B" },
+    { id: "history", label: "History", count: ((data.auditLog || []).filter(e => e.tableName === 'k9_clients' && e.recordId === clientId)).length, color: "#6B7280" },
   ];
 
   // Reservation card renderer
@@ -9373,8 +9416,6 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
 
   return (
     <div>
-      <button onClick={()=>nav("clients")} style={{display:"flex",alignItems:"center",gap:6,background:"none",border:"none",cursor:"pointer",color:C.textSec,fontSize:14,fontWeight:600,padding:0,marginBottom:20,fontFamily:"inherit"}}><I.Back/> Back to Clients</button>
-
       {/* Header */}
       <Card style={{marginBottom:16,padding:"24px 28px"}}>
         <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:16}}>
@@ -9385,8 +9426,44 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           <div style={{display:"flex",gap:8}}>
             <Btn variant="primary" onClick={()=>nav("new-reservation",{clientId})} icon={<I.Plus/>} size="sm">New</Btn>
             <Btn variant="ghost" onClick={()=>nav("messages")} icon={<I.MessageSquare/>} size="sm">Message</Btn>
-            <Btn variant="secondary" onClick={startEdit} icon={<I.Edit/>} size="sm">Edit</Btn>
           </div>
+        </div>
+
+        {/* Inline Editable Client Fields */}
+        <div style={{ padding: "14px 18px", background: C.bg, borderRadius: 12, marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em" }}>Client Information</div>
+            {inlineDirty && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn variant="secondary" size="sm" onClick={cancelInlineEdit}>Cancel</Btn>
+                <Btn variant="primary" size="sm" onClick={saveInlineEdit} disabled={inlineSaving}>{inlineSaving ? "Saving..." : "Save Changes"}</Btn>
+              </div>
+            )}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {data.clientFields.filter(f => f.type !== "textarea").map(f => (
+              <div key={f.id} style={f.type === "checkbox" ? { display: "flex", alignItems: "end" } : {}}>
+                <Inp label={f.name} type={f.type} value={inlineFields[f.id] || ""} onChange={v => updateInlineField(f.id, v)} required={isFieldRequired(f, "create")} options={f.options} />
+              </div>
+            ))}
+            {(() => {
+              const recurringDiscounts = (data.discounts || []).filter(d => d.discountKind === "recurring" && d.active !== false);
+              return recurringDiscounts.length > 0 ? (
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <label style={{ fontSize: 13, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", display: "block", marginBottom: 6 }}>Recurring Discount</label>
+                  <select value={inlineRecurringDiscountId || ""} onChange={e => { setInlineRecurringDiscountId(e.target.value || null); setInlineDirty(true); }} style={{ width: "100%", padding: "6px 10px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: C.surface, color: C.text, cursor: "pointer" }}>
+                    <option value="">None</option>
+                    {recurringDiscounts.map(d => <option key={d.id} value={d.id}>{d.name} ({d.type === "percentage" ? `${d.value}%` : `$${d.value}`} off)</option>)}
+                  </select>
+                </div>
+              ) : null;
+            })()}
+          </div>
+          {data.clientFields.filter(f => f.type === "textarea").map(f => (
+            <div key={f.id} style={{ marginTop: 12 }}>
+              <Inp label={f.name} type="textarea" value={inlineFields[f.id] || ""} onChange={v => updateInlineField(f.id, v)} />
+            </div>
+          ))}
         </div>
 
         {/* Agreement Status Section */}
@@ -9514,10 +9591,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           })()}
         </div>
 
-        {/* Other fields */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(200px, 1fr))",gap:"12px 20px"}}>
-          {data.clientFields.filter(f=>!["phone","first_name","last_name","email","notes"].includes(f.id)&&client.fields[f.id]).map(f=>(<div key={f.id}><div style={{fontSize:11,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",marginBottom:2}}>{f.name}</div><div style={{fontSize:14,color:C.text}}>{f.type==="tel"?fmtPhone(client.fields[f.id]):client.fields[f.id]}</div></div>))}
-        </div>
+        {/* Fields are now inline above */}
       </Card>
 
       {/* Stats Bar */}
@@ -9907,28 +9981,55 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           </div>
         )}
 
+        {/* ──── HISTORY TAB ──── */}
+        {activeTab === "history" && (() => {
+          const clientAudit = (data.auditLog || []).filter(e => e.tableName === 'k9_clients' && e.recordId === clientId).sort((a, b) => new Date(b.timestamp || b.createdAt || 0) - new Date(a.timestamp || a.createdAt || 0));
+          return (
+            <div>
+              {clientAudit.length === 0 && (
+                <Card style={{textAlign:"center",padding:32}}><div style={{fontSize:14,color:C.textSec}}>No changes recorded yet</div></Card>
+              )}
+              {clientAudit.map(entry => {
+                // details may be a JSON string after DB round-trip
+                let details = entry.details;
+                if (typeof details === 'string') { try { details = JSON.parse(details); } catch { details = []; } }
+                if (!Array.isArray(details)) details = [];
+                const ts = entry.timestamp || entry.createdAt;
+                return (
+                <Card key={entry.id} style={{padding:"14px 18px",marginBottom:8,borderLeft:`3px solid ${C.pri}`}}>
+                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:8}}>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{width:28,height:28,borderRadius:8,background:C.pri+"15",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                        <I.Edit size={14} color={C.pri}/>
+                      </div>
+                      <div>
+                        <div style={{fontSize:13,fontWeight:700,color:C.text}}>{entry.action}</div>
+                        <div style={{fontSize:11,color:C.textMut}}>{entry.changedBy || entry.userName || "System"}{ts ? ` \u00B7 ${new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})} ${new Date(ts).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}` : ""}</div>
+                      </div>
+                    </div>
+                  </div>
+                  {details.length > 0 && (
+                    <div style={{marginLeft:36,display:"flex",flexDirection:"column",gap:4}}>
+                      {details.map((d, i) => (
+                        <div key={i} style={{fontSize:12,color:C.textSec,padding:"4px 10px",background:C.bg,borderRadius:6,display:"flex",alignItems:"center",gap:6}}>
+                          <span style={{fontWeight:600,color:C.text,minWidth:100}}>{d.field}</span>
+                          <span style={{textDecoration:"line-through",color:C.dan,fontSize:11}}>{d.oldVal}</span>
+                          <span style={{color:C.textMut,fontSize:11}}>&rarr;</span>
+                          <span style={{color:C.suc,fontWeight:600,fontSize:11}}>{d.newVal}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+                );
+              })}
+            </div>
+          );
+        })()}
+
       </div>
 
-      {/* Edit Modal */}
-      {editing&&<Modal title="Edit Client" onClose={()=>setEditing(false)} wide>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
-          {data.clientFields.filter(f=>f.type!=="textarea").map(f=>(<div key={f.id} style={f.type==="checkbox"?{display:"flex",alignItems:"end"}:{}}><Inp label={f.name} type={f.type} value={editFields[f.id]||""} onChange={v=>setEditFields({...editFields,[f.id]:v})} required={isFieldRequired(f,"create")} options={f.options}/></div>))}
-          {(() => {
-            const recurringDiscounts = (data.discounts || []).filter(d => d.discountKind === "recurring" && d.active !== false);
-            return recurringDiscounts.length > 0 ? (
-              <div style={{display:"flex",flexDirection:"column",gridColumn:"span 1"}}>
-                <label style={{fontSize:13,fontWeight:600,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.04em",display:"block",marginBottom:6}}>Recurring Discount</label>
-                <select value={editRecurringDiscountId || ""} onChange={e => setEditRecurringDiscountId(e.target.value || null)} style={{width:"100%",padding:"6px 10px",borderRadius:8,border:`1px solid ${C.border}`,fontSize:13,fontFamily:"inherit",background:C.surface,color:C.text,cursor:"pointer"}}>
-                  <option value="">None</option>
-                  {recurringDiscounts.map(d => <option key={d.id} value={d.id}>{d.name} ({d.type === "percentage" ? `${d.value}%` : `$${d.value}`} off)</option>)}
-                </select>
-              </div>
-            ) : null;
-          })()}
-        </div>
-        {data.clientFields.filter(f=>f.type==="textarea").map(f=>(<div key={f.id} style={{marginTop:16}}><Inp label={f.name} type="textarea" value={editFields[f.id]||""} onChange={v=>setEditFields({...editFields,[f.id]:v})}/></div>))}
-        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:24}}><Btn variant="secondary" onClick={()=>setEditing(false)}>Cancel</Btn><Btn onClick={saveEdit}>Save</Btn></div>
-      </Modal>}
+      {/* Edit modal removed — fields are now inline */}
 
       {boardingPreviewId && (() => {
         const bRes = data.reservations.find(r => r.id === boardingPreviewId);
