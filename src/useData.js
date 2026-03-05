@@ -515,6 +515,9 @@ async function savePricing(locationId, prev, next) {
   }
   if (next.privatePlaySurcharge != null) rows.push(mkRow('misc_fee', 'private_play_surcharge', next.privatePlaySurcharge));
   if (next.dayboardingRate != null) rows.push(mkRow('misc_fee', 'day_boarding', next.dayboardingRate));
+  // Re-save misc_fee items loaded via the catch-all in loadPricing
+  const MISC_FEE_KEYS = ['bath','food_from_home','late_pickup','medication_admin','nail_trim','teeth_brushing','evaluationFee','tourFee','halfDayThreshold'];
+  for (const k of MISC_FEE_KEYS) { if (next[k] != null) rows.push(mkRow('misc_fee', k, next[k])); }
   if (next.surcharges) {
     for (const [name, price] of Object.entries(next.surcharges)) {
       if (price != null) rows.push(mkRow('surcharge', name, price));
