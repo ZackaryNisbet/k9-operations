@@ -74,7 +74,7 @@ const PAGE_SLUGS = {
   messages:"messages", payments:"payments", operations:"operations",
   "ops-opening":"ops/opening", "ops-fe":"ops/front-end", "ops-be":"ops/back-end", "ops-rooms":"ops/rooms",
   "ops-pictures":"ops/pictures", "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
-  management:"management", "mgmt-attendance":"management/attendance",
+  management:"management", "mgmt-attendance":"management/attendance", "mgmt-audit-log":"management/audit-log",
   eod:"eod", ai:"ai", settings:"settings", "evaluation-form":"evaluation", "online-bookings":"bookings",
   "settings-team":"settings/team-management", "settings-roles":"settings/roles",
   "settings-fields":"settings/fields", "settings-tags":"settings/tags", "settings-vaccines":"settings/vaccines",
@@ -959,6 +959,7 @@ const PERMISSION_CATEGORIES = [
     {key:"check_in",label:"Check In",desc:"Process reservation check-ins"},
     {key:"check_out",label:"Check Out",desc:"Process reservation check-outs"},
     {key:"cancel_reservation",label:"Cancel Reservation",desc:"Cancel existing bookings"},
+    {key:"override_closed_dates",label:"Override Closed Dates",desc:"Book reservations on closed dates (holidays, blackout dates)"},
   ]},
   { key:"payments", label:"Payment Management", permissions:[
     {key:"view_payment_history",label:"View Payment History",desc:"See payment records and transaction details"},
@@ -994,6 +995,10 @@ const PERMISSION_CATEGORIES = [
     {key:"view_management",label:"View Management",desc:"Access management tools (attendance, etc.)"},
     {key:"edit_attendance",label:"Edit Attendance",desc:"Log and edit attendance records"},
     {key:"edit_roster",label:"Edit Roster",desc:"Add or modify team roster entries"},
+    {key:"view_audit_log",label:"View Audit Log",desc:"View employee login history and system activity log"},
+  ]},
+  { key:"developer", label:"Developer Tools", permissions:[
+    {key:"use_time_travel",label:"Time Travel",desc:"Access the date simulator toolbar for testing time-dependent features"},
   ]},
   { key:"ai", label:"AI Features", permissions:[
     {key:"use_ai",label:"Use AI Command",desc:"Access and use the AI chat assistant"},
@@ -1025,11 +1030,12 @@ const DEFAULT_ROLES = [
       view_payment_history:true,collect_payment:true,issue_refund:true,
       edit_daily_ops:true,lock_daily_ops:true,edit_eod:true,lock_eod:true,
       edit_tours:true,edit_evaluations:true,
-      view_management:true,edit_attendance:true,edit_roster:true,
+      view_management:true,edit_attendance:true,edit_roster:true,view_audit_log:true,
       view_message_threads:true,send_messages:true,
       edit_pricing:true,edit_fields:true,edit_tags_config:true,edit_vaccines_config:true,edit_agreements:true,
       edit_eod_template:true,edit_ops_template:true,edit_dropdowns:true,use_ai:true,
-      manage_team:false,manage_roles:false,edit_facility:false,edit_rooms:false,reset_data:false,
+      override_closed_dates:true,
+      manage_team:false,manage_roles:false,edit_facility:false,edit_rooms:false,reset_data:false,use_time_travel:false,
     }),
   },
   {
@@ -12295,7 +12301,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
     const closedSet = new Set((data.closedDates || []).map(cd => cd.date));
     const hasClosedConflict = closedSet.has(checkIn) || (type==="boarding" && closedSet.has(checkOut));
     if (hasClosedConflict && !closedDateOverride) {
-      const canOverride = profile?.role === "owner" || profile?.role === "enterprise_admin" || profile?.role === "manager";
+      const canOverride = hasPermission(profile, data, "override_closed_dates");
       if (canOverride) {
         if(closedSet.has(checkIn)){const cd=(data.closedDates||[]).find(c=>c.date===checkIn);errs.checkIn=`Resort is closed on this date${cd?.label?` (${cd.label})`:""} — click "Override Closed Date" below to proceed`;}
         if(type==="boarding"&&closedSet.has(checkOut)){const cd=(data.closedDates||[]).find(c=>c.date===checkOut);errs.checkOut=`Resort is closed on this date${cd?.label?` (${cd.label})`:""} — click "Override Closed Date" below to proceed`;}
@@ -13623,7 +13629,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
         {(() => {
           const cs = new Set((data.closedDates || []).map(cd => cd.date));
           const conflict = cs.has(checkIn) || (type==="boarding" && cs.has(checkOut));
-          const canOverride = profile?.role === "owner" || profile?.role === "enterprise_admin" || profile?.role === "manager";
+          const canOverride = hasPermission(profile, data, "override_closed_dates");
           if (!conflict) return null;
           return (
             <div style={{marginTop:20,padding:"12px 16px",borderRadius:10,background:closedDateOverride?"rgba(22,163,74,0.08)":"rgba(220,38,38,0.06)",border:`1.5px solid ${closedDateOverride?C.suc:C.dan}`,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
@@ -15514,6 +15520,7 @@ function OperationsHub({ data, save, nav, profile }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
             {[
               { id: "mgmt-attendance", label: "Attendance Tracker", desc: "Track tardies, call-outs, and no-shows", active: true },
+              ...(hasPermission(profile, data, "view_audit_log") ? [{ id: "mgmt-audit-log", label: "Audit Log", desc: "Employee logins and system activity", active: true }] : []),
               { id: null, label: "Incident Reports", desc: "Log workplace incidents", active: false },
             ].map((tool, i) => (
               <div key={i}
@@ -15548,8 +15555,10 @@ function OperationsHub({ data, save, nav, profile }) {
 // MANAGEMENT HUB
 // ═══════════════════════════════════════════════════════════════════════════
 function ManagementHub({ data, save, nav, profile }) {
+  const hp = (k) => hasPermission(profile, data, k);
   const mgmtTools = [
     { id: "mgmt-attendance", label: "Attendance Tracker", desc: "Track tardies, call-outs, and no-shows with automatic summaries", icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M9 14l2 2 4-4"/></svg>, status: "active" },
+    ...(hp("view_audit_log") ? [{ id: "mgmt-audit-log", label: "Audit Log", desc: "View employee logins, account switches, and all system activity", icon: <I.Search />, status: "active" }] : []),
     { id: null, label: "Incident Reports", desc: "Log and track workplace incidents and investigations", icon: <I.AlertTriangle />, status: "coming_soon" },
   ];
   return (
@@ -15580,6 +15589,139 @@ function ManagementHub({ data, save, nav, profile }) {
   );
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AUDIT LOG VIEWER PAGE
+// ═══════════════════════════════════════════════════════════════════════════
+function AuditLogPage({ data, nav, profile }) {
+  const [filter, setFilter] = useState("all"); // all, logins, reservations, settings
+  const [search, setSearch] = useState("");
+  const [dateRange, setDateRange] = useState("7d"); // 7d, 30d, 90d, all
+
+  const allLogs = useMemo(() => {
+    const logs = (data.auditLog || []).slice().sort((a, b) => (b.timestamp || "").localeCompare(a.timestamp || ""));
+    // Date filter
+    const now = new Date();
+    const cutoff = dateRange === "7d" ? new Date(now - 7*86400000) :
+                   dateRange === "30d" ? new Date(now - 30*86400000) :
+                   dateRange === "90d" ? new Date(now - 90*86400000) : null;
+    const dated = cutoff ? logs.filter(l => new Date(l.timestamp) >= cutoff) : logs;
+    // Action type filter
+    const typed = filter === "all" ? dated :
+                  filter === "logins" ? dated.filter(l => l.action === "Employee Sign-In" || l.action === "Account Switch") :
+                  filter === "reservations" ? dated.filter(l => l.reservationId) :
+                  filter === "settings" ? dated.filter(l => l.action?.includes("Settings") || l.action?.includes("Config")) :
+                  dated;
+    // Search filter
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      return typed.filter(l =>
+        (l.userName || "").toLowerCase().includes(q) ||
+        (l.action || "").toLowerCase().includes(q) ||
+        JSON.stringify(l.details || []).toLowerCase().includes(q)
+      );
+    }
+    return typed;
+  }, [data.auditLog, filter, dateRange, search]);
+
+  const actionColor = (action) => {
+    if (action === "Employee Sign-In") return C.suc;
+    if (action === "Account Switch") return C.warn;
+    if (action === "Checked In") return "#22C55E";
+    if (action === "Checked Out") return "#3B82F6";
+    if (action === "Collected Payment") return "#8B5CF6";
+    if (action === "Cancelled") return C.dan;
+    return C.textSec;
+  };
+
+  return (
+    <div style={{ padding: "0 8px" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0, marginBottom: 4 }}>Audit Log</h2>
+          <p style={{ fontSize: 13, color: C.textSec, margin: 0 }}>Employee logins, reservation changes, and system activity.</p>
+        </div>
+        <Btn variant="ghost" onClick={() => nav("management")} style={{ border: `1.5px solid ${C.border}` }}>← Back to Management</Btn>
+      </div>
+
+      {/* Filters */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name, action, or detail..." style={{ flex: 1, minWidth: 200, padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 13, fontFamily: "inherit", background: C.bg, color: C.text, outline: "none" }} />
+        {["all", "logins", "reservations", "settings"].map(f => (
+          <button key={f} onClick={() => setFilter(f)} style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${filter === f ? C.pri : C.border}`, background: filter === f ? C.priLt : "transparent", color: filter === f ? C.pri : C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textTransform: "capitalize" }}>{f === "all" ? "All Activity" : f}</button>
+        ))}
+        <select value={dateRange} onChange={e => setDateRange(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", background: C.bg, color: C.text }}>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+          <option value="90d">Last 90 days</option>
+          <option value="all">All time</option>
+        </select>
+      </div>
+
+      {/* Stats */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+        {[
+          { label: "Total Events", value: allLogs.length, color: C.pri },
+          { label: "Logins", value: allLogs.filter(l => l.action === "Employee Sign-In").length, color: C.suc },
+          { label: "Account Switches", value: allLogs.filter(l => l.action === "Account Switch").length, color: C.warn },
+        ].map((s, i) => (
+          <div key={i} style={{ padding: "12px 18px", borderRadius: 10, background: C.surface, border: `1.5px solid ${C.border}`, minWidth: 130 }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: 11, color: C.textSec, fontWeight: 600 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Log entries */}
+      <div style={{ background: C.surface, borderRadius: 12, border: `1.5px solid ${C.border}`, overflow: "hidden" }}>
+        {allLogs.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: C.textMut, fontSize: 13 }}>No audit log entries found for the selected filters.</div>
+        ) : (
+          <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: C.bg, position: "sticky", top: 0, zIndex: 1 }}>
+                  <th style={{ padding: "10px 14px", textAlign: "left", fontWeight: 700, color: C.textSec, borderBottom: `1.5px solid ${C.border}`, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>Time</th>
+                  <th style={{ padding: "10px 14px", textAlign: "left", fontWeight: 700, color: C.textSec, borderBottom: `1.5px solid ${C.border}`, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>User</th>
+                  <th style={{ padding: "10px 14px", textAlign: "left", fontWeight: 700, color: C.textSec, borderBottom: `1.5px solid ${C.border}`, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>Action</th>
+                  <th style={{ padding: "10px 14px", textAlign: "left", fontWeight: 700, color: C.textSec, borderBottom: `1.5px solid ${C.border}`, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em" }}>Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allLogs.slice(0, 200).map((log, i) => {
+                  const details = Array.isArray(log.details) ? log.details : [];
+                  const ts = log.timestamp ? new Date(log.timestamp) : null;
+                  return (
+                    <tr key={log.id || i} style={{ borderBottom: `1px solid ${C.border}20` }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.bg}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <td style={{ padding: "10px 14px", whiteSpace: "nowrap", color: C.textSec, fontSize: 12 }}>
+                        {ts ? `${ts.toLocaleDateString("en-US", { month: "short", day: "numeric" })} ${ts.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : "—"}
+                      </td>
+                      <td style={{ padding: "10px 14px", fontWeight: 600, color: C.text }}>{log.userName || log.changedBy || "—"}</td>
+                      <td style={{ padding: "10px 14px" }}>
+                        <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700, background: actionColor(log.action) + "18", color: actionColor(log.action) }}>{log.action || "—"}</span>
+                      </td>
+                      <td style={{ padding: "10px 14px", color: C.textSec, fontSize: 12, maxWidth: 400 }}>
+                        {details.length > 0 ? details.map((d, j) => (
+                          <span key={j}>
+                            {j > 0 && " · "}
+                            <span style={{ fontWeight: 600 }}>{d.field}:</span> {d.oldVal && d.oldVal !== "—" ? <><span style={{ textDecoration: "line-through", opacity: 0.6 }}>{d.oldVal}</span> → </> : ""}{d.newVal || "—"}
+                          </span>
+                        )) : log.reservationId ? `Reservation ${log.reservationId.slice(0, 8)}...` : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {allLogs.length > 200 && <div style={{ padding: "12px 14px", textAlign: "center", color: C.textMut, fontSize: 12 }}>Showing first 200 of {allLogs.length} entries</div>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ATTENDANCE TRACKER PAGE
@@ -25882,7 +26024,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
     const closedSet = new Set((data.closedDates || []).map(cd => cd.date));
     const hasClosedConflict2 = closedSet.has(checkIn) || (type==="boarding" && closedSet.has(checkOut));
     if (hasClosedConflict2 && !closedDateOverride2) {
-      const canOverride = profile?.role === "owner" || profile?.role === "enterprise_admin" || profile?.role === "manager";
+      const canOverride = hasPermission(profile, data, "override_closed_dates");
       if (canOverride) {
         if(closedSet.has(checkIn)){const cd=(data.closedDates||[]).find(c=>c.date===checkIn);rErrs.checkIn=`Resort is closed${cd?.label?` (${cd.label})`:""} — click "Override Closed Date" to proceed`;}
         if(type==="boarding"&&closedSet.has(checkOut)){const cd=(data.closedDates||[]).find(c=>c.date===checkOut);rErrs.checkOut=`Resort is closed${cd?.label?` (${cd.label})`:""} — click "Override Closed Date" to proceed`;}
@@ -26411,7 +26553,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
             {(() => {
               const cs = new Set((data.closedDates || []).map(cd => cd.date));
               const conflict = cs.has(checkIn) || (type==="boarding" && cs.has(checkOut));
-              const canOverride = profile?.role === "owner" || profile?.role === "enterprise_admin" || profile?.role === "manager";
+              const canOverride = hasPermission(profile, data, "override_closed_dates");
               if (!conflict) return null;
               return (
                 <div style={{marginBottom:16,padding:"12px 16px",borderRadius:10,background:closedDateOverride2?"rgba(22,163,74,0.08)":"rgba(220,38,38,0.06)",border:`1.5px solid ${closedDateOverride2?C.suc:C.dan}`,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
@@ -31151,7 +31293,7 @@ export default function App() {
   }, [TOP_LEVEL_PAGES]);
 
   // ═══ Time Travel (Developer Tool) ═══
-  const isDevUser = profile?.role === 'owner' || profile?.role === 'enterprise_admin';
+  const isDevUser = hasPermission(profile, data, 'use_time_travel');
   const [timeTravelDate, setTimeTravelDate] = useState(() => {
     try { return sessionStorage.getItem("k9_timetravel") || ""; } catch { return ""; }
   });
@@ -31275,6 +31417,7 @@ export default function App() {
       }
       case "management": return "Management";
       case "mgmt-attendance": return "Attendance Tracker";
+      case "mgmt-audit-log": return "Audit Log";
       case "enterprise-locations": return "Location Management";
       case "enterprise-operations": return "Operations Oversight";
       case "enterprise-packages": return "Package Management";
@@ -31349,6 +31492,7 @@ export default function App() {
     const denied = <div style={{padding:"60px 40px",textAlign:"center"}}><div style={{fontSize:36,marginBottom:12}}>🔒</div><div style={{fontSize:18,fontWeight:700,color:C.text,marginBottom:6}}>Access Restricted</div><div style={{fontSize:14,color:C.textSec}}>You don't have permission to view this page. Contact your admin to update your role.</div></div>;
     if (page === "management") return (hp("view_management") || hp("view_daily_ops")) ? <ManagementHub data={data} save={save} nav={nav} profile={profile}/> : denied;
     if (page === "mgmt-attendance") return (hp("view_management") || hp("view_daily_ops")) ? <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile}/> : denied;
+    if (page === "mgmt-audit-log") return hp("view_audit_log") ? <AuditLogPage data={data} nav={nav} profile={profile}/> : denied;
     switch(page) {
       case "operations": return <OperationsHub data={data} save={save} nav={nav} profile={profile}/>;
       case "dashboard": return <DashboardPage data={data} save={save} nav={nav} onNew={openNew} profile={profile}/>;
