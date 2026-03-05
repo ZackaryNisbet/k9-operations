@@ -249,6 +249,7 @@ function packageToRow(pkg, _locationId) {
     package_type: pkg.packageType || 'standard',
     service_category: pkg.serviceCategory || null,
     service_names: pkg.serviceNames || (pkg.serviceName ? [pkg.serviceName] : null),
+    service_name: pkg.serviceName || null,
     discount_type: pkg.discountType || pkg.pricingMode || null,
     discount_value: pkg.discountValue != null ? pkg.discountValue : (pkg.discountPct || pkg.discountDollar || null),
     quantity: pkg.quantity != null ? pkg.quantity : null,
@@ -258,8 +259,14 @@ function packageToRow(pkg, _locationId) {
     retail_value: pkg.retailValue != null ? pkg.retailValue : null,
     package_price: pkg.packagePrice != null ? pkg.packagePrice : null,
     savings: pkg.savings != null ? pkg.savings : null,
+    savings_per_unit: pkg.savingsPerUnit != null ? pkg.savingsPerUnit : null,
     is_active: pkg.isActive ?? true,
     available_online: pkg.availableOnline ?? false,
+    location_id: pkg.locationId || null,
+    pushed_to: pkg.pushedTo || null,
+    enterprise_source_id: pkg.enterpriseSourceId || null,
+    buy_qty: pkg.buyQty != null ? pkg.buyQty : null,
+    free_qty: pkg.freeQty != null ? pkg.freeQty : null,
   };
 }
 
@@ -285,6 +292,13 @@ function rowToPackage(r) {
   if (r.is_active != null) p.isActive = r.is_active;
   if (r.available_online != null) p.availableOnline = r.available_online;
   if (r.created_at) p.createdAt = r.created_at.slice(0, 10);
+  if (r.location_id) p.locationId = r.location_id;
+  if (r.pushed_to) p.pushedTo = r.pushed_to;
+  if (r.enterprise_source_id) p.enterpriseSourceId = r.enterprise_source_id;
+  if (r.savings_per_unit != null) p.savingsPerUnit = Number(r.savings_per_unit);
+  if (r.buy_qty != null) p.buyQty = Number(r.buy_qty);
+  if (r.free_qty != null) p.freeQty = Number(r.free_qty);
+  if (r.service_name) p.serviceName = r.service_name;
   return p;
 }
 
