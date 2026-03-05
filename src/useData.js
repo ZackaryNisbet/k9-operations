@@ -1171,7 +1171,7 @@ const ENTITIES = {
   vets:         { table: 'vets',               toRow: vetToRow,         fromRow: rowToVet,          select: '*' },
 };
 
-const DAILY_OPS_TABLE = 'k9_daily_ops_v2';
+const DAILY_OPS_TABLE = 'k9_daily_ops';
 
 // Keys that go to entity tables (NOT settings)
 const ENTITY_KEYS = new Set([
@@ -1828,6 +1828,26 @@ export function useData(profile) {
         if (prev.questionnaires !== newData.questionnaires) settingsSaves.push(saveQuestionnaires(locationId, prev.questionnaires, newData.questionnaires));
 
         if (settingsSaves.length > 0) await Promise.all(settingsSaves);
+
+        // FR.5: Historical versioning — snapshot settings when they change
+        const VERSIONED_KEYS = ['pricing', 'rooms', 'requiredVaccines', 'eodTemplate', 'facilitySettings', 'resortPolicies', 'closedDates'];
+        const historyInserts = [];
+        for (const key of VERSIONED_KEYS) {
+          if (prev[key] !== newData[key] && prev[key] != null) {
+            historyInserts.push({
+              id: crypto.randomUUID(),
+              location_id: locationId,
+              setting_key: key,
+              snapshot: JSON.stringify(prev[key]),
+              changed_at: new Date().toISOString(),
+              changed_by: profile?.full_name || profile?.email || 'system',
+            });
+          }
+        }
+        if (historyInserts.length > 0) {
+          supabase.from('settings_history').insert(historyInserts)
+            .then(({ error }) => { if (error) console.error('Settings history:', error.message); });
+        }
 
         // ── Client child table saves (lifecycle events, agreement signings, questionnaire responses) ──
         const clientChildSaves = [];
