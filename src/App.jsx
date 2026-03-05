@@ -22248,8 +22248,8 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
   const [entSortField, setEntSortField] = useState("createdAt");
   const [entSortDir, setEntSortDir] = useState("desc");
 
-  const entPkgs = (data.enterprisePackages || []).filter(p => p.active !== false);
-  const archivedEntPkgs = (data.enterprisePackages || []).filter(p => p.active === false);
+  const entPkgs = (data.packages || []).filter(p => p.active !== false);
+  const archivedEntPkgs = (data.packages || []).filter(p => p.active === false);
   const locations = (allLocations || []).filter(l => !l.isEnterprise);
   const locNameMap = Object.fromEntries(locations.map(l => [l.id, l.name]));
 
@@ -22265,23 +22265,23 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
 
   const handleSaveEntEdit = async () => {
     if (!entEditDraft) return;
-    await save({ ...data, enterprisePackages: (data.enterprisePackages || []).map(p => p.id === entEditDraft.id ? { ...p, name: entEditDraft.name, description: entEditDraft.description, discountValue: parseFloat(entEditDraft.discountValue) || 0, quantity: parseInt(entEditDraft.quantity) || 1, expirationType: entEditDraft.expirationType, expirationDays: parseInt(entEditDraft.expirationDays) || 90, availableOnline: entEditDraft.availableOnline } : p) });
+    await save({ ...data, packages: (data.packages || []).map(p => p.id === entEditDraft.id ? { ...p, name: entEditDraft.name, description: entEditDraft.description, discountValue: parseFloat(entEditDraft.discountValue) || 0, quantity: parseInt(entEditDraft.quantity) || 1, expirationType: entEditDraft.expirationType, expirationDays: parseInt(entEditDraft.expirationDays) || 90, availableOnline: entEditDraft.availableOnline } : p) });
     setExpandedEntPkg(null); setEntEditDraft(null);
   };
 
   const handleCreateEnterprisePkg = async (pkg) => {
     const newPkg = { ...pkg, id: gid(), createdAt: todayStr(), pushedTo: [], active: true };
-    await save({ ...data, enterprisePackages: [...(data.enterprisePackages || []), newPkg] });
+    await save({ ...data, packages: [...(data.packages || []), newPkg] });
     setShowCreate(false);
   };
 
   const handleArchivePkg = async (pkgId) => {
     if (!window.confirm("Archive this enterprise package? It will no longer be available for pushing to locations.")) return;
-    await save({ ...data, enterprisePackages: (data.enterprisePackages || []).map(p => p.id === pkgId ? { ...p, active: false } : p) });
+    await save({ ...data, packages: (data.packages || []).map(p => p.id === pkgId ? { ...p, active: false } : p) });
   };
 
   const handleReactivatePkg = async (pkgId) => {
-    await save({ ...data, enterprisePackages: (data.enterprisePackages || []).map(p => p.id === pkgId ? { ...p, active: true } : p) });
+    await save({ ...data, packages: (data.packages || []).map(p => p.id === pkgId ? { ...p, active: true } : p) });
   };
 
   const handlePushToLocations = async () => {
@@ -22352,8 +22352,8 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
       } catch (e) { console.error('Push package error:', e); }
     }
     if (successLocs.length > 0) {
-      const updated = (data.enterprisePackages || []).map(p => p.id === pkg.id ? { ...p, pushedTo: [...new Set([...(p.pushedTo || []), ...successLocs])] } : p);
-      await save({ ...data, enterprisePackages: updated });
+      const updated = (data.packages || []).map(p => p.id === pkg.id ? { ...p, pushedTo: [...new Set([...(p.pushedTo || []), ...successLocs])] } : p);
+      await save({ ...data, packages: updated });
     }
     setPushing(false);
     setPushModal(null);
@@ -22471,7 +22471,7 @@ function EnterprisePackagesPage({ data, save, allLocations }) {
                             )}
                           </div>
                           <div style={{...entCellBase,display:"flex",alignItems:"center",justifyContent:"center",cursor:"default"}}>
-                            <div onClick={(e) => { e.stopPropagation(); const updated = (data.enterprisePackages || []).map(p => p.id === pkg.id ? { ...p, availableOnline: !p.availableOnline } : p); save({ ...data, enterprisePackages: updated }); }} style={{width:40,height:24,borderRadius:12,border:"none",background:pkg.availableOnline ? C.suc : C.border,cursor:"pointer",position:"relative",transition:"background 0.2s"}}>
+                            <div onClick={(e) => { e.stopPropagation(); const updated = (data.packages || []).map(p => p.id === pkg.id ? { ...p, availableOnline: !p.availableOnline } : p); save({ ...data, packages: updated }); }} style={{width:40,height:24,borderRadius:12,border:"none",background:pkg.availableOnline ? C.suc : C.border,cursor:"pointer",position:"relative",transition:"background 0.2s"}}>
                               <div style={{width:18,height:18,borderRadius:9,background:"#fff",boxShadow:"0 1px 3px rgba(0,0,0,0.2)",position:"absolute",top:3,left:pkg.availableOnline ? 19 : 3,transition:"left 0.2s"}} />
                             </div>
                           </div>
