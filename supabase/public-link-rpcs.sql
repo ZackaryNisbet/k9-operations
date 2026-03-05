@@ -90,7 +90,7 @@ BEGIN
     SELECT EXISTS(
       SELECT 1 FROM agreement_log
       WHERE client_id = v_link.client_id
-        AND agreement_id::TEXT = v_link.related_id::TEXT
+        AND agreement_id = v_link.related_id
         AND location_id = v_link.location_id
         AND status = 'signed'
     ) INTO v_already_signed;
@@ -158,18 +158,18 @@ BEGIN
   IF v_link.expires_at < NOW() THEN RETURN jsonb_build_object('success', false, 'message', 'This link has expired'); END IF;
 
   -- Already signed?
-  IF EXISTS(SELECT 1 FROM agreement_log WHERE client_id = v_link.client_id AND agreement_id::TEXT = v_link.related_id::TEXT AND location_id = v_link.location_id AND status = 'signed') THEN
+  IF EXISTS(SELECT 1 FROM agreement_log WHERE client_id = v_link.client_id AND agreement_id = v_link.related_id AND location_id = v_link.location_id AND status = 'signed') THEN
     RETURN jsonb_build_object('success', false, 'message', 'Already signed', 'alreadySigned', true);
   END IF;
 
   -- Update existing log entry
   UPDATE agreement_log SET status = 'signed', signed_at = NOW(), sent_via = 'online_' || p_signature
-  WHERE client_id = v_link.client_id AND agreement_id::TEXT = v_link.related_id::TEXT AND location_id = v_link.location_id AND status != 'signed';
+  WHERE client_id = v_link.client_id AND agreement_id = v_link.related_id AND location_id = v_link.location_id AND status != 'signed';
 
   -- Or insert new
   IF NOT FOUND THEN
     INSERT INTO agreement_log (id, agreement_id, client_id, location_id, status, signed_at, sent_via)
-    VALUES (gen_random_uuid(), v_link.related_id::TEXT, v_link.client_id, v_link.location_id, 'signed', NOW(), 'online_' || p_signature);
+    VALUES (gen_random_uuid(), v_link.related_id, v_link.client_id, v_link.location_id, 'signed', NOW(), 'online_' || p_signature);
   END IF;
 
   RETURN jsonb_build_object('success', true, 'message', 'Agreement signed successfully');
