@@ -30,9 +30,10 @@ CREATE INDEX IF NOT EXISTS idx_questionnaire_sub_dog ON questionnaire_submission
 -- Fetches link data, client/dog info, and agreement/questionnaire content
 -- NO AUTH REQUIRED — callable by anonymous users
 -- ============================================================
-CREATE OR REPLACE FUNCTION get_public_link_data(p_link_id UUID)
+CREATE OR REPLACE FUNCTION get_public_link_data(p_link_id TEXT)
 RETURNS JSONB AS $$
 DECLARE
+  v_link_uuid UUID;
   v_link RECORD;
   v_client RECORD;
   v_location RECORD;
@@ -42,8 +43,15 @@ DECLARE
   v_already_signed BOOLEAN;
   v_already_submitted BOOLEAN;
 BEGIN
+  -- Cast text to UUID
+  BEGIN
+    v_link_uuid := p_link_id::UUID;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Invalid link format');
+  END;
+
   -- Fetch the outbound link
-  SELECT * INTO v_link FROM outbound_links WHERE id = p_link_id;
+  SELECT * INTO v_link FROM outbound_links WHERE id = v_link_uuid;
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object(
@@ -66,7 +74,7 @@ BEGIN
   SET
     first_viewed_at = COALESCE(first_viewed_at, NOW()),
     view_count = view_count + 1
-  WHERE id = p_link_id;
+  WHERE id = v_link_uuid;
 
   -- Fetch client
   SELECT * INTO v_client FROM k9_clients WHERE id = v_link.client_id;
@@ -120,7 +128,7 @@ BEGIN
       'dogNames', v_dog_names,
       'agreementId', v_link.related_id,
       'agreement', COALESCE(v_agreement_data, '{}'::jsonb),
-      'linkId', p_link_id::TEXT
+      'linkId', p_link_id
     );
 
   -- ── QUESTIONNAIRE LINK ──
@@ -129,7 +137,7 @@ BEGIN
     -- Check if already submitted
     SELECT EXISTS(
       SELECT 1 FROM questionnaire_submissions
-      WHERE link_id = p_link_id
+      WHERE link_id = v_link_uuid
     ) INTO v_already_submitted;
 
     -- Fetch questionnaire template from the `questionnaires` table
@@ -155,7 +163,7 @@ BEGIN
       'dogNames', v_dog_names,
       'questionnaireId', v_link.related_id,
       'questionnaire', COALESCE(v_questionnaire_data, '{}'::jsonb),
-      'linkId', p_link_id::TEXT
+      'linkId', p_link_id
     );
 
   ELSE
@@ -173,14 +181,22 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- Matches the schema used by useData.js saveAgreementSignings()
 -- agreement_log columns: id, agreement_id, client_id, location_id, status, signed_at, sent_via, message_id, sent_at, created_at
 -- ============================================================
-CREATE OR REPLACE FUNCTION sign_public_agreement(p_link_id UUID, p_signature TEXT)
+CREATE OR REPLACE FUNCTION sign_public_agreement(p_link_id TEXT, p_signature TEXT)
 RETURNS JSONB AS $$
 DECLARE
+  v_link_uuid UUID;
   v_link RECORD;
   v_existing RECORD;
 BEGIN
+  -- Cast text to UUID
+  BEGIN
+    v_link_uuid := p_link_id::UUID;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Invalid link format');
+  END;
+
   -- Fetch the outbound link
-  SELECT * INTO v_link FROM outbound_links WHERE id = p_link_id;
+  SELECT * INTO v_link FROM outbound_links WHERE id = v_link_uuid;
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('success', false, 'message', 'Invalid link');
@@ -245,14 +261,22 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- 3. submit_public_questionnaire(p_link_id UUID, p_responses JSONB)
 -- Submits questionnaire responses via public link
 -- ============================================================
-CREATE OR REPLACE FUNCTION submit_public_questionnaire(p_link_id UUID, p_responses JSONB)
+CREATE OR REPLACE FUNCTION submit_public_questionnaire(p_link_id TEXT, p_responses JSONB)
 RETURNS JSONB AS $$
 DECLARE
+  v_link_uuid UUID;
   v_link RECORD;
   v_dog_id UUID;
 BEGIN
+  -- Cast text to UUID
+  BEGIN
+    v_link_uuid := p_link_id::UUID;
+  EXCEPTION WHEN OTHERS THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Invalid link format');
+  END;
+
   -- Fetch the outbound link
-  SELECT * INTO v_link FROM outbound_links WHERE id = p_link_id;
+  SELECT * INTO v_link FROM outbound_links WHERE id = v_link_uuid;
 
   IF NOT FOUND THEN
     RETURN jsonb_build_object('success', false, 'message', 'Invalid link');
@@ -268,7 +292,7 @@ BEGIN
   END IF;
 
   -- Check for duplicate submission
-  IF EXISTS(SELECT 1 FROM questionnaire_submissions WHERE link_id = p_link_id) THEN
+  IF EXISTS(SELECT 1 FROM questionnaire_submissions WHERE link_id = v_link_uuid) THEN
     RETURN jsonb_build_object(
       'success', false,
       'message', 'This questionnaire has already been submitted',
@@ -286,7 +310,7 @@ BEGIN
     client_id, dog_id, location_id, questionnaire_id, link_id, responses
   ) VALUES (
     v_link.client_id, v_dog_id, v_link.location_id,
-    v_link.related_id, p_link_id, p_responses
+    v_link.related_id, v_link_uuid, p_responses
   );
 
   RETURN jsonb_build_object(
@@ -301,6 +325,11 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- ============================================================
 -- Grant execute permissions to anon role
 -- ============================================================
-GRANT EXECUTE ON FUNCTION get_public_link_data(UUID) TO anon;
-GRANT EXECUTE ON FUNCTION sign_public_agreement(UUID, TEXT) TO anon;
-GRANT EXECUTE ON FUNCTION submit_public_questionnaire(UUID, JSONB) TO anon;
+-- Drop old UUID-signature functions if they exist (from prior deploy)
+DROP FUNCTION IF EXISTS get_public_link_data(UUID);
+DROP FUNCTION IF EXISTS sign_public_agreement(UUID, TEXT);
+DROP FUNCTION IF EXISTS submit_public_questionnaire(UUID, JSONB);
+
+GRANT EXECUTE ON FUNCTION get_public_link_data(TEXT) TO anon;
+GRANT EXECUTE ON FUNCTION sign_public_agreement(TEXT, TEXT) TO anon;
+GRANT EXECUTE ON FUNCTION submit_public_questionnaire(TEXT, JSONB) TO anon;
