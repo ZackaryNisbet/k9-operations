@@ -260,6 +260,8 @@ function getAvailableCount(roomType, rooms, checkIn, checkOut, reservations) {
   const booked = resArr.filter(r => {
     if (r.type !== 'boarding' || r.roomType !== roomType) return false;
     if (r.status === 'cancelled' || r.status === 'checked-out') return false;
+    // Save-without-reserving does NOT hold rooms — skip these
+    if (r.noDeposit) return false;
     return r.checkIn <= checkOut && r.checkOut >= checkIn;
   }).length;
   return Math.max(0, total - booked);
