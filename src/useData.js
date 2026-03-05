@@ -138,6 +138,7 @@ function reservationToRow(res, locationId) {
     parent_destination: res.parentDestination || null,
     belongings: res.belongings || null,
     eval_result: res.evalResult || null,
+    no_deposit: res.noDeposit || false,
   };
 }
 
@@ -172,6 +173,7 @@ function rowToReservation(r) {
   if (r.actual_check_out_time) res.actualCheckOutTime = r.actual_check_out_time;
   if (r.checked_out_by) res.checkedOutBy = r.checked_out_by;
   if (r.created_at) res.createdAt = r.created_at;
+  if (r.no_deposit) res.noDeposit = r.no_deposit;
   return res;
 }
 
