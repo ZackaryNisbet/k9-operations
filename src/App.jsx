@@ -9146,32 +9146,49 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const sendAgreementLink = async (agrId) => {
     const agr = (data.agreements || []).find(a => a.id === agrId);
     if (!agr) return;
-    const linkId = crypto.randomUUID();
-    const msgId = gid();
+    const senderName = profile ? (profile.full_name || profile.email || 'Staff') : 'Staff';
     const clientName = (client.fields?.first_name || '').trim();
     const agrName = agr.name || 'Agreement';
     const now = new Date().toISOString();
 
-    const newLink = {
-      id: linkId, linkType: 'agreement', relatedId: agrId,
-      clientId: clientId, expiresAt: new Date(Date.now() + 30*86400000).toISOString(),
-      viewCount: 0,
-    };
+    // Reuse existing outbound link for this client+agreement, or create new one
+    const existingLink = (data.outboundLinks || []).find(l =>
+      l.clientId === clientId && l.relatedId === agrId && l.linkType === 'agreement'
+    );
+    const linkId = existingLink ? existingLink.id : crypto.randomUUID();
+    const msgId = gid();
+
+    let updatedLinks = data.outboundLinks || [];
+    if (existingLink) {
+      // Refresh expiry on existing link
+      updatedLinks = updatedLinks.map(l => l.id === linkId
+        ? { ...l, expiresAt: new Date(Date.now() + 30*86400000).toISOString() }
+        : l
+      );
+    } else {
+      updatedLinks = [...updatedLinks, {
+        id: linkId, linkType: 'agreement', relatedId: agrId,
+        clientId: clientId, locationId: profile?.location_id || null,
+        expiresAt: new Date(Date.now() + 30*86400000).toISOString(),
+        viewCount: 0,
+      }];
+    }
 
     const newMsg = {
       id: msgId, clientId: clientId, direction: 'outbound', channel: 'sms',
       body: `Hi ${clientName}, please review and sign the ${agrName} agreement for K9 Resorts: k9operations.com/sign/${linkId}`,
-      sentAt: now, sentBy: 'Staff', status: 'sent', _simulated: true,
+      sentAt: now, sentBy: senderName, status: 'sent', _simulated: true,
     };
 
-    // Update agreement_log via client.agreements
+    // Update agreement_log via client.agreements — use null logId so saveAgreementSignings INSERTs a proper row
     const agrs = { ...(client.agreements || {}) };
-    agrs[agrId] = { signed: false, date: null, status: 'sent', sentAt: now, logId: linkId, messageId: msgId };
+    const prevEntry = agrs[agrId];
+    agrs[agrId] = { signed: false, date: null, status: 'sent', sentAt: now, sentBy: senderName, logId: prevEntry?.logId || null, messageId: msgId };
 
     await save({
       ...data,
       clients: data.clients.map(c => c.id === clientId ? { ...c, agreements: agrs } : c),
-      outboundLinks: [...(data.outboundLinks || []), newLink],
+      outboundLinks: updatedLinks,
       messages: [...(data.messages || []), newMsg],
     });
   };
@@ -9377,15 +9394,15 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Agreement Status</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                         {data.agreements.map(agr => {
-              // Read directly from client.agreements (not through agrSigned which returns null for unsigned)
               const raw = client.agreements && client.agreements[agr.id];
               const isSigned = raw && (raw === true || raw.signed === true);
               const isPending = raw && !isSigned && (raw.status === 'sent' || raw.status === 'pending');
               const dateFmt = raw && raw.date ? new Date(raw.date + "T00:00:00").toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }) : null;
-              const sentFmt = raw && raw.sentAt ? new Date(raw.sentAt).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit" }) : null;
+              const sentFmt = raw && raw.sentAt ? new Date(raw.sentAt).toLocaleString("en-US", { month: "2-digit", day: "2-digit", year: "2-digit", hour: "numeric", minute: "2-digit" }) : null;
+              const sentByName = raw?.sentBy || null;
 
               if (isSigned) {
-                // Green pill with CheckCircle and date
+                // Green pill — signed
                 return (
                   <div key={agr.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: C.sucLt, border: `1.5px solid #A7F3D0` }}>
                     <span style={{ color: C.suc }}><I.CheckCircle /></span>
@@ -9394,30 +9411,31 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                   </div>
                 );
               } else if (isPending) {
-                // Amber/yellow pill with Clock icon and "Mark Signed" link
+                // Yellow pill — sent, awaiting signature
                 return (
-                  <div key={agr.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: "#FEF3C7", border: "1.5px solid #F59E0B40" }}>
+                  <div key={agr.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: "#FEF3C7", border: "1.5px solid #F59E0B40", cursor: "pointer" }}
+                    onClick={() => sendAgreementLink(agr.id)} title="Click to resend">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                       <circle cx="12" cy="12" r="10" />
                       <polyline points="12 6 12 12 16 14" />
                     </svg>
                     <span style={{ fontSize: 13, fontWeight: 600, color: "#92400E" }}>{agr.name}</span>
                     <span style={{ fontSize: 11, color: "#78350F" }}>Pending</span>
-                    {sentFmt && <span style={{ fontSize: 10, color: "#B45309" }}>sent {sentFmt}</span>}
-                    <button onClick={() => markAgreementSigned(agr.id)} style={{ fontSize: 10, fontWeight: 600, color: "#D97706", background: "none", border: "none", cursor: "pointer", padding: "2px 4px", marginLeft: 4, textDecoration: "underline" }}>Mark Signed</button>
+                    {sentFmt && <span style={{ fontSize: 10, color: "#B45309" }}>sent {sentFmt}{sentByName ? ` by ${sentByName}` : ''}</span>}
                   </div>
                 );
               } else {
-                // Blue pill with "Send Agreement" button
+                // Red pill — not sent, unsigned
                 return (
-                  <button key={agr.id} onClick={() => sendAgreementLink(agr.id)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: C.priLt, border: `1.5px solid ${C.pri}40`, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}
-                    onMouseEnter={e => { e.currentTarget.style.background = C.pri; e.currentTarget.style.color = "#fff"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = C.priLt; e.currentTarget.style.color = "inherit"; }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                      <line x1="22" y1="2" x2="11" y2="13" />
-                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                  <button key={agr.id} onClick={() => sendAgreementLink(agr.id)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: "#FEE2E2", border: "1.5px solid #EF444440", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "#FECACA"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "#FEE2E2"; }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="15" y1="9" x2="9" y2="15" />
+                      <line x1="9" y1="9" x2="15" y2="15" />
                     </svg>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>Send {agr.name}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "#DC2626" }}>Send {agr.name}</span>
                   </button>
                 );
               }
@@ -26811,7 +26829,7 @@ const OPS_MANUAL_KB = [
 ];
 
 // ─── Messages Page ────────────────────────────────────────────────────────
-function MessagesPage({ data, save, nav }) {
+function MessagesPage({ data, save, nav, profile }) {
   const [selClient, setSelClient] = useState(null);
   const [search, setSearch] = useState("");
   const [compose, setCompose] = useState("");
@@ -26873,7 +26891,7 @@ function MessagesPage({ data, save, nav }) {
       id: gid(), clientId: selClient, direction: "outbound", channel: "sms",
       body: compose.trim(),
       attachments: attachments.length > 0 ? attachments.map(a => ({ name: a.name, size: a.size, type: a.type })) : undefined,
-      timestamp: new Date().toISOString(), status: "sent", twilioSid: null, templateId: null, readAt: null
+      timestamp: new Date().toISOString(), status: "sent", sentBy: profile ? (profile.full_name || profile.email || 'Staff') : 'Staff', twilioSid: null, templateId: null, readAt: null
     };
     await save({ ...data, messages: [...msgs, msg] });
     setCompose("");
@@ -27073,7 +27091,7 @@ function MessagesPage({ data, save, nav }) {
                     {/* Timestamp after group */}
                     <div style={{ textAlign: isOut ? "right" : "left", fontSize: 10, color: C.textMut, marginTop: 2, padding: isOut ? "0 4px 0 0" : "0 0 0 4px" }}>
                       {fmtMsgTime(group.messages[group.messages.length - 1].timestamp)}
-                      {isOut && <span style={{ marginLeft: 4, opacity: 0.7 }}>Sent</span>}
+                      {isOut && <span style={{ marginLeft: 4, opacity: 0.7 }}>Sent{group.messages[group.messages.length - 1].sentBy ? ` by ${group.messages[group.messages.length - 1].sentBy}` : ''}</span>}
                     </div>
                   </div>
                 );
@@ -31054,7 +31072,7 @@ export default function App() {
           coldDate: c.lifecycle?.coldDate ?? "",
           coldFrom: c.lifecycle?.coldFrom ?? "",
         },
-        lifecycleEvents: c.lifecycleEvents || [{ event: "created", date: c.createdAt || todayStr(), details: "Client record created" }],
+        lifecycleEvents: c.lifecycleEvents || [{ event: "created", date: (c.createdAt || todayStr()).slice(0, 10), details: "Client record created" }],
       };
     });
     save({ ...data, clients: migratedClients });
