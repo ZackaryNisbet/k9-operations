@@ -50,6 +50,7 @@ const I = {
   RefreshCw: () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>,
   AlertTriangle: (props) => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
   InfoCircle: (props) => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>,
+  Download: () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>,
   ShoppingCart: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>,
   GraduationCap: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 0 3 3 6 3s6-3 6-3v-5"/></svg>,
 };
@@ -8337,6 +8338,42 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           }}>
             <I.MessageSquare /> Mass Text ({activeList.filter(c => c.fields?.phone).length})
           </Btn>
+          <Btn variant="ghost" onClick={() => {
+            // Export current lifecycle tab to CSV
+            const headers = activeTab === "conversion"
+              ? ["First Name","Last Name","Phone","Email","Dogs","Source","Follow-Up Date","Notes"]
+              : activeTab === "active"
+              ? ["First Name","Last Name","Phone","Email","Dogs","Reservations","Last Visit","Days Since","Total Spent"]
+              : activeTab === "cold"
+              ? ["First Name","Last Name","Phone","Email","Dogs","Cold Date","Previous Stage"]
+              : ["First Name","Last Name","Phone","Email","Dogs"];
+            const rows = activeList.map(c => {
+              const f = c.fields || {};
+              const dogs = (data.dogs || []).filter(d => d.clientId === c.id).map(d => d.fields?.name).join(", ");
+              const base = [f.first_name||"", f.last_name||"", f.phone||"", f.email||"", dogs];
+              if (activeTab === "conversion") {
+                const lc = c.lifecycle?.conversion || {};
+                return [...base, c.referralSource || "", lc.followUpDate || "", lc.notes || ""];
+              } else if (activeTab === "active") {
+                const resCount = (data.reservations || []).filter(r => r.clientId === c.id).length;
+                const lastRes = (data.reservations || []).filter(r => r.clientId === c.id).sort((a,b) => (b.checkIn||"").localeCompare(a.checkIn||""))[0];
+                const daysSince = lastRes ? Math.floor((new Date(todayStr()+"T12:00:00") - new Date(lastRes.checkIn+"T12:00:00")) / 86400000) : "";
+                const totalSpent = (data.payments || []).filter(p => p.clientId === c.id).reduce((s,p) => s + (p.amount||0), 0);
+                return [...base, resCount, lastRes?.checkIn || "", daysSince, "$" + totalSpent.toFixed(2)];
+              } else if (activeTab === "cold") {
+                return [...base, c.lifecycle?.coldDate || "", c.lifecycle?.coldFrom || ""];
+              }
+              return base;
+            });
+            const csvContent = [headers.join(","), ...rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(","))].join("\n");
+            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a"); a.href = url; a.download = `lifecycle-${activeTab}-${todayStr()}.csv`; a.click();
+            URL.revokeObjectURL(url);
+            addGlobalToast?.({ message: `Exported ${rows.length} clients to CSV`, type: "success" });
+          }}>
+            <I.Download /> Export CSV
+          </Btn>
           <Btn onClick={() => nav("new-client")}>+ New Client</Btn>
         </div>
       </div>
@@ -11874,6 +11911,8 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
   // Emergency contact override (local state — not saved until reservation created)
   const [ecOverride, setEcOverride] = useState({ name: "", phone: "" });
   const [ecInitialized, setEcInitialized] = useState(false);
+  // Closed date override — manager+ can acknowledge and proceed
+  const [closedDateOverride, setClosedDateOverride] = useState(false);
   // Per-dog add-ons: { [dogId]: { bath_type, ... } }
   const [dogAddOns, setDogAddOns] = useState({});
   const [expandedAddOns, setExpandedAddOns] = useState({});
@@ -12252,10 +12291,19 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
       if(!parentDestination.trim()) errs.parentDestination="Required — where is the parent going?";
       if(!notes.trim()) errs.notes="Required — add general notes or special instructions";
     }
-    // Closed dates check — block check-ins and check-outs on closed dates
+    // Closed dates check — role-based: manager/owner/enterprise_admin can override, CSR/staff blocked
     const closedSet = new Set((data.closedDates || []).map(cd => cd.date));
-    if(closedSet.has(checkIn)){const cd=(data.closedDates||[]).find(c=>c.date===checkIn);errs.checkIn=`Resort is closed on this date${cd?.label?` (${cd.label})`:""}`;}
-    if(type==="boarding"&&closedSet.has(checkOut)){const cd=(data.closedDates||[]).find(c=>c.date===checkOut);errs.checkOut=`Resort is closed on this date${cd?.label?` (${cd.label})`:""}`;}
+    const hasClosedConflict = closedSet.has(checkIn) || (type==="boarding" && closedSet.has(checkOut));
+    if (hasClosedConflict && !closedDateOverride) {
+      const canOverride = profile?.role === "owner" || profile?.role === "enterprise_admin" || profile?.role === "manager";
+      if (canOverride) {
+        if(closedSet.has(checkIn)){const cd=(data.closedDates||[]).find(c=>c.date===checkIn);errs.checkIn=`Resort is closed on this date${cd?.label?` (${cd.label})`:""} — click "Override Closed Date" below to proceed`;}
+        if(type==="boarding"&&closedSet.has(checkOut)){const cd=(data.closedDates||[]).find(c=>c.date===checkOut);errs.checkOut=`Resort is closed on this date${cd?.label?` (${cd.label})`:""} — click "Override Closed Date" below to proceed`;}
+      } else {
+        if(closedSet.has(checkIn)){const cd=(data.closedDates||[]).find(c=>c.date===checkIn);errs.checkIn=`Resort is closed on this date${cd?.label?` (${cd.label})`:""}. Only a manager can override this restriction.`;}
+        if(type==="boarding"&&closedSet.has(checkOut)){const cd=(data.closedDates||[]).find(c=>c.date===checkOut);errs.checkOut=`Resort is closed on this date${cd?.label?` (${cd.label})`:""}. Only a manager can override this restriction.`;}
+      }
+    }
     // Duplicate / overlap check: warn if any selected dog is already checked-in or has an overlapping reservation
     const ci = checkIn; const co = checkOut || checkIn;
     for (const did of selectedDogs) {
@@ -13570,6 +13618,23 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
             })()}
           </div>
         )}
+
+        {/* Closed date override banner for manager+ roles */}
+        {(() => {
+          const cs = new Set((data.closedDates || []).map(cd => cd.date));
+          const conflict = cs.has(checkIn) || (type==="boarding" && cs.has(checkOut));
+          const canOverride = profile?.role === "owner" || profile?.role === "enterprise_admin" || profile?.role === "manager";
+          if (!conflict) return null;
+          return (
+            <div style={{marginTop:20,padding:"12px 16px",borderRadius:10,background:closedDateOverride?"rgba(22,163,74,0.08)":"rgba(220,38,38,0.06)",border:`1.5px solid ${closedDateOverride?C.suc:C.dan}`,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+              <span style={{fontSize:13,color:closedDateOverride?C.suc:C.dan,fontWeight:600,flex:1}}>
+                {closedDateOverride ? "✓ Closed date override active — reservation will be created on a closed date" : canOverride ? "⚠ Selected dates conflict with a closed date. As a manager, you can override this." : "⚠ Selected dates conflict with a closed date. Only a manager can override this restriction."}
+              </span>
+              {canOverride && !closedDateOverride && <Btn size="sm" style={{background:C.warn,color:"#fff",border:"none"}} onClick={()=>setClosedDateOverride(true)}>Override Closed Date</Btn>}
+              {closedDateOverride && <Btn size="sm" variant="ghost" onClick={()=>setClosedDateOverride(false)}>Remove Override</Btn>}
+            </div>
+          );
+        })()}
 
         <div style={{marginTop:28}}>
           <div style={{display:"flex",justifyContent:"flex-end",gap:10,alignItems:"center"}}>
@@ -24136,7 +24201,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
       await Promise.all([
         supabase.from('audit_log').delete().eq('location_id', loc),
         supabase.from('k9_messages').delete().eq('location_id', loc),
-        supabase.from('k9_daily_ops_v2').delete().eq('location_id', loc),
+        supabase.from('k9_daily_ops').delete().eq('location_id', loc),
         supabase.from('checkout_log').delete().neq('id', '00000000-0000-0000-0000-000000000000'), // no location_id, delete via reservation
         supabase.from('invoice_line_items').delete().neq('id', '00000000-0000-0000-0000-000000000000'), // cascades from invoices
       ]);
@@ -25660,6 +25725,8 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
   const [expandedAddOns, setExpandedAddOns] = useState({});
   // Per-dog care expanded state
   const [careExpanded, setCareExpanded] = useState(true);
+  // Closed date override — manager+ can acknowledge and proceed
+  const [closedDateOverride2, setClosedDateOverride2] = useState(false);
 
   // Emergency contact local draft state — prevents focus loss when typing
   // Syncs to clientFields on blur so compliance check updates after field exit
@@ -25811,6 +25878,19 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
     const rErrs = {};
     if (!checkIn) rErrs.checkIn = "Required";
     if (type === "boarding" && checkOut < checkIn) rErrs.checkOut = "Must be after check-in";
+    // Closed dates check — role-based: manager/owner/enterprise_admin can override, CSR/staff blocked
+    const closedSet = new Set((data.closedDates || []).map(cd => cd.date));
+    const hasClosedConflict2 = closedSet.has(checkIn) || (type==="boarding" && closedSet.has(checkOut));
+    if (hasClosedConflict2 && !closedDateOverride2) {
+      const canOverride = profile?.role === "owner" || profile?.role === "enterprise_admin" || profile?.role === "manager";
+      if (canOverride) {
+        if(closedSet.has(checkIn)){const cd=(data.closedDates||[]).find(c=>c.date===checkIn);rErrs.checkIn=`Resort is closed${cd?.label?` (${cd.label})`:""} — click "Override Closed Date" to proceed`;}
+        if(type==="boarding"&&closedSet.has(checkOut)){const cd=(data.closedDates||[]).find(c=>c.date===checkOut);rErrs.checkOut=`Resort is closed${cd?.label?` (${cd.label})`:""} — click "Override Closed Date" to proceed`;}
+      } else {
+        if(closedSet.has(checkIn)){const cd=(data.closedDates||[]).find(c=>c.date===checkIn);rErrs.checkIn=`Resort is closed${cd?.label?` (${cd.label})`:""}. Only a manager can override.`;}
+        if(type==="boarding"&&closedSet.has(checkOut)){const cd=(data.closedDates||[]).find(c=>c.date===checkOut);rErrs.checkOut=`Resort is closed${cd?.label?` (${cd.label})`:""}. Only a manager can override.`;}
+      }
+    }
     if (Object.keys(rErrs).length > 0) { setResErrors(rErrs); return; }
 
     // Create client (use finalClientFields which includes EC draft values)
@@ -26326,6 +26406,23 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                 <ItemizedReceipt pricingResult={livePricing} />
               </div>
             )}
+
+            {/* Closed date override banner */}
+            {(() => {
+              const cs = new Set((data.closedDates || []).map(cd => cd.date));
+              const conflict = cs.has(checkIn) || (type==="boarding" && cs.has(checkOut));
+              const canOverride = profile?.role === "owner" || profile?.role === "enterprise_admin" || profile?.role === "manager";
+              if (!conflict) return null;
+              return (
+                <div style={{marginBottom:16,padding:"12px 16px",borderRadius:10,background:closedDateOverride2?"rgba(22,163,74,0.08)":"rgba(220,38,38,0.06)",border:`1.5px solid ${closedDateOverride2?C.suc:C.dan}`,display:"flex",alignItems:"center",gap:12,flexWrap:"wrap"}}>
+                  <span style={{fontSize:13,color:closedDateOverride2?C.suc:C.dan,fontWeight:600,flex:1}}>
+                    {closedDateOverride2 ? "✓ Closed date override active" : canOverride ? "⚠ Dates conflict with a closed date. As a manager, you can override." : "⚠ Dates conflict with a closed date. Only a manager can override."}
+                  </span>
+                  {canOverride && !closedDateOverride2 && <Btn size="sm" style={{background:C.warn,color:"#fff",border:"none"}} onClick={()=>setClosedDateOverride2(true)}>Override Closed Date</Btn>}
+                  {closedDateOverride2 && <Btn size="sm" variant="ghost" onClick={()=>setClosedDateOverride2(false)}>Remove Override</Btn>}
+                </div>
+              );
+            })()}
 
             {/* Submit */}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 8 }}>
@@ -30920,6 +31017,28 @@ export default function App() {
     return () => clearInterval(timer);
   }, [data?.sessionTimeout?.enabled, data?.sessionTimeout?.hours, signInTime, signOut]);
 
+  // FR.3: Employee login/usage audit logging — log sign-ins to audit_log
+  const loginLoggedRef = useRef(false);
+  useEffect(() => {
+    if (!profile || !data || loginLoggedRef.current) return;
+    loginLoggedRef.current = true;
+    const entry = {
+      id: gid(),
+      location_id: profile.location_id,
+      reservation_id: null,
+      timestamp: new Date().toISOString(),
+      user_name: profile.full_name || profile.email || "Unknown",
+      changed_by: profile.full_name || profile.email || "Unknown",
+      action: "Employee Sign-In",
+      details: JSON.stringify([
+        { field: "User", oldVal: "—", newVal: profile.full_name || profile.email },
+        { field: "Role", oldVal: "—", newVal: profile.role || "staff" },
+        { field: "Method", oldVal: "—", newVal: "Password" },
+      ]),
+    };
+    supabase.from("audit_log").insert(entry).then(() => {});
+  }, [profile, data]);
+
   // Handle account switch
   const handleAccountSwitch = async () => {
     if (!switchTarget || !switchPassword) return;
@@ -30928,6 +31047,19 @@ export default function App() {
     const { error } = await supabase.auth.signInWithPassword({ email: switchTarget.email, password: switchPassword });
     setSwitchLoading(false);
     if (error) { setSwitchError("Invalid password. Please try again."); return; }
+    // FR.3: Log account switch
+    supabase.from("audit_log").insert({
+      id: gid(), location_id: profile?.location_id, reservation_id: null,
+      timestamp: new Date().toISOString(),
+      user_name: switchTarget.full_name || switchTarget.email,
+      changed_by: profile?.full_name || profile?.email || "Unknown",
+      action: "Account Switch",
+      details: JSON.stringify([
+        { field: "From", oldVal: profile?.full_name || profile?.email, newVal: switchTarget.full_name || switchTarget.email },
+        { field: "Role", oldVal: profile?.role, newVal: switchTarget.role || "staff" },
+      ]),
+    }).then(() => {});
+    loginLoggedRef.current = false; // reset so new session gets logged
     setSwitchTarget(null); setSwitchPassword(""); setAccountSwitchOpen(false); setSignInTime(Date.now());
   };
 
