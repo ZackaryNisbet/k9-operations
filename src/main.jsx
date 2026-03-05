@@ -25,14 +25,18 @@ import { supabase } from './supabaseClient';
 import Login from './Login';
 import App from './App';
 import BookingPage from './BookingPage';
+import PublicPage from './PublicPages';
 
-// Public route check — render booking page without auth
+// Public route check — render public pages without auth
 const path = window.location.pathname;
 const isBookingPage = path.startsWith('/book/') || path === '/book';
+const isPublicLink = path.startsWith('/sign/') || path.startsWith('/form/');
 
 function Root() {
   // Public booking page — no auth required
   if (isBookingPage) return <BookingPage />;
+  // Public agreement signing & questionnaire pages — no auth required
+  if (isPublicLink) return <PublicPage />;
 
   const { user, profile, loading, signOut, needsPasswordSet, updatePassword } = useAuth();
 
