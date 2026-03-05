@@ -1439,9 +1439,13 @@ export function useData(profile) {
 
           const fRows = feedingByDog[dog.id] || [];
           dog.fields.feedingSchedules = fRows.map(f => ({
-            id: f.id, foodType: f.food_type || f.food_type_id || '',
-            mealTime: f.meal_time || '', portion: f.portion || '',
-            notes: f.notes || '', active: f.is_active ?? true,
+            id: f.id,
+            times: f.meal_time ? [f.meal_time] : [],
+            amount: f.quantity || '',
+            unit: f.quantity_unit || '',
+            foodType: f.food_type || '',
+            instruction: f.instructions ? (typeof f.instructions === 'string' ? (f.instructions.startsWith('[') ? JSON.parse(f.instructions) : [f.instructions]) : f.instructions) : [],
+            notes: f.notes || '',
           }));
 
           const mRows = medsByDog[dog.id] || [];
@@ -1675,12 +1679,23 @@ export function useData(profile) {
 
           // --- Feeding schedules: dog.fields.feedingSchedules → feeding_schedules rows ---
           if (JSON.stringify(f.feedingSchedules) !== JSON.stringify(pf.feedingSchedules)) {
-            const schedRows = (f.feedingSchedules || []).map(s => ({
-              id: s.id || crypto.randomUUID(),
-              dog_id: dog.id, food_type: s.foodType || '',
-              meal_time: s.mealTime || '', portion: s.portion || '',
-              notes: s.notes || '', is_active: s.active ?? true,
-            }));
+            // Each editor entry has times:["AM (6:00 am)","PM (6:00 pm)"] — expand to one row per time
+            const schedRows = [];
+            for (const s of (f.feedingSchedules || [])) {
+              const times = s.times && s.times.length > 0 ? s.times : (s.mealTime ? [s.mealTime] : ['']);
+              for (const t of times) {
+                schedRows.push({
+                  id: times.length === 1 ? (s.id || crypto.randomUUID()) : crypto.randomUUID(),
+                  dog_id: dog.id,
+                  meal_time: t || '',
+                  food_type: s.foodType || '',
+                  quantity: s.amount || s.portion || '',
+                  quantity_unit: s.unit || '',
+                  instructions: Array.isArray(s.instruction) ? JSON.stringify(s.instruction) : (s.instruction || ''),
+                  is_active: true,
+                });
+              }
+            }
             // Delete all and re-insert for this dog
             t4.push(
               supabase.from('feeding_schedules').delete().eq('dog_id', dog.id)
