@@ -482,6 +482,14 @@ function loadPricing(rows) {
       if (!pricing.surcharges) pricing.surcharges = {};
       pricing.surcharges[r.sub_category] = p;
     }
+    else if (r.category === 'food_type') {
+      if (!pricing.foodTypePricing) pricing.foodTypePricing = {};
+      pricing.foodTypePricing[r.sub_category] = p;
+    }
+    else if (r.category === 'med_pricing') {
+      if (!pricing.medPricing) pricing.medPricing = {};
+      pricing.medPricing[r.sub_category] = p;
+    }
   }
   return pricing;
 }
@@ -510,6 +518,16 @@ async function savePricing(locationId, prev, next) {
   if (next.surcharges) {
     for (const [name, price] of Object.entries(next.surcharges)) {
       if (price != null) rows.push(mkRow('surcharge', name, price));
+    }
+  }
+  if (next.foodTypePricing) {
+    for (const [name, price] of Object.entries(next.foodTypePricing)) {
+      if (price != null) rows.push(mkRow('food_type', name, price));
+    }
+  }
+  if (next.medPricing) {
+    for (const [name, price] of Object.entries(next.medPricing)) {
+      if (price != null) rows.push(mkRow('med_pricing', name, price));
     }
   }
   // Delete all current active prices for this location, then insert fresh

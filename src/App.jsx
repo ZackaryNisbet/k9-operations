@@ -3142,8 +3142,8 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
   const [checkOut, setCheckOut] = useState(reservation.checkOut);
   const [checkInTime, setCheckInTime] = useState(reservation.checkInTime);
   const [checkOutTime, setCheckOutTime] = useState(reservation.checkOutTime);
-  const [feedingSchedules, setFeedingSchedules] = useState(reservation.careOverrides?.feedingSchedules ?? dog.fields.feedingSchedules ?? []);
-  const [medicationSchedules, setMedicationSchedules] = useState(reservation.careOverrides?.medicationSchedules ?? dog.fields.medicationSchedules ?? []);
+  const [feedingSchedules, setFeedingSchedules] = useState((reservation.careOverrides?.feedingSchedules?.length ? reservation.careOverrides.feedingSchedules : null) ?? dog.fields.feedingSchedules ?? []);
+  const [medicationSchedules, setMedicationSchedules] = useState((reservation.careOverrides?.medicationSchedules?.length ? reservation.careOverrides.medicationSchedules : null) ?? dog.fields.medicationSchedules ?? []);
   const [bathType, setBathType] = useState(reservation.careOverrides?.bath_type ?? profileBath);
   const [postBathReturn, setPostBathReturn] = useState(reservation.careOverrides?.postBathReturn || "");
   const [ecName, setEcName] = useState(reservation.emergencyContactOverride?.name ?? clientEcName);
@@ -5471,8 +5471,8 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
       const dog = data.dogs.find(d => d.id === res.dogId);
       const client = data.clients.find(c => c.id === res.clientId);
       if (!dog) return;
-      const feedSch = res.careOverrides?.feedingSchedules || dog.fields.feedingSchedules || [];
-      const medSch = res.careOverrides?.medicationSchedules || dog.fields.medicationSchedules || [];
+      const feedSch = (res.careOverrides?.feedingSchedules?.length ? res.careOverrides.feedingSchedules : null) || dog.fields.feedingSchedules || [];
+      const medSch = (res.careOverrides?.medicationSchedules?.length ? res.careOverrides.medicationSchedules : null) || dog.fields.medicationSchedules || [];
       const bath = res.careOverrides?.bath_type || dog.fields.bath_type || "";
       const log = res.activityLog || {};
 
@@ -28792,7 +28792,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
           nightDate = addDays(nightDate, 1);
         }
 
-        const feeds = (res.careOverrides?.feedingSchedules || fields.feedingSchedules || []);
+        const feeds = (res.careOverrides?.feedingSchedules?.length ? res.careOverrides.feedingSchedules : null) || fields.feedingSchedules || [];
         if (feeds.length > 0) {
           const feedsByTime = { am: [], noon: [], pm: [] };
           feeds.forEach(f => {
@@ -28824,7 +28824,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
           }
         }
 
-        const meds = (res.careOverrides?.medicationSchedules || fields.medicationSchedules || []);
+        const meds = (res.careOverrides?.medicationSchedules?.length ? res.careOverrides.medicationSchedules : null) || fields.medicationSchedules || [];
         if (meds.length > 0) {
           const medsByTime = { am: [], noon: [], pm: [] };
           meds.forEach(m => {
