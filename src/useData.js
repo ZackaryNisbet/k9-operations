@@ -1668,6 +1668,7 @@ export function useData(profile) {
           ...buildOps('eodEntries', DAILY_OPS_TABLE, dailyOpsToRow),
           ...buildOps('dailyOps', DAILY_OPS_TABLE, dailyOpsToRow),
         ];
+        if (t4.length) await Promise.all(t4);
 
         // ── Dog child table saves (transform app format → DB rows) ──
         const vaccineTypes = newData._vaccineTypes || prev._vaccineTypes || [];
