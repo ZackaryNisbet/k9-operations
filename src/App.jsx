@@ -28895,16 +28895,26 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     const targetComp = useMemo(() => normalize(chartData, d => d.prevValue || 0), [chartData]);
     const targetMax = useMemo(() => Math.max(...targetMain, ...(showCompare ? targetComp : []), 1), [targetMain, targetComp, showCompare]);
 
-    // Animation: always starts from whatever is currently on screen (screenRef)
-    // so interrupting mid-animation never bounces — it just redirects smoothly
+    // Animation: on FIRST render, show data instantly (no animation from zero).
+    // On SUBSEQUENT target changes, morph from current on-screen position to new target.
     useEffect(() => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+
+      // First render — just display the data, no animation
+      if (!screenRef.current.main) {
+        screenRef.current.main = [...targetMain];
+        screenRef.current.comp = [...targetComp];
+        screenRef.current.max = targetMax;
+        forceRender(c => c + 1);
+        return;
+      }
+
       // Snapshot what's on screen RIGHT NOW as starting point
-      const fromMain = screenRef.current.main || Array(CHART_PTS).fill(0);
-      const fromComp = screenRef.current.comp || Array(CHART_PTS).fill(0);
-      const fromMax = screenRef.current.max || 1;
+      const fromMain = [...screenRef.current.main];
+      const fromComp = [...screenRef.current.comp];
+      const fromMax = screenRef.current.max;
       const dur = 3500; // 3.5 seconds — slow, elegant morph
       let startTs = null;
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
 
       const tick = (ts) => {
         if (!startTs) startTs = ts;
@@ -28913,9 +28923,9 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
         const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
         // Interpolate and write directly to the screen ref
         screenRef.current.main = targetMain.map((v, i) => fromMain[i] + (v - fromMain[i]) * ease);
-        screenRef.current.comp = targetComp.map((v, i) => (fromComp[i] || 0) + (v - (fromComp[i] || 0)) * ease);
+        screenRef.current.comp = targetComp.map((v, i) => fromComp[i] + (v - fromComp[i]) * ease);
         screenRef.current.max = fromMax + (targetMax - fromMax) * ease;
-        forceRender(c => c + 1); // trigger re-render with updated ref values
+        forceRender(c => c + 1);
         if (t < 1) rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
