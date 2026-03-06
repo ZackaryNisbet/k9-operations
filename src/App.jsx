@@ -28903,7 +28903,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
       const pM = prevMainRef.current || Array(CHART_PTS).fill(0);
       const pC = prevCompRef.current || Array(CHART_PTS).fill(0);
       const pMax = prevMaxRef.current || 1;
-      const dur = 600;
+      const dur = 1200;
       let startTs = null;
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
 
