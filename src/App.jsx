@@ -28486,357 +28486,108 @@ function SVGFunnel({ stages, width = 400, height = 280 }) {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// REPORTS PAGE — Entities + Analytics two-layer reporting suite
+// REPORTS PAGE — Revenue Intelligence Dashboard
 // ═══════════════════════════════════════════════════════════════════════════
+// © 2026 K9 Operations LLC. All Rights Reserved.
+// Revenue Intelligence Dashboard - Enhanced ReportsPage Component
+// A world-class reporting dashboard for pet-boarding POS revenue analysis
+
 function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen, rptFilters, setRptFilters, onActiveReportChange }) {
-  const [section, setSection] = useState("entities"); // "entities" | "analytics"
-  const [activeReport, setActiveReport] = useState(null);
-  useEffect(() => { setRptFilters({}); setRptFilterOpen(false); }, [activeReport]);
-  useEffect(() => { if (onActiveReportChange) onActiveReportChange(activeReport); }, [activeReport]);
-  const [reportsSearch, setReportsSearch] = useState("");
+  const [activeTab, setActiveTab] = useState("cash-basis");
+  const [timeRange, setTimeRange] = useState("month");
+  const [compareMode, setCompareMode] = useState(false);
+  const [nlpQuery, setNlpQuery] = useState("");
+  const [nlpResults, setNlpResults] = useState(null);
+  const [nlpLoading, setNlpLoading] = useState(false);
+  const [showNLPSuggestions, setShowNLPSuggestions] = useState(false);
+  const [selectedReservation, setSelectedReservation] = useState(null);
+  const [sortConfig, setSortConfig] = useState({ key: "date", direction: "desc" });
+  const [transactionPage, setTransactionPage] = useState(0);
+  const [transactionSearch, setTransactionSearch] = useState("");
+  const [accrualSortConfig, setAccrualSortConfig] = useState({ key: "checkIn", direction: "desc" });
+  const [accrualGroupBy, setAccrualGroupBy] = useState("date");
 
+  // ─── NLP SUGGESTED QUERIES ───
+  const nlpSuggestions = [
+    "Show me boarding revenue by suite type",
+    "Revenue by category",
+    "Top 10 clients by spend",
+    "Payment method breakdown",
+    "Occupancy rate",
+    "Average length of stay",
+    "Discount impact analysis",
+  ];
+
+  // ─── DATE RANGE LOGIC ───
   const today = new Date().toISOString().split("T")[0];
-  const def30 = addDays(today, -30);
-  const [rangeFrom, setRangeFrom] = useState(def30);
-  const [rangeTo, setRangeTo] = useState(today);
-
-  // ═══ LOCAL HELPERS ═══
-  const fmtD = (dateStr) => {
-    if (!dateStr) return "";
-    const dt = new Date(dateStr + "T00:00:00");
-    return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "2-digit" });
+  const getDateRange = (range) => {
+    let from = today;
+    if (range === "today") { from = today; }
+    else if (range === "week") { from = addDays(today, -7); }
+    else if (range === "month") { from = addDays(today, -30); }
+    else if (range === "quarter") { from = addDays(today, -90); }
+    else if (range === "year") { from = addDays(today, -365); }
+    return { from, to: today };
   };
 
-  const fmtTime = (t) => {
-    if (!t) return "";
-    const [h, m] = t.split(":").map(Number);
-    const ampm = h >= 12 ? "PM" : "AM";
-    const h12 = h % 12 || 12;
-    return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
-  };
+  const { from: dateFrom, to: dateTo } = getDateRange(timeRange);
+  const { from: prevFrom, to: prevTo } = compareMode
+    ? (() => {
+        const days = timeRange === "today" ? 1 : timeRange === "week" ? 7 : timeRange === "month" ? 30 : timeRange === "quarter" ? 90 : 365;
+        return { from: addDays(dateFrom, -days), to: addDays(dateFrom, -1) };
+      })()
+    : { from: dateFrom, to: dateTo };
 
-  const fmtISO = (iso) => {
-    if (!iso) return "";
-    const [dateStr] = iso.split("T");
-    return fmtD(dateStr);
-  };
+  // ─── FORMATTING HELPERS ───
+  const fmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toFixed(2) : "0.00"}`;
+  const fmt$k = (v) => v >= 1000 ? `$${(v/1000).toFixed(1)}k` : fmt$(v);
+  const fmtPercent = (v) => `${typeof v === "number" ? v.toFixed(1) : "0.0"}%`;
 
-  const fmt$ = (v) => {
-    if (typeof v !== "number") return "$0.00";
-    return `$${Math.abs(v).toFixed(2)}`;
-  };
-
-  const statusBadge = (status, style = {}) => {
-    let color = C.textMut, bg = C.bg;
-    if (status === "upcoming") { color = C.info; bg = C.info + "14"; }
-    else if (status === "checked-in") { color = C.suc; bg = C.suc + "14"; }
-    else if (status === "checked-out") { color = C.text; bg = C.bg; }
-    else if (status === "cancelled") { color = C.dan; bg = C.dan + "14"; }
-    return (
-      <div style={{ display: "inline-block", padding: "4px 10px", borderRadius: 6, background: bg, color, fontSize: 11, fontWeight: 600, textTransform: "capitalize", ...style }}>
-        {status || "—"}
-      </div>
-    );
-  };
-
-  // ═══ DATA LOOKUP HELPERS ═══
-  const allDogs = data.dogs || [];
-  const allClients = data.clients || [];
-  const allRes = data.reservations || [];
-  const allEvals = data.evaluations || [];
-  const allPayments = data.payments || [];
-
-  const getDog = (id) => allDogs.find(d => d.id === id);
-  const getClient = (id) => allClients.find(c => c.id === id);
-
-  // ═══ ENTITY DATA BUILDERS ═══
-  const overnightData = useMemo(() => {
-    return (allRes || [])
-      .filter(r => r.type === "boarding" && r.status !== "cancelled")
-      .map(r => {
-        const dog = getDog(r.dogId);
-        const client = getClient(r.clientId);
-        const nights = countNights(r.checkIn, r.checkOut);
-        return {
-          id: r.id,
-          idShort: (r.id || "").slice(-6),
-          dogName: dog?.fields?.name || "—",
-          clientFirst: client?.fields?.first_name || "—",
-          clientLast: client?.fields?.last_name || "—",
-          phone: client?.fields?.phone || "—",
-          roomType: r.roomType || "—",
-          room: r.room || "—",
-          checkInDate: r.checkIn || "—",
-          scheduledCheckInTime: r.checkInTime || "—",
-          actualCheckInTime: r.actualCheckInTime || "—",
-          checkOutDate: r.checkOut || "—",
-          scheduledCheckOutTime: r.checkOutTime || "—",
-          actualCheckOutTime: r.actualCheckOutTime || "—",
-          nights,
-          status: r.status || "upcoming",
-          bookingSource: r.bookingSource || "—",
-          total: r.pricing?.total || 0,
-          notes: r.notes || "—",
+  // ─── CASH BASIS DATA ───
+  const cashBasisData = useMemo(() => {
+    const payments = (data.payments || []).filter(p => p.status === "completed" && p.type !== "refund");
+    const filtered = compareMode
+      ? {
+          current: payments.filter(p => p.timestamp && p.timestamp.split("T")[0] >= dateFrom && p.timestamp.split("T")[0] <= dateTo),
+          previous: payments.filter(p => p.timestamp && p.timestamp.split("T")[0] >= prevFrom && p.timestamp.split("T")[0] <= prevTo)
+        }
+      : {
+          current: payments.filter(p => p.timestamp && p.timestamp.split("T")[0] >= dateFrom && p.timestamp.split("T")[0] <= dateTo),
+          previous: []
         };
+
+    const calcMetrics = (pmts) => {
+      const total = pmts.reduce((sum, p) => sum + (p.amount || 0), 0);
+      const byCategory = {};
+      const byMethod = {};
+      const bySource = {};
+
+      pmts.forEach(p => {
+        const cat = p.category || "Other";
+        byCategory[cat] = (byCategory[cat] || 0) + (p.amount || 0);
+        const meth = p.method || "other";
+        byMethod[meth] = (byMethod[meth] || 0) + 1;
+        const res = (data.reservations || []).find(r => r.id === p.reservationId);
+        const src = res?.bookingSource || "phone";
+        bySource[src] = (bySource[src] || 0) + (p.amount || 0);
       });
-  }, [allRes, allDogs, allClients]);
 
-  const daycareData = useMemo(() => {
-    return (allRes || [])
-      .filter(r => r.type === "daycare" && r.status !== "cancelled")
-      .map(r => {
-        const dog = getDog(r.dogId);
-        const client = getClient(r.clientId);
-        const hours = countHours(r.checkInTime, r.checkOutTime);
-        const isHalf = hours < 5;
-        return {
-          id: r.id,
-          idShort: (r.id || "").slice(-6),
-          dogName: dog?.fields?.name || "—",
-          clientFirst: client?.fields?.first_name || "—",
-          clientLast: client?.fields?.last_name || "—",
-          phone: client?.fields?.phone || "—",
-          visitDate: r.checkIn || "—",
-          checkInTime: r.checkInTime || "—",
-          checkOutTime: r.checkOutTime || "—",
-          hours,
-          dayType: isHalf ? "Half" : "Full",
-          size: r.daycareSize || "—",
-          status: r.status || "upcoming",
-          bookingSource: r.bookingSource || "—",
-          total: r.pricing?.total || 0,
-          notes: r.notes || "—",
-        };
-      });
-  }, [allRes, allDogs, allClients]);
+      return { total, count: pmts.length, byCategory, byMethod, bySource, avgTransaction: pmts.length > 0 ? total / pmts.length : 0, payments: pmts };
+    };
 
-  const evaluationData = useMemo(() => {
-    return (allEvals || []).map(e => {
-      const dog = getDog(e.dogId);
-      const res = (allRes || []).find(r => r.dogId === e.dogId && r.type === "evaluation");
-      const client = res ? getClient(res.clientId) : null;
-      const score = e.score || 0;
-      const maxScore = e.maxScore || 100;
-      const scorePercent = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
-      return {
-        id: e.id,
-        idShort: (e.id || "").slice(-6),
-        dogName: dog?.fields?.name || "—",
-        clientFirst: client?.fields?.first_name || "—",
-        clientLast: client?.fields?.last_name || "—",
-        phone: client?.fields?.phone || "—",
-        evalDate: e.evalDate || e.createdAt?.split("T")[0] || "—",
-        evaluator: e.evaluatorName || "—",
-        score,
-        maxScore,
-        scorePercent,
-        result: e.result || "—",
-        breed: dog?.fields?.breed || "—",
-        weight: dog?.fields?.weight || "—",
-        notes: e.notes || "—",
-      };
-    });
-  }, [allEvals, allDogs, allRes, allClients]);
+    const current = calcMetrics(filtered.current);
+    const previous = compareMode ? calcMetrics(filtered.previous) : { total: 0, count: 0, avgTransaction: 0, payments: [] };
 
-  const toursData = useMemo(() => {
-    return (allRes || [])
-      .filter(r => r.type === "tour" && r.status !== "cancelled")
-      .map(r => {
-        const dog = r.dogId ? getDog(r.dogId) : null;
-        const client = getClient(r.clientId);
-        return {
-          id: r.id,
-          idShort: (r.id || "").slice(-6),
-          dogName: dog?.fields?.name || "—",
-          clientFirst: client?.fields?.first_name || "—",
-          clientLast: client?.fields?.last_name || "—",
-          phone: client?.fields?.phone || "—",
-          tourDate: r.checkIn || "—",
-          tourTime: r.checkInTime || "—",
-          status: r.status || "upcoming",
-          bookingSource: r.bookingSource || "—",
-          notes: r.notes || "—",
-        };
-      });
-  }, [allRes, allDogs, allClients]);
+    return {
+      current,
+      previous,
+      trend: previous.total > 0 ? ((current.total - previous.total) / previous.total) * 100 : 0,
+      trendAvg: previous.count > 0 ? ((current.avgTransaction - previous.avgTransaction) / previous.avgTransaction) * 100 : 0,
+    };
+  }, [data.payments, data.reservations, dateFrom, dateTo, prevFrom, prevTo, compareMode]);
 
-  const dayboardingData = useMemo(() => {
-    return (allRes || [])
-      .filter(r => r.type === "dayboarding" && r.status !== "cancelled")
-      .map(r => {
-        const dog = getDog(r.dogId);
-        const client = getClient(r.clientId);
-        return {
-          id: r.id,
-          idShort: (r.id || "").slice(-6),
-          dogName: dog?.fields?.name || "—",
-          clientFirst: client?.fields?.first_name || "—",
-          clientLast: client?.fields?.last_name || "—",
-          phone: client?.fields?.phone || "—",
-          visitDate: r.checkIn || "—",
-          checkInTime: r.checkInTime || "—",
-          checkOutTime: r.checkOutTime || "—",
-          status: r.status || "upcoming",
-          total: r.pricing?.total || 0,
-          notes: r.notes || "—",
-        };
-      });
-  }, [allRes, allDogs, allClients]);
-
-  const cancellationsData = useMemo(() => {
-    return (allRes || [])
-      .filter(r => r.status === "cancelled")
-      .map(r => {
-        const dog = getDog(r.dogId);
-        const client = getClient(r.clientId);
-        const daysBeforeService = r.checkIn ? Math.floor((new Date(r.checkIn + "T00:00:00") - new Date()) / 86400000) : 0;
-        return {
-          id: r.id,
-          idShort: (r.id || "").slice(-6),
-          serviceType: r.type || "—",
-          dogName: dog?.fields?.name || "—",
-          clientName: client ? `${client.fields?.first_name || ""} ${client.fields?.last_name || ""}`.trim() : "—",
-          phone: client?.fields?.phone || "—",
-          originalCheckIn: r.checkIn || "—",
-          originalCheckOut: r.checkOut || "—",
-          cancelledAt: r.cancelledAt?.split("T")[0] || "—",
-          cancelledBy: r.cancelledBy || "—",
-          cancelReason: r.cancelledBy === "System (Auto)" ? "Auto (day lapsed)" : "Manual",
-          daysBeforeService,
-          notes: r.notes || "—",
-        };
-      });
-  }, [allRes, allDogs, allClients]);
-
-  const clientDirectoryData = useMemo(() => {
-    return (allClients || []).map(c => {
-      const clientRes = (allRes || []).filter(r => r.clientId === c.id && r.status !== "cancelled");
-      const totalVisits = clientRes.length;
-      const totalBoardingNights = clientRes
-        .filter(r => r.type === "boarding")
-        .reduce((sum, r) => sum + countNights(r.checkIn, r.checkOut), 0);
-      const totalDaycareDays = clientRes.filter(r => r.type === "daycare").length;
-      const totalSpent = clientRes.reduce((sum, r) => sum + (r.pricing?.total || 0), 0);
-      const clientDogs = (allDogs || []).filter(d => d.clientId === c.id).length;
-      const lastRes = clientRes.sort((a, b) => new Date(b.checkIn || 0) - new Date(a.checkIn || 0))[0];
-      const lastVisitDate = lastRes?.checkIn || null;
-      const daysSinceLastVisit = lastVisitDate ? Math.floor((new Date() - new Date(lastVisitDate + "T00:00:00")) / 86400000) : null;
-      const isActive = daysSinceLastVisit !== null && daysSinceLastVisit <= 90;
-      return {
-        id: c.id,
-        idShort: (c.id || "").slice(-6),
-        firstName: c.fields?.first_name || "—",
-        lastName: c.fields?.last_name || "—",
-        phone: c.fields?.phone || "—",
-        email: c.fields?.email || "—",
-        registeredAt: c.createdAt?.split("T")[0] || "—",
-        lastVisitDate: lastVisitDate || "—",
-        daysSinceLastVisit: daysSinceLastVisit !== null ? daysSinceLastVisit : "—",
-        totalVisits,
-        totalBoardingNights,
-        totalDaycareDays,
-        totalSpent,
-        dogsCount: clientDogs,
-        referralSource: c.fields?.referral_source || "—",
-        isActive,
-      };
-    });
-  }, [allClients, allRes, allDogs]);
-
-  // ═══ FILTERED ENTITY DATA (applies report filters) ═══
-  const filteredOvernightData = useMemo(() => applyReportFilters(overnightData, rptFilters, RPT_FILTER_FIELDS.overnight || []), [overnightData, rptFilters]);
-  const filteredDaycareData = useMemo(() => applyReportFilters(daycareData, rptFilters, RPT_FILTER_FIELDS.daycare || []), [daycareData, rptFilters]);
-  const filteredEvaluationData = useMemo(() => applyReportFilters(evaluationData, rptFilters, RPT_FILTER_FIELDS.evaluations || []), [evaluationData, rptFilters]);
-  const filteredToursData = useMemo(() => applyReportFilters(toursData, rptFilters, RPT_FILTER_FIELDS.tours || []), [toursData, rptFilters]);
-  const filteredDayboardingData = useMemo(() => applyReportFilters(dayboardingData, rptFilters, RPT_FILTER_FIELDS.dayboarding || []), [dayboardingData, rptFilters]);
-  const filteredCancellationsData = useMemo(() => applyReportFilters(cancellationsData, rptFilters, RPT_FILTER_FIELDS.cancellations || []), [cancellationsData, rptFilters]);
-
-  const unpaidDepositsData = useMemo(() => {
-    const pricing = data.pricing || DEF_PRICING;
-    return (allRes || [])
-      .filter(r => (r.status === "upcoming" || r.status === "checked-in") && (r.type === "boarding" || r.type === "dayboarding"))
-      .map(r => {
-        const dog = getDog(r.dogId);
-        const client = getClient(r.clientId);
-        const pmts = (data.payments || []).filter(p => p.reservationId === r.id && p.status === "completed" && p.type !== "refund");
-        const refs = (data.payments || []).filter(p => p.reservationId === r.id && (p.type === "refund" || p.status === "refunded"));
-        const collected = pmts.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0) - refs.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-        const nights = Math.max(1, countNights(r.checkIn, r.checkOut));
-        const rate = (pricing.boardingRates || {})[r.roomType] || 0;
-        const est = rate * nights;
-        const depositReq = Math.round(est * 0.5 * 100) / 100;
-        const outstanding = Math.max(0, depositReq - collected);
-        if (collected >= depositReq) return null;
-        return {
-          id: r.id, clientId: r.clientId,
-          clientName: client ? `${client.fields?.first_name || ""} ${client.fields?.last_name || ""}`.trim() : "—",
-          dogName: dog?.fields?.name || "—",
-          checkIn: r.checkIn || "—", checkOut: r.checkOut || "—",
-          roomType: r.roomType || "—", status: r.status,
-          estTotal: est, depositReq, collected, outstanding,
-        };
-      })
-      .filter(Boolean);
-  }, [allRes, data.payments, data.pricing]);
-
-  const filteredClientDirectoryData = useMemo(() => applyReportFilters(clientDirectoryData, rptFilters, RPT_FILTER_FIELDS.clients || []), [clientDirectoryData, rptFilters]);
-
-  // Birthday report
-  const [bdayRange, setBdayRange] = useState("30");
-  const birthdayData = useMemo(() => {
-    const today = new Date();
-    const rangeDays = bdayRange === "7" ? 7 : bdayRange === "30" ? 30 : bdayRange === "90" ? 90 : 365;
-    const endDate = new Date(today); endDate.setDate(endDate.getDate() + rangeDays);
-    return (allDogs || [])
-      .filter(d => d.fields?.dob)
-      .map(d => {
-        const dob = new Date(d.fields.dob + "T12:00:00");
-        const nextBday = new Date(today.getFullYear(), dob.getMonth(), dob.getDate());
-        if (nextBday < today) nextBday.setFullYear(nextBday.getFullYear() + 1);
-        // Also check if bday is today
-        const isToday = nextBday.toDateString() === today.toDateString();
-        if (nextBday > endDate && !isToday) return null;
-        const daysUntil = Math.round((nextBday - today) / 86400000);
-        const age = calcAge(d.fields.dob);
-        const turningAge = nextBday.getFullYear() - dob.getFullYear();
-        const client = getClient(d.clientId);
-        return {
-          id: d.id, dogName: d.fields.name || "—", breed: d.fields.breed || "—",
-          dob: d.fields.dob,
-          clientName: client ? `${client.fields?.first_name || ""} ${client.fields?.last_name || ""}`.trim() : "—",
-          clientId: d.clientId, phone: client?.fields?.phone || "—",
-          currentAge: age, turningAge,
-          nextBirthday: nextBday.toISOString().slice(0, 10),
-          daysUntil: isToday ? 0 : daysUntil,
-        };
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.daysUntil - b.daysUntil);
-  }, [allDogs, allClients, bdayRange]);
-
-
-  // ═══ PRE-FILTERED SOURCE DATA FOR ANALYTICS ═══
-  const rptFilteredRes = useMemo(() => {
-    if (!rptFilters || Object.keys(rptFilters).length === 0) return allRes;
-    const isAnalytics = ["hourly-volume","occupancy","revenue","booking-pace"].includes(activeReport);
-    if (!isAnalytics) return allRes;
-    return (allRes || []).filter(r => {
-      return Object.entries(rptFilters).every(([key, {op, val}]) => {
-        if (val === "" && op !== "empty" && op !== "notEmpty") return true;
-        if (key === "serviceType") { const s = r.type || ""; return op === "is" ? s === val : s !== val; }
-        if (key === "bookingSource") { const s = r.bookingSource || ""; return op === "is" ? s === val : s !== val; }
-        if (key === "roomType") { const s = r.roomType || ""; return op === "is" ? s === val : s !== val; }
-        return true;
-      });
-    });
-  }, [allRes, rptFilters, activeReport]);
-
-
-  // ═══ EXISTING buildAccrualData (COPY FROM EXISTING CODE) ═══
-  const buildAccrualData = useMemo(() => {
-    const from = rangeFrom, to = rangeTo;
-    if (!from || !to) return { days: [], totals: {} };
-
+  // ─── ACCRUAL DATA (Enhanced with room segments and discounts) ───
+  const accrualData = useMemo(() => {
     const reservations = data.reservations || [];
     const pricing = data.pricing || DEF_PRICING;
     const addOnPrices = getAddOnPrices(pricing, data.addOnRules);
@@ -28844,1386 +28595,1442 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     const daycareRates = { ...DEF_PRICING.daycareRates, ...(pricing.daycareRates || {}) };
     const dayboardingRate = pricing.dayboardingRate ?? DEF_PRICING.dayboardingRate;
     const multiDogDiscount = pricing.multiDogDiscount ?? DEF_PRICING.multiDogDiscount;
-    const evalFee = pricing.evaluationFee ?? DEF_PRICING.evaluationFee;
-    const tourFee = pricing.tourFee ?? DEF_PRICING.tourFee;
-    const halfDayThreshold = pricing.halfDayThreshold ?? DEF_PRICING.halfDayThreshold;
-    const ftp = { ...DEF_PRICING.foodTypePricing, ...(pricing.foodTypePricing || {}) };
-    const mp = { ...DEF_PRICING.medPricing, ...(pricing.medPricing || {}) };
 
-    const days = [];
-    let cur = from;
-    while (cur <= to) { days.push(cur); cur = addDays(cur, 1); }
+    const processDateRange = (from, to) => {
+      const days = [];
+      let cur = from;
+      while (cur <= to) { days.push(cur); cur = addDays(cur, 1); }
 
-    const dayData = {};
-    days.forEach(d => { dayData[d] = { roomRevenue: 0, multiDogAdj: 0, feedingRevenue: 0, medRevenue: 0, addOnRevenue: 0, discountAdj: 0, evalRevenue: 0, tourRevenue: 0, daycareRevenue: 0, dayboardingRevenue: 0, totalRevenue: 0, roomsSold: 0, evalCount: 0, tourCount: 0, daycareCount: 0, refunds: 0 }; });
-
-    reservations.forEach(res => {
-      if (res.status === "cancelled") return;
-
-      const dog = (data.dogs || []).find(d => d.id === res.dogId);
-      const fields = dog ? dog.fields : {};
-
-      if (res.type === "boarding" && res.checkIn && res.checkOut) {
-        const resStart = res.checkIn;
-        const resEnd = res.checkOut;
-        const isActive = res.status === "checked-in" || res.status === "checked-out";
-        if (!isActive && res.status !== "upcoming") return;
-        if (res.status === "upcoming" && resStart > today) return;
-
-        const totalNights = countNights(resStart, resEnd);
-        if (totalNights <= 0) return;
-
-        const getNightRate = (nightDate) => {
-          if (res.roomSegments && res.roomSegments.length > 0) {
-            const seg = res.roomSegments.find(s => nightDate >= s.startDate && nightDate < s.endDate);
-            return seg ? (boardingRates[seg.roomType] || 0) : (boardingRates[res.roomType] || 0);
-          }
-          return boardingRates[res.roomType] || 0;
+      const dayData = {};
+      days.forEach(d => {
+        dayData[d] = {
+          boardingRevenue: 0,
+          daycareRevenue: 0,
+          feedingRevenue: 0,
+          medicationRevenue: 0,
+          addOnRevenue: 0,
+          totalRevenue: 0,
+          discounts: 0,
+          netRevenue: 0,
+          roomsOccupied: 0,
+          reservationDetails: []
         };
-
-        const multiDogFactor = res.isSecondDogSameRoom ? (1 - multiDogDiscount / 100) : 1;
-
-        let manualDiscountPerNight = 0;
-        if (res.discountType === "percent" && res.discountValue > 0) {
-          let totalRoom = 0;
-          let nd = resStart;
-          while (nd < resEnd) { totalRoom += getNightRate(nd) * multiDogFactor; nd = addDays(nd, 1); }
-          const totalDisc = totalRoom * (res.discountValue / 100);
-          manualDiscountPerNight = totalNights > 0 ? totalDisc / totalNights : 0;
-        } else if (res.discountType === "flat" && res.discountValue > 0) {
-          manualDiscountPerNight = totalNights > 0 ? res.discountValue / totalNights : 0;
-        }
-
-        let nightDate = resStart;
-        while (nightDate < resEnd) {
-          const nightCompleted = res.status === "checked-out" ? true : (nightDate < today);
-          if (nightCompleted && nightDate >= from && nightDate <= to) {
-            const dd = dayData[nightDate];
-            if (dd) {
-              const rate = getNightRate(nightDate);
-              const roomRev = rate * multiDogFactor;
-              dd.roomRevenue += rate;
-              dd.multiDogAdj += rate - roomRev;
-              dd.discountAdj += manualDiscountPerNight;
-              dd.roomsSold += 1;
-            }
-          }
-          nightDate = addDays(nightDate, 1);
-        }
-
-        const feeds = (res.careOverrides?.feedingSchedules?.length ? res.careOverrides.feedingSchedules : null) || fields.feedingSchedules || [];
-        if (feeds.length > 0) {
-          const feedsByTime = { am: [], noon: [], pm: [] };
-          feeds.forEach(f => {
-            (f.times || []).forEach(t => {
-              const tl = t.toLowerCase();
-              if (tl.includes("am")) feedsByTime.am.push(f);
-              else if (tl.includes("noon") || tl.includes("12")) feedsByTime.noon.push(f);
-              else if (tl.includes("pm")) feedsByTime.pm.push(f);
-            });
-          });
-          const ciHour = res.checkInTime ? parseInt(res.checkInTime.split(":")[0]) : 9;
-          const coHour = res.checkOutTime ? parseInt(res.checkOutTime.split(":")[0]) : 11;
-          let feedDay = resStart;
-          const lastDay = resEnd;
-          while (feedDay <= lastDay) {
-            const dayCompleted = res.status === "checked-out" ? true : (feedDay < today);
-            if (dayCompleted && feedDay >= from && feedDay <= to) {
-              const isFirst = feedDay === resStart;
-              const isLast = feedDay === lastDay;
-              const amActive = !(isFirst && ciHour > 6);
-              const pmActive = !(isLast && coHour < 17);
-              const noonActive = feedsByTime.noon.length > 0;
-              const dayCost = (amActive ? feedsByTime.am.reduce((s, f) => s + (ftp[f.foodType] || 0), 0) : 0)
-                + (noonActive ? feedsByTime.noon.reduce((s, f) => s + (ftp[f.foodType] || 0), 0) : 0)
-                + (pmActive ? feedsByTime.pm.reduce((s, f) => s + (ftp[f.foodType] || 0), 0) : 0);
-              if (dayCost > 0 && dayData[feedDay]) dayData[feedDay].feedingRevenue += dayCost;
-            }
-            feedDay = addDays(feedDay, 1);
-          }
-        }
-
-        const meds = (res.careOverrides?.medicationSchedules?.length ? res.careOverrides.medicationSchedules : null) || fields.medicationSchedules || [];
-        if (meds.length > 0) {
-          const medsByTime = { am: [], noon: [], pm: [] };
-          meds.forEach(m => {
-            (m.times || []).forEach(t => {
-              const tl = t.toLowerCase();
-              if (tl.includes("am")) medsByTime.am.push(m);
-              else if (tl.includes("noon") || tl.includes("12")) medsByTime.noon.push(m);
-              else if (tl.includes("pm")) medsByTime.pm.push(m);
-            });
-          });
-          const ciHour = res.checkInTime ? parseInt(res.checkInTime.split(":")[0]) : 9;
-          const coHour = res.checkOutTime ? parseInt(res.checkOutTime.split(":")[0]) : 11;
-          let medDay = resStart;
-          const lastDay = resEnd;
-          while (medDay <= lastDay) {
-            const dayCompleted = res.status === "checked-out" ? true : (medDay < today);
-            if (dayCompleted && medDay >= from && medDay <= to) {
-              const isFirst = medDay === resStart;
-              const isLast = medDay === lastDay;
-              const amActive = !(isFirst && ciHour > 6);
-              const pmActive = !(isLast && coHour < 17);
-              const noonActive = medsByTime.noon.length > 0;
-              const defaultRate = mp.Bagged || mp.Unbagged || 0;
-              const dayCost = (amActive ? medsByTime.am.length * defaultRate : 0)
-                + (noonActive ? medsByTime.noon.length * defaultRate : 0)
-                + (pmActive ? medsByTime.pm.length * defaultRate : 0);
-              if (dayCost > 0 && dayData[medDay]) dayData[medDay].medRevenue += dayCost;
-            }
-            medDay = addDays(medDay, 1);
-          }
-        }
-
-        const addOns = res.selectedAddOns || [];
-        const bathType = res.careOverrides?.bath_type || "";
-        if (bathType && totalNights >= 2) {
-          const bKey = `${bathType} Bath`;
-          if (!addOns.includes(bKey)) addOns.push(bKey);
-        }
-        if (addOns.length > 0) {
-          const recognitionDate = res.status === "checked-out" ? addDays(resEnd, -1) : null;
-          if (recognitionDate && recognitionDate >= from && recognitionDate <= to && dayData[recognitionDate]) {
-            addOns.forEach(addon => {
-              const rate = addOnPrices[addon] ?? 0;
-              if (rate > 0) dayData[recognitionDate].addOnRevenue += rate;
-            });
-          }
-        }
-      }
-
-      else if (res.type === "daycare" && res.checkIn) {
-        const isCompleted = res.status === "checked-out" || (res.status === "checked-in" && res.checkIn < today);
-        if (isCompleted && res.checkIn >= from && res.checkIn <= to) {
-          const dd = dayData[res.checkIn];
-          if (dd) {
-            const hrs = countHours(res.checkInTime || "09:00", res.checkOutTime || "17:00");
-            const isHalf = hrs < halfDayThreshold;
-            const rate = isHalf ? (daycareRates.halfDay || 0) : (daycareRates.fullDay || 0);
-            dd.daycareRevenue += rate;
-            dd.daycareCount += 1;
-          }
-        }
-      }
-
-      else if (res.type === "dayboarding" && res.checkIn) {
-        const isCompleted = res.status === "checked-out" || (res.status === "checked-in" && res.checkIn < today);
-        if (isCompleted && res.checkIn >= from && res.checkIn <= to) {
-          const dd = dayData[res.checkIn];
-          if (dd) {
-            dd.dayboardingRevenue += dayboardingRate;
-          }
-        }
-      }
-
-      else if (res.type === "evaluation" && res.checkIn) {
-        const isCompleted = res.status === "checked-out";
-        if (isCompleted && res.checkIn >= from && res.checkIn <= to) {
-          const dd = dayData[res.checkIn];
-          if (dd) {
-            dd.evalRevenue += evalFee;
-            dd.evalCount += 1;
-          }
-        }
-      }
-
-      else if (res.type === "tour" && res.checkIn) {
-        const isCompleted = res.status === "checked-out";
-        if (isCompleted && res.checkIn >= from && res.checkIn <= to) {
-          const dd = dayData[res.checkIn];
-          if (dd) {
-            dd.tourRevenue += tourFee;
-            dd.tourCount += 1;
-          }
-        }
-      }
-    });
-
-    (data.payments || []).forEach(pmt => {
-      if (pmt.type === "refund" && pmt.status === "completed" && pmt.timestamp) {
-        const pmtDate = pmt.timestamp.split("T")[0];
-        if (pmtDate >= from && pmtDate <= to && dayData[pmtDate]) {
-          dayData[pmtDate].refunds += pmt.amount || 0;
-        }
-      }
-    });
-
-    days.forEach(d => {
-      const dd = dayData[d];
-      dd.totalRevenue = dd.roomRevenue - dd.multiDogAdj - dd.discountAdj
-        + dd.feedingRevenue + dd.medRevenue + dd.addOnRevenue
-        + dd.evalRevenue + dd.tourRevenue + dd.daycareRevenue + dd.dayboardingRevenue
-        - dd.refunds;
-    });
-
-    const totals = { roomRevenue: 0, multiDogAdj: 0, feedingRevenue: 0, medRevenue: 0, addOnRevenue: 0, discountAdj: 0, evalRevenue: 0, tourRevenue: 0, daycareRevenue: 0, dayboardingRevenue: 0, totalRevenue: 0, roomsSold: 0, evalCount: 0, tourCount: 0, daycareCount: 0, refunds: 0 };
-    days.forEach(d => {
-      const dd = dayData[d];
-      Object.keys(totals).forEach(k => { totals[k] += dd[k]; });
-    });
-
-    return { days, dayData, totals };
-  }, [rangeFrom, rangeTo, data.reservations, data.payments, data.dogs, data.pricing]);
-
-  const fmt = (v) => `$${Math.abs(v).toFixed(2)}`;
-  const fmtK = (v) => v >= 1000 ? `$${(v/1000).toFixed(1)}k` : fmt(v);
-
-  // ═══ ANALYTICS DATA BUILDERS ═══
-  const hourlyVolumeData = useMemo(() => {
-    const checkinsByHour = {};
-    const checkoutsByHour = {};
-    const occupancyByHour = {};
-
-    for (let h = 7; h <= 19; h++) {
-      const hkey = `${String(h).padStart(2, "0")}:00`;
-      checkinsByHour[hkey] = 0;
-      checkoutsByHour[hkey] = 0;
-      occupancyByHour[hkey] = 0;
-    }
-
-    const relevantRes = (rptFilteredRes || []).filter(r =>
-      (r.type === "boarding" || r.type === "daycare" || r.type === "dayboarding") &&
-      r.checkIn >= rangeFrom && r.checkIn <= rangeTo &&
-      r.actualCheckInTime
-    );
-
-    relevantRes.forEach(r => {
-      const ciHour = r.actualCheckInTime ? r.actualCheckInTime.substring(0, 2) : null;
-      const coHour = r.actualCheckOutTime ? r.actualCheckOutTime.substring(0, 2) : null;
-
-      if (ciHour) {
-        const hkey = `${String(Math.min(19, Math.max(7, parseInt(ciHour)))).padStart(2, "0")}:00`;
-        checkinsByHour[hkey] = (checkinsByHour[hkey] || 0) + 1;
-      }
-      if (coHour) {
-        const hkey = `${String(Math.min(19, Math.max(7, parseInt(coHour)))).padStart(2, "0")}:00`;
-        checkoutsByHour[hkey] = (checkoutsByHour[hkey] || 0) + 1;
-      }
-    });
-
-    return { checkinsByHour, checkoutsByHour };
-  }, [rptFilteredRes, rangeFrom, rangeTo]);
-
-  const occupancyData = useMemo(() => {
-    const byDay = {};
-    const byRoomType = {};
-    const byDOW = { "Mon": 0, "Tue": 0, "Wed": 0, "Thu": 0, "Fri": 0, "Sat": 0, "Sun": 0 };
-    const byDOWCount = { "Mon": 0, "Tue": 0, "Wed": 0, "Thu": 0, "Fri": 0, "Sat": 0, "Sun": 0 };
-
-    ["Luxury Suite", "Executive Room", "Double Compartment", "Single Compartment"].forEach(rt => {
-      byRoomType[rt] = 0;
-    });
-
-    let cur = rangeFrom;
-    while (cur <= rangeTo) {
-      const occupied = (rptFilteredRes || []).filter(r =>
-        r.type === "boarding" &&
-        r.checkIn <= cur && r.checkOut > cur &&
-        (r.status === "checked-in" || r.status === "checked-out")
-      ).length;
-
-      byDay[cur] = Math.round((occupied / 48) * 100);
-
-      const dt = new Date(cur + "T12:00:00");
-      const dow = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dt.getDay()];
-      byDOW[dow] += byDay[cur];
-      byDOWCount[dow] += 1;
-
-      cur = addDays(cur, 1);
-    }
-
-    Object.keys(byDOW).forEach(k => {
-      if (byDOWCount[k] > 0) byDOW[k] = Math.round(byDOW[k] / byDOWCount[k]);
-    });
-
-    return { byDay, byRoomType, byDOW };
-  }, [rptFilteredRes, rangeFrom, rangeTo]);
-
-  const revenueData = useMemo(() => {
-    const { days, dayData, totals } = buildAccrualData;
-    const byType = {
-      "Boarding": totals.roomRevenue,
-      "Daycare": totals.daycareRevenue,
-      "Day Boarding": totals.dayboardingRevenue,
-      "Evaluation": totals.evalRevenue,
-      "Tour": totals.tourRevenue,
-      "Add-Ons": totals.addOnRevenue,
-      "Feeding": totals.feedingRevenue,
-      "Medication": totals.medRevenue,
-    };
-    return { byType, days, dayData, totals };
-  }, [buildAccrualData]);
-
-  const bookingPaceData = useMemo(() => {
-    const bySource = { "online": 0, "walk-in": 0, "phone": 0 };
-    const leadTimes = { "0-1": 0, "2-7": 0, "8-14": 0, "15-30": 0, "30+": 0 };
-
-    (rptFilteredRes || [])
-      .filter(r => r.status !== "cancelled" && r.createdAt && r.checkIn)
-      .forEach(r => {
-        const source = r.bookingSource || "phone";
-        if (bySource.hasOwnProperty(source)) bySource[source]++;
-
-        const createdDate = new Date(r.createdAt.split("T")[0] + "T00:00:00");
-        const checkInDate = new Date(r.checkIn + "T00:00:00");
-        const leadDays = Math.floor((checkInDate - createdDate) / 86400000);
-
-        if (leadDays <= 1) leadTimes["0-1"]++;
-        else if (leadDays <= 7) leadTimes["2-7"]++;
-        else if (leadDays <= 14) leadTimes["8-14"]++;
-        else if (leadDays <= 30) leadTimes["15-30"]++;
-        else leadTimes["30+"]++;
       });
 
-    return { bySource, leadTimes };
-  }, [rptFilteredRes]);
+      // Process boarding reservations
+      reservations.forEach(res => {
+        if (res.status === "cancelled") return;
 
-  const clientIntelligenceData = useMemo(() => {
-    const allClientMetrics = clientDirectoryData;
-    const newThisPeriod = (allClients || []).filter(c => {
-      const createdDate = c.createdAt?.split("T")[0];
-      return createdDate && createdDate >= rangeFrom && createdDate <= rangeTo;
-    }).length;
+        if (res.type === "boarding" && res.checkIn && res.checkOut) {
+          const totalNights = countNights(res.checkIn, res.checkOut);
+          if (totalNights <= 0) return;
 
-    const atRisk = allClientMetrics.filter(m => m.daysSinceLastVisit !== "—" && m.daysSinceLastVisit >= 60 && m.daysSinceLastVisit < 90).length;
-    const churned = allClientMetrics.filter(m => m.daysSinceLastVisit !== "—" && m.daysSinceLastVisit >= 90).length;
+          const rate = (boardingRates[res.roomType] || 0);
+          let nightDate = res.checkIn;
 
-    return { total: (allClients || []).length, newThisPeriod, atRisk, churned };
-  }, [clientDirectoryData, allClients, rangeFrom, rangeTo]);
+          // Handle room segments if they exist
+          const segments = res.roomSegments || [{ startDate: res.checkIn, endDate: res.checkOut, room: res.room, roomType: res.roomType }];
 
-  const evalConversionData = useMemo(() => {
-    const tours = (allRes || []).filter(r => r.type === "tour" && r.status === "checked-out").length;
-    const evals = (allEvals || []).length;
-    const firstBookings = (allClients || []).length;
-    const repeats = (allClients || []).filter(c => {
-      const visitsForClient = (allRes || []).filter(r => r.clientId === c.id && r.status !== "cancelled").length;
-      return visitsForClient > 1;
-    }).length;
+          segments.forEach(segment => {
+            const segStartDate = segment.startDate || res.checkIn;
+            const segEndDate = segment.endDate || res.checkOut;
+            const segRate = boardingRates[segment.roomType || res.roomType] || rate;
 
-    return { tours, evals, firstBookings, repeats };
-  }, [allRes, allEvals, allClients]);
+            let segNightDate = segStartDate;
+            while (segNightDate < segEndDate) {
+              if (segNightDate >= from && segNightDate <= to && dayData[segNightDate]) {
+                dayData[segNightDate].boardingRevenue += segRate;
+                dayData[segNightDate].roomsOccupied += 1;
+              }
+              segNightDate = addDays(segNightDate, 1);
+            }
+          });
 
-  // ═══ MENU DEFINITIONS ═══
-  const entityItems = [
-    { id: "overnight", label: "Overnight Stays", desc: "Boarding reservations with full detail" },
-    { id: "daycare", label: "Daycare Visits", desc: "Daily daycare appointments" },
-    { id: "evaluations", label: "Evaluations", desc: "All dog evaluations completed" },
-    { id: "tours", label: "Tours", desc: "Facility tours given" },
-    { id: "dayboarding", label: "Day Boarding", desc: "Day boarding visits" },
-    { id: "cancellations", label: "Cancellations", desc: "Cancelled reservations" },
-    { id: "unpaid-deposits", label: "Unpaid Deposits", desc: "Outstanding deposit balances" },
-    { id: "birthdays", label: "Upcoming Birthdays", desc: "Dog birthdays coming up" },
-    { id: "clients", label: "Client Directory", desc: "All clients with aggregated metrics" },
-  ];
+          // Process discounts on checkout day
+          let discountAmount = 0;
+          if (res.discountType === "percent") {
+            discountAmount = (rate * totalNights * (res.discountValue || 0)) / 100;
+          } else if (res.discountType === "flat") {
+            discountAmount = res.discountValue || 0;
+          } else if (res.discountType === "coupon") {
+            discountAmount = res.discountValue || 0;
+          }
 
-  const analyticsItems = [
-    { id: "hourly-volume", label: "Hourly Volume", desc: "Check-in/check-out patterns by hour" },
-    { id: "occupancy", label: "Occupancy Dashboard", desc: "Room utilization and hotel KPIs" },
-    { id: "revenue", label: "Revenue Breakdown", desc: "Financial performance analysis" },
-    { id: "booking-pace", label: "Booking Pace", desc: "Booking patterns and lead times" },
-    { id: "client-intel", label: "Client Intelligence", desc: "Customer behavior and retention" },
-    { id: "eval-funnel", label: "Eval Conversion", desc: "Tour-to-booking conversion funnel" },
-    { id: "payments", label: "Payments", desc: "View transaction history and records" },
-    { id: "resort-volume", label: "Resort Volume", desc: "Evaluations, tours, daycare, rooms" },
-    { id: "accrual-revenue", label: "Accrual Revenue", desc: "Daily accrual-based revenue" },
-  ];
+          // Multi-dog discount
+          if (res.isSecondDogSameRoom && multiDogDiscount > 0) {
+            discountAmount += (rate * totalNights * multiDogDiscount) / 100;
+          }
 
-  const sq = reportsSearch.trim().toLowerCase();
-  const entityFiltered = entityItems.filter(i => i.label.toLowerCase().includes(sq) || i.desc.toLowerCase().includes(sq));
-  const analyticsFiltered = analyticsItems.filter(i => i.label.toLowerCase().includes(sq) || i.desc.toLowerCase().includes(sq));
+          if (discountAmount > 0 && res.checkOut <= to) {
+            const checkoutDate = addDays(res.checkOut, -1);
+            if (dayData[checkoutDate]) {
+              dayData[checkoutDate].discounts += discountAmount;
+            }
+          }
 
-  // ═══ RENDER: ACTIVE REPORT ═══
-  if (activeReport) {
-    const allItems = [...entityItems, ...analyticsItems];
-    const item = allItems.find(i => i.id === activeReport);
-    const isEntity = entityItems.some(i => i.id === activeReport);
+          // Add-ons recognized on checkout day
+          if (res.selectedAddOns && res.selectedAddOns.length > 0 && res.checkOut <= to) {
+            const checkoutDate = addDays(res.checkOut, -1);
+            if (dayData[checkoutDate]) {
+              const addOnTotal = res.selectedAddOns.reduce((sum, addon) => {
+                const price = addOnPrices[addon] || 0;
+                return sum + (price * totalNights);
+              }, 0);
+              dayData[checkoutDate].addOnRevenue += addOnTotal;
+            }
+          }
+
+          // Feeding revenue
+          if (res.careOverrides?.feeding || (data.dogs && data.dogs.find(d => d.id === res.dogId)?.feeding)) {
+            const feedingRate = res.careOverrides?.feedingRate || pricing.feedingRate || 0;
+            if (res.checkOut <= to) {
+              const checkoutDate = addDays(res.checkOut, -1);
+              if (dayData[checkoutDate]) {
+                dayData[checkoutDate].feedingRevenue += feedingRate * totalNights;
+              }
+            }
+          }
+
+          // Medication revenue
+          if (res.careOverrides?.medication) {
+            const medRate = res.careOverrides?.medicationRate || pricing.medicationRate || 0;
+            if (res.checkOut <= to) {
+              const checkoutDate = addDays(res.checkOut, -1);
+              if (dayData[checkoutDate]) {
+                dayData[checkoutDate].medicationRevenue += medRate * totalNights;
+              }
+            }
+          }
+        } else if (res.type === "daycare" && res.checkIn && res.checkIn >= from && res.checkIn <= to) {
+          const hrs = countHours(res.checkInTime || "09:00", res.checkOutTime || "17:00");
+          const halfDayThreshold = pricing.halfDayThreshold ?? 4;
+          const rate = hrs < halfDayThreshold ? (daycareRates.halfDay || 0) : (daycareRates.fullDay || 0);
+          if (dayData[res.checkIn]) dayData[res.checkIn].daycareRevenue += rate;
+        }
+      });
+
+      days.forEach(d => {
+        dayData[d].totalRevenue = dayData[d].boardingRevenue + dayData[d].daycareRevenue + dayData[d].feedingRevenue + dayData[d].medicationRevenue + dayData[d].addOnRevenue;
+        dayData[d].netRevenue = dayData[d].totalRevenue - dayData[d].discounts;
+      });
+
+      const totals = { boardingRevenue: 0, daycareRevenue: 0, feedingRevenue: 0, medicationRevenue: 0, addOnRevenue: 0, totalRevenue: 0, discounts: 0, netRevenue: 0, roomsOccupied: 0 };
+      days.forEach(d => {
+        Object.keys(totals).forEach(k => { totals[k] += dayData[d][k]; });
+      });
+
+      return { dayData, totals, days };
+    };
+
+    const current = processDateRange(dateFrom, dateTo);
+    const previous = compareMode ? processDateRange(prevFrom, prevTo) : { dayData: {}, totals: { totalRevenue: 0, discounts: 0 }, days: [] };
+
+    const revenueTrend = previous.totals.totalRevenue > 0
+      ? ((current.totals.totalRevenue - previous.totals.totalRevenue) / previous.totals.totalRevenue) * 100
+      : 0;
+
+    const occupancyRate = current.totals.roomsOccupied > 0 ? (current.totals.roomsOccupied / (48 * current.days.length)) * 100 : 0;
+    const revPAR = current.days.length > 0 ? current.totals.boardingRevenue / (48 * current.days.length) : 0;
+
+    return { current, previous, revenueTrend, occupancyRate, revPAR, days: current.days };
+  }, [data.reservations, data.dogs, data.pricing, data.addOnRules, dateFrom, dateTo, prevFrom, prevTo, compareMode]);
+
+  // ─── DISCOUNT BREAKDOWN ───
+  const discountBreakdown = useMemo(() => {
+    const reservations = data.reservations || [];
+    const byType = { none: 0, percent: 0, flat: 0, coupon: 0, multidog: 0 };
+    const byAmount = { none: 0, percent: 0, flat: 0, coupon: 0, multidog: 0 };
+
+    reservations.forEach(res => {
+      if (res.status === "cancelled" || res.type !== "boarding") return;
+      if (res.checkOut < dateFrom || res.checkIn > dateTo) return;
+
+      const totalNights = countNights(res.checkIn, res.checkOut);
+      const boardingRates = { ...DEF_PRICING.boardingRates, ...(data.pricing?.boardingRates || {}) };
+      const rate = boardingRates[res.roomType] || 0;
+
+      if (!res.discountType || res.discountType === "none") {
+        byType.none += 1;
+      } else if (res.discountType === "percent") {
+        byType.percent += 1;
+        byAmount.percent += (rate * totalNights * (res.discountValue || 0)) / 100;
+      } else if (res.discountType === "flat") {
+        byType.flat += 1;
+        byAmount.flat += res.discountValue || 0;
+      } else if (res.discountType === "coupon") {
+        byType.coupon += 1;
+        byAmount.coupon += res.discountValue || 0;
+      }
+
+      if (res.isSecondDogSameRoom) {
+        byType.multidog += 1;
+        byAmount.multidog += (rate * totalNights * (data.pricing?.multiDogDiscount || 10)) / 100;
+      }
+    });
+
+    const totalCount = Object.values(byType).reduce((sum, v) => sum + v, 0);
+    const grossRevenue = accrualData.current.totals.totalRevenue;
+    const totalDiscounts = Object.values(byAmount).reduce((sum, v) => sum + v, 0);
+
+    return { byType, byAmount, totalCount, grossRevenue, totalDiscounts };
+  }, [data.reservations, accrualData.current, dateFrom, dateTo]);
+
+  // ─── TRANSACTIONS TABLE DATA ───
+  const transactionsData = useMemo(() => {
+    let transactions = (cashBasisData.current.payments || []).map(p => {
+      const res = (data.reservations || []).find(r => r.id === p.reservationId);
+      const dog = res ? (data.dogs || []).find(d => d.id === res.dogId) : null;
+      const client = res ? (data.clients || []).find(c => c.id === res.clientId) : null;
+      return {
+        id: p.id,
+        date: p.timestamp?.split("T")[0] || "—",
+        clientName: client?.fields?.first_name || "—",
+        dogName: dog?.fields?.name || "—",
+        service: res?.type === "boarding" ? "Boarding" : res?.type === "daycare" ? "Daycare" : "—",
+        room: res?.room || "—",
+        amount: p.amount || 0,
+        method: p.method || "other",
+        source: res?.bookingSource || "phone",
+        reservationId: p.reservationId,
+      };
+    });
+
+    // Filter by search
+    if (transactionSearch) {
+      const q = transactionSearch.toLowerCase();
+      transactions = transactions.filter(t =>
+        t.clientName.toLowerCase().includes(q) ||
+        t.dogName.toLowerCase().includes(q) ||
+        t.date.includes(q)
+      );
+    }
+
+    // Sort
+    transactions.sort((a, b) => {
+      const aVal = a[sortConfig.key];
+      const bVal = b[sortConfig.key];
+      const cmp = typeof aVal === "number" ? aVal - bVal : String(aVal).localeCompare(String(bVal));
+      return sortConfig.direction === "desc" ? -cmp : cmp;
+    });
+
+    return transactions;
+  }, [cashBasisData.current.payments, data.reservations, data.dogs, data.clients, sortConfig, transactionSearch]);
+
+  // ─── ACCRUAL RESERVATIONS TABLE DATA ───
+  const accrualReservationsData = useMemo(() => {
+    const reservations = (data.reservations || []).filter(r => {
+      if (r.status === "cancelled") return false;
+      if (r.checkOut < dateFrom || r.checkIn > dateTo) return false;
+      if (r.type !== "boarding") return false;
+      return true;
+    });
+
+    const boardingRates = { ...DEF_PRICING.boardingRates, ...(data.pricing?.boardingRates || {}) };
+    const multiDogDiscount = data.pricing?.multiDogDiscount ?? 10;
+
+    let processed = reservations.map(res => {
+      const dog = (data.dogs || []).find(d => d.id === res.dogId);
+      const client = (data.clients || []).find(c => c.id === res.clientId);
+      const nights = countNights(res.checkIn, res.checkOut);
+      const rate = boardingRates[res.roomType] || 0;
+      const retailTotal = rate * nights;
+
+      let discountAmount = 0;
+      if (res.discountType === "percent") {
+        discountAmount = (retailTotal * (res.discountValue || 0)) / 100;
+      } else if (res.discountType === "flat") {
+        discountAmount = res.discountValue || 0;
+      } else if (res.discountType === "coupon") {
+        discountAmount = res.discountValue || 0;
+      }
+
+      if (res.isSecondDogSameRoom) {
+        discountAmount += (retailTotal * multiDogDiscount) / 100;
+      }
+
+      const netTotal = retailTotal - discountAmount;
+
+      return {
+        id: res.id,
+        dogName: dog?.fields?.name || "—",
+        clientName: client?.fields?.first_name + " " + client?.fields?.last_name || "—",
+        roomType: res.roomType,
+        checkIn: res.checkIn,
+        checkOut: res.checkOut,
+        nights: nights,
+        nightlyRate: rate,
+        retailTotal: retailTotal,
+        discountType: res.discountType || "none",
+        discountAmount: discountAmount,
+        netTotal: netTotal,
+        status: res.checkOut <= today ? "checked-out" : res.checkIn <= today ? "active" : "upcoming",
+        reservationId: res.id,
+      };
+    });
+
+    // Sort
+    processed.sort((a, b) => {
+      const aVal = a[accrualSortConfig.key];
+      const bVal = b[accrualSortConfig.key];
+      const cmp = typeof aVal === "number" ? aVal - bVal : String(aVal).localeCompare(String(bVal));
+      return accrualSortConfig.direction === "desc" ? -cmp : cmp;
+    });
+
+    return processed;
+  }, [data.reservations, data.dogs, data.clients, accrualSortConfig, dateFrom, dateTo]);
+
+  // ─── NLP QUERY PROCESSING ───
+  const processNLPQuery = useCallback((query) => {
+    const q = query.toLowerCase().trim();
+    setNlpLoading(true);
+
+    setTimeout(() => {
+      let result = null;
+
+      if (q.includes("revenue by") && q.includes("suite type")) {
+        const boardingRates = { ...DEF_PRICING.boardingRates, ...(data.pricing?.boardingRates || {}) };
+        const byType = {};
+
+        (data.reservations || []).forEach(res => {
+          if (res.status === "cancelled" || res.type !== "boarding") return;
+          if (res.checkOut < dateFrom || res.checkIn > dateTo) return;
+          const nights = countNights(res.checkIn, res.checkOut);
+          const rate = boardingRates[res.roomType] || 0;
+          byType[res.roomType] = (byType[res.roomType] || 0) + (rate * nights);
+        });
+
+        result = {
+          type: "table",
+          title: "Boarding Revenue by Suite Type",
+          columns: ["Suite Type", "Revenue", "Percentage"],
+          rows: Object.entries(byType).map(([type, revenue]) => [
+            type,
+            fmt$(revenue),
+            fmtPercent((revenue / accrualData.current.totals.totalRevenue) * 100),
+          ]),
+        };
+      } else if (q.includes("revenue by") && q.includes("category")) {
+        const cats = cashBasisData.current.byCategory;
+        const total = cashBasisData.current.total;
+        result = {
+          type: "table",
+          title: "Revenue by Category",
+          columns: ["Category", "Amount", "Percentage"],
+          rows: Object.entries(cats)
+            .sort(([, a], [, b]) => b - a)
+            .map(([cat, amt]) => [cat, fmt$(amt), fmtPercent((amt / total) * 100)]),
+        };
+      } else if (q.includes("top") && q.includes("client")) {
+        const byClient = {};
+        (cashBasisData.current.payments || []).forEach(p => {
+          const res = (data.reservations || []).find(r => r.id === p.reservationId);
+          const client = res ? (data.clients || []).find(c => c.id === res.clientId) : null;
+          const name = client?.fields?.first_name + " " + client?.fields?.last_name || "Unknown";
+          byClient[name] = (byClient[name] || 0) + (p.amount || 0);
+        });
+
+        result = {
+          type: "table",
+          title: "Top 10 Clients by Spend",
+          columns: ["Client Name", "Total Spend", "Transaction Count"],
+          rows: Object.entries(byClient)
+            .sort(([, a], [, b]) => b - a)
+            .slice(0, 10)
+            .map(([name, amt]) => [
+              name,
+              fmt$(amt),
+              String((cashBasisData.current.payments || []).filter(p => {
+                const res = (data.reservations || []).find(r => r.id === p.reservationId);
+                const client = res ? (data.clients || []).find(c => c.id === res.clientId) : null;
+                return (client?.fields?.first_name + " " + client?.fields?.last_name) === name;
+              }).length),
+            ]),
+        };
+      } else if (q.includes("payment") && q.includes("method")) {
+        const methodCounts = {};
+        (cashBasisData.current.payments || []).forEach(p => {
+          const method = p.method || "other";
+          methodCounts[method] = (methodCounts[method] || 0) + 1;
+        });
+
+        result = {
+          type: "table",
+          title: "Payment Method Breakdown",
+          columns: ["Payment Method", "Count", "Percentage"],
+          rows: Object.entries(methodCounts)
+            .sort(([, a], [, b]) => b - a)
+            .map(([method, count]) => [
+              method.charAt(0).toUpperCase() + method.slice(1),
+              String(count),
+              fmtPercent((count / (cashBasisData.current.count || 1)) * 100),
+            ]),
+        };
+      } else if (q.includes("occupancy")) {
+        result = {
+          type: "summary",
+          title: "Occupancy Analysis",
+          items: [
+            { label: "Occupancy Rate", value: fmtPercent(accrualData.occupancyRate) },
+            { label: "Total Rooms Occupied", value: String(accrualData.current.totals.roomsOccupied) },
+            { label: "Available Rooms", value: String(Math.max(0, 48 * accrualData.days.length - accrualData.current.totals.roomsOccupied)) },
+            { label: "Avg per Day", value: (accrualData.current.totals.roomsOccupied / Math.max(1, accrualData.days.length)).toFixed(1) },
+          ],
+        };
+      } else if (q.includes("average") && q.includes("stay")) {
+        const avgStay = accrualData.days.length > 0
+          ? accrualData.current.totals.roomsOccupied / Math.max(1, accrualData.days.length)
+          : 0;
+        result = {
+          type: "summary",
+          title: "Length of Stay Analysis",
+          items: [
+            { label: "Average Stay (nights)", value: avgStay.toFixed(1) },
+            { label: "Total Nights Booked", value: String(Math.round(accrualData.current.totals.roomsOccupied)) },
+            { label: "Reporting Period", value: accrualData.days.length + " days" },
+          ],
+        };
+      } else if (q.includes("discount")) {
+        result = {
+          type: "summary",
+          title: "Discount Impact Analysis",
+          items: [
+            { label: "Gross Revenue", value: fmt$(discountBreakdown.grossRevenue) },
+            { label: "Total Discounts", value: fmt$(discountBreakdown.totalDiscounts) },
+            { label: "Net Revenue", value: fmt$(discountBreakdown.grossRevenue - discountBreakdown.totalDiscounts) },
+            { label: "Discount Rate", value: fmtPercent((discountBreakdown.totalDiscounts / discountBreakdown.grossRevenue) * 100) },
+          ],
+        };
+      } else {
+        result = {
+          type: "message",
+          title: "AI Processing Required",
+          message: "This query requires AI processing. Coming soon!",
+        };
+      }
+
+      setNlpResults(result);
+      setNlpLoading(false);
+    }, 800);
+  }, [data.reservations, data.clients, data.dogs, data.pricing, cashBasisData.current, accrualData.current, accrualData.days, accrualData.occupancyRate, discountBreakdown, dateFrom, dateTo]);
+
+  // ─── ANIMATED NUMBER COMPONENT ───
+  const AnimatedNumber = ({ value, prefix = "$", duration = 800 }) => {
+    const [displayValue, setDisplayValue] = useState(0);
+    useEffect(() => {
+      let startTime;
+      const animate = (currentTime) => {
+        if (!startTime) startTime = currentTime;
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        setDisplayValue(Math.floor(value * progress));
+        if (progress < 1) requestAnimationFrame(animate);
+      };
+      requestAnimationFrame(animate);
+    }, [value, duration]);
+
+    return <span>{prefix}{Math.abs(displayValue).toFixed(2)}</span>;
+  };
+
+  // ─── SPARKLINE CHART COMPONENT ───
+  const SparklineChart = ({ data: points, color = C.pri, height = 40 }) => {
+    if (!points || points.length === 0) return <svg width="100%" height={height} />;
+    const max = Math.max(...points, 1);
+    const width = 100 * points.length;
+    const h = height;
+    const padding = 4;
+    const chartHeight = h - padding * 2;
+
+    let pathData = "";
+    points.forEach((p, i) => {
+      const x = (i / (points.length - 1)) * (width - padding * 2) + padding;
+      const y = h - padding - (p / max) * chartHeight;
+      pathData += (i === 0 ? "M" : "L") + x + " " + y;
+    });
+
+    return (
+      <svg width="100%" height={height} viewBox={`0 0 ${width} ${h}`} style={{ overflow: "visible" }}>
+        <defs>
+          <linearGradient id="sparkGrad" x1="0%" x2="0%" y1="0%" y2="100%">
+            <stop offset="0%" style={{ stopColor: color, stopOpacity: 0.2 }} />
+            <stop offset="100%" style={{ stopColor: color, stopOpacity: 0 }} />
+          </linearGradient>
+        </defs>
+        <path d={pathData + ` L ${width - padding} ${h - padding} L ${padding} ${h - padding} Z`} fill="url(#sparkGrad)" />
+        <path d={pathData} stroke={color} strokeWidth="1.5" fill="none" />
+      </svg>
+    );
+  };
+
+  // ─── KPI CARD COMPONENT ───
+  const KPICard = ({ label, value, trend, sparkData, icon: Icon, color = C.pri, delay = 0 }) => {
+    return (
+      <div style={{
+        background: C.surface,
+        border: `1px solid ${C.border}`,
+        borderRadius: 16,
+        padding: 20,
+        flex: 1,
+        minWidth: 200,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+        transition: "all 0.3s ease",
+        cursor: "pointer",
+        position: "relative",
+        overflow: "hidden",
+        animation: `fadeInUp 0.6s ease both`,
+        animationDelay: `${delay * 0.1}s`,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.boxShadow = `0 8px 24px ${color}20`;
+        e.currentTarget.style.borderColor = color;
+        e.currentTarget.style.transform = "translateY(-2px)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04)";
+        e.currentTarget.style.borderColor = C.border;
+        e.currentTarget.style.transform = "translateY(0)";
+      }}>
+        <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: 3, background: `linear-gradient(90deg, ${color}, transparent)` }} />
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, color: C.textMut, marginBottom: 8 }}>{label}</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: C.text, fontFamily: "'GT Eesti', monospace" }}>
+              {typeof value === "string" ? value : <AnimatedNumber value={value} prefix="$" />}
+            </div>
+          </div>
+          {Icon && <div style={{ fontSize: 20, opacity: 0.4 }}>{Icon}</div>}
+        </div>
+
+        {trend !== undefined && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <div style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "4px 8px",
+              borderRadius: 6,
+              background: trend >= 0 ? C.sucLt : C.danLt,
+              color: trend >= 0 ? C.suc : C.dan,
+              fontSize: 12,
+              fontWeight: 600,
+            }}>
+              <span>{trend >= 0 ? "↑" : "↓"}</span>
+              {fmtPercent(Math.abs(trend))}
+            </div>
+            <span style={{ fontSize: 11, color: C.textMut }}>vs prev</span>
+          </div>
+        )}
+
+        {sparkData && (
+          <div style={{ marginTop: 12 }}>
+            <SparklineChart data={sparkData} color={color} height={30} />
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ─── AREA CHART COMPONENT ───
+  const AreaChart = ({ data: points, label, height = 300 }) => {
+    if (!points || points.length === 0) return <div style={{ width: "100%", height, background: C.bg, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut }}>No data</div>;
+
+    const max = Math.max(...points, 1);
+    const w = Math.max(points.length * 40, 400);
+    const h = height;
+    const padding = { top: 20, right: 20, bottom: 40, left: 50 };
+    const chartW = w - padding.left - padding.right;
+    const chartH = h - padding.top - padding.bottom;
+
+    let pathData = "";
+    points.forEach((p, i) => {
+      const x = padding.left + (i / (points.length - 1)) * chartW;
+      const y = padding.top + chartH - (p / max) * chartH;
+      pathData += (i === 0 ? "M" : "L") + x + " " + y;
+    });
+    const areaPath = pathData + ` L ${padding.left + chartW} ${padding.top + chartH} L ${padding.left} ${padding.top + chartH} Z`;
+
+    return (
+      <div style={{ width: "100%", overflowX: "auto" }}>
+        <svg width={w} height={h} style={{ display: "block" }}>
+          <defs>
+            <linearGradient id="areaGrad" x1="0%" x2="0%" y1="0%" y2="100%">
+              <stop offset="0%" style={{ stopColor: C.pri, stopOpacity: 0.15 }} />
+              <stop offset="100%" style={{ stopColor: C.pri, stopOpacity: 0 }} />
+            </linearGradient>
+          </defs>
+          {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => (
+            <line key={i} x1={padding.left} x2={w - padding.right} y1={padding.top + chartH * (1 - pct)} y2={padding.top + chartH * (1 - pct)} stroke={C.borderLight} strokeWidth="1" />
+          ))}
+          <path d={areaPath} fill="url(#areaGrad)" />
+          <path d={pathData} stroke={C.pri} strokeWidth="2" fill="none" />
+          {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => (
+            <text key={i} x={padding.left - 10} y={padding.top + chartH * (1 - pct) + 4} fontSize="11" fill={C.textMut} textAnchor="end">${(max * pct / 1000).toFixed(0)}k</text>
+          ))}
+        </svg>
+      </div>
+    );
+  };
+
+  // ─── HORIZONTAL BAR CHART COMPONENT ───
+  const HorizontalBarChart = ({ data: items, height = 300, onClick }) => {
+    if (!items || items.length === 0) return null;
+    const max = Math.max(...items.map(i => i.value), 1);
+    const colors = ['#003462', '#AF8D54', '#0D7A56', '#1A5EC4', '#C4720C', '#6366F1', '#C42B2B', '#059669'];
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {items.map((item, idx) => (
+          <div key={idx} style={{ cursor: "pointer", transition: "all 0.2s", }}
+            onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.8"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+            onClick={() => onClick?.(item.id)}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+              <div style={{ flex: 1, maxWidth: 150 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{item.label}</div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, minWidth: 60, textAlign: "right" }}>{fmt$(item.value)}</div>
+              <div style={{ fontSize: 11, color: C.textMut, minWidth: 40, textAlign: "right" }}>{fmtPercent(item.percent)}</div>
+            </div>
+            <div style={{ width: "100%", height: 24, background: C.bg, borderRadius: 4, overflow: "hidden" }}>
+              <div style={{
+                height: "100%",
+                width: `${(item.value / max) * 100}%`,
+                background: item.color || colors[idx % colors.length],
+                transition: "width 0.6s ease",
+                borderRadius: 4,
+              }} />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  // ─── DONUT CHART COMPONENT ───
+  const DonutChart = ({ data: items, size = 200 }) => {
+    if (!items || items.length === 0) return null;
+    const total = items.reduce((sum, i) => sum + i.value, 0);
+    const colors = ['#003462', '#AF8D54', '#0D7A56', '#1A5EC4', '#C4720C', '#6366F1', '#C42B2B', '#059669'];
+
+    const radius = size / 2 - 20;
+    const innerRadius = radius * 0.6;
+    let currentAngle = -Math.PI / 2;
+
+    const arcs = items.map((item, idx) => {
+      const sliceAngle = (item.value / total) * Math.PI * 2;
+      const startAngle = currentAngle;
+      const endAngle = currentAngle + sliceAngle;
+      currentAngle = endAngle;
+
+      const x1 = size / 2 + radius * Math.cos(startAngle);
+      const y1 = size / 2 + radius * Math.sin(startAngle);
+      const x2 = size / 2 + radius * Math.cos(endAngle);
+      const y2 = size / 2 + radius * Math.sin(endAngle);
+
+      const ix1 = size / 2 + innerRadius * Math.cos(startAngle);
+      const iy1 = size / 2 + innerRadius * Math.sin(startAngle);
+      const ix2 = size / 2 + innerRadius * Math.cos(endAngle);
+      const iy2 = size / 2 + innerRadius * Math.sin(endAngle);
+
+      const largeArc = sliceAngle > Math.PI ? 1 : 0;
+      const path = `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${ix1} ${iy1} Z`;
+
+      return { path, color: colors[idx % colors.length] };
+    });
+
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: "block", margin: "0 auto" }}>
+        {arcs.map((arc, idx) => (
+          <path key={idx} d={arc.path} fill={arc.color} stroke={C.surface} strokeWidth="2" />
+        ))}
+        <circle cx={size / 2} cy={size / 2} r={innerRadius} fill={C.surface} stroke={C.border} strokeWidth="1" />
+      </svg>
+    );
+  };
+
+  // ─── SIDE DRAWER COMPONENT (ENHANCED) ───
+  const ReservationDrawer = ({ reservation, onClose }) => {
+    if (!reservation) return null;
+
+    const res = (data.reservations || []).find(r => r.id === reservation);
+    const dog = res ? (data.dogs || []).find(d => d.id === res.dogId) : null;
+    const client = res ? (data.clients || []).find(c => c.id === res.clientId) : null;
+
+    const boardingRates = { ...DEF_PRICING.boardingRates, ...(data.pricing?.boardingRates || {}) };
+    const nights = res ? countNights(res.checkIn, res.checkOut) : 0;
+    const baseRate = res ? boardingRates[res.roomType] || 0 : 0;
+    const baseTotal = baseRate * nights;
+
+    let discountAmount = 0;
+    if (res?.discountType === "percent") {
+      discountAmount = (baseTotal * (res.discountValue || 0)) / 100;
+    } else if (res?.discountType === "flat") {
+      discountAmount = res.discountValue || 0;
+    } else if (res?.discountType === "coupon") {
+      discountAmount = res.discountValue || 0;
+    }
+
+    const netTotal = baseTotal - discountAmount;
+
+    return ReactDOM.createPortal(
+      <div style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: "rgba(0,0,0,0.3)",
+        display: "flex",
+        justifyContent: "flex-end",
+        zIndex: 1000,
+        backdropFilter: "blur(4px)",
+      }}
+      onClick={onClose}>
+        <div style={{
+          width: 420,
+          height: "100%",
+          background: C.surface,
+          boxShadow: "-8px 0 32px rgba(0,0,0,0.12)",
+          display: "flex",
+          flexDirection: "column",
+          animation: "slideInRight 0.3s ease",
+        }}
+        onClick={e => e.stopPropagation()}>
+          <div style={{ padding: 20, borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Reservation Details</h3>
+            <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 20, color: C.textMut }}>✕</button>
+          </div>
+
+          <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+            {res && dog && client && (
+              <>
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>Dog</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{dog.fields?.name}</div>
+                </div>
+
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>Client</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{client.fields?.first_name} {client.fields?.last_name}</div>
+                  {client.fields?.phone && <div style={{ fontSize: 13, color: C.textSec }}>{client.fields.phone}</div>}
+                </div>
+
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>Room</div>
+                  <div style={{ fontSize: 14, color: C.text }}>{res.roomType} {res.room ? `- Room ${res.room}` : ""}</div>
+                </div>
+
+                <div style={{ marginBottom: 24 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>Dates</div>
+                  <div style={{ fontSize: 13, color: C.text }}>Check-in: {res.checkIn}</div>
+                  <div style={{ fontSize: 13, color: C.text }}>Check-out: {res.checkOut}</div>
+                  <div style={{ fontSize: 13, color: C.textMut }}>({nights} nights)</div>
+                </div>
+
+                <div style={{ marginBottom: 24, paddingBottom: 24, borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 12 }}>Pricing Waterfall</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                    <span style={{ color: C.textSec }}>Base Rate ({nights} nights × {fmt$(baseRate)})</span>
+                    <span style={{ fontWeight: 600 }}>{fmt$(baseTotal)}</span>
+                  </div>
+                  {res.selectedAddOns && res.selectedAddOns.length > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                      <span style={{ color: C.textSec }}>Add-ons</span>
+                      <span style={{ fontWeight: 600 }}>{fmt$(res.pricing?.addOns || 0)}</span>
+                    </div>
+                  )}
+                  {discountAmount > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, color: C.dan }}>
+                      <span>Discount ({res.discountType})</span>
+                      <span style={{ fontWeight: 600 }}>-{fmt$(discountAmount)}</span>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, borderTop: `1px solid ${C.border}`, fontWeight: 700 }}>
+                    <span>Net Total</span>
+                    <span>{fmt$(netTotal)}</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>Status</div>
+                  <div style={{
+                    display: "inline-block",
+                    padding: "6px 12px",
+                    borderRadius: 6,
+                    background: res.checkOut <= today ? C.bg : res.checkIn <= today ? C.sucLt : C.infoLt,
+                    color: res.checkOut <= today ? C.textMut : res.checkIn <= today ? C.suc : C.info,
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}>
+                    {res.checkOut <= today ? "Checked Out" : res.checkIn <= today ? "Active" : "Upcoming"}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div style={{ padding: 20, borderTop: `1px solid ${C.border}`, display: "flex", gap: 10 }}>
+            <button
+              onClick={() => {
+                if (res) nav("client-detail", { clientId: res.clientId });
+                onClose();
+              }}
+              style={{
+                flex: 1,
+                padding: "10px 16px",
+                background: C.pri,
+                color: "white",
+                border: "none",
+                borderRadius: 8,
+                fontWeight: 600,
+                cursor: "pointer",
+                transition: "all 0.2s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.9"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}>
+              View Profile
+            </button>
+            <button
+              onClick={onClose}
+              style={{
+                flex: 1,
+                padding: "10px 16px",
+                background: C.bg,
+                color: C.text,
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                fontWeight: 600,
+                cursor: "pointer",
+                transition: "all 0.2s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.pri; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}>
+              Close
+            </button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    );
+  };
+
+  // ─── TRANSACTION TABLE COMPONENT ───
+  const TransactionTable = () => {
+    const itemsPerPage = 25;
+    const startIdx = transactionPage * itemsPerPage;
+    const pageItems = transactionsData.slice(startIdx, startIdx + itemsPerPage);
+    const maxPages = Math.ceil(transactionsData.length / itemsPerPage);
+    const totalAmount = transactionsData.reduce((sum, t) => sum + t.amount, 0);
+
+    const handleSort = (key) => {
+      if (sortConfig.key === key) {
+        setSortConfig({ key, direction: sortConfig.direction === "desc" ? "asc" : "desc" });
+      } else {
+        setSortConfig({ key, direction: "desc" });
+      }
+    };
 
     return (
       <div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-          <button onClick={() => setActiveReport(null)} style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "none", cursor: "pointer", fontFamily: "inherit", fontSize: 13, fontWeight: 600, color: C.pri, padding: "6px 0" }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-            Reports
-          </button>
-          <span style={{ color: C.textMut, fontSize: 13 }}>/</span>
-          <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{item?.label}</span>
-
-        {/* Filter button */}
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={() => setRptFilterOpen(!rptFilterOpen)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", border: `1.5px solid ${rptFilterOpen ? C.pri : C.border}`, borderRadius: 8, background: rptFilterOpen ? C.priLt : C.surface, cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, color: rptFilterOpen ? C.pri : C.textSec, transition: "all 0.15s" }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
-            Filter
-            {Object.keys(rptFilters).length > 0 && <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 18, height: 18, padding: "0 5px", borderRadius: 9, fontSize: 10, fontWeight: 800, background: C.pri, color: "#fff" }}>{Object.keys(rptFilters).length}</span>}
-          </button>
-        </div>
-        </div>
-
-        {/* Date range controls for analytics (not for entities or payments) */}
-        {!isEntity && activeReport !== "payments" && (
-          <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 24, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>From</span>
-              <MiniDatePicker value={rangeFrom} onChange={setRangeFrom}/>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, background: C.bg, padding: "8px 14px", borderRadius: 10, border: `1.5px solid ${C.border}` }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>To</span>
-              <MiniDatePicker value={rangeTo} onChange={setRangeTo}/>
-            </div>
+        <div style={{ display: "flex", gap: 12, marginBottom: 16, alignItems: "center" }}>
+          <div style={{ flex: 1, position: "relative" }}>
+            <input
+              type="text"
+              placeholder="Search transactions..."
+              value={transactionSearch}
+              onChange={(e) => { setTransactionSearch(e.target.value); setTransactionPage(0); }}
+              style={{
+                width: "100%",
+                padding: "10px 16px",
+                border: `1px solid ${C.border}`,
+                borderRadius: 8,
+                fontSize: 13,
+                background: C.bg,
+              }}
+            />
           </div>
-        )}
-
-        {/* Active filter pills */}
-        {Object.keys(rptFilters).length > 0 && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16, alignItems: "center" }}>
-            {Object.entries(rptFilters).map(([key, { op, val }]) => {
-              const fields = getFilterFieldsForReport(activeReport);
-              const field = fields.find(f => f.key === key);
-              const label = field ? field.label : key;
-              return (
-                <span key={key} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", borderRadius: 8, background: C.priLt, color: C.pri, fontSize: 11, fontWeight: 600 }}>
-                  {label} {LC_OP_LABELS[op] || op} {val && <strong>{val}</strong>}
-                  <button onClick={() => { const n = { ...rptFilters }; delete n[key]; setRptFilters(n); }} style={{ border: "none", background: "none", cursor: "pointer", color: C.pri, padding: 0, display: "flex", marginLeft: 2 }}>
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                  </button>
-                </span>
-              );
-            })}
-            <button onClick={() => setRptFilters({})} style={{ padding: "4px 10px", borderRadius: 8, border: `1px solid ${C.border}`, background: C.surface, fontSize: 11, fontWeight: 600, color: C.textSec, cursor: "pointer", fontFamily: "inherit" }}>Clear all</button>
-          </div>
-        )}
-
-        {/* ENTITY TABLES */}
-        {activeReport === "overnight" && (
-          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
-            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Overnight Stays ({filteredOvernightData.length})</span>
-            </div>
-            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead>
-                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>ID</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Phone</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Room</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Check-In</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Check-Out</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Nights</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Status</th>
-                    <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredOvernightData.map(r => (
-                    <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace", whiteSpace: "nowrap" }}>{r.idShort}</td>
-                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.dogName}</td>
-                      <td style={{ padding: "8px 12px", color: C.text }}>{r.clientFirst} {r.clientLast}</td>
-                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.phone}</td>
-                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.roomType} {r.room}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.checkInDate)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.checkOutDate)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{r.nights}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center" }}>{statusBadge(r.status)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.text }}>{fmt$(r.total)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeReport === "daycare" && (
-          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
-            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daycare Visits ({filteredDaycareData.length})</span>
-            </div>
-            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead>
-                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>ID</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Phone</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Date</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Hours</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Type</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Size</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Status</th>
-                    <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredDaycareData.map(r => (
-                    <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
-                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.dogName}</td>
-                      <td style={{ padding: "8px 12px", color: C.text }}>{r.clientFirst} {r.clientLast}</td>
-                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.phone}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.visitDate)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{r.hours.toFixed(1)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, fontWeight: 600, color: C.text }}>{r.dayType}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.text }}>{r.size}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center" }}>{statusBadge(r.status)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.text }}>{fmt$(r.total)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeReport === "evaluations" && (
-          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
-            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Evaluations ({filteredEvaluationData.length})</span>
-            </div>
-            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead>
-                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>ID</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Date</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Evaluator</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Score</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>%</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Result</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Breed</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredEvaluationData.map(r => {
-                    let resultColor = C.textMut;
-                    if (r.result === "green") resultColor = C.suc;
-                    else if (r.result === "yellow") resultColor = C.warn;
-                    else if (r.result === "red") resultColor = C.dan;
-
-                    return (
-                      <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                        <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
-                        <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.dogName}</td>
-                        <td style={{ padding: "8px 12px", color: C.text }}>{r.clientFirst} {r.clientLast}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.evalDate)}</td>
-                        <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.evaluator}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{r.score}/{r.maxScore}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{r.scorePercent}%</td>
-                        <td style={{ padding: "8px 12px", textAlign: "center", color: resultColor, fontWeight: 600, textTransform: "capitalize" }}>{r.result}</td>
-                        <td style={{ padding: "8px 12px", fontSize: 11, color: C.text }}>{r.breed}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeReport === "tours" && (
-          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
-            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Tours ({filteredToursData.length})</span>
-            </div>
-            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead>
-                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>ID</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Phone</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Date</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Time</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Status</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Source</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredToursData.map(r => (
-                    <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
-                      <td style={{ padding: "8px 12px", color: C.text }}>{r.clientFirst} {r.clientLast}</td>
-                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.phone}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.tourDate)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.text }}>{fmtTime(r.tourTime)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center" }}>{statusBadge(r.status)}</td>
-                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.text, textTransform: "capitalize" }}>{r.bookingSource}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeReport === "dayboarding" && (
-          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
-            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Day Boarding ({filteredDayboardingData.length})</span>
-            </div>
-            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead>
-                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>ID</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Phone</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Date</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Check-In</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Check-Out</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Status</th>
-                    <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredDayboardingData.map(r => (
-                    <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
-                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{r.dogName}</td>
-                      <td style={{ padding: "8px 12px", color: C.text }}>{r.clientFirst} {r.clientLast}</td>
-                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.phone}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.visitDate)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.text }}>{fmtTime(r.checkInTime)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.text }}>{fmtTime(r.checkOutTime)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center" }}>{statusBadge(r.status)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.text }}>{fmt$(r.total)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeReport === "cancellations" && (
-          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
-            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Cancellations ({filteredCancellationsData.length})</span>
-            </div>
-            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead>
-                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>ID</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Service</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Original Date</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Cancelled</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Days Before</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Cancelled By</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredCancellationsData.map(r => (
-                    <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textMut, fontFamily: "monospace" }}>{r.idShort}</td>
-                      <td style={{ padding: "8px 12px", fontSize: 11, fontWeight: 600, color: C.text, textTransform: "capitalize" }}>{r.serviceType}</td>
-                      <td style={{ padding: "8px 12px", color: C.text }}>{r.dogName}</td>
-                      <td style={{ padding: "8px 12px", color: C.text }}>{r.clientName}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.originalCheckIn)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.dan, fontWeight: 600 }}>{fmtD(r.cancelledAt)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: r.daysBeforeService > 7 ? C.suc : r.daysBeforeService > 0 ? C.warn : C.dan }}>{r.daysBeforeService}</td>
-                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{r.cancelledBy}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, fontWeight: 600, color: r.cancelReason === "Auto (day lapsed)" ? C.acc : C.textSec }}>{r.cancelReason}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeReport === "clients" && (
-          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
-            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Client Directory ({filteredClientDirectoryData.length})</span>
-            </div>
-            <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead>
-                  <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Name</th>
-                    <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Phone</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Registered</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Last Visit</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Days Inactive</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Total Visits</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Boarding Nights</th>
-                    <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Total Spent</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Dogs</th>
-                    <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Active</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredClientDirectoryData.map(c => (
-                    <tr key={c.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                      <td style={{ padding: "8px 12px", color: C.text, fontWeight: 500 }}>{c.firstName} {c.lastName}</td>
-                      <td style={{ padding: "8px 12px", fontSize: 11, color: C.textSec }}>{c.phone}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(c.registeredAt)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{c.lastVisitDate === "—" ? "—" : fmtD(c.lastVisitDate)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: typeof c.daysSinceLastVisit === "number" ? (c.daysSinceLastVisit > 90 ? C.dan : c.daysSinceLastVisit > 60 ? C.warn : C.text) : C.textMut }}>{typeof c.daysSinceLastVisit === "number" ? c.daysSinceLastVisit : "—"}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{c.totalVisits}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{c.totalBoardingNights}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 600, color: C.text }}>{fmt$(c.totalSpent)}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: C.text }}>{c.dogsCount}</td>
-                      <td style={{ padding: "8px 12px", textAlign: "center", color: c.isActive ? C.suc : C.textMut, fontWeight: 600 }}>{c.isActive ? "Yes" : "No"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {activeReport === "unpaid-deposits" && (
-          <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
-            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Unpaid Deposits ({unpaidDepositsData.length})</span>
-              {unpaidDepositsData.length > 0 && <span style={{ fontSize: 13, fontWeight: 800, color: C.dan }}>Total Outstanding: ${unpaidDepositsData.reduce((s, r) => s + r.outstanding, 0).toFixed(2)}</span>}
-            </div>
-            {unpaidDepositsData.length === 0 ? (
-              <div style={{ padding: "40px 20px", textAlign: "center" }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: C.suc, marginBottom: 8 }}>All deposits are up to date!</div>
-                <div style={{ fontSize: 12, color: C.textSec }}>No outstanding deposit balances found.</div>
-              </div>
-            ) : (
-              <div style={{ overflowX: "auto", maxHeight: 600, overflowY: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
-                      <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
-                      <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
-                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Dates</th>
-                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Room</th>
-                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Status</th>
-                      <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Est. Total</th>
-                      <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Deposit Req.</th>
-                      <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Collected</th>
-                      <th style={{ padding: "10px 12px", textAlign: "right", fontWeight: 700, color: C.text }}>Outstanding</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {unpaidDepositsData.map(r => (
-                      <tr key={r.id} style={{ borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer" }} onClick={() => nav("client-detail", { clientId: r.clientId })}>
-                        <td style={{ padding: "8px 12px", fontWeight: 600, color: C.text }}>{r.clientName}</td>
-                        <td style={{ padding: "8px 12px", color: C.text }}>{r.dogName}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, color: C.textSec }}>{fmtD(r.checkIn)} — {fmtD(r.checkOut)}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "center", color: C.textSec }}>{r.roomType}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "center", fontSize: 11, fontWeight: 600, color: r.status === "checked-in" ? C.suc : C.info, textTransform: "capitalize" }}>{r.status === "checked-in" ? "In House" : "Upcoming"}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "right", color: C.text }}>${r.estTotal.toFixed(2)}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "right", color: C.acc, fontWeight: 600 }}>${r.depositReq.toFixed(2)}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "right", color: r.collected > 0 ? C.suc : C.textMut }}>${r.collected.toFixed(2)}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "right", color: C.dan, fontWeight: 700 }}>${r.outstanding.toFixed(2)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ENTITY: Upcoming Birthdays */}
-        {activeReport === "birthdays" && (
-          <div>
-            <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-              {[{ v: "7", l: "Next 7 Days" }, { v: "30", l: "Next 30 Days" }, { v: "90", l: "Next 90 Days" }, { v: "365", l: "Next Year" }].map(opt => (
-                <button key={opt.v} onClick={() => setBdayRange(opt.v)} style={{
-                  padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${bdayRange === opt.v ? C.pri : C.border}`,
-                  background: bdayRange === opt.v ? C.pri : C.surface, color: bdayRange === opt.v ? "#fff" : C.text,
-                  fontWeight: 600, fontSize: 13, cursor: "pointer", transition: "all 0.15s"
-                }}>{opt.l}</button>
-              ))}
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16, marginBottom: 24 }}>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Total Birthdays</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, letterSpacing: "-0.02em" }}>{birthdayData.length}</div>
-              </div>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Today's Birthdays</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.acc, letterSpacing: "-0.02em" }}>{birthdayData.filter(d => d.daysUntil === 0).length}</div>
-              </div>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>This Week</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.info, letterSpacing: "-0.02em" }}>{birthdayData.filter(d => d.daysUntil <= 7).length}</div>
-              </div>
-            </div>
-
-            {birthdayData.length === 0 ? (
-              <div style={{ textAlign: "center", padding: 40, color: C.textMut }}>No upcoming birthdays in this range</div>
-            ) : (
-              <div style={{ overflowX: "auto", borderRadius: 12, border: `1.5px solid ${C.border}` }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                  <thead>
-                    <tr style={{ background: C.surfaceAlt, borderBottom: `2px solid ${C.border}` }}>
-                      <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Dog</th>
-                      <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Breed</th>
-                      <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.text }}>Client</th>
-                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Phone</th>
-                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Birthday</th>
-                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Turning</th>
-                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.text }}>Days Until</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {birthdayData.map(d => (
-                      <tr key={d.id} style={{
-                        borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer",
-                        background: d.daysUntil === 0 ? `${C.acc}15` : "transparent"
-                      }} onClick={() => nav("client-detail", { clientId: d.clientId })}>
-                        <td style={{ padding: "8px 12px", fontWeight: 600, color: C.text }}>
-                          {d.daysUntil === 0 && <span style={{ marginRight: 4 }}>🎂</span>}{d.dogName}
-                        </td>
-                        <td style={{ padding: "8px 12px", color: C.textSec }}>{d.breed}</td>
-                        <td style={{ padding: "8px 12px", color: C.text }}>{d.clientName}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "center", color: C.textSec }}>{d.phone}</td>
-                        <td style={{ padding: "8px 12px", textAlign: "center", color: C.text, fontWeight: 600 }}>
-                          {new Date(d.dob + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                        </td>
-                        <td style={{ padding: "8px 12px", textAlign: "center", color: C.pri, fontWeight: 700 }}>
-                          {d.turningAge} {d.turningAge === 1 ? "yr" : "yrs"}
-                        </td>
-                        <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 700, color: d.daysUntil === 0 ? C.acc : d.daysUntil <= 7 ? C.warn : C.textSec }}>
-                          {d.daysUntil === 0 ? "Today!" : d.daysUntil === 1 ? "Tomorrow" : `${d.daysUntil} days`}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ANALYTICS: Hourly Volume */}
-        {activeReport === "hourly-volume" && (
-          <div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Peak Hour</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, letterSpacing: "-0.02em" }}>
-                  {Object.entries(hourlyVolumeData.checkinsByHour)
-                    .reduce((max, [h, v]) => v > max.v ? { h, v } : max, { h: "—", v: 0 })
-                    .h}
-                </div>
-              </div>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Avg Check-Ins/Hour</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.suc, letterSpacing: "-0.02em" }}>
-                  {(Object.values(hourlyVolumeData.checkinsByHour).reduce((a, b) => a + b, 0) / Object.keys(hourlyVolumeData.checkinsByHour).length).toFixed(1)}
-                </div>
-              </div>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Avg Check-Outs/Hour</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.dan, letterSpacing: "-0.02em" }}>
-                  {(Object.values(hourlyVolumeData.checkoutsByHour).reduce((a, b) => a + b, 0) / Object.keys(hourlyVolumeData.checkoutsByHour).length).toFixed(1)}
-                </div>
-              </div>
-            </div>
-            <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface, padding: "16px 20px" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Hourly Activity (7 AM - 7 PM)</div>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 180, overflowX: "auto" }}>
-                {Object.entries(hourlyVolumeData.checkinsByHour).map(([h, v]) => (
-                  <div key={h} style={{ flex: "1 0 20px", minWidth: 20, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                    <div style={{ fontSize: 9, color: C.textMut, height: 20, display: "flex", alignItems: "center" }}>
-                      {v > 0 ? v : ""}
-                    </div>
-                    <div style={{ width: "100%", height: Math.max(2, (v / Math.max(...Object.values(hourlyVolumeData.checkinsByHour))) * 120), background: C.pri, borderRadius: "2px 2px 0 0", transition: "height 0.2s" }} />
-                    <div style={{ fontSize: 9, fontWeight: 600, color: C.textSec, whiteSpace: "nowrap" }}>{h}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ANALYTICS: Occupancy */}
-        {activeReport === "occupancy" && (
-          <div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Avg Occupancy</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, letterSpacing: "-0.02em" }}>
-                  {Math.round(Object.values(occupancyData.byDay).reduce((a, b) => a + b, 0) / Math.max(1, Object.values(occupancyData.byDay).length))}%
-                </div>
-              </div>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Busiest Day</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.suc, letterSpacing: "-0.02em" }}>
-                  {Object.entries(occupancyData.byDOW).reduce((max, [d, v]) => v > max.v ? { d, v } : max, { d: "—", v: 0 }).d}
-                </div>
-              </div>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Slowest Day</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.warn, letterSpacing: "-0.02em" }}>
-                  {Object.entries(occupancyData.byDOW).reduce((min, [d, v]) => v < min.v && v > 0 ? { d, v } : min, { d: "—", v: 100 }).d}
-                </div>
-              </div>
-            </div>
-            <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface, padding: "16px 20px" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Occupancy by Day of Week</div>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 12, height: 160, justifyContent: "space-around", padding: "0 8px" }}>
-                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(d => (
-                  <div key={d} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-                    <div style={{ width: "100%", height: Math.max(2, (occupancyData.byDOW[d] / 100) * 100), background: C.pri, borderRadius: "4px 4px 0 0", transition: "height 0.2s" }} />
-                    <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{occupancyData.byDOW[d]}%</div>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec }}>{d}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ANALYTICS: Revenue */}
-        {activeReport === "revenue" && (
-          <div>
-            <div style={{ padding: "20px", border: `1.5px solid ${C.pri}30`, borderRadius: 12, background: `linear-gradient(135deg, ${C.pri}12, ${C.pri}06)`, marginBottom: 24 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 4, textTransform: "uppercase" }}>Total Revenue</div>
-              <div style={{ fontSize: 36, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>{fmt$(revenueData.totals.totalRevenue)}</div>
-              <div style={{ fontSize: 12, color: C.textMut, marginTop: 6 }}>
-                {revenueData.days.length} days · Avg {fmt$(revenueData.days.length > 0 ? revenueData.totals.totalRevenue / revenueData.days.length : 0)}/day
-              </div>
-            </div>
-            <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface, padding: "16px 20px" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Revenue by Service Type</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {Object.entries(revenueData.byType)
-                  .filter(([_, v]) => v > 0)
-                  .sort((a, b) => b[1] - a[1])
-                  .map(([type, value]) => {
-                    const pct = revenueData.totals.totalRevenue > 0 ? Math.round((value / revenueData.totals.totalRevenue) * 100) : 0;
-                    return (
-                      <div key={type} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                        <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: C.text }}>{type}</div>
-                        <div style={{ width: 60, height: 6, background: C.bg, borderRadius: 3, overflow: "hidden" }}>
-                          <div style={{ width: `${pct}%`, height: "100%", background: C.pri, transition: "width 0.2s" }} />
-                        </div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, textAlign: "right", minWidth: 70 }}>{fmt$(value)}</div>
-                      </div>
-                    );
-                  })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ANALYTICS: Booking Pace */}
-        {activeReport === "booking-pace" && (
-          <div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Avg Lead Time</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, letterSpacing: "-0.02em" }}>
-                  {(() => {
-                    let totalDays = 0, count = 0;
-                    const allLeadTimes = Object.values(bookingPaceData.leadTimes).reduce((a, b) => a + b, 0);
-                    if (allLeadTimes > 0) {
-                      totalDays = (bookingPaceData.leadTimes["0-1"] * 0.5 + bookingPaceData.leadTimes["2-7"] * 4 + bookingPaceData.leadTimes["8-14"] * 11 + bookingPaceData.leadTimes["15-30"] * 22 + bookingPaceData.leadTimes["30+"] * 45);
-                      count = allLeadTimes;
-                      return Math.round(totalDays / count);
-                    }
-                    return "—";
-                  })()}
-                </div>
-              </div>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Online Bookings</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.info, letterSpacing: "-0.02em" }}>
-                  {(() => {
-                    const total = Object.values(bookingPaceData.bySource).reduce((a, b) => a + b, 0);
-                    return total > 0 ? Math.round((bookingPaceData.bySource.online / total) * 100) : 0;
-                  })()}%
-                </div>
-              </div>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Walk-In %</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.suc, letterSpacing: "-0.02em" }}>
-                  {(() => {
-                    const total = Object.values(bookingPaceData.bySource).reduce((a, b) => a + b, 0);
-                    return total > 0 ? Math.round((bookingPaceData.bySource["walk-in"] / total) * 100) : 0;
-                  })()}%
-                </div>
-              </div>
-            </div>
-            <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface, padding: "16px 20px" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 12 }}>Booking Lead Time Distribution</div>
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 8, height: 140, justifyContent: "space-around", padding: "0 8px" }}>
-                {["0-1", "2-7", "8-14", "15-30", "30+"].map(range => {
-                  const val = bookingPaceData.leadTimes[range];
-                  const maxVal = Math.max(...Object.values(bookingPaceData.leadTimes));
-                  return (
-                    <div key={range} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                      <div style={{ width: "100%", height: maxVal > 0 ? (val / maxVal) * 100 : 2, background: C.pri, borderRadius: "3px 3px 0 0", transition: "height 0.2s", minHeight: 2 }} />
-                      <div style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{val}</div>
-                      <div style={{ fontSize: 10, fontWeight: 600, color: C.textSec, textAlign: "center" }}>{range} days</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ANALYTICS: Client Intelligence */}
-        {activeReport === "client-intel" && (
-          <div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Total Clients</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, letterSpacing: "-0.02em" }}>{clientIntelligenceData.total}</div>
-              </div>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>New This Period</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.suc, letterSpacing: "-0.02em" }}>{clientIntelligenceData.newThisPeriod}</div>
-              </div>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>At-Risk (60-90 days)</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.warn, letterSpacing: "-0.02em" }}>{clientIntelligenceData.atRisk}</div>
-              </div>
-              <div style={{ padding: "20px", border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, marginBottom: 8 }}>Churned (90+ days)</div>
-                <div style={{ fontSize: 28, fontWeight: 800, color: C.dan, letterSpacing: "-0.02em" }}>{clientIntelligenceData.churned}</div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ANALYTICS: Eval Conversion */}
-        {activeReport === "eval-funnel" && (
-          <div>
-            <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 12, background: C.surface, padding: "20px" }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 20 }}>Conversion Funnel</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {[
-                  { label: "Tours Given", value: evalConversionData.tours, color: C.info },
-                  { label: "Evaluations Completed", value: evalConversionData.evals, color: C.acc },
-                  { label: "First Bookings", value: evalConversionData.firstBookings, color: C.suc },
-                  { label: "Repeat Customers", value: evalConversionData.repeats, color: C.pri },
-                ].map((stage, idx) => {
-                  const maxVal = evalConversionData.tours || 1;
-                  const pctWidth = (stage.value / maxVal) * 100;
-                  return (
-                    <div key={stage.label} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: C.text, minWidth: 150 }}>{stage.label}</div>
-                      <div style={{ flex: 1, height: 32, background: C.bg, borderRadius: 6, overflow: "hidden" }}>
-                        <div style={{ width: `${pctWidth}%`, height: "100%", background: stage.color, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 8, transition: "width 0.2s" }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: "white" }}>{stage.value}</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* PAYMENTS TAB */}
-        {activeReport === "payments" && <PaymentsPage data={data} save={save} nav={nav} profile={profile}/>}
-
-        {/* RESORT VOLUME TAB (existing code) */}
-        {activeReport === "resort-volume" && (() => {
-          const { totals } = buildAccrualData;
-          const cards = [
-            { label: "Evaluations Completed", value: totals.evalCount, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>, color: C.acc },
-            { label: "Tours Given", value: totals.tourCount, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.info} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>, color: C.info },
-            { label: "Daycare Appointments", value: totals.daycareCount, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.suc} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>, color: C.suc },
-            { label: "Overnight Rooms Sold", value: totals.roomsSold, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>, color: C.pri },
-          ];
-
-          return (
-            <div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 16, marginBottom: 32 }}>
-                {cards.map(c => (
-                  <div key={c.label} style={{ padding: "24px 20px", borderRadius: 16, border: `1.5px solid ${C.border}`, background: C.surface, display: "flex", flexDirection: "column", gap: 12 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ width: 40, height: 40, borderRadius: 12, background: c.color + "14", display: "flex", alignItems: "center", justifyContent: "center" }}>{c.icon}</div>
-                    </div>
-                    <div style={{ fontSize: 32, fontWeight: 800, color: C.text, letterSpacing: "-0.03em", lineHeight: 1 }}>{c.value.toLocaleString()}</div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>{c.label}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
-                <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daily Breakdown</span>
-                </div>
-                <div style={{ maxHeight: 400, overflowY: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead>
-                      <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
-                        <th style={{ padding: "10px 16px", textAlign: "left", fontWeight: 700, color: C.text }}>Date</th>
-                        <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.acc }}>Evals</th>
-                        <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.info }}>Tours</th>
-                        <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.suc }}>Daycare</th>
-                        <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.pri }}>Rooms</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...buildAccrualData.days].reverse().map(d => {
-                        const dd = buildAccrualData.dayData[d];
-                        const isToday = d === today;
-                        return (
-                          <tr key={d} style={{ borderBottom: `1px solid ${C.borderLight}`, background: isToday ? C.priLt : "transparent" }}>
-                            <td style={{ padding: "8px 16px", fontWeight: isToday ? 700 : 500, color: isToday ? C.pri : C.text, whiteSpace: "nowrap" }}>
-                              {new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-                              {isToday && <span style={{ fontSize: 9, fontWeight: 800, color: C.pri, marginLeft: 6, textTransform: "uppercase" }}>Today</span>}
-                            </td>
-                            <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: dd.evalCount ? C.acc : C.textMut }}>{dd.evalCount || "—"}</td>
-                            <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: dd.tourCount ? C.info : C.textMut }}>{dd.tourCount || "—"}</td>
-                            <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: dd.daycareCount ? C.suc : C.textMut }}>{dd.daycareCount || "—"}</td>
-                            <td style={{ padding: "8px 12px", textAlign: "center", fontWeight: 600, color: dd.roomsSold ? C.pri : C.textMut }}>{dd.roomsSold || "—"}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-
-        {/* ACCRUAL REVENUE TAB (existing code) */}
-        {activeReport === "accrual-revenue" && (() => {
-          const { days, dayData, totals } = buildAccrualData;
-          const summaryRows = [
-            { label: "Room Revenue", value: totals.roomRevenue, color: C.pri },
-            { label: "Multi-Dog Adjustment", value: -totals.multiDogAdj, color: C.warn, isNeg: true },
-            { label: "Feeding Revenue", value: totals.feedingRevenue, color: C.text },
-            { label: "Medication Revenue", value: totals.medRevenue, color: C.text },
-            { label: "Add-On Revenue", value: totals.addOnRevenue, color: C.text },
-            { label: "Evaluation Revenue", value: totals.evalRevenue, color: C.acc },
-            { label: "Tour Revenue", value: totals.tourRevenue, color: C.info },
-            { label: "Daycare Revenue", value: totals.daycareRevenue, color: C.suc },
-            { label: "Day Boarding Revenue", value: totals.dayboardingRevenue, color: C.text },
-            { label: "Discounts", value: -totals.discountAdj, color: C.dan, isNeg: true },
-            { label: "Refunds", value: -totals.refunds, color: C.dan, isNeg: true },
-          ].filter(r => Math.abs(r.value) > 0.005);
-
-          const maxRev = Math.max(1, ...days.map(d => Math.max(0, dayData[d].totalRevenue)));
-
-          return (
-            <div>
-              <div style={{ padding: "28px 24px", borderRadius: 16, background: `linear-gradient(135deg, ${C.pri}12, ${C.pri}06)`, border: `1.5px solid ${C.pri}30`, marginBottom: 24, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Total Accrual Revenue</div>
-                  <div style={{ fontSize: 36, fontWeight: 800, color: C.text, letterSpacing: "-0.03em", lineHeight: 1 }}>{fmt(totals.totalRevenue)}</div>
-                  <div style={{ fontSize: 12, color: C.textMut, marginTop: 6 }}>{days.length} days · Avg {fmt(days.length > 0 ? totals.totalRevenue / days.length : 0)}/day</div>
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
-                <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
-                  <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Revenue Breakdown</span>
-                  </div>
-                  <div style={{ padding: "12px 20px" }}>
-                    {summaryRows.map((r, i) => (
-                      <div key={r.label} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: i < summaryRows.length - 1 ? `1px solid ${C.borderLight}` : "none" }}>
-                        <span style={{ fontSize: 13, color: C.textSec, fontWeight: 500 }}>{r.label}</span>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: r.isNeg ? C.dan : r.color, fontVariantNumeric: "tabular-nums" }}>{r.isNeg ? `−${fmt(Math.abs(r.value))}` : fmt(r.value)}</span>
-                      </div>
-                    ))}
-                    <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 0 4px", borderTop: `2px solid ${C.border}`, marginTop: 4 }}>
-                      <span style={{ fontSize: 15, fontWeight: 800, color: C.text }}>Net Revenue</span>
-                      <span style={{ fontSize: 15, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>{fmt(totals.totalRevenue)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
-                  <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daily Revenue</span>
-                  </div>
-                  <div style={{ padding: "16px 20px", display: "flex", alignItems: "flex-end", gap: 2, height: 180, overflowX: "auto" }}>
-                    {days.map(d => {
-                      const dd = dayData[d];
-                      const h = Math.max(2, (dd.totalRevenue / maxRev) * 140);
-                      const isToday = d === today;
-                      return (
-                        <div key={d} title={`${new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",day:"numeric"})}: ${fmt(dd.totalRevenue)}`}
-                          style={{ flex: "1 0 4px", maxWidth: 16, minWidth: 3, height: h, background: isToday ? C.pri : dd.totalRevenue > 0 ? C.pri + "60" : C.border, borderRadius: "3px 3px 0 0", transition: "height 0.2s" }}/>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 14, overflow: "hidden", background: C.surface }}>
-                <div style={{ padding: "14px 20px", borderBottom: `1px solid ${C.borderLight}`, background: C.bg }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Daily Accrual Detail</span>
-                </div>
-                <div style={{ maxHeight: 420, overflowY: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                    <thead>
-                      <tr style={{ borderBottom: `2px solid ${C.border}`, position: "sticky", top: 0, background: C.surface, zIndex: 1 }}>
-                        <th style={{ padding: "10px 16px", textAlign: "left", fontWeight: 700, color: C.text }}>Date</th>
-                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Rooms</th>
-                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Multi-Dog</th>
-                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Feeding</th>
-                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Meds</th>
-                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Add-Ons</th>
-                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Discount</th>
-                        <th style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, color: C.text }}>Other</th>
-                        <th style={{ padding: "10px 16px", textAlign: "right", fontWeight: 800, color: C.pri }}>Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {[...days].reverse().map(d => {
-                        const dd = dayData[d];
-                        const isToday = d === today;
-                        const other = dd.evalRevenue + dd.tourRevenue + dd.daycareRevenue + dd.dayboardingRevenue;
-                        const cell = (v, neg) => (
-                          <td style={{ padding: "8px 8px", textAlign: "right", fontWeight: 600, color: v > 0.005 ? (neg ? C.dan : C.text) : C.textMut, fontVariantNumeric: "tabular-nums" }}>
-                            {v > 0.005 ? (neg ? `−${fmt(v)}` : fmt(v)) : "—"}
-                          </td>
-                        );
-                        return (
-                          <tr key={d} style={{ borderBottom: `1px solid ${C.borderLight}`, background: isToday ? C.priLt : "transparent" }}>
-                            <td style={{ padding: "8px 16px", fontWeight: isToday ? 700 : 500, color: isToday ? C.pri : C.text, whiteSpace: "nowrap" }}>
-                              {new Date(d + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
-                              {isToday && <span style={{ fontSize: 9, fontWeight: 800, color: C.pri, marginLeft: 6, textTransform: "uppercase" }}>Today</span>}
-                            </td>
-                            {cell(dd.roomRevenue)}
-                            {cell(dd.multiDogAdj, true)}
-                            {cell(dd.feedingRevenue)}
-                            {cell(dd.medRevenue)}
-                            {cell(dd.addOnRevenue)}
-                            {cell(dd.discountAdj, true)}
-                            {cell(other)}
-                            <td style={{ padding: "8px 16px", textAlign: "right", fontWeight: 800, color: dd.totalRevenue > 0.005 ? C.pri : C.textMut, fontVariantNumeric: "tabular-nums" }}>
-                              {dd.totalRevenue > 0.005 ? fmt(dd.totalRevenue) : "—"}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-      </div>
-    );
-  }
-
-  // ═══ HUB VIEW ═══
-  return (
-    <div>
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: "0 0 4px", fontSize: 22, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>Reports</h2>
-        <p style={{ margin: 0, fontSize: 14, color: C.textSec }}>Raw data tables and analytical reports</p>
-      </div>
-
-      {/* Section toggle: Entities | Analytics */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20, background: C.bg, padding: 4, borderRadius: 10, width: "fit-content", border: `1.5px solid ${C.border}` }}>
-        {["entities", "analytics"].map(s => (
           <button
-            key={s}
-            onClick={() => setSection(s)}
             style={{
-              padding: "8px 16px",
-              borderRadius: 8,
+              padding: "10px 16px",
+              background: C.pri,
+              color: "white",
               border: "none",
-              background: section === s ? C.pri : "transparent",
-              color: section === s ? "white" : C.text,
-              fontSize: 13,
+              borderRadius: 8,
               fontWeight: 600,
               cursor: "pointer",
-              fontFamily: "inherit",
-              transition: "all 0.15s",
-            }}
-          >
-            {s === "entities" ? "Entities" : "Analytics"}
+              fontSize: 12,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}>
+            Export CSV
           </button>
-        ))}
-      </div>
-
-      {/* Search */}
-      <div style={{ position: "relative", marginBottom: 24 }}>
-        <div style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", color: C.textMut, display: "flex" }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </div>
-        <input
-          value={reportsSearch}
-          onChange={e => setReportsSearch(e.target.value)}
-          placeholder="Search reports…"
-          style={{ width: "100%", padding: "14px 16px 14px 46px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 15, fontWeight: 500, color: C.text, fontFamily: "'GT Eesti', sans-serif", outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" }}
-          onFocus={e => { e.target.style.borderColor = C.pri; }}
-          onBlur={e => { e.target.style.borderColor = C.border; }}
-        />
-        {reportsSearch && (
-          <button
-            onClick={() => setReportsSearch("")}
-            style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", color: C.textMut, display: "flex", padding: 4 }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: `2px solid ${C.border}` }}>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5, cursor: "pointer" }} onClick={() => handleSort("date")}>
+                  Date {sortConfig.key === "date" && (sortConfig.direction === "desc" ? "↓" : "↑")}
+                </th>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Client</th>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Dog</th>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Service</th>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Room</th>
+                <th style={{ padding: 12, textAlign: "right", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5, cursor: "pointer" }} onClick={() => handleSort("amount")}>
+                  Amount {sortConfig.key === "amount" && (sortConfig.direction === "desc" ? "↓" : "↑")}
+                </th>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Method</th>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pageItems.map((txn, idx) => (
+                <tr key={idx} style={{ borderBottom: `1px solid ${C.border}`, cursor: "pointer", transition: "all 0.2s" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = C.bg; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                  onClick={() => setSelectedReservation(txn.reservationId)}>
+                  <td style={{ padding: 12, color: C.text }}>{txn.date}</td>
+                  <td style={{ padding: 12, color: C.text, fontWeight: 500 }}>{txn.clientName}</td>
+                  <td style={{ padding: 12, color: C.text }}>{txn.dogName}</td>
+                  <td style={{ padding: 12, color: C.text }}>{txn.service}</td>
+                  <td style={{ padding: 12, color: C.textSec }}>{txn.room}</td>
+                  <td style={{ padding: 12, color: C.text, textAlign: "right", fontWeight: 600 }}>{fmt$(txn.amount)}</td>
+                  <td style={{ padding: 12, color: C.text, textTransform: "capitalize" }}>{txn.method}</td>
+                  <td style={{ padding: 12, color: C.text, textTransform: "capitalize" }}>{txn.source}</td>
+                </tr>
+              ))}
+              <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
+                <td colSpan="5" style={{ padding: 12, textAlign: "right" }}>Total</td>
+                <td style={{ padding: 12, textAlign: "right" }}>{fmt$(totalAmount)}</td>
+                <td colSpan="2" style={{ padding: 12 }}></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {maxPages > 1 && (
+          <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 16 }}>
+            <button onClick={() => setTransactionPage(Math.max(0, transactionPage - 1))} disabled={transactionPage === 0} style={{ padding: "8px 12px", border: `1px solid ${C.border}`, background: C.surface, borderRadius: 6, cursor: "pointer" }}>Previous</button>
+            <span style={{ padding: "8px 12px", color: C.textMut }}>{transactionPage + 1} / {maxPages}</span>
+            <button onClick={() => setTransactionPage(Math.min(maxPages - 1, transactionPage + 1))} disabled={transactionPage >= maxPages - 1} style={{ padding: "8px 12px", border: `1px solid ${C.border}`, background: C.surface, borderRadius: 6, cursor: "pointer" }}>Next</button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ─── ACCRUAL RESERVATIONS TABLE COMPONENT ───
+  const AccrualTable = () => {
+    const handleSort = (key) => {
+      if (accrualSortConfig.key === key) {
+        setAccrualSortConfig({ key, direction: accrualSortConfig.direction === "desc" ? "asc" : "desc" });
+      } else {
+        setAccrualSortConfig({ key, direction: "desc" });
+      }
+    };
+
+    const totalRetail = accrualReservationsData.reduce((sum, r) => sum + r.retailTotal, 0);
+    const totalDiscounts = accrualReservationsData.reduce((sum, r) => sum + r.discountAmount, 0);
+    const totalNet = accrualReservationsData.reduce((sum, r) => sum + r.netTotal, 0);
+
+    return (
+      <div>
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Group by:</span>
+            <select
+              value={accrualGroupBy}
+              onChange={(e) => setAccrualGroupBy(e.target.value)}
+              style={{ padding: "6px 12px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, background: C.bg }}>
+              <option value="date">Date</option>
+              <option value="client">Client</option>
+            </select>
+          </label>
+        </div>
+
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: `2px solid ${C.border}` }}>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Dog</th>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Client</th>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Room Type</th>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5, cursor: "pointer" }} onClick={() => handleSort("checkIn")}>
+                  Check-In {accrualSortConfig.key === "checkIn" && (accrualSortConfig.direction === "desc" ? "↓" : "↑")}
+                </th>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Check-Out</th>
+                <th style={{ padding: 12, textAlign: "center", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Nights</th>
+                <th style={{ padding: 12, textAlign: "right", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Nightly</th>
+                <th style={{ padding: 12, textAlign: "right", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Retail Total</th>
+                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Discount</th>
+                <th style={{ padding: 12, textAlign: "right", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Net Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {accrualReservationsData.map((res, idx) => (
+                <tr key={idx} style={{
+                  borderBottom: `1px solid ${C.border}`,
+                  background: res.status === "active" ? C.sucLt + "20" : res.status === "upcoming" ? C.infoLt + "20" : "transparent",
+                  cursor: "pointer",
+                  transition: "all 0.2s",
+                }}
+                  onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.8"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                  onClick={() => setSelectedReservation(res.reservationId)}>
+                  <td style={{ padding: 12, color: C.text, fontWeight: 500 }}>{res.dogName}</td>
+                  <td style={{ padding: 12, color: C.text }}>{res.clientName}</td>
+                  <td style={{ padding: 12, color: C.text }}>{res.roomType}</td>
+                  <td style={{ padding: 12, color: C.text, fontSize: 12 }}>{res.checkIn}</td>
+                  <td style={{ padding: 12, color: C.text, fontSize: 12 }}>{res.checkOut}</td>
+                  <td style={{ padding: 12, textAlign: "center", color: C.text }}>{res.nights}</td>
+                  <td style={{ padding: 12, textAlign: "right", color: C.text }}>{fmt$(res.nightlyRate)}</td>
+                  <td style={{ padding: 12, textAlign: "right", color: C.text, fontWeight: 600 }}>{fmt$(res.retailTotal)}</td>
+                  <td style={{ padding: 12, color: res.discountAmount > 0 ? C.dan : C.textMut }}>{res.discountType !== "none" ? res.discountType : "—"}</td>
+                  <td style={{ padding: 12, textAlign: "right", color: C.pri, fontWeight: 600 }}>{fmt$(res.netTotal)}</td>
+                </tr>
+              ))}
+              <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
+                <td colSpan="7" style={{ padding: 12, textAlign: "right" }}>Totals</td>
+                <td style={{ padding: 12, textAlign: "right" }}>{fmt$(totalRetail)}</td>
+                <td style={{ padding: 12 }}></td>
+                <td style={{ padding: 12, textAlign: "right" }}>{fmt$(totalNet)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
+  // ─── NLP RESULTS DISPLAY ───
+  const NLPResults = () => {
+    if (!nlpResults) return null;
+
+    if (nlpResults.type === "table") {
+      return (
+        <div style={{ background: C.surface, borderRadius: 16, padding: 24, border: `1px solid ${C.border}`, marginTop: 24 }}>
+          <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700 }}>{nlpResults.title}</h3>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ borderBottom: `2px solid ${C.border}` }}>
+                  {nlpResults.columns.map((col, idx) => (
+                    <th key={idx} style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>{col}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {nlpResults.rows.map((row, ridx) => (
+                  <tr key={ridx} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    {row.map((cell, cidx) => (
+                      <td key={cidx} style={{ padding: 12, color: C.text }}>{cell}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    } else if (nlpResults.type === "summary") {
+      return (
+        <div style={{ background: C.surface, borderRadius: 16, padding: 24, border: `1px solid ${C.border}`, marginTop: 24 }}>
+          <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700 }}>{nlpResults.title}</h3>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 16 }}>
+            {nlpResults.items.map((item, idx) => (
+              <div key={idx} style={{ padding: 16, background: C.bg, borderRadius: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>{item.label}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    } else {
+      return (
+        <div style={{ background: C.surface, borderRadius: 16, padding: 24, border: `1px solid ${C.border}`, marginTop: 24 }}>
+          <h3 style={{ margin: "0 0 12px 0", fontSize: 16, fontWeight: 700 }}>{nlpResults.title}</h3>
+          <p style={{ margin: 0, color: C.textSec, fontSize: 14 }}>{nlpResults.message}</p>
+        </div>
+      );
+    }
+  };
+
+  // ─── MAIN RENDERING ───
+  const sparkData = accrualData.days.slice(-7).map(day => accrualData.current.dayData[day]?.totalRevenue || 0);
+  const revenueChartData = accrualData.days.map(day => accrualData.current.dayData[day]?.totalRevenue || 0);
+
+  const categoryData = useMemo(() => {
+    const cats = cashBasisData.current.byCategory;
+    const total = cashBasisData.current.total;
+    const colors = ['#003462', '#AF8D54', '#0D7A56', '#1A5EC4', '#C4720C', '#6366F1', '#C42B2B', '#059669'];
+    return Object.entries(cats)
+      .map(([label, value], idx) => ({ id: label, label, value, percent: total > 0 ? (value / total) * 100 : 0, color: colors[idx % colors.length] }))
+      .sort((a, b) => b.value - a.value);
+  }, [cashBasisData.current]);
+
+  const bookingSourceData = useMemo(() => {
+    const src = cashBasisData.current.bySource;
+    const total = cashBasisData.current.total;
+    const colors = ['#003462', '#AF8D54', '#0D7A56'];
+    return Object.entries(src)
+      .map(([label, value], idx) => ({
+        id: label,
+        label: label === "online" ? "Online" : label === "walk-in" ? "Walk-In" : label === "phone" ? "Phone" : label,
+        value,
+        percent: total > 0 ? (value / total) * 100 : 0,
+        color: colors[idx % colors.length]
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [cashBasisData.current]);
+
+  const paymentMethodData = useMemo(() => {
+    const methods = cashBasisData.current.byMethod;
+    const total = Object.values(methods).reduce((sum, v) => sum + v, 0);
+    const colors = ['#003462', '#AF8D54', '#0D7A56', '#1A5EC4'];
+    return Object.entries(methods)
+      .map(([method, count], idx) => ({
+        id: method,
+        label: method.charAt(0).toUpperCase() + method.slice(1),
+        value: count,
+        percent: total > 0 ? (count / total) * 100 : 0,
+        color: colors[idx % colors.length],
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [cashBasisData.current]);
+
+  return (
+    <>
+      <style>{`
+        @keyframes fadeInUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes slideInRight { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
+        @keyframes shimmer { from { background-position: -1000px 0; } to { background-position: 1000px 0; } }
+        .report-section { animation: fadeInUp 0.6s ease both; }
+        .nlp-thinking { animation: shimmer 2s infinite; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent); background-size: 1000px 100%; }
+      `}</style>
+
+      <div style={{ maxWidth: 1400, margin: "0 auto", padding: 24 }}>
+        {/* HEADER */}
+        <div style={{ marginBottom: 32 }}>
+          <h1 style={{ fontSize: 32, fontWeight: 700, margin: "0 0 8px 0", fontFamily: "'Canela', Georgia, serif", color: C.text }}>Revenue Intelligence</h1>
+          <p style={{ fontSize: 14, color: C.textSec, margin: 0 }}>Track cash and accrual revenue across all service types</p>
+        </div>
+
+        {/* NLP QUERY BAR */}
+        <div style={{ background: C.surface, borderRadius: 16, padding: 20, marginBottom: 32, border: `1px solid ${C.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <div style={{ fontSize: 18, color: C.pri }}>✨</div>
+            <input
+              type="text"
+              placeholder="Ask anything... Try: 'Show me boarding revenue by suite type'"
+              value={nlpQuery}
+              onChange={(e) => setNlpQuery(e.target.value)}
+              onFocus={() => setShowNLPSuggestions(true)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && nlpQuery.trim()) {
+                  setShowNLPSuggestions(false);
+                  processNLPQuery(nlpQuery);
+                }
+              }}
+              style={{
+                flex: 1,
+                padding: "12px 16px",
+                border: `1px solid ${C.border}`,
+                borderRadius: 12,
+                fontSize: 14,
+                background: C.bg,
+              }}
+            />
+            {nlpLoading && <div className="nlp-thinking" style={{ width: 40, height: 40, borderRadius: 8 }} />}
+          </div>
+
+          {showNLPSuggestions && nlpQuery === "" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut }}>Suggested Queries</div>
+              {nlpSuggestions.map((suggestion, idx) => (
+                <div key={idx}
+                  onClick={() => { setNlpQuery(suggestion); processNLPQuery(suggestion); setShowNLPSuggestions(false); }}
+                  style={{
+                    padding: 12,
+                    background: C.bg,
+                    borderRadius: 8,
+                    cursor: "pointer",
+                    fontSize: 13,
+                    color: C.text,
+                    transition: "all 0.2s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = C.borderLight; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = C.bg; }}>
+                  {suggestion}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* NLP RESULTS */}
+        {nlpResults && <NLPResults />}
+
+        {/* TIME RANGE TABS & OPTIONS */}
+        <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap", alignItems: "center" }}>
+          {["today", "week", "month", "quarter", "year"].map(range => (
+            <button
+              key={range}
+              onClick={() => setTimeRange(range)}
+              style={{
+                padding: "8px 16px",
+                borderRadius: 8,
+                border: "1px solid " + (timeRange === range ? C.pri : C.border),
+                background: timeRange === range ? C.priLt : C.surface,
+                color: timeRange === range ? C.pri : C.text,
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: "pointer",
+                transition: "all 0.2s",
+              }}>
+              {range.charAt(0).toUpperCase() + range.slice(1)}
+            </button>
+          ))}
+
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", padding: "8px 0", cursor: "pointer" }}>
+            <input type="checkbox" checked={compareMode} onChange={(e) => setCompareMode(e.target.checked)} style={{ cursor: "pointer" }} />
+            <span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>Compare to previous period</span>
+          </label>
+        </div>
+
+        {/* TAB BUTTONS */}
+        <div style={{ display: "flex", gap: 12, marginBottom: 32 }}>
+          {[
+            { id: "cash-basis", label: "Cash Basis Revenue", icon: "💵" },
+            { id: "accrual", label: "Accrual Revenue", icon: "📈" },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                flex: 1,
+                padding: 16,
+                background: activeTab === tab.id ? C.pri : C.surface,
+                color: activeTab === tab.id ? "white" : C.text,
+                border: `2px solid ${activeTab === tab.id ? C.pri : C.border}`,
+                borderRadius: 12,
+                fontWeight: 700,
+                fontSize: 15,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 10,
+                transition: "all 0.3s",
+              }}>
+              <span style={{ fontSize: 18 }}>{tab.icon}</span>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* CONTENT BY TAB */}
+        {activeTab === "cash-basis" ? (
+          <div className="report-section">
+            {/* KPI CARDS */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 32 }}>
+              <KPICard
+                label="Total Cash Revenue"
+                value={cashBasisData.current.total}
+                trend={compareMode && cashBasisData.previous.total > 0 ? ((cashBasisData.current.total - cashBasisData.previous.total) / cashBasisData.previous.total) * 100 : undefined}
+                sparkData={sparkData}
+                icon="💰"
+                color={C.pri}
+                delay={0}
+              />
+              <KPICard
+                label="Average Transaction"
+                value={cashBasisData.current.avgTransaction}
+                trend={compareMode && cashBasisData.previous.count > 0 ? cashBasisData.trendAvg : undefined}
+                sparkData={[...sparkData].reverse()}
+                icon="🎯"
+                color={C.acc}
+                delay={1}
+              />
+              <KPICard
+                label="Total Transactions"
+                value={`${cashBasisData.current.count}`}
+                trend={compareMode && cashBasisData.previous.count > 0 ? ((cashBasisData.current.count - cashBasisData.previous.count) / cashBasisData.previous.count) * 100 : undefined}
+                color={C.suc}
+                delay={2}
+              />
+              <KPICard
+                label="Top Category"
+                value={categoryData.length > 0 ? categoryData[0].label : "—"}
+                color={C.info}
+                delay={3}
+              />
+            </div>
+
+            {/* REVENUE TREND CHART */}
+            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.4s" }}>
+              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Revenue Trend</h3>
+              <AreaChart data={revenueChartData} height={250} />
+            </div>
+
+            {/* CATEGORY BREAKDOWN */}
+            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.5s" }}>
+              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Revenue by Category</h3>
+              <HorizontalBarChart
+                data={categoryData}
+                height={250}
+              />
+            </div>
+
+            {/* BOOKING SOURCE BREAKDOWN */}
+            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.6s" }}>
+              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Booking Source Breakdown</h3>
+              <HorizontalBarChart
+                data={bookingSourceData}
+                height={200}
+              />
+            </div>
+
+            {/* PAYMENT METHOD BREAKDOWN */}
+            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.7s" }}>
+              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Payment Method Distribution</h3>
+              <HorizontalBarChart
+                data={paymentMethodData}
+                height={180}
+              />
+            </div>
+
+            {/* DETAILED TRANSACTION TABLE */}
+            <div style={{ background: C.surface, borderRadius: 16, padding: 24, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.8s" }}>
+              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Transaction Details</h3>
+              <TransactionTable />
+            </div>
+          </div>
+        ) : (
+          <div className="report-section">
+            {/* ACCRUAL KPI CARDS */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 32 }}>
+              <KPICard
+                label="Total Accrual Revenue"
+                value={accrualData.current.totals.totalRevenue}
+                trend={compareMode && accrualData.previous.totals.totalRevenue > 0 ? accrualData.revenueTrend : undefined}
+                sparkData={sparkData}
+                icon="📊"
+                color={C.pri}
+                delay={0}
+              />
+              <KPICard
+                label="Occupancy Rate"
+                value={`${fmtPercent(accrualData.occupancyRate)}`}
+                color={C.acc}
+                delay={1}
+              />
+              <KPICard
+                label="Revenue Per Room"
+                value={accrualData.revPAR}
+                color={C.suc}
+                delay={2}
+              />
+              <KPICard
+                label="Avg Length of Stay"
+                value={`${(accrualData.current.days.length / Math.max(accrualData.current.totals.roomsOccupied, 1)).toFixed(1)} nights`}
+                color={C.info}
+                delay={3}
+              />
+            </div>
+
+            {/* DISCOUNT TRANSPARENCY SECTION */}
+            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.4s" }}>
+              <h3 style={{ margin: "0 0 24px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Discount Transparency</h3>
+
+              {/* Flow Chart */}
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 32, flexWrap: "wrap" }}>
+                <div style={{ padding: 16, background: C.bg, borderRadius: 12, minWidth: 140 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>Gross Revenue</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmt$(discountBreakdown.grossRevenue)}</div>
+                </div>
+                <div style={{ fontSize: 20, color: C.textMut }}>→</div>
+                <div style={{ padding: 16, background: C.danLt, borderRadius: 12, minWidth: 140 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.dan, marginBottom: 8 }}>Discounts</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: C.dan }}>-{fmt$(discountBreakdown.totalDiscounts)}</div>
+                </div>
+                <div style={{ fontSize: 20, color: C.textMut }}>→</div>
+                <div style={{ padding: 16, background: C.priLt, borderRadius: 12, minWidth: 140 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.pri, marginBottom: 8 }}>Net Revenue</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: C.pri }}>{fmt$(discountBreakdown.grossRevenue - discountBreakdown.totalDiscounts)}</div>
+                </div>
+              </div>
+
+              {/* Discount Breakdown Grid */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
+                {[
+                  { type: "None", count: discountBreakdown.byType.none, amount: 0 },
+                  { type: "Percent", count: discountBreakdown.byType.percent, amount: discountBreakdown.byAmount.percent },
+                  { type: "Flat", count: discountBreakdown.byType.flat, amount: discountBreakdown.byAmount.flat },
+                  { type: "Coupon", count: discountBreakdown.byType.coupon, amount: discountBreakdown.byAmount.coupon },
+                  { type: "Multi-Dog", count: discountBreakdown.byType.multidog, amount: discountBreakdown.byAmount.multidog },
+                ].map((discount, idx) => (
+                  <div key={idx} style={{ padding: 16, background: C.bg, borderRadius: 12 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>{discount.type}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 8 }}>{discount.count} reservations</div>
+                    <div style={{ fontSize: 13, color: C.dan }}>{fmt$(discount.amount)}</div>
+                    <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>{fmtPercent((discount.amount / (discountBreakdown.totalDiscounts || 1)) * 100)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* REVENUE BREAKDOWN CARDS */}
+            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.5s" }}>
+              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Revenue Composition</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16 }}>
+                <div style={{ padding: 16, background: C.bg, borderRadius: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>Boarding Revenue</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{fmt$(accrualData.current.totals.boardingRevenue)}</div>
+                </div>
+                <div style={{ padding: 16, background: C.bg, borderRadius: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>Daycare Revenue</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{fmt$(accrualData.current.totals.daycareRevenue)}</div>
+                </div>
+                <div style={{ padding: 16, background: C.bg, borderRadius: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>Add-Ons & Services</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{fmt$(accrualData.current.totals.addOnRevenue + accrualData.current.totals.feedingRevenue + accrualData.current.totals.medicationRevenue)}</div>
+                </div>
+                <div style={{ padding: 16, background: C.danLt, borderRadius: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.dan, marginBottom: 8 }}>Total Discounts</div>
+                  <div style={{ fontSize: 18, fontWeight: 700, color: C.dan }}>-{fmt$(accrualData.current.totals.discounts)}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* DAILY REVENUE TREND */}
+            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.6s" }}>
+              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Daily Revenue Trend</h3>
+              <AreaChart data={revenueChartData} height={250} />
+            </div>
+
+            {/* ACCRUAL RESERVATIONS TABLE */}
+            <div style={{ background: C.surface, borderRadius: 16, padding: 24, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.7s" }}>
+              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Active & Upcoming Reservations</h3>
+              <AccrualTable />
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Grid of report cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
-        {(section === "entities" ? entityFiltered : analyticsFiltered).map(item => (
-          <button
-            key={item.id}
-            onClick={() => { setActiveReport(item.id); setReportsSearch(""); }}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 16,
-              padding: "18px 20px",
-              borderRadius: 14,
-              border: `1.5px solid ${C.border}`,
-              background: C.surface,
-              cursor: "pointer",
-              fontFamily: "inherit",
-              textAlign: "left",
-              transition: "all 0.15s",
-              width: "100%",
-            }}
-            onMouseEnter={e => {
-              e.currentTarget.style.borderColor = C.pri;
-              e.currentTarget.style.background = C.priLt;
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.borderColor = C.border;
-              e.currentTarget.style.background = C.surface;
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 2 }}>{item.label}</div>
-              <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.4 }}>{item.desc}</div>
-            </div>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0, opacity: 0.4 }}><polyline points="9 18 15 12 9 6"/></svg>
-          </button>
-        ))}
-      </div>
-
-      {(section === "entities" ? entityFiltered : analyticsFiltered).length === 0 && (
-        <div style={{ textAlign: "center", padding: "48px 24px", color: C.textMut }}>
-          <div style={{ fontSize: 32, marginBottom: 8 }}>🔍</div>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>No reports found</div>
-          <div style={{ fontSize: 13, marginTop: 4 }}>Try a different search term</div>
-        </div>
+      {/* DRAWER */}
+      {selectedReservation && (
+        <ReservationDrawer
+          reservation={selectedReservation}
+          onClose={() => setSelectedReservation(null)}
+        />
       )}
-    </div>
+    </>
   );
 }
+
 
 
 function AIPage({ data, save, nav }) {
