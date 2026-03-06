@@ -28869,49 +28869,62 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   // ══════════════════════════════════════════════════════════════════════════
   // INTERACTIVE LINE CHART — fixed width, animated transitions, hover tooltip
   // ══════════════════════════════════════════════════════════════════════════
+  const CHART_PTS = 30; // Always exactly 30 points — consistent paths for smooth morphing
   const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, showCompare, height = 240, id = "chart" }) => {
     const [hoverIdx, setHoverIdx] = useState(null);
-    const [animVals, setAnimVals] = useState(null);
-    const prevValsRef = useRef(null);
+    const [animMain, setAnimMain] = useState(null);
+    const [animComp, setAnimComp] = useState(null);
+    const [animMax, setAnimMax] = useState(null);
+    const prevMainRef = useRef(null);
+    const prevCompRef = useRef(null);
+    const prevMaxRef = useRef(null);
     const animFrameRef = useRef(null);
 
-    // Normalize to fixed 30 points for consistent display regardless of data length
+    // ALWAYS normalize to exactly CHART_PTS points via linear interpolation (up or down)
     const normalize = (raw, accessor) => {
-      if (!raw || raw.length === 0) return Array(30).fill(0);
-      if (raw.length <= 30) return raw.map(accessor);
-      const step = raw.length / 30;
-      return Array.from({ length: 30 }, (_, i) => {
-        const idx = Math.min(Math.floor(i * step), raw.length - 1);
-        return accessor(raw[idx]);
+      if (!raw || raw.length === 0) return Array(CHART_PTS).fill(0);
+      const vals = raw.map(accessor);
+      if (vals.length === 1) return Array(CHART_PTS).fill(vals[0]);
+      return Array.from({ length: CHART_PTS }, (_, i) => {
+        const t = i / (CHART_PTS - 1) * (vals.length - 1);
+        const lo = Math.floor(t);
+        const hi = Math.min(lo + 1, vals.length - 1);
+        const frac = t - lo;
+        return vals[lo] + (vals[hi] - vals[lo]) * frac;
       });
     };
 
-    const currentVals = useMemo(() => normalize(chartData, d => d.value), [chartData]);
-    const compareVals = useMemo(() => normalize(chartData, d => d.prevValue || 0), [chartData]);
+    const targetMain = useMemo(() => normalize(chartData, d => d.value), [chartData]);
+    const targetComp = useMemo(() => normalize(chartData, d => d.prevValue || 0), [chartData]);
+    const targetMax = useMemo(() => Math.max(...targetMain, ...(showCompare ? targetComp : []), 1), [targetMain, targetComp, showCompare]);
 
-    // Animate between old and new values
+    // Animate ALL values: main line, compare line, AND the Y-axis max (so grid rescales smoothly)
     useEffect(() => {
-      const prev = prevValsRef.current || currentVals.map(() => 0);
-      const target = currentVals;
-      const dur = 450;
+      const pM = prevMainRef.current || Array(CHART_PTS).fill(0);
+      const pC = prevCompRef.current || Array(CHART_PTS).fill(0);
+      const pMax = prevMaxRef.current || 1;
+      const dur = 600;
       let startTs = null;
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
 
-      const step = (ts) => {
+      const tick = (ts) => {
         if (!startTs) startTs = ts;
         const t = Math.min((ts - startTs) / dur, 1);
         const ease = 1 - Math.pow(1 - t, 3); // ease-out cubic
-        const interp = target.map((v, i) => (prev[i] || 0) + (v - (prev[i] || 0)) * ease);
-        setAnimVals(interp);
-        if (t < 1) animFrameRef.current = requestAnimationFrame(step);
-        else prevValsRef.current = target;
+        setAnimMain(targetMain.map((v, i) => pM[i] + (v - pM[i]) * ease));
+        setAnimComp(targetComp.map((v, i) => (pC[i] || 0) + (v - (pC[i] || 0)) * ease));
+        setAnimMax(pMax + (targetMax - pMax) * ease);
+        if (t < 1) { animFrameRef.current = requestAnimationFrame(tick); }
+        else { prevMainRef.current = targetMain; prevCompRef.current = targetComp; prevMaxRef.current = targetMax; }
       };
-      animFrameRef.current = requestAnimationFrame(step);
+      animFrameRef.current = requestAnimationFrame(tick);
       return () => { if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current); };
-    }, [currentVals]);
+    }, [targetMain, targetComp, targetMax]);
 
-    const vals = animVals || currentVals;
-    const n = vals.length;
+    const vals = animMain || targetMain;
+    const cmpVals = animComp || targetComp;
+    const curMax = animMax || targetMax;
+    const n = CHART_PTS;
 
     if (!chartData || chartData.length === 0) return (
       <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut, fontSize: 13 }}>No data for this period</div>
@@ -28923,18 +28936,28 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     const cw = W - pad.left - pad.right;
     const ch = H - pad.top - pad.bottom;
 
-    const allMax = Math.max(...vals, ...(showCompare ? compareVals : []), 1);
     const yTicks = 4;
+    const xS = (i) => pad.left + (i / (n - 1)) * cw;
+    const yS = (v) => pad.top + ch - (v / curMax) * ch;
 
-    const xS = (i) => pad.left + (i / Math.max(n - 1, 1)) * cw;
-    const yS = (v) => pad.top + ch - (v / allMax) * ch;
+    // Smooth cubic Bézier spline instead of jagged straight lines
+    const buildSpline = (arr) => {
+      if (arr.length < 2) return `M${xS(0).toFixed(1)},${yS(arr[0] || 0).toFixed(1)}`;
+      let d = `M${xS(0).toFixed(1)},${yS(arr[0]).toFixed(1)}`;
+      for (let i = 0; i < arr.length - 1; i++) {
+        const x0 = xS(i), y0 = yS(arr[i]);
+        const x1 = xS(i + 1), y1 = yS(arr[i + 1]);
+        const cpx = (x1 - x0) * 0.35;
+        d += ` C${(x0 + cpx).toFixed(1)},${y0.toFixed(1)} ${(x1 - cpx).toFixed(1)},${y1.toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+      }
+      return d;
+    };
+    const buildSplineArea = (arr) => buildSpline(arr) + ` L${xS(n - 1).toFixed(1)},${(pad.top + ch).toFixed(1)} L${pad.left},${(pad.top + ch).toFixed(1)} Z`;
 
-    const buildPath = (arr) => arr.map((v, i) => `${i === 0 ? "M" : "L"}${xS(i).toFixed(1)},${yS(v).toFixed(1)}`).join(" ");
-    const buildArea = (arr) => buildPath(arr) + ` L${xS(n - 1).toFixed(1)},${(pad.top + ch).toFixed(1)} L${pad.left},${(pad.top + ch).toFixed(1)} Z`;
-
-    const mainPath = buildPath(vals);
-    const mainArea = buildArea(vals);
-    const compPath = showCompare ? buildPath(compareVals) : "";
+    const mainPath = buildSpline(vals);
+    const mainArea = buildSplineArea(vals);
+    const compPath = showCompare ? buildSpline(cmpVals) : "";
+    const compArea = showCompare ? buildSplineArea(cmpVals) : "";
 
     // Map normalized indices back to source labels
     const srcStep = chartData.length / n;
@@ -28949,19 +28972,23 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
         <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet" style={{ display: "block", fontFamily: "'GT Eesti', sans-serif" }}>
           <defs>
             <linearGradient id={`${id}-grad`} x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity="0.12" />
-              <stop offset="100%" stopColor={color} stopOpacity="0" />
+              <stop offset="0%" stopColor={color} stopOpacity="0.15" />
+              <stop offset="100%" stopColor={color} stopOpacity="0.01" />
             </linearGradient>
+            {showCompare && <linearGradient id={`${id}-comp-grad`} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor={compareColor} stopOpacity="0.08" />
+              <stop offset="100%" stopColor={compareColor} stopOpacity="0.01" />
+            </linearGradient>}
           </defs>
 
-          {/* Grid lines */}
+          {/* Grid lines — these animate too because curMax is interpolated */}
           {Array.from({ length: yTicks + 1 }).map((_, i) => {
             const ratio = i / yTicks;
             const y = pad.top + ch - ratio * ch;
             return (
               <g key={`grid-${i}`}>
                 <line x1={pad.left} x2={W - pad.right} y1={y} y2={y} stroke={C.borderLight} strokeWidth="0.7" />
-                <text x={pad.left - 6} y={y + 3.5} textAnchor="end" fontSize="9" fill={C.textMut}>{fmt$k(allMax * ratio)}</text>
+                <text x={pad.left - 6} y={y + 3.5} textAnchor="end" fontSize="9" fill={C.textMut}>{fmt$k(curMax * ratio)}</text>
               </g>
             );
           })}
@@ -28973,17 +29000,19 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
             return <text key={`xl-${i}`} x={xS(i)} y={H - 6} textAnchor="middle" fontSize="9" fill={C.textMut}>{src?.label || ""}</text>;
           })}
 
-          {/* Compare line (dashed) */}
-          {showCompare && <path d={compPath} stroke={compareColor} strokeWidth="1.5" strokeDasharray="5,3" fill="none" opacity="0.55" />}
+          {/* Compare area + line (dashed, behind main) */}
+          {showCompare && <>
+            <path d={compArea} fill={`url(#${id}-comp-grad)`} />
+            <path d={compPath} stroke={compareColor} strokeWidth="1.5" strokeDasharray="5,3" fill="none" opacity="0.55" />
+          </>}
 
-          {/* Main area + line */}
+          {/* Main area fill + line */}
           <path d={mainArea} fill={`url(#${id}-grad)`} />
-          <path d={mainPath} stroke={color} strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          <path d={mainPath} stroke={color} strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
 
           {/* Data dots — only show hovered + endpoints */}
           {vals.map((v, i) => {
             const show = hoverIdx === i || i === 0 || i === n - 1;
-            if (!show && hoverIdx === null) return null;
             if (!show) return null;
             return <circle key={`dot-${i}`} cx={xS(i)} cy={yS(v)} r={hoverIdx === i ? 4.5 : 2} fill={hoverIdx === i ? color : "white"} stroke={color} strokeWidth="1.5" />;
           })}
@@ -29028,7 +29057,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
               <div style={{ fontSize: 15 }}>{fmt$(vals[hoverIdx])}</div>
               {showCompare && (
                 <div style={{ marginTop: 3, fontSize: 10, color: compareColor, borderTop: "1px solid rgba(255,255,255,0.2)", paddingTop: 3 }}>
-                  Prev: {fmt$(compareVals[hoverIdx])}
+                  Prev: {fmt$(cmpVals[hoverIdx])}
                 </div>
               )}
             </div>
