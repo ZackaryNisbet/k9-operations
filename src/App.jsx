@@ -28499,7 +28499,7 @@ const CHART_PTS = 30;
 const _chartFmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}`;
 const _chartFmt$k = (v) => v >= 10000 ? `$${(v / 1000).toFixed(1)}k` : v >= 1000 ? `$${(v / 1000).toFixed(2)}k` : _chartFmt$(v);
 
-const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, showCompare, height = 240, id = "chart" }) => {
+const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, showCompare, height = 240, id = "chart", animationEpoch = 0 }) => {
   const [hoverIdx, setHoverIdx] = useState(null);
   const [display, setDisplay] = useState(null);
   const liveRef = useRef(null);
@@ -28532,7 +28532,7 @@ const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, 
     const fM = [...liveRef.current.main];
     const fC = [...liveRef.current.comp];
     const fMax = liveRef.current.max;
-    const dur = 3500;
+    const dur = 750; // 750ms — best-practice for data visualization morphs (Material Design / Apple HIG sweet spot)
     let startTs = null;
     const tick = (ts) => {
       if (!startTs) startTs = ts;
@@ -28547,7 +28547,7 @@ const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, 
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [targetMain, targetComp, targetMax]);
+  }, [targetMain, targetComp, targetMax, animationEpoch]);
 
   const vals = display ? display.main : targetMain;
   const cmpVals = display ? display.comp : targetComp;
@@ -28648,6 +28648,9 @@ const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, 
 function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen, rptFilters, setRptFilters, onActiveReportChange }) {
   const [timeRange, setTimeRange] = useState("month");
   const [compareMode, setCompareMode] = useState(false);
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [animEpoch, setAnimEpoch] = useState(0);
   const [nlpQuery, setNlpQuery] = useState("");
   const [nlpResults, setNlpResults] = useState(null);
   const [nlpLoading, setNlpLoading] = useState(false);
@@ -28659,6 +28662,9 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   const [accrualSortConfig, setAccrualSortConfig] = useState({ key: "checkIn", direction: "desc" });
   const [cashTableOpen, setCashTableOpen] = useState(false);
   const [accrualTableOpen, setAccrualTableOpen] = useState(false);
+
+  // Wrapper that bumps animEpoch so both charts start/end animation in perfect sync
+  const changeTimeRange = (range) => { setTimeRange(range); setAnimEpoch(e => e + 1); };
 
   // ─── NLP SUGGESTED QUERIES ───
   const nlpSuggestionsBank = [
@@ -28674,6 +28680,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   // ─── DATE RANGE LOGIC ───
   const today = new Date().toISOString().split("T")[0];
   const getDateRange = (range) => {
+    if (range === "custom" && customFrom && customTo) return { from: customFrom, to: customTo };
     let from = today;
     if (range === "today") from = today;
     else if (range === "week") from = addDays(today, -7);
@@ -28684,7 +28691,12 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   };
 
   const { from: dateFrom, to: dateTo } = getDateRange(timeRange);
-  const days = (() => { const d = timeRange === "today" ? 1 : timeRange === "week" ? 7 : timeRange === "month" ? 30 : timeRange === "quarter" ? 90 : 365; return d; })();
+  const days = (() => {
+    if (timeRange === "custom" && customFrom && customTo) {
+      return Math.max(1, Math.round((new Date(customTo) - new Date(customFrom)) / 86400000));
+    }
+    return timeRange === "today" ? 1 : timeRange === "week" ? 7 : timeRange === "month" ? 30 : timeRange === "quarter" ? 90 : 365;
+  })();
   const prevFrom = addDays(dateFrom, -days);
   const prevTo = addDays(dateFrom, -1);
 
@@ -28980,26 +28992,85 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   }, [data, cashBasisData.current, accrualData, discountBreakdown, dateFrom, dateTo]);
 
   // ─── CHART DATA PREP ───
+  // ─── SMART CHART BUCKETING ───
+  // Determines how to aggregate data points based on the time span
+  const getQuarter = (dateStr) => { const m = new Date(dateStr + "T00:00:00").getMonth(); return m < 3 ? "Q1" : m < 6 ? "Q2" : m < 9 ? "Q3" : "Q4"; };
+  const getMonthLabel = (dateStr) => new Date(dateStr + "T00:00:00").toLocaleDateString("en-US", { month: "short" });
+  const getMonthYearLabel = (dateStr) => new Date(dateStr + "T00:00:00").toLocaleDateString("en-US", { month: "short", year: "2-digit" });
+
+  // Bucket strategy: today/week/month → daily, quarter → weekly, year → monthly
+  const bucketMode = useMemo(() => {
+    if (timeRange === "year" || days > 180) return "monthly";
+    if (timeRange === "quarter" || days > 60) return "weekly";
+    return "daily";
+  }, [timeRange, days]);
+
+  const bucketDays = useCallback((daysList, getValueForDay, getPrevValueForDay) => {
+    if (bucketMode === "daily") {
+      return daysList.map(d => ({
+        date: d,
+        label: fmtDateLabel(d),
+        value: getValueForDay(d),
+        prevValue: getPrevValueForDay ? getPrevValueForDay(d) : 0,
+      }));
+    }
+
+    if (bucketMode === "monthly") {
+      const monthBuckets = {};
+      daysList.forEach(d => {
+        const key = d.slice(0, 7); // "2025-03"
+        if (!monthBuckets[key]) {
+          const q = getQuarter(d);
+          monthBuckets[key] = { date: d, label: `${getMonthLabel(d)} (${q})`, value: 0, prevValue: 0 };
+        }
+        monthBuckets[key].value += getValueForDay(d);
+        if (getPrevValueForDay) monthBuckets[key].prevValue += getPrevValueForDay(d);
+      });
+      return Object.values(monthBuckets);
+    }
+
+    // weekly
+    const weekBuckets = [];
+    for (let i = 0; i < daysList.length; i += 7) {
+      const chunk = daysList.slice(i, i + 7);
+      const first = chunk[0], last = chunk[chunk.length - 1];
+      const q = getQuarter(first);
+      const label = chunk.length >= 5
+        ? `${getMonthLabel(first)} ${new Date(first + "T00:00:00").getDate()}–${new Date(last + "T00:00:00").getDate()} (${q})`
+        : `${fmtDateLabel(first)} (${q})`;
+      weekBuckets.push({
+        date: first,
+        label,
+        value: chunk.reduce((sum, d) => sum + getValueForDay(d), 0),
+        prevValue: getPrevValueForDay ? chunk.reduce((sum, d) => sum + getPrevValueForDay(d), 0) : 0,
+      });
+    }
+    return weekBuckets;
+  }, [bucketMode, fmtDateLabel]);
+
   const cashChartData = useMemo(() => {
     const daysList = [];
     let cur = dateFrom;
     while (cur <= dateTo) { daysList.push(cur); cur = addDays(cur, 1); }
-    return daysList.map(d => ({
-      date: d,
-      label: fmtDateLabel(d),
-      value: cashBasisData.current.byDate?.[d] || 0,
-      prevValue: compareMode ? (cashBasisData.previous.byDate?.[addDays(d, -days)] || 0) : 0,
-    }));
-  }, [cashBasisData, dateFrom, dateTo, days, compareMode]);
+    return bucketDays(
+      daysList,
+      (d) => cashBasisData.current.byDate?.[d] || 0,
+      compareMode ? (d) => cashBasisData.previous.byDate?.[addDays(d, -days)] || 0 : null
+    );
+  }, [cashBasisData, dateFrom, dateTo, days, compareMode, bucketDays]);
 
   const accrualChartData = useMemo(() => {
-    return accrualData.days.map((d, i) => ({
-      date: d,
-      label: fmtDateLabel(d),
-      value: accrualData.current.dayData[d]?.netRevenue || 0,
-      prevValue: compareMode && accrualData.previous.days[i] ? (accrualData.previous.dayData[accrualData.previous.days[i]]?.netRevenue || 0) : 0,
-    }));
-  }, [accrualData, compareMode]);
+    const daysList = accrualData.days;
+    return bucketDays(
+      daysList,
+      (d) => accrualData.current.dayData[d]?.netRevenue || 0,
+      compareMode ? (d) => {
+        const idx = daysList.indexOf(d);
+        const prevDay = accrualData.previous.days[idx];
+        return prevDay ? (accrualData.previous.dayData[prevDay]?.netRevenue || 0) : 0;
+      } : null
+    );
+  }, [accrualData, compareMode, bucketDays]);
 
   const categoryData = useMemo(() => {
     const cats = cashBasisData.current.byCategory;
@@ -29348,8 +29419,8 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <div style={{ display: "flex", background: C.bg, borderRadius: 8, padding: 2 }}>
-              {["today", "week", "month", "quarter", "year"].map(range => (
-                <button key={range} onClick={() => setTimeRange(range)} style={{
+              {["today", "week", "month", "quarter", "year", "custom"].map(range => (
+                <button key={range} onClick={() => changeTimeRange(range)} style={{
                   padding: "5px 12px", borderRadius: 6, border: "none",
                   background: timeRange === range ? C.pri : "transparent",
                   color: timeRange === range ? "white" : C.textSec,
@@ -29357,6 +29428,15 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
                 }}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>
               ))}
             </div>
+            {timeRange === "custom" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input type="date" value={customFrom} onChange={(e) => { setCustomFrom(e.target.value); setAnimEpoch(ep => ep + 1); }}
+                  style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 11, fontFamily: "inherit", background: C.surface, color: C.text }} />
+                <span style={{ fontSize: 11, color: C.textMut }}>–</span>
+                <input type="date" value={customTo} onChange={(e) => { setCustomTo(e.target.value); setAnimEpoch(ep => ep + 1); }}
+                  style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 11, fontFamily: "inherit", background: C.surface, color: C.text }} />
+              </div>
+            )}
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 11, color: C.textSec, fontWeight: 500 }}>Compare</span>
               <div onClick={() => setCompareMode(!compareMode)} style={{ width: 36, height: 20, borderRadius: 10, background: compareMode ? C.pri : C.border, transition: "background 0.2s", position: "relative", cursor: "pointer" }}>
@@ -29419,7 +29499,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
                 <h3 style={sectionTitle}>Cash Revenue Trend</h3>
                 {compareMode && <span style={{ fontSize: 9, padding: "2px 6px", background: C.accLt, color: C.accDk, borderRadius: 4, fontWeight: 600 }}>vs prev</span>}
               </div>
-              <InteractiveLineChart chartData={cashChartData} color={C.pri} showCompare={compareMode} height={210} id="rpt-cash" />
+              <InteractiveLineChart chartData={cashChartData} color={C.pri} showCompare={compareMode} height={210} id="rpt-cash" animationEpoch={animEpoch} />
             </div>
 
             {/* Category Breakdown */}
@@ -29508,7 +29588,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
                 <h3 style={sectionTitle}>Accrual Revenue Trend</h3>
                 {compareMode && <span style={{ fontSize: 9, padding: "2px 6px", background: C.accLt, color: C.accDk, borderRadius: 4, fontWeight: 600 }}>vs prev</span>}
               </div>
-              <InteractiveLineChart chartData={accrualChartData} color={C.acc} compareColor={C.pri} showCompare={compareMode} height={210} id="rpt-accrual" />
+              <InteractiveLineChart chartData={accrualChartData} color={C.acc} compareColor={C.pri} showCompare={compareMode} height={210} id="rpt-accrual" animationEpoch={animEpoch} />
             </div>
 
             {/* Revenue Composition */}
