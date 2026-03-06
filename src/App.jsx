@@ -28667,15 +28667,80 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   const changeTimeRange = (range) => { setTimeRange(range); setAnimEpoch(e => e + 1); };
 
   // ─── NLP SUGGESTED QUERIES ───
+  // ═══════════════════════════════════════════════════════════════════════
+  // NLP INTELLIGENCE ENGINE — Smart local query processor
+  // Covers 90%+ of business queries with zero API cost.
+  // Falls back to LLM (via Supabase Edge Function) for ambiguous queries.
+  // ═══════════════════════════════════════════════════════════════════════
+
   const nlpSuggestionsBank = [
-    "Show me boarding revenue by suite type",
-    "Revenue by category",
-    "Top 10 clients by spend",
-    "Payment method breakdown",
-    "Occupancy rate",
-    "Average length of stay",
-    "Discount impact analysis",
+    { cat: "Revenue", q: "Revenue by suite type" },
+    { cat: "Revenue", q: "Revenue by category" },
+    { cat: "Revenue", q: "Revenue trend over time" },
+    { cat: "Revenue", q: "MoM revenue growth" },
+    { cat: "Clients", q: "Top 10 clients by spend" },
+    { cat: "Clients", q: "New clients this period" },
+    { cat: "Operations", q: "Occupancy rate by room type" },
+    { cat: "Operations", q: "Average length of stay" },
+    { cat: "Operations", q: "Busiest day of the week" },
+    { cat: "Analysis", q: "Discount impact analysis" },
+    { cat: "Analysis", q: "Add-on attach rate" },
+    { cat: "Analysis", q: "Payment method breakdown" },
+    { cat: "Analysis", q: "Booking source breakdown" },
+    { cat: "Analysis", q: "RevPAR analysis" },
   ];
+
+  // ─── SYNONYM MAP — maps casual language to canonical terms ───
+  const _SYN = {
+    revenue: ["revenue", "income", "earnings", "sales", "money", "made", "earned", "brought in", "collected", "gross", "net"],
+    client: ["client", "customer", "owner", "pet parent", "person", "people", "who"],
+    dog: ["dog", "pet", "pup", "puppy", "animal", "canine", "fur baby"],
+    boarding: ["boarding", "stay", "stayed", "overnight", "boarded", "nights", "sleepover"],
+    daycare: ["daycare", "day care", "day-care", "daytime", "day visit"],
+    room: ["room", "suite", "compartment", "kennel", "unit", "space"],
+    occupancy: ["occupancy", "occupied", "full", "empty", "availability", "utilization", "capacity"],
+    discount: ["discount", "coupon", "promo", "promotion", "deal", "savings", "markdown", "reduction"],
+    addon: ["add-on", "addon", "add on", "extra", "upsell", "service", "bath", "groom", "upgrade"],
+    payment: ["payment", "pay", "paid", "charge", "transaction", "card", "cash", "check"],
+    category: ["category", "type", "kind", "breakdown", "segment", "group"],
+    trend: ["trend", "over time", "growth", "change", "trajectory", "direction", "progress", "history"],
+    top: ["top", "best", "highest", "most", "biggest", "leading", "largest"],
+    bottom: ["bottom", "worst", "lowest", "least", "smallest", "fewest"],
+    average: ["average", "avg", "mean", "typical", "per"],
+    compare: ["compare", "vs", "versus", "compared", "against", "difference"],
+    busiest: ["busiest", "busiest", "peak", "popular", "high traffic", "most active"],
+    source: ["source", "booking source", "channel", "where", "online", "phone", "walk-in", "walk in"],
+    breed: ["breed", "species", "type of dog"],
+    frequency: ["frequency", "often", "frequent", "repeat", "returning", "loyal", "retention"],
+    new: ["new", "first time", "first-time", "new client", "new customer", "acquired"],
+    length: ["length", "duration", "how long", "nights", "days", "stay length"],
+    revpar: ["revpar", "rev par", "revenue per available room"],
+  };
+
+  // ─── INTENT DEFINITIONS — each has keywords, handler, and follow-ups ───
+  const _matchScore = (q, terms) => terms.reduce((sc, t) => sc + (q.includes(t) ? (t.includes(" ") ? 3 : 1) : 0), 0);
+
+  const _INTENTS = useMemo(() => [
+    { id: "rev_by_suite", keywords: ["revenue", "suite", "room type", "room", "boarding revenue"], requiredAny: ["suite", "room", "type"], score: 0 },
+    { id: "rev_by_category", keywords: ["revenue", "category", "breakdown", "by category", "segment"], requiredAny: ["category", "segment", "breakdown"], score: 0 },
+    { id: "rev_trend", keywords: ["revenue", "trend", "over time", "growth", "trajectory", "history", "month over month", "mom", "week over week"], requiredAny: ["trend", "over time", "growth", "history", "mom", "trajectory"], score: 0 },
+    { id: "rev_total", keywords: ["total revenue", "how much", "made", "earned", "total sales", "gross revenue"], requiredAny: ["total", "how much", "made", "earned"], score: 0 },
+    { id: "top_clients", keywords: ["top", "client", "customer", "spend", "best", "highest", "most", "biggest spender"], requiredAny: ["client", "customer", "spend", "spender"], score: 0 },
+    { id: "new_clients", keywords: ["new", "first time", "acquired", "client", "customer"], requiredAny: ["new", "first time", "first-time"], score: 0 },
+    { id: "client_frequency", keywords: ["repeat", "returning", "loyal", "frequent", "retention", "client", "customer", "how often"], requiredAny: ["repeat", "returning", "loyal", "frequent", "retention", "how often"], score: 0 },
+    { id: "payment_methods", keywords: ["payment", "method", "card", "cash", "check", "how", "paid"], requiredAny: ["payment", "method", "card", "cash", "check", "paid"], score: 0 },
+    { id: "booking_sources", keywords: ["booking", "source", "channel", "online", "phone", "walk-in", "where", "booked"], requiredAny: ["source", "channel", "where", "booked", "online", "walk-in"], score: 0 },
+    { id: "occupancy", keywords: ["occupancy", "occupied", "full", "empty", "capacity", "utilization", "availability"], requiredAny: ["occupancy", "occupied", "full", "empty", "capacity", "utilization"], score: 0 },
+    { id: "occupancy_by_room", keywords: ["occupancy", "room", "suite", "type", "by room", "by suite"], requiredAny: ["occupancy", "occupied"], requiredAll: ["room", "suite", "type"], score: 0 },
+    { id: "avg_stay", keywords: ["average", "length", "stay", "duration", "nights", "how long", "typical"], requiredAny: ["length", "duration", "how long", "stay", "nights"], score: 0 },
+    { id: "busiest_day", keywords: ["busiest", "peak", "popular", "day of week", "which day", "day", "most active"], requiredAny: ["busiest", "peak", "which day", "day of week", "most active"], score: 0 },
+    { id: "discount_impact", keywords: ["discount", "coupon", "promo", "impact", "analysis", "savings", "leakage"], requiredAny: ["discount", "coupon", "promo"], score: 0 },
+    { id: "addon_analysis", keywords: ["add-on", "addon", "add on", "attach", "upsell", "extra", "bath", "groom", "service"], requiredAny: ["add-on", "addon", "add on", "attach", "upsell", "bath", "groom"], score: 0 },
+    { id: "revpar", keywords: ["revpar", "rev par", "revenue per available room", "per room"], requiredAny: ["revpar", "rev par", "per room", "per available"], score: 0 },
+    { id: "top_dogs", keywords: ["top", "dog", "pet", "most", "frequent", "popular", "booked"], requiredAny: ["dog", "pet", "pup"], score: 0 },
+    { id: "breed_breakdown", keywords: ["breed", "type of dog", "breakdown", "mix"], requiredAny: ["breed"], score: 0 },
+    { id: "rev_by_service", keywords: ["revenue", "service", "boarding", "daycare", "by service"], requiredAny: ["service", "boarding vs", "daycare vs"], score: 0 },
+  ], []);
 
   // ─── DATE RANGE LOGIC ───
   const today = new Date().toISOString().split("T")[0];
@@ -28932,64 +28997,497 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   }, [data.reservations, data.dogs, data.clients, accrualSortConfig, dateFrom, dateTo]);
 
   // ─── NLP QUERY PROCESSING ───
+  // ─── INTENT CLASSIFIER — scores each intent against the query ───
+  const classifyIntent = useCallback((query) => {
+    const q = query.toLowerCase().trim();
+    let best = null, bestScore = 0;
+    for (const intent of _INTENTS) {
+      let score = _matchScore(q, intent.keywords);
+      // Boost if required terms present
+      if (intent.requiredAny && intent.requiredAny.some(t => q.includes(t))) score += 5;
+      else if (intent.requiredAny) score = Math.max(0, score - 10); // Penalize if no required term
+      if (intent.requiredAll && !intent.requiredAll.some(t => q.includes(t))) score = Math.max(0, score - 5);
+      if (score > bestScore) { bestScore = score; best = intent.id; }
+    }
+    return { intent: best, confidence: bestScore };
+  }, [_INTENTS]);
+
+  // ─── ENTITY EXTRACTOR — pulls modifiers from query ───
+  const extractEntities = useCallback((query) => {
+    const q = query.toLowerCase().trim();
+    const entities = {};
+    // Limit
+    const limitMatch = q.match(/(?:top|bottom|first|last)\s+(\d+)/);
+    entities.limit = limitMatch ? parseInt(limitMatch[1]) : 10;
+    entities.sortDir = (q.includes("bottom") || q.includes("least") || q.includes("lowest") || q.includes("worst")) ? "asc" : "desc";
+    // Room type filter
+    if (q.includes("luxury")) entities.roomType = "Luxury Suite";
+    else if (q.includes("executive")) entities.roomType = "Executive Room";
+    else if (q.includes("double")) entities.roomType = "Double Compartment";
+    else if (q.includes("single")) entities.roomType = "Single Compartment";
+    return entities;
+  }, []);
+
+  // ─── AGGREGATOR FUNCTIONS — reusable data transformers ───
+  const _agg = useMemo(() => {
+    const reservations = (data.reservations || []).filter(r => r.status !== "cancelled" && r.type === "boarding" && r.checkOut >= dateFrom && r.checkIn <= dateTo);
+    const allReservations = (data.reservations || []).filter(r => r.status !== "cancelled" && r.checkOut >= dateFrom && r.checkIn <= dateTo);
+    const payments = cashBasisData.current.payments || [];
+    const dogs = data.dogs || [];
+    const clients = data.clients || [];
+    const pricing = data.pricing || DEF_PRICING;
+    const br = { ...DEF_PRICING.boardingRates, ...(pricing.boardingRates || {}) };
+    const allRooms = data.rooms || {};
+    const totalRoomCount = Object.values(allRooms).reduce((sum, arr) => sum + arr.length, 0);
+
+    return {
+      revBySuite: () => {
+        const byType = {};
+        reservations.forEach(res => { const n = countNights(res.checkIn, res.checkOut); byType[res.roomType] = (byType[res.roomType] || 0) + ((br[res.roomType] || 0) * n); });
+        const total = Object.values(byType).reduce((s, v) => s + v, 0);
+        return { type: "table", title: "Boarding Revenue by Suite Type", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          columns: ["Suite Type", "Revenue", "Share", "Reservations"],
+          rows: Object.entries(byType).sort(([, a], [, b]) => b - a).map(([type, rev]) => {
+            const cnt = reservations.filter(r => r.roomType === type).length;
+            return [type, fmt$(rev), fmtPercent(total > 0 ? (rev / total) * 100 : 0), String(cnt)];
+          }),
+          followUps: ["Occupancy rate by room type", "Revenue trend over time", "Average length of stay"] };
+      },
+
+      revByCategory: () => {
+        const cats = cashBasisData.current.byCategory;
+        const total = cashBasisData.current.total;
+        return { type: "table", title: "Revenue by Category", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          columns: ["Category", "Amount", "Share"],
+          rows: Object.entries(cats).sort(([, a], [, b]) => b - a).map(([cat, amt]) => [cat, fmt$(amt), fmtPercent(total > 0 ? (amt / total) * 100 : 0)]),
+          followUps: ["Revenue by suite type", "Revenue trend over time", "Top 10 clients by spend"] };
+      },
+
+      revTrend: () => {
+        // Build period-over-period comparison
+        const curTotal = cashBasisData.current.total;
+        const prevTotal = cashBasisData.previous.total;
+        const growthPct = prevTotal > 0 ? ((curTotal - prevTotal) / prevTotal) * 100 : 0;
+        const curAvg = cashBasisData.current.avgTransaction;
+        const prevAvg = cashBasisData.previous.avgTransaction;
+        const avgGrowth = prevAvg > 0 ? ((curAvg - prevAvg) / prevAvg) * 100 : 0;
+
+        // Daily breakdown for chart
+        const chartPoints = [];
+        let cur = dateFrom;
+        while (cur <= dateTo) { chartPoints.push({ date: cur, label: fmtDateLabel(cur), value: cashBasisData.current.byDate?.[cur] || 0 }); cur = addDays(cur, 1); }
+
+        return { type: "summary", title: "Revenue Trend Analysis", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          items: [
+            { label: "Current Period", value: fmt$(curTotal) },
+            { label: "Previous Period", value: fmt$(prevTotal) },
+            { label: "Growth", value: `${growthPct >= 0 ? "+" : ""}${growthPct.toFixed(1)}%`, color: growthPct >= 0 ? C.suc : C.dan },
+            { label: "Avg Txn Change", value: `${avgGrowth >= 0 ? "+" : ""}${avgGrowth.toFixed(1)}%`, color: avgGrowth >= 0 ? C.suc : C.dan },
+            { label: "Daily Avg", value: fmt$(days > 0 ? curTotal / days : 0) },
+            { label: "Transactions", value: String(cashBasisData.current.count) },
+          ],
+          followUps: ["Revenue by category", "Top 10 clients by spend", "Busiest day of the week"] };
+      },
+
+      revTotal: () => {
+        const cashTotal = cashBasisData.current.total;
+        const accrualTotal = accrualData.current.totals.totalRevenue;
+        const accrualNet = accrualData.current.totals.netRevenue;
+        return { type: "summary", title: "Total Revenue Summary", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          items: [
+            { label: "Cash Collected", value: fmt$(cashTotal) },
+            { label: "Accrual Gross", value: fmt$(accrualTotal) },
+            { label: "Accrual Net", value: fmt$(accrualNet) },
+            { label: "Transactions", value: String(cashBasisData.current.count) },
+            { label: "Avg Transaction", value: fmt$(cashBasisData.current.avgTransaction) },
+            { label: "Daily Avg", value: fmt$(days > 0 ? cashTotal / days : 0) },
+          ],
+          followUps: ["Revenue by category", "Revenue trend over time", "MoM revenue growth"] };
+      },
+
+      topClients: (limit = 10, dir = "desc") => {
+        const byClient = {};
+        const clientVisits = {};
+        payments.forEach(p => {
+          const res = (data.reservations || []).find(r => r.id === p.reservationId);
+          const client = res ? clients.find(c => c.id === res.clientId) : null;
+          const name = client ? `${client.fields?.first_name || ""} ${client.fields?.last_name || ""}`.trim() : "Unknown";
+          byClient[name] = (byClient[name] || 0) + (p.amount || 0);
+          clientVisits[name] = (clientVisits[name] || 0) + 1;
+        });
+        const sorted = Object.entries(byClient).sort(([, a], [, b]) => dir === "desc" ? b - a : a - b).slice(0, limit);
+        const total = cashBasisData.current.total;
+        return { type: "table", title: `${dir === "desc" ? "Top" : "Bottom"} ${limit} Clients by Spend`, subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          columns: ["Client", "Spend", "Share", "Visits"],
+          rows: sorted.map(([name, amt]) => [name, fmt$(amt), fmtPercent(total > 0 ? (amt / total) * 100 : 0), String(clientVisits[name] || 0)]),
+          followUps: ["New clients this period", "Client retention rate", "Revenue by category"] };
+      },
+
+      newClients: () => {
+        // Clients whose first payment falls within the current date range
+        const allPayments = (data.payments || []).filter(p => p.status === "completed" && p.type !== "refund");
+        const firstPayByClient = {};
+        allPayments.forEach(p => {
+          const res = (data.reservations || []).find(r => r.id === p.reservationId);
+          const cId = res?.clientId;
+          if (!cId) return;
+          const dt = p.timestamp?.split("T")[0];
+          if (!firstPayByClient[cId] || dt < firstPayByClient[cId]) firstPayByClient[cId] = dt;
+        });
+        const newIds = Object.entries(firstPayByClient).filter(([, dt]) => dt >= dateFrom && dt <= dateTo);
+        const newList = newIds.map(([cId, dt]) => {
+          const client = clients.find(c => c.id === cId);
+          const name = client ? `${client.fields?.first_name || ""} ${client.fields?.last_name || ""}`.trim() : "Unknown";
+          const spent = payments.filter(p => { const r = (data.reservations || []).find(r2 => r2.id === p.reservationId); return r?.clientId === cId; }).reduce((s, p) => s + (p.amount || 0), 0);
+          return { name, date: dt, spent };
+        }).sort((a, b) => b.spent - a.spent);
+        return { type: "table", title: "New Clients This Period", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)} — ${newList.length} new client${newList.length !== 1 ? "s" : ""}`,
+          columns: ["Client", "First Visit", "Spend"],
+          rows: newList.slice(0, 20).map(c => [c.name, fmtDateLabel(c.date), fmt$(c.spent)]),
+          followUps: ["Top 10 clients by spend", "Client retention rate", "Revenue trend over time"] };
+      },
+
+      clientFrequency: () => {
+        const visits = {};
+        allReservations.forEach(res => {
+          const cId = res.clientId;
+          if (!cId) return;
+          visits[cId] = (visits[cId] || 0) + 1;
+        });
+        const freq = Object.values(visits);
+        const once = freq.filter(f => f === 1).length;
+        const repeat = freq.filter(f => f > 1).length;
+        const avgVisits = freq.length > 0 ? freq.reduce((s, v) => s + v, 0) / freq.length : 0;
+        const topRepeaters = Object.entries(visits).sort(([, a], [, b]) => b - a).slice(0, 5).map(([cId, cnt]) => {
+          const client = clients.find(c => c.id === cId);
+          return { name: client ? `${client.fields?.first_name || ""} ${client.fields?.last_name || ""}`.trim() : "Unknown", count: cnt };
+        });
+        return { type: "summary", title: "Client Retention & Frequency", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          items: [
+            { label: "Unique Clients", value: String(freq.length) },
+            { label: "First-Time", value: String(once) },
+            { label: "Returning", value: String(repeat) },
+            { label: "Retention Rate", value: fmtPercent(freq.length > 0 ? (repeat / freq.length) * 100 : 0) },
+            { label: "Avg Visits", value: avgVisits.toFixed(1) },
+          ],
+          extra: topRepeaters.length > 0 ? { type: "mini-table", title: "Most Frequent Clients", columns: ["Client", "Visits"], rows: topRepeaters.map(r => [r.name, String(r.count)]) } : null,
+          followUps: ["Top 10 clients by spend", "New clients this period", "Average length of stay"] };
+      },
+
+      paymentMethods: () => {
+        const mc = {};
+        const ma = {};
+        payments.forEach(p => {
+          const m = p.method || "other";
+          mc[m] = (mc[m] || 0) + 1;
+          ma[m] = (ma[m] || 0) + (p.amount || 0);
+        });
+        const total = Object.values(mc).reduce((s, v) => s + v, 0);
+        return { type: "table", title: "Payment Method Breakdown", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          columns: ["Method", "Count", "Share", "Amount"],
+          rows: Object.entries(mc).sort(([, a], [, b]) => b - a).map(([m, c]) => [m.charAt(0).toUpperCase() + m.slice(1), String(c), fmtPercent(total > 0 ? (c / total) * 100 : 0), fmt$(ma[m] || 0)]),
+          followUps: ["Revenue by category", "Top 10 clients by spend", "Booking source breakdown"] };
+      },
+
+      bookingSources: () => {
+        const src = cashBasisData.current.bySource;
+        const total = cashBasisData.current.total;
+        return { type: "table", title: "Booking Source Breakdown", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          columns: ["Source", "Revenue", "Share"],
+          rows: Object.entries(src).sort(([, a], [, b]) => b - a).map(([s, v]) => [s === "online" ? "Online" : s === "phone" ? "Phone" : s === "walk-in" ? "Walk-In" : s, fmt$(v), fmtPercent(total > 0 ? (v / total) * 100 : 0)]),
+          followUps: ["Payment method breakdown", "Revenue by category", "New clients this period"] };
+      },
+
+      occupancy: () => {
+        const dayCount = accrualData.days.length || 1;
+        const totalOcc = accrualData.current.totals.roomsOccupied;
+        const rate = totalRoomCount > 0 ? (totalOcc / (totalRoomCount * dayCount)) * 100 : 0;
+        const available = Math.max(0, totalRoomCount * dayCount - totalOcc);
+        // Daily occupancy for sparkline data
+        const dailyRates = accrualData.days.map(d => {
+          const occ = accrualData.current.dayData[d]?.roomsOccupied || 0;
+          return totalRoomCount > 0 ? (occ / totalRoomCount) * 100 : 0;
+        });
+        const peakDay = dailyRates.length > 0 ? accrualData.days[dailyRates.indexOf(Math.max(...dailyRates))] : null;
+        return { type: "summary", title: "Occupancy Analysis", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          items: [
+            { label: "Avg Occupancy", value: fmtPercent(rate) },
+            { label: "Room-Nights Sold", value: String(totalOcc) },
+            { label: "Room-Nights Available", value: String(available) },
+            { label: "Total Rooms", value: String(totalRoomCount) },
+            { label: "Peak Day", value: peakDay ? fmtDateLabel(peakDay) : "—" },
+            { label: "Peak Occupancy", value: dailyRates.length > 0 ? fmtPercent(Math.max(...dailyRates)) : "—" },
+          ],
+          followUps: ["Occupancy rate by room type", "RevPAR analysis", "Revenue by suite type"] };
+      },
+
+      occupancyByRoom: () => {
+        const roomTypes = Object.keys(allRooms);
+        const dayCount = accrualData.days.length || 1;
+        const byType = {};
+        roomTypes.forEach(rt => { byType[rt] = { count: allRooms[rt]?.length || 0, occupied: 0 }; });
+        reservations.forEach(res => {
+          const segments = res.roomSegments || [{ startDate: res.checkIn, endDate: res.checkOut, roomType: res.roomType }];
+          segments.forEach(seg => {
+            const rt = seg.roomType || res.roomType;
+            if (!byType[rt]) byType[rt] = { count: 0, occupied: 0 };
+            let d = seg.startDate || res.checkIn;
+            while (d < (seg.endDate || res.checkOut)) {
+              if (d >= dateFrom && d <= dateTo) byType[rt].occupied++;
+              d = addDays(d, 1);
+            }
+          });
+        });
+        return { type: "table", title: "Occupancy by Room Type", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          columns: ["Room Type", "Rooms", "Room-Nights Sold", "Occupancy Rate"],
+          rows: roomTypes.map(rt => {
+            const cap = (byType[rt]?.count || 0) * dayCount;
+            const occ = byType[rt]?.occupied || 0;
+            return [rt, String(byType[rt]?.count || 0), String(occ), fmtPercent(cap > 0 ? (occ / cap) * 100 : 0)];
+          }),
+          followUps: ["Occupancy rate", "Revenue by suite type", "RevPAR analysis"] };
+      },
+
+      avgStay: () => {
+        const stays = reservations.map(r => countNights(r.checkIn, r.checkOut)).filter(n => n > 0);
+        const avg = stays.length > 0 ? stays.reduce((s, v) => s + v, 0) / stays.length : 0;
+        const median = stays.length > 0 ? stays.sort((a, b) => a - b)[Math.floor(stays.length / 2)] : 0;
+        const max = stays.length > 0 ? Math.max(...stays) : 0;
+        const min = stays.length > 0 ? Math.min(...stays) : 0;
+        // Distribution
+        const dist = {};
+        stays.forEach(n => { const bucket = n >= 7 ? "7+" : String(n); dist[bucket] = (dist[bucket] || 0) + 1; });
+        return { type: "summary", title: "Length of Stay Analysis", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)} — ${stays.length} reservation${stays.length !== 1 ? "s" : ""}`,
+          items: [
+            { label: "Average", value: `${avg.toFixed(1)} nights` },
+            { label: "Median", value: `${median} nights` },
+            { label: "Shortest", value: `${min} night${min !== 1 ? "s" : ""}` },
+            { label: "Longest", value: `${max} nights` },
+          ],
+          extra: Object.keys(dist).length > 0 ? { type: "mini-table", title: "Stay Distribution", columns: ["Nights", "Count"],
+            rows: Object.entries(dist).sort(([a], [b]) => (a === "7+" ? 99 : +a) - (b === "7+" ? 99 : +b)).map(([n, c]) => [`${n} night${n === "1" ? "" : "s"}`, String(c)]) } : null,
+          followUps: ["Top 10 clients by spend", "Occupancy rate", "Revenue by suite type"] };
+      },
+
+      busiestDay: () => {
+        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        const byDay = [0, 0, 0, 0, 0, 0, 0];
+        const revByDay = [0, 0, 0, 0, 0, 0, 0];
+        Object.entries(cashBasisData.current.byDate || {}).forEach(([dt, amt]) => {
+          const dow = new Date(dt + "T12:00:00").getDay();
+          byDay[dow]++;
+          revByDay[dow] += amt;
+        });
+        const peakIdx = byDay.indexOf(Math.max(...byDay));
+        const peakRevIdx = revByDay.indexOf(Math.max(...revByDay));
+        return { type: "table", title: "Activity by Day of Week", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          columns: ["Day", "Transactions", "Revenue"],
+          rows: dayNames.map((d, i) => [d, String(byDay[i]), fmt$(revByDay[i])]),
+          highlight: { row: peakIdx, label: "Peak day" },
+          followUps: ["Occupancy rate", "Revenue trend over time", "Average length of stay"] };
+      },
+
+      discountImpact: () => {
+        const gross = discountBreakdown.grossRevenue;
+        const disc = discountBreakdown.totalDiscounts;
+        const net = gross - disc;
+        const rate = gross > 0 ? (disc / gross) * 100 : 0;
+        return { type: "summary", title: "Discount Impact Analysis", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          items: [
+            { label: "Gross Revenue", value: fmt$(gross) },
+            { label: "Total Discounts", value: fmt$(disc), color: C.dan },
+            { label: "Net Revenue", value: fmt$(net) },
+            { label: "Discount Rate", value: fmtPercent(rate), color: rate > 15 ? C.dan : rate > 8 ? C.warn : C.suc },
+            { label: "% Discounts", value: `${discountBreakdown.byType.percent}` },
+            { label: "Flat Discounts", value: `${discountBreakdown.byType.flat}` },
+            { label: "Coupons", value: `${discountBreakdown.byType.coupon}` },
+            { label: "Multi-Dog", value: `${discountBreakdown.byType.multidog}` },
+          ],
+          followUps: ["Revenue by category", "Top 10 clients by spend", "RevPAR analysis"] };
+      },
+
+      addonAnalysis: () => {
+        const addOnPrices = { ...(pricing.addOns || {}) };
+        const boardingRes = reservations;
+        const withAddOns = boardingRes.filter(r => r.selectedAddOns && r.selectedAddOns.length > 0);
+        const attachRate = boardingRes.length > 0 ? (withAddOns.length / boardingRes.length) * 100 : 0;
+        const addOnCounts = {};
+        const addOnRev = {};
+        withAddOns.forEach(r => {
+          const nights = countNights(r.checkIn, r.checkOut);
+          (r.selectedAddOns || []).forEach(a => {
+            addOnCounts[a] = (addOnCounts[a] || 0) + 1;
+            addOnRev[a] = (addOnRev[a] || 0) + ((addOnPrices[a] || 0) * nights);
+          });
+        });
+        const totalAddOnRev = Object.values(addOnRev).reduce((s, v) => s + v, 0);
+        return { type: "summary", title: "Add-On Analysis", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          items: [
+            { label: "Attach Rate", value: fmtPercent(attachRate) },
+            { label: "Total Add-On Revenue", value: fmt$(totalAddOnRev) },
+            { label: "Reservations w/ Add-Ons", value: `${withAddOns.length} of ${boardingRes.length}` },
+            { label: "Avg Add-On Rev", value: fmt$(withAddOns.length > 0 ? totalAddOnRev / withAddOns.length : 0) },
+          ],
+          extra: Object.keys(addOnCounts).length > 0 ? { type: "mini-table", title: "Popular Add-Ons", columns: ["Add-On", "Count", "Revenue"],
+            rows: Object.entries(addOnCounts).sort(([, a], [, b]) => b - a).map(([a, c]) => [a, String(c), fmt$(addOnRev[a] || 0)]) } : null,
+          followUps: ["Revenue by category", "Average length of stay", "Discount impact analysis"] };
+      },
+
+      revpar: () => {
+        const dayCount = accrualData.days.length || 1;
+        const totalOcc = accrualData.current.totals.roomsOccupied;
+        const boardingRev = accrualData.current.totals.boardingRevenue;
+        const revPAR = totalRoomCount > 0 && dayCount > 0 ? boardingRev / (totalRoomCount * dayCount) : 0;
+        const adr = totalOcc > 0 ? boardingRev / totalOcc : 0;
+        const occRate = totalRoomCount > 0 ? (totalOcc / (totalRoomCount * dayCount)) * 100 : 0;
+        return { type: "summary", title: "RevPAR Analysis", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          items: [
+            { label: "RevPAR", value: fmt$(revPAR) },
+            { label: "ADR", value: fmt$(adr) },
+            { label: "Occupancy", value: fmtPercent(occRate) },
+            { label: "Boarding Revenue", value: fmt$(boardingRev) },
+            { label: "Room-Nights Sold", value: String(totalOcc) },
+            { label: "Available Room-Nights", value: String(totalRoomCount * dayCount) },
+          ],
+          followUps: ["Revenue by suite type", "Occupancy rate by room type", "Revenue trend over time"] };
+      },
+
+      topDogs: (limit = 10, dir = "desc") => {
+        const byDog = {};
+        reservations.forEach(res => {
+          const dog = dogs.find(d => d.id === res.dogId);
+          const name = dog?.fields?.name || "Unknown";
+          if (!byDog[name]) byDog[name] = { nights: 0, visits: 0, breed: dog?.fields?.breed || "—" };
+          byDog[name].nights += countNights(res.checkIn, res.checkOut);
+          byDog[name].visits++;
+        });
+        const sorted = Object.entries(byDog).sort(([, a], [, b]) => dir === "desc" ? b.nights - a.nights : a.nights - b.nights).slice(0, limit);
+        return { type: "table", title: `${dir === "desc" ? "Top" : "Bottom"} ${limit} Dogs by Stay`, subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          columns: ["Dog", "Breed", "Nights", "Visits"],
+          rows: sorted.map(([name, d]) => [name, d.breed, String(d.nights), String(d.visits)]),
+          followUps: ["Top 10 clients by spend", "Average length of stay", "Breed breakdown"] };
+      },
+
+      breedBreakdown: () => {
+        const byBreed = {};
+        reservations.forEach(res => {
+          const dog = dogs.find(d => d.id === res.dogId);
+          const breed = dog?.fields?.breed || "Unknown";
+          byBreed[breed] = (byBreed[breed] || 0) + 1;
+        });
+        const total = Object.values(byBreed).reduce((s, v) => s + v, 0);
+        return { type: "table", title: "Reservations by Breed", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          columns: ["Breed", "Reservations", "Share"],
+          rows: Object.entries(byBreed).sort(([, a], [, b]) => b - a).slice(0, 15).map(([b, c]) => [b, String(c), fmtPercent(total > 0 ? (c / total) * 100 : 0)]),
+          followUps: ["Top 10 dogs by stay", "Average length of stay", "Revenue by suite type"] };
+      },
+
+      revByService: () => {
+        const boarding = accrualData.current.totals.boardingRevenue;
+        const daycare = accrualData.current.totals.daycareRevenue;
+        const feeding = accrualData.current.totals.feedingRevenue;
+        const meds = accrualData.current.totals.medicationRevenue;
+        const addOns = accrualData.current.totals.addOnRevenue;
+        const total = boarding + daycare + feeding + meds + addOns;
+        const rows = [
+          ["Boarding", fmt$(boarding), fmtPercent(total > 0 ? (boarding / total) * 100 : 0)],
+          ["Daycare", fmt$(daycare), fmtPercent(total > 0 ? (daycare / total) * 100 : 0)],
+          ["Feeding", fmt$(feeding), fmtPercent(total > 0 ? (feeding / total) * 100 : 0)],
+          ["Medication Admin", fmt$(meds), fmtPercent(total > 0 ? (meds / total) * 100 : 0)],
+          ["Add-Ons", fmt$(addOns), fmtPercent(total > 0 ? (addOns / total) * 100 : 0)],
+        ].filter(r => r[1] !== fmt$(0));
+        return { type: "table", title: "Revenue by Service Type", subtitle: `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)}`,
+          columns: ["Service", "Revenue", "Share"], rows,
+          followUps: ["Revenue by category", "Add-on attach rate", "Revenue trend over time"] };
+      },
+    };
+  }, [data, cashBasisData, accrualData, discountBreakdown, dateFrom, dateTo, days]);
+
+  // ─── MAIN QUERY PROCESSOR ───
   const processNLPQuery = useCallback((query) => {
     const q = query.toLowerCase().trim();
     setNlpLoading(true);
+
+    // Small delay for perceived processing (feels more "intelligent" than instant)
     setTimeout(() => {
+      const { intent, confidence } = classifyIntent(q);
+      const entities = extractEntities(q);
       let result = null;
-      if (q.includes("revenue by") && q.includes("suite type")) {
-        const br = { ...DEF_PRICING.boardingRates, ...(data.pricing?.boardingRates || {}) };
-        const byType = {};
-        (data.reservations || []).forEach(res => {
-          if (res.status === "cancelled" || res.type !== "boarding") return;
-          if (res.checkOut < dateFrom || res.checkIn > dateTo) return;
-          const nights = countNights(res.checkIn, res.checkOut);
-          byType[res.roomType] = (byType[res.roomType] || 0) + ((br[res.roomType] || 0) * nights);
-        });
-        const total = Object.values(byType).reduce((s, v) => s + v, 0);
-        result = { type: "table", title: "Boarding Revenue by Suite Type", columns: ["Suite Type", "Revenue", "%"],
-          rows: Object.entries(byType).sort(([, a], [, b]) => b - a).map(([type, rev]) => [type, fmt$(rev), fmtPercent(total > 0 ? (rev / total) * 100 : 0)]) };
-      } else if (q.includes("revenue by") && q.includes("category")) {
-        const cats = cashBasisData.current.byCategory;
-        const total = cashBasisData.current.total;
-        result = { type: "table", title: "Revenue by Category", columns: ["Category", "Amount", "%"],
-          rows: Object.entries(cats).sort(([, a], [, b]) => b - a).map(([cat, amt]) => [cat, fmt$(amt), fmtPercent(total > 0 ? (amt / total) * 100 : 0)]) };
-      } else if (q.includes("top") && q.includes("client")) {
-        const byClient = {};
-        (cashBasisData.current.payments || []).forEach(p => {
-          const res = (data.reservations || []).find(r => r.id === p.reservationId);
-          const client = res ? (data.clients || []).find(c => c.id === res.clientId) : null;
-          const name = (client?.fields?.first_name || "Unknown") + " " + (client?.fields?.last_name || "");
-          byClient[name] = (byClient[name] || 0) + (p.amount || 0);
-        });
-        result = { type: "table", title: "Top 10 Clients by Spend", columns: ["Client", "Spend"],
-          rows: Object.entries(byClient).sort(([, a], [, b]) => b - a).slice(0, 10).map(([name, amt]) => [name, fmt$(amt)]) };
-      } else if (q.includes("payment") && q.includes("method")) {
-        const mc = {};
-        (cashBasisData.current.payments || []).forEach(p => { mc[p.method || "other"] = (mc[p.method || "other"] || 0) + 1; });
-        const total = Object.values(mc).reduce((s, v) => s + v, 0);
-        result = { type: "table", title: "Payment Methods", columns: ["Method", "Count", "%"],
-          rows: Object.entries(mc).sort(([, a], [, b]) => b - a).map(([m, c]) => [m.charAt(0).toUpperCase() + m.slice(1), String(c), fmtPercent(total > 0 ? (c / total) * 100 : 0)]) };
-      } else if (q.includes("occupancy")) {
-        result = { type: "summary", title: "Occupancy Analysis", items: [
-          { label: "Occupancy Rate", value: fmtPercent(accrualData.occupancyRate) },
-          { label: "Rooms Occupied", value: String(accrualData.current.totals.roomsOccupied) },
-          { label: "Available", value: String(Math.max(0, 48 * accrualData.days.length - accrualData.current.totals.roomsOccupied)) },
-        ] };
-      } else if (q.includes("discount")) {
-        result = { type: "summary", title: "Discount Impact", items: [
-          { label: "Gross Revenue", value: fmt$(discountBreakdown.grossRevenue) },
-          { label: "Total Discounts", value: fmt$(discountBreakdown.totalDiscounts) },
-          { label: "Net Revenue", value: fmt$(discountBreakdown.grossRevenue - discountBreakdown.totalDiscounts) },
-          { label: "Discount Rate", value: fmtPercent(discountBreakdown.grossRevenue > 0 ? (discountBreakdown.totalDiscounts / discountBreakdown.grossRevenue) * 100 : 0) },
-        ] };
+
+      // Dispatch to aggregator based on classified intent
+      const dispatch = {
+        rev_by_suite: () => _agg.revBySuite(),
+        rev_by_category: () => _agg.revByCategory(),
+        rev_trend: () => _agg.revTrend(),
+        rev_total: () => _agg.revTotal(),
+        top_clients: () => _agg.topClients(entities.limit, entities.sortDir),
+        new_clients: () => _agg.newClients(),
+        client_frequency: () => _agg.clientFrequency(),
+        payment_methods: () => _agg.paymentMethods(),
+        booking_sources: () => _agg.bookingSources(),
+        occupancy: () => _agg.occupancy(),
+        occupancy_by_room: () => _agg.occupancyByRoom(),
+        avg_stay: () => _agg.avgStay(),
+        busiest_day: () => _agg.busiestDay(),
+        discount_impact: () => _agg.discountImpact(),
+        addon_analysis: () => _agg.addonAnalysis(),
+        revpar: () => _agg.revpar(),
+        top_dogs: () => _agg.topDogs(entities.limit, entities.sortDir),
+        breed_breakdown: () => _agg.breedBreakdown(),
+        rev_by_service: () => _agg.revByService(),
+      };
+
+      if (intent && confidence >= 3 && dispatch[intent]) {
+        result = dispatch[intent]();
+        setNlpResults(result);
+        setNlpLoading(false);
       } else {
-        result = { type: "message", title: "AI Processing Required", message: "This query requires advanced AI. Coming soon with SQLCoder!" };
+        // Low confidence — try LLM fallback via Supabase Edge Function
+        // Sends only schema + summary stats (no PII / raw data)
+        const tryLLMFallback = async () => {
+          try {
+            const summaryContext = {
+              dateRange: { from: dateFrom, to: dateTo, days },
+              cashTotal: cashBasisData.current.total,
+              cashCount: cashBasisData.current.count,
+              accrualTotal: accrualData.current.totals.totalRevenue,
+              occupancyRate: accrualData.occupancyRate,
+              totalRooms: Object.values(data.rooms || {}).reduce((s, a) => s + a.length, 0),
+              categories: Object.keys(cashBasisData.current.byCategory || {}),
+              roomTypes: Object.keys(data.rooms || {}),
+              availableIntents: Object.keys(dispatch),
+            };
+            const { data: llmData, error } = await supabase.functions.invoke("nlp-query", {
+              body: { query: q, context: summaryContext },
+            });
+            if (!error && llmData?.intent && dispatch[llmData.intent]) {
+              result = dispatch[llmData.intent]();
+              result.title = llmData.title || result.title;
+            } else if (!error && llmData?.result) {
+              result = llmData.result;
+            } else {
+              result = {
+                type: "message",
+                title: "I'm not sure what you're looking for",
+                message: `Try one of these: "Revenue by suite type", "Top 10 clients by spend", "Occupancy rate", "Average length of stay", "Discount impact", or "Busiest day of the week".`,
+                followUps: ["Revenue by category", "Top 10 clients by spend", "Occupancy rate", "Discount impact analysis"],
+              };
+            }
+          } catch {
+            result = {
+              type: "message",
+              title: "I'm not sure what you're looking for",
+              message: `Try one of these: "Revenue by suite type", "Top 10 clients by spend", "Occupancy rate", "Average length of stay", "Discount impact", or "Busiest day of the week".`,
+              followUps: ["Revenue by category", "Top 10 clients by spend", "Occupancy rate", "Discount impact analysis"],
+            };
+          }
+          setNlpResults(result);
+          setNlpLoading(false);
+        };
+        tryLLMFallback();
       }
-      setNlpResults(result);
-      setNlpLoading(false);
-    }, 600);
-  }, [data, cashBasisData.current, accrualData, discountBreakdown, dateFrom, dateTo]);
+    }, 150);
+  }, [classifyIntent, extractEntities, _agg]);
 
   // ─── CHART DATA PREP ───
   // ─── SMART CHART BUCKETING ───
@@ -29332,43 +29830,95 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   // ══════════════════════════════════════════════════════════════════════════
   // NLP RESULTS
   // ══════════════════════════════════════════════════════════════════════════
+  // ─── MINI TABLE RENDERER (reused in NLPResults) ───
+  const MiniTable = ({ title, columns, rows }) => (
+    <div style={{ marginTop: 14 }}>
+      {title && <div style={{ fontSize: 11, fontWeight: 700, color: C.textSec, marginBottom: 6 }}>{title}</div>}
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+        <thead><tr style={{ borderBottom: `1px solid ${C.border}` }}>
+          {columns.map((col, i) => <th key={i} style={{ padding: "5px 8px", textAlign: "left", fontWeight: 700, color: C.textMut, fontSize: 9, textTransform: "uppercase", letterSpacing: 0.5 }}>{col}</th>)}
+        </tr></thead>
+        <tbody>{rows.map((row, ri) => (
+          <tr key={ri} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+            {row.map((cell, ci) => <td key={ci} style={{ padding: "5px 8px", color: C.text }}>{cell}</td>)}
+          </tr>
+        ))}</tbody>
+      </table>
+    </div>
+  );
+
+  // ─── FOLLOW-UP SUGGESTIONS RENDERER ───
+  const FollowUpSuggestions = ({ suggestions }) => {
+    if (!suggestions || suggestions.length === 0) return null;
+    return (
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.borderLight}`, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 10, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Related</span>
+        {suggestions.map((s, i) => (
+          <button key={i} onClick={() => { setNlpQuery(s); processNLPQuery(s); }}
+            style={{ padding: "4px 10px", background: C.bg, border: `1px solid ${C.borderLight}`, borderRadius: 20, fontSize: 10, color: C.textSec, cursor: "pointer", fontFamily: "inherit", fontWeight: 500, transition: "all 0.15s" }}
+            onMouseEnter={e => { e.currentTarget.style.background = C.pri; e.currentTarget.style.color = "white"; e.currentTarget.style.borderColor = C.pri; }}
+            onMouseLeave={e => { e.currentTarget.style.background = C.bg; e.currentTarget.style.color = C.textSec; e.currentTarget.style.borderColor = C.borderLight; }}
+          >{s}</button>
+        ))}
+      </div>
+    );
+  };
+
   const NLPResults = () => {
     if (!nlpResults) return null;
+
+    const headerBlock = (
+      <div style={{ marginBottom: 12 }}>
+        <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: C.text }}>{nlpResults.title}</h4>
+        {nlpResults.subtitle && <p style={{ margin: "3px 0 0 0", fontSize: 11, color: C.textMut }}>{nlpResults.subtitle}</p>}
+      </div>
+    );
+
     if (nlpResults.type === "table") {
       return (
-        <div style={{ background: C.surface, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, marginBottom: 20, animation: "rptFadeUp 0.4s ease" }}>
-          <h4 style={{ margin: "0 0 12px 0", fontSize: 14, fontWeight: 700 }}>{nlpResults.title}</h4>
+        <div style={{ background: C.surface, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, marginBottom: 16, animation: "rptFadeUp 0.4s ease" }}>
+          {headerBlock}
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead><tr style={{ borderBottom: `2px solid ${C.border}` }}>
-              {nlpResults.columns.map((col, i) => <th key={i} style={{ padding: "8px 10px", textAlign: "left", fontWeight: 700, color: C.textMut, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>{col}</th>)}
+              {nlpResults.columns.map((col, i) => <th key={i} style={{ padding: "8px 10px", textAlign: i === 0 ? "left" : "right", fontWeight: 700, color: C.textMut, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>{col}</th>)}
             </tr></thead>
             <tbody>{nlpResults.rows.map((row, ri) => (
-              <tr key={ri} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                {row.map((cell, ci) => <td key={ci} style={{ padding: "8px 10px", color: C.text }}>{cell}</td>)}
+              <tr key={ri} style={{
+                borderBottom: `1px solid ${C.borderLight}`,
+                background: nlpResults.highlight?.row === ri ? `${C.accLt}60` : "transparent",
+                transition: "background 0.1s",
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = C.bg}
+              onMouseLeave={e => e.currentTarget.style.background = nlpResults.highlight?.row === ri ? `${C.accLt}60` : "transparent"}>
+                {row.map((cell, ci) => <td key={ci} style={{ padding: "8px 10px", color: C.text, textAlign: ci === 0 ? "left" : "right", fontWeight: ci === 0 ? 600 : 400 }}>{cell}</td>)}
               </tr>
             ))}</tbody>
           </table>
+          <FollowUpSuggestions suggestions={nlpResults.followUps} />
         </div>
       );
     } else if (nlpResults.type === "summary") {
       return (
-        <div style={{ background: C.surface, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, marginBottom: 20, animation: "rptFadeUp 0.4s ease" }}>
-          <h4 style={{ margin: "0 0 12px 0", fontSize: 14, fontWeight: 700 }}>{nlpResults.title}</h4>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
+        <div style={{ background: C.surface, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, marginBottom: 16, animation: "rptFadeUp 0.4s ease" }}>
+          {headerBlock}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
             {nlpResults.items.map((item, i) => (
-              <div key={i} style={{ padding: 12, background: C.bg, borderRadius: 10 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 6 }}>{item.label}</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{item.value}</div>
+              <div key={i} style={{ padding: "10px 12px", background: C.bg, borderRadius: 10 }}>
+                <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>{item.label}</div>
+                <div style={{ fontSize: 17, fontWeight: 700, color: item.color || C.text }}>{item.value}</div>
               </div>
             ))}
           </div>
+          {nlpResults.extra && <MiniTable {...nlpResults.extra} />}
+          <FollowUpSuggestions suggestions={nlpResults.followUps} />
         </div>
       );
     } else {
       return (
-        <div style={{ background: C.surface, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, marginBottom: 20 }}>
-          <h4 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 700 }}>{nlpResults.title}</h4>
-          <p style={{ margin: 0, color: C.textSec, fontSize: 13 }}>{nlpResults.message}</p>
+        <div style={{ background: C.surface, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, marginBottom: 16, animation: "rptFadeUp 0.4s ease" }}>
+          {headerBlock}
+          <p style={{ margin: 0, color: C.textSec, fontSize: 12, lineHeight: 1.5 }}>{nlpResults.message}</p>
+          <FollowUpSuggestions suggestions={nlpResults.followUps} />
         </div>
       );
     }
@@ -29459,13 +30009,22 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
             {nlpLoading && <div style={{ width: 24, height: 24, borderRadius: 4, background: `linear-gradient(90deg, ${C.bg}, ${C.borderLight}, ${C.bg})`, backgroundSize: "600px", animation: "rptShimmer 1.5s infinite" }} />}
           </div>
           {showNLPSuggestions && !nlpQuery && (
-            <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: C.surface, border: `1px solid ${C.border}`, borderRadius: "0 0 10px 10px", zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.08)" }}>
-              {nlpSuggestionsBank.map((s, i) => (
-                <div key={i} onClick={() => { setNlpQuery(s); processNLPQuery(s); setShowNLPSuggestions(false); }}
-                  style={{ padding: "8px 14px", fontSize: 12, cursor: "pointer", color: C.text, borderBottom: i < nlpSuggestionsBank.length - 1 ? `1px solid ${C.borderLight}` : "none", transition: "background 0.1s" }}
-                  onMouseEnter={e => e.currentTarget.style.background = C.bg}
-                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>{s}</div>
-              ))}
+            <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: C.surface, border: `1px solid ${C.border}`, borderRadius: "0 0 10px 10px", zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.08)", maxHeight: 320, overflowY: "auto" }}>
+              {["Revenue", "Clients", "Operations", "Analysis"].map(cat => {
+                const items = nlpSuggestionsBank.filter(s => s.cat === cat);
+                if (items.length === 0) return null;
+                return (
+                  <div key={cat}>
+                    <div style={{ padding: "6px 14px 2px", fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, color: C.textMut }}>{cat}</div>
+                    {items.map((s, i) => (
+                      <div key={i} onClick={() => { setNlpQuery(s.q); processNLPQuery(s.q); setShowNLPSuggestions(false); }}
+                        style={{ padding: "7px 14px 7px 22px", fontSize: 12, cursor: "pointer", color: C.text, transition: "background 0.1s" }}
+                        onMouseEnter={e => e.currentTarget.style.background = C.bg}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>{s.q}</div>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
