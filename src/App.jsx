@@ -28872,13 +28872,10 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   const CHART_PTS = 30; // Always exactly 30 points — consistent paths for smooth morphing
   const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, showCompare, height = 240, id = "chart" }) => {
     const [hoverIdx, setHoverIdx] = useState(null);
-    const [animMain, setAnimMain] = useState(null);
-    const [animComp, setAnimComp] = useState(null);
-    const [animMax, setAnimMax] = useState(null);
-    const prevMainRef = useRef(null);
-    const prevCompRef = useRef(null);
-    const prevMaxRef = useRef(null);
-    const animFrameRef = useRef(null);
+    // Single ref tracks exactly what's on screen RIGHT NOW — no stale state, no bounce
+    const screenRef = useRef({ main: null, comp: null, max: null });
+    const rafRef = useRef(null);
+    const [, forceRender] = useState(0);
 
     // ALWAYS normalize to exactly CHART_PTS points via linear interpolation (up or down)
     const normalize = (raw, accessor) => {
@@ -28898,32 +28895,36 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     const targetComp = useMemo(() => normalize(chartData, d => d.prevValue || 0), [chartData]);
     const targetMax = useMemo(() => Math.max(...targetMain, ...(showCompare ? targetComp : []), 1), [targetMain, targetComp, showCompare]);
 
-    // Animate ALL values: main line, compare line, AND the Y-axis max (so grid rescales smoothly)
+    // Animation: always starts from whatever is currently on screen (screenRef)
+    // so interrupting mid-animation never bounces — it just redirects smoothly
     useEffect(() => {
-      const pM = prevMainRef.current || Array(CHART_PTS).fill(0);
-      const pC = prevCompRef.current || Array(CHART_PTS).fill(0);
-      const pMax = prevMaxRef.current || 1;
-      const dur = 8000;
+      // Snapshot what's on screen RIGHT NOW as starting point
+      const fromMain = screenRef.current.main || Array(CHART_PTS).fill(0);
+      const fromComp = screenRef.current.comp || Array(CHART_PTS).fill(0);
+      const fromMax = screenRef.current.max || 1;
+      const dur = 3500; // 3.5 seconds — slow, elegant morph
       let startTs = null;
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
 
       const tick = (ts) => {
         if (!startTs) startTs = ts;
         const t = Math.min((ts - startTs) / dur, 1);
-        const ease = 1 - Math.pow(1 - t, 3); // ease-out cubic
-        setAnimMain(targetMain.map((v, i) => pM[i] + (v - pM[i]) * ease));
-        setAnimComp(targetComp.map((v, i) => (pC[i] || 0) + (v - (pC[i] || 0)) * ease));
-        setAnimMax(pMax + (targetMax - pMax) * ease);
-        if (t < 1) { animFrameRef.current = requestAnimationFrame(tick); }
-        else { prevMainRef.current = targetMain; prevCompRef.current = targetComp; prevMaxRef.current = targetMax; }
+        // Smooth ease-in-out: slow start, smooth middle, slow end
+        const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        // Interpolate and write directly to the screen ref
+        screenRef.current.main = targetMain.map((v, i) => fromMain[i] + (v - fromMain[i]) * ease);
+        screenRef.current.comp = targetComp.map((v, i) => (fromComp[i] || 0) + (v - (fromComp[i] || 0)) * ease);
+        screenRef.current.max = fromMax + (targetMax - fromMax) * ease;
+        forceRender(c => c + 1); // trigger re-render with updated ref values
+        if (t < 1) rafRef.current = requestAnimationFrame(tick);
       };
-      animFrameRef.current = requestAnimationFrame(tick);
-      return () => { if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current); };
+      rafRef.current = requestAnimationFrame(tick);
+      return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
     }, [targetMain, targetComp, targetMax]);
 
-    const vals = animMain || targetMain;
-    const cmpVals = animComp || targetComp;
-    const curMax = animMax || targetMax;
+    const vals = screenRef.current.main || targetMain;
+    const cmpVals = screenRef.current.comp || targetComp;
+    const curMax = screenRef.current.max || targetMax;
     const n = CHART_PTS;
 
     if (!chartData || chartData.length === 0) return (
