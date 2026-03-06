@@ -28872,10 +28872,9 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   const CHART_PTS = 30; // Always exactly 30 points — consistent paths for smooth morphing
   const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, showCompare, height = 240, id = "chart" }) => {
     const [hoverIdx, setHoverIdx] = useState(null);
-    // Single ref tracks exactly what's on screen RIGHT NOW — no stale state, no bounce
-    const screenRef = useRef({ main: null, comp: null, max: null });
+    const [display, setDisplay] = useState(null); // { main:[], comp:[], max:number } — what's rendered
+    const liveRef = useRef(null); // always tracks the latest on-screen values (updated every rAF tick)
     const rafRef = useRef(null);
-    const [, forceRender] = useState(0);
 
     // ALWAYS normalize to exactly CHART_PTS points via linear interpolation (up or down)
     const normalize = (raw, accessor) => {
@@ -28895,46 +28894,44 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     const targetComp = useMemo(() => normalize(chartData, d => d.prevValue || 0), [chartData]);
     const targetMax = useMemo(() => Math.max(...targetMain, ...(showCompare ? targetComp : []), 1), [targetMain, targetComp, showCompare]);
 
-    // Animation: on FIRST render, show data instantly (no animation from zero).
-    // On SUBSEQUENT target changes, morph from current on-screen position to new target.
     useEffect(() => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
 
-      // First render — just display the data, no animation
-      if (!screenRef.current.main) {
-        screenRef.current.main = [...targetMain];
-        screenRef.current.comp = [...targetComp];
-        screenRef.current.max = targetMax;
-        forceRender(c => c + 1);
+      // First mount: show data immediately, no animation from zero
+      if (!liveRef.current) {
+        liveRef.current = { main: [...targetMain], comp: [...targetComp], max: targetMax };
+        setDisplay({ main: [...targetMain], comp: [...targetComp], max: targetMax });
         return;
       }
 
-      // Snapshot what's on screen RIGHT NOW as starting point
-      const fromMain = [...screenRef.current.main];
-      const fromComp = [...screenRef.current.comp];
-      const fromMax = screenRef.current.max;
-      const dur = 3500; // 3.5 seconds — slow, elegant morph
+      // Subsequent changes: animate from wherever the line IS right now to the new target.
+      // liveRef always holds the latest on-screen position (updated every tick),
+      // so interrupting mid-animation seamlessly redirects — no bounce, no snap to zero.
+      const fM = [...liveRef.current.main];
+      const fC = [...liveRef.current.comp];
+      const fMax = liveRef.current.max;
+      const dur = 3500;
       let startTs = null;
 
       const tick = (ts) => {
         if (!startTs) startTs = ts;
         const t = Math.min((ts - startTs) / dur, 1);
-        // Smooth ease-in-out: slow start, smooth middle, slow end
         const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-        // Interpolate and write directly to the screen ref
-        screenRef.current.main = targetMain.map((v, i) => fromMain[i] + (v - fromMain[i]) * ease);
-        screenRef.current.comp = targetComp.map((v, i) => fromComp[i] + (v - fromComp[i]) * ease);
-        screenRef.current.max = fromMax + (targetMax - fromMax) * ease;
-        forceRender(c => c + 1);
+        const newMain = targetMain.map((v, i) => fM[i] + (v - fM[i]) * ease);
+        const newComp = targetComp.map((v, i) => fC[i] + (v - fC[i]) * ease);
+        const newMax = fMax + (targetMax - fMax) * ease;
+        // Update BOTH the ref (so next interruption reads correct position) and state (so React renders)
+        liveRef.current = { main: newMain, comp: newComp, max: newMax };
+        setDisplay({ main: newMain, comp: newComp, max: newMax });
         if (t < 1) rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
       return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
     }, [targetMain, targetComp, targetMax]);
 
-    const vals = screenRef.current.main || targetMain;
-    const cmpVals = screenRef.current.comp || targetComp;
-    const curMax = screenRef.current.max || targetMax;
+    const vals = display ? display.main : targetMain;
+    const cmpVals = display ? display.comp : targetComp;
+    const curMax = display ? display.max : targetMax;
     const n = CHART_PTS;
 
     if (!chartData || chartData.length === 0) return (
