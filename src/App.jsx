@@ -28486,14 +28486,12 @@ function SVGFunnel({ stages, width = 400, height = 280 }) {
 
 
 // ═══════════════════════════════════════════════════════════════════════════
-// REPORTS PAGE — Revenue Intelligence Dashboard
+// REPORTS PAGE — Revenue Intelligence Dashboard v2
 // ═══════════════════════════════════════════════════════════════════════════
 // © 2026 K9 Operations LLC. All Rights Reserved.
-// Revenue Intelligence Dashboard - Enhanced ReportsPage Component
-// A world-class reporting dashboard for pet-boarding POS revenue analysis
+// Revenue Intelligence Dashboard v2 — Single-page, interactive, world-class
 
 function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen, rptFilters, setRptFilters, onActiveReportChange }) {
-  const [activeTab, setActiveTab] = useState("cash-basis");
   const [timeRange, setTimeRange] = useState("month");
   const [compareMode, setCompareMode] = useState(false);
   const [nlpQuery, setNlpQuery] = useState("");
@@ -28505,10 +28503,11 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   const [transactionPage, setTransactionPage] = useState(0);
   const [transactionSearch, setTransactionSearch] = useState("");
   const [accrualSortConfig, setAccrualSortConfig] = useState({ key: "checkIn", direction: "desc" });
-  const [accrualGroupBy, setAccrualGroupBy] = useState("date");
+  const [cashTableOpen, setCashTableOpen] = useState(false);
+  const [accrualTableOpen, setAccrualTableOpen] = useState(false);
 
   // ─── NLP SUGGESTED QUERIES ───
-  const nlpSuggestions = [
+  const nlpSuggestionsBank = [
     "Show me boarding revenue by suite type",
     "Revenue by category",
     "Top 10 clients by spend",
@@ -28522,45 +28521,32 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   const today = new Date().toISOString().split("T")[0];
   const getDateRange = (range) => {
     let from = today;
-    if (range === "today") { from = today; }
-    else if (range === "week") { from = addDays(today, -7); }
-    else if (range === "month") { from = addDays(today, -30); }
-    else if (range === "quarter") { from = addDays(today, -90); }
-    else if (range === "year") { from = addDays(today, -365); }
+    if (range === "today") from = today;
+    else if (range === "week") from = addDays(today, -7);
+    else if (range === "month") from = addDays(today, -30);
+    else if (range === "quarter") from = addDays(today, -90);
+    else if (range === "year") from = addDays(today, -365);
     return { from, to: today };
   };
 
   const { from: dateFrom, to: dateTo } = getDateRange(timeRange);
-  const { from: prevFrom, to: prevTo } = compareMode
-    ? (() => {
-        const days = timeRange === "today" ? 1 : timeRange === "week" ? 7 : timeRange === "month" ? 30 : timeRange === "quarter" ? 90 : 365;
-        return { from: addDays(dateFrom, -days), to: addDays(dateFrom, -1) };
-      })()
-    : { from: dateFrom, to: dateTo };
+  const days = (() => { const d = timeRange === "today" ? 1 : timeRange === "week" ? 7 : timeRange === "month" ? 30 : timeRange === "quarter" ? 90 : 365; return d; })();
+  const prevFrom = addDays(dateFrom, -days);
+  const prevTo = addDays(dateFrom, -1);
 
   // ─── FORMATTING HELPERS ───
-  const fmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toFixed(2) : "0.00"}`;
-  const fmt$k = (v) => v >= 1000 ? `$${(v/1000).toFixed(1)}k` : fmt$(v);
+  const fmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}`;
+  const fmt$k = (v) => v >= 10000 ? `$${(v / 1000).toFixed(1)}k` : v >= 1000 ? `$${(v / 1000).toFixed(2)}k` : fmt$(v);
   const fmtPercent = (v) => `${typeof v === "number" ? v.toFixed(1) : "0.0"}%`;
+  const fmtDateLabel = (d) => { if (!d) return ""; const dt = new Date(d + "T00:00:00"); return `${dt.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`; };
 
   // ─── CASH BASIS DATA ───
   const cashBasisData = useMemo(() => {
     const payments = (data.payments || []).filter(p => p.status === "completed" && p.type !== "refund");
-    const filtered = compareMode
-      ? {
-          current: payments.filter(p => p.timestamp && p.timestamp.split("T")[0] >= dateFrom && p.timestamp.split("T")[0] <= dateTo),
-          previous: payments.filter(p => p.timestamp && p.timestamp.split("T")[0] >= prevFrom && p.timestamp.split("T")[0] <= prevTo)
-        }
-      : {
-          current: payments.filter(p => p.timestamp && p.timestamp.split("T")[0] >= dateFrom && p.timestamp.split("T")[0] <= dateTo),
-          previous: []
-        };
 
     const calcMetrics = (pmts) => {
       const total = pmts.reduce((sum, p) => sum + (p.amount || 0), 0);
-      const byCategory = {};
-      const byMethod = {};
-      const bySource = {};
+      const byCategory = {}, byMethod = {}, bySource = {}, byDate = {};
 
       pmts.forEach(p => {
         const cat = p.category || "Other";
@@ -28570,13 +28556,20 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
         const res = (data.reservations || []).find(r => r.id === p.reservationId);
         const src = res?.bookingSource || "phone";
         bySource[src] = (bySource[src] || 0) + (p.amount || 0);
+        const dt = p.timestamp?.split("T")[0] || today;
+        byDate[dt] = (byDate[dt] || 0) + (p.amount || 0);
       });
 
-      return { total, count: pmts.length, byCategory, byMethod, bySource, avgTransaction: pmts.length > 0 ? total / pmts.length : 0, payments: pmts };
+      return { total, count: pmts.length, byCategory, byMethod, bySource, byDate, avgTransaction: pmts.length > 0 ? total / pmts.length : 0, payments: pmts };
     };
 
-    const current = calcMetrics(filtered.current);
-    const previous = compareMode ? calcMetrics(filtered.previous) : { total: 0, count: 0, avgTransaction: 0, payments: [] };
+    const currentPayments = payments.filter(p => p.timestamp && p.timestamp.split("T")[0] >= dateFrom && p.timestamp.split("T")[0] <= dateTo);
+    const previousPayments = compareMode
+      ? payments.filter(p => p.timestamp && p.timestamp.split("T")[0] >= prevFrom && p.timestamp.split("T")[0] <= prevTo)
+      : [];
+
+    const current = calcMetrics(currentPayments);
+    const previous = calcMetrics(previousPayments);
 
     return {
       current,
@@ -28586,120 +28579,72 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     };
   }, [data.payments, data.reservations, dateFrom, dateTo, prevFrom, prevTo, compareMode]);
 
-  // ─── ACCRUAL DATA (Enhanced with room segments and discounts) ───
+  // ─── ACCRUAL DATA ───
   const accrualData = useMemo(() => {
     const reservations = data.reservations || [];
     const pricing = data.pricing || DEF_PRICING;
     const addOnPrices = getAddOnPrices(pricing, data.addOnRules);
     const boardingRates = { ...DEF_PRICING.boardingRates, ...(pricing.boardingRates || {}) };
     const daycareRates = { ...DEF_PRICING.daycareRates, ...(pricing.daycareRates || {}) };
-    const dayboardingRate = pricing.dayboardingRate ?? DEF_PRICING.dayboardingRate;
     const multiDogDiscount = pricing.multiDogDiscount ?? DEF_PRICING.multiDogDiscount;
 
     const processDateRange = (from, to) => {
-      const days = [];
+      const daysList = [];
       let cur = from;
-      while (cur <= to) { days.push(cur); cur = addDays(cur, 1); }
+      while (cur <= to) { daysList.push(cur); cur = addDays(cur, 1); }
 
       const dayData = {};
-      days.forEach(d => {
-        dayData[d] = {
-          boardingRevenue: 0,
-          daycareRevenue: 0,
-          feedingRevenue: 0,
-          medicationRevenue: 0,
-          addOnRevenue: 0,
-          totalRevenue: 0,
-          discounts: 0,
-          netRevenue: 0,
-          roomsOccupied: 0,
-          reservationDetails: []
-        };
+      daysList.forEach(d => {
+        dayData[d] = { boardingRevenue: 0, daycareRevenue: 0, feedingRevenue: 0, medicationRevenue: 0, addOnRevenue: 0, totalRevenue: 0, discounts: 0, netRevenue: 0, roomsOccupied: 0 };
       });
 
-      // Process boarding reservations
       reservations.forEach(res => {
         if (res.status === "cancelled") return;
 
         if (res.type === "boarding" && res.checkIn && res.checkOut) {
           const totalNights = countNights(res.checkIn, res.checkOut);
           if (totalNights <= 0) return;
-
-          const rate = (boardingRates[res.roomType] || 0);
-          let nightDate = res.checkIn;
-
-          // Handle room segments if they exist
+          const rate = boardingRates[res.roomType] || 0;
           const segments = res.roomSegments || [{ startDate: res.checkIn, endDate: res.checkOut, room: res.room, roomType: res.roomType }];
 
           segments.forEach(segment => {
-            const segStartDate = segment.startDate || res.checkIn;
-            const segEndDate = segment.endDate || res.checkOut;
             const segRate = boardingRates[segment.roomType || res.roomType] || rate;
-
-            let segNightDate = segStartDate;
-            while (segNightDate < segEndDate) {
-              if (segNightDate >= from && segNightDate <= to && dayData[segNightDate]) {
-                dayData[segNightDate].boardingRevenue += segRate;
-                dayData[segNightDate].roomsOccupied += 1;
+            let segNight = segment.startDate || res.checkIn;
+            while (segNight < (segment.endDate || res.checkOut)) {
+              if (segNight >= from && segNight <= to && dayData[segNight]) {
+                dayData[segNight].boardingRevenue += segRate;
+                dayData[segNight].roomsOccupied += 1;
               }
-              segNightDate = addDays(segNightDate, 1);
+              segNight = addDays(segNight, 1);
             }
           });
 
-          // Process discounts on checkout day
           let discountAmount = 0;
-          if (res.discountType === "percent") {
-            discountAmount = (rate * totalNights * (res.discountValue || 0)) / 100;
-          } else if (res.discountType === "flat") {
-            discountAmount = res.discountValue || 0;
-          } else if (res.discountType === "coupon") {
-            discountAmount = res.discountValue || 0;
-          }
-
-          // Multi-dog discount
-          if (res.isSecondDogSameRoom && multiDogDiscount > 0) {
-            discountAmount += (rate * totalNights * multiDogDiscount) / 100;
-          }
+          if (res.discountType === "percent") discountAmount = (rate * totalNights * (res.discountValue || 0)) / 100;
+          else if (res.discountType === "flat") discountAmount = res.discountValue || 0;
+          else if (res.discountType === "coupon") discountAmount = res.discountValue || 0;
+          if (res.isSecondDogSameRoom && multiDogDiscount > 0) discountAmount += (rate * totalNights * multiDogDiscount) / 100;
 
           if (discountAmount > 0 && res.checkOut <= to) {
-            const checkoutDate = addDays(res.checkOut, -1);
-            if (dayData[checkoutDate]) {
-              dayData[checkoutDate].discounts += discountAmount;
-            }
+            const cd = addDays(res.checkOut, -1);
+            if (dayData[cd]) dayData[cd].discounts += discountAmount;
           }
 
-          // Add-ons recognized on checkout day
           if (res.selectedAddOns && res.selectedAddOns.length > 0 && res.checkOut <= to) {
-            const checkoutDate = addDays(res.checkOut, -1);
-            if (dayData[checkoutDate]) {
-              const addOnTotal = res.selectedAddOns.reduce((sum, addon) => {
-                const price = addOnPrices[addon] || 0;
-                return sum + (price * totalNights);
-              }, 0);
-              dayData[checkoutDate].addOnRevenue += addOnTotal;
+            const cd = addDays(res.checkOut, -1);
+            if (dayData[cd]) {
+              const addOnTotal = res.selectedAddOns.reduce((sum, a) => sum + ((addOnPrices[a] || 0) * totalNights), 0);
+              dayData[cd].addOnRevenue += addOnTotal;
             }
           }
 
-          // Feeding revenue
           if (res.careOverrides?.feeding || (data.dogs && data.dogs.find(d => d.id === res.dogId)?.feeding)) {
             const feedingRate = res.careOverrides?.feedingRate || pricing.feedingRate || 0;
-            if (res.checkOut <= to) {
-              const checkoutDate = addDays(res.checkOut, -1);
-              if (dayData[checkoutDate]) {
-                dayData[checkoutDate].feedingRevenue += feedingRate * totalNights;
-              }
-            }
+            if (res.checkOut <= to) { const cd = addDays(res.checkOut, -1); if (dayData[cd]) dayData[cd].feedingRevenue += feedingRate * totalNights; }
           }
-
-          // Medication revenue
           if (res.careOverrides?.medication) {
             const medRate = res.careOverrides?.medicationRate || pricing.medicationRate || 0;
-            if (res.checkOut <= to) {
-              const checkoutDate = addDays(res.checkOut, -1);
-              if (dayData[checkoutDate]) {
-                dayData[checkoutDate].medicationRevenue += medRate * totalNights;
-              }
-            }
+            if (res.checkOut <= to) { const cd = addDays(res.checkOut, -1); if (dayData[cd]) dayData[cd].medicationRevenue += medRate * totalNights; }
           }
         } else if (res.type === "daycare" && res.checkIn && res.checkIn >= from && res.checkIn <= to) {
           const hrs = countHours(res.checkInTime || "09:00", res.checkOutTime || "17:00");
@@ -28709,26 +28654,22 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
         }
       });
 
-      days.forEach(d => {
+      daysList.forEach(d => {
         dayData[d].totalRevenue = dayData[d].boardingRevenue + dayData[d].daycareRevenue + dayData[d].feedingRevenue + dayData[d].medicationRevenue + dayData[d].addOnRevenue;
         dayData[d].netRevenue = dayData[d].totalRevenue - dayData[d].discounts;
       });
 
       const totals = { boardingRevenue: 0, daycareRevenue: 0, feedingRevenue: 0, medicationRevenue: 0, addOnRevenue: 0, totalRevenue: 0, discounts: 0, netRevenue: 0, roomsOccupied: 0 };
-      days.forEach(d => {
-        Object.keys(totals).forEach(k => { totals[k] += dayData[d][k]; });
-      });
+      daysList.forEach(d => { Object.keys(totals).forEach(k => { totals[k] += dayData[d][k]; }); });
 
-      return { dayData, totals, days };
+      return { dayData, totals, days: daysList };
     };
 
     const current = processDateRange(dateFrom, dateTo);
     const previous = compareMode ? processDateRange(prevFrom, prevTo) : { dayData: {}, totals: { totalRevenue: 0, discounts: 0 }, days: [] };
 
     const revenueTrend = previous.totals.totalRevenue > 0
-      ? ((current.totals.totalRevenue - previous.totals.totalRevenue) / previous.totals.totalRevenue) * 100
-      : 0;
-
+      ? ((current.totals.totalRevenue - previous.totals.totalRevenue) / previous.totals.totalRevenue) * 100 : 0;
     const occupancyRate = current.totals.roomsOccupied > 0 ? (current.totals.roomsOccupied / (48 * current.days.length)) * 100 : 0;
     const revPAR = current.days.length > 0 ? current.totals.boardingRevenue / (48 * current.days.length) : 0;
 
@@ -28744,35 +28685,20 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     reservations.forEach(res => {
       if (res.status === "cancelled" || res.type !== "boarding") return;
       if (res.checkOut < dateFrom || res.checkIn > dateTo) return;
-
       const totalNights = countNights(res.checkIn, res.checkOut);
       const boardingRates = { ...DEF_PRICING.boardingRates, ...(data.pricing?.boardingRates || {}) };
       const rate = boardingRates[res.roomType] || 0;
 
-      if (!res.discountType || res.discountType === "none") {
-        byType.none += 1;
-      } else if (res.discountType === "percent") {
-        byType.percent += 1;
-        byAmount.percent += (rate * totalNights * (res.discountValue || 0)) / 100;
-      } else if (res.discountType === "flat") {
-        byType.flat += 1;
-        byAmount.flat += res.discountValue || 0;
-      } else if (res.discountType === "coupon") {
-        byType.coupon += 1;
-        byAmount.coupon += res.discountValue || 0;
-      }
-
-      if (res.isSecondDogSameRoom) {
-        byType.multidog += 1;
-        byAmount.multidog += (rate * totalNights * (data.pricing?.multiDogDiscount || 10)) / 100;
-      }
+      if (!res.discountType || res.discountType === "none") { byType.none += 1; }
+      else if (res.discountType === "percent") { byType.percent += 1; byAmount.percent += (rate * totalNights * (res.discountValue || 0)) / 100; }
+      else if (res.discountType === "flat") { byType.flat += 1; byAmount.flat += res.discountValue || 0; }
+      else if (res.discountType === "coupon") { byType.coupon += 1; byAmount.coupon += res.discountValue || 0; }
+      if (res.isSecondDogSameRoom) { byType.multidog += 1; byAmount.multidog += (rate * totalNights * (data.pricing?.multiDogDiscount || 10)) / 100; }
     });
 
-    const totalCount = Object.values(byType).reduce((sum, v) => sum + v, 0);
     const grossRevenue = accrualData.current.totals.totalRevenue;
     const totalDiscounts = Object.values(byAmount).reduce((sum, v) => sum + v, 0);
-
-    return { byType, byAmount, totalCount, grossRevenue, totalDiscounts };
+    return { byType, byAmount, grossRevenue, totalDiscounts };
   }, [data.reservations, accrualData.current, dateFrom, dateTo]);
 
   // ─── TRANSACTIONS TABLE DATA ───
@@ -28781,38 +28707,18 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
       const res = (data.reservations || []).find(r => r.id === p.reservationId);
       const dog = res ? (data.dogs || []).find(d => d.id === res.dogId) : null;
       const client = res ? (data.clients || []).find(c => c.id === res.clientId) : null;
-      return {
-        id: p.id,
-        date: p.timestamp?.split("T")[0] || "—",
-        clientName: client?.fields?.first_name || "—",
-        dogName: dog?.fields?.name || "—",
-        service: res?.type === "boarding" ? "Boarding" : res?.type === "daycare" ? "Daycare" : "—",
-        room: res?.room || "—",
-        amount: p.amount || 0,
-        method: p.method || "other",
-        source: res?.bookingSource || "phone",
-        reservationId: p.reservationId,
-      };
+      return { id: p.id, date: p.timestamp?.split("T")[0] || "—", clientName: client?.fields?.first_name || "—", dogName: dog?.fields?.name || "—", service: res?.type === "boarding" ? "Boarding" : res?.type === "daycare" ? "Daycare" : "—", room: res?.room || "—", amount: p.amount || 0, method: p.method || "other", source: res?.bookingSource || "phone", reservationId: p.reservationId };
     });
 
-    // Filter by search
     if (transactionSearch) {
       const q = transactionSearch.toLowerCase();
-      transactions = transactions.filter(t =>
-        t.clientName.toLowerCase().includes(q) ||
-        t.dogName.toLowerCase().includes(q) ||
-        t.date.includes(q)
-      );
+      transactions = transactions.filter(t => t.clientName.toLowerCase().includes(q) || t.dogName.toLowerCase().includes(q) || t.date.includes(q));
     }
-
-    // Sort
     transactions.sort((a, b) => {
-      const aVal = a[sortConfig.key];
-      const bVal = b[sortConfig.key];
+      const aVal = a[sortConfig.key], bVal = b[sortConfig.key];
       const cmp = typeof aVal === "number" ? aVal - bVal : String(aVal).localeCompare(String(bVal));
       return sortConfig.direction === "desc" ? -cmp : cmp;
     });
-
     return transactions;
   }, [cashBasisData.current.payments, data.reservations, data.dogs, data.clients, sortConfig, transactionSearch]);
 
@@ -28821,12 +28727,10 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     const reservations = (data.reservations || []).filter(r => {
       if (r.status === "cancelled") return false;
       if (r.checkOut < dateFrom || r.checkIn > dateTo) return false;
-      if (r.type !== "boarding") return false;
-      return true;
+      return r.type === "boarding";
     });
-
     const boardingRates = { ...DEF_PRICING.boardingRates, ...(data.pricing?.boardingRates || {}) };
-    const multiDogDiscount = data.pricing?.multiDogDiscount ?? 10;
+    const multiDogDiscountVal = data.pricing?.multiDogDiscount ?? 10;
 
     let processed = reservations.map(res => {
       const dog = (data.dogs || []).find(d => d.id === res.dogId);
@@ -28836,46 +28740,26 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
       const retailTotal = rate * nights;
 
       let discountAmount = 0;
-      if (res.discountType === "percent") {
-        discountAmount = (retailTotal * (res.discountValue || 0)) / 100;
-      } else if (res.discountType === "flat") {
-        discountAmount = res.discountValue || 0;
-      } else if (res.discountType === "coupon") {
-        discountAmount = res.discountValue || 0;
-      }
-
-      if (res.isSecondDogSameRoom) {
-        discountAmount += (retailTotal * multiDogDiscount) / 100;
-      }
-
-      const netTotal = retailTotal - discountAmount;
+      if (res.discountType === "percent") discountAmount = (retailTotal * (res.discountValue || 0)) / 100;
+      else if (res.discountType === "flat") discountAmount = res.discountValue || 0;
+      else if (res.discountType === "coupon") discountAmount = res.discountValue || 0;
+      if (res.isSecondDogSameRoom) discountAmount += (retailTotal * multiDogDiscountVal) / 100;
 
       return {
-        id: res.id,
-        dogName: dog?.fields?.name || "—",
-        clientName: client?.fields?.first_name + " " + client?.fields?.last_name || "—",
-        roomType: res.roomType,
-        checkIn: res.checkIn,
-        checkOut: res.checkOut,
-        nights: nights,
-        nightlyRate: rate,
-        retailTotal: retailTotal,
-        discountType: res.discountType || "none",
-        discountAmount: discountAmount,
-        netTotal: netTotal,
+        id: res.id, dogName: dog?.fields?.name || "—",
+        clientName: (client?.fields?.first_name || "") + " " + (client?.fields?.last_name || ""),
+        roomType: res.roomType, checkIn: res.checkIn, checkOut: res.checkOut, nights, nightlyRate: rate,
+        retailTotal, discountType: res.discountType || "none", discountAmount, netTotal: retailTotal - discountAmount,
         status: res.checkOut <= today ? "checked-out" : res.checkIn <= today ? "active" : "upcoming",
         reservationId: res.id,
       };
     });
 
-    // Sort
     processed.sort((a, b) => {
-      const aVal = a[accrualSortConfig.key];
-      const bVal = b[accrualSortConfig.key];
+      const aVal = a[accrualSortConfig.key], bVal = b[accrualSortConfig.key];
       const cmp = typeof aVal === "number" ? aVal - bVal : String(aVal).localeCompare(String(bVal));
       return accrualSortConfig.direction === "desc" ? -cmp : cmp;
     });
-
     return processed;
   }, [data.reservations, data.dogs, data.clients, accrualSortConfig, dateFrom, dateTo]);
 
@@ -28883,321 +28767,273 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   const processNLPQuery = useCallback((query) => {
     const q = query.toLowerCase().trim();
     setNlpLoading(true);
-
     setTimeout(() => {
       let result = null;
-
       if (q.includes("revenue by") && q.includes("suite type")) {
-        const boardingRates = { ...DEF_PRICING.boardingRates, ...(data.pricing?.boardingRates || {}) };
+        const br = { ...DEF_PRICING.boardingRates, ...(data.pricing?.boardingRates || {}) };
         const byType = {};
-
         (data.reservations || []).forEach(res => {
           if (res.status === "cancelled" || res.type !== "boarding") return;
           if (res.checkOut < dateFrom || res.checkIn > dateTo) return;
           const nights = countNights(res.checkIn, res.checkOut);
-          const rate = boardingRates[res.roomType] || 0;
-          byType[res.roomType] = (byType[res.roomType] || 0) + (rate * nights);
+          byType[res.roomType] = (byType[res.roomType] || 0) + ((br[res.roomType] || 0) * nights);
         });
-
-        result = {
-          type: "table",
-          title: "Boarding Revenue by Suite Type",
-          columns: ["Suite Type", "Revenue", "Percentage"],
-          rows: Object.entries(byType).map(([type, revenue]) => [
-            type,
-            fmt$(revenue),
-            fmtPercent((revenue / accrualData.current.totals.totalRevenue) * 100),
-          ]),
-        };
+        const total = Object.values(byType).reduce((s, v) => s + v, 0);
+        result = { type: "table", title: "Boarding Revenue by Suite Type", columns: ["Suite Type", "Revenue", "%"],
+          rows: Object.entries(byType).sort(([, a], [, b]) => b - a).map(([type, rev]) => [type, fmt$(rev), fmtPercent(total > 0 ? (rev / total) * 100 : 0)]) };
       } else if (q.includes("revenue by") && q.includes("category")) {
         const cats = cashBasisData.current.byCategory;
         const total = cashBasisData.current.total;
-        result = {
-          type: "table",
-          title: "Revenue by Category",
-          columns: ["Category", "Amount", "Percentage"],
-          rows: Object.entries(cats)
-            .sort(([, a], [, b]) => b - a)
-            .map(([cat, amt]) => [cat, fmt$(amt), fmtPercent((amt / total) * 100)]),
-        };
+        result = { type: "table", title: "Revenue by Category", columns: ["Category", "Amount", "%"],
+          rows: Object.entries(cats).sort(([, a], [, b]) => b - a).map(([cat, amt]) => [cat, fmt$(amt), fmtPercent(total > 0 ? (amt / total) * 100 : 0)]) };
       } else if (q.includes("top") && q.includes("client")) {
         const byClient = {};
         (cashBasisData.current.payments || []).forEach(p => {
           const res = (data.reservations || []).find(r => r.id === p.reservationId);
           const client = res ? (data.clients || []).find(c => c.id === res.clientId) : null;
-          const name = client?.fields?.first_name + " " + client?.fields?.last_name || "Unknown";
+          const name = (client?.fields?.first_name || "Unknown") + " " + (client?.fields?.last_name || "");
           byClient[name] = (byClient[name] || 0) + (p.amount || 0);
         });
-
-        result = {
-          type: "table",
-          title: "Top 10 Clients by Spend",
-          columns: ["Client Name", "Total Spend", "Transaction Count"],
-          rows: Object.entries(byClient)
-            .sort(([, a], [, b]) => b - a)
-            .slice(0, 10)
-            .map(([name, amt]) => [
-              name,
-              fmt$(amt),
-              String((cashBasisData.current.payments || []).filter(p => {
-                const res = (data.reservations || []).find(r => r.id === p.reservationId);
-                const client = res ? (data.clients || []).find(c => c.id === res.clientId) : null;
-                return (client?.fields?.first_name + " " + client?.fields?.last_name) === name;
-              }).length),
-            ]),
-        };
+        result = { type: "table", title: "Top 10 Clients by Spend", columns: ["Client", "Spend"],
+          rows: Object.entries(byClient).sort(([, a], [, b]) => b - a).slice(0, 10).map(([name, amt]) => [name, fmt$(amt)]) };
       } else if (q.includes("payment") && q.includes("method")) {
-        const methodCounts = {};
-        (cashBasisData.current.payments || []).forEach(p => {
-          const method = p.method || "other";
-          methodCounts[method] = (methodCounts[method] || 0) + 1;
-        });
-
-        result = {
-          type: "table",
-          title: "Payment Method Breakdown",
-          columns: ["Payment Method", "Count", "Percentage"],
-          rows: Object.entries(methodCounts)
-            .sort(([, a], [, b]) => b - a)
-            .map(([method, count]) => [
-              method.charAt(0).toUpperCase() + method.slice(1),
-              String(count),
-              fmtPercent((count / (cashBasisData.current.count || 1)) * 100),
-            ]),
-        };
+        const mc = {};
+        (cashBasisData.current.payments || []).forEach(p => { mc[p.method || "other"] = (mc[p.method || "other"] || 0) + 1; });
+        const total = Object.values(mc).reduce((s, v) => s + v, 0);
+        result = { type: "table", title: "Payment Methods", columns: ["Method", "Count", "%"],
+          rows: Object.entries(mc).sort(([, a], [, b]) => b - a).map(([m, c]) => [m.charAt(0).toUpperCase() + m.slice(1), String(c), fmtPercent(total > 0 ? (c / total) * 100 : 0)]) };
       } else if (q.includes("occupancy")) {
-        result = {
-          type: "summary",
-          title: "Occupancy Analysis",
-          items: [
-            { label: "Occupancy Rate", value: fmtPercent(accrualData.occupancyRate) },
-            { label: "Total Rooms Occupied", value: String(accrualData.current.totals.roomsOccupied) },
-            { label: "Available Rooms", value: String(Math.max(0, 48 * accrualData.days.length - accrualData.current.totals.roomsOccupied)) },
-            { label: "Avg per Day", value: (accrualData.current.totals.roomsOccupied / Math.max(1, accrualData.days.length)).toFixed(1) },
-          ],
-        };
-      } else if (q.includes("average") && q.includes("stay")) {
-        const avgStay = accrualData.days.length > 0
-          ? accrualData.current.totals.roomsOccupied / Math.max(1, accrualData.days.length)
-          : 0;
-        result = {
-          type: "summary",
-          title: "Length of Stay Analysis",
-          items: [
-            { label: "Average Stay (nights)", value: avgStay.toFixed(1) },
-            { label: "Total Nights Booked", value: String(Math.round(accrualData.current.totals.roomsOccupied)) },
-            { label: "Reporting Period", value: accrualData.days.length + " days" },
-          ],
-        };
+        result = { type: "summary", title: "Occupancy Analysis", items: [
+          { label: "Occupancy Rate", value: fmtPercent(accrualData.occupancyRate) },
+          { label: "Rooms Occupied", value: String(accrualData.current.totals.roomsOccupied) },
+          { label: "Available", value: String(Math.max(0, 48 * accrualData.days.length - accrualData.current.totals.roomsOccupied)) },
+        ] };
       } else if (q.includes("discount")) {
-        result = {
-          type: "summary",
-          title: "Discount Impact Analysis",
-          items: [
-            { label: "Gross Revenue", value: fmt$(discountBreakdown.grossRevenue) },
-            { label: "Total Discounts", value: fmt$(discountBreakdown.totalDiscounts) },
-            { label: "Net Revenue", value: fmt$(discountBreakdown.grossRevenue - discountBreakdown.totalDiscounts) },
-            { label: "Discount Rate", value: fmtPercent((discountBreakdown.totalDiscounts / discountBreakdown.grossRevenue) * 100) },
-          ],
-        };
+        result = { type: "summary", title: "Discount Impact", items: [
+          { label: "Gross Revenue", value: fmt$(discountBreakdown.grossRevenue) },
+          { label: "Total Discounts", value: fmt$(discountBreakdown.totalDiscounts) },
+          { label: "Net Revenue", value: fmt$(discountBreakdown.grossRevenue - discountBreakdown.totalDiscounts) },
+          { label: "Discount Rate", value: fmtPercent(discountBreakdown.grossRevenue > 0 ? (discountBreakdown.totalDiscounts / discountBreakdown.grossRevenue) * 100 : 0) },
+        ] };
       } else {
-        result = {
-          type: "message",
-          title: "AI Processing Required",
-          message: "This query requires AI processing. Coming soon!",
-        };
+        result = { type: "message", title: "AI Processing Required", message: "This query requires advanced AI. Coming soon with SQLCoder!" };
       }
-
       setNlpResults(result);
       setNlpLoading(false);
-    }, 800);
-  }, [data.reservations, data.clients, data.dogs, data.pricing, cashBasisData.current, accrualData.current, accrualData.days, accrualData.occupancyRate, discountBreakdown, dateFrom, dateTo]);
+    }, 600);
+  }, [data, cashBasisData.current, accrualData, discountBreakdown, dateFrom, dateTo]);
 
-  // ─── ANIMATED NUMBER COMPONENT ───
-  const AnimatedNumber = ({ value, prefix = "$", duration = 800 }) => {
-    const [displayValue, setDisplayValue] = useState(0);
-    useEffect(() => {
-      let startTime;
-      const animate = (currentTime) => {
-        if (!startTime) startTime = currentTime;
-        const elapsed = currentTime - startTime;
-        const progress = Math.min(elapsed / duration, 1);
-        setDisplayValue(Math.floor(value * progress));
-        if (progress < 1) requestAnimationFrame(animate);
-      };
-      requestAnimationFrame(animate);
-    }, [value, duration]);
+  // ─── CHART DATA PREP ───
+  const cashChartData = useMemo(() => {
+    const daysList = [];
+    let cur = dateFrom;
+    while (cur <= dateTo) { daysList.push(cur); cur = addDays(cur, 1); }
+    return daysList.map(d => ({
+      date: d,
+      label: fmtDateLabel(d),
+      value: cashBasisData.current.byDate?.[d] || 0,
+      prevValue: compareMode ? (cashBasisData.previous.byDate?.[addDays(d, -days)] || 0) : 0,
+    }));
+  }, [cashBasisData, dateFrom, dateTo, days, compareMode]);
 
-    return <span>{prefix}{Math.abs(displayValue).toFixed(2)}</span>;
-  };
+  const accrualChartData = useMemo(() => {
+    return accrualData.days.map((d, i) => ({
+      date: d,
+      label: fmtDateLabel(d),
+      value: accrualData.current.dayData[d]?.netRevenue || 0,
+      prevValue: compareMode && accrualData.previous.days[i] ? (accrualData.previous.dayData[accrualData.previous.days[i]]?.netRevenue || 0) : 0,
+    }));
+  }, [accrualData, compareMode]);
 
-  // ─── SPARKLINE CHART COMPONENT ───
-  const SparklineChart = ({ data: points, color = C.pri, height = 40 }) => {
-    if (!points || points.length === 0) return <svg width="100%" height={height} />;
-    const max = Math.max(...points, 1);
-    const width = 100 * points.length;
-    const h = height;
-    const padding = 4;
-    const chartHeight = h - padding * 2;
+  const categoryData = useMemo(() => {
+    const cats = cashBasisData.current.byCategory;
+    const total = cashBasisData.current.total;
+    const colors = ["#003462", "#AF8D54", "#0D7A56", "#1A5EC4", "#C4720C", "#6366F1", "#C42B2B", "#059669"];
+    return Object.entries(cats).map(([label, value], idx) => ({ label, value, percent: total > 0 ? (value / total) * 100 : 0, color: colors[idx % colors.length] })).sort((a, b) => b.value - a.value);
+  }, [cashBasisData.current]);
 
-    let pathData = "";
-    points.forEach((p, i) => {
-      const x = (i / (points.length - 1)) * (width - padding * 2) + padding;
-      const y = h - padding - (p / max) * chartHeight;
-      pathData += (i === 0 ? "M" : "L") + x + " " + y;
-    });
+  const bookingSourceData = useMemo(() => {
+    const src = cashBasisData.current.bySource;
+    const total = cashBasisData.current.total;
+    return Object.entries(src).map(([label, value]) => ({ label: label === "online" ? "Online" : label === "phone" ? "Phone" : label === "walk-in" ? "Walk-In" : label, value, percent: total > 0 ? (value / total) * 100 : 0 })).sort((a, b) => b.value - a.value);
+  }, [cashBasisData.current]);
 
-    return (
-      <svg width="100%" height={height} viewBox={`0 0 ${width} ${h}`} style={{ overflow: "visible" }}>
-        <defs>
-          <linearGradient id="sparkGrad" x1="0%" x2="0%" y1="0%" y2="100%">
-            <stop offset="0%" style={{ stopColor: color, stopOpacity: 0.2 }} />
-            <stop offset="100%" style={{ stopColor: color, stopOpacity: 0 }} />
-          </linearGradient>
-        </defs>
-        <path d={pathData + ` L ${width - padding} ${h - padding} L ${padding} ${h - padding} Z`} fill="url(#sparkGrad)" />
-        <path d={pathData} stroke={color} strokeWidth="1.5" fill="none" />
-      </svg>
+  const paymentMethodData = useMemo(() => {
+    const methods = cashBasisData.current.byMethod;
+    const total = Object.values(methods).reduce((s, v) => s + v, 0);
+    return Object.entries(methods).map(([m, count]) => ({ label: m.charAt(0).toUpperCase() + m.slice(1), value: count, percent: total > 0 ? (count / total) * 100 : 0 })).sort((a, b) => b.value - a.value);
+  }, [cashBasisData.current]);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // INTERACTIVE LINE CHART (with hover, crosshair, tooltip, compare overlay)
+  // ══════════════════════════════════════════════════════════════════════════
+  const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, showCompare, height = 260, id = "chart" }) => {
+    const [hoverIdx, setHoverIdx] = useState(null);
+    const containerRef = useRef(null);
+
+    if (!chartData || chartData.length === 0) return (
+      <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut, fontSize: 13 }}>No data for this period</div>
     );
-  };
 
-  // ─── KPI CARD COMPONENT ───
-  const KPICard = ({ label, value, trend, sparkData, icon: Icon, color = C.pri, delay = 0 }) => {
-    return (
-      <div style={{
-        background: C.surface,
-        border: `1px solid ${C.border}`,
-        borderRadius: 16,
-        padding: 20,
-        flex: 1,
-        minWidth: 200,
-        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-        transition: "all 0.3s ease",
-        cursor: "pointer",
-        position: "relative",
-        overflow: "hidden",
-        animation: `fadeInUp 0.6s ease both`,
-        animationDelay: `${delay * 0.1}s`,
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.boxShadow = `0 8px 24px ${color}20`;
-        e.currentTarget.style.borderColor = color;
-        e.currentTarget.style.transform = "translateY(-2px)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04)";
-        e.currentTarget.style.borderColor = C.border;
-        e.currentTarget.style.transform = "translateY(0)";
-      }}>
-        <div style={{ position: "absolute", top: 0, left: 0, width: "100%", height: 3, background: `linear-gradient(90deg, ${color}, transparent)` }} />
-
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.8, color: C.textMut, marginBottom: 8 }}>{label}</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: C.text, fontFamily: "'GT Eesti', monospace" }}>
-              {typeof value === "string" ? value : <AnimatedNumber value={value} prefix="$" />}
-            </div>
-          </div>
-          {Icon && <div style={{ fontSize: 20, opacity: 0.4 }}>{Icon}</div>}
-        </div>
-
-        {trend !== undefined && (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <div style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-              padding: "4px 8px",
-              borderRadius: 6,
-              background: trend >= 0 ? C.sucLt : C.danLt,
-              color: trend >= 0 ? C.suc : C.dan,
-              fontSize: 12,
-              fontWeight: 600,
-            }}>
-              <span>{trend >= 0 ? "↑" : "↓"}</span>
-              {fmtPercent(Math.abs(trend))}
-            </div>
-            <span style={{ fontSize: 11, color: C.textMut }}>vs prev</span>
-          </div>
-        )}
-
-        {sparkData && (
-          <div style={{ marginTop: 12 }}>
-            <SparklineChart data={sparkData} color={color} height={30} />
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // ─── AREA CHART COMPONENT ───
-  const AreaChart = ({ data: points, label, height = 300 }) => {
-    if (!points || points.length === 0) return <div style={{ width: "100%", height, background: C.bg, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut }}>No data</div>;
-
-    const max = Math.max(...points, 1);
-    const w = Math.max(points.length * 40, 400);
+    const w = Math.max(chartData.length * 24, 500);
     const h = height;
-    const padding = { top: 20, right: 20, bottom: 40, left: 50 };
-    const chartW = w - padding.left - padding.right;
-    const chartH = h - padding.top - padding.bottom;
+    const pad = { top: 20, right: 30, bottom: 36, left: 56 };
+    const cw = w - pad.left - pad.right;
+    const ch = h - pad.top - pad.bottom;
 
-    let pathData = "";
-    points.forEach((p, i) => {
-      const x = padding.left + (i / (points.length - 1)) * chartW;
-      const y = padding.top + chartH - (p / max) * chartH;
-      pathData += (i === 0 ? "M" : "L") + x + " " + y;
-    });
-    const areaPath = pathData + ` L ${padding.left + chartW} ${padding.top + chartH} L ${padding.left} ${padding.top + chartH} Z`;
+    const allVals = [...chartData.map(d => d.value), ...(showCompare ? chartData.map(d => d.prevValue) : [])];
+    const maxVal = Math.max(...allVals, 1);
+    const yTicks = 5;
+
+    const xScale = (i) => pad.left + (i / Math.max(chartData.length - 1, 1)) * cw;
+    const yScale = (v) => pad.top + ch - (v / maxVal) * ch;
+
+    const buildPath = (accessor) => {
+      let d = "";
+      chartData.forEach((pt, i) => {
+        const x = xScale(i), y = yScale(accessor(pt));
+        d += (i === 0 ? "M" : "L") + `${x},${y} `;
+      });
+      return d;
+    };
+
+    const buildArea = (accessor) => {
+      let d = buildPath(accessor);
+      d += `L${xScale(chartData.length - 1)},${pad.top + ch} L${pad.left},${pad.top + ch} Z`;
+      return d;
+    };
+
+    const mainPath = buildPath(d => d.value);
+    const mainArea = buildArea(d => d.value);
+    const compPath = showCompare ? buildPath(d => d.prevValue) : "";
+
+    const xLabelStep = Math.max(1, Math.ceil(chartData.length / 8));
 
     return (
-      <div style={{ width: "100%", overflowX: "auto" }}>
-        <svg width={w} height={h} style={{ display: "block" }}>
+      <div ref={containerRef} style={{ position: "relative", width: "100%", overflowX: "auto" }}>
+        <svg width={w} height={h} style={{ display: "block", fontFamily: "'GT Eesti', sans-serif" }}>
           <defs>
-            <linearGradient id="areaGrad" x1="0%" x2="0%" y1="0%" y2="100%">
-              <stop offset="0%" style={{ stopColor: C.pri, stopOpacity: 0.15 }} />
-              <stop offset="100%" style={{ stopColor: C.pri, stopOpacity: 0 }} />
+            <linearGradient id={`${id}-grad`} x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity="0.15" />
+              <stop offset="100%" stopColor={color} stopOpacity="0" />
             </linearGradient>
           </defs>
-          {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => (
-            <line key={i} x1={padding.left} x2={w - padding.right} y1={padding.top + chartH * (1 - pct)} y2={padding.top + chartH * (1 - pct)} stroke={C.borderLight} strokeWidth="1" />
+
+          {/* Grid lines */}
+          {Array.from({ length: yTicks + 1 }).map((_, i) => {
+            const ratio = i / yTicks;
+            const y = pad.top + ch - ratio * ch;
+            return (
+              <g key={`grid-${i}`}>
+                <line x1={pad.left} x2={w - pad.right} y1={y} y2={y} stroke={C.borderLight} strokeWidth="1" />
+                <text x={pad.left - 8} y={y + 4} textAnchor="end" fontSize="10" fill={C.textMut}>
+                  {fmt$k(maxVal * ratio)}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* X labels */}
+          {chartData.map((pt, i) => {
+            if (i % xLabelStep !== 0) return null;
+            return <text key={`xl-${i}`} x={xScale(i)} y={h - 8} textAnchor="middle" fontSize="10" fill={C.textMut}>{pt.label}</text>;
+          })}
+
+          {/* Compare area + line */}
+          {showCompare && (
+            <>
+              <path d={compPath} stroke={compareColor} strokeWidth="1.5" strokeDasharray="6,3" fill="none" opacity="0.6" style={{ transition: "d 0.4s ease" }} />
+            </>
+          )}
+
+          {/* Main area + line */}
+          <path d={mainArea} fill={`url(#${id}-grad)`} style={{ transition: "d 0.4s ease" }} />
+          <path d={mainPath} stroke={color} strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round" style={{ transition: "d 0.4s ease" }} />
+
+          {/* Data points */}
+          {chartData.map((pt, i) => (
+            <circle key={`dot-${i}`} cx={xScale(i)} cy={yScale(pt.value)} r={hoverIdx === i ? 5 : 2.5} fill={hoverIdx === i ? color : "white"} stroke={color} strokeWidth="2" style={{ transition: "r 0.15s ease, cy 0.4s ease" }} />
           ))}
-          <path d={areaPath} fill="url(#areaGrad)" />
-          <path d={pathData} stroke={C.pri} strokeWidth="2" fill="none" />
-          {[0, 0.25, 0.5, 0.75, 1].map((pct, i) => (
-            <text key={i} x={padding.left - 10} y={padding.top + chartH * (1 - pct) + 4} fontSize="11" fill={C.textMut} textAnchor="end">${(max * pct / 1000).toFixed(0)}k</text>
-          ))}
+
+          {/* Hover crosshair */}
+          {hoverIdx !== null && (
+            <g>
+              <line x1={xScale(hoverIdx)} x2={xScale(hoverIdx)} y1={pad.top} y2={pad.top + ch} stroke={color} strokeWidth="1" strokeDasharray="4,3" opacity="0.5" />
+              <line x1={pad.left} x2={w - pad.right} y1={yScale(chartData[hoverIdx].value)} y2={yScale(chartData[hoverIdx].value)} stroke={color} strokeWidth="1" opacity="0.2" />
+            </g>
+          )}
+
+          {/* Invisible hover columns */}
+          {chartData.map((_, i) => {
+            const colW = cw / chartData.length;
+            return (
+              <rect key={`hover-${i}`} x={xScale(i) - colW / 2} y={pad.top} width={colW} height={ch} fill="transparent" style={{ cursor: "crosshair" }}
+                onMouseEnter={() => setHoverIdx(i)}
+                onMouseLeave={() => setHoverIdx(null)} />
+            );
+          })}
         </svg>
+
+        {/* Tooltip */}
+        {hoverIdx !== null && chartData[hoverIdx] && (
+          <div style={{
+            position: "absolute",
+            left: Math.min(xScale(hoverIdx) + 12, w - 180),
+            top: Math.max(yScale(chartData[hoverIdx].value) - 60, 4),
+            background: C.text,
+            color: "white",
+            padding: "10px 14px",
+            borderRadius: 10,
+            fontSize: 12,
+            fontWeight: 600,
+            pointerEvents: "none",
+            zIndex: 10,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+            minWidth: 120,
+          }}>
+            <div style={{ fontSize: 10, opacity: 0.7, marginBottom: 4 }}>{chartData[hoverIdx].label} · {chartData[hoverIdx].date}</div>
+            <div style={{ fontSize: 16 }}>{fmt$(chartData[hoverIdx].value)}</div>
+            {showCompare && (
+              <div style={{ marginTop: 4, fontSize: 11, color: compareColor, borderTop: "1px solid rgba(255,255,255,0.2)", paddingTop: 4 }}>
+                Prev: {fmt$(chartData[hoverIdx].prevValue)}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   };
 
-  // ─── HORIZONTAL BAR CHART COMPONENT ───
-  const HorizontalBarChart = ({ data: items, height = 300, onClick }) => {
-    if (!items || items.length === 0) return null;
-    const max = Math.max(...items.map(i => i.value), 1);
-    const colors = ['#003462', '#AF8D54', '#0D7A56', '#1A5EC4', '#C4720C', '#6366F1', '#C42B2B', '#059669'];
+  // ══════════════════════════════════════════════════════════════════════════
+  // INTERACTIVE BAR CHART (category breakdown with hover)
+  // ══════════════════════════════════════════════════════════════════════════
+  const InteractiveBarChart = ({ items, height = 220, onBarClick }) => {
+    const [hoverIdx, setHoverIdx] = useState(null);
+    if (!items || items.length === 0) return <div style={{ height: 80, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut, fontSize: 13 }}>No data</div>;
 
+    const max = Math.max(...items.map(i => i.value), 1);
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {items.map((item, idx) => (
-          <div key={idx} style={{ cursor: "pointer", transition: "all 0.2s", }}
-            onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.8"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-            onClick={() => onClick?.(item.id)}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-              <div style={{ flex: 1, maxWidth: 150 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{item.label}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {items.slice(0, 8).map((item, idx) => (
+          <div key={idx}
+            style={{ cursor: "pointer", padding: "6px 0", transition: "all 0.2s", opacity: hoverIdx !== null && hoverIdx !== idx ? 0.5 : 1 }}
+            onMouseEnter={() => setHoverIdx(idx)}
+            onMouseLeave={() => setHoverIdx(null)}
+            onClick={() => onBarClick?.(item)}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{item.label}</span>
+              <div style={{ display: "flex", gap: 12, alignItems: "baseline" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{fmt$(item.value)}</span>
+                <span style={{ fontSize: 10, color: C.textMut, minWidth: 36, textAlign: "right" }}>{fmtPercent(item.percent)}</span>
               </div>
-              <div style={{ fontSize: 13, fontWeight: 700, minWidth: 60, textAlign: "right" }}>{fmt$(item.value)}</div>
-              <div style={{ fontSize: 11, color: C.textMut, minWidth: 40, textAlign: "right" }}>{fmtPercent(item.percent)}</div>
             </div>
-            <div style={{ width: "100%", height: 24, background: C.bg, borderRadius: 4, overflow: "hidden" }}>
+            <div style={{ width: "100%", height: 20, background: C.bg, borderRadius: 4, overflow: "hidden" }}>
               <div style={{
                 height: "100%",
                 width: `${(item.value / max) * 100}%`,
-                background: item.color || colors[idx % colors.length],
-                transition: "width 0.6s ease",
+                background: hoverIdx === idx ? `${item.color}dd` : item.color,
                 borderRadius: 4,
+                transition: "width 0.5s cubic-bezier(0.4, 0, 0.2, 1), background 0.15s",
               }} />
             </div>
           </div>
@@ -29206,207 +29042,199 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     );
   };
 
-  // ─── DONUT CHART COMPONENT ───
-  const DonutChart = ({ data: items, size = 200 }) => {
+  // ══════════════════════════════════════════════════════════════════════════
+  // MINI DONUT CHART
+  // ══════════════════════════════════════════════════════════════════════════
+  const MiniDonut = ({ items, size = 110, id = "donut" }) => {
+    const [hoverIdx, setHoverIdx] = useState(null);
     if (!items || items.length === 0) return null;
-    const total = items.reduce((sum, i) => sum + i.value, 0);
-    const colors = ['#003462', '#AF8D54', '#0D7A56', '#1A5EC4', '#C4720C', '#6366F1', '#C42B2B', '#059669'];
-
-    const radius = size / 2 - 20;
-    const innerRadius = radius * 0.6;
-    let currentAngle = -Math.PI / 2;
+    const total = items.reduce((s, i) => s + i.value, 0);
+    const colors = ["#003462", "#AF8D54", "#0D7A56", "#1A5EC4", "#C4720C"];
+    const r = size / 2 - 8, ir = r * 0.6;
+    let angle = -Math.PI / 2;
 
     const arcs = items.map((item, idx) => {
-      const sliceAngle = (item.value / total) * Math.PI * 2;
-      const startAngle = currentAngle;
-      const endAngle = currentAngle + sliceAngle;
-      currentAngle = endAngle;
-
-      const x1 = size / 2 + radius * Math.cos(startAngle);
-      const y1 = size / 2 + radius * Math.sin(startAngle);
-      const x2 = size / 2 + radius * Math.cos(endAngle);
-      const y2 = size / 2 + radius * Math.sin(endAngle);
-
-      const ix1 = size / 2 + innerRadius * Math.cos(startAngle);
-      const iy1 = size / 2 + innerRadius * Math.sin(startAngle);
-      const ix2 = size / 2 + innerRadius * Math.cos(endAngle);
-      const iy2 = size / 2 + innerRadius * Math.sin(endAngle);
-
-      const largeArc = sliceAngle > Math.PI ? 1 : 0;
-      const path = `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} L ${ix2} ${iy2} A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${ix1} ${iy1} Z`;
-
-      return { path, color: colors[idx % colors.length] };
+      const slice = (item.value / (total || 1)) * Math.PI * 2;
+      const start = angle;
+      angle += slice;
+      const la = slice > Math.PI ? 1 : 0;
+      const cx = size / 2, cy = size / 2;
+      const path = `M ${cx + ir * Math.cos(start)} ${cy + ir * Math.sin(start)} L ${cx + r * Math.cos(start)} ${cy + r * Math.sin(start)} A ${r} ${r} 0 ${la} 1 ${cx + r * Math.cos(angle)} ${cy + r * Math.sin(angle)} L ${cx + ir * Math.cos(angle)} ${cy + ir * Math.sin(angle)} A ${ir} ${ir} 0 ${la} 0 ${cx + ir * Math.cos(start)} ${cy + ir * Math.sin(start)} Z`;
+      return { path, color: colors[idx % colors.length], item, pct: total > 0 ? ((item.value / total) * 100).toFixed(0) : "0" };
     });
 
     return (
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: "block", margin: "0 auto" }}>
-        {arcs.map((arc, idx) => (
-          <path key={idx} d={arc.path} fill={arc.color} stroke={C.surface} strokeWidth="2" />
-        ))}
-        <circle cx={size / 2} cy={size / 2} r={innerRadius} fill={C.surface} stroke={C.border} strokeWidth="1" />
-      </svg>
+      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <svg width={size} height={size} style={{ flexShrink: 0 }}>
+          {arcs.map((a, i) => (
+            <path key={i} d={a.path} fill={a.color} stroke="white" strokeWidth="2"
+              opacity={hoverIdx !== null && hoverIdx !== i ? 0.4 : 1}
+              style={{ transition: "opacity 0.15s", cursor: "pointer" }}
+              onMouseEnter={() => setHoverIdx(i)} onMouseLeave={() => setHoverIdx(null)} />
+          ))}
+        </svg>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1 }}>
+          {arcs.map((a, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: hoverIdx !== null && hoverIdx !== i ? 0.5 : 1, transition: "opacity 0.15s" }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: a.color, flexShrink: 0 }} />
+              <span style={{ color: C.text, fontWeight: 500 }}>{a.item.label}</span>
+              <span style={{ color: C.textMut, marginLeft: "auto" }}>{a.pct}%</span>
+            </div>
+          ))}
+        </div>
+      </div>
     );
   };
 
-  // ─── SIDE DRAWER COMPONENT (ENHANCED) ───
+  // ══════════════════════════════════════════════════════════════════════════
+  // ANIMATED KPI CARD
+  // ══════════════════════════════════════════════════════════════════════════
+  const KPI = ({ label, value, displayValue, trend, accentColor = C.pri, icon, delay = 0 }) => {
+    const [animVal, setAnimVal] = useState(0);
+    const numVal = typeof value === "number" ? value : 0;
+    const isNumeric = typeof value === "number";
+
+    useEffect(() => {
+      if (!isNumeric) return;
+      let start;
+      const dur = 700;
+      const animate = (ts) => {
+        if (!start) start = ts;
+        const p = Math.min((ts - start) / dur, 1);
+        const eased = 1 - Math.pow(1 - p, 3);
+        setAnimVal(numVal * eased);
+        if (p < 1) requestAnimationFrame(animate);
+      };
+      requestAnimationFrame(animate);
+    }, [numVal, isNumeric]);
+
+    return (
+      <div style={{
+        background: C.surface,
+        border: `1px solid ${C.border}`,
+        borderRadius: 14,
+        padding: "16px 18px",
+        flex: "1 1 0",
+        minWidth: 170,
+        position: "relative",
+        overflow: "hidden",
+        transition: "all 0.25s ease",
+        cursor: "default",
+        animation: `rptFadeUp 0.5s ease both`,
+        animationDelay: `${delay * 80}ms`,
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = `0 6px 20px ${accentColor}18`; e.currentTarget.style.borderColor = accentColor; e.currentTarget.style.transform = "translateY(-1px)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.borderColor = C.border; e.currentTarget.style.transform = "translateY(0)"; }}>
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg, ${accentColor}, ${accentColor}40)` }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, color: C.textMut, marginBottom: 8 }}>{label}</div>
+          {icon && <span style={{ fontSize: 16, opacity: 0.35 }}>{icon}</span>}
+        </div>
+        <div style={{ fontSize: 24, fontWeight: 800, color: C.text, fontFamily: "'GT Eesti', sans-serif", lineHeight: 1.1 }}>
+          {displayValue || (isNumeric ? fmt$(animVal) : value)}
+        </div>
+        {trend !== undefined && trend !== 0 && (
+          <div style={{ marginTop: 8, display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 6, background: trend >= 0 ? C.sucLt : C.danLt, color: trend >= 0 ? C.suc : C.dan, fontSize: 11, fontWeight: 600 }}>
+            {trend >= 0 ? "↑" : "↓"} {fmtPercent(Math.abs(trend))}
+            <span style={{ fontSize: 10, opacity: 0.7, marginLeft: 2 }}>vs prev</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // COLLAPSIBLE SECTION
+  // ══════════════════════════════════════════════════════════════════════════
+  const CollapsibleSection = ({ title, open, onToggle, count, children }) => (
+    <div style={{ background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, overflow: "hidden", transition: "all 0.3s" }}>
+      <div onClick={onToggle} style={{
+        padding: "14px 20px",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        cursor: "pointer",
+        transition: "background 0.15s",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = C.bg; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{title}</span>
+          {count !== undefined && <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 10, background: C.priLt, color: C.pri, fontWeight: 600 }}>{count}</span>}
+        </div>
+        <span style={{ fontSize: 14, color: C.textMut, transition: "transform 0.3s", transform: open ? "rotate(180deg)" : "rotate(0)" }}>▾</span>
+      </div>
+      {open && <div style={{ padding: "0 20px 20px", animation: "rptFadeUp 0.3s ease" }}>{children}</div>}
+    </div>
+  );
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // RESERVATION DRAWER
+  // ══════════════════════════════════════════════════════════════════════════
   const ReservationDrawer = ({ reservation, onClose }) => {
     if (!reservation) return null;
-
     const res = (data.reservations || []).find(r => r.id === reservation);
     const dog = res ? (data.dogs || []).find(d => d.id === res.dogId) : null;
     const client = res ? (data.clients || []).find(c => c.id === res.clientId) : null;
-
-    const boardingRates = { ...DEF_PRICING.boardingRates, ...(data.pricing?.boardingRates || {}) };
+    const br = { ...DEF_PRICING.boardingRates, ...(data.pricing?.boardingRates || {}) };
     const nights = res ? countNights(res.checkIn, res.checkOut) : 0;
-    const baseRate = res ? boardingRates[res.roomType] || 0 : 0;
+    const baseRate = res ? br[res.roomType] || 0 : 0;
     const baseTotal = baseRate * nights;
-
-    let discountAmount = 0;
-    if (res?.discountType === "percent") {
-      discountAmount = (baseTotal * (res.discountValue || 0)) / 100;
-    } else if (res?.discountType === "flat") {
-      discountAmount = res.discountValue || 0;
-    } else if (res?.discountType === "coupon") {
-      discountAmount = res.discountValue || 0;
-    }
-
-    const netTotal = baseTotal - discountAmount;
+    let disc = 0;
+    if (res?.discountType === "percent") disc = (baseTotal * (res.discountValue || 0)) / 100;
+    else if (res?.discountType === "flat") disc = res.discountValue || 0;
+    else if (res?.discountType === "coupon") disc = res.discountValue || 0;
+    const net = baseTotal - disc;
 
     return ReactDOM.createPortal(
-      <div style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: "rgba(0,0,0,0.3)",
-        display: "flex",
-        justifyContent: "flex-end",
-        zIndex: 1000,
-        backdropFilter: "blur(4px)",
-      }}
-      onClick={onClose}>
-        <div style={{
-          width: 420,
-          height: "100%",
-          background: C.surface,
-          boxShadow: "-8px 0 32px rgba(0,0,0,0.12)",
-          display: "flex",
-          flexDirection: "column",
-          animation: "slideInRight 0.3s ease",
-        }}
-        onClick={e => e.stopPropagation()}>
-          <div style={{ padding: 20, borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Reservation Details</h3>
-            <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 20, color: C.textMut }}>✕</button>
+      <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.35)", display: "flex", justifyContent: "flex-end", zIndex: 1000, backdropFilter: "blur(4px)" }} onClick={onClose}>
+        <div style={{ width: 400, height: "100%", background: C.surface, boxShadow: "-8px 0 32px rgba(0,0,0,0.12)", display: "flex", flexDirection: "column", animation: "rptSlideIn 0.3s ease" }} onClick={e => e.stopPropagation()}>
+          <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Reservation Details</h3>
+            <button onClick={onClose} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 18, color: C.textMut, padding: 4 }}>✕</button>
           </div>
-
           <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
             {res && dog && client && (
               <>
-                <div style={{ marginBottom: 24 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>Dog</div>
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 3 }}>Dog</div>
                   <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{dog.fields?.name}</div>
                 </div>
-
-                <div style={{ marginBottom: 24 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>Client</div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{client.fields?.first_name} {client.fields?.last_name}</div>
-                  {client.fields?.phone && <div style={{ fontSize: 13, color: C.textSec }}>{client.fields.phone}</div>}
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 3 }}>Client</div>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: C.text }}>{client.fields?.first_name} {client.fields?.last_name}</div>
+                  {client.fields?.phone && <div style={{ fontSize: 12, color: C.textSec }}>{client.fields.phone}</div>}
                 </div>
-
-                <div style={{ marginBottom: 24 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>Room</div>
-                  <div style={{ fontSize: 14, color: C.text }}>{res.roomType} {res.room ? `- Room ${res.room}` : ""}</div>
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 3 }}>Stay</div>
+                  <div style={{ fontSize: 13, color: C.text }}>{res.roomType} · Room {res.room || "—"}</div>
+                  <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{fmtDateLabel(res.checkIn)} → {fmtDateLabel(res.checkOut)} ({nights} nights)</div>
                 </div>
-
-                <div style={{ marginBottom: 24 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>Dates</div>
-                  <div style={{ fontSize: 13, color: C.text }}>Check-in: {res.checkIn}</div>
-                  <div style={{ fontSize: 13, color: C.text }}>Check-out: {res.checkOut}</div>
-                  <div style={{ fontSize: 13, color: C.textMut }}>({nights} nights)</div>
-                </div>
-
-                <div style={{ marginBottom: 24, paddingBottom: 24, borderBottom: `1px solid ${C.border}` }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 12 }}>Pricing Waterfall</div>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                    <span style={{ color: C.textSec }}>Base Rate ({nights} nights × {fmt$(baseRate)})</span>
-                    <span style={{ fontWeight: 600 }}>{fmt$(baseTotal)}</span>
+                <div style={{ padding: 16, background: C.bg, borderRadius: 12, marginBottom: 20 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 12 }}>Pricing Waterfall</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                    <span style={{ fontSize: 13, color: C.textSec }}>{nights} nights × {fmt$(baseRate)}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{fmt$(baseTotal)}</span>
                   </div>
-                  {res.selectedAddOns && res.selectedAddOns.length > 0 && (
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                      <span style={{ color: C.textSec }}>Add-ons</span>
-                      <span style={{ fontWeight: 600 }}>{fmt$(res.pricing?.addOns || 0)}</span>
-                    </div>
-                  )}
-                  {discountAmount > 0 && (
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8, color: C.dan }}>
-                      <span>Discount ({res.discountType})</span>
-                      <span style={{ fontWeight: 600 }}>-{fmt$(discountAmount)}</span>
-                    </div>
-                  )}
-                  <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, borderTop: `1px solid ${C.border}`, fontWeight: 700 }}>
-                    <span>Net Total</span>
-                    <span>{fmt$(netTotal)}</span>
+                  {disc > 0 && <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, color: C.dan }}>
+                    <span style={{ fontSize: 13 }}>Discount ({res.discountType})</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>-{fmt$(disc)}</span>
+                  </div>}
+                  <div style={{ display: "flex", justifyContent: "space-between", paddingTop: 8, borderTop: `1px solid ${C.border}`, fontWeight: 700, fontSize: 14 }}>
+                    <span>Net Total</span><span>{fmt$(net)}</span>
                   </div>
                 </div>
-
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>Status</div>
-                  <div style={{
-                    display: "inline-block",
-                    padding: "6px 12px",
-                    borderRadius: 6,
-                    background: res.checkOut <= today ? C.bg : res.checkIn <= today ? C.sucLt : C.infoLt,
-                    color: res.checkOut <= today ? C.textMut : res.checkIn <= today ? C.suc : C.info,
-                    fontSize: 12,
-                    fontWeight: 600,
-                  }}>
-                    {res.checkOut <= today ? "Checked Out" : res.checkIn <= today ? "Active" : "Upcoming"}
-                  </div>
-                </div>
+                <div style={{
+                  display: "inline-block", padding: "5px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600,
+                  background: res.checkOut <= today ? C.bg : res.checkIn <= today ? C.sucLt : C.infoLt,
+                  color: res.checkOut <= today ? C.textMut : res.checkIn <= today ? C.suc : C.info,
+                }}>{res.checkOut <= today ? "Checked Out" : res.checkIn <= today ? "Active" : "Upcoming"}</div>
               </>
             )}
           </div>
-
-          <div style={{ padding: 20, borderTop: `1px solid ${C.border}`, display: "flex", gap: 10 }}>
-            <button
-              onClick={() => {
-                if (res) nav("client-detail", { clientId: res.clientId });
-                onClose();
-              }}
-              style={{
-                flex: 1,
-                padding: "10px 16px",
-                background: C.pri,
-                color: "white",
-                border: "none",
-                borderRadius: 8,
-                fontWeight: 600,
-                cursor: "pointer",
-                transition: "all 0.2s",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.9"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}>
-              View Profile
-            </button>
-            <button
-              onClick={onClose}
-              style={{
-                flex: 1,
-                padding: "10px 16px",
-                background: C.bg,
-                color: C.text,
-                border: `1px solid ${C.border}`,
-                borderRadius: 8,
-                fontWeight: 600,
-                cursor: "pointer",
-                transition: "all 0.2s",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.pri; }}
-              onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; }}>
-              Close
-            </button>
+          <div style={{ padding: "12px 20px", borderTop: `1px solid ${C.border}`, display: "flex", gap: 8 }}>
+            <button onClick={() => { if (res) nav("client-detail", { clientId: res.clientId }); onClose(); }} style={{ flex: 1, padding: "9px 14px", background: C.pri, color: "white", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 13 }}>View Profile</button>
+            <button onClick={onClose} style={{ flex: 1, padding: "9px 14px", background: C.bg, color: C.text, border: `1px solid ${C.border}`, borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 13 }}>Close</button>
           </div>
         </div>
       </div>,
@@ -29414,235 +29242,36 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     );
   };
 
-  // ─── TRANSACTION TABLE COMPONENT ───
-  const TransactionTable = () => {
-    const itemsPerPage = 25;
-    const startIdx = transactionPage * itemsPerPage;
-    const pageItems = transactionsData.slice(startIdx, startIdx + itemsPerPage);
-    const maxPages = Math.ceil(transactionsData.length / itemsPerPage);
-    const totalAmount = transactionsData.reduce((sum, t) => sum + t.amount, 0);
-
-    const handleSort = (key) => {
-      if (sortConfig.key === key) {
-        setSortConfig({ key, direction: sortConfig.direction === "desc" ? "asc" : "desc" });
-      } else {
-        setSortConfig({ key, direction: "desc" });
-      }
-    };
-
-    return (
-      <div>
-        <div style={{ display: "flex", gap: 12, marginBottom: 16, alignItems: "center" }}>
-          <div style={{ flex: 1, position: "relative" }}>
-            <input
-              type="text"
-              placeholder="Search transactions..."
-              value={transactionSearch}
-              onChange={(e) => { setTransactionSearch(e.target.value); setTransactionPage(0); }}
-              style={{
-                width: "100%",
-                padding: "10px 16px",
-                border: `1px solid ${C.border}`,
-                borderRadius: 8,
-                fontSize: 13,
-                background: C.bg,
-              }}
-            />
-          </div>
-          <button
-            style={{
-              padding: "10px 16px",
-              background: C.pri,
-              color: "white",
-              border: "none",
-              borderRadius: 8,
-              fontWeight: 600,
-              cursor: "pointer",
-              fontSize: 12,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}>
-            Export CSV
-          </button>
-        </div>
-
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: `2px solid ${C.border}` }}>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5, cursor: "pointer" }} onClick={() => handleSort("date")}>
-                  Date {sortConfig.key === "date" && (sortConfig.direction === "desc" ? "↓" : "↑")}
-                </th>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Client</th>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Dog</th>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Service</th>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Room</th>
-                <th style={{ padding: 12, textAlign: "right", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5, cursor: "pointer" }} onClick={() => handleSort("amount")}>
-                  Amount {sortConfig.key === "amount" && (sortConfig.direction === "desc" ? "↓" : "↑")}
-                </th>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Method</th>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Source</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageItems.map((txn, idx) => (
-                <tr key={idx} style={{ borderBottom: `1px solid ${C.border}`, cursor: "pointer", transition: "all 0.2s" }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = C.bg; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                  onClick={() => setSelectedReservation(txn.reservationId)}>
-                  <td style={{ padding: 12, color: C.text }}>{txn.date}</td>
-                  <td style={{ padding: 12, color: C.text, fontWeight: 500 }}>{txn.clientName}</td>
-                  <td style={{ padding: 12, color: C.text }}>{txn.dogName}</td>
-                  <td style={{ padding: 12, color: C.text }}>{txn.service}</td>
-                  <td style={{ padding: 12, color: C.textSec }}>{txn.room}</td>
-                  <td style={{ padding: 12, color: C.text, textAlign: "right", fontWeight: 600 }}>{fmt$(txn.amount)}</td>
-                  <td style={{ padding: 12, color: C.text, textTransform: "capitalize" }}>{txn.method}</td>
-                  <td style={{ padding: 12, color: C.text, textTransform: "capitalize" }}>{txn.source}</td>
-                </tr>
-              ))}
-              <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
-                <td colSpan="5" style={{ padding: 12, textAlign: "right" }}>Total</td>
-                <td style={{ padding: 12, textAlign: "right" }}>{fmt$(totalAmount)}</td>
-                <td colSpan="2" style={{ padding: 12 }}></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        {maxPages > 1 && (
-          <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 16 }}>
-            <button onClick={() => setTransactionPage(Math.max(0, transactionPage - 1))} disabled={transactionPage === 0} style={{ padding: "8px 12px", border: `1px solid ${C.border}`, background: C.surface, borderRadius: 6, cursor: "pointer" }}>Previous</button>
-            <span style={{ padding: "8px 12px", color: C.textMut }}>{transactionPage + 1} / {maxPages}</span>
-            <button onClick={() => setTransactionPage(Math.min(maxPages - 1, transactionPage + 1))} disabled={transactionPage >= maxPages - 1} style={{ padding: "8px 12px", border: `1px solid ${C.border}`, background: C.surface, borderRadius: 6, cursor: "pointer" }}>Next</button>
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  // ─── ACCRUAL RESERVATIONS TABLE COMPONENT ───
-  const AccrualTable = () => {
-    const handleSort = (key) => {
-      if (accrualSortConfig.key === key) {
-        setAccrualSortConfig({ key, direction: accrualSortConfig.direction === "desc" ? "asc" : "desc" });
-      } else {
-        setAccrualSortConfig({ key, direction: "desc" });
-      }
-    };
-
-    const totalRetail = accrualReservationsData.reduce((sum, r) => sum + r.retailTotal, 0);
-    const totalDiscounts = accrualReservationsData.reduce((sum, r) => sum + r.discountAmount, 0);
-    const totalNet = accrualReservationsData.reduce((sum, r) => sum + r.netTotal, 0);
-
-    return (
-      <div>
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>Group by:</span>
-            <select
-              value={accrualGroupBy}
-              onChange={(e) => setAccrualGroupBy(e.target.value)}
-              style={{ padding: "6px 12px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, background: C.bg }}>
-              <option value="date">Date</option>
-              <option value="client">Client</option>
-            </select>
-          </label>
-        </div>
-
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: `2px solid ${C.border}` }}>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Dog</th>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Client</th>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Room Type</th>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5, cursor: "pointer" }} onClick={() => handleSort("checkIn")}>
-                  Check-In {accrualSortConfig.key === "checkIn" && (accrualSortConfig.direction === "desc" ? "↓" : "↑")}
-                </th>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Check-Out</th>
-                <th style={{ padding: 12, textAlign: "center", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Nights</th>
-                <th style={{ padding: 12, textAlign: "right", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Nightly</th>
-                <th style={{ padding: 12, textAlign: "right", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Retail Total</th>
-                <th style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Discount</th>
-                <th style={{ padding: 12, textAlign: "right", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>Net Total</th>
-              </tr>
-            </thead>
-            <tbody>
-              {accrualReservationsData.map((res, idx) => (
-                <tr key={idx} style={{
-                  borderBottom: `1px solid ${C.border}`,
-                  background: res.status === "active" ? C.sucLt + "20" : res.status === "upcoming" ? C.infoLt + "20" : "transparent",
-                  cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
-                  onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.8"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
-                  onClick={() => setSelectedReservation(res.reservationId)}>
-                  <td style={{ padding: 12, color: C.text, fontWeight: 500 }}>{res.dogName}</td>
-                  <td style={{ padding: 12, color: C.text }}>{res.clientName}</td>
-                  <td style={{ padding: 12, color: C.text }}>{res.roomType}</td>
-                  <td style={{ padding: 12, color: C.text, fontSize: 12 }}>{res.checkIn}</td>
-                  <td style={{ padding: 12, color: C.text, fontSize: 12 }}>{res.checkOut}</td>
-                  <td style={{ padding: 12, textAlign: "center", color: C.text }}>{res.nights}</td>
-                  <td style={{ padding: 12, textAlign: "right", color: C.text }}>{fmt$(res.nightlyRate)}</td>
-                  <td style={{ padding: 12, textAlign: "right", color: C.text, fontWeight: 600 }}>{fmt$(res.retailTotal)}</td>
-                  <td style={{ padding: 12, color: res.discountAmount > 0 ? C.dan : C.textMut }}>{res.discountType !== "none" ? res.discountType : "—"}</td>
-                  <td style={{ padding: 12, textAlign: "right", color: C.pri, fontWeight: 600 }}>{fmt$(res.netTotal)}</td>
-                </tr>
-              ))}
-              <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
-                <td colSpan="7" style={{ padding: 12, textAlign: "right" }}>Totals</td>
-                <td style={{ padding: 12, textAlign: "right" }}>{fmt$(totalRetail)}</td>
-                <td style={{ padding: 12 }}></td>
-                <td style={{ padding: 12, textAlign: "right" }}>{fmt$(totalNet)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
-  // ─── NLP RESULTS DISPLAY ───
+  // ══════════════════════════════════════════════════════════════════════════
+  // NLP RESULTS
+  // ══════════════════════════════════════════════════════════════════════════
   const NLPResults = () => {
     if (!nlpResults) return null;
-
     if (nlpResults.type === "table") {
       return (
-        <div style={{ background: C.surface, borderRadius: 16, padding: 24, border: `1px solid ${C.border}`, marginTop: 24 }}>
-          <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700 }}>{nlpResults.title}</h3>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead>
-                <tr style={{ borderBottom: `2px solid ${C.border}` }}>
-                  {nlpResults.columns.map((col, idx) => (
-                    <th key={idx} style={{ padding: 12, textAlign: "left", fontWeight: 700, color: C.textMut, textTransform: "uppercase", fontSize: 11, letterSpacing: 0.5 }}>{col}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {nlpResults.rows.map((row, ridx) => (
-                  <tr key={ridx} style={{ borderBottom: `1px solid ${C.border}` }}>
-                    {row.map((cell, cidx) => (
-                      <td key={cidx} style={{ padding: 12, color: C.text }}>{cell}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div style={{ background: C.surface, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, marginBottom: 20, animation: "rptFadeUp 0.4s ease" }}>
+          <h4 style={{ margin: "0 0 12px 0", fontSize: 14, fontWeight: 700 }}>{nlpResults.title}</h4>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr style={{ borderBottom: `2px solid ${C.border}` }}>
+              {nlpResults.columns.map((col, i) => <th key={i} style={{ padding: "8px 10px", textAlign: "left", fontWeight: 700, color: C.textMut, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>{col}</th>)}
+            </tr></thead>
+            <tbody>{nlpResults.rows.map((row, ri) => (
+              <tr key={ri} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                {row.map((cell, ci) => <td key={ci} style={{ padding: "8px 10px", color: C.text }}>{cell}</td>)}
+              </tr>
+            ))}</tbody>
+          </table>
         </div>
       );
     } else if (nlpResults.type === "summary") {
       return (
-        <div style={{ background: C.surface, borderRadius: 16, padding: 24, border: `1px solid ${C.border}`, marginTop: 24 }}>
-          <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700 }}>{nlpResults.title}</h3>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 16 }}>
-            {nlpResults.items.map((item, idx) => (
-              <div key={idx} style={{ padding: 16, background: C.bg, borderRadius: 12 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>{item.label}</div>
-                <div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{item.value}</div>
+        <div style={{ background: C.surface, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, marginBottom: 20, animation: "rptFadeUp 0.4s ease" }}>
+          <h4 style={{ margin: "0 0 12px 0", fontSize: 14, fontWeight: 700 }}>{nlpResults.title}</h4>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
+            {nlpResults.items.map((item, i) => (
+              <div key={i} style={{ padding: 12, background: C.bg, borderRadius: 10 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 6 }}>{item.label}</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{item.value}</div>
               </div>
             ))}
           </div>
@@ -29650,386 +29279,384 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
       );
     } else {
       return (
-        <div style={{ background: C.surface, borderRadius: 16, padding: 24, border: `1px solid ${C.border}`, marginTop: 24 }}>
-          <h3 style={{ margin: "0 0 12px 0", fontSize: 16, fontWeight: 700 }}>{nlpResults.title}</h3>
-          <p style={{ margin: 0, color: C.textSec, fontSize: 14 }}>{nlpResults.message}</p>
+        <div style={{ background: C.surface, borderRadius: 14, padding: 20, border: `1px solid ${C.border}`, marginBottom: 20 }}>
+          <h4 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 700 }}>{nlpResults.title}</h4>
+          <p style={{ margin: 0, color: C.textSec, fontSize: 13 }}>{nlpResults.message}</p>
         </div>
       );
     }
   };
 
-  // ─── MAIN RENDERING ───
-  const sparkData = accrualData.days.slice(-7).map(day => accrualData.current.dayData[day]?.totalRevenue || 0);
-  const revenueChartData = accrualData.days.map(day => accrualData.current.dayData[day]?.totalRevenue || 0);
+  // ══════════════════════════════════════════════════════════════════════════
+  // TABLE HELPERS
+  // ══════════════════════════════════════════════════════════════════════════
+  const handleCashSort = (key) => {
+    setSortConfig(prev => ({ key, direction: prev.key === key && prev.direction === "desc" ? "asc" : "desc" }));
+  };
+  const handleAccrualSort = (key) => {
+    setAccrualSortConfig(prev => ({ key, direction: prev.key === key && prev.direction === "desc" ? "asc" : "desc" }));
+  };
 
-  const categoryData = useMemo(() => {
-    const cats = cashBasisData.current.byCategory;
-    const total = cashBasisData.current.total;
-    const colors = ['#003462', '#AF8D54', '#0D7A56', '#1A5EC4', '#C4720C', '#6366F1', '#C42B2B', '#059669'];
-    return Object.entries(cats)
-      .map(([label, value], idx) => ({ id: label, label, value, percent: total > 0 ? (value / total) * 100 : 0, color: colors[idx % colors.length] }))
-      .sort((a, b) => b.value - a.value);
-  }, [cashBasisData.current]);
+  const thStyle = { padding: "10px 10px", textAlign: "left", fontWeight: 700, color: C.textMut, fontSize: 10, textTransform: "uppercase", letterSpacing: 0.5, cursor: "pointer", whiteSpace: "nowrap" };
+  const tdStyle = { padding: "10px 10px", color: C.text, fontSize: 12 };
 
-  const bookingSourceData = useMemo(() => {
-    const src = cashBasisData.current.bySource;
-    const total = cashBasisData.current.total;
-    const colors = ['#003462', '#AF8D54', '#0D7A56'];
-    return Object.entries(src)
-      .map(([label, value], idx) => ({
-        id: label,
-        label: label === "online" ? "Online" : label === "walk-in" ? "Walk-In" : label === "phone" ? "Phone" : label,
-        value,
-        percent: total > 0 ? (value / total) * 100 : 0,
-        color: colors[idx % colors.length]
-      }))
-      .sort((a, b) => b.value - a.value);
-  }, [cashBasisData.current]);
+  const itemsPerPage = 20;
+  const startIdx = transactionPage * itemsPerPage;
+  const pageItems = transactionsData.slice(startIdx, startIdx + itemsPerPage);
+  const maxPages = Math.ceil(transactionsData.length / itemsPerPage);
+  const cashTotalAmount = transactionsData.reduce((s, t) => s + t.amount, 0);
 
-  const paymentMethodData = useMemo(() => {
-    const methods = cashBasisData.current.byMethod;
-    const total = Object.values(methods).reduce((sum, v) => sum + v, 0);
-    const colors = ['#003462', '#AF8D54', '#0D7A56', '#1A5EC4'];
-    return Object.entries(methods)
-      .map(([method, count], idx) => ({
-        id: method,
-        label: method.charAt(0).toUpperCase() + method.slice(1),
-        value: count,
-        percent: total > 0 ? (count / total) * 100 : 0,
-        color: colors[idx % colors.length],
-      }))
-      .sort((a, b) => b.value - a.value);
-  }, [cashBasisData.current]);
+  const accrualTotalRetail = accrualReservationsData.reduce((s, r) => s + r.retailTotal, 0);
+  const accrualTotalNet = accrualReservationsData.reduce((s, r) => s + r.netTotal, 0);
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // MAIN RENDER
+  // ══════════════════════════════════════════════════════════════════════════
   return (
     <>
       <style>{`
-        @keyframes fadeInUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes slideInRight { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
-        @keyframes shimmer { from { background-position: -1000px 0; } to { background-position: 1000px 0; } }
-        .report-section { animation: fadeInUp 0.6s ease both; }
-        .nlp-thinking { animation: shimmer 2s infinite; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent); background-size: 1000px 100%; }
+        @keyframes rptFadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes rptSlideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+        @keyframes rptShimmer { from { background-position: -600px 0; } to { background-position: 600px 0; } }
       `}</style>
 
-      <div style={{ maxWidth: 1400, margin: "0 auto", padding: 24 }}>
-        {/* HEADER */}
-        <div style={{ marginBottom: 32 }}>
-          <h1 style={{ fontSize: 32, fontWeight: 700, margin: "0 0 8px 0", fontFamily: "'Canela', Georgia, serif", color: C.text }}>Revenue Intelligence</h1>
-          <p style={{ fontSize: 14, color: C.textSec, margin: 0 }}>Track cash and accrual revenue across all service types</p>
-        </div>
-
-        {/* NLP QUERY BAR */}
-        <div style={{ background: C.surface, borderRadius: 16, padding: 20, marginBottom: 32, border: `1px solid ${C.border}` }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-            <div style={{ fontSize: 18, color: C.pri }}>✨</div>
-            <input
-              type="text"
-              placeholder="Ask anything... Try: 'Show me boarding revenue by suite type'"
-              value={nlpQuery}
-              onChange={(e) => setNlpQuery(e.target.value)}
-              onFocus={() => setShowNLPSuggestions(true)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && nlpQuery.trim()) {
-                  setShowNLPSuggestions(false);
-                  processNLPQuery(nlpQuery);
-                }
-              }}
-              style={{
-                flex: 1,
-                padding: "12px 16px",
-                border: `1px solid ${C.border}`,
-                borderRadius: 12,
-                fontSize: 14,
-                background: C.bg,
-              }}
-            />
-            {nlpLoading && <div className="nlp-thinking" style={{ width: 40, height: 40, borderRadius: 8 }} />}
+      <div style={{ maxWidth: 1400, margin: "0 auto", padding: "20px 24px" }}>
+        {/* ─── HEADER ROW ─── */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, fontFamily: "'Canela', Georgia, serif", color: C.text, lineHeight: 1.2 }}>Revenue Intelligence</h1>
+            <p style={{ fontSize: 12, color: C.textMut, margin: "4px 0 0 0" }}>{fmtDateLabel(dateFrom)} – {fmtDateLabel(dateTo)}{compareMode ? ` vs ${fmtDateLabel(prevFrom)} – ${fmtDateLabel(prevTo)}` : ""}</p>
           </div>
 
-          {showNLPSuggestions && nlpQuery === "" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut }}>Suggested Queries</div>
-              {nlpSuggestions.map((suggestion, idx) => (
-                <div key={idx}
-                  onClick={() => { setNlpQuery(suggestion); processNLPQuery(suggestion); setShowNLPSuggestions(false); }}
-                  style={{
-                    padding: 12,
-                    background: C.bg,
-                    borderRadius: 8,
-                    cursor: "pointer",
-                    fontSize: 13,
-                    color: C.text,
-                    transition: "all 0.2s",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = C.borderLight; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = C.bg; }}>
-                  {suggestion}
-                </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {/* Time range pills */}
+            <div style={{ display: "flex", background: C.bg, borderRadius: 10, padding: 3 }}>
+              {["today", "week", "month", "quarter", "year"].map(range => (
+                <button key={range} onClick={() => setTimeRange(range)} style={{
+                  padding: "6px 14px", borderRadius: 8, border: "none",
+                  background: timeRange === range ? C.pri : "transparent",
+                  color: timeRange === range ? "white" : C.textSec,
+                  fontWeight: 600, fontSize: 12, cursor: "pointer",
+                  transition: "all 0.2s ease",
+                }}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>
+              ))}
+            </div>
+
+            {/* Compare toggle */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, color: C.textSec, fontWeight: 500 }}>Compare</span>
+              <div onClick={() => setCompareMode(!compareMode)} style={{
+                width: 40, height: 22, borderRadius: 11, background: compareMode ? C.pri : C.border,
+                transition: "background 0.2s", position: "relative", cursor: "pointer",
+              }}>
+                <div style={{
+                  width: 18, height: 18, borderRadius: 9, background: "white", position: "absolute", top: 2,
+                  left: compareMode ? 20 : 2, transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
+                }} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ─── NLP QUERY BAR ─── */}
+        <div style={{ background: C.surface, borderRadius: 12, padding: "12px 16px", marginBottom: 20, border: `1px solid ${C.border}`, position: "relative" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 16, color: C.acc }}>✨</span>
+            <input type="text" placeholder="Ask anything... Try: 'Revenue by category' or 'Top 10 clients by spend'"
+              value={nlpQuery} onChange={(e) => setNlpQuery(e.target.value)}
+              onFocus={() => setShowNLPSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowNLPSuggestions(false), 200)}
+              onKeyDown={(e) => { if (e.key === "Enter" && nlpQuery.trim()) { setShowNLPSuggestions(false); processNLPQuery(nlpQuery); } }}
+              style={{ flex: 1, padding: "8px 12px", border: `1px solid ${C.borderLight}`, borderRadius: 8, fontSize: 13, background: C.bg, outline: "none" }} />
+            {nlpLoading && <div style={{ width: 28, height: 28, borderRadius: 6, background: `linear-gradient(90deg, ${C.bg}, ${C.borderLight}, ${C.bg})`, backgroundSize: "600px", animation: "rptShimmer 1.5s infinite" }} />}
+          </div>
+          {showNLPSuggestions && !nlpQuery && (
+            <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: C.surface, border: `1px solid ${C.border}`, borderRadius: "0 0 12px 12px", zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.08)" }}>
+              {nlpSuggestionsBank.map((s, i) => (
+                <div key={i} onClick={() => { setNlpQuery(s); processNLPQuery(s); setShowNLPSuggestions(false); }}
+                  style={{ padding: "10px 16px", fontSize: 13, cursor: "pointer", color: C.text, borderBottom: i < nlpSuggestionsBank.length - 1 ? `1px solid ${C.borderLight}` : "none", transition: "background 0.1s" }}
+                  onMouseEnter={e => e.currentTarget.style.background = C.bg}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>{s}</div>
               ))}
             </div>
           )}
         </div>
 
-        {/* NLP RESULTS */}
+        {/* NLP Results */}
         {nlpResults && <NLPResults />}
 
-        {/* TIME RANGE TABS & OPTIONS */}
-        <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap", alignItems: "center" }}>
-          {["today", "week", "month", "quarter", "year"].map(range => (
-            <button
-              key={range}
-              onClick={() => setTimeRange(range)}
-              style={{
-                padding: "8px 16px",
-                borderRadius: 8,
-                border: "1px solid " + (timeRange === range ? C.pri : C.border),
-                background: timeRange === range ? C.priLt : C.surface,
-                color: timeRange === range ? C.pri : C.text,
-                fontWeight: 600,
-                fontSize: 13,
-                cursor: "pointer",
-                transition: "all 0.2s",
-              }}>
-              {range.charAt(0).toUpperCase() + range.slice(1)}
-            </button>
-          ))}
+        {/* ═══════════════════════════════════════════════════════════════════
+            CASH BASIS REVENUE SECTION
+            ═══════════════════════════════════════════════════════════════════ */}
+        <div style={{ marginBottom: 28 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+            <span style={{ fontSize: 16 }}>💵</span>
+            <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text, fontFamily: "'GT Eesti', sans-serif" }}>Cash Basis Revenue</h2>
+          </div>
 
-          <label style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", padding: "8px 0", cursor: "pointer" }}>
-            <input type="checkbox" checked={compareMode} onChange={(e) => setCompareMode(e.target.checked)} style={{ cursor: "pointer" }} />
-            <span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>Compare to previous period</span>
-          </label>
-        </div>
+          {/* KPI CARDS */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+            <KPI label="Total Revenue" value={cashBasisData.current.total} trend={compareMode ? cashBasisData.trend : undefined} accentColor={C.pri} icon="💰" delay={0} />
+            <KPI label="Avg Transaction" value={cashBasisData.current.avgTransaction} trend={compareMode ? cashBasisData.trendAvg : undefined} accentColor={C.acc} icon="🎯" delay={1} />
+            <KPI label="Transactions" value={cashBasisData.current.count} displayValue={String(cashBasisData.current.count)} accentColor={C.suc} icon="📋" delay={2} />
+            <KPI label="Top Category" displayValue={categoryData.length > 0 ? categoryData[0].label : "—"} value={0} accentColor={C.info} icon="🏆" delay={3} />
+          </div>
 
-        {/* TAB BUTTONS */}
-        <div style={{ display: "flex", gap: 12, marginBottom: 32 }}>
-          {[
-            { id: "cash-basis", label: "Cash Basis Revenue", icon: "💵" },
-            { id: "accrual", label: "Accrual Revenue", icon: "📈" },
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              style={{
-                flex: 1,
-                padding: 16,
-                background: activeTab === tab.id ? C.pri : C.surface,
-                color: activeTab === tab.id ? "white" : C.text,
-                border: `2px solid ${activeTab === tab.id ? C.pri : C.border}`,
-                borderRadius: 12,
-                fontWeight: 700,
-                fontSize: 15,
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 10,
-                transition: "all 0.3s",
-              }}>
-              <span style={{ fontSize: 18 }}>{tab.icon}</span>
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* CONTENT BY TAB */}
-        {activeTab === "cash-basis" ? (
-          <div className="report-section">
-            {/* KPI CARDS */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 32 }}>
-              <KPICard
-                label="Total Cash Revenue"
-                value={cashBasisData.current.total}
-                trend={compareMode && cashBasisData.previous.total > 0 ? ((cashBasisData.current.total - cashBasisData.previous.total) / cashBasisData.previous.total) * 100 : undefined}
-                sparkData={sparkData}
-                icon="💰"
-                color={C.pri}
-                delay={0}
-              />
-              <KPICard
-                label="Average Transaction"
-                value={cashBasisData.current.avgTransaction}
-                trend={compareMode && cashBasisData.previous.count > 0 ? cashBasisData.trendAvg : undefined}
-                sparkData={[...sparkData].reverse()}
-                icon="🎯"
-                color={C.acc}
-                delay={1}
-              />
-              <KPICard
-                label="Total Transactions"
-                value={`${cashBasisData.current.count}`}
-                trend={compareMode && cashBasisData.previous.count > 0 ? ((cashBasisData.current.count - cashBasisData.previous.count) / cashBasisData.previous.count) * 100 : undefined}
-                color={C.suc}
-                delay={2}
-              />
-              <KPICard
-                label="Top Category"
-                value={categoryData.length > 0 ? categoryData[0].label : "—"}
-                color={C.info}
-                delay={3}
-              />
+          {/* CHARTS SIDE BY SIDE */}
+          <div style={{ display: "grid", gridTemplateColumns: "3fr 2fr", gap: 12, marginBottom: 16 }}>
+            {/* Revenue Trend */}
+            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 20px", border: `1px solid ${C.border}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Revenue Trend</h3>
+                {compareMode && <span style={{ fontSize: 10, padding: "3px 8px", background: C.accLt, color: C.accDk, borderRadius: 6, fontWeight: 600 }}>Comparing periods</span>}
+              </div>
+              <InteractiveLineChart chartData={cashChartData} color={C.pri} showCompare={compareMode} height={240} id="rpt-cash" />
             </div>
 
-            {/* REVENUE TREND CHART */}
-            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.4s" }}>
-              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Revenue Trend</h3>
-              <AreaChart data={revenueChartData} height={250} />
-            </div>
-
-            {/* CATEGORY BREAKDOWN */}
-            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.5s" }}>
-              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Revenue by Category</h3>
-              <HorizontalBarChart
-                data={categoryData}
-                height={250}
-              />
-            </div>
-
-            {/* BOOKING SOURCE BREAKDOWN */}
-            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.6s" }}>
-              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Booking Source Breakdown</h3>
-              <HorizontalBarChart
-                data={bookingSourceData}
-                height={200}
-              />
-            </div>
-
-            {/* PAYMENT METHOD BREAKDOWN */}
-            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.7s" }}>
-              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Payment Method Distribution</h3>
-              <HorizontalBarChart
-                data={paymentMethodData}
-                height={180}
-              />
-            </div>
-
-            {/* DETAILED TRANSACTION TABLE */}
-            <div style={{ background: C.surface, borderRadius: 16, padding: 24, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.8s" }}>
-              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Transaction Details</h3>
-              <TransactionTable />
+            {/* Category Breakdown */}
+            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 20px", border: `1px solid ${C.border}` }}>
+              <h3 style={{ margin: "0 0 12px 0", fontSize: 13, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Revenue by Category</h3>
+              <InteractiveBarChart items={categoryData} />
             </div>
           </div>
-        ) : (
-          <div className="report-section">
-            {/* ACCRUAL KPI CARDS */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 16, marginBottom: 32 }}>
-              <KPICard
-                label="Total Accrual Revenue"
-                value={accrualData.current.totals.totalRevenue}
-                trend={compareMode && accrualData.previous.totals.totalRevenue > 0 ? accrualData.revenueTrend : undefined}
-                sparkData={sparkData}
-                icon="📊"
-                color={C.pri}
-                delay={0}
-              />
-              <KPICard
-                label="Occupancy Rate"
-                value={`${fmtPercent(accrualData.occupancyRate)}`}
-                color={C.acc}
-                delay={1}
-              />
-              <KPICard
-                label="Revenue Per Room"
-                value={accrualData.revPAR}
-                color={C.suc}
-                delay={2}
-              />
-              <KPICard
-                label="Avg Length of Stay"
-                value={`${(accrualData.current.days.length / Math.max(accrualData.current.totals.roomsOccupied, 1)).toFixed(1)} nights`}
-                color={C.info}
-                delay={3}
-              />
+
+          {/* DETAIL PANELS — 3 columns */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
+            {/* Booking Source */}
+            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 18px", border: `1px solid ${C.border}` }}>
+              <h4 style={{ margin: "0 0 12px 0", fontSize: 12, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Booking Source</h4>
+              <MiniDonut items={bookingSourceData} size={100} id="rpt-src" />
             </div>
 
-            {/* DISCOUNT TRANSPARENCY SECTION */}
-            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.4s" }}>
-              <h3 style={{ margin: "0 0 24px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Discount Transparency</h3>
+            {/* Payment Methods */}
+            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 18px", border: `1px solid ${C.border}` }}>
+              <h4 style={{ margin: "0 0 12px 0", fontSize: 12, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Payment Methods</h4>
+              <MiniDonut items={paymentMethodData} size={100} id="rpt-pay" />
+            </div>
 
-              {/* Flow Chart */}
-              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 32, flexWrap: "wrap" }}>
-                <div style={{ padding: 16, background: C.bg, borderRadius: 12, minWidth: 140 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>Gross Revenue</div>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: C.text }}>{fmt$(discountBreakdown.grossRevenue)}</div>
-                </div>
-                <div style={{ fontSize: 20, color: C.textMut }}>→</div>
-                <div style={{ padding: 16, background: C.danLt, borderRadius: 12, minWidth: 140 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.dan, marginBottom: 8 }}>Discounts</div>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: C.dan }}>-{fmt$(discountBreakdown.totalDiscounts)}</div>
-                </div>
-                <div style={{ fontSize: 20, color: C.textMut }}>→</div>
-                <div style={{ padding: 16, background: C.priLt, borderRadius: 12, minWidth: 140 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.pri, marginBottom: 8 }}>Net Revenue</div>
-                  <div style={{ fontSize: 20, fontWeight: 700, color: C.pri }}>{fmt$(discountBreakdown.grossRevenue - discountBreakdown.totalDiscounts)}</div>
-                </div>
-              </div>
-
-              {/* Discount Breakdown Grid */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
+            {/* Quick Stats */}
+            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 18px", border: `1px solid ${C.border}` }}>
+              <h4 style={{ margin: "0 0 12px 0", fontSize: 12, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Quick Stats</h4>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
                 {[
-                  { type: "None", count: discountBreakdown.byType.none, amount: 0 },
-                  { type: "Percent", count: discountBreakdown.byType.percent, amount: discountBreakdown.byAmount.percent },
-                  { type: "Flat", count: discountBreakdown.byType.flat, amount: discountBreakdown.byAmount.flat },
-                  { type: "Coupon", count: discountBreakdown.byType.coupon, amount: discountBreakdown.byAmount.coupon },
-                  { type: "Multi-Dog", count: discountBreakdown.byType.multidog, amount: discountBreakdown.byAmount.multidog },
-                ].map((discount, idx) => (
-                  <div key={idx} style={{ padding: 16, background: C.bg, borderRadius: 12 }}>
-                    <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>{discount.type}</div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 8 }}>{discount.count} reservations</div>
-                    <div style={{ fontSize: 13, color: C.dan }}>{fmt$(discount.amount)}</div>
-                    <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>{fmtPercent((discount.amount / (discountBreakdown.totalDiscounts || 1)) * 100)}</div>
+                  { label: "Period", value: `${days}d` },
+                  { label: "Daily Avg", value: fmt$k(cashBasisData.current.total / Math.max(days, 1)) },
+                  { label: "Categories", value: String(Object.keys(cashBasisData.current.byCategory).length) },
+                  { label: "Highest Day", value: fmt$k(Math.max(...Object.values(cashBasisData.current.byDate || { "": 0 }))) },
+                ].map((s, i) => (
+                  <div key={i} style={{ padding: "8px 10px", background: C.bg, borderRadius: 8 }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 3 }}>{s.label}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{s.value}</div>
                   </div>
                 ))}
               </div>
             </div>
+          </div>
 
-            {/* REVENUE BREAKDOWN CARDS */}
-            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.5s" }}>
-              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Revenue Composition</h3>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 16 }}>
-                <div style={{ padding: 16, background: C.bg, borderRadius: 12 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>Boarding Revenue</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{fmt$(accrualData.current.totals.boardingRevenue)}</div>
-                </div>
-                <div style={{ padding: 16, background: C.bg, borderRadius: 12 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>Daycare Revenue</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{fmt$(accrualData.current.totals.daycareRevenue)}</div>
-                </div>
-                <div style={{ padding: 16, background: C.bg, borderRadius: 12 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 8 }}>Add-Ons & Services</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{fmt$(accrualData.current.totals.addOnRevenue + accrualData.current.totals.feedingRevenue + accrualData.current.totals.medicationRevenue)}</div>
-                </div>
-                <div style={{ padding: 16, background: C.danLt, borderRadius: 12 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, color: C.dan, marginBottom: 8 }}>Total Discounts</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, color: C.dan }}>-{fmt$(accrualData.current.totals.discounts)}</div>
-                </div>
+          {/* TRANSACTIONS TABLE (collapsible) */}
+          <CollapsibleSection title="Transaction Details" open={cashTableOpen} onToggle={() => setCashTableOpen(!cashTableOpen)} count={transactionsData.length}>
+            <div style={{ display: "flex", gap: 10, marginBottom: 12, alignItems: "center" }}>
+              <input type="text" placeholder="Search..." value={transactionSearch}
+                onChange={e => { setTransactionSearch(e.target.value); setTransactionPage(0); }}
+                style={{ flex: 1, padding: "8px 12px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, background: C.bg }} />
+              <button style={{ padding: "8px 14px", background: C.pri, color: "white", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 11, whiteSpace: "nowrap" }}>Export CSV</button>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr style={{ borderBottom: `2px solid ${C.border}` }}>
+                  <th style={thStyle} onClick={() => handleCashSort("date")}>Date {sortConfig.key === "date" ? (sortConfig.direction === "desc" ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle}>Client</th><th style={thStyle}>Dog</th><th style={thStyle}>Service</th>
+                  <th style={{ ...thStyle, textAlign: "right" }} onClick={() => handleCashSort("amount")}>Amount {sortConfig.key === "amount" ? (sortConfig.direction === "desc" ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle}>Method</th><th style={thStyle}>Source</th>
+                </tr></thead>
+                <tbody>
+                  {pageItems.map((t, i) => (
+                    <tr key={i} style={{ borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer", transition: "background 0.1s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.bg}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                      onClick={() => setSelectedReservation(t.reservationId)}>
+                      <td style={tdStyle}>{t.date}</td>
+                      <td style={{ ...tdStyle, fontWeight: 500 }}>{t.clientName}</td>
+                      <td style={tdStyle}>{t.dogName}</td>
+                      <td style={tdStyle}>{t.service}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>{fmt$(t.amount)}</td>
+                      <td style={{ ...tdStyle, textTransform: "capitalize" }}>{t.method}</td>
+                      <td style={{ ...tdStyle, textTransform: "capitalize" }}>{t.source}</td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
+                    <td colSpan="4" style={{ ...tdStyle, textAlign: "right" }}>Total</td>
+                    <td style={{ ...tdStyle, textAlign: "right" }}>{fmt$(cashTotalAmount)}</td>
+                    <td colSpan="2" />
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            {maxPages > 1 && (
+              <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 12 }}>
+                <button onClick={() => setTransactionPage(Math.max(0, transactionPage - 1))} disabled={transactionPage === 0} style={{ padding: "6px 12px", border: `1px solid ${C.border}`, background: C.surface, borderRadius: 6, cursor: "pointer", fontSize: 12 }}>Prev</button>
+                <span style={{ padding: "6px 12px", color: C.textMut, fontSize: 12 }}>{transactionPage + 1}/{maxPages}</span>
+                <button onClick={() => setTransactionPage(Math.min(maxPages - 1, transactionPage + 1))} disabled={transactionPage >= maxPages - 1} style={{ padding: "6px 12px", border: `1px solid ${C.border}`, background: C.surface, borderRadius: 6, cursor: "pointer", fontSize: 12 }}>Next</button>
+              </div>
+            )}
+          </CollapsibleSection>
+        </div>
+
+        {/* ─── DIVIDER ─── */}
+        <div style={{ height: 2, background: `linear-gradient(90deg, transparent, ${C.border}, transparent)`, margin: "8px 0 28px" }} />
+
+        {/* ═══════════════════════════════════════════════════════════════════
+            ACCRUAL REVENUE SECTION
+            ═══════════════════════════════════════════════════════════════════ */}
+        <div style={{ marginBottom: 28 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+            <span style={{ fontSize: 16 }}>📈</span>
+            <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text, fontFamily: "'GT Eesti', sans-serif" }}>Accrual Revenue</h2>
+          </div>
+
+          {/* KPI CARDS */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
+            <KPI label="Total Accrual Revenue" value={accrualData.current.totals.totalRevenue} trend={compareMode ? accrualData.revenueTrend : undefined} accentColor={C.pri} icon="📊" delay={0} />
+            <KPI label="Occupancy Rate" displayValue={fmtPercent(accrualData.occupancyRate)} value={0} accentColor={C.acc} icon="🏠" delay={1} />
+            <KPI label="RevPAR" value={accrualData.revPAR} accentColor={C.suc} icon="💎" delay={2} />
+            <KPI label="Total Discounts" value={discountBreakdown.totalDiscounts} accentColor={C.dan} icon="🏷️" delay={3} />
+          </div>
+
+          {/* CHARTS SIDE BY SIDE */}
+          <div style={{ display: "grid", gridTemplateColumns: "3fr 2fr", gap: 12, marginBottom: 16 }}>
+            {/* Accrual Revenue Trend */}
+            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 20px", border: `1px solid ${C.border}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Daily Revenue Trend</h3>
+                {compareMode && <span style={{ fontSize: 10, padding: "3px 8px", background: C.accLt, color: C.accDk, borderRadius: 6, fontWeight: 600 }}>Comparing periods</span>}
+              </div>
+              <InteractiveLineChart chartData={accrualChartData} color={C.acc} compareColor={C.pri} showCompare={compareMode} height={240} id="rpt-accrual" />
+            </div>
+
+            {/* Revenue Composition */}
+            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 20px", border: `1px solid ${C.border}` }}>
+              <h3 style={{ margin: "0 0 12px 0", fontSize: 13, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Revenue Composition</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {[
+                  { label: "Boarding", value: accrualData.current.totals.boardingRevenue, color: "#003462" },
+                  { label: "Daycare", value: accrualData.current.totals.daycareRevenue, color: "#AF8D54" },
+                  { label: "Add-Ons & Feeding", value: accrualData.current.totals.addOnRevenue + accrualData.current.totals.feedingRevenue + accrualData.current.totals.medicationRevenue, color: "#0D7A56" },
+                  { label: "Discounts", value: -accrualData.current.totals.discounts, color: C.dan },
+                ].filter(i => i.value !== 0).map((item, idx) => {
+                  const maxComp = Math.max(accrualData.current.totals.boardingRevenue, 1);
+                  return (
+                    <div key={idx}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{item.label}</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: item.value < 0 ? C.dan : C.text }}>{item.value < 0 ? "-" : ""}{fmt$(Math.abs(item.value))}</span>
+                      </div>
+                      <div style={{ width: "100%", height: 16, background: C.bg, borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${Math.min((Math.abs(item.value) / maxComp) * 100, 100)}%`, background: item.color, borderRadius: 3, transition: "width 0.5s ease" }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Net revenue summary */}
+              <div style={{ marginTop: 16, padding: 12, background: C.priLt, borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.pri }}>Net Revenue</span>
+                <span style={{ fontSize: 18, fontWeight: 800, color: C.pri }}>{fmt$(accrualData.current.totals.netRevenue)}</span>
               </div>
             </div>
+          </div>
 
-            {/* DAILY REVENUE TREND */}
-            <div style={{ background: C.surface, borderRadius: 16, padding: 24, marginBottom: 32, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.6s" }}>
-              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Daily Revenue Trend</h3>
-              <AreaChart data={revenueChartData} height={250} />
+          {/* DISCOUNT TRANSPARENCY ROW */}
+          <div style={{ background: C.surface, borderRadius: 14, padding: "16px 20px", border: `1px solid ${C.border}`, marginBottom: 16 }}>
+            <h3 style={{ margin: "0 0 14px 0", fontSize: 13, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Discount Transparency</h3>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+              <div style={{ padding: "12px 16px", background: C.bg, borderRadius: 10, flex: 1, minWidth: 120 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>Gross</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{fmt$(discountBreakdown.grossRevenue)}</div>
+              </div>
+              <span style={{ fontSize: 18, color: C.textMut }}>→</span>
+              <div style={{ padding: "12px 16px", background: C.danLt, borderRadius: 10, flex: 1, minWidth: 120 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.dan, marginBottom: 4 }}>Discounts</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: C.dan }}>-{fmt$(discountBreakdown.totalDiscounts)}</div>
+              </div>
+              <span style={{ fontSize: 18, color: C.textMut }}>→</span>
+              <div style={{ padding: "12px 16px", background: C.priLt, borderRadius: 10, flex: 1, minWidth: 120 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.pri, marginBottom: 4 }}>Net</div>
+                <div style={{ fontSize: 18, fontWeight: 700, color: C.pri }}>{fmt$(discountBreakdown.grossRevenue - discountBreakdown.totalDiscounts)}</div>
+              </div>
             </div>
-
-            {/* ACCRUAL RESERVATIONS TABLE */}
-            <div style={{ background: C.surface, borderRadius: 16, padding: 24, border: `1px solid ${C.border}`, animation: "fadeInUp 0.6s ease both", animationDelay: "0.7s" }}>
-              <h3 style={{ margin: "0 0 20px 0", fontSize: 16, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.08, color: C.textMut }}>Active & Upcoming Reservations</h3>
-              <AccrualTable />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
+              {[
+                { type: "None", count: discountBreakdown.byType.none, amount: 0 },
+                { type: "Percent", count: discountBreakdown.byType.percent, amount: discountBreakdown.byAmount.percent },
+                { type: "Flat", count: discountBreakdown.byType.flat, amount: discountBreakdown.byAmount.flat },
+                { type: "Coupon", count: discountBreakdown.byType.coupon, amount: discountBreakdown.byAmount.coupon },
+                { type: "Multi-Dog", count: discountBreakdown.byType.multidog, amount: discountBreakdown.byAmount.multidog },
+              ].map((d, i) => (
+                <div key={i} style={{ padding: "10px 12px", background: C.bg, borderRadius: 10 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>{d.type}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{d.count} res</div>
+                  {d.amount > 0 && <div style={{ fontSize: 12, color: C.dan, marginTop: 2 }}>-{fmt$(d.amount)}</div>}
+                </div>
+              ))}
             </div>
           </div>
-        )}
+
+          {/* ACCRUAL TABLE (collapsible) */}
+          <CollapsibleSection title="Accrual Reservations" open={accrualTableOpen} onToggle={() => setAccrualTableOpen(!accrualTableOpen)} count={accrualReservationsData.length}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr style={{ borderBottom: `2px solid ${C.border}` }}>
+                  <th style={thStyle}>Dog</th><th style={thStyle}>Client</th><th style={thStyle}>Room</th>
+                  <th style={thStyle} onClick={() => handleAccrualSort("checkIn")}>Check-In {accrualSortConfig.key === "checkIn" ? (accrualSortConfig.direction === "desc" ? "↓" : "↑") : ""}</th>
+                  <th style={thStyle}>Check-Out</th><th style={{ ...thStyle, textAlign: "center" }}>Nights</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>Rate</th>
+                  <th style={{ ...thStyle, textAlign: "right" }}>Retail</th>
+                  <th style={thStyle}>Discount</th>
+                  <th style={{ ...thStyle, textAlign: "right" }} onClick={() => handleAccrualSort("netTotal")}>Net {accrualSortConfig.key === "netTotal" ? (accrualSortConfig.direction === "desc" ? "↓" : "↑") : ""}</th>
+                </tr></thead>
+                <tbody>
+                  {accrualReservationsData.map((r, i) => (
+                    <tr key={i} style={{
+                      borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer", transition: "background 0.1s",
+                      background: r.status === "active" ? `${C.sucLt}40` : r.status === "upcoming" ? `${C.infoLt}40` : "transparent",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.opacity = "0.85"}
+                    onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+                    onClick={() => setSelectedReservation(r.reservationId)}>
+                      <td style={{ ...tdStyle, fontWeight: 500 }}>{r.dogName}</td>
+                      <td style={tdStyle}>{r.clientName}</td>
+                      <td style={tdStyle}>{r.roomType}</td>
+                      <td style={{ ...tdStyle, fontSize: 11 }}>{r.checkIn}</td>
+                      <td style={{ ...tdStyle, fontSize: 11 }}>{r.checkOut}</td>
+                      <td style={{ ...tdStyle, textAlign: "center" }}>{r.nights}</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{fmt$(r.nightlyRate)}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>{fmt$(r.retailTotal)}</td>
+                      <td style={{ ...tdStyle, color: r.discountAmount > 0 ? C.dan : C.textMut }}>{r.discountType !== "none" ? r.discountType : "—"}</td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: C.pri }}>{fmt$(r.netTotal)}</td>
+                    </tr>
+                  ))}
+                  <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
+                    <td colSpan="7" style={{ ...tdStyle, textAlign: "right" }}>Totals</td>
+                    <td style={{ ...tdStyle, textAlign: "right" }}>{fmt$(accrualTotalRetail)}</td>
+                    <td />
+                    <td style={{ ...tdStyle, textAlign: "right" }}>{fmt$(accrualTotalNet)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </CollapsibleSection>
+        </div>
       </div>
 
-      {/* DRAWER */}
+      {/* RESERVATION DRAWER */}
       {selectedReservation && (
-        <ReservationDrawer
-          reservation={selectedReservation}
-          onClose={() => setSelectedReservation(null)}
-        />
+        <ReservationDrawer reservation={selectedReservation} onClose={() => setSelectedReservation(null)} />
       )}
     </>
   );
 }
+
 
 
 
