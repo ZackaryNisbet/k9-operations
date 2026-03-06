@@ -562,36 +562,37 @@ function loadRooms(typeRows, unitRows) {
 async function saveRooms(locationId, prev, next) {
   if (JSON.stringify(prev) === JSON.stringify(next)) return;
   if (!next) return;
-  // Get current room types to find IDs
-  const { data: existingTypes } = await supabase.from('location_room_types')
-    .select('id, name').eq('location_id', locationId);
-  const existingMap = new Map((existingTypes || []).map(t => [t.name, t.id]));
   const nextTypes = Object.keys(next);
+  console.log('[K9] saveRooms called, types:', nextTypes, 'locationId:', locationId);
 
-  // Delete removed types (cascade deletes units)
-  for (const [name, id] of existingMap) {
-    if (!nextTypes.includes(name)) {
-      await supabase.from('location_room_types').delete().eq('id', id);
+  // Step 1: Delete all existing units for this location, then delete all types
+  const { error: delUnitsErr } = await supabase.from('location_room_units').delete().eq('location_id', locationId);
+  if (delUnitsErr) console.error('[K9] saveRooms delete units:', delUnitsErr);
+  const { error: delTypesErr } = await supabase.from('location_room_types').delete().eq('location_id', locationId);
+  if (delTypesErr) console.error('[K9] saveRooms delete types:', delTypesErr);
+
+  // Step 2: Insert all room types
+  if (nextTypes.length === 0) return;
+  const typeRows = nextTypes.map((name, i) => ({ location_id: locationId, name, sort_order: i }));
+  const { data: insertedTypes, error: insTypesErr } = await supabase.from('location_room_types')
+    .insert(typeRows).select('id, name');
+  if (insTypesErr) { console.error('[K9] saveRooms insert types:', insTypesErr); return; }
+  console.log('[K9] saveRooms inserted types:', insertedTypes);
+
+  // Step 3: Insert all room units
+  const typeIdMap = new Map((insertedTypes || []).map(t => [t.name, t.id]));
+  const unitRows = [];
+  for (const typeName of nextTypes) {
+    const typeId = typeIdMap.get(typeName);
+    if (!typeId) continue;
+    for (const unitName of (next[typeName] || [])) {
+      unitRows.push({ room_type_id: typeId, location_id: locationId, unit_name: unitName });
     }
   }
-  // Upsert types and their units
-  for (let i = 0; i < nextTypes.length; i++) {
-    const typeName = nextTypes[i];
-    const units = next[typeName] || [];
-    let typeId = existingMap.get(typeName);
-    if (!typeId) {
-      const { data: ins } = await supabase.from('location_room_types')
-        .insert({ location_id: locationId, name: typeName, sort_order: i }).select('id').single();
-      typeId = ins?.id;
-    }
-    if (!typeId) continue;
-    // Replace all units for this type
-    await supabase.from('location_room_units').delete().eq('room_type_id', typeId);
-    if (units.length > 0) {
-      await supabase.from('location_room_units').insert(
-        units.map(name => ({ room_type_id: typeId, location_id: locationId, unit_name: name }))
-      );
-    }
+  if (unitRows.length > 0) {
+    const { error: insUnitsErr } = await supabase.from('location_room_units').insert(unitRows);
+    if (insUnitsErr) console.error('[K9] saveRooms insert units:', insUnitsErr);
+    else console.log('[K9] saveRooms inserted', unitRows.length, 'units');
   }
 }
 
