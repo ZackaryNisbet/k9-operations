@@ -29215,7 +29215,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
         <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg, ${accentColor}, ${accentColor}40)` }} />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, color: C.textMut, marginBottom: 8 }}>{label}</div>
-          {icon && <span style={{ fontSize: 16, opacity: 0.35 }}>{icon}</span>}
+          {null /* icon removed — clean aesthetic */}
         </div>
         <div style={{ fontSize: 24, fontWeight: 800, color: C.text, fontFamily: "'GT Eesti', sans-serif", lineHeight: 1.1 }}>
           {displayValue || (isNumeric ? fmt$(animVal) : value)}
@@ -29449,7 +29449,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
         {/* ─── NLP QUERY BAR ─── */}
         <div style={{ background: C.surface, borderRadius: 10, padding: "10px 14px", marginBottom: 16, border: `1px solid ${C.border}`, position: "relative" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 14, color: C.acc }}>✨</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input type="text" placeholder="Ask anything... 'Revenue by category', 'Top 10 clients', 'Occupancy rate'"
               value={nlpQuery} onChange={(e) => setNlpQuery(e.target.value)}
               onFocus={() => setShowNLPSuggestions(true)}
@@ -29481,16 +29481,15 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
           {/* ═══ LEFT COLUMN: CASH BASIS ═══ */}
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, padding: "8px 12px", background: `${C.pri}08`, borderRadius: 8, borderLeft: `3px solid ${C.pri}` }}>
-              <span style={{ fontSize: 14 }}>💵</span>
               <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.pri }}>Cash Basis Revenue</h2>
             </div>
 
             {/* KPI CARDS — 2×2 grid */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
-              <KPI label="Total Revenue" value={cashBasisData.current.total} trend={compareMode ? cashBasisData.trend : undefined} accentColor={C.pri} icon="💰" delay={0} />
-              <KPI label="Avg Transaction" value={cashBasisData.current.avgTransaction} trend={compareMode ? cashBasisData.trendAvg : undefined} accentColor={C.acc} icon="🎯" delay={1} />
-              <KPI label="Transactions" value={cashBasisData.current.count} displayValue={String(cashBasisData.current.count)} accentColor={C.suc} icon="📋" delay={2} />
-              <KPI label="Top Category" displayValue={categoryData.length > 0 ? categoryData[0].label : "—"} value={0} accentColor={C.info} icon="🏆" delay={3} />
+              <KPI label="Total Revenue" value={cashBasisData.current.total} trend={compareMode ? cashBasisData.trend : undefined} accentColor={C.pri} delay={0} />
+              <KPI label="Avg Transaction" value={cashBasisData.current.avgTransaction} trend={compareMode ? cashBasisData.trendAvg : undefined} accentColor={C.acc} delay={1} />
+              <KPI label="Transactions" value={cashBasisData.current.count} displayValue={String(cashBasisData.current.count)} accentColor={C.suc} delay={2} />
+              <KPI label="Top Category" displayValue={categoryData.length > 0 ? categoryData[0].label : "—"} value={0} accentColor={C.info} delay={3} />
             </div>
 
             {/* Revenue Trend Chart */}
@@ -29570,16 +29569,15 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
           {/* ═══ RIGHT COLUMN: ACCRUAL ═══ */}
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, padding: "8px 12px", background: `${C.acc}10`, borderRadius: 8, borderLeft: `3px solid ${C.acc}` }}>
-              <span style={{ fontSize: 14 }}>📈</span>
               <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.accDk }}>Accrual Revenue</h2>
             </div>
 
             {/* KPI CARDS — 2×2 grid */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
-              <KPI label="Total Accrual" value={accrualData.current.totals.totalRevenue} trend={compareMode ? accrualData.revenueTrend : undefined} accentColor={C.pri} icon="📊" delay={0} />
-              <KPI label="Occupancy" displayValue={fmtPercent(accrualData.occupancyRate)} value={0} accentColor={C.acc} icon="🏠" delay={1} />
-              <KPI label="RevPAR" value={accrualData.revPAR} accentColor={C.suc} icon="💎" delay={2} />
-              <KPI label="Discounts" value={discountBreakdown.totalDiscounts} accentColor={C.dan} icon="🏷️" delay={3} />
+              <KPI label="Total Accrual" value={accrualData.current.totals.totalRevenue} trend={compareMode ? accrualData.revenueTrend : undefined} accentColor={C.pri} delay={0} />
+              <KPI label="Occupancy" displayValue={fmtPercent(accrualData.occupancyRate)} value={0} accentColor={C.acc} delay={1} />
+              <KPI label="RevPAR" value={accrualData.revPAR} accentColor={C.suc} delay={2} />
+              <KPI label="Discounts" value={discountBreakdown.totalDiscounts} accentColor={C.dan} delay={3} />
             </div>
 
             {/* Accrual Revenue Trend Chart */}
