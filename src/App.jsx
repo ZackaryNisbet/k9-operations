@@ -28668,13 +28668,15 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     const current = processDateRange(dateFrom, dateTo);
     const previous = compareMode ? processDateRange(prevFrom, prevTo) : { dayData: {}, totals: { totalRevenue: 0, discounts: 0 }, days: [] };
 
+    const allRooms = data.rooms || {};
+    const totalRoomCount = Object.values(allRooms).reduce((sum, arr) => sum + arr.length, 0);
     const revenueTrend = previous.totals.totalRevenue > 0
       ? ((current.totals.totalRevenue - previous.totals.totalRevenue) / previous.totals.totalRevenue) * 100 : 0;
-    const occupancyRate = current.totals.roomsOccupied > 0 ? (current.totals.roomsOccupied / (48 * current.days.length)) * 100 : 0;
-    const revPAR = current.days.length > 0 ? current.totals.boardingRevenue / (48 * current.days.length) : 0;
+    const occupancyRate = totalRoomCount > 0 && current.days.length > 0 ? (current.totals.roomsOccupied / (totalRoomCount * current.days.length)) * 100 : 0;
+    const revPAR = totalRoomCount > 0 && current.days.length > 0 ? current.totals.boardingRevenue / (totalRoomCount * current.days.length) : 0;
 
     return { current, previous, revenueTrend, occupancyRate, revPAR, days: current.days };
-  }, [data.reservations, data.dogs, data.pricing, data.addOnRules, dateFrom, dateTo, prevFrom, prevTo, compareMode]);
+  }, [data.reservations, data.dogs, data.pricing, data.addOnRules, data.rooms, dateFrom, dateTo, prevFrom, prevTo, compareMode]);
 
   // ─── DISCOUNT BREAKDOWN ───
   const discountBreakdown = useMemo(() => {
@@ -28865,56 +28867,89 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   }, [cashBasisData.current]);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // INTERACTIVE LINE CHART (with hover, crosshair, tooltip, compare overlay)
+  // INTERACTIVE LINE CHART — fixed width, animated transitions, hover tooltip
   // ══════════════════════════════════════════════════════════════════════════
-  const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, showCompare, height = 260, id = "chart" }) => {
+  const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, showCompare, height = 240, id = "chart" }) => {
     const [hoverIdx, setHoverIdx] = useState(null);
-    const containerRef = useRef(null);
+    const [animVals, setAnimVals] = useState(null);
+    const prevValsRef = useRef(null);
+    const animFrameRef = useRef(null);
+
+    // Normalize to fixed 30 points for consistent display regardless of data length
+    const normalize = (raw, accessor) => {
+      if (!raw || raw.length === 0) return Array(30).fill(0);
+      if (raw.length <= 30) return raw.map(accessor);
+      const step = raw.length / 30;
+      return Array.from({ length: 30 }, (_, i) => {
+        const idx = Math.min(Math.floor(i * step), raw.length - 1);
+        return accessor(raw[idx]);
+      });
+    };
+
+    const currentVals = useMemo(() => normalize(chartData, d => d.value), [chartData]);
+    const compareVals = useMemo(() => normalize(chartData, d => d.prevValue || 0), [chartData]);
+
+    // Animate between old and new values
+    useEffect(() => {
+      const prev = prevValsRef.current || currentVals.map(() => 0);
+      const target = currentVals;
+      const dur = 450;
+      let startTs = null;
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+
+      const step = (ts) => {
+        if (!startTs) startTs = ts;
+        const t = Math.min((ts - startTs) / dur, 1);
+        const ease = 1 - Math.pow(1 - t, 3); // ease-out cubic
+        const interp = target.map((v, i) => (prev[i] || 0) + (v - (prev[i] || 0)) * ease);
+        setAnimVals(interp);
+        if (t < 1) animFrameRef.current = requestAnimationFrame(step);
+        else prevValsRef.current = target;
+      };
+      animFrameRef.current = requestAnimationFrame(step);
+      return () => { if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current); };
+    }, [currentVals]);
+
+    const vals = animVals || currentVals;
+    const n = vals.length;
 
     if (!chartData || chartData.length === 0) return (
       <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut, fontSize: 13 }}>No data for this period</div>
     );
 
-    const w = Math.max(chartData.length * 24, 500);
-    const h = height;
-    const pad = { top: 20, right: 30, bottom: 36, left: 56 };
-    const cw = w - pad.left - pad.right;
-    const ch = h - pad.top - pad.bottom;
+    // Fixed internal coordinate system — chart always fills container
+    const W = 560, H = height;
+    const pad = { top: 16, right: 16, bottom: 32, left: 50 };
+    const cw = W - pad.left - pad.right;
+    const ch = H - pad.top - pad.bottom;
 
-    const allVals = [...chartData.map(d => d.value), ...(showCompare ? chartData.map(d => d.prevValue) : [])];
-    const maxVal = Math.max(...allVals, 1);
-    const yTicks = 5;
+    const allMax = Math.max(...vals, ...(showCompare ? compareVals : []), 1);
+    const yTicks = 4;
 
-    const xScale = (i) => pad.left + (i / Math.max(chartData.length - 1, 1)) * cw;
-    const yScale = (v) => pad.top + ch - (v / maxVal) * ch;
+    const xS = (i) => pad.left + (i / Math.max(n - 1, 1)) * cw;
+    const yS = (v) => pad.top + ch - (v / allMax) * ch;
 
-    const buildPath = (accessor) => {
-      let d = "";
-      chartData.forEach((pt, i) => {
-        const x = xScale(i), y = yScale(accessor(pt));
-        d += (i === 0 ? "M" : "L") + `${x},${y} `;
-      });
-      return d;
-    };
+    const buildPath = (arr) => arr.map((v, i) => `${i === 0 ? "M" : "L"}${xS(i).toFixed(1)},${yS(v).toFixed(1)}`).join(" ");
+    const buildArea = (arr) => buildPath(arr) + ` L${xS(n - 1).toFixed(1)},${(pad.top + ch).toFixed(1)} L${pad.left},${(pad.top + ch).toFixed(1)} Z`;
 
-    const buildArea = (accessor) => {
-      let d = buildPath(accessor);
-      d += `L${xScale(chartData.length - 1)},${pad.top + ch} L${pad.left},${pad.top + ch} Z`;
-      return d;
-    };
+    const mainPath = buildPath(vals);
+    const mainArea = buildArea(vals);
+    const compPath = showCompare ? buildPath(compareVals) : "";
 
-    const mainPath = buildPath(d => d.value);
-    const mainArea = buildArea(d => d.value);
-    const compPath = showCompare ? buildPath(d => d.prevValue) : "";
+    // Map normalized indices back to source labels
+    const srcStep = chartData.length / n;
+    const getLabel = (i) => { const si = Math.min(Math.floor(i * srcStep), chartData.length - 1); return chartData[si]; };
+    const xLabelStep = Math.max(1, Math.ceil(n / 6));
 
-    const xLabelStep = Math.max(1, Math.ceil(chartData.length / 8));
+    // Percentage of container for tooltip positioning
+    const tooltipLeftPct = (i) => ((xS(i) / W) * 100);
 
     return (
-      <div ref={containerRef} style={{ position: "relative", width: "100%", overflowX: "auto" }}>
-        <svg width={w} height={h} style={{ display: "block", fontFamily: "'GT Eesti', sans-serif" }}>
+      <div style={{ position: "relative", width: "100%" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="xMidYMid meet" style={{ display: "block", fontFamily: "'GT Eesti', sans-serif" }}>
           <defs>
             <linearGradient id={`${id}-grad`} x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity="0.15" />
+              <stop offset="0%" stopColor={color} stopOpacity="0.12" />
               <stop offset="100%" stopColor={color} stopOpacity="0" />
             </linearGradient>
           </defs>
@@ -28925,81 +28960,80 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
             const y = pad.top + ch - ratio * ch;
             return (
               <g key={`grid-${i}`}>
-                <line x1={pad.left} x2={w - pad.right} y1={y} y2={y} stroke={C.borderLight} strokeWidth="1" />
-                <text x={pad.left - 8} y={y + 4} textAnchor="end" fontSize="10" fill={C.textMut}>
-                  {fmt$k(maxVal * ratio)}
-                </text>
+                <line x1={pad.left} x2={W - pad.right} y1={y} y2={y} stroke={C.borderLight} strokeWidth="0.7" />
+                <text x={pad.left - 6} y={y + 3.5} textAnchor="end" fontSize="9" fill={C.textMut}>{fmt$k(allMax * ratio)}</text>
               </g>
             );
           })}
 
           {/* X labels */}
-          {chartData.map((pt, i) => {
-            if (i % xLabelStep !== 0) return null;
-            return <text key={`xl-${i}`} x={xScale(i)} y={h - 8} textAnchor="middle" fontSize="10" fill={C.textMut}>{pt.label}</text>;
+          {Array.from({ length: n }).map((_, i) => {
+            if (i % xLabelStep !== 0 || i >= n) return null;
+            const src = getLabel(i);
+            return <text key={`xl-${i}`} x={xS(i)} y={H - 6} textAnchor="middle" fontSize="9" fill={C.textMut}>{src?.label || ""}</text>;
           })}
 
-          {/* Compare area + line */}
-          {showCompare && (
-            <>
-              <path d={compPath} stroke={compareColor} strokeWidth="1.5" strokeDasharray="6,3" fill="none" opacity="0.6" style={{ transition: "d 0.4s ease" }} />
-            </>
-          )}
+          {/* Compare line (dashed) */}
+          {showCompare && <path d={compPath} stroke={compareColor} strokeWidth="1.5" strokeDasharray="5,3" fill="none" opacity="0.55" />}
 
           {/* Main area + line */}
-          <path d={mainArea} fill={`url(#${id}-grad)`} style={{ transition: "d 0.4s ease" }} />
-          <path d={mainPath} stroke={color} strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round" style={{ transition: "d 0.4s ease" }} />
+          <path d={mainArea} fill={`url(#${id}-grad)`} />
+          <path d={mainPath} stroke={color} strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
 
-          {/* Data points */}
-          {chartData.map((pt, i) => (
-            <circle key={`dot-${i}`} cx={xScale(i)} cy={yScale(pt.value)} r={hoverIdx === i ? 5 : 2.5} fill={hoverIdx === i ? color : "white"} stroke={color} strokeWidth="2" style={{ transition: "r 0.15s ease, cy 0.4s ease" }} />
-          ))}
+          {/* Data dots — only show hovered + endpoints */}
+          {vals.map((v, i) => {
+            const show = hoverIdx === i || i === 0 || i === n - 1;
+            if (!show && hoverIdx === null) return null;
+            if (!show) return null;
+            return <circle key={`dot-${i}`} cx={xS(i)} cy={yS(v)} r={hoverIdx === i ? 4.5 : 2} fill={hoverIdx === i ? color : "white"} stroke={color} strokeWidth="1.5" />;
+          })}
 
           {/* Hover crosshair */}
           {hoverIdx !== null && (
             <g>
-              <line x1={xScale(hoverIdx)} x2={xScale(hoverIdx)} y1={pad.top} y2={pad.top + ch} stroke={color} strokeWidth="1" strokeDasharray="4,3" opacity="0.5" />
-              <line x1={pad.left} x2={w - pad.right} y1={yScale(chartData[hoverIdx].value)} y2={yScale(chartData[hoverIdx].value)} stroke={color} strokeWidth="1" opacity="0.2" />
+              <line x1={xS(hoverIdx)} x2={xS(hoverIdx)} y1={pad.top} y2={pad.top + ch} stroke={color} strokeWidth="0.8" strokeDasharray="3,2" opacity="0.5" />
+              <line x1={pad.left} x2={W - pad.right} y1={yS(vals[hoverIdx])} y2={yS(vals[hoverIdx])} stroke={color} strokeWidth="0.5" opacity="0.2" />
             </g>
           )}
 
           {/* Invisible hover columns */}
-          {chartData.map((_, i) => {
-            const colW = cw / chartData.length;
-            return (
-              <rect key={`hover-${i}`} x={xScale(i) - colW / 2} y={pad.top} width={colW} height={ch} fill="transparent" style={{ cursor: "crosshair" }}
-                onMouseEnter={() => setHoverIdx(i)}
-                onMouseLeave={() => setHoverIdx(null)} />
-            );
-          })}
+          {vals.map((_, i) => (
+            <rect key={`hc-${i}`} x={xS(i) - cw / n / 2} y={pad.top} width={cw / n} height={ch} fill="transparent" style={{ cursor: "crosshair" }}
+              onMouseEnter={() => setHoverIdx(i)} onMouseLeave={() => setHoverIdx(null)} />
+          ))}
         </svg>
 
         {/* Tooltip */}
-        {hoverIdx !== null && chartData[hoverIdx] && (
-          <div style={{
-            position: "absolute",
-            left: Math.min(xScale(hoverIdx) + 12, w - 180),
-            top: Math.max(yScale(chartData[hoverIdx].value) - 60, 4),
-            background: C.text,
-            color: "white",
-            padding: "10px 14px",
-            borderRadius: 10,
-            fontSize: 12,
-            fontWeight: 600,
-            pointerEvents: "none",
-            zIndex: 10,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
-            minWidth: 120,
-          }}>
-            <div style={{ fontSize: 10, opacity: 0.7, marginBottom: 4 }}>{chartData[hoverIdx].label} · {chartData[hoverIdx].date}</div>
-            <div style={{ fontSize: 16 }}>{fmt$(chartData[hoverIdx].value)}</div>
-            {showCompare && (
-              <div style={{ marginTop: 4, fontSize: 11, color: compareColor, borderTop: "1px solid rgba(255,255,255,0.2)", paddingTop: 4 }}>
-                Prev: {fmt$(chartData[hoverIdx].prevValue)}
-              </div>
-            )}
-          </div>
-        )}
+        {hoverIdx !== null && (() => {
+          const src = getLabel(hoverIdx);
+          const pctLeft = tooltipLeftPct(hoverIdx);
+          return (
+            <div style={{
+              position: "absolute",
+              left: `${Math.min(pctLeft + 2, 75)}%`,
+              top: 8,
+              background: C.text,
+              color: "white",
+              padding: "8px 12px",
+              borderRadius: 8,
+              fontSize: 11,
+              fontWeight: 600,
+              pointerEvents: "none",
+              zIndex: 10,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+              minWidth: 100,
+              whiteSpace: "nowrap",
+            }}>
+              <div style={{ fontSize: 9, opacity: 0.7, marginBottom: 3 }}>{src?.label} · {src?.date}</div>
+              <div style={{ fontSize: 15 }}>{fmt$(vals[hoverIdx])}</div>
+              {showCompare && (
+                <div style={{ marginTop: 3, fontSize: 10, color: compareColor, borderTop: "1px solid rgba(255,255,255,0.2)", paddingTop: 3 }}>
+                  Prev: {fmt$(compareVals[hoverIdx])}
+                </div>
+              )}
+            </div>
+          );
+        })()}
       </div>
     );
   };
@@ -29310,8 +29344,11 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   const accrualTotalNet = accrualReservationsData.reduce((s, r) => s + r.netTotal, 0);
 
   // ══════════════════════════════════════════════════════════════════════════
-  // MAIN RENDER
+  // MAIN RENDER — Two-column: Cash Basis (left) | Accrual (right)
   // ══════════════════════════════════════════════════════════════════════════
+  const sectionCard = { background: C.surface, borderRadius: 12, padding: "14px 16px", border: `1px solid ${C.border}`, marginBottom: 10 };
+  const sectionTitle = { margin: "0 0 10px 0", fontSize: 12, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 };
+
   return (
     <>
       <style>{`
@@ -29320,61 +29357,50 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
         @keyframes rptShimmer { from { background-position: -600px 0; } to { background-position: 600px 0; } }
       `}</style>
 
-      <div style={{ maxWidth: 1400, margin: "0 auto", padding: "20px 24px" }}>
+      <div style={{ margin: "0 auto", padding: "16px 20px" }}>
         {/* ─── HEADER ROW ─── */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
           <div>
-            <h1 style={{ fontSize: 26, fontWeight: 700, margin: 0, fontFamily: "'Canela', Georgia, serif", color: C.text, lineHeight: 1.2 }}>Revenue Intelligence</h1>
-            <p style={{ fontSize: 12, color: C.textMut, margin: "4px 0 0 0" }}>{fmtDateLabel(dateFrom)} – {fmtDateLabel(dateTo)}{compareMode ? ` vs ${fmtDateLabel(prevFrom)} – ${fmtDateLabel(prevTo)}` : ""}</p>
+            <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, fontFamily: "'Canela', Georgia, serif", color: C.text, lineHeight: 1.2 }}>Revenue Intelligence</h1>
+            <p style={{ fontSize: 11, color: C.textMut, margin: "3px 0 0 0" }}>{fmtDateLabel(dateFrom)} – {fmtDateLabel(dateTo)}{compareMode ? ` vs ${fmtDateLabel(prevFrom)} – ${fmtDateLabel(prevTo)}` : ""}</p>
           </div>
-
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            {/* Time range pills */}
-            <div style={{ display: "flex", background: C.bg, borderRadius: 10, padding: 3 }}>
+            <div style={{ display: "flex", background: C.bg, borderRadius: 8, padding: 2 }}>
               {["today", "week", "month", "quarter", "year"].map(range => (
                 <button key={range} onClick={() => setTimeRange(range)} style={{
-                  padding: "6px 14px", borderRadius: 8, border: "none",
+                  padding: "5px 12px", borderRadius: 6, border: "none",
                   background: timeRange === range ? C.pri : "transparent",
                   color: timeRange === range ? "white" : C.textSec,
-                  fontWeight: 600, fontSize: 12, cursor: "pointer",
-                  transition: "all 0.2s ease",
+                  fontWeight: 600, fontSize: 11, cursor: "pointer", transition: "all 0.2s ease",
                 }}>{range.charAt(0).toUpperCase() + range.slice(1)}</button>
               ))}
             </div>
-
-            {/* Compare toggle */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 12, color: C.textSec, fontWeight: 500 }}>Compare</span>
-              <div onClick={() => setCompareMode(!compareMode)} style={{
-                width: 40, height: 22, borderRadius: 11, background: compareMode ? C.pri : C.border,
-                transition: "background 0.2s", position: "relative", cursor: "pointer",
-              }}>
-                <div style={{
-                  width: 18, height: 18, borderRadius: 9, background: "white", position: "absolute", top: 2,
-                  left: compareMode ? 20 : 2, transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)",
-                }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 11, color: C.textSec, fontWeight: 500 }}>Compare</span>
+              <div onClick={() => setCompareMode(!compareMode)} style={{ width: 36, height: 20, borderRadius: 10, background: compareMode ? C.pri : C.border, transition: "background 0.2s", position: "relative", cursor: "pointer" }}>
+                <div style={{ width: 16, height: 16, borderRadius: 8, background: "white", position: "absolute", top: 2, left: compareMode ? 18 : 2, transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }} />
               </div>
             </div>
           </div>
         </div>
 
         {/* ─── NLP QUERY BAR ─── */}
-        <div style={{ background: C.surface, borderRadius: 12, padding: "12px 16px", marginBottom: 20, border: `1px solid ${C.border}`, position: "relative" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 16, color: C.acc }}>✨</span>
-            <input type="text" placeholder="Ask anything... Try: 'Revenue by category' or 'Top 10 clients by spend'"
+        <div style={{ background: C.surface, borderRadius: 10, padding: "10px 14px", marginBottom: 16, border: `1px solid ${C.border}`, position: "relative" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 14, color: C.acc }}>✨</span>
+            <input type="text" placeholder="Ask anything... 'Revenue by category', 'Top 10 clients', 'Occupancy rate'"
               value={nlpQuery} onChange={(e) => setNlpQuery(e.target.value)}
               onFocus={() => setShowNLPSuggestions(true)}
               onBlur={() => setTimeout(() => setShowNLPSuggestions(false), 200)}
               onKeyDown={(e) => { if (e.key === "Enter" && nlpQuery.trim()) { setShowNLPSuggestions(false); processNLPQuery(nlpQuery); } }}
-              style={{ flex: 1, padding: "8px 12px", border: `1px solid ${C.borderLight}`, borderRadius: 8, fontSize: 13, background: C.bg, outline: "none" }} />
-            {nlpLoading && <div style={{ width: 28, height: 28, borderRadius: 6, background: `linear-gradient(90deg, ${C.bg}, ${C.borderLight}, ${C.bg})`, backgroundSize: "600px", animation: "rptShimmer 1.5s infinite" }} />}
+              style={{ flex: 1, padding: "7px 10px", border: `1px solid ${C.borderLight}`, borderRadius: 6, fontSize: 12, background: C.bg, outline: "none" }} />
+            {nlpLoading && <div style={{ width: 24, height: 24, borderRadius: 4, background: `linear-gradient(90deg, ${C.bg}, ${C.borderLight}, ${C.bg})`, backgroundSize: "600px", animation: "rptShimmer 1.5s infinite" }} />}
           </div>
           {showNLPSuggestions && !nlpQuery && (
-            <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: C.surface, border: `1px solid ${C.border}`, borderRadius: "0 0 12px 12px", zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.08)" }}>
+            <div style={{ position: "absolute", top: "100%", left: 0, right: 0, background: C.surface, border: `1px solid ${C.border}`, borderRadius: "0 0 10px 10px", zIndex: 20, boxShadow: "0 8px 24px rgba(0,0,0,0.08)" }}>
               {nlpSuggestionsBank.map((s, i) => (
                 <div key={i} onClick={() => { setNlpQuery(s); processNLPQuery(s); setShowNLPSuggestions(false); }}
-                  style={{ padding: "10px 16px", fontSize: 13, cursor: "pointer", color: C.text, borderBottom: i < nlpSuggestionsBank.length - 1 ? `1px solid ${C.borderLight}` : "none", transition: "background 0.1s" }}
+                  style={{ padding: "8px 14px", fontSize: 12, cursor: "pointer", color: C.text, borderBottom: i < nlpSuggestionsBank.length - 1 ? `1px solid ${C.borderLight}` : "none", transition: "background 0.1s" }}
                   onMouseEnter={e => e.currentTarget.style.background = C.bg}
                   onMouseLeave={e => e.currentTarget.style.background = "transparent"}>{s}</div>
               ))}
@@ -29386,157 +29412,127 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
         {nlpResults && <NLPResults />}
 
         {/* ═══════════════════════════════════════════════════════════════════
-            CASH BASIS REVENUE SECTION
+            TWO-COLUMN LAYOUT: Cash Basis (left) | Accrual (right)
             ═══════════════════════════════════════════════════════════════════ */}
-        <div style={{ marginBottom: 28 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-            <span style={{ fontSize: 16 }}>💵</span>
-            <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text, fontFamily: "'GT Eesti', sans-serif" }}>Cash Basis Revenue</h2>
-          </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
 
-          {/* KPI CARDS */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
-            <KPI label="Total Revenue" value={cashBasisData.current.total} trend={compareMode ? cashBasisData.trend : undefined} accentColor={C.pri} icon="💰" delay={0} />
-            <KPI label="Avg Transaction" value={cashBasisData.current.avgTransaction} trend={compareMode ? cashBasisData.trendAvg : undefined} accentColor={C.acc} icon="🎯" delay={1} />
-            <KPI label="Transactions" value={cashBasisData.current.count} displayValue={String(cashBasisData.current.count)} accentColor={C.suc} icon="📋" delay={2} />
-            <KPI label="Top Category" displayValue={categoryData.length > 0 ? categoryData[0].label : "—"} value={0} accentColor={C.info} icon="🏆" delay={3} />
-          </div>
+          {/* ═══ LEFT COLUMN: CASH BASIS ═══ */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, padding: "8px 12px", background: `${C.pri}08`, borderRadius: 8, borderLeft: `3px solid ${C.pri}` }}>
+              <span style={{ fontSize: 14 }}>💵</span>
+              <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.pri }}>Cash Basis Revenue</h2>
+            </div>
 
-          {/* CHARTS SIDE BY SIDE */}
-          <div style={{ display: "grid", gridTemplateColumns: "3fr 2fr", gap: 12, marginBottom: 16 }}>
-            {/* Revenue Trend */}
-            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 20px", border: `1px solid ${C.border}` }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Revenue Trend</h3>
-                {compareMode && <span style={{ fontSize: 10, padding: "3px 8px", background: C.accLt, color: C.accDk, borderRadius: 6, fontWeight: 600 }}>Comparing periods</span>}
+            {/* KPI CARDS — 2×2 grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+              <KPI label="Total Revenue" value={cashBasisData.current.total} trend={compareMode ? cashBasisData.trend : undefined} accentColor={C.pri} icon="💰" delay={0} />
+              <KPI label="Avg Transaction" value={cashBasisData.current.avgTransaction} trend={compareMode ? cashBasisData.trendAvg : undefined} accentColor={C.acc} icon="🎯" delay={1} />
+              <KPI label="Transactions" value={cashBasisData.current.count} displayValue={String(cashBasisData.current.count)} accentColor={C.suc} icon="📋" delay={2} />
+              <KPI label="Top Category" displayValue={categoryData.length > 0 ? categoryData[0].label : "—"} value={0} accentColor={C.info} icon="🏆" delay={3} />
+            </div>
+
+            {/* Revenue Trend Chart */}
+            <div style={sectionCard}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <h3 style={sectionTitle}>Cash Revenue Trend</h3>
+                {compareMode && <span style={{ fontSize: 9, padding: "2px 6px", background: C.accLt, color: C.accDk, borderRadius: 4, fontWeight: 600 }}>vs prev</span>}
               </div>
-              <InteractiveLineChart chartData={cashChartData} color={C.pri} showCompare={compareMode} height={240} id="rpt-cash" />
+              <InteractiveLineChart chartData={cashChartData} color={C.pri} showCompare={compareMode} height={210} id="rpt-cash" />
             </div>
 
             {/* Category Breakdown */}
-            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 20px", border: `1px solid ${C.border}` }}>
-              <h3 style={{ margin: "0 0 12px 0", fontSize: 13, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Revenue by Category</h3>
+            <div style={sectionCard}>
+              <h3 style={sectionTitle}>Revenue by Category</h3>
               <InteractiveBarChart items={categoryData} />
             </div>
-          </div>
 
-          {/* DETAIL PANELS — 3 columns */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
-            {/* Booking Source */}
-            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 18px", border: `1px solid ${C.border}` }}>
-              <h4 style={{ margin: "0 0 12px 0", fontSize: 12, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Booking Source</h4>
-              <MiniDonut items={bookingSourceData} size={100} id="rpt-src" />
-            </div>
-
-            {/* Payment Methods */}
-            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 18px", border: `1px solid ${C.border}` }}>
-              <h4 style={{ margin: "0 0 12px 0", fontSize: 12, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Payment Methods</h4>
-              <MiniDonut items={paymentMethodData} size={100} id="rpt-pay" />
-            </div>
-
-            {/* Quick Stats */}
-            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 18px", border: `1px solid ${C.border}` }}>
-              <h4 style={{ margin: "0 0 12px 0", fontSize: 12, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Quick Stats</h4>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                {[
-                  { label: "Period", value: `${days}d` },
-                  { label: "Daily Avg", value: fmt$k(cashBasisData.current.total / Math.max(days, 1)) },
-                  { label: "Categories", value: String(Object.keys(cashBasisData.current.byCategory).length) },
-                  { label: "Highest Day", value: fmt$k(Math.max(...Object.values(cashBasisData.current.byDate || { "": 0 }))) },
-                ].map((s, i) => (
-                  <div key={i} style={{ padding: "8px 10px", background: C.bg, borderRadius: 8 }}>
-                    <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 3 }}>{s.label}</div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{s.value}</div>
-                  </div>
-                ))}
+            {/* Donuts side by side */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+              <div style={sectionCard}>
+                <h4 style={{ ...sectionTitle, fontSize: 11 }}>Booking Source</h4>
+                <MiniDonut items={bookingSourceData} size={90} id="rpt-src" />
+              </div>
+              <div style={sectionCard}>
+                <h4 style={{ ...sectionTitle, fontSize: 11 }}>Payment Methods</h4>
+                <MiniDonut items={paymentMethodData} size={90} id="rpt-pay" />
               </div>
             </div>
-          </div>
 
-          {/* TRANSACTIONS TABLE (collapsible) */}
-          <CollapsibleSection title="Transaction Details" open={cashTableOpen} onToggle={() => setCashTableOpen(!cashTableOpen)} count={transactionsData.length}>
-            <div style={{ display: "flex", gap: 10, marginBottom: 12, alignItems: "center" }}>
-              <input type="text" placeholder="Search..." value={transactionSearch}
-                onChange={e => { setTransactionSearch(e.target.value); setTransactionPage(0); }}
-                style={{ flex: 1, padding: "8px 12px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, background: C.bg }} />
-              <button style={{ padding: "8px 14px", background: C.pri, color: "white", border: "none", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 11, whiteSpace: "nowrap" }}>Export CSV</button>
-            </div>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr style={{ borderBottom: `2px solid ${C.border}` }}>
-                  <th style={thStyle} onClick={() => handleCashSort("date")}>Date {sortConfig.key === "date" ? (sortConfig.direction === "desc" ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle}>Client</th><th style={thStyle}>Dog</th><th style={thStyle}>Service</th>
-                  <th style={{ ...thStyle, textAlign: "right" }} onClick={() => handleCashSort("amount")}>Amount {sortConfig.key === "amount" ? (sortConfig.direction === "desc" ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle}>Method</th><th style={thStyle}>Source</th>
-                </tr></thead>
-                <tbody>
-                  {pageItems.map((t, i) => (
-                    <tr key={i} style={{ borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer", transition: "background 0.1s" }}
-                      onMouseEnter={e => e.currentTarget.style.background = C.bg}
-                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                      onClick={() => setSelectedReservation(t.reservationId)}>
-                      <td style={tdStyle}>{t.date}</td>
-                      <td style={{ ...tdStyle, fontWeight: 500 }}>{t.clientName}</td>
-                      <td style={tdStyle}>{t.dogName}</td>
-                      <td style={tdStyle}>{t.service}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>{fmt$(t.amount)}</td>
-                      <td style={{ ...tdStyle, textTransform: "capitalize" }}>{t.method}</td>
-                      <td style={{ ...tdStyle, textTransform: "capitalize" }}>{t.source}</td>
+            {/* Transactions Table */}
+            <CollapsibleSection title="Transactions" open={cashTableOpen} onToggle={() => setCashTableOpen(!cashTableOpen)} count={transactionsData.length}>
+              <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
+                <input type="text" placeholder="Search..." value={transactionSearch}
+                  onChange={e => { setTransactionSearch(e.target.value); setTransactionPage(0); }}
+                  style={{ flex: 1, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 11, background: C.bg }} />
+                <button style={{ padding: "6px 12px", background: C.pri, color: "white", border: "none", borderRadius: 6, fontWeight: 600, cursor: "pointer", fontSize: 10, whiteSpace: "nowrap" }}>Export</button>
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr style={{ borderBottom: `2px solid ${C.border}` }}>
+                    <th style={thStyle} onClick={() => handleCashSort("date")}>Date {sortConfig.key === "date" ? (sortConfig.direction === "desc" ? "↓" : "↑") : ""}</th>
+                    <th style={thStyle}>Client</th><th style={thStyle}>Dog</th>
+                    <th style={{ ...thStyle, textAlign: "right" }} onClick={() => handleCashSort("amount")}>Amount {sortConfig.key === "amount" ? (sortConfig.direction === "desc" ? "↓" : "↑") : ""}</th>
+                    <th style={thStyle}>Method</th>
+                  </tr></thead>
+                  <tbody>
+                    {pageItems.map((t, i) => (
+                      <tr key={i} style={{ borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer", transition: "background 0.1s" }}
+                        onMouseEnter={e => e.currentTarget.style.background = C.bg}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                        onClick={() => setSelectedReservation(t.reservationId)}>
+                        <td style={tdStyle}>{t.date}</td>
+                        <td style={{ ...tdStyle, fontWeight: 500 }}>{t.clientName}</td>
+                        <td style={tdStyle}>{t.dogName}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>{fmt$(t.amount)}</td>
+                        <td style={{ ...tdStyle, textTransform: "capitalize" }}>{t.method}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
+                      <td colSpan="3" style={{ ...tdStyle, textAlign: "right" }}>Total</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{fmt$(cashTotalAmount)}</td>
+                      <td />
                     </tr>
-                  ))}
-                  <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
-                    <td colSpan="4" style={{ ...tdStyle, textAlign: "right" }}>Total</td>
-                    <td style={{ ...tdStyle, textAlign: "right" }}>{fmt$(cashTotalAmount)}</td>
-                    <td colSpan="2" />
-                  </tr>
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              </div>
+              {maxPages > 1 && (
+                <div style={{ display: "flex", justifyContent: "center", gap: 6, marginTop: 10 }}>
+                  <button onClick={() => setTransactionPage(Math.max(0, transactionPage - 1))} disabled={transactionPage === 0} style={{ padding: "5px 10px", border: `1px solid ${C.border}`, background: C.surface, borderRadius: 5, cursor: "pointer", fontSize: 11 }}>Prev</button>
+                  <span style={{ padding: "5px 10px", color: C.textMut, fontSize: 11 }}>{transactionPage + 1}/{maxPages}</span>
+                  <button onClick={() => setTransactionPage(Math.min(maxPages - 1, transactionPage + 1))} disabled={transactionPage >= maxPages - 1} style={{ padding: "5px 10px", border: `1px solid ${C.border}`, background: C.surface, borderRadius: 5, cursor: "pointer", fontSize: 11 }}>Next</button>
+                </div>
+              )}
+            </CollapsibleSection>
+          </div>
+
+          {/* ═══ RIGHT COLUMN: ACCRUAL ═══ */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, padding: "8px 12px", background: `${C.acc}10`, borderRadius: 8, borderLeft: `3px solid ${C.acc}` }}>
+              <span style={{ fontSize: 14 }}>📈</span>
+              <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.accDk }}>Accrual Revenue</h2>
             </div>
-            {maxPages > 1 && (
-              <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 12 }}>
-                <button onClick={() => setTransactionPage(Math.max(0, transactionPage - 1))} disabled={transactionPage === 0} style={{ padding: "6px 12px", border: `1px solid ${C.border}`, background: C.surface, borderRadius: 6, cursor: "pointer", fontSize: 12 }}>Prev</button>
-                <span style={{ padding: "6px 12px", color: C.textMut, fontSize: 12 }}>{transactionPage + 1}/{maxPages}</span>
-                <button onClick={() => setTransactionPage(Math.min(maxPages - 1, transactionPage + 1))} disabled={transactionPage >= maxPages - 1} style={{ padding: "6px 12px", border: `1px solid ${C.border}`, background: C.surface, borderRadius: 6, cursor: "pointer", fontSize: 12 }}>Next</button>
+
+            {/* KPI CARDS — 2×2 grid */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+              <KPI label="Total Accrual" value={accrualData.current.totals.totalRevenue} trend={compareMode ? accrualData.revenueTrend : undefined} accentColor={C.pri} icon="📊" delay={0} />
+              <KPI label="Occupancy" displayValue={fmtPercent(accrualData.occupancyRate)} value={0} accentColor={C.acc} icon="🏠" delay={1} />
+              <KPI label="RevPAR" value={accrualData.revPAR} accentColor={C.suc} icon="💎" delay={2} />
+              <KPI label="Discounts" value={discountBreakdown.totalDiscounts} accentColor={C.dan} icon="🏷️" delay={3} />
+            </div>
+
+            {/* Accrual Revenue Trend Chart */}
+            <div style={sectionCard}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <h3 style={sectionTitle}>Accrual Revenue Trend</h3>
+                {compareMode && <span style={{ fontSize: 9, padding: "2px 6px", background: C.accLt, color: C.accDk, borderRadius: 4, fontWeight: 600 }}>vs prev</span>}
               </div>
-            )}
-          </CollapsibleSection>
-        </div>
-
-        {/* ─── DIVIDER ─── */}
-        <div style={{ height: 2, background: `linear-gradient(90deg, transparent, ${C.border}, transparent)`, margin: "8px 0 28px" }} />
-
-        {/* ═══════════════════════════════════════════════════════════════════
-            ACCRUAL REVENUE SECTION
-            ═══════════════════════════════════════════════════════════════════ */}
-        <div style={{ marginBottom: 28 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
-            <span style={{ fontSize: 16 }}>📈</span>
-            <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text, fontFamily: "'GT Eesti', sans-serif" }}>Accrual Revenue</h2>
-          </div>
-
-          {/* KPI CARDS */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 16 }}>
-            <KPI label="Total Accrual Revenue" value={accrualData.current.totals.totalRevenue} trend={compareMode ? accrualData.revenueTrend : undefined} accentColor={C.pri} icon="📊" delay={0} />
-            <KPI label="Occupancy Rate" displayValue={fmtPercent(accrualData.occupancyRate)} value={0} accentColor={C.acc} icon="🏠" delay={1} />
-            <KPI label="RevPAR" value={accrualData.revPAR} accentColor={C.suc} icon="💎" delay={2} />
-            <KPI label="Total Discounts" value={discountBreakdown.totalDiscounts} accentColor={C.dan} icon="🏷️" delay={3} />
-          </div>
-
-          {/* CHARTS SIDE BY SIDE */}
-          <div style={{ display: "grid", gridTemplateColumns: "3fr 2fr", gap: 12, marginBottom: 16 }}>
-            {/* Accrual Revenue Trend */}
-            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 20px", border: `1px solid ${C.border}` }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Daily Revenue Trend</h3>
-                {compareMode && <span style={{ fontSize: 10, padding: "3px 8px", background: C.accLt, color: C.accDk, borderRadius: 6, fontWeight: 600 }}>Comparing periods</span>}
-              </div>
-              <InteractiveLineChart chartData={accrualChartData} color={C.acc} compareColor={C.pri} showCompare={compareMode} height={240} id="rpt-accrual" />
+              <InteractiveLineChart chartData={accrualChartData} color={C.acc} compareColor={C.pri} showCompare={compareMode} height={210} id="rpt-accrual" />
             </div>
 
             {/* Revenue Composition */}
-            <div style={{ background: C.surface, borderRadius: 14, padding: "16px 20px", border: `1px solid ${C.border}` }}>
-              <h3 style={{ margin: "0 0 12px 0", fontSize: 13, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Revenue Composition</h3>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={sectionCard}>
+              <h3 style={sectionTitle}>Revenue Composition</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {[
                   { label: "Boarding", value: accrualData.current.totals.boardingRevenue, color: "#003462" },
                   { label: "Daycare", value: accrualData.current.totals.daycareRevenue, color: "#AF8D54" },
@@ -29546,106 +29542,100 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
                   const maxComp = Math.max(accrualData.current.totals.boardingRevenue, 1);
                   return (
                     <div key={idx}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{item.label}</span>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: item.value < 0 ? C.dan : C.text }}>{item.value < 0 ? "-" : ""}{fmt$(Math.abs(item.value))}</span>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{item.label}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: item.value < 0 ? C.dan : C.text }}>{item.value < 0 ? "-" : ""}{fmt$(Math.abs(item.value))}</span>
                       </div>
-                      <div style={{ width: "100%", height: 16, background: C.bg, borderRadius: 3, overflow: "hidden" }}>
+                      <div style={{ width: "100%", height: 14, background: C.bg, borderRadius: 3, overflow: "hidden" }}>
                         <div style={{ height: "100%", width: `${Math.min((Math.abs(item.value) / maxComp) * 100, 100)}%`, background: item.color, borderRadius: 3, transition: "width 0.5s ease" }} />
                       </div>
                     </div>
                   );
                 })}
               </div>
-
-              {/* Net revenue summary */}
-              <div style={{ marginTop: 16, padding: 12, background: C.priLt, borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: C.pri }}>Net Revenue</span>
-                <span style={{ fontSize: 18, fontWeight: 800, color: C.pri }}>{fmt$(accrualData.current.totals.netRevenue)}</span>
+              <div style={{ marginTop: 12, padding: 10, background: C.priLt, borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.pri }}>Net Revenue</span>
+                <span style={{ fontSize: 16, fontWeight: 800, color: C.pri }}>{fmt$(accrualData.current.totals.netRevenue)}</span>
               </div>
             </div>
-          </div>
 
-          {/* DISCOUNT TRANSPARENCY ROW */}
-          <div style={{ background: C.surface, borderRadius: 14, padding: "16px 20px", border: `1px solid ${C.border}`, marginBottom: 16 }}>
-            <h3 style={{ margin: "0 0 14px 0", fontSize: 13, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: 0.5 }}>Discount Transparency</h3>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
-              <div style={{ padding: "12px 16px", background: C.bg, borderRadius: 10, flex: 1, minWidth: 120 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>Gross</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{fmt$(discountBreakdown.grossRevenue)}</div>
-              </div>
-              <span style={{ fontSize: 18, color: C.textMut }}>→</span>
-              <div style={{ padding: "12px 16px", background: C.danLt, borderRadius: 10, flex: 1, minWidth: 120 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.dan, marginBottom: 4 }}>Discounts</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: C.dan }}>-{fmt$(discountBreakdown.totalDiscounts)}</div>
-              </div>
-              <span style={{ fontSize: 18, color: C.textMut }}>→</span>
-              <div style={{ padding: "12px 16px", background: C.priLt, borderRadius: 10, flex: 1, minWidth: 120 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.pri, marginBottom: 4 }}>Net</div>
-                <div style={{ fontSize: 18, fontWeight: 700, color: C.pri }}>{fmt$(discountBreakdown.grossRevenue - discountBreakdown.totalDiscounts)}</div>
-              </div>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
-              {[
-                { type: "None", count: discountBreakdown.byType.none, amount: 0 },
-                { type: "Percent", count: discountBreakdown.byType.percent, amount: discountBreakdown.byAmount.percent },
-                { type: "Flat", count: discountBreakdown.byType.flat, amount: discountBreakdown.byAmount.flat },
-                { type: "Coupon", count: discountBreakdown.byType.coupon, amount: discountBreakdown.byAmount.coupon },
-                { type: "Multi-Dog", count: discountBreakdown.byType.multidog, amount: discountBreakdown.byAmount.multidog },
-              ].map((d, i) => (
-                <div key={i} style={{ padding: "10px 12px", background: C.bg, borderRadius: 10 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, color: C.textMut, marginBottom: 4 }}>{d.type}</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{d.count} res</div>
-                  {d.amount > 0 && <div style={{ fontSize: 12, color: C.dan, marginTop: 2 }}>-{fmt$(d.amount)}</div>}
+            {/* Discount Transparency */}
+            <div style={sectionCard}>
+              <h3 style={sectionTitle}>Discount Transparency</h3>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <div style={{ padding: "8px 12px", background: C.bg, borderRadius: 8, flex: 1 }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", color: C.textMut, marginBottom: 2 }}>Gross</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{fmt$(discountBreakdown.grossRevenue)}</div>
                 </div>
-              ))}
+                <span style={{ fontSize: 14, color: C.textMut }}>→</span>
+                <div style={{ padding: "8px 12px", background: C.danLt, borderRadius: 8, flex: 1 }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", color: C.dan, marginBottom: 2 }}>Discounts</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.dan }}>-{fmt$(discountBreakdown.totalDiscounts)}</div>
+                </div>
+                <span style={{ fontSize: 14, color: C.textMut }}>→</span>
+                <div style={{ padding: "8px 12px", background: C.priLt, borderRadius: 8, flex: 1 }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", color: C.pri, marginBottom: 2 }}>Net</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: C.pri }}>{fmt$(discountBreakdown.grossRevenue - discountBreakdown.totalDiscounts)}</div>
+                </div>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 6 }}>
+                {[
+                  { type: "None", count: discountBreakdown.byType.none, amount: 0 },
+                  { type: "%", count: discountBreakdown.byType.percent, amount: discountBreakdown.byAmount.percent },
+                  { type: "Flat", count: discountBreakdown.byType.flat, amount: discountBreakdown.byAmount.flat },
+                  { type: "Coupon", count: discountBreakdown.byType.coupon, amount: discountBreakdown.byAmount.coupon },
+                  { type: "Multi", count: discountBreakdown.byType.multidog, amount: discountBreakdown.byAmount.multidog },
+                ].map((d, i) => (
+                  <div key={i} style={{ padding: "8px 8px", background: C.bg, borderRadius: 8, textAlign: "center" }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", color: C.textMut, marginBottom: 2 }}>{d.type}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{d.count}</div>
+                    {d.amount > 0 && <div style={{ fontSize: 10, color: C.dan }}>-{fmt$(d.amount)}</div>}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
 
-          {/* ACCRUAL TABLE (collapsible) */}
-          <CollapsibleSection title="Accrual Reservations" open={accrualTableOpen} onToggle={() => setAccrualTableOpen(!accrualTableOpen)} count={accrualReservationsData.length}>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr style={{ borderBottom: `2px solid ${C.border}` }}>
-                  <th style={thStyle}>Dog</th><th style={thStyle}>Client</th><th style={thStyle}>Room</th>
-                  <th style={thStyle} onClick={() => handleAccrualSort("checkIn")}>Check-In {accrualSortConfig.key === "checkIn" ? (accrualSortConfig.direction === "desc" ? "↓" : "↑") : ""}</th>
-                  <th style={thStyle}>Check-Out</th><th style={{ ...thStyle, textAlign: "center" }}>Nights</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>Rate</th>
-                  <th style={{ ...thStyle, textAlign: "right" }}>Retail</th>
-                  <th style={thStyle}>Discount</th>
-                  <th style={{ ...thStyle, textAlign: "right" }} onClick={() => handleAccrualSort("netTotal")}>Net {accrualSortConfig.key === "netTotal" ? (accrualSortConfig.direction === "desc" ? "↓" : "↑") : ""}</th>
-                </tr></thead>
-                <tbody>
-                  {accrualReservationsData.map((r, i) => (
-                    <tr key={i} style={{
-                      borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer", transition: "background 0.1s",
-                      background: r.status === "active" ? `${C.sucLt}40` : r.status === "upcoming" ? `${C.infoLt}40` : "transparent",
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.opacity = "0.85"}
-                    onMouseLeave={e => e.currentTarget.style.opacity = "1"}
-                    onClick={() => setSelectedReservation(r.reservationId)}>
-                      <td style={{ ...tdStyle, fontWeight: 500 }}>{r.dogName}</td>
-                      <td style={tdStyle}>{r.clientName}</td>
-                      <td style={tdStyle}>{r.roomType}</td>
-                      <td style={{ ...tdStyle, fontSize: 11 }}>{r.checkIn}</td>
-                      <td style={{ ...tdStyle, fontSize: 11 }}>{r.checkOut}</td>
-                      <td style={{ ...tdStyle, textAlign: "center" }}>{r.nights}</td>
-                      <td style={{ ...tdStyle, textAlign: "right" }}>{fmt$(r.nightlyRate)}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>{fmt$(r.retailTotal)}</td>
-                      <td style={{ ...tdStyle, color: r.discountAmount > 0 ? C.dan : C.textMut }}>{r.discountType !== "none" ? r.discountType : "—"}</td>
-                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: C.pri }}>{fmt$(r.netTotal)}</td>
+            {/* Accrual Table */}
+            <CollapsibleSection title="Reservations" open={accrualTableOpen} onToggle={() => setAccrualTableOpen(!accrualTableOpen)} count={accrualReservationsData.length}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr style={{ borderBottom: `2px solid ${C.border}` }}>
+                    <th style={thStyle}>Dog</th><th style={thStyle}>Room</th>
+                    <th style={thStyle} onClick={() => handleAccrualSort("checkIn")}>In {accrualSortConfig.key === "checkIn" ? (accrualSortConfig.direction === "desc" ? "↓" : "↑") : ""}</th>
+                    <th style={{ ...thStyle, textAlign: "center" }}>Nts</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>Retail</th>
+                    <th style={thStyle}>Disc</th>
+                    <th style={{ ...thStyle, textAlign: "right" }} onClick={() => handleAccrualSort("netTotal")}>Net {accrualSortConfig.key === "netTotal" ? (accrualSortConfig.direction === "desc" ? "↓" : "↑") : ""}</th>
+                  </tr></thead>
+                  <tbody>
+                    {accrualReservationsData.map((r, i) => (
+                      <tr key={i} style={{
+                        borderBottom: `1px solid ${C.borderLight}`, cursor: "pointer", transition: "background 0.1s",
+                        background: r.status === "active" ? `${C.sucLt}40` : r.status === "upcoming" ? `${C.infoLt}40` : "transparent",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.opacity = "0.85"}
+                      onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+                      onClick={() => setSelectedReservation(r.reservationId)}>
+                        <td style={{ ...tdStyle, fontWeight: 500 }}>{r.dogName}</td>
+                        <td style={tdStyle}>{r.roomType}</td>
+                        <td style={{ ...tdStyle, fontSize: 10 }}>{r.checkIn}</td>
+                        <td style={{ ...tdStyle, textAlign: "center" }}>{r.nights}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 600 }}>{fmt$(r.retailTotal)}</td>
+                        <td style={{ ...tdStyle, color: r.discountAmount > 0 ? C.dan : C.textMut, fontSize: 10 }}>{r.discountType !== "none" ? r.discountType : "—"}</td>
+                        <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: C.pri }}>{fmt$(r.netTotal)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
+                      <td colSpan="4" style={{ ...tdStyle, textAlign: "right" }}>Totals</td>
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{fmt$(accrualTotalRetail)}</td>
+                      <td />
+                      <td style={{ ...tdStyle, textAlign: "right" }}>{fmt$(accrualTotalNet)}</td>
                     </tr>
-                  ))}
-                  <tr style={{ background: C.bg, fontWeight: 700, borderTop: `2px solid ${C.border}` }}>
-                    <td colSpan="7" style={{ ...tdStyle, textAlign: "right" }}>Totals</td>
-                    <td style={{ ...tdStyle, textAlign: "right" }}>{fmt$(accrualTotalRetail)}</td>
-                    <td />
-                    <td style={{ ...tdStyle, textAlign: "right" }}>{fmt$(accrualTotalNet)}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </CollapsibleSection>
+                  </tbody>
+                </table>
+              </div>
+            </CollapsibleSection>
+          </div>
         </div>
       </div>
 
