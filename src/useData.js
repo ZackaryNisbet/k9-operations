@@ -17,11 +17,10 @@ import { supabase } from './supabaseClient';
 const CLIENT_FIELDS = {
   phone: 'phone', first_name: 'first_name', last_name: 'last_name',
   email: 'email',
-  address: 'address_street1',
-  addressStreet2: 'address_street2',
-  addressCity: 'address_city',
-  addressState: 'address_state',
-  addressZip: 'address_zip',
+  street: 'street',
+  city: 'city',
+  state: 'state',
+  zip: 'zip',
   notes: 'notes', referral_source: 'referral_source',
 };
 

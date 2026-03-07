@@ -1417,11 +1417,14 @@ const DEF_CLIENT_FIELDS = [
   { id:"first_name",name:"First Name",type:"text",requiredFor:["tour"],locked:false,order:1 },
   { id:"last_name",name:"Last Name",type:"text",requiredFor:["tour"],locked:false,order:2 },
   { id:"email",name:"Email",type:"email",requiredFor:["eval"],locked:false,order:3 },
-  { id:"address",name:"Address",type:"text",requiredFor:[],locked:false,order:4 },
-  { id:"emergency_contact",name:"Emergency Contact",type:"text",requiredFor:[],locked:false,order:5 },
-  { id:"emergency_phone",name:"Emergency Phone",type:"tel",requiredFor:[],locked:false,order:6 },
-  { id:"notes",name:"Notes",type:"textarea",requiredFor:[],locked:false,order:7 },
-  { id:"referral_source",name:"Referral Source",type:"select",requiredFor:[],locked:false,order:8,options:["Friend/Family","Google","Social Media","Website","Walk-In","Vet Referral","Other"] },
+  { id:"street",name:"Street Address",type:"text",requiredFor:[],locked:false,order:4 },
+  { id:"city",name:"City",type:"text",requiredFor:[],locked:false,order:5 },
+  { id:"state",name:"State",type:"text",requiredFor:[],locked:false,order:6 },
+  { id:"zip",name:"Zip Code",type:"text",requiredFor:[],locked:false,order:7 },
+  { id:"emergency_contact",name:"Emergency Contact",type:"text",requiredFor:[],locked:false,order:8 },
+  { id:"emergency_phone",name:"Emergency Phone",type:"tel",requiredFor:[],locked:false,order:9 },
+  { id:"notes",name:"Notes",type:"textarea",requiredFor:[],locked:false,order:10 },
+  { id:"referral_source",name:"Referral Source",type:"select",requiredFor:[],locked:false,order:11,options:["Friend/Family","Google","Social Media","Website","Walk-In","Vet Referral","Other"] },
 ];
 
 const DEF_DOG_FIELDS = [
@@ -1761,7 +1764,10 @@ function generateDemoData() {
       fields: {
         phone: ph, first_name: fn, last_name: ln,
         email: fn.toLowerCase()+"."+ln.toLowerCase()+"@email.com",
-        address: ri(1,999)+" "+rp(STR)+", "+rp(CTY),
+        street: ri(1,999)+" "+rp(STR),
+        city: rp(CTY).split(", ")[0],
+        state: rp(CTY).split(", ")[1] || "IL",
+        zip: "600" + String(ri(10,99)),
         emergency_contact: rp(FN)+" "+rp(LN),
         emergency_phone: "847555"+String(ri(1000,9999)),
         notes: srand()>0.7 ? rp(["Prefers text communication","Travels frequently, regular boarder","Also has cat at home","First-time pet owner","Referred by friend","VIP client","Works from home","Prefers morning drop-off","Wants daily photo updates",""]) : ""
@@ -30284,6 +30290,35 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   );
 }
 
+function renderAIFormattedText(text) {
+  if (!text) return null;
+  const sections = text.split(/\n\n+/);
+  return sections.map((section, si) => {
+    const lines = section.split(/\n/);
+    const isBulletSection = lines.length > 1 && lines.every(l => !l.trim() || /^[-*•]\s/.test(l.trim()));
+    if (isBulletSection) {
+      return React.createElement("ul", { key: si, style: { margin: "8px 0", paddingLeft: 20, listStyle: "disc" } },
+        lines.filter(l => l.trim()).map((line, li) =>
+          React.createElement("li", { key: li, style: { marginBottom: 4, fontSize: 13, lineHeight: 1.5 } },
+            renderAIInline(line.replace(/^[-*•]\s*/, ""))
+          )
+        )
+      );
+    }
+    return React.createElement("p", { key: si, style: { margin: si === 0 ? 0 : "10px 0 0", fontSize: 13, lineHeight: 1.5 } }, renderAIInline(section));
+  });
+}
+
+function renderAIInline(text) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return React.createElement("strong", { key: i }, part.slice(2, -2));
+    }
+    return part;
+  });
+}
+
 function K9LoadingAnimation({ size = 56 }) {
   const scale = size / 100;
   return (
@@ -30520,7 +30555,7 @@ function AIAssistantPage({ data, save, nav, profile }) {
           lineHeight: 1.5,
           fontWeight: 400
         }}>
-          {msg.text}
+          {msg.role === "assistant" ? renderAIFormattedText(msg.text) : msg.text}
         </div>
         {msg.structured && msg.role === "assistant" && renderStructuredData(msg.structured)}
         {msg.suggestions && msg.role === "assistant" && msg.suggestions.length > 0 && (
@@ -30999,8 +31034,8 @@ function CommandBar({ data, profile, isOpen, onClose, nav, allLocations, onLocat
             // Show AI result
             <div style={{ padding: "16px 20px" }}>
               {aiResult.response && (
-                <div style={{ marginBottom: 16, fontSize: 13, color: C.text, lineHeight: 1.5 }}>
-                  {aiResult.response}
+                <div style={{ marginBottom: 16, color: C.text, lineHeight: 1.5 }}>
+                  {renderAIFormattedText(aiResult.response)}
                 </div>
               )}
               {aiResult.structured?.type === "table" && aiResult.structured?.data && (
