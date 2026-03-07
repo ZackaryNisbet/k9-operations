@@ -30333,11 +30333,14 @@ function AIAssistantPage({ data, save, nav, profile }) {
         }
       });
 
+      console.log("[K9 AI Chat] invoke result:", { result, error });
       if (error) {
+        console.error("[K9 AI Chat] Edge function error:", error);
+        const errDetail = error?.message || error?.context?.body || (typeof error === "string" ? error : JSON.stringify(error));
         const errorMsg = {
           id: gid(),
           role: "assistant",
-          text: "I encountered an error processing your request. Please try again.",
+          text: "Error: " + errDetail,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
         };
         setMessages(prev => [...prev, errorMsg]);
@@ -30852,13 +30855,19 @@ function CommandBar({ data, profile, isOpen, onClose, nav, allLocations, onLocat
             compact: true
           }
         });
-        if (!error && result) {
+        console.log("[K9 AI] invoke result:", { result, error });
+        if (error) {
+          console.error("[K9 AI] Edge function error:", error);
+          const errMsg = error?.message || error?.context?.body || (typeof error === "string" ? error : JSON.stringify(error));
+          setAiResult({ response: "Edge function error: " + errMsg });
+        } else if (result) {
           setAiResult(result);
         } else {
-          setAiResult({ response: "Unable to process query" });
+          setAiResult({ response: "No response from AI service." });
         }
       } catch (err) {
-        setAiResult({ response: "Error: " + (err?.message || "Unknown error") });
+        console.error("[K9 AI] Catch error:", err);
+        setAiResult({ response: "Connection error: " + (err?.message || "Unknown error") });
       } finally {
         setAiLoading(false);
       }
