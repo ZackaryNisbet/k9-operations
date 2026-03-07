@@ -30327,6 +30327,7 @@ function K9LoadingAnimation({ size = 56 }) {
         @keyframes k9orbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @keyframes k9pulse { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.15); opacity: 1; } }
         @keyframes k9fade { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.7; } }
+        @keyframes k9fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
       `}</style>
       <svg width={size} height={size} viewBox="0 0 100 100" style={{ overflow: "visible" }}>
         <defs>
@@ -30719,6 +30720,7 @@ function CommandBar({ data, profile, isOpen, onClose, nav, allLocations, onLocat
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResult, setAiResult] = useState(null);
+  const [visibleParagraphs, setVisibleParagraphs] = useState(0);
   const inputRef = useRef(null);
 
   // Pages definition
@@ -30887,8 +30889,24 @@ function CommandBar({ data, profile, isOpen, onClose, nav, allLocations, onLocat
       setInputValue("");
       setSelectedIdx(0);
       setAiResult(null);
+      setVisibleParagraphs(0);
     }
   }, [isOpen]);
+
+  // Progressive reveal: show one paragraph at a time
+  const aiParagraphs = useMemo(() => {
+    if (!aiResult?.response) return [];
+    return aiResult.response.split(/\n\n+/).filter(p => p.trim());
+  }, [aiResult?.response]);
+
+  useEffect(() => {
+    if (!aiResult || aiParagraphs.length === 0) return;
+    if (visibleParagraphs >= aiParagraphs.length) return;
+    const timer = setTimeout(() => {
+      setVisibleParagraphs(v => v + 1);
+    }, visibleParagraphs === 0 ? 100 : 600);
+    return () => clearTimeout(timer);
+  }, [aiResult, visibleParagraphs, aiParagraphs.length]);
 
   const handleSelect = async (item) => {
     if (!item || item.type === "header") return;
@@ -30929,10 +30947,13 @@ function CommandBar({ data, profile, isOpen, onClose, nav, allLocations, onLocat
           console.error("[K9 AI] Edge function error:", error);
           const errMsg = error?.message || error?.context?.body || (typeof error === "string" ? error : JSON.stringify(error));
           setAiResult({ response: "Edge function error: " + errMsg });
+          setVisibleParagraphs(999);
         } else if (result) {
           setAiResult(result);
+          setVisibleParagraphs(0);
         } else {
           setAiResult({ response: "No response from AI service." });
+          setVisibleParagraphs(999);
         }
       } catch (err) {
         console.error("[K9 AI] Catch error:", err);
@@ -31031,11 +31052,20 @@ function CommandBar({ data, profile, isOpen, onClose, nav, allLocations, onLocat
         {/* Results or AI Response */}
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
           {aiResult ? (
-            // Show AI result
+            // Show AI result with progressive reveal
             <div style={{ padding: "16px 20px" }}>
               {aiResult.response && (
                 <div style={{ marginBottom: 16, color: C.text, lineHeight: 1.5 }}>
-                  {renderAIFormattedText(aiResult.response)}
+                  {aiParagraphs.slice(0, visibleParagraphs).map((para, i) => (
+                    <div key={i} style={{ marginBottom: 10, animation: "k9fadeIn 0.4s ease", opacity: 1 }}>
+                      {renderAIFormattedText(para)}
+                    </div>
+                  ))}
+                  {visibleParagraphs < aiParagraphs.length && (
+                    <div style={{ display: "flex", justifyContent: "center", padding: "8px 0" }}>
+                      <K9LoadingAnimation size={36} />
+                    </div>
+                  )}
                 </div>
               )}
               {aiResult.structured?.type === "table" && aiResult.structured?.data && (
