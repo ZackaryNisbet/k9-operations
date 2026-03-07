@@ -29442,29 +29442,54 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
         setNlpResults(result);
         setNlpLoading(false);
       } else {
-        // Low confidence — try LLM fallback via Supabase Edge Function
-        // Sends only schema + summary stats (no PII / raw data)
-        const tryLLMFallback = async () => {
+        // Low confidence — use AI assistant edge function (Claude with DB access)
+        const tryAIFallback = async () => {
           try {
-            const summaryContext = {
-              dateRange: { from: dateFrom, to: dateTo, days },
-              cashTotal: cashBasisData.current.total,
-              cashCount: cashBasisData.current.count,
-              accrualTotal: accrualData.current.totals.totalRevenue,
-              occupancyRate: accrualData.occupancyRate,
-              totalRooms: Object.values(data.rooms || {}).reduce((s, a) => s + a.length, 0),
-              categories: Object.keys(cashBasisData.current.byCategory || {}),
-              roomTypes: Object.keys(data.rooms || {}),
-              availableIntents: Object.keys(dispatch),
-            };
-            const { data: llmData, error } = await supabase.functions.invoke("nlp-query", {
-              body: { query: q, context: summaryContext },
+            const locId = data._locationId || data.locationId;
+            const { data: aiResult, error } = await supabase.functions.invoke("ai-assistant", {
+              body: { query: q, locationId: locId, userId: "reports" },
             });
-            if (!error && llmData?.intent && dispatch[llmData.intent]) {
-              result = dispatch[llmData.intent]();
-              result.title = llmData.title || result.title;
-            } else if (!error && llmData?.result) {
-              result = llmData.result;
+            if (!error && aiResult?.structured) {
+              // Map structured response to NLP results format
+              const s = aiResult.structured;
+              result = {
+                type: s.type === "table" ? "table" : s.type === "metric" ? "metric" : "message",
+                title: s.title || "AI Analysis",
+                subtitle: s.subtitle,
+                message: aiResult.response,
+                followUps: s.followUps || [],
+              };
+              if (s.type === "table" && s.data) {
+                result.headers = s.data.headers;
+                result.rows = s.data.rows;
+              }
+              if (s.type === "metric" && s.data) {
+                result.value = s.data.value;
+                result.label = s.data.label;
+                result.change = s.data.change;
+              }
+              if (s.type === "summary" && s.data) {
+                result.items = s.data.items;
+              }
+            } else if (!error && aiResult?.response) {
+              result = { type: "message", title: "AI Analysis", message: aiResult.response, followUps: [] };
+            } else {
+              // AI unavailable — fall back to local intent matching with lower threshold
+              if (intent && dispatch[intent]) {
+                result = dispatch[intent]();
+              } else {
+                result = {
+                  type: "message",
+                  title: "I'm not sure what you're looking for",
+                  message: `Try one of these: "Revenue by suite type", "Top 10 clients by spend", "Occupancy rate", "Average length of stay", "Discount impact", or "Busiest day of the week".`,
+                  followUps: ["Revenue by category", "Top 10 clients by spend", "Occupancy rate", "Discount impact analysis"],
+                };
+              }
+            }
+          } catch {
+            // Offline/edge function not deployed — fall back to local
+            if (intent && dispatch[intent]) {
+              result = dispatch[intent]();
             } else {
               result = {
                 type: "message",
@@ -29473,18 +29498,11 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
                 followUps: ["Revenue by category", "Top 10 clients by spend", "Occupancy rate", "Discount impact analysis"],
               };
             }
-          } catch {
-            result = {
-              type: "message",
-              title: "I'm not sure what you're looking for",
-              message: `Try one of these: "Revenue by suite type", "Top 10 clients by spend", "Occupancy rate", "Average length of stay", "Discount impact", or "Busiest day of the week".`,
-              followUps: ["Revenue by category", "Top 10 clients by spend", "Occupancy rate", "Discount impact analysis"],
-            };
           }
           setNlpResults(result);
           setNlpLoading(false);
         };
-        tryLLMFallback();
+        tryAIFallback();
       }
     }, 150);
   }, [classifyIntent, extractEntities, _agg]);
@@ -30269,681 +30287,212 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
 
 
 
-function AIPage({ data, save, nav }) {
+function AIAssistantPage({ data, save, nav, profile }) {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
-  const [context, setContext] = useState({});
+  const [isLoading, setIsLoading] = useState(false);
   const chatEndRef = useRef(null);
-  const fileInputRef = useRef(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isTyping]);
+  }, [messages, isLoading]);
 
-  const KB = OPS_MANUAL_KB;
+  const conversationHistory = messages.map(m => ({
+    role: m.role,
+    content: m.text
+  }));
 
-  // ─── Intent Detection ─────────────────────────────────────────────
-  const detectIntent = (text) => {
-    const t = text.toLowerCase();
-    if (context.pendingBooking) return "nlp-booking-followup";
-    if (context.pendingVaccine) return "vaccine-followup";
-    if (/vaccine|vax|shot|immuniz|rabies|dhpp|bordetella|distemper|canine.?flu/i.test(t)) return "vaccine";
-    if (/protocol|manual|procedure|policy|handbook|rule|guideline|how\s+(do|should)|what.s\s+the\s+(rule|protocol|procedure)/i.test(t)) return "ops-manual";
-    if (/cost|estimate|price|book|reserv|boarding|daycare|night|room|quote/i.test(t)) return "nlp-booking";
-    return "general";
-  };
-
-  // ─── Vaccine Parsing ──────────────────────────────────────────────
-  const parseVaccines = (text) => {
-    const vaccines = {};
-    const patterns = [
-      { regex: /rabies[\s:]*(\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4})/i, field: "rabies_exp" },
-      { regex: /(?:dhpp|distemper)[\s:]*(\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4})/i, field: "dhpp_exp" },
-      { regex: /bordetella[\s:]*(\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4})/i, field: "bordetella_exp" },
-      { regex: /(?:canine\s*flu|influenza)[\s:]*(\d{4}[-\/]\d{1,2}[-\/]\d{1,2}|\d{1,2}[-\/]\d{1,2}[-\/]\d{4})/i, field: "canine_flu_exp" },
-    ];
-    for (const p of patterns) {
-      const m = text.match(p.regex);
-      if (m) {
-        let dateStr = m[1].replace(/\//g, "-");
-        if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(dateStr)) {
-          const parts = dateStr.split("-");
-          dateStr = `${parts[2]}-${parts[0].padStart(2,"0")}-${parts[1].padStart(2,"0")}`;
-        }
-        vaccines[p.field] = dateStr;
-      }
-    }
-    return vaccines;
-  };
-
-  const findDog = (text) => {
-    const t = text.toLowerCase();
-    for (const dog of (data.dogs || [])) {
-      if (dog.fields && dog.fields.name && t.includes(dog.fields.name.toLowerCase())) return dog;
-    }
-    return null;
-  };
-
-  // ─── NLP Booking Parser ───────────────────────────────────────────
-  const parseBookingRequest = (text) => {
-    const t = text.toLowerCase();
-    const result = { type: "boarding", roomType: null, nights: null, startDate: null, dogCount: 1, sameRoom: false };
-    if (/daycare|day\s*care/i.test(t)) result.type = "daycare";
-    else if (/eval/i.test(t)) result.type = "evaluation";
-    else if (/tour/i.test(t)) result.type = "tour";
-    if (/exec/i.test(t)) result.roomType = "Executive Room";
-    else if (/lux/i.test(t)) result.roomType = "Luxury Suite";
-    else if (/double/i.test(t)) result.roomType = "Double Compartment";
-    else if (/single/i.test(t)) result.roomType = "Single Compartment";
-    else if (result.type === "boarding") result.roomType = "Luxury Suite";
-    const nightMatch = t.match(/(\d+)\s*night/i);
-    if (nightMatch) result.nights = parseInt(nightMatch[1]);
-    const dayMatch = t.match(/(\d+)\s*day/i);
-    if (dayMatch && !nightMatch) result.nights = parseInt(dayMatch[1]);
-    if (!result.nights && result.type === "boarding") result.nights = 1;
-    const months = { jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12" };
-    const dateMatch = t.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+(\d{1,2})/i);
-    if (dateMatch) {
-      const mon = months[dateMatch[1].toLowerCase().slice(0, 3)];
-      const day = dateMatch[2].padStart(2, "0");
-      const year = new Date().getFullYear();
-      result.startDate = `${year}-${mon}-${day}`;
-      if (result.startDate < new Date().toISOString().split("T")[0]) result.startDate = `${year + 1}-${mon}-${day}`;
-    } else {
-      const d = new Date(); d.setDate(d.getDate() + 1);
-      result.startDate = d.toISOString().split("T")[0];
-    }
-    const dogCountMatch = t.match(/(\d+)\s*dog/i);
-    if (dogCountMatch) result.dogCount = parseInt(dogCountMatch[1]);
-    if (/same\s*room|one\s*room|together/i.test(t)) result.sameRoom = true;
-    return result;
-  };
-
-  // ─── Add Message Helper ───────────────────────────────────────────
-  const addMessage = useCallback((role, text, richContent) => {
-    const msg = { id: gid(), role, text, richContent, timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) };
-    setMessages(prev => [...prev, msg]);
-    return msg;
-  }, []);
-
-  // ─── Handle Vaccine Confirm ───────────────────────────────────────
-  const handleVaccineConfirm = useCallback((dogId, newVax) => {
-    save({ ...data, dogs: data.dogs.map(d => d.id === dogId ? { ...d, fields: { ...d.fields, ...newVax } } : d) });
-    const dog = (data.dogs || []).find(d => d.id === dogId);
-    const count = Object.keys(newVax).length;
-    addMessage("ai", `Updated ${count} vaccine${count !== 1 ? "s" : ""} for ${dog?.fields?.name || "the dog"}. All records are now current.`, { type: "vaccine-success" });
-  }, [data, save, addMessage]);
-
-  // ─── Handle Dog Pick for Vaccines ─────────────────────────────────
-  const handleDogPick = useCallback((dogId) => {
-    const pv = context.pendingVaccine;
-    const vaxData = pv?.vaccines || pv?.updates;
-    if (vaxData) {
-      const dog = (data.dogs || []).find(d => d.id === dogId);
-      if (dog) {
-        const client = (data.clients || []).find(c => c.id === dog.clientId);
-        addMessage("ai", `I'll update vaccines for ${dog.fields.name}. Please confirm:`, {
-          type: "vaccine-confirm", dogId: dog.id, dogName: dog.fields.name,
-          ownerName: client ? `${client.fields?.first_name||""} ${client.fields?.last_name||""}`.trim() : "",
-          currentVax: { rabies_exp: dog.fields.rabies_exp, dhpp_exp: dog.fields.dhpp_exp, bordetella_exp: dog.fields.bordetella_exp, canine_flu_exp: dog.fields.canine_flu_exp },
-          newVax: vaxData,
-        });
-        setContext({});
-      }
-    }
-  }, [context, data, addMessage]);
-
-  // ─── Handle Dog Selection for Booking ─────────────────────────────
-  const handleDogSelect = useCallback((dogIds) => {
-    const pb = context.pendingBooking;
-    setContext(prev => ({ ...prev, pendingBooking: { ...prev.pendingBooking, selectedDogs: dogIds } }));
-    const dogNames = dogIds.map(did => {
-      const d = (data.dogs || []).find(x => x.id === did);
-      return d?.fields?.name || "Unknown";
-    }).join(", ");
-    addMessage("ai", `Ready to book ${dogNames} in ${pb?.roomType || pb?.type || "boarding"}, ${fmtDate(pb?.startDate)} \u2013 ${fmtDate(pb?.checkOut)}.${pb?.pricing ? ` Total: $${pb.pricing.total.toFixed(2)}` : ""}\n\nType "confirm" to book, or "cancel" to start over.`);
-  }, [context, data, addMessage]);
-
-  // ─── Process Message ──────────────────────────────────────────────
-  const processMessage = async (text) => {
-    addMessage("user", text);
-    setInputValue("");
-    setIsTyping(true);
-    await new Promise(r => setTimeout(r, 600 + Math.random() * 800));
-
-    const intent = detectIntent(text);
-
-    switch (intent) {
-      case "vaccine": {
-        const dog = findDog(text);
-        const vaccines = parseVaccines(text);
-        const vaccineCount = Object.keys(vaccines).length;
-        if (!dog && vaccineCount === 0) {
-          setIsTyping(false);
-          addMessage("ai", "I can help update vaccine records! Please include the dog's name and vaccine dates. For example:\n\n\"Update vaccines for Baxter: Rabies 2026-10-15, DHPP 2026-08-20, Bordetella 2026-09-01\"");
-          return;
-        }
-        if (!dog) {
-          setIsTyping(false);
-          setContext({ pendingVaccine: { vaccines } });
-          addMessage("ai", "Which dog are these vaccines for? I found these in the system:", {
-            type: "dog-picker",
-            dogs: (data.dogs || []).map(d => {
-              const client = (data.clients || []).find(c => c.id === d.clientId);
-              return { id: d.id, name: d.fields?.name || "Unknown", owner: client ? `${client.fields?.first_name||""} ${client.fields?.last_name||""}` : "Unknown" };
-            })
-          });
-          return;
-        }
-        if (vaccineCount === 0) {
-          setIsTyping(false);
-          addMessage("ai", `I see you want to update vaccines for ${dog.fields.name}. Please include dates, e.g.:\n\n\"Rabies 2026-10-15, DHPP 2026-08-20, Bordetella 2026-09-01\"`);
-          setContext({ pendingVaccine: { dogId: dog.id } });
-          return;
-        }
-        const client = (data.clients || []).find(c => c.id === dog.clientId);
-        setIsTyping(false);
-        addMessage("ai", `I'll update vaccines for ${dog.fields.name}${client ? ` (${client.fields?.first_name||""} ${client.fields?.last_name||""})` : ""}. Please confirm:`, {
-          type: "vaccine-confirm", dogId: dog.id, dogName: dog.fields.name,
-          ownerName: client ? `${client.fields?.first_name||""} ${client.fields?.last_name||""}` : "",
-          currentVax: { rabies_exp: dog.fields.rabies_exp, dhpp_exp: dog.fields.dhpp_exp, bordetella_exp: dog.fields.bordetella_exp, canine_flu_exp: dog.fields.canine_flu_exp },
-          newVax: vaccines,
-        });
-        return;
-      }
-
-      case "vaccine-followup": {
-        if (context.pendingVaccine?.vaccines && Object.keys(context.pendingVaccine.vaccines).length > 0) {
-          const dog = findDog(text);
-          if (dog) {
-            const client = (data.clients || []).find(c => c.id === dog.clientId);
-            setIsTyping(false);
-            addMessage("ai", `I'll update vaccines for ${dog.fields.name}. Please confirm:`, {
-              type: "vaccine-confirm", dogId: dog.id, dogName: dog.fields.name,
-              ownerName: client ? `${client.fields?.first_name||""} ${client.fields?.last_name||""}` : "",
-              currentVax: { rabies_exp: dog.fields.rabies_exp, dhpp_exp: dog.fields.dhpp_exp, bordetella_exp: dog.fields.bordetella_exp, canine_flu_exp: dog.fields.canine_flu_exp },
-              newVax: context.pendingVaccine.vaccines,
-            });
-            setContext({});
-            return;
-          }
-        }
-        if (context.pendingVaccine?.dogId) {
-          const vaccines = parseVaccines(text);
-          if (Object.keys(vaccines).length > 0) {
-            const dog = (data.dogs || []).find(d => d.id === context.pendingVaccine.dogId);
-            if (dog) {
-              const client = (data.clients || []).find(c => c.id === dog.clientId);
-              setIsTyping(false);
-              addMessage("ai", `I'll update vaccines for ${dog.fields.name}. Please confirm:`, {
-                type: "vaccine-confirm", dogId: dog.id, dogName: dog.fields.name,
-                ownerName: client ? `${client.fields?.first_name||""} ${client.fields?.last_name||""}` : "",
-                currentVax: { rabies_exp: dog.fields.rabies_exp, dhpp_exp: dog.fields.dhpp_exp, bordetella_exp: dog.fields.bordetella_exp, canine_flu_exp: dog.fields.canine_flu_exp },
-                newVax: vaccines,
-              });
-              setContext({});
-              return;
-            }
-          }
-        }
-        setIsTyping(false);
-        addMessage("ai", "I couldn't parse the vaccine dates. Please try a format like:\n\"Rabies 2026-10-15, DHPP 2026-08-20\"");
-        return;
-      }
-
-      case "ops-manual": {
-        const t = text.toLowerCase();
-        let bestMatch = null;
-        let bestScore = 0;
-        for (const entry of KB) {
-          let score = 0;
-          for (const kw of entry.keywords) {
-            if (t.includes(kw)) score += kw.split(" ").length;
-          }
-          if (score > bestScore) { bestScore = score; bestMatch = entry; }
-        }
-        setIsTyping(false);
-        if (bestMatch && bestScore > 0) {
-          addMessage("ai", `${bestMatch.title}\n\nAccording to K9 Resorts protocol:\n\n${bestMatch.answer}`);
-        } else {
-          addMessage("ai", "I don't have specific guidance on that topic in my knowledge base. You may want to consult the full operations manual or ask your manager.\n\nI can help with protocols on: dog fights, aggressive behavior, medications, escape prevention, feeding, cleaning, emergencies, late pickups, check-in, and check-out.");
-        }
-        return;
-      }
-
-      case "nlp-booking": {
-        const params = parseBookingRequest(text);
-        const checkOut = (() => {
-          const d = new Date(params.startDate + "T12:00:00");
-          d.setDate(d.getDate() + (params.nights || 1));
-          return d.toISOString().split("T")[0];
-        })();
-        const dummyDogs = Array.from({ length: params.dogCount }, (_, i) => ({ dogId: `temp_${i}` }));
-        let pricing;
-        try {
-          pricing = calcReservationPricing({
-            type: params.type, roomType: params.roomType, checkIn: params.startDate, checkOut: checkOut,
-            checkInTime: "08:00", checkOutTime: "18:00", dogs: dummyDogs, dogProfiles: [],
-            pricing: data.settings?.pricing || DEF_PRICING, isSecondDogSameRoom: params.sameRoom && params.dogCount > 1,
-            reservation: { actualCheckInTime: undefined },
-          });
-        } catch (e) { pricing = null; }
-        setIsTyping(false);
-        setContext({ pendingBooking: { ...params, checkOut, pricing } });
-        addMessage("ai", `Here's your estimate for ${params.dogCount} dog${params.dogCount > 1 ? "s" : ""}:`, {
-          type: "booking-estimate", params: { ...params, checkOut }, pricing,
-        });
-        return;
-      }
-
-      case "nlp-booking-followup": {
-        const t = text.toLowerCase();
-        let matchedClient = null;
-        for (const client of (data.clients || [])) {
-          const full = `${client.fields?.first_name||""} ${client.fields?.last_name||""}`.toLowerCase();
-          if (t.includes(full) || t.includes((client.fields?.last_name||"").toLowerCase()) || t.includes((client.fields?.first_name||"").toLowerCase())) {
-            matchedClient = client;
-            break;
-          }
-        }
-        if (matchedClient) {
-          const clientDogs = (data.dogs || []).filter(d => d.clientId === matchedClient.id);
-          setIsTyping(false);
-          setContext(prev => ({ ...prev, pendingBooking: { ...prev.pendingBooking, clientId: matchedClient.id, clientName: `${matchedClient.first} ${matchedClient.last}` } }));
-          if (clientDogs.length > 0) {
-            addMessage("ai", `Found ${matchedClient.first} ${matchedClient.last}! Which dog(s) should I book?`, {
-              type: "dog-select",
-              dogs: clientDogs.map(d => ({ id: d.id, name: d.fields?.name || "Unknown" })),
-            });
-          } else {
-            addMessage("ai", `Found ${matchedClient.first} ${matchedClient.last}, but they don't have any dogs on file. Please add a dog profile first.`);
-            setContext({});
-          }
-        } else if (/yes|confirm|book\s*it|go\s*ahead|do\s*it/i.test(t) && context.pendingBooking?.selectedDogs) {
-          const pb = context.pendingBooking;
-          const newReservations = pb.selectedDogs.map((dogId, i) => ({
-            id: gid(), clientId: pb.clientId, dogId: dogId, type: pb.type, roomType: pb.roomType,
-            checkIn: pb.startDate, checkOut: pb.checkOut, checkInTime: "08:00", checkOutTime: "18:00",
-            status: "upcoming", isSecondDogSameRoom: i > 0 && pb.sameRoom, notes: "Booked via AI Command",
-          }));
-          await save({ ...data, reservations: [...data.reservations, ...newReservations] });
-          setIsTyping(false);
-          const dogNames = pb.selectedDogs.map(did => {
-            const d = (data.dogs || []).find(x => x.id === did);
-            return d?.fields?.name || "Unknown";
-          }).join(", ");
-          addMessage("ai", `Booked! ${pb.roomType || titleCase(pb.type)} for ${dogNames}, ${fmtDate(pb.startDate)} \u2013 ${fmtDate(pb.checkOut)}.${pb.pricing ? ` Total: $${pb.pricing.total.toFixed(2)}` : ""}\n\nThe reservation is now visible on the Lodging Calendar.`, { type: "booking-success" });
-          setContext({});
-        } else {
-          setIsTyping(false);
-          addMessage("ai", "I couldn't find that client. What's the client's name? I'll look them up.");
-        }
-        return;
-      }
-
-      default: {
-        setIsTyping(false);
-        addMessage("ai", "I can help with:\n\n\u2022 Vaccine updates \u2014 \"Update vaccines for Baxter: Rabies 2026-10-15\"\n\u2022 Operations manual \u2014 \"What's the protocol for dog fights?\"\n\u2022 Cost estimates & booking \u2014 \"Cost for boarding exec room 5 nights for 2 dogs\"\n\nHow can I assist you?");
-        return;
-      }
-    }
-  };
-
-  // ─── Handle Send ──────────────────────────────────────────────────
-  const handleSend = () => {
-    const text = inputValue.trim();
-    if (!text || isTyping) return;
-    if (/^cancel$/i.test(text)) {
-      setContext({});
-      setInputValue("");
-      addMessage("user", text);
-      addMessage("ai", "Cancelled. How else can I help?");
-      return;
-    }
-    processMessage(text);
-  };
-
-  // ─── Handle File Upload (Vaccine PDFs) ──────────────────────────
-  const handleFileUpload = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = "";
-    const ext = file.name.split(".").pop().toLowerCase();
-    if (!["pdf","jpg","jpeg","png"].includes(ext)) {
-      addMessage("user", `📎 ${file.name}`);
-      addMessage("ai", "I can only process PDF or image files (.pdf, .jpg, .png) for vaccine records. Please upload one of those formats.");
-      return;
-    }
-    addMessage("user", `📎 Uploaded: ${file.name}`);
-    setIsTyping(true);
-
-    // ── Pre-compute matching data (available to all steps) ─────
-    const allDogs = data.dogs || [];
-    const allClients = data.clients || [];
-    const baseName = file.name.replace(/\.[^.]+$/, "").replace(/\s*\(\d+\)\s*$/, "").trim();
-    const tokens = baseName.split(/[-_\s,.]+/).filter(t => t.length >= 2 && !/^\d+$/.test(t));
-    const dateMatch = baseName.match(/(\d{2})(\d{2})(\d{4})/);
-    const fileDate = dateMatch ? new Date(+dateMatch[3], +dateMatch[1] - 1, +dateMatch[2]) : new Date();
-
-    // Try to match client by name tokens
-    let matchedClient = null;
-    let nameToken = null;
-    for (const client of allClients) {
-      const fn = (client.fields?.first_name || "").toLowerCase();
-      const ln = (client.fields?.last_name || "").toLowerCase();
-      for (const tok of tokens) {
-        const t = tok.toLowerCase();
-        if (t.length >= 3 && (ln === t || fn === t || (t.length >= 4 && (ln.includes(t) || t.includes(ln))))) {
-          matchedClient = client; nameToken = tok; break;
-        }
-      }
-      if (matchedClient) break;
-    }
-
-    let matchedDog = null;
-    let clientDogs = [];
-    if (matchedClient) {
-      clientDogs = allDogs.filter(d => d.clientId === matchedClient.id);
-      matchedDog = clientDogs.length >= 1 ? clientDogs[0] : null;
-    }
-    const ownerFull = matchedClient ? `${matchedClient.fields?.first_name || ""} ${matchedClient.fields?.last_name || ""}`.trim() : null;
-
-    // Simulate extracted vaccine dates from file date
-    const addMo = (d, m) => { const r = new Date(d); r.setMonth(r.getMonth() + m); return r; };
-    const fmt = d => d.toISOString().slice(0, 10);
-    const simVax = {
-      bordetella_exp: fmt(addMo(fileDate, 12)),
-      canine_flu_exp: fmt(addMo(fileDate, 12)),
-      rabies_exp: fmt(addMo(fileDate, 14)),
-      dhpp_exp: fmt(addMo(fileDate, 17)),
-    };
-    const vaxLabels = { rabies_exp: "Rabies", dhpp_exp: "DHPP (Distemper)", bordetella_exp: "Bordetella", canine_flu_exp: "Canine Influenza" };
-
-    // Build the "extracted fields" card data
-    // If we matched a client, use their real data as the "OCR output" (simulated)
-    // If not, use whatever we can derive from the filename
-    const extractedFields = [];
-    if (matchedClient) {
-      extractedFields.push({ label: "Client Name", value: ownerFull });
-      if (matchedClient.fields?.phone) extractedFields.push({ label: "Phone", value: matchedClient.fields.phone });
-      if (matchedClient.fields?.email) extractedFields.push({ label: "Email", value: matchedClient.fields.email });
-      if (matchedClient.fields?.address) extractedFields.push({ label: "Address", value: matchedClient.fields.address });
-      if (matchedDog) {
-        extractedFields.push({ label: "Dog Name", value: matchedDog.fields?.name || "Unknown" });
-        if (matchedDog.fields?.breed) extractedFields.push({ label: "Breed", value: matchedDog.fields.breed });
-        if (matchedDog.fields?.weight) extractedFields.push({ label: "Weight", value: `${matchedDog.fields.weight} lbs` });
-        if (matchedDog.fields?.dob) extractedFields.push({ label: "DOB", value: fmtDateFull(matchedDog.fields.dob) });
-      } else if (clientDogs.length > 1) {
-        extractedFields.push({ label: "Dogs", value: clientDogs.map(d => d.fields?.name).filter(Boolean).join(", ") });
-      }
-    } else {
-      const simName = tokens.map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).join(" ");
-      if (simName) extractedFields.push({ label: "Client Name", value: simName });
-      if (dateMatch) extractedFields.push({ label: "Document Date", value: `${dateMatch[1]}/${dateMatch[2]}/${dateMatch[3]}` });
-    }
-    // Add vaccine expirations to extracted fields
-    Object.entries(simVax).forEach(([k, v]) => {
-      extractedFields.push({ label: vaxLabels[k], value: fmtDateFull(v), isVax: true });
-    });
-
-    // ══ STEP 1: Show extracted data (after scan delay) ══════════
-    setTimeout(() => {
-      setIsTyping(false);
-      addMessage("ai", `I scanned ${file.name} and extracted the following:`, {
-        type: "vaccine-extracted", fields: extractedFields,
-      });
-
-      // ══ STEP 2: "Searching..." (brief pause then searching msg) ═
-      setTimeout(() => {
-        setIsTyping(true);
-        setTimeout(() => {
-          setIsTyping(false);
-          addMessage("ai", "Let me search our clients\u2026");
-          setIsTyping(true);
-
-          // ══ STEP 3: Show match results ════════════════════════
-          setTimeout(() => {
-            setIsTyping(false);
-
-            if (matchedClient && matchedDog) {
-              // ── Strong match: show evidence + vaccine confirm ──
-              const evidence = [];
-              if (matchedClient.fields?.phone) evidence.push({ field: "Phone", extracted: matchedClient.fields.phone, status: "match" });
-              evidence.push({ field: "Client Name", extracted: ownerFull, status: "match" });
-              if (matchedClient.fields?.email) evidence.push({ field: "Email", extracted: matchedClient.fields.email, status: "match" });
-              evidence.push({ field: "Dog Name", extracted: matchedDog.fields?.name || "Unknown", status: "match" });
-
-              addMessage("ai", `I found a match! The extracted data matches an existing profile:`, {
-                type: "vaccine-search-result",
-                evidence,
-                dogId: matchedDog.id,
-                dogName: matchedDog.fields?.name || "Unknown",
-                ownerName: ownerFull,
-                newVax: simVax,
-                vaxLabels,
-                currentVax: {
-                  rabies_exp: matchedDog.fields?.rabies_exp, dhpp_exp: matchedDog.fields?.dhpp_exp,
-                  bordetella_exp: matchedDog.fields?.bordetella_exp, canine_flu_exp: matchedDog.fields?.canine_flu_exp,
-                },
-              });
-            } else if (matchedClient && clientDogs.length > 1) {
-              // ── Client matched but multiple dogs ──
-              setContext(prev => ({ ...prev, pendingVaccine: { source: "upload", updates: simVax } }));
-              addMessage("ai",
-                `I found ${ownerFull}\u2019s profile, but they have ${clientDogs.length} dogs on file. Which dog are these vaccines for?`,
-                { type: "dog-picker", dogs: clientDogs.map(d => ({ id: d.id, name: d.fields?.name || "Unknown", owner: ownerFull })) }
-              );
-            } else {
-              // ── No match ──
-              const simName = tokens.map(t => t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()).join(" ");
-              setContext(prev => ({ ...prev, pendingVaccine: { source: "upload", updates: simVax } }));
-              addMessage("ai",
-                allDogs.length > 0
-                  ? `I couldn\u2019t find a client matching \u201c${simName || file.name}\u201d in our system. Which dog should I update with the vaccine dates above?`
-                  : `I couldn\u2019t find any dogs in the system yet. Add a client and dog first, then upload the records.`,
-                allDogs.length > 0
-                  ? { type: "dog-picker", dogs: allDogs.slice(0, 12).map(d => {
-                      const cl = allClients.find(c => c.id === d.clientId);
-                      return { id: d.id, name: d.fields?.name || "Unknown", owner: cl ? `${cl.fields?.first_name||""} ${cl.fields?.last_name||""}`.trim() : "Unknown" };
-                    }) }
-                  : undefined
-              );
-            }
-          }, 1500);
-        }, 800);
-      }, 600);
-    }, 1800);
-  };
-
-  // ─── Format message text (handles **bold** and line breaks) ──────
-  const formatText = (text) => {
-    if (!text) return null;
-    return text.split("\n").map((line, li) => {
-      const parts = line.split(/(\*\*.*?\*\*)/g).map((seg, si) => {
-        if (seg.startsWith("**") && seg.endsWith("**")) return <strong key={si}>{seg.slice(2, -2)}</strong>;
-        return seg;
-      });
-      return <span key={li}>{li > 0 && <br />}{parts}</span>;
-    });
-  };
-
-  // ─── Render Rich Content ──────────────────────────────────────────
-  const renderRichContent = (msg) => {
-    const rc = msg.richContent;
-    if (!rc) return null;
-
-    if (rc.type === "vaccine-confirm") {
-      const vaxNames = { rabies_exp: "Rabies", dhpp_exp: "DHPP", bordetella_exp: "Bordetella", canine_flu_exp: "Canine Flu" };
-      return (
-        <div style={{ marginTop: 12, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.surface }}>
-          <div style={{ padding: "10px 16px", background: C.priLt, borderBottom: `1px solid ${C.borderLight}`, fontSize: 13, fontWeight: 700, color: C.pri }}>
-            Vaccine Update \u2014 {rc.dogName} {rc.ownerName && <span style={{ fontWeight: 400, color: C.textSec }}>({rc.ownerName})</span>}
-          </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead><tr style={{ background: C.bg }}>
-              <th style={{ padding: "8px 16px", textAlign: "left", fontWeight: 600, color: C.textSec, fontSize: 11, textTransform: "uppercase" }}>Vaccine</th>
-              <th style={{ padding: "8px 16px", textAlign: "left", fontWeight: 600, color: C.textSec, fontSize: 11, textTransform: "uppercase" }}>Current</th>
-              <th style={{ padding: "8px 16px", textAlign: "left", fontWeight: 600, color: C.textSec, fontSize: 11, textTransform: "uppercase" }}>New Date</th>
-            </tr></thead>
-            <tbody>
-              {Object.entries(rc.newVax).map(([field, date]) => (
-                <tr key={field} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                  <td style={{ padding: "8px 16px", fontWeight: 500 }}>{vaxNames[field] || field}</td>
-                  <td style={{ padding: "8px 16px", color: C.textSec }}>{rc.currentVax[field] ? fmtDateFull(rc.currentVax[field]) : "\u2014"}</td>
-                  <td style={{ padding: "8px 16px", color: C.suc, fontWeight: 600 }}>{fmtDateFull(date)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div style={{ padding: "12px 16px", display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${C.borderLight}` }}>
-            <Btn variant="secondary" size="sm" onClick={() => { setContext({}); addMessage("ai", "Cancelled. No changes made."); }}>Cancel</Btn>
-            <Btn size="sm" onClick={() => handleVaccineConfirm(rc.dogId, rc.newVax)}>Update Vaccines</Btn>
-          </div>
-        </div>
-      );
-    }
-
-    if (rc.type === "vaccine-extracted") {
-      const infoFields = (rc.fields || []).filter(f => !f.isVax);
-      const vaxFields = (rc.fields || []).filter(f => f.isVax);
-      return (
-        <div style={{ marginTop: 12, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.surface }}>
-          <div style={{ padding: "10px 16px", background: C.priLt, borderBottom: `1px solid ${C.borderLight}`, fontSize: 12, fontWeight: 700, color: C.pri }}>
-            Extracted Document Data
-          </div>
-          <div style={{ padding: "14px 16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 28px" }}>
-            {infoFields.map((f, i) => (
-              <div key={i}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>{f.label}</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.text, marginTop: 2 }}>{f.value}</div>
-              </div>
-            ))}
-          </div>
-          {vaxFields.length > 0 && <>
-            <div style={{ padding: "8px 16px", background: C.bg, borderTop: `1px solid ${C.borderLight}`, borderBottom: `1px solid ${C.borderLight}`, fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Vaccine Expirations Found
-            </div>
-            <div style={{ padding: "10px 16px", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 28px" }}>
-              {vaxFields.map((f, i) => (
-                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0" }}>
-                  <span style={{ fontSize: 12, color: C.textSec }}>{f.label}</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: C.suc }}>{f.value}</span>
-                </div>
-              ))}
-            </div>
-          </>}
-        </div>
-      );
-    }
-
-    if (rc.type === "vaccine-search-result") {
-      const vaxN = rc.vaxLabels || { rabies_exp: "Rabies", dhpp_exp: "DHPP", bordetella_exp: "Bordetella", canine_flu_exp: "Canine Flu" };
-      return (
-        <div style={{ marginTop: 12, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.surface }}>
-          {/* Match evidence */}
-          <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
-            {(rc.evidence || []).map((ev, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
-                <span style={{ color: C.suc, fontSize: 16, flexShrink: 0 }}>{"\u2713"}</span>
-                <span style={{ color: C.textSec }}>{ev.field}:</span>
-                <span style={{ fontWeight: 600, color: C.text }}>{ev.extracted}</span>
-                <span style={{ fontSize: 11, color: C.suc, fontWeight: 600, marginLeft: "auto" }}>Match</span>
-              </div>
-            ))}
-          </div>
-          {/* Vaccine comparison table */}
-          <div style={{ padding: "10px 16px", background: C.priLt, borderTop: `1px solid ${C.borderLight}`, borderBottom: `1px solid ${C.borderLight}`, fontSize: 12, fontWeight: 700, color: C.pri }}>
-            Vaccine Date Updates
-          </div>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <thead><tr style={{ background: C.bg }}>
-              <th style={{ padding: "8px 16px", textAlign: "left", fontWeight: 600, color: C.textSec, fontSize: 11, textTransform: "uppercase" }}>Vaccine</th>
-              <th style={{ padding: "8px 16px", textAlign: "left", fontWeight: 600, color: C.textSec, fontSize: 11, textTransform: "uppercase" }}>Current</th>
-              <th style={{ padding: "8px 16px", textAlign: "left", fontWeight: 600, color: C.textSec, fontSize: 11, textTransform: "uppercase" }}>New Date</th>
-            </tr></thead>
-            <tbody>
-              {Object.entries(rc.newVax).map(([field, date]) => (
-                <tr key={field} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                  <td style={{ padding: "8px 16px", fontWeight: 500 }}>{vaxN[field] || field}</td>
-                  <td style={{ padding: "8px 16px", color: C.textSec }}>{rc.currentVax?.[field] ? fmtDateFull(rc.currentVax[field]) : "\u2014"}</td>
-                  <td style={{ padding: "8px 16px", color: C.suc, fontWeight: 600 }}>{fmtDateFull(date)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {/* Confirmation prompt */}
-          <div style={{ padding: "14px 16px", fontSize: 13, color: C.text, borderTop: `1px solid ${C.borderLight}`, background: C.bg }}>
-            Would you like to update <strong>{rc.dogName}</strong>{"\u2019"}s vaccine records to reflect the dates above?
-          </div>
-          <div style={{ padding: "12px 16px", display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${C.borderLight}` }}>
-            <Btn variant="secondary" size="sm" onClick={() => { setContext({}); addMessage("ai", "Cancelled. No changes made."); }}>Cancel</Btn>
-            <Btn size="sm" onClick={() => handleVaccineConfirm(rc.dogId, rc.newVax)}>Update Vaccines</Btn>
-          </div>
-        </div>
-      );
-    }
-
-    if (rc.type === "dog-picker") {
-      return (
-        <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {rc.dogs.map(d => (
-            <button key={d.id} onClick={() => handleDogPick(d.id)} style={{ padding: "8px 16px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", fontSize: 13, fontWeight: 500, color: C.text, transition: "all 0.15s", fontFamily: "inherit" }}
-              onMouseEnter={e => { e.target.style.borderColor = C.pri; e.target.style.background = C.priLt; }}
-              onMouseLeave={e => { e.target.style.borderColor = C.border; e.target.style.background = C.surface; }}>
-              {d.name} <span style={{ color: C.textSec, fontSize: 11 }}>({d.owner})</span>
-            </button>
-          ))}
-        </div>
-      );
-    }
-
-    if (rc.type === "booking-estimate") {
-      const p = rc.params;
-      return (
-        <div style={{ marginTop: 12, border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", background: C.surface }}>
-          <div style={{ padding: "12px 16px", background: `linear-gradient(135deg, ${C.accLt}, ${C.surface})`, borderBottom: `1px solid ${C.borderLight}` }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: C.accDk, display: "flex", alignItems: "center", gap: 8 }}>
-              <I.Sparkle /> Cost Estimate
-            </div>
-          </div>
-          <div style={{ padding: "12px 16px", fontSize: 13 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "6px 12px", marginBottom: 12 }}>
-              <span style={{ color: C.textSec, fontWeight: 500 }}>Service:</span><span style={{ fontWeight: 600 }}>{titleCase(p.type)}</span>
-              {p.roomType && <><span style={{ color: C.textSec, fontWeight: 500 }}>Room Type:</span><span style={{ fontWeight: 600 }}>{p.roomType}</span></>}
-              <span style={{ color: C.textSec, fontWeight: 500 }}>Dates:</span><span style={{ fontWeight: 600 }}>{fmtDate(p.startDate)} \u2013 {fmtDate(p.checkOut)}</span>
-              {p.nights && <><span style={{ color: C.textSec, fontWeight: 500 }}>Duration:</span><span style={{ fontWeight: 600 }}>{p.nights} night{p.nights !== 1 ? "s" : ""}</span></>}
-              <span style={{ color: C.textSec, fontWeight: 500 }}>Dogs:</span><span style={{ fontWeight: 600 }}>{p.dogCount}{p.sameRoom ? " (same room)" : ""}</span>
-            </div>
-            {rc.pricing && <div style={{ borderTop: `1px solid ${C.borderLight}`, paddingTop: 12 }}><ItemizedReceipt pricingResult={rc.pricing} /></div>}
-          </div>
-          <div style={{ padding: "12px 16px", borderTop: `1px solid ${C.borderLight}`, background: C.bg, fontSize: 13, color: C.textSec }}>
-            What client is this for? I'll book it.
-          </div>
-        </div>
-      );
-    }
-
-    if (rc.type === "dog-select") {
-      return <DogSelectButtons dogs={rc.dogs} onSelect={handleDogSelect} />;
-    }
-
-    if (rc.type === "vaccine-success" || rc.type === "booking-success") {
-      return (
-        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 10, background: C.sucLt, color: C.suc, fontSize: 13, fontWeight: 600 }}>
-          <I.CheckCircle /> Done
-        </div>
-      );
-    }
-    return null;
-  };
-
-  // ─── Example Prompts ──────────────────────────────────────────────
-  const examples = [
-    { icon: "\ud83d\udccb", text: "Update vaccines for Baxter: Rabies 2026-10-15, DHPP 2026-08-20" },
-    { icon: "\ud83d\udcb0", text: "Cost for boarding exec room 5 nights for 2 dogs same room" },
-    { icon: "\ud83d\udcd6", text: "What's the protocol for dog fights?" },
+  const starterQueries = [
+    "What's my revenue this month?",
+    "Show me today's schedule",
+    "How many dogs are due for vaccines?",
+    "Find client by name"
   ];
+
+  const handleSendMessage = async () => {
+    if (!inputValue.trim()) return;
+
+    const userMessage = {
+      id: gid(),
+      role: "user",
+      text: inputValue,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    };
+    setMessages(prev => [...prev, userMessage]);
+    setInputValue("");
+    setIsLoading(true);
+
+    try {
+      const { data: result, error } = await supabase.functions.invoke("ai-assistant", {
+        body: {
+          query: inputValue,
+          conversationHistory,
+          locationId: data._locationId || profile?.location_id,
+          userId: profile?.id
+        }
+      });
+
+      if (error) {
+        const errorMsg = {
+          id: gid(),
+          role: "assistant",
+          text: "I encountered an error processing your request. Please try again.",
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        };
+        setMessages(prev => [...prev, errorMsg]);
+      } else {
+        const assistantMsg = {
+          id: gid(),
+          role: "assistant",
+          text: result?.message || "I'm ready to help.",
+          structured: result?.structured,
+          suggestions: result?.suggestions,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        };
+        setMessages(prev => [...prev, assistantMsg]);
+      }
+    } catch (err) {
+      const errorMsg = {
+        id: gid(),
+        role: "assistant",
+        text: "Unable to reach the AI service. Please try again.",
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSuggestionClick = (suggestion) => {
+    setInputValue(suggestion);
+  };
+
+  const renderStructuredData = (structured) => {
+    if (!structured) return null;
+
+    switch (structured.type) {
+      case "table":
+        return (
+          <div style={{ marginTop: 12, background: C.bg, borderRadius: 8, padding: 12, border: `1px solid ${C.border}` }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                  {structured.columns?.map((col, i) => (
+                    <th key={i} style={{ padding: "8px", textAlign: i === 0 ? "left" : "right", fontWeight: 700, color: C.textMut, fontSize: 11, textTransform: "uppercase" }}>
+                      {col}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {structured.rows?.slice(0, 10).map((row, ri) => (
+                  <tr key={ri} style={{ borderBottom: `1px solid ${C.borderLight}`, background: ri % 2 === 0 ? C.bg : "transparent" }}>
+                    {row.map((cell, ci) => (
+                      <td key={ci} style={{ padding: "8px", color: C.text, textAlign: ci === 0 ? "left" : "right" }}>
+                        {cell}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+
+      case "metric":
+        return (
+          <div style={{ marginTop: 12, padding: 16, background: C.bg, borderRadius: 8, border: `1px solid ${C.border}`, textAlign: "center" }}>
+            <div style={{ fontSize: 28, fontWeight: 700, color: C.pri, marginBottom: 4 }}>
+              {structured.value}
+            </div>
+            <div style={{ fontSize: 12, color: C.textMut }}>{structured.label}</div>
+            {structured.change !== undefined && (
+              <div style={{ marginTop: 8, fontSize: 12, fontWeight: 600, color: structured.change >= 0 ? C.suc : C.dan }}>
+                {structured.change >= 0 ? "↑" : "↓"} {Math.abs(structured.change).toFixed(1)}%
+              </div>
+            )}
+          </div>
+        );
+
+      case "summary":
+        return (
+          <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 8 }}>
+            {structured.items?.map((item, i) => (
+              <div key={i} style={{ padding: 10, background: C.bg, borderRadius: 6, border: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 10, color: C.textMut, fontWeight: 600, marginBottom: 4 }}>{item.label}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+        );
+
+      case "confirmation":
+        return (
+          <div style={{ marginTop: 12, padding: 12, background: C.priLt, borderRadius: 8, border: `1px solid ${C.pri}` }}>
+            <div style={{ fontSize: 12, color: C.text, marginBottom: 10 }}>
+              {structured.message}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => {
+                // TODO: Call edge function to confirm
+                handleSendMessage();
+              }} style={{ flex: 1, padding: "8px 12px", background: C.pri, color: "white", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                Confirm
+              </button>
+              <button onClick={() => setMessages(prev => prev.slice(0, -1))} style={{ flex: 1, padding: "8px 12px", background: C.bg, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  };
+
+  const renderMessageContent = (msg) => {
+    return (
+      <>
+        <div style={{
+          padding: "12px 16px",
+          borderRadius: msg.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+          background: msg.role === "user" ? C.pri : C.surface,
+          color: msg.role === "user" ? "#fff" : C.text,
+          border: msg.role === "assistant" ? `1px solid ${C.border}` : "none",
+          fontSize: 13,
+          lineHeight: 1.5
+        }}>
+          {msg.text}
+        </div>
+        {msg.structured && msg.role === "assistant" && renderStructuredData(msg.structured)}
+        {msg.suggestions && msg.role === "assistant" && msg.suggestions.length > 0 && (
+          <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {msg.suggestions.slice(0, 3).map((s, i) => (
+              <button key={i} onClick={() => handleSuggestionClick(s)} style={{
+                padding: "6px 12px",
+                background: C.bg,
+                border: `1px solid ${C.border}`,
+                borderRadius: 6,
+                fontSize: 11,
+                color: C.text,
+                cursor: "pointer",
+                transition: "all 0.15s"
+              }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = C.priLt; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+        <div style={{ fontSize: 10, color: C.textMut, marginTop: 4, textAlign: msg.role === "user" ? "right" : "left" }}>
+          {msg.timestamp}
+        </div>
+      </>
+    );
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg }}>
@@ -30952,19 +30501,29 @@ function AIPage({ data, save, nav }) {
         {messages.length === 0 ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", textAlign: "center" }}>
             <div style={{ width: 64, height: 64, borderRadius: 20, background: `linear-gradient(135deg, ${C.accLt}, ${C.surface})`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20, border: `1px solid ${C.border}` }}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2" strokeLinecap="round"><path d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3z"/></svg>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2" strokeLinecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
             </div>
-            <h3 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: C.text, marginBottom: 8 }}>How can I help you today?</h3>
-            <p style={{ margin: 0, fontSize: 14, color: C.textSec, maxWidth: 420, marginBottom: 28 }}>
-              I can update vaccine records, answer operations manual questions, and generate cost estimates with real-time pricing.
+            <h3 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: C.text, marginBottom: 8 }}>K9 AI Assistant</h3>
+            <p style={{ margin: 0, fontSize: 13, color: C.textSec, maxWidth: 420, marginBottom: 28, lineHeight: 1.5 }}>
+              Ask me questions about your reservations, clients, dogs, and more. I can access your data and help with operational insights.
             </p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
-              {examples.map((ex, i) => (
-                <button key={i} onClick={() => processMessage(ex.text)} style={{ padding: "12px 18px", borderRadius: 12, border: `1.5px solid ${C.border}`, background: C.surface, cursor: "pointer", fontSize: 13, fontWeight: 500, color: C.text, textAlign: "left", maxWidth: 300, transition: "all 0.15s", fontFamily: "inherit", display: "flex", alignItems: "flex-start", gap: 10, boxShadow: "0 1px 3px rgba(0,0,0,0.03)" }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.transform = "translateY(-1px)"; e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)"; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.03)"; }}>
-                  <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1.3 }}>{ex.icon}</span>
-                  <span>{ex.text}</span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", maxWidth: 500 }}>
+              {starterQueries.map((q, i) => (
+                <button key={i} onClick={() => { setInputValue(q); setTimeout(() => handleSendMessage(), 0); }}
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${C.border}`,
+                    background: C.surface,
+                    cursor: "pointer",
+                    fontSize: 12,
+                    color: C.text,
+                    transition: "all 0.15s",
+                    fontFamily: "inherit"
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = C.priLt; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.surface; }}>
+                  {q}
                 </button>
               ))}
             </div>
@@ -30974,30 +30533,19 @@ function AIPage({ data, save, nav }) {
             {messages.map(msg => (
               <div key={msg.id} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", marginBottom: 16 }}>
                 <div style={{ maxWidth: "75%", minWidth: 60 }}>
-                  <div style={{
-                    padding: "12px 18px",
-                    borderRadius: msg.role === "user" ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-                    background: msg.role === "user" ? C.pri : C.surface,
-                    color: msg.role === "user" ? "#fff" : C.text,
-                    border: msg.role === "ai" ? `1px solid ${C.border}` : "none",
-                    fontSize: 14, lineHeight: 1.6,
-                    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-                  }}>
-                    {formatText(msg.text)}
-                  </div>
-                  {renderRichContent(msg)}
-                  <div style={{ fontSize: 10, color: C.textMut, marginTop: 4, textAlign: msg.role === "user" ? "right" : "left" }}>
-                    {msg.timestamp}
-                  </div>
+                  {renderMessageContent(msg)}
                 </div>
               </div>
             ))}
-            {isTyping && (
+            {isLoading && (
               <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16 }}>
-                <div style={{ padding: "12px 18px", borderRadius: "16px 16px 16px 4px", background: C.surface, border: `1px solid ${C.border}`, display: "flex", gap: 4, alignItems: "center" }}>
-                  {[0, 1, 2].map(i => (
-                    <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: C.textMut, animation: `k9typing 1.2s ease-in-out ${i * 0.2}s infinite` }} />
-                  ))}
+                <div style={{ padding: "12px 16px", borderRadius: "14px 14px 14px 4px", background: C.surface, border: `1px solid ${C.border}`, display: "flex", gap: 6, alignItems: "center" }}>
+                  <div style={{ fontSize: 12, color: C.textMut }}>Thinking</div>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    {[0, 1, 2].map(i => (
+                      <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: C.textMut, animation: `k9dot 1.4s ease-in-out ${i * 0.2}s infinite`, opacity: 0.6 }} />
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
@@ -31006,39 +30554,237 @@ function AIPage({ data, save, nav }) {
         )}
       </div>
 
-      {/* Typing animation */}
-      <style>{`@keyframes k9typing { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-6px); opacity: 1; } }`}</style>
-
-      {/* Hidden file input for vaccine uploads */}
-      <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".pdf,.jpg,.jpeg,.png" style={{ display: "none" }} />
-
       {/* Input Bar */}
-      <div style={{ padding: "16px 28px 20px", flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "flex-end", background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 16, padding: "4px 4px 4px 6px", transition: "border-color 0.2s, box-shadow 0.2s" }}
-          onFocus={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.boxShadow = `0 0 0 3px rgba(0,52,98,0.08)`; }}
-          onBlur={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}>
-          <button onClick={() => fileInputRef.current?.click()} disabled={isTyping} title="Upload vaccine record (PDF or image)"
-            style={{ width: 36, height: 36, borderRadius: 10, border: "none", background: "transparent", color: C.textMut, cursor: isTyping ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s", marginBottom: 2 }}
-            onMouseEnter={e => { if (!isTyping) { e.currentTarget.style.background = C.bg; e.currentTarget.style.color = C.pri; } }}
-            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = C.textMut; }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-          </button>
+      <style>{`@keyframes k9dot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-6px); opacity: 1; } }`}</style>
+      <div style={{ padding: "16px 24px 20px", flexShrink: 0, borderTop: `1px solid ${C.border}` }}>
+        <div style={{
+          display: "flex",
+          alignItems: "flex-end",
+          background: C.surface,
+          border: `1px solid ${C.border}`,
+          borderRadius: 12,
+          padding: "8px 12px",
+          gap: 8,
+          transition: "all 0.2s"
+        }}>
           <textarea
             value={inputValue}
             onChange={e => setInputValue(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder="Type a message..."
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                handleSendMessage();
+              }
+            }}
+            placeholder="Ask anything..."
             rows={1}
-            style={{ flex: 1, padding: "8px 8px", border: "none", fontSize: 14, fontFamily: "inherit", color: C.text, background: "transparent", outline: "none", resize: "none", minHeight: 36, maxHeight: 120, boxSizing: "border-box", lineHeight: 1.45 }}
+            style={{
+              flex: 1,
+              padding: "8px 0",
+              border: "none",
+              fontSize: 13,
+              fontFamily: "inherit",
+              color: C.text,
+              background: "transparent",
+              outline: "none",
+              resize: "none",
+              minHeight: 36,
+              maxHeight: 100,
+              boxSizing: "border-box"
+            }}
           />
-          <button onClick={handleSend} disabled={!inputValue.trim() || isTyping}
-            style={{ width: 36, height: 36, borderRadius: 10, border: "none", background: inputValue.trim() && !isTyping ? C.pri : "transparent", color: inputValue.trim() && !isTyping ? "#fff" : C.textMut, cursor: inputValue.trim() && !isTyping ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.2s", marginBottom: 2 }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          <button
+            onClick={handleSendMessage}
+            disabled={!inputValue.trim() || isLoading}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              border: "none",
+              background: inputValue.trim() && !isLoading ? C.pri : C.border,
+              color: inputValue.trim() && !isLoading ? "#fff" : C.textMut,
+              cursor: inputValue.trim() && !isLoading ? "pointer" : "default",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+              transition: "all 0.2s"
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
           </button>
         </div>
-        <div style={{ textAlign: "center", marginTop: 6, fontSize: 10, color: C.textMut, letterSpacing: "0.02em" }}>Press Enter to send {"\u00b7"} Shift+Enter for new line</div>
       </div>
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// COMMAND BAR COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════
+function CommandBar({ data, profile, isOpen, onClose, nav }) {
+  const [inputValue, setInputValue] = useState("");
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      inputRef.current?.focus();
+      setInputValue("");
+      setResults(null);
+    }
+  }, [isOpen]);
+
+  const handleSubmit = async () => {
+    if (!inputValue.trim()) return;
+
+    setLoading(true);
+    try {
+      const { data: result, error } = await supabase.functions.invoke("ai-assistant", {
+        body: {
+          query: inputValue,
+          conversationHistory: [],
+          locationId: data._locationId || profile?.location_id,
+          userId: profile?.id,
+          compact: true
+        }
+      });
+
+      if (!error && result?.structured) {
+        setResults(result.structured);
+      }
+    } catch (err) {
+      setResults({ type: "message", message: "Unable to process query" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return ReactDOM.createPortal(
+    <div style={{
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: "rgba(0,0,0,0.4)",
+      display: "flex",
+      alignItems: "flex-start",
+      justifyContent: "center",
+      zIndex: 10000,
+      backdropFilter: "blur(2px)",
+      paddingTop: "20vh"
+    }} onClick={onClose}>
+      <div style={{
+        width: "90%",
+        maxWidth: 600,
+        background: C.surface,
+        borderRadius: 12,
+        border: `1px solid ${C.border}`,
+        boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
+        animation: "k9overlay 0.2s ease"
+      }} onClick={e => e.stopPropagation()}>
+        {/* Input */}
+        <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.border}` }}>
+          <input
+            ref={inputRef}
+            type="text"
+            value={inputValue}
+            onChange={e => setInputValue(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter") { e.preventDefault(); handleSubmit(); }
+              if (e.key === "Escape") { e.preventDefault(); onClose(); }
+            }}
+            placeholder="Search or ask..."
+            style={{
+              width: "100%",
+              padding: "10px 12px",
+              fontSize: 14,
+              border: `1px solid ${C.border}`,
+              borderRadius: 8,
+              background: C.bg,
+              color: C.text,
+              outline: "none"
+            }}
+          />
+        </div>
+
+        {/* Results */}
+        <div style={{ maxHeight: 400, overflowY: "auto", padding: "12px 0" }}>
+          {loading && (
+            <div style={{ padding: "20px", textAlign: "center", color: C.textMut, fontSize: 12 }}>
+              Searching...
+            </div>
+          )}
+          {results && (
+            <>
+              {results.type === "table" && (
+                <div style={{ padding: "12px 16px" }}>
+                  <table style={{ width: "100%", fontSize: 11 }}>
+                    <thead>
+                      <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                        {results.columns?.slice(0, 4).map((col, i) => (
+                          <th key={i} style={{ padding: "6px 8px", textAlign: "left", fontWeight: 600, color: C.textMut }}>{col}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.rows?.slice(0, 5).map((row, ri) => (
+                        <tr key={ri} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
+                          {row.slice(0, 4).map((cell, ci) => (
+                            <td key={ci} style={{ padding: "6px 8px", color: C.text }}>{cell}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {(results.rows?.length || 0) > 5 && (
+                    <div style={{ fontSize: 10, color: C.textMut, padding: "8px 0", textAlign: "center" }}>
+                      +{results.rows.length - 5} more
+                    </div>
+                  )}
+                </div>
+              )}
+              {results.type === "metric" && (
+                <div style={{ padding: "16px" }}>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: C.pri, textAlign: "center" }}>
+                    {results.value}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.textMut, textAlign: "center", marginTop: 4 }}>
+                    {results.label}
+                  </div>
+                </div>
+              )}
+              {results.type === "summary" && (
+                <div style={{ padding: "12px 16px", display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+                  {results.items?.slice(0, 4).map((item, i) => (
+                    <div key={i} style={{ padding: "8px", background: C.bg, borderRadius: 6 }}>
+                      <div style={{ fontSize: 9, color: C.textMut, fontWeight: 600 }}>{item.label}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginTop: 2 }}>{item.value}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {results.type === "message" && (
+                <div style={{ padding: "16px", color: C.textSec, fontSize: 12 }}>
+                  {results.message}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: "8px 16px", borderTop: `1px solid ${C.border}`, fontSize: 10, color: C.textMut, display: "flex", justifyContent: "space-between" }}>
+          <span>Press Enter to search</span>
+          <span>Esc to close</span>
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
@@ -31475,6 +31221,7 @@ export default function App() {
 
   // ═══ New Overlay ═══
   const [showNewOverlay, setShowNewOverlay] = useState(false);
+  const [commandBarOpen, setCommandBarOpen] = useState(false);
   const openNew = useCallback(() => setShowNewOverlay(true), []);
 
   // ═══ Global Toast ═══
@@ -31489,6 +31236,18 @@ export default function App() {
   const dismissGlobalToast = useCallback((id) => setGlobalToasts(prev => prev.filter(x => x.id !== id)), []);
 
   // ═══ Keyboard Shortcuts ═══
+  // ═══ Global Cmd+K → Command Bar ═══
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setCommandBarOpen(prev => !prev);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   const hkEnabled = ((data || {}).hotkeySettings || {}).enabled === true;
   const hkHints = ((data || {}).hotkeySettings || {}).showHints === true;
   const hkBindingsGlobal = { ...DEF_HOTKEY_BINDINGS, ...((data || {}).hotkeySettings || {}).bindings };
@@ -31674,7 +31433,7 @@ export default function App() {
       case "messages": return hp("view_messages") ? <MessagesPage data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "payments": return hp("view_payments") ? <PaymentsPage data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "reports": return hp("view_payments") ? <ReportsPage data={data} save={save} nav={nav} profile={profile} rptFilterOpen={rptFilterOpen} setRptFilterOpen={setRptFilterOpen} rptFilters={rptFilters} setRptFilters={setRptFilters} onActiveReportChange={setRptActiveReport}/> : denied;
-      case "ai": return hp("use_ai") ? <AIPage data={data} save={save} nav={nav}/> : denied;
+      case "ai": return hp("use_ai") ? <AIAssistantPage data={data} save={save} nav={nav} profile={profile}/> : denied;
       case "lms": return <LMSPage data={data} save={save} nav={nav} profile={profile}/>;
       case "settings": return hp("view_settings") ? <SettingsPage data={data} save={save} profile={profile} nav={nav} locationSlug={locSlug} addGlobalToast={addGlobalToast}/> : denied;
       default:
@@ -31927,6 +31686,7 @@ export default function App() {
 
       {/* ═══ Superhuman-style "New" Overlay ═══ */}
       {showNewOverlay && <NewOverlay data={data} nav={nav} onClose={() => setShowNewOverlay(false)} />}
+      {commandBarOpen && <CommandBar data={data} profile={profile} isOpen={commandBarOpen} onClose={() => setCommandBarOpen(false)} nav={nav} />}
     </div>
     </ErrorBoundary>
   );
