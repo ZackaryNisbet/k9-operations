@@ -30284,8 +30284,34 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   );
 }
 
-
-
+function K9LoadingAnimation({ size = 56 }) {
+  const scale = size / 100;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "16px 0" }}>
+      <svg width={size} height={size} viewBox="0 0 100 100" style={{ overflow: "visible" }}>
+        <defs>
+          <linearGradient id="k9LoadGold" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#C4A46A"/>
+            <stop offset="100%" stopColor="#AF8D54"/>
+          </linearGradient>
+        </defs>
+        {/* Center hub with pulse */}
+        <circle cx="50" cy="50" r="14" fill="url(#k9LoadGold)" style={{ animation: "k9pulse 2s ease-in-out infinite" }}/>
+        <circle cx="50" cy="50" r="5" fill="#003462" opacity="0.25"/>
+        {/* Orbiting group */}
+        <g style={{ transformOrigin: "50px 50px", animation: "k9orbit 3s linear infinite" }}>
+          <line x1="50" y1="50" x2="28" y2="26" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
+          <line x1="50" y1="50" x2="76" y2="34" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
+          <line x1="50" y1="50" x2="52" y2="78" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
+          <circle cx="28" cy="26" r="7" fill="#AF8D54" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out infinite" }}/>
+          <circle cx="76" cy="34" r="7" fill="#AF8D54" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out 0.7s infinite" }}/>
+          <circle cx="52" cy="78" r="7" fill="#AF8D54" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out 1.4s infinite" }}/>
+        </g>
+      </svg>
+      <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 500, fontFamily: "'GT Eesti', -apple-system, sans-serif", letterSpacing: "0.03em" }}>Analyzing your data...</span>
+    </div>
+  );
+}
 
 function AIAssistantPage({ data, save, nav, profile }) {
   const [messages, setMessages] = useState([]);
@@ -30523,7 +30549,11 @@ function AIAssistantPage({ data, save, nav, profile }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>
-      <style>{`@keyframes k9thinking { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
+      <style>{`
+  @keyframes k9orbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  @keyframes k9pulse { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.15); opacity: 1; } }
+  @keyframes k9fade { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.7; } }
+`}</style>
 
       {/* Chat Area */}
       <div style={{ flex: 1, overflowY: "auto", padding: "32px 40px" }}>
@@ -30566,9 +30596,8 @@ function AIAssistantPage({ data, save, nav, profile }) {
             ))}
             {isLoading && (
               <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 20 }}>
-                <div style={{ padding: "12px 16px", borderRadius: "12px 12px 12px 4px", background: C.surface, border: `1px solid ${C.border}`, display: "flex", gap: 4, alignItems: "center" }}>
-                  <span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>Thinking</span>
-                  <span style={{ fontSize: 13, color: C.textMut, animation: "k9thinking 1s ease-in-out infinite", fontWeight: 600 }}>...</span>
+                <div style={{ padding: "8px 20px", borderRadius: "12px 12px 12px 4px", background: C.surface, border: `1px solid ${C.border}` }}>
+                  <K9LoadingAnimation size={56} />
                 </div>
               </div>
             )}
@@ -30998,8 +31027,8 @@ function CommandBar({ data, profile, isOpen, onClose, nav, allLocations, onLocat
               )}
             </div>
           ) : aiLoading ? (
-            <div style={{ padding: "20px", textAlign: "center", color: C.textMut, fontSize: 12 }}>
-              Asking AI...
+            <div style={{ padding: "20px", display: "flex", justifyContent: "center" }}>
+              <K9LoadingAnimation size={48} />
             </div>
           ) : (
             // Show local results
