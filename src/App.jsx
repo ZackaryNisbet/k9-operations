@@ -29437,7 +29437,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
         rev_by_service: () => _agg.revByService(),
       };
 
-      if (intent && confidence >= 3 && dispatch[intent]) {
+      if (intent && confidence >= 4 && dispatch[intent]) {
         result = dispatch[intent]();
         setNlpResults(result);
         setNlpLoading(false);
@@ -30341,12 +30341,32 @@ function AIAssistantPage({ data, save, nav, profile }) {
         };
         setMessages(prev => [...prev, errorMsg]);
       } else {
+        // Map structured data from edge function format to frontend format
+        let mappedStructured = null;
+        if (result?.structured) {
+          const s = result.structured;
+          mappedStructured = {
+            type: s.type,
+            title: s.title,
+            subtitle: s.subtitle,
+            message: s.message,
+            followUps: s.followUps,
+            // Map data fields for tables and other types
+            columns: s.data?.headers,
+            rows: s.data?.rows,
+            value: s.data?.value,
+            label: s.data?.label,
+            change: s.data?.change,
+            items: s.data?.items
+          };
+        }
+
         const assistantMsg = {
           id: gid(),
           role: "assistant",
-          text: result?.message || "I'm ready to help.",
-          structured: result?.structured,
-          suggestions: result?.suggestions,
+          text: result?.response || "I'm ready to help.",
+          structured: mappedStructured,
+          suggestions: result?.followUps || [],
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
         };
         setMessages(prev => [...prev, assistantMsg]);
@@ -30456,38 +30476,41 @@ function AIAssistantPage({ data, save, nav, profile }) {
     return (
       <>
         <div style={{
-          padding: "12px 16px",
-          borderRadius: msg.role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+          padding: "11px 15px",
+          borderRadius: msg.role === "user" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
           background: msg.role === "user" ? C.pri : C.surface,
           color: msg.role === "user" ? "#fff" : C.text,
           border: msg.role === "assistant" ? `1px solid ${C.border}` : "none",
           fontSize: 13,
-          lineHeight: 1.5
+          lineHeight: 1.5,
+          fontWeight: 400
         }}>
           {msg.text}
         </div>
         {msg.structured && msg.role === "assistant" && renderStructuredData(msg.structured)}
         {msg.suggestions && msg.role === "assistant" && msg.suggestions.length > 0 && (
-          <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
             {msg.suggestions.slice(0, 3).map((s, i) => (
               <button key={i} onClick={() => handleSuggestionClick(s)} style={{
                 padding: "6px 12px",
-                background: C.bg,
+                background: "transparent",
                 border: `1px solid ${C.border}`,
                 borderRadius: 6,
-                fontSize: 11,
+                fontSize: 12,
                 color: C.text,
                 cursor: "pointer",
-                transition: "all 0.15s"
+                transition: "all 0.15s",
+                fontFamily: "'GT Eesti', -apple-system, sans-serif",
+                fontWeight: 500
               }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = C.priLt; }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.bg; }}>
+              onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = "transparent"; }}>
                 {s}
               </button>
             ))}
           </div>
         )}
-        <div style={{ fontSize: 10, color: C.textMut, marginTop: 4, textAlign: msg.role === "user" ? "right" : "left" }}>
+        <div style={{ fontSize: 11, color: C.textMut, marginTop: 6, textAlign: msg.role === "user" ? "right" : "left" }}>
           {msg.timestamp}
         </div>
       </>
@@ -30495,34 +30518,34 @@ function AIAssistantPage({ data, save, nav, profile }) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>
+      <style>{`@keyframes k9thinking { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }`}</style>
+
       {/* Chat Area */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }}>
+      <div style={{ flex: 1, overflowY: "auto", padding: "32px 40px" }}>
         {messages.length === 0 ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", textAlign: "center" }}>
-            <div style={{ width: 64, height: 64, borderRadius: 20, background: `linear-gradient(135deg, ${C.accLt}, ${C.surface})`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20, border: `1px solid ${C.border}` }}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2" strokeLinecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-            </div>
-            <h3 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: C.text, marginBottom: 8 }}>K9 AI Assistant</h3>
-            <p style={{ margin: 0, fontSize: 13, color: C.textSec, maxWidth: 420, marginBottom: 28, lineHeight: 1.5 }}>
-              Ask me questions about your reservations, clients, dogs, and more. I can access your data and help with operational insights.
+            <h2 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: C.text, marginBottom: 12 }}>K9 AI Assistant</h2>
+            <p style={{ margin: 0, fontSize: 14, color: C.textMut, maxWidth: 480, marginBottom: 32, lineHeight: 1.6 }}>
+              Ask me anything about your business. I can help with reservations, client insights, revenue analysis, and more.
             </p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", maxWidth: 500 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center", maxWidth: 600 }}>
               {starterQueries.map((q, i) => (
                 <button key={i} onClick={() => { setInputValue(q); setTimeout(() => handleSendMessage(), 0); }}
                   style={{
-                    padding: "10px 14px",
-                    borderRadius: 8,
+                    padding: "8px 16px",
+                    borderRadius: 6,
                     border: `1px solid ${C.border}`,
-                    background: C.surface,
+                    background: "transparent",
                     cursor: "pointer",
-                    fontSize: 12,
+                    fontSize: 13,
                     color: C.text,
                     transition: "all 0.15s",
-                    fontFamily: "inherit"
+                    fontFamily: "'GT Eesti', -apple-system, sans-serif",
+                    fontWeight: 500
                   }}
                   onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = C.priLt; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.surface; }}>
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = "transparent"; }}>
                   {q}
                 </button>
               ))}
@@ -30531,21 +30554,17 @@ function AIAssistantPage({ data, save, nav, profile }) {
         ) : (
           <>
             {messages.map(msg => (
-              <div key={msg.id} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", marginBottom: 16 }}>
-                <div style={{ maxWidth: "75%", minWidth: 60 }}>
+              <div key={msg.id} style={{ display: "flex", justifyContent: msg.role === "user" ? "flex-end" : "flex-start", marginBottom: 20 }}>
+                <div style={{ maxWidth: "72%", minWidth: 60 }}>
                   {renderMessageContent(msg)}
                 </div>
               </div>
             ))}
             {isLoading && (
-              <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 16 }}>
-                <div style={{ padding: "12px 16px", borderRadius: "14px 14px 14px 4px", background: C.surface, border: `1px solid ${C.border}`, display: "flex", gap: 6, alignItems: "center" }}>
-                  <div style={{ fontSize: 12, color: C.textMut }}>Thinking</div>
-                  <div style={{ display: "flex", gap: 4 }}>
-                    {[0, 1, 2].map(i => (
-                      <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: C.textMut, animation: `k9dot 1.4s ease-in-out ${i * 0.2}s infinite`, opacity: 0.6 }} />
-                    ))}
-                  </div>
+              <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 20 }}>
+                <div style={{ padding: "12px 16px", borderRadius: "12px 12px 12px 4px", background: C.surface, border: `1px solid ${C.border}`, display: "flex", gap: 4, alignItems: "center" }}>
+                  <span style={{ fontSize: 13, color: C.text, fontWeight: 500 }}>Thinking</span>
+                  <span style={{ fontSize: 13, color: C.textMut, animation: "k9thinking 1s ease-in-out infinite", fontWeight: 600 }}>...</span>
                 </div>
               </div>
             )}
@@ -30554,17 +30573,16 @@ function AIAssistantPage({ data, save, nav, profile }) {
         )}
       </div>
 
-      {/* Input Bar */}
-      <style>{`@keyframes k9dot { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-6px); opacity: 1; } }`}</style>
-      <div style={{ padding: "16px 24px 20px", flexShrink: 0, borderTop: `1px solid ${C.border}` }}>
+      {/* Input Area */}
+      <div style={{ padding: "20px 40px 24px", flexShrink: 0, borderTop: `1px solid ${C.border}` }}>
         <div style={{
           display: "flex",
           alignItems: "flex-end",
           background: C.surface,
           border: `1px solid ${C.border}`,
-          borderRadius: 12,
-          padding: "8px 12px",
-          gap: 8,
+          borderRadius: 10,
+          padding: "10px 14px",
+          gap: 10,
           transition: "all 0.2s"
         }}>
           <textarea
@@ -30583,7 +30601,7 @@ function AIAssistantPage({ data, save, nav, profile }) {
               padding: "8px 0",
               border: "none",
               fontSize: 13,
-              fontFamily: "inherit",
+              fontFamily: "'GT Eesti', -apple-system, sans-serif",
               color: C.text,
               background: "transparent",
               outline: "none",
@@ -30597,8 +30615,8 @@ function AIAssistantPage({ data, save, nav, profile }) {
             onClick={handleSendMessage}
             disabled={!inputValue.trim() || isLoading}
             style={{
-              width: 32,
-              height: 32,
+              width: 36,
+              height: 36,
               borderRadius: 8,
               border: "none",
               background: inputValue.trim() && !isLoading ? C.pri : C.border,
@@ -30610,6 +30628,7 @@ function AIAssistantPage({ data, save, nav, profile }) {
               flexShrink: 0,
               transition: "all 0.2s"
             }}
+            title="Send message"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
           </button>
@@ -30676,7 +30695,8 @@ function CommandBar({ data, profile, isOpen, onClose, nav }) {
       justifyContent: "center",
       zIndex: 10000,
       backdropFilter: "blur(2px)",
-      paddingTop: "20vh"
+      paddingTop: "20vh",
+      fontFamily: "'GT Eesti', -apple-system, sans-serif"
     }} onClick={onClose}>
       <div style={{
         width: "90%",
@@ -30685,7 +30705,8 @@ function CommandBar({ data, profile, isOpen, onClose, nav }) {
         borderRadius: 12,
         border: `1px solid ${C.border}`,
         boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
-        animation: "k9overlay 0.2s ease"
+        animation: "k9overlay 0.2s ease",
+        fontFamily: "'GT Eesti', -apple-system, sans-serif"
       }} onClick={e => e.stopPropagation()}>
         {/* Input */}
         <div style={{ padding: "16px 20px", borderBottom: `1px solid ${C.border}` }}>
