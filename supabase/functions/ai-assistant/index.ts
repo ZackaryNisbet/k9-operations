@@ -10,7 +10,7 @@
 //   SUPABASE_SERVICE_ROLE_KEY — auto-provided, bypasses RLS
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 /* ─── CORS ─────────────────────────────────────────────────────── */
 const CORS = {
@@ -148,7 +148,7 @@ const TOOLS = [
     description:
       "Execute a read-only SQL query against the K9 Operations database. MUST include location_id filter. Only SELECT is allowed. Use parameterized queries with $1, $2, etc. The first parameter ($1) is always the location_id.",
     input_schema: {
-      type: "object" as const,
+      type: "object",
       properties: {
         sql: {
           type: "string",
@@ -170,7 +170,7 @@ const TOOLS = [
     description:
       "Return a structured response to the user. Use this for tables, metrics, summaries, and charts.",
     input_schema: {
-      type: "object" as const,
+      type: "object",
       properties: {
         type: {
           type: "string",
@@ -200,7 +200,7 @@ const TOOLS = [
     description:
       "Prepare a reservation for user confirmation. Does NOT create it — returns a confirmation payload. Use when the user wants to book a stay.",
     input_schema: {
-      type: "object" as const,
+      type: "object",
       properties: {
         client_id: { type: "string", description: "Client ID" },
         client_name: { type: "string", description: "Client full name" },
@@ -228,7 +228,7 @@ const TOOLS = [
     description:
       "Prepare a vaccine update for user confirmation. Does NOT update — returns a confirmation payload.",
     input_schema: {
-      type: "object" as const,
+      type: "object",
       properties: {
         dog_id: { type: "string" },
         dog_name: { type: "string" },
@@ -446,6 +446,8 @@ async function executeConfirmedAction(
 
 /* ─── MAIN HANDLER ─────────────────────────────────────────────── */
 serve(async (req) => {
+  // Top-level safety wrapper — never return non-2xx
+  try {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
   try {
@@ -557,14 +559,22 @@ serve(async (req) => {
 
     return json(payload);
   } catch (err) {
-    console.error("ai-assistant error:", err);
+    console.error("ai-assistant inner error:", err);
     return json(
       {
         response:
           "Something went wrong processing your request. Please try again.",
         error: (err as Error).message,
       },
-      200, // Return 200 so client handles gracefully
+      200,
+    );
+  }
+  } catch (outerErr) {
+    // Absolute last resort — never crash
+    console.error("ai-assistant OUTER error:", outerErr);
+    return new Response(
+      JSON.stringify({ response: "Service error: " + String(outerErr), error: String(outerErr) }),
+      { status: 200, headers: { ...CORS, "Content-Type": "application/json" } },
     );
   }
 });
