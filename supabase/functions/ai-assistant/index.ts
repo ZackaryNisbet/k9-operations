@@ -116,10 +116,10 @@ ${SCHEMA}
 - When multiple related insights, use type "summary"
 - Suggest 1-2 follow-up questions when relevant
 - Today's date is $TODAY
-- If a query fails, retry with a different approach. Be transparent about what you're doing.
-- If you cannot get data after retrying, say so and suggest alternatives.
-- k9_clients has both a legacy freeform 'address' column AND individual 'street', 'city', 'state', 'zip' columns. Prefer the individual columns for queries (e.g., WHERE zip = '07054'). The legacy address column may still be populated for older records.
-- IMPORTANT: Always finish your response with the actual answer or result. Never stop mid-thought. If you're explaining your approach, still end with the data.
+- If a query returns empty results, try ONE alternative approach. If that also fails, conclude with what you found (even if empty). Do NOT keep retrying more than twice for the same data.
+- k9_clients has both a legacy freeform 'address' column AND individual 'street', 'city', 'state', 'zip' columns. Prefer the individual columns for queries (e.g., WHERE zip = '07054'). The legacy address column may still be populated for older records. If both are empty, say so — the data hasn't been collected yet.
+- IMPORTANT: You have a maximum of 8 tool calls. Budget them wisely. Do NOT spend multiple rounds exploring whether data exists — query it once, and if empty, report that clearly.
+- CRITICAL: Always finish your response with the actual answer or result. NEVER end with "Let me check..." or "Let me try...". Every response must have a conclusion.
 
 ## Response style:
 - Be direct but transparent. You can briefly mention your approach (e.g., "Querying client addresses...") but always lead to the answer.
@@ -326,7 +326,7 @@ Deno.serve(async (req) => {
     let rounds = 0;
     let allTextBlocks: string[] = [];
 
-    while (response.stop_reason === 'tool_use' && rounds < 5) {
+    while (response.stop_reason === 'tool_use' && rounds < 8) {
       rounds++;
       const toolBlocks = (response.content || []).filter((b: any) => b.type === 'tool_use');
       const toolResults: any[] = [];

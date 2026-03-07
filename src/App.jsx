@@ -30288,6 +30288,11 @@ function K9LoadingAnimation({ size = 56 }) {
   const scale = size / 100;
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "16px 0" }}>
+      <style>{`
+        @keyframes k9orbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes k9pulse { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.15); opacity: 1; } }
+        @keyframes k9fade { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.7; } }
+      `}</style>
       <svg width={size} height={size} viewBox="0 0 100 100" style={{ overflow: "visible" }}>
         <defs>
           <linearGradient id="k9LoadGold" x1="0%" y1="0%" x2="100%" y2="100%">
