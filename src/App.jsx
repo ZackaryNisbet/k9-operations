@@ -21700,16 +21700,23 @@ function TeamTab({ profile, data, save }) {
     let created = false;
     let tempPassword = null;
     try {
-      const { data: result } = await supabase.rpc('send_team_invite', {
+      const { data: result, error: rpcError } = await supabase.rpc('send_team_invite', {
         invite_email: inv.email,
         invite_name: inv.name || '',
       });
-      if (result && result.success && result.temp_password) {
+      if (rpcError) {
+        console.error('send_team_invite RPC error:', rpcError);
+        alert('Invite RPC error: ' + (rpcError.message || JSON.stringify(rpcError)));
+      } else if (result && !result.success) {
+        console.error('send_team_invite returned failure:', result);
+        alert('Invite failed: ' + (result.error || result.message || JSON.stringify(result)));
+      } else if (result && result.success && result.temp_password) {
         created = true;
         tempPassword = result.temp_password;
       }
     } catch (e) {
-      console.log('send_team_invite not available:', e.message);
+      console.error('send_team_invite exception:', e);
+      alert('Invite exception: ' + e.message);
     }
 
     setInviteEmail(""); setInviteName(""); setInviteRole("role_staff");
