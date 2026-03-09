@@ -21693,7 +21693,7 @@ function TeamTab({ profile, data, save }) {
       role: inviteRole,
       invitedAt: new Date().toISOString(),
     };
-    // Save the pending invite to the data blob
+    // Save the pending invite to location_pending_invites table (via useData save)
     await save({ ...data, pendingInvites: [...pendingInvites, inv] });
 
     // Try to create user with temp password via Supabase Admin API
