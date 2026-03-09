@@ -950,14 +950,14 @@ async function saveMassTextHistory(locationId, prev, next) {
 // --- Pending Invites: location_pending_invites → data.pendingInvites ---
 function loadPendingInvites(rows) {
   if (!rows || rows.length === 0) return [];
-  return rows.map(r => ({ id: r.id, email: r.email, role: r.role, invitedBy: r.invited_by, createdAt: r.created_at }));
+  return rows.map(r => ({ id: r.id, email: r.email, name: r.name || '', role: r.role, invitedBy: r.invited_by, createdAt: r.created_at }));
 }
 async function savePendingInvites(locationId, prev, next) {
   const diff = diffArrays(prev, next);
   if (!diff.hasChanges) return;
   if (diff.adds.length > 0) {
     const rows = diff.adds.map(i => ({
-      id: i.id, location_id: locationId, email: i.email, role: i.role, invited_by: i.invitedBy,
+      id: i.id, location_id: locationId, email: i.email, name: i.name || '', role: i.role, invited_by: i.invitedBy,
     }));
     const { error } = await supabase.from('location_pending_invites').insert(rows);
     if (error) console.error('Save pending invites:', error);

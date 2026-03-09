@@ -2,11 +2,18 @@
 -- TEAM INVITE: Create User with Temporary Password + Auto-Email
 -- Run this in Supabase SQL Editor (Dashboard > SQL Editor > New Query)
 -- ============================================================
--- SETUP (two keys to replace):
---   Line 22: Replace YOUR_SERVICE_ROLE_KEY with your Supabase service_role key
---            (Supabase Dashboard > Settings > API > service_role secret key)
---   Line 24: Replace YOUR_RESEND_API_KEY with your Resend API key
---            (resend.com > API Keys > Create API Key)
+-- SETUP (Supabase Vault — run ONCE before deploying this function):
+--
+--   INSERT INTO vault.secrets (name, secret)
+--   VALUES ('service_role_key', 'your-actual-service-role-key-here');
+--
+--   INSERT INTO vault.secrets (name, secret)
+--   VALUES ('resend_api_key', 'your-actual-resend-api-key-here');
+--
+-- To find your service_role key:
+--   Supabase Dashboard > Settings > API > service_role (secret)
+-- To get a Resend API key:
+--   resend.com > API Keys > Create API Key
 -- ============================================================
 -- Flow:
 -- 1. Generates a random 8-char temp password
@@ -23,15 +30,26 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 CREATE OR REPLACE FUNCTION send_team_invite(invite_email TEXT, invite_name TEXT DEFAULT '')
 RETURNS JSONB AS $$
 DECLARE
-  service_key TEXT := 'YOUR_SERVICE_ROLE_KEY';
+  service_key TEXT;
   project_url TEXT := 'https://xuzvqcpthqikyroqhypw.supabase.co';
-  resend_key  TEXT := 'YOUR_RESEND_API_KEY';
+  resend_key  TEXT;
   temp_pass TEXT;
   request_id BIGINT;
   email_request_id BIGINT;
   display_name TEXT;
   email_html TEXT;
 BEGIN
+  -- Load secrets from Supabase Vault
+  SELECT decrypted_secret INTO service_key
+  FROM vault.decrypted_secrets WHERE name = 'service_role_key' LIMIT 1;
+
+  SELECT decrypted_secret INTO resend_key
+  FROM vault.decrypted_secrets WHERE name = 'resend_api_key' LIMIT 1;
+
+  IF service_key IS NULL THEN
+    RETURN jsonb_build_object('success', false, 'error', 'service_role_key not configured in vault.secrets');
+  END IF;
+
   -- Only owners can send invites
   IF NOT EXISTS (
     SELECT 1 FROM profiles
@@ -113,7 +131,15 @@ BEGIN
     || '</div>'
     || '</div></body></html>';
 
-  -- Send the welcome email via Resend API
+  -- Send the welcome email via Resend API (skip if no resend_key configured)
+  IF resend_key IS NULL THEN
+    RETURN jsonb_build_object(
+      'success', true,
+      'temp_password', temp_pass,
+      'message', 'Account created for ' || invite_email || ' (email skipped — resend_api_key not configured in vault)'
+    );
+  END IF;
+
   SELECT net.http_post(
     url := 'https://api.resend.com/emails',
     headers := jsonb_build_object(
