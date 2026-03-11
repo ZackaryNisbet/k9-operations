@@ -1,15 +1,14 @@
 -- © 2026 K9 Operations LLC. All Rights Reserved.
--- Fix: Location creation error + Client data persistence
+-- COMPREHENSIVE FIX: Location creation + Client/Dog/Reservation persistence
 --
--- ISSUE 1: create_location() references column "data" on locations table
---          which no longer exists, causing "column data of relation locations
---          does not exist" error.
+-- The useData.js code (V2 normalized schema) writes to columns that may not
+-- exist in the production database. When Supabase PostgREST encounters a
+-- non-existent column in an upsert, the entire operation fails silently
+-- (errors are only console.logged in the app), causing data to "disappear"
+-- on the next reload.
 --
--- ISSUE 2: k9_clients table is missing columns that useData.js clientToRow()
---          tries to write (lifecycle_stage, lifecycle_data, preferred_vet_id,
---          saved_cards, client_notes, recurring_discount_id, first_service_date,
---          last_service_date). When these columns are missing, the upsert fails
---          silently and clients "disappear" on next data reload.
+-- This migration ensures ALL columns referenced by useData.js toRow functions
+-- exist in the production database.
 --
 -- Run this in Supabase SQL Editor (Dashboard > SQL Editor > New Query)
 -- ============================================================
@@ -19,53 +18,81 @@
 -- FIX 1: Re-add the "data" column to locations if it was dropped
 -- ============================================================
 -- Multiple RPC functions still reference locations.data for settings
--- (get_public_booking_data, get_locations_ops_data, etc.)
--- The safest fix is to ensure the column exists.
+-- (get_public_booking_data, get_locations_ops_data, submit_online_booking, etc.)
 ALTER TABLE locations ADD COLUMN IF NOT EXISTS data JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 
 -- ============================================================
--- FIX 2: Add missing columns to k9_clients
+-- FIX 2: k9_clients — add ALL missing columns
 -- ============================================================
--- useData.js clientToRow() writes these columns, and rowToClient() reads them.
--- If they don't exist, the Supabase upsert fails silently (error is only
--- console.logged), so clients appear in local state but are never persisted
--- to the DB. On the next data reload (realtime or 30s poll), they vanish.
+-- From 20260308 migration (may not have been applied):
+ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS street TEXT;
+ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS city TEXT;
+ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS state TEXT;
+ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS zip TEXT;
 
--- Lifecycle tracking (replaces the old JSONB lifecycle column)
+-- Lifecycle tracking (clientToRow writes lifecycle_stage + lifecycle_data)
 ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS lifecycle_stage TEXT DEFAULT 'prospect';
 ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS lifecycle_data JSONB;
 
--- Vet reference (FK to vets table)
+-- Vet reference
 ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS preferred_vet_id TEXT;
 
--- Service date tracking
+-- Service date tracking (rowToClient reads these)
 ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS first_service_date TEXT;
 ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS last_service_date TEXT;
 
--- Direct columns for data that was previously in overflow/JSONB
+-- Direct columns for formerly-overflowed data
 ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS saved_cards JSONB;
 ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS client_notes JSONB;
 ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS recurring_discount_id TEXT;
 
--- Create index on lifecycle_stage for filtering
+-- Notification preferences (clientToRow writes notification_prefs)
+ALTER TABLE k9_clients ADD COLUMN IF NOT EXISTS notification_prefs JSONB;
+
+-- Indexes
 CREATE INDEX IF NOT EXISTS idx_k9_clients_lifecycle ON k9_clients(lifecycle_stage, location_id);
+CREATE INDEX IF NOT EXISTS idx_k9_clients_zip ON k9_clients(zip) WHERE zip IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_k9_clients_state ON k9_clients(state) WHERE state IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_k9_clients_city ON k9_clients(city) WHERE city IS NOT NULL;
 
 
 -- ============================================================
--- FIX 2b: Add missing column to k9_dogs
+-- FIX 3: k9_dogs — add ALL missing columns
 -- ============================================================
--- useData.js dogToRow() writes vet_id when a dog has an assigned vet,
--- but the column is missing from the table definition.
+-- useData.js DOG_FIELDS maps JS names → DB column names that may differ
+-- from the original normalize-tables.sql definitions.
+-- The code writes to these column names (left side = what code writes):
+--   dob         → date_of_birth
+--   weight      → latest_weight
+--   weight_last_updated → latest_weight_date
+--   bath_type   → preferred_bath_type
+--   temperament → temperament_notes
+--   profile_pic → profile_pic_url
+
+ALTER TABLE k9_dogs ADD COLUMN IF NOT EXISTS date_of_birth TEXT;
+ALTER TABLE k9_dogs ADD COLUMN IF NOT EXISTS latest_weight TEXT;
+ALTER TABLE k9_dogs ADD COLUMN IF NOT EXISTS latest_weight_date TEXT;
+ALTER TABLE k9_dogs ADD COLUMN IF NOT EXISTS preferred_bath_type TEXT;
+ALTER TABLE k9_dogs ADD COLUMN IF NOT EXISTS temperament_notes TEXT;
+ALTER TABLE k9_dogs ADD COLUMN IF NOT EXISTS profile_pic_url TEXT;
+
+-- Additional columns referenced by dogToRow/rowToDog:
 ALTER TABLE k9_dogs ADD COLUMN IF NOT EXISTS vet_id TEXT;
+ALTER TABLE k9_dogs ADD COLUMN IF NOT EXISTS current_tag TEXT;
+ALTER TABLE k9_dogs ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
 
 
 -- ============================================================
--- FIX 3: Update create_location() to not require "data" column
+-- FIX 4: k9_reservations — add missing column
 -- ============================================================
--- Even though we re-added the column above, we update the function
--- to be resilient: it no longer sets _initialized in the data blob
--- since the app's normalized schema doesn't use it.
+-- reservationToRow writes no_deposit but it may not exist
+ALTER TABLE k9_reservations ADD COLUMN IF NOT EXISTS no_deposit BOOLEAN DEFAULT false;
+
+
+-- ============================================================
+-- FIX 5: Update create_location() to use empty data blob
+-- ============================================================
 CREATE OR REPLACE FUNCTION create_location(p_name TEXT, p_region TEXT DEFAULT '')
 RETURNS JSONB AS $$
 DECLARE
@@ -108,16 +135,15 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 
 -- ============================================================
--- DIAGNOSTIC: Run these queries to verify the fixes worked
+-- DIAGNOSTIC: Verify all columns exist after running this migration
 -- ============================================================
--- Check locations.data column exists:
--- SELECT column_name, data_type FROM information_schema.columns
--- WHERE table_name = 'locations' AND column_name = 'data';
+-- Run these to confirm:
 --
--- Check k9_clients has all expected columns:
 -- SELECT column_name FROM information_schema.columns
 -- WHERE table_name = 'k9_clients' ORDER BY ordinal_position;
 --
--- Test create_location (as an owner):
--- SELECT create_location('Test Location', 'Test Region');
--- Then delete the test: SELECT delete_location((SELECT id FROM locations WHERE name = 'Test Location'));
+-- SELECT column_name FROM information_schema.columns
+-- WHERE table_name = 'k9_dogs' ORDER BY ordinal_position;
+--
+-- SELECT column_name FROM information_schema.columns
+-- WHERE table_name = 'k9_reservations' ORDER BY ordinal_position;
