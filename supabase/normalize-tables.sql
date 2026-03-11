@@ -386,18 +386,225 @@ ALTER TABLE k9_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE k9_audit_log ENABLE ROW LEVEL SECURITY;
 ALTER TABLE k9_reminder_log ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY k9_clients_rls ON k9_clients FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-CREATE POLICY k9_dogs_rls ON k9_dogs FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-CREATE POLICY k9_vaccine_records_rls ON k9_vaccine_records FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-CREATE POLICY k9_reservations_rls ON k9_reservations FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-CREATE POLICY k9_evaluations_rls ON k9_evaluations FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-CREATE POLICY k9_daily_ops_rls ON k9_daily_ops FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-CREATE POLICY k9_payments_rls ON k9_payments FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-CREATE POLICY k9_packages_rls ON k9_packages FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-CREATE POLICY k9_package_sales_rls ON k9_package_sales FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-CREATE POLICY k9_messages_rls ON k9_messages FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-CREATE POLICY k9_audit_log_rls ON k9_audit_log FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
-CREATE POLICY k9_reminder_log_rls ON k9_reminder_log FOR ALL USING (location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid()));
+-- RLS policies: location-scoped access with owner/enterprise_admin override
+-- Owners and enterprise admins can read/write ALL locations' data.
+-- Regular staff can only access data for their assigned location.
+
+-- k9_clients
+CREATE POLICY k9_clients_select ON k9_clients FOR SELECT USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_clients_insert ON k9_clients FOR INSERT WITH CHECK (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_clients_update ON k9_clients FOR UPDATE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_clients_delete ON k9_clients FOR DELETE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+
+-- k9_dogs
+CREATE POLICY k9_dogs_select ON k9_dogs FOR SELECT USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_dogs_insert ON k9_dogs FOR INSERT WITH CHECK (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_dogs_update ON k9_dogs FOR UPDATE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_dogs_delete ON k9_dogs FOR DELETE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+
+-- k9_vaccine_records
+CREATE POLICY k9_vaccine_records_select ON k9_vaccine_records FOR SELECT USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_vaccine_records_insert ON k9_vaccine_records FOR INSERT WITH CHECK (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_vaccine_records_update ON k9_vaccine_records FOR UPDATE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_vaccine_records_delete ON k9_vaccine_records FOR DELETE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+
+-- k9_reservations
+CREATE POLICY k9_reservations_select ON k9_reservations FOR SELECT USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_reservations_insert ON k9_reservations FOR INSERT WITH CHECK (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_reservations_update ON k9_reservations FOR UPDATE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_reservations_delete ON k9_reservations FOR DELETE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+
+-- k9_evaluations
+CREATE POLICY k9_evaluations_select ON k9_evaluations FOR SELECT USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_evaluations_insert ON k9_evaluations FOR INSERT WITH CHECK (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_evaluations_update ON k9_evaluations FOR UPDATE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_evaluations_delete ON k9_evaluations FOR DELETE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+
+-- k9_daily_ops
+CREATE POLICY k9_daily_ops_select ON k9_daily_ops FOR SELECT USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_daily_ops_insert ON k9_daily_ops FOR INSERT WITH CHECK (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_daily_ops_update ON k9_daily_ops FOR UPDATE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_daily_ops_delete ON k9_daily_ops FOR DELETE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+
+-- k9_payments
+CREATE POLICY k9_payments_select ON k9_payments FOR SELECT USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_payments_insert ON k9_payments FOR INSERT WITH CHECK (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_payments_update ON k9_payments FOR UPDATE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_payments_delete ON k9_payments FOR DELETE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+
+-- k9_packages
+CREATE POLICY k9_packages_select ON k9_packages FOR SELECT USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_packages_insert ON k9_packages FOR INSERT WITH CHECK (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_packages_update ON k9_packages FOR UPDATE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_packages_delete ON k9_packages FOR DELETE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+
+-- k9_package_sales
+CREATE POLICY k9_package_sales_select ON k9_package_sales FOR SELECT USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_package_sales_insert ON k9_package_sales FOR INSERT WITH CHECK (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_package_sales_update ON k9_package_sales FOR UPDATE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_package_sales_delete ON k9_package_sales FOR DELETE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+
+-- k9_messages
+CREATE POLICY k9_messages_select ON k9_messages FOR SELECT USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_messages_insert ON k9_messages FOR INSERT WITH CHECK (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_messages_update ON k9_messages FOR UPDATE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_messages_delete ON k9_messages FOR DELETE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+
+-- k9_audit_log
+CREATE POLICY k9_audit_log_select ON k9_audit_log FOR SELECT USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_audit_log_insert ON k9_audit_log FOR INSERT WITH CHECK (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_audit_log_update ON k9_audit_log FOR UPDATE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_audit_log_delete ON k9_audit_log FOR DELETE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+
+-- k9_reminder_log
+CREATE POLICY k9_reminder_log_select ON k9_reminder_log FOR SELECT USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_reminder_log_insert ON k9_reminder_log FOR INSERT WITH CHECK (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_reminder_log_update ON k9_reminder_log FOR UPDATE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
+CREATE POLICY k9_reminder_log_delete ON k9_reminder_log FOR DELETE USING (
+  location_id IN (SELECT location_id FROM profiles WHERE id = auth.uid())
+  OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role IN ('owner', 'enterprise_admin'))
+);
 
 -- ============================================================
 -- Auto-update updated_at triggers
