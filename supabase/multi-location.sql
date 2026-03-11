@@ -43,9 +43,9 @@ BEGIN
   END LOOP;
   loc_slug := slug_candidate;
 
-  -- Insert the new location (empty but marked as initialized)
+  -- Insert the new location (empty — normalized schema, no JSONB blob needed)
   INSERT INTO locations (name, slug, region, data)
-  VALUES (trim(p_name), loc_slug, trim(p_region), '{"_initialized": true}'::jsonb)
+  VALUES (trim(p_name), loc_slug, trim(p_region), '{}'::jsonb)
   RETURNING id INTO new_loc_id;
 
   RETURN jsonb_build_object(

@@ -42,13 +42,21 @@ CREATE TABLE k9_clients (
   vet_phone TEXT,
   notes TEXT,
   referral_source TEXT,
+  street TEXT,
+  city TEXT,
+  state TEXT,
+  zip TEXT,
   -- top-level
   created_at_app TEXT,          -- app-level createdAt (ISO string from app)
-  lifecycle JSONB,              -- { conversion, retention, coldFrom, ... }
-  lifecycle_events JSONB,       -- array of system events
-  agreements JSONB,             -- { agrId: { signed, date }, ... }
-  questionnaire_responses JSONB,-- per-client questionnaire answers
+  lifecycle_stage TEXT DEFAULT 'prospect', -- simple lifecycle stage string
+  lifecycle_data JSONB,         -- full lifecycle tracking object
+  preferred_vet_id TEXT,        -- FK to vets table
+  first_service_date TEXT,      -- ISO date of first service
+  last_service_date TEXT,       -- ISO date of most recent service
   notification_prefs JSONB,     -- { vaccineAlerts, textReminders, ... }
+  saved_cards JSONB,            -- stored payment method references
+  client_notes JSONB,           -- structured notes data
+  recurring_discount_id TEXT,   -- FK to discount/package
   custom_fields JSONB,          -- any user-defined fields not in schema
   -- db timestamps
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -66,6 +74,7 @@ CREATE TABLE k9_dogs (
   id TEXT PRIMARY KEY,
   location_id UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
   client_id TEXT REFERENCES k9_clients(id) ON DELETE CASCADE,
+  vet_id TEXT,
   -- fields.*
   name TEXT,
   breed TEXT,
