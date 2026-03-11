@@ -1641,8 +1641,11 @@ export function useData(profile) {
             const rows = [...diff.adds, ...diff.updates].map(item =>
               isGlobal ? toRow(item) : toRow(item, locationId)
             );
-            ops.push(supabase.from(table).upsert(rows, { onConflict: 'id' })
-              .then(({ error, status, statusText }) => { if (error) console.error(`Upsert ${key}:`, JSON.stringify({ code: error.code, msg: error.message, details: error.details, hint: error.hint, status, statusText, table, rowCount: rows.length, rowKeys: Object.keys(rows[0] || {}) })); }));
+            ops.push(supabase.from(table).upsert(rows, { onConflict: 'id' }).select()
+              .then(({ data: returned, error, status, statusText }) => {
+                if (error) console.error(`Upsert ${key}:`, JSON.stringify({ code: error.code, msg: error.message, details: error.details, hint: error.hint, status, statusText, table, rowCount: rows.length, rowKeys: Object.keys(rows[0] || {}) }));
+                else if (returned && returned.length < rows.length) console.warn(`[K9] Silent RLS rejection on ${table}: sent ${rows.length} rows, only ${returned.length} persisted. Check that profiles.location_id matches the target location.`);
+              }));
           }
           if (diff.deletes.length > 0) {
             ops.push(supabase.from(table).delete().in('id', diff.deletes.map(i => i.id))
