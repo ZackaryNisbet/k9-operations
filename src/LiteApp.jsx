@@ -1597,6 +1597,27 @@ function useGingrData(locationId) {
     }
   }, [locationId, transformOwners, transformAnimals, transformReservations, buildRooms]);
 
+  // ── Helper: extract real error from edge function responses ──
+  const extractEdgeFnError = async (fnError) => {
+    if (!fnError) return null;
+    // FunctionsHttpError has the response context — try to get the body
+    try {
+      if (fnError.context?.body) {
+        const reader = fnError.context.body.getReader?.();
+        if (reader) {
+          const { value } = await reader.read();
+          const text = new TextDecoder().decode(value);
+          try { const j = JSON.parse(text); return j.error || j.message || text; } catch (_) { return text; }
+        }
+      }
+      if (typeof fnError.message === "string" && fnError.message !== "Edge Function returned a non-2xx status code") return fnError.message;
+    } catch (_) {}
+    return fnError.message || "Unknown edge function error";
+  };
+
+  // ── Developer error log (copyable) ──
+  const [lastErrorLog, setLastErrorLog] = useState(null);
+
   // ── Trigger sync via Edge Function (auto-retries backfill until complete) ──
   const [syncProgress, setSyncProgress] = useState(null); // { chunksProcessed, chunksRemaining }
   const triggerSync = useCallback(async (syncType = "full") => {
@@ -1604,6 +1625,7 @@ function useGingrData(locationId) {
     try {
       setSyncing(true);
       setSyncProgress(null);
+      setLastErrorLog(null);
       let backfillComplete = false;
       let totalSynced = 0;
       let iteration = 0;
@@ -1612,7 +1634,13 @@ function useGingrData(locationId) {
         const { data: fnData, error: fnError } = await supabase.functions.invoke("gingr-sync", {
           body: { location_id: locationId, sync_type: syncType },
         });
-        if (fnError) throw fnError;
+        if (fnError) {
+          const detail = await extractEdgeFnError(fnError);
+          const errObj = new Error(detail);
+          errObj._detail = detail;
+          errObj._raw = fnError;
+          throw errObj;
+        }
         console.log(`Gingr sync iteration ${iteration}:`, fnData);
         const resResult = fnData?.results?.reservations;
         totalSynced += resResult?.synced || 0;
@@ -1632,6 +1660,8 @@ function useGingrData(locationId) {
       return { totalSynced, iterations: iteration };
     } catch (err) {
       console.error("Sync failed:", err);
+      const errorLog = { timestamp: new Date().toISOString(), error: err._detail || err.message, location_id: locationId, syncType };
+      setLastErrorLog(errorLog);
       setSyncing(false);
       setSyncProgress(null);
       throw err;
@@ -5741,7 +5771,10 @@ function GingrIntegrationTab() {
           },
         },
       });
-      if (fnError) throw fnError;
+      if (fnError) {
+        const detail = await extractEdgeFnError(fnError);
+        throw new Error(detail);
+      }
       if (fnData?.success) {
         setTestStatus("success");
         const names = fnData.location_names || [];
@@ -5753,6 +5786,7 @@ function GingrIntegrationTab() {
     } catch (e) {
       setTestStatus("error");
       setTestMessage(e.message || "Could not reach Gingr. Make sure the Edge Function is deployed.");
+      setLastErrorLog({ timestamp: new Date().toISOString(), error: e.message, context: "test_connection" });
     }
   };
 
@@ -5764,7 +5798,10 @@ function GingrIntegrationTab() {
       const { data: fnData, error: fnError } = await supabase.functions.invoke("gingr-sync", {
         body: { location_id: profile.location_id, sync_type: "full" },
       });
-      if (fnError) throw fnError;
+      if (fnError) {
+        const detail = await extractEdgeFnError(fnError);
+        throw new Error(detail);
+      }
       const r = fnData?.results || {};
       const parts = [];
       if (r.owners?.synced) parts.push(`${r.owners.synced} owners`);
@@ -5779,6 +5816,7 @@ function GingrIntegrationTab() {
     } catch (err) {
       setSyncStatus("error");
       setSyncMessage(`Sync failed: ${err.message || "Unknown error"}`);
+      setLastErrorLog({ timestamp: new Date().toISOString(), error: err.message, context: "settings_sync" });
     }
   };
 
@@ -5891,6 +5929,16 @@ function GingrIntegrationTab() {
             {syncStatus === "syncing" && (<><svg width={18} height={18} viewBox="0 0 100 100" style={{ overflow: "visible", flexShrink: 0 }}><circle cx="50" cy="50" r="14" fill="#AF8D54" style={{ animation: "k9pulse 2s ease-in-out infinite" }}/><g style={{ transformOrigin: "50px 50px", animation: "k9orbit 3s linear infinite" }}><circle cx="28" cy="26" r="6" fill="#AF8D54" opacity="0.5"/><circle cx="76" cy="34" r="6" fill="#AF8D54" opacity="0.5"/><circle cx="52" cy="78" r="6" fill="#AF8D54" opacity="0.5"/></g></svg> {syncMessage}</>)}
             {syncStatus === "success" && (<><Icons.Check /> {syncMessage}</>)}
             {syncStatus === "error" && (<><Icons.AlertTriangle /> {syncMessage}</>)}
+          </div>
+        )}
+
+        {lastErrorLog && (
+          <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 8, background: C.surface, border: `1px solid ${C.borderLight}`, fontSize: 12, fontFamily: "monospace" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+              <span style={{ fontWeight: 600, color: C.textSec, fontFamily: "inherit" }}>Error Log</span>
+              <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(lastErrorLog, null, 2)); }} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.borderLight}`, background: C.bg, color: C.textSec, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Copy</button>
+            </div>
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", color: C.dan, fontSize: 11, lineHeight: 1.4 }}>{JSON.stringify(lastErrorLog, null, 2)}</pre>
           </div>
         )}
 
