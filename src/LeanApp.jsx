@@ -3904,8 +3904,24 @@ function PhotosPage() {
   );
 }
 
+// ─── Error Boundary ──────────────────────────────────────────────────────
+class LeanAppErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null, info: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("LeanApp Error:", error, info); this.setState({ info }); }
+  render() {
+    if (this.state.error) {
+      return <div style={{padding:40,fontFamily:"monospace"}}>
+        <h2 style={{color:"red"}}>LeanApp crashed</h2>
+        <pre style={{whiteSpace:"pre-wrap",fontSize:13,background:"#f5f5f5",padding:20,borderRadius:8}}>{this.state.error.toString()}{"\n\n"}{this.state.info?.componentStack}</pre>
+      </div>;
+    }
+    return this.props.children;
+  }
+}
+
 // ─── Main App Component ───────────────────────────────────────────────────
-export default function LeanApp() {
+function LeanAppInner() {
   const { user } = useAuth();
   const [page, setPage] = useState("lifecycle");
   const [lcFilters, setLcFilters] = useState({});
@@ -4039,4 +4055,8 @@ export default function LeanApp() {
       </div>
     </div>
   );
+}
+
+export default function LeanApp() {
+  return <LeanAppErrorBoundary><LeanAppInner /></LeanAppErrorBoundary>;
 }
