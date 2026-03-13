@@ -1775,7 +1775,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       const totalSpent = resSpent + pmtSpent;
 
       // Use Gingr owner-level _lastReservation as fallback when synced data is incomplete
-      // (Edge Function only syncs 90 days of reservations but owners API has full history)
+      // (Edge Function syncs full history — 3 years of reservations)
       let lastRes = lastResSynced || null;
       let daysSinceLast = lastRes ? Math.round((tdNoon - new Date(lastRes.checkIn + "T12:00:00")) / 86400000) : null;
       if (daysSinceLast == null && c._lastReservation) {
