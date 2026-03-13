@@ -241,15 +241,19 @@ async function syncReservations(
   // Resumable: check where we left off from sync state
   let start = startDate || "2015-01-01";
   if (!startDate) {
-    const { data: syncState } = await supabase
-      .from("gingr_sync_state")
-      .select("backfill_cursor")
-      .eq("location_id", locationId)
-      .eq("entity_type", "reservations")
-      .limit(1);
-    const cursor = syncState?.[0]?.backfill_cursor;
-    if (cursor && cursor > "2015-01-01") {
-      start = cursor;
+    try {
+      const { data: syncState } = await supabase
+        .from("gingr_sync_state")
+        .select("*")
+        .eq("location_id", locationId)
+        .eq("entity_type", "reservations")
+        .limit(1);
+      const cursor = syncState?.[0]?.backfill_cursor;
+      if (cursor && cursor > "2015-01-01") {
+        start = cursor;
+      }
+    } catch (_) {
+      // backfill_cursor column may not exist yet — start from beginning
     }
   }
 
@@ -266,52 +270,64 @@ async function syncReservations(
 
   const chunks = getDateChunks(start, end, 30);
   let total = 0;
-  const MAX_CHUNKS_PER_RUN = 8; // ~8 chunks per invocation to stay under timeout
+  const MAX_CHUNKS_PER_RUN = 4; // ~4 chunks per invocation to stay under timeout
   let chunksProcessed = 0;
   let lastChunkEnd = start;
+  const errors: string[] = [];
 
   for (const [chunkStart, chunkEnd] of chunks) {
     if (!isBackfillComplete && chunksProcessed >= MAX_CHUNKS_PER_RUN) break;
 
-    const result = await gingrFetch(subdomain, "reservations", apiKey, "POST", {
-      checked_in: "false",
-      start_date: chunkStart,
-      end_date: chunkEnd,
-    });
+    try {
+      const result = await gingrFetch(subdomain, "reservations", apiKey, "POST", {
+        checked_in: "false",
+        start_date: chunkStart,
+        end_date: chunkEnd,
+      });
 
-    const resMap = result.data || {};
-    const reservations = Object.values(resMap) as any[];
-    lastChunkEnd = chunkEnd;
-    chunksProcessed++;
+      const resMap = result.data || {};
+      const reservations = Object.values(resMap) as any[];
+      lastChunkEnd = chunkEnd;
+      chunksProcessed++;
 
-    if (reservations.length === 0) continue;
+      if (reservations.length === 0) continue;
 
-    const batchSize = 500;
-    for (let i = 0; i < reservations.length; i += batchSize) {
-      const batch = reservations.slice(i, i + batchSize);
-      const rows = batch.map((r: any) => mapReservationRow(r, locationId));
+      const batchSize = 500;
+      for (let i = 0; i < reservations.length; i += batchSize) {
+        const batch = reservations.slice(i, i + batchSize);
+        const rows = batch.map((r: any) => mapReservationRow(r, locationId));
 
-      const { error } = await supabase
-        .from("gingr_reservations")
-        .upsert(rows, { onConflict: "location_id,gingr_id" });
+        const { error } = await supabase
+          .from("gingr_reservations")
+          .upsert(rows, { onConflict: "location_id,gingr_id" });
 
-      if (error) throw new Error(`Reservation upsert error: ${error.message}`);
-      total += batch.length;
+        if (error) throw new Error(`Reservation upsert error: ${error.message}`);
+        total += batch.length;
+      }
+    } catch (chunkErr: any) {
+      // Log but don't fail entire sync — skip this chunk and continue
+      errors.push(`${chunkStart}-${chunkEnd}: ${chunkErr.message}`);
+      lastChunkEnd = chunkEnd;
+      chunksProcessed++;
     }
   }
 
   // Save backfill cursor so next run picks up where we left off
-  if (!isBackfillComplete) {
-    await supabase.from("gingr_sync_state").upsert(
-      { location_id: locationId, entity_type: "reservations", backfill_cursor: lastChunkEnd },
-      { onConflict: "location_id,entity_type" }
-    );
-  } else {
-    // Backfill done — clear cursor
-    await supabase.from("gingr_sync_state").upsert(
-      { location_id: locationId, entity_type: "reservations", backfill_cursor: null },
-      { onConflict: "location_id,entity_type" }
-    );
+  try {
+    if (!isBackfillComplete) {
+      await supabase.from("gingr_sync_state").upsert(
+        { location_id: locationId, entity_type: "reservations", backfill_cursor: lastChunkEnd },
+        { onConflict: "location_id,entity_type" }
+      );
+    } else {
+      // Backfill done — clear cursor
+      await supabase.from("gingr_sync_state").upsert(
+        { location_id: locationId, entity_type: "reservations", backfill_cursor: null },
+        { onConflict: "location_id,entity_type" }
+      );
+    }
+  } catch (_) {
+    // backfill_cursor column may not exist — non-fatal
   }
 
   // Also sync currently checked-in
@@ -338,6 +354,7 @@ async function syncReservations(
     backfill_cursor: isBackfillComplete ? null : lastChunkEnd,
     chunks_processed: chunksProcessed,
     chunks_remaining: isBackfillComplete ? 0 : chunks.length - chunksProcessed,
+    chunk_errors: errors.length > 0 ? errors : undefined,
   };
 }
 
