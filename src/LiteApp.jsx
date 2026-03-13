@@ -1941,6 +1941,35 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     return map;
   }, [data.clients, clientStats, resByClient, data.resortPolicies?.retentionDaycareDays, data.resortPolicies?.retentionBoardingDays]);
 
+  // ── TEMP DIAGNOSTIC: why are clients in conversion? ──
+  const conversionDiag = useMemo(() => {
+    const convClients = data.clients.filter(c => clientTabMap[c.id]?.isConversion);
+    let noSyncedRes = 0, noGingrNumRes = 0, hasGingrNumButNoSynced = 0, onlyToursEvals = 0;
+    let sampleNoRes = [];
+    convClients.forEach(c => {
+      const cRes = resByClient[c.id] || [];
+      const s = clientStats[c.id] || {};
+      const syncedNonTourEval = cRes.filter(r => r.type !== "tour" && r.type !== "evaluation").length;
+      if (cRes.length === 0) noSyncedRes++;
+      if ((c._numReservations || 0) === 0) noGingrNumRes++;
+      if ((c._numReservations || 0) > 0 && syncedNonTourEval === 0) hasGingrNumButNoSynced++;
+      if (cRes.length > 0 && syncedNonTourEval === 0) onlyToursEvals++;
+      if (sampleNoRes.length < 3 && cRes.length === 0 && (c._numReservations || 0) > 0) {
+        sampleNoRes.push({ id: c.id, name: `${c.fields?.first_name} ${c.fields?.last_name}`, _numRes: c._numReservations, _lastRes: c._lastReservation });
+      }
+    });
+    return {
+      total: convClients.length,
+      totalClients: data.clients.length,
+      totalReservations: (data.reservations || []).length,
+      noSyncedRes,
+      noGingrNumRes,
+      hasGingrNumButNoSynced,
+      onlyToursEvals,
+      sampleNoRes,
+    };
+  }, [data.clients, clientTabMap, resByClient, clientStats]);
+
   // ── Lifecycle event tracking ──
   const prevTabMapRef = useRef(null);
   useEffect(() => {
@@ -2644,6 +2673,15 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         {activeTab === "conversion" && (() => {
           const grid = getGrid();
           return <>
+            {/* TEMP DIAGNOSTIC — remove after debugging */}
+            <div style={{margin:"0 14px 8px",padding:"10px 14px",borderRadius:8,background:"#FFF7ED",border:"1px solid #FDBA74",fontSize:12,fontFamily:"monospace",lineHeight:1.6}}>
+              <div style={{fontWeight:700,marginBottom:4,color:"#9A3412"}}>Conversion Diagnostic</div>
+              <div>Total clients: {conversionDiag.totalClients} | Total reservations synced: {conversionDiag.totalReservations}</div>
+              <div>In conversion: {conversionDiag.total} | No synced reservations: {conversionDiag.noSyncedRes} | Gingr _numReservations=0: {conversionDiag.noGingrNumRes}</div>
+              <div>Has Gingr _numRes but no synced non-tour/eval: {conversionDiag.hasGingrNumButNoSynced} | Only tours/evals: {conversionDiag.onlyToursEvals}</div>
+              {conversionDiag.sampleNoRes.length > 0 && <div style={{marginTop:4}}>Samples (have _numRes but no synced): {conversionDiag.sampleNoRes.map(s => `${s.name} (_numRes=${s._numRes}, _lastRes=${s._lastRes})`).join(" | ")}</div>}
+              <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(conversionDiag, null, 2)); }} style={{marginTop:6,padding:"3px 8px",borderRadius:4,border:"1px solid #FDBA74",background:"#FFF",cursor:"pointer",fontSize:11}}>Copy Diagnostic</button>
+            </div>
             <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
               <div style={colHeaderStyle("name")} onClick={()=>handleSort("name")}>Client <SortIcon col="name"/></div>
               <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
