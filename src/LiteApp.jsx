@@ -2203,12 +2203,21 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   };
 
   // ── Tab config ──
+  const filteredTabCounts = useMemo(() => {
+    if (activeFilterCount === 0) return null;
+    const out = {};
+    for (const key of ["conversion","active","retention","cold","all"]) {
+      out[key] = applyStructuredFilters(tabLists[key] || [], clientStats, clientTabMap, lcFilters).length;
+    }
+    return out;
+  }, [activeFilterCount, tabLists, clientStats, clientTabMap, lcFilters]);
+
   const tabDefs = [
-    { id: "conversion", label: "Conversion", count: tabLists.conversion.length, color: C.acc },
-    { id: "active", label: "Active Customers", count: tabLists.active.length, color: C.pri },
-    { id: "retention", label: "Retention", count: tabLists.retention.length, color: C.dan },
-    { id: "cold", label: "Cold", count: tabLists.cold.length, color: C.textSec },
-    { id: "all", label: "All", count: tabLists.all.length, color: C.info },
+    { id: "conversion", label: "Conversion", count: filteredTabCounts ? filteredTabCounts.conversion : tabLists.conversion.length, color: C.acc },
+    { id: "active", label: "Active Customers", count: filteredTabCounts ? filteredTabCounts.active : tabLists.active.length, color: C.pri },
+    { id: "retention", label: "Retention", count: filteredTabCounts ? filteredTabCounts.retention : tabLists.retention.length, color: C.dan },
+    { id: "cold", label: "Cold", count: filteredTabCounts ? filteredTabCounts.cold : tabLists.cold.length, color: C.textSec },
+    { id: "all", label: "All", count: filteredTabCounts ? filteredTabCounts.all : tabLists.all.length, color: C.info },
   ];
 
   // ── Toggleable columns for Active/All tabs ──
