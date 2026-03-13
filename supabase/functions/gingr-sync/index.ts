@@ -195,6 +195,38 @@ async function syncAnimals(
   return { synced: total };
 }
 
+function mapReservationRow(r: any, locationId: string) {
+  return {
+    gingr_id: String(r.reservation_id),
+    location_id: locationId,
+    owner_gingr_id: r.owner?.id ? String(r.owner.id) : null,
+    animal_gingr_id: r.animal?.id ? String(r.animal.id) : null,
+    reservation_type_id: r.reservation_type?.id ? String(r.reservation_type.id) : null,
+    reservation_type_name: r.reservation_type?.type || null,
+    start_date: r.start_date || null,
+    end_date: r.end_date || null,
+    check_in_date: r.check_in_date || null,
+    check_out_date: r.check_out_date || null,
+    cancelled_date: r.cancelled_date || null,
+    confirmed_date: r.confirmed_date || null,
+    created_date: r.created_date || null,
+    standing_reservation: r.standing_reservation || false,
+    owner_first_name: r.owner?.first_name?.trim() || null,
+    owner_last_name: r.owner?.last_name?.trim() || null,
+    owner_email: r.owner?.email || null,
+    animal_name: r.animal?.name || null,
+    animal_breed: r.animal?.breed || null,
+    notes_reservation: r.notes?.reservation_notes || null,
+    notes_animal: r.notes?.animal_notes || null,
+    notes_owner: r.notes?.owner_notes || null,
+    services: r.services || null,
+    deposit: r.deposit || null,
+    transaction: r.transaction || null,
+    raw_data: r,
+    synced_at: new Date().toISOString(),
+  };
+}
+
 async function syncReservations(
   supabase: any,
   subdomain: string,
@@ -203,17 +235,44 @@ async function syncReservations(
   startDate?: string,
   endDate?: string
 ) {
-  // Gingr limits to 30-day windows, so we chunk if needed
   const now = new Date();
   const end = endDate || now.toISOString().split("T")[0];
 
-  // Default: sync ALL history in 30-day chunks
-  const start = startDate || "2015-01-01";
+  // Resumable: check where we left off from sync state
+  let start = startDate || "2015-01-01";
+  if (!startDate) {
+    const { data: syncState } = await supabase
+      .from("gingr_sync_state")
+      .select("backfill_cursor")
+      .eq("location_id", locationId)
+      .eq("entity_type", "reservations")
+      .limit(1);
+    const cursor = syncState?.[0]?.backfill_cursor;
+    if (cursor && cursor > "2015-01-01") {
+      start = cursor;
+    }
+  }
+
+  // If we've already backfilled to today, just sync recent 90 days for updates
+  const startD = new Date(start);
+  const endD = new Date(end);
+  const daysLeft = Math.round((endD.getTime() - startD.getTime()) / 86400000);
+  const isBackfillComplete = daysLeft <= 90;
+
+  if (isBackfillComplete) {
+    // Normal ongoing sync: just last 90 days
+    start = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  }
 
   const chunks = getDateChunks(start, end, 30);
   let total = 0;
+  const MAX_CHUNKS_PER_RUN = 8; // ~8 chunks per invocation to stay under timeout
+  let chunksProcessed = 0;
+  let lastChunkEnd = start;
 
   for (const [chunkStart, chunkEnd] of chunks) {
+    if (!isBackfillComplete && chunksProcessed >= MAX_CHUNKS_PER_RUN) break;
+
     const result = await gingrFetch(subdomain, "reservations", apiKey, "POST", {
       checked_in: "false",
       start_date: chunkStart,
@@ -222,41 +281,15 @@ async function syncReservations(
 
     const resMap = result.data || {};
     const reservations = Object.values(resMap) as any[];
+    lastChunkEnd = chunkEnd;
+    chunksProcessed++;
 
     if (reservations.length === 0) continue;
 
     const batchSize = 500;
     for (let i = 0; i < reservations.length; i += batchSize) {
       const batch = reservations.slice(i, i + batchSize);
-      const rows = batch.map((r: any) => ({
-        gingr_id: String(r.reservation_id),
-        location_id: locationId,
-        owner_gingr_id: r.owner?.id ? String(r.owner.id) : null,
-        animal_gingr_id: r.animal?.id ? String(r.animal.id) : null,
-        reservation_type_id: r.reservation_type?.id ? String(r.reservation_type.id) : null,
-        reservation_type_name: r.reservation_type?.type || null,
-        start_date: r.start_date || null,
-        end_date: r.end_date || null,
-        check_in_date: r.check_in_date || null,
-        check_out_date: r.check_out_date || null,
-        cancelled_date: r.cancelled_date || null,
-        confirmed_date: r.confirmed_date || null,
-        created_date: r.created_date || null,
-        standing_reservation: r.standing_reservation || false,
-        owner_first_name: r.owner?.first_name?.trim() || null,
-        owner_last_name: r.owner?.last_name?.trim() || null,
-        owner_email: r.owner?.email || null,
-        animal_name: r.animal?.name || null,
-        animal_breed: r.animal?.breed || null,
-        notes_reservation: r.notes?.reservation_notes || null,
-        notes_animal: r.notes?.animal_notes || null,
-        notes_owner: r.notes?.owner_notes || null,
-        services: r.services || null,
-        deposit: r.deposit || null,
-        transaction: r.transaction || null,
-        raw_data: r,
-        synced_at: new Date().toISOString(),
-      }));
+      const rows = batch.map((r: any) => mapReservationRow(r, locationId));
 
       const { error } = await supabase
         .from("gingr_reservations")
@@ -267,6 +300,20 @@ async function syncReservations(
     }
   }
 
+  // Save backfill cursor so next run picks up where we left off
+  if (!isBackfillComplete) {
+    await supabase.from("gingr_sync_state").upsert(
+      { location_id: locationId, entity_type: "reservations", backfill_cursor: lastChunkEnd },
+      { onConflict: "location_id,entity_type" }
+    );
+  } else {
+    // Backfill done — clear cursor
+    await supabase.from("gingr_sync_state").upsert(
+      { location_id: locationId, entity_type: "reservations", backfill_cursor: null },
+      { onConflict: "location_id,entity_type" }
+    );
+  }
+
   // Also sync currently checked-in
   const checkedInResult = await gingrFetch(subdomain, "reservations", apiKey, "POST", {
     checked_in: "true",
@@ -275,36 +322,7 @@ async function syncReservations(
   const checkedIn = Object.values(checkedInMap) as any[];
 
   if (checkedIn.length > 0) {
-    const rows = checkedIn.map((r: any) => ({
-      gingr_id: String(r.reservation_id),
-      location_id: locationId,
-      owner_gingr_id: r.owner?.id ? String(r.owner.id) : null,
-      animal_gingr_id: r.animal?.id ? String(r.animal.id) : null,
-      reservation_type_id: r.reservation_type?.id ? String(r.reservation_type.id) : null,
-      reservation_type_name: r.reservation_type?.type || null,
-      start_date: r.start_date || null,
-      end_date: r.end_date || null,
-      check_in_date: r.check_in_date || null,
-      check_out_date: r.check_out_date || null,
-      cancelled_date: r.cancelled_date || null,
-      confirmed_date: r.confirmed_date || null,
-      created_date: r.created_date || null,
-      standing_reservation: r.standing_reservation || false,
-      owner_first_name: r.owner?.first_name?.trim() || null,
-      owner_last_name: r.owner?.last_name?.trim() || null,
-      owner_email: r.owner?.email || null,
-      animal_name: r.animal?.name || null,
-      animal_breed: r.animal?.breed || null,
-      notes_reservation: r.notes?.reservation_notes || null,
-      notes_animal: r.notes?.animal_notes || null,
-      notes_owner: r.notes?.owner_notes || null,
-      services: r.services || null,
-      deposit: r.deposit || null,
-      transaction: r.transaction || null,
-      raw_data: r,
-      synced_at: new Date().toISOString(),
-    }));
-
+    const rows = checkedIn.map((r: any) => mapReservationRow(r, locationId));
     for (let i = 0; i < rows.length; i += 500) {
       const chunk = rows.slice(i, i + 500);
       await supabase
@@ -314,7 +332,13 @@ async function syncReservations(
     total += checkedIn.length;
   }
 
-  return { synced: total };
+  return {
+    synced: total,
+    backfill_complete: isBackfillComplete,
+    backfill_cursor: isBackfillComplete ? null : lastChunkEnd,
+    chunks_processed: chunksProcessed,
+    chunks_remaining: isBackfillComplete ? 0 : chunks.length - chunksProcessed,
+  };
 }
 
 async function syncReservationTypes(
