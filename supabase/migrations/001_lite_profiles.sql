@@ -63,6 +63,7 @@ CREATE TRIGGER trg_lite_profiles_updated_at
 ALTER TABLE lite_profiles ENABLE ROW LEVEL SECURITY;
 
 -- Users can read profiles at their own locations
+DROP POLICY IF EXISTS lite_profiles_select ON lite_profiles;
 CREATE POLICY lite_profiles_select ON lite_profiles
   FOR SELECT USING (
     auth.uid() = user_id
@@ -77,6 +78,7 @@ CREATE POLICY lite_profiles_select ON lite_profiles
   );
 
 -- Only managers, location admins, and enterprise admins can insert
+DROP POLICY IF EXISTS lite_profiles_insert ON lite_profiles;
 CREATE POLICY lite_profiles_insert ON lite_profiles
   FOR INSERT WITH CHECK (
     EXISTS (
@@ -88,6 +90,7 @@ CREATE POLICY lite_profiles_insert ON lite_profiles
 
 -- Only managers+ can update, and only within their location
 -- Enterprise admins can update any profile
+DROP POLICY IF EXISTS lite_profiles_update ON lite_profiles;
 CREATE POLICY lite_profiles_update ON lite_profiles
   FOR UPDATE USING (
     EXISTS (
@@ -102,6 +105,7 @@ CREATE POLICY lite_profiles_update ON lite_profiles
 
 -- Only location admins+ can delete, and only within their location
 -- Enterprise admins can delete any profile
+DROP POLICY IF EXISTS lite_profiles_delete ON lite_profiles;
 CREATE POLICY lite_profiles_delete ON lite_profiles
   FOR DELETE USING (
     EXISTS (
