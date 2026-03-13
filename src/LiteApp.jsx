@@ -492,6 +492,42 @@ const LITE_DEF_PRICING = {
   multiDogDiscount: 20,
 };
 const CHART_PTS = 30;
+
+// ── K9 Loading Animation (orbiting nodes — matches POS Ask AI) ──
+function K9LoadingAnimation({ size = 56, message = "Loading...", subMessage }) {
+  const scale = size / 100;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "16px 0" }}>
+      <style>{`
+        @keyframes k9orbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        @keyframes k9pulse { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.15); opacity: 1; } }
+        @keyframes k9fade { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.7; } }
+      `}</style>
+      <svg width={size} height={size} viewBox="0 0 100 100" style={{ overflow: "visible" }}>
+        <defs>
+          <linearGradient id="k9LoadGold" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor="#C4A46A"/>
+            <stop offset="100%" stopColor="#AF8D54"/>
+          </linearGradient>
+        </defs>
+        <circle cx="50" cy="50" r="14" fill="url(#k9LoadGold)" style={{ animation: "k9pulse 2s ease-in-out infinite" }}/>
+        <circle cx="50" cy="50" r="5" fill="#003462" opacity="0.25"/>
+        <g style={{ transformOrigin: "50px 50px", animation: "k9orbit 3s linear infinite" }}>
+          <line x1="50" y1="50" x2="28" y2="26" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
+          <line x1="50" y1="50" x2="76" y2="34" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
+          <line x1="50" y1="50" x2="52" y2="78" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
+          <circle cx="28" cy="26" r="7" fill="#AF8D54" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out infinite" }}/>
+          <circle cx="76" cy="34" r="7" fill="#AF8D54" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out 0.7s infinite" }}/>
+          <circle cx="52" cy="78" r="7" fill="#AF8D54" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out 1.4s infinite" }}/>
+        </g>
+      </svg>
+      <div style={{ textAlign: "center" }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: C.textSec, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>{message}</div>
+        {subMessage && <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>{subMessage}</div>}
+      </div>
+    </div>
+  );
+}
 const _chartFmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}`;
 const _chartFmt$k = (v) => v >= 10000 ? `$${(v / 1000).toFixed(1)}k` : v >= 1000 ? `$${(v / 1000).toFixed(2)}k` : _chartFmt$(v);
 
@@ -1561,24 +1597,43 @@ function useGingrData(locationId) {
     }
   }, [locationId, transformOwners, transformAnimals, transformReservations, buildRooms]);
 
-  // ── Trigger sync via Edge Function ──
+  // ── Trigger sync via Edge Function (auto-retries backfill until complete) ──
+  const [syncProgress, setSyncProgress] = useState(null); // { chunksProcessed, chunksRemaining }
   const triggerSync = useCallback(async (syncType = "full") => {
     if (!locationId || syncing) return;
     try {
       setSyncing(true);
-      const { data: fnData, error: fnError } = await supabase.functions.invoke("gingr-sync", {
-        body: { location_id: locationId, sync_type: syncType },
-      });
-      if (fnError) throw fnError;
-      console.log("Gingr sync result:", fnData);
-      // Reload data after sync
+      setSyncProgress(null);
+      let backfillComplete = false;
+      let totalSynced = 0;
+      let iteration = 0;
+      while (!backfillComplete) {
+        iteration++;
+        const { data: fnData, error: fnError } = await supabase.functions.invoke("gingr-sync", {
+          body: { location_id: locationId, sync_type: syncType },
+        });
+        if (fnError) throw fnError;
+        console.log(`Gingr sync iteration ${iteration}:`, fnData);
+        const resResult = fnData?.results?.reservations;
+        totalSynced += resResult?.synced || 0;
+        if (resResult && resResult.backfill_complete === false && resResult.chunks_remaining > 0) {
+          setSyncProgress({ chunksProcessed: resResult.chunks_processed, chunksRemaining: resResult.chunks_remaining, totalSynced, iteration });
+          // Brief pause between backfill runs to avoid hammering
+          await new Promise(r => setTimeout(r, 500));
+        } else {
+          backfillComplete = true;
+        }
+      }
+      // Reload data after full sync
       await loadData();
       setLastSyncAt(new Date().toISOString());
       setSyncing(false);
-      return fnData;
+      setSyncProgress(null);
+      return { totalSynced, iterations: iteration };
     } catch (err) {
       console.error("Sync failed:", err);
       setSyncing(false);
+      setSyncProgress(null);
       throw err;
     }
   }, [locationId, syncing, loadData]);
@@ -2370,9 +2425,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   // ── Render ──
   if (data.loading) return (
     <div style={{padding:"60px 28px",textAlign:"center"}}>
-      <div style={{display:"inline-block",width:32,height:32,border:`3px solid ${C.borderLight}`,borderTopColor:C.pri,borderRadius:"50%",animation:"spin 0.8s linear infinite",marginBottom:14}} />
-      <div style={{fontSize:15,fontWeight:600,color:C.textSec}}>Loading client data...</div>
-      <div style={{fontSize:12,color:C.textMut,marginTop:6}}>Syncing from Gingr</div>
+      <K9LoadingAnimation size={56} message="Loading client data..." subMessage="Syncing from Gingr" />
     </div>
   );
 
@@ -3457,9 +3510,7 @@ function OperationsHub({ data, save, nav, profile }) {
 
   if (data.loading) return (
     <div style={{ padding: 60, textAlign: "center" }}>
-      <div style={{ display: "inline-block", width: 32, height: 32, border: `3px solid ${C.borderLight}`, borderTopColor: C.pri, borderRadius: "50%", animation: "spin 0.8s linear infinite", marginBottom: 14 }} />
-      <div style={{ fontSize: 15, fontWeight: 600, color: C.textSec }}>Loading operations data...</div>
-      <div style={{ fontSize: 12, color: C.textMut, marginTop: 6 }}>Syncing from Gingr</div>
+      <K9LoadingAnimation size={56} message="Loading operations data..." subMessage="Syncing from Gingr" />
     </div>
   );
 
@@ -5837,7 +5888,7 @@ function GingrIntegrationTab() {
 
         {syncStatus && (
           <div style={{ marginBottom: 16, padding: "12px 16px", borderRadius: 10, fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", gap: 8, background: syncStatus === "success" ? C.sucLt : syncStatus === "error" ? C.danLt : C.infoLt, color: syncStatus === "success" ? C.suc : syncStatus === "error" ? C.dan : C.info }}>
-            {syncStatus === "syncing" && (<><span style={{ display: "inline-block", width: 14, height: 14, border: "2px solid currentColor", borderTopColor: "transparent", borderRadius: "50%", animation: "spin 1s linear infinite" }} /> {syncMessage}</>)}
+            {syncStatus === "syncing" && (<><svg width={18} height={18} viewBox="0 0 100 100" style={{ overflow: "visible", flexShrink: 0 }}><circle cx="50" cy="50" r="14" fill="#AF8D54" style={{ animation: "k9pulse 2s ease-in-out infinite" }}/><g style={{ transformOrigin: "50px 50px", animation: "k9orbit 3s linear infinite" }}><circle cx="28" cy="26" r="6" fill="#AF8D54" opacity="0.5"/><circle cx="76" cy="34" r="6" fill="#AF8D54" opacity="0.5"/><circle cx="52" cy="78" r="6" fill="#AF8D54" opacity="0.5"/></g></svg> {syncMessage}</>)}
             {syncStatus === "success" && (<><Icons.Check /> {syncMessage}</>)}
             {syncStatus === "error" && (<><Icons.AlertTriangle /> {syncMessage}</>)}
           </div>
@@ -6736,7 +6787,7 @@ function RetentionThresholdsTab() {
     setSaving(false);
   };
 
-  if (!loaded) return <div style={{ padding: 40, textAlign: "center", color: C.textMut }}>Loading...</div>;
+  if (!loaded) return <div style={{ padding: 40, textAlign: "center" }}><K9LoadingAnimation size={48} message="Loading settings..." /></div>;
 
   return (
     <div>
