@@ -67,6 +67,11 @@ const K9_LOCATIONS = [
   { id: "demo", name: "Demo", slug: "demo" },
 ];
 
+// ─── POS Base Path ──────────────────────────────────────────────────────────
+// All POS routes live under /pos. This constant is prepended by buildUrl()
+// and stripped by parseUrl() so the rest of the app is unaware of the prefix.
+const POS_BASE = "/pos";
+
 // ─── URL Routing ────────────────────────────────────────────────────────────
 const PAGE_SLUGS = {
   dashboard:"dashboard", reservations:"lodging", clients:"lifecycle", "client-detail":"client", "dog-detail":"dog",
@@ -93,23 +98,26 @@ const ENT_SLUG_TO_PAGE = { locations:"enterprise-locations", oversight:"enterpri
 
 function buildUrl(locSlug, pg, prms, dataRef) {
   const slug = PAGE_SLUGS[pg] || pg;
-  if (locSlug === "enterprise") return `/enterprise/${slug}`;
+  if (locSlug === "enterprise") return `${POS_BASE}/enterprise/${slug}`;
   if (pg === "client-detail" && prms?.clientId && dataRef) {
     const c = (dataRef.clients||[]).find(cl => cl.id === prms.clientId);
     const phone = c?.fields?.phone?.replace(/\D/g,"");
-    if (phone) return `/${locSlug}/client/${phone}`;
+    if (phone) return `${POS_BASE}/${locSlug}/client/${phone}`;
   }
   if (pg === "dog-detail" && prms?.clientId && prms?.dogId && dataRef) {
     const c = (dataRef.clients||[]).find(cl => cl.id === prms.clientId);
     const d = (dataRef.dogs||[]).find(dg => dg.id === prms.dogId);
     const phone = c?.fields?.phone?.replace(/\D/g,"");
-    if (phone && d) return `/${locSlug}/client/${phone}/${encodeURIComponent((d.fields?.name||"dog").toLowerCase())}`;
+    if (phone && d) return `${POS_BASE}/${locSlug}/client/${phone}/${encodeURIComponent((d.fields?.name||"dog").toLowerCase())}`;
   }
-  return `/${locSlug}/${slug}`;
+  return `${POS_BASE}/${locSlug}/${slug}`;
 }
 
 function parseUrl(pathname, dataRef) {
-  const parts = pathname.replace(/^\/+|\/+$/g,"").split("/").filter(Boolean);
+  // Strip the POS base prefix before parsing
+  let cleanPath = pathname;
+  if (cleanPath.startsWith(POS_BASE)) cleanPath = cleanPath.slice(POS_BASE.length) || "/";
+  const parts = cleanPath.replace(/^\/+|\/+$/g,"").split("/").filter(Boolean);
   if (parts.length === 0) return { locSlug: "demo", page: "dashboard", params: {} };
   const locSlug = parts[0];
   if (locSlug === "enterprise") {
@@ -31577,7 +31585,7 @@ export default function App() {
 
   // Replace initial URL if at root
   useEffect(() => {
-    if (window.location.pathname === "/" || window.location.pathname === "") {
+    if (window.location.pathname === POS_BASE || window.location.pathname === POS_BASE + "/") {
       window.history.replaceState({}, "", buildUrl(locSlug, page, params, data));
     }
   }, []);
@@ -31589,10 +31597,10 @@ export default function App() {
     const slug = loc ? loc.slug : locId;
     if (locId === "enterprise") {
       setPage("enterprise-locations"); setParams({}); setNavStack([{ page: "enterprise-locations", params: {} }]);
-      window.history.pushState({}, "", `/enterprise/locations`);
+      window.history.pushState({}, "", `${POS_BASE}/enterprise/locations`);
     } else {
       setPage("dashboard"); setParams({}); setNavStack([{ page: "dashboard", params: {} }]);
-      window.history.pushState({}, "", `/${slug}/dashboard`);
+      window.history.pushState({}, "", `${POS_BASE}/${slug}/dashboard`);
       // Switch active location in Supabase so useData loads the right data
       try {
         const { data: result } = await supabase.rpc('switch_location', { p_location_id: locId });

@@ -24,13 +24,15 @@ import { AuthProvider, useAuth } from './AuthProvider';
 import { supabase } from './supabaseClient';
 import Login from './Login';
 import App from './App';
+import LeanApp from './LeanApp';
 import BookingPage from './BookingPage';
 import PublicPage from './PublicPages';
 
-// Public route check — render public pages without auth
+// Route detection — determine which app to render
 const path = window.location.pathname;
 const isBookingPage = path.startsWith('/book/') || path === '/book';
 const isPublicLink = path.startsWith('/sign/') || path.startsWith('/form/');
+const isPOS = path.startsWith('/pos');
 
 function Root() {
   // Public booking page — no auth required
@@ -143,8 +145,9 @@ function Root() {
     );
   }
 
-  // All good → show the app (users without a location_id land in the demo environment)
-  return <App />;
+  // All good → route to POS or Lean app based on URL
+  if (isPOS) return <App />;
+  return <LeanApp />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(
