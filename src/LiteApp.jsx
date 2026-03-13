@@ -5996,9 +5996,13 @@ function GingrIntegrationTab() {
           </div>
         )}
 
-        {syncStatus && (
-          <div style={{ marginBottom: 16, padding: "12px 16px", borderRadius: 10, fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", gap: 8, background: syncStatus === "success" ? C.sucLt : syncStatus === "error" ? C.danLt : C.infoLt, color: syncStatus === "success" ? C.suc : syncStatus === "error" ? C.dan : C.info }}>
-            {syncStatus === "syncing" && (<><svg width={18} height={18} viewBox="0 0 100 100" style={{ overflow: "visible", flexShrink: 0 }}><circle cx="50" cy="50" r="14" fill="#AF8D54" style={{ animation: "k9pulse 2s ease-in-out infinite" }}/><g style={{ transformOrigin: "50px 50px", animation: "k9orbit 3s linear infinite" }}><circle cx="28" cy="26" r="6" fill="#AF8D54" opacity="0.5"/><circle cx="76" cy="34" r="6" fill="#AF8D54" opacity="0.5"/><circle cx="52" cy="78" r="6" fill="#AF8D54" opacity="0.5"/></g></svg> {syncMessage}</>)}
+        {syncStatus === "syncing" && (
+          <div style={{ marginBottom: 16, padding: "24px 16px", borderRadius: 10, background: C.infoLt, border: `1px solid ${C.borderLight}`, textAlign: "center" }}>
+            <K9LoadingAnimation size={48} message="Syncing from Gingr..." subMessage={syncMessage} />
+          </div>
+        )}
+        {syncStatus && syncStatus !== "syncing" && (
+          <div style={{ marginBottom: 16, padding: "12px 16px", borderRadius: 10, fontSize: 14, fontWeight: 500, display: "flex", alignItems: "center", gap: 8, background: syncStatus === "success" ? C.sucLt : C.danLt, color: syncStatus === "success" ? C.suc : C.dan }}>
             {syncStatus === "success" && (<><Icons.Check /> {syncMessage}</>)}
             {syncStatus === "error" && (<><Icons.AlertTriangle /> {syncMessage}</>)}
           </div>
