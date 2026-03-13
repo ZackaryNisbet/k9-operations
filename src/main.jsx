@@ -2,6 +2,22 @@
 // Proprietary and Confidential. Unauthorized copying, modification,
 // distribution, or use of this software is strictly prohibited.
 
+// ── Global Error Display (debug) ──────────────────────────────────────────
+window.addEventListener('error', (e) => {
+  const el = document.getElementById('root');
+  if (el && !el.dataset.errShown) {
+    el.dataset.errShown = '1';
+    el.innerHTML = `<div style="padding:40px;font-family:monospace"><h2 style="color:red">JS Error</h2><pre style="white-space:pre-wrap;font-size:13px;background:#f5f5f5;padding:20px;border-radius:8px">${e.message}\n${e.filename}:${e.lineno}:${e.colno}\n${e.error?.stack || ''}</pre></div>`;
+  }
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const el = document.getElementById('root');
+  if (el && !el.dataset.errShown) {
+    el.dataset.errShown = '1';
+    el.innerHTML = `<div style="padding:40px;font-family:monospace"><h2 style="color:red">Unhandled Promise Rejection</h2><pre style="white-space:pre-wrap;font-size:13px;background:#f5f5f5;padding:20px;border-radius:8px">${e.reason?.message || e.reason}\n${e.reason?.stack || ''}</pre></div>`;
+  }
+});
+
 // ── Production Security Guard ──────────────────────────────────────────────
 if (import.meta.env.PROD) {
   // Disable right-click context menu
