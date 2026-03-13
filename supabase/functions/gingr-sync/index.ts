@@ -207,10 +207,8 @@ async function syncReservations(
   const now = new Date();
   const end = endDate || now.toISOString().split("T")[0];
 
-  // Default: sync last 90 days in 30-day chunks
-  const start =
-    startDate ||
-    new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  // Default: sync ALL history in 30-day chunks
+  const start = startDate || "2015-01-01";
 
   const chunks = getDateChunks(start, end, 30);
   let total = 0;
