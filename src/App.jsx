@@ -65,6 +65,7 @@ const K9LogoMini = ({size=28}) => <img src={K9_LOGO_PNG} alt="K9 Resorts" style=
 const K9_LOCATIONS = [
   { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
   { id: "demo", name: "Demo", slug: "demo" },
+  { id: "lite", name: "K9 Operations Lite", slug: "lite", isLite: true },
 ];
 
 // ─── POS Base Path ──────────────────────────────────────────────────────────
@@ -173,7 +174,8 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
 
   const current = locs.find(l => l.id === currentLocation) || locs[1] || locs[0];
   const isEnterprise = current?.isEnterprise;
-  const locations = locs.filter(l => !l.isEnterprise);
+  const locations = locs.filter(l => !l.isEnterprise && !l.isLite);
+  const liteLocations = locs.filter(l => l.isLite);
 
   if (collapsed) {
     return (
@@ -240,6 +242,25 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
                 {currentLocation === loc.id && <span style={{ color: C.acc }}><I.Check/></span>}
               </button>
             ))}
+
+            {/* Lite App link */}
+            {liteLocations.length > 0 && (<>
+              <div style={{ margin: "4px 10px", height: 1, background: "rgba(175,141,84,0.12)" }}/>
+              {liteLocations.map(loc => (
+                <button key={loc.id} onClick={() => { onLocationChange(loc.id); setOpen(false); }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginTop: 2 }}
+                  onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                  <div style={{ width: 26, height: 26, borderRadius: 6, background: "rgba(100,180,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(100,180,255,0.7)" strokeWidth="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                  </div>
+                  <div style={{ textAlign: "left", flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "rgba(100,180,255,0.9)" }}>{loc.name}</div>
+                    <div style={{ fontSize: 9, color: "rgba(100,180,255,0.4)", textTransform: "uppercase" }}>Switch App</div>
+                  </div>
+                </button>
+              ))}
+            </>)}
           </div>
         </div>
       )}
@@ -31438,7 +31459,8 @@ export default function App() {
 
   const allLocations = useMemo(() => [
     { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
-    ...dbLocations.map(l => ({ id: l.id, name: l.name, slug: l.slug || l.id, region: l.region || "" }))
+    ...dbLocations.map(l => ({ id: l.id, name: l.name, slug: l.slug || l.id, region: l.region || "" })),
+    { id: "lite", name: "K9 Operations Lite", slug: "lite", isLite: true },
   ], [dbLocations]);
 
   // ═══ URL-based routing state ═══
@@ -31595,6 +31617,11 @@ export default function App() {
     try { localStorage.setItem("k9_location", locId); } catch {}
     const loc = allLocations.find(l => l.id === locId);
     const slug = loc ? loc.slug : locId;
+    const selectedLoc = allLocations.find(l => l.id === locId);
+    if (selectedLoc?.isLite) {
+      window.location.href = "/";
+      return;
+    }
     if (locId === "enterprise") {
       setPage("enterprise-locations"); setParams({}); setNavStack([{ page: "enterprise-locations", params: {} }]);
       window.history.pushState({}, "", `${POS_BASE}/enterprise/locations`);

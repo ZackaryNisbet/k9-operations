@@ -40,7 +40,7 @@ import { AuthProvider, useAuth } from './AuthProvider';
 import { supabase } from './supabaseClient';
 import Login from './Login';
 import App from './App';
-import LeanApp from './LeanApp';
+import LiteApp from './LiteApp';
 import BookingPage from './BookingPage';
 import PublicPage from './PublicPages';
 
@@ -161,9 +161,9 @@ function Root() {
     );
   }
 
-  // All good → route to POS or Lean app based on URL
+  // All good → route to POS or Lite app based on URL
   if (isPOS) return <App />;
-  return <LeanApp />;
+  return <LiteApp />;
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(
