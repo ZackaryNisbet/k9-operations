@@ -760,6 +760,7 @@ const LC_FILTER_FIELDS = [
   { section:"Client Info", key:"lastName", label:"Last Name", type:"text", ops:["contains","equals","starts","empty","notEmpty"] },
   { section:"Client Info", key:"phone", label:"Phone", type:"text", ops:["contains","equals","empty","notEmpty"] },
   { section:"Client Info", key:"dogCount", label:"Dogs", type:"number", ops:["=",">=","<=",">","<"] },
+  { section:"Client Info", key:"createdAt", label:"Created Date", type:"date", ops:["after","before","inLastDays"] },
   { section:"Activity", key:"totalRes", label:"Total Reservations", type:"number", ops:["=",">=","<=",">","<"] },
   { section:"Activity", key:"lastRes", label:"Last Visit", type:"date", ops:["after","before","inLastDays"] },
   { section:"Activity", key:"daysSince", label:"Days Since Visit", type:"number", ops:[">=","<=",">","<","="] },
@@ -1717,6 +1718,7 @@ function useGingrData(locationId) {
     locationRoles: [],
     resortPolicies: { retentionDaycareDays: 90, retentionBoardingDays: 180 },
     lifecycleExplainers: {},
+    lifecycleViews: [],
     closingTemplate: DEF_CLOSING_TEMPLATE,
     evaluations: [],
     gingr_api_key: "",
@@ -1770,6 +1772,11 @@ function applyStructuredFilters(clients, stats, tabMap, filters) {
         if (isNaN(nq)) return true;
         if (op==="=") return nv===nq; if (op===">=") return nv>=nq; if (op==="<=") return nv<=nq; if (op===">") return nv>nq; if (op==="<") return nv<nq;
       }
+      if (k === "createdAt") {
+        const d = c.createdAt ? c.createdAt.split("T")[0] : "";
+        if (op==="after") return d && d > val; if (op==="before") return d && d < val;
+        if (op==="inLastDays") { if (!d) return false; const diff = Math.floor((new Date(today+"T12:00:00") - new Date(d+"T12:00:00"))/(86400000)); return diff <= parseInt(val); }
+      }
       if (k === "lastRes") {
         const d = s.lastRes?.checkIn || "";
         if (op==="after") return d && d > val; if (op==="before") return d && d < val;
@@ -1798,7 +1805,7 @@ function applyStructuredFilters(clients, stats, tabMap, filters) {
 }
 
 // ─── CLIENTS PAGE (from POS App) ───────────────────────────────────────────
-function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setLcFilters, setLcFilterOpen, locationSlug }) {
+function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setLcFilters, lcFilterOpen, setLcFilterOpen, locationSlug }) {
   const [activeTab, setActiveTab] = useState("conversion");
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState(null);
@@ -1823,6 +1830,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [massTextBody, setMassTextBody] = useState("");
   const [showMassTextHistory, setShowMassTextHistory] = useState(false);
   const [displayLimit, setDisplayLimit] = useState(100);
+  const [activeViewId, setActiveViewId] = useState(null);
+  const [showSaveView, setShowSaveView] = useState(false);
+  const [viewName, setViewName] = useState("");
+  const [draftFilters, setDraftFilters] = useState({});
+  const prevFilterOpen = useRef(false);
+  useEffect(() => { if (lcFilterOpen && !prevFilterOpen.current) setDraftFilters({...lcFilters}); prevFilterOpen.current = lcFilterOpen; }, [lcFilterOpen, lcFilters]);
   const logBtnRef = useRef({});
   const colToggleRef = useRef(null);
 
@@ -2047,6 +2060,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           case "first_name": va = (a.fields.first_name||"").toLowerCase(); vb = (b.fields.first_name||"").toLowerCase(); break;
           case "phone": va = a.fields.phone||""; vb = b.fields.phone||""; break;
           case "dogCount": va = sa.dogCount||0; vb = sb.dogCount||0; break;
+          case "createdAt": va = a.createdAt||""; vb = b.createdAt||""; break;
           case "totalRes": va = sa.totalRes||0; vb = sb.totalRes||0; break;
           case "lastRes": va = sa.lastRes?.checkIn||""; vb = sb.lastRes?.checkIn||""; break;
           case "daysSince": va = sa.daysSinceLast??9999; vb = sb.daysSinceLast??9999; break;
@@ -2446,11 +2460,11 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Grid templates per tab ──
   const getGrid = () => {
-    if (activeTab === "conversion") return "minmax(120px,1.5fr) minmax(80px,1fr) 60px minmax(100px,1.2fr) minmax(90px,1fr) minmax(100px,1.5fr) 100px 60px";
-    if (activeTab === "retention") return "minmax(110px,1.3fr) minmax(80px,1fr) 50px minmax(90px,1fr) minmax(85px,0.9fr) minmax(90px,1.3fr) 90px minmax(70px,0.8fr) minmax(65px,0.7fr) 55px 55px";
-    if (activeTab === "cold") return "minmax(120px,1.5fr) minmax(80px,1fr) 60px minmax(100px,1.2fr) minmax(90px,1fr) minmax(120px,1.5fr) 70px";
+    if (activeTab === "conversion") return "minmax(110px,1.3fr) minmax(75px,0.9fr) 50px 75px 55px 55px minmax(80px,1fr) minmax(80px,1fr) minmax(90px,1.3fr) 85px 55px";
+    if (activeTab === "retention") return "minmax(100px,1.2fr) minmax(75px,0.9fr) 45px 75px minmax(80px,0.9fr) minmax(80px,0.9fr) minmax(85px,1.2fr) 80px minmax(65px,0.7fr) minmax(60px,0.6fr) 50px 50px";
+    if (activeTab === "cold") return "minmax(110px,1.3fr) minmax(75px,0.9fr) 50px 75px minmax(90px,1fr) minmax(80px,1fr) minmax(110px,1.3fr) 65px";
     // Active / All
-    const base = "minmax(80px,1fr) minmax(80px,1fr) minmax(80px,0.8fr) 50px";
+    const base = "minmax(80px,1fr) minmax(80px,1fr) minmax(80px,0.8fr) 50px 75px";
     const dataCols = shownDataCols.map(k => {
       if (k==="lastRes"||k==="nextRes") return "minmax(70px,0.8fr)";
       return "minmax(50px,0.6fr)";
@@ -2524,6 +2538,187 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           <Btn onClick={() => nav("new-client")}>+ New Client</Btn>
         </div>
       </div>
+
+      {/* ═══ FILTER MODAL ═══ */}
+      {lcFilterOpen && (() => {
+        const isAdmin = profile?.role === "owner" || profile?.role === "enterprise_admin";
+        const views = data.lifecycleViews || [];
+        const usedKeys = Object.keys(draftFilters);
+        const availableFields = LC_FILTER_FIELDS.filter(f => !usedKeys.includes(f.key));
+        const sections = [...new Set(availableFields.map(f => f.section))];
+        const addFilter = (key) => {
+          const fd = LC_FILTER_FIELDS.find(f => f.key === key);
+          if (fd) setDraftFilters(prev => ({ ...prev, [key]: { op: fd.ops[0], val: "" } }));
+        };
+        const removeFilter = (key) => { setDraftFilters(prev => { const n = { ...prev }; delete n[key]; return n; }); };
+        const updateFilter = (key, field, val) => { setDraftFilters(prev => ({ ...prev, [key]: { ...prev[key], [field]: val } })); };
+        const applyFilters = () => { setLcFilters(draftFilters); setLcFilterOpen(false); };
+        const clearAll = () => { setDraftFilters({}); setLcFilters({}); };
+        const needsValue = (op) => !["empty","notEmpty","has","missing","overdue","today","thisWeek","hasDate","noDate"].includes(op);
+        const saveView = async () => {
+          if (!viewName.trim()) return;
+          const newView = { id: Date.now().toString(36), name: viewName.trim(), filters: { ...draftFilters }, tab: activeTab, createdBy: profile?.id || "unknown", createdAt: new Date().toISOString() };
+          const updated = [...(data.lifecycleViews || []), newView];
+          await save({ ...data, lifecycleViews: updated });
+          setActiveViewId(newView.id);
+          setViewName("");
+          setShowSaveView(false);
+          addGlobalToast?.({ message: `View "${newView.name}" saved`, type: "success" });
+        };
+        const deleteView = async (viewId) => {
+          const updated = (data.lifecycleViews || []).filter(v => v.id !== viewId);
+          await save({ ...data, lifecycleViews: updated });
+          if (activeViewId === viewId) setActiveViewId(null);
+          addGlobalToast?.({ message: "View deleted" });
+        };
+        const loadView = (view) => {
+          setDraftFilters({ ...view.filters });
+          setLcFilters({ ...view.filters });
+          setActiveViewId(view.id);
+          if (view.tab) setActiveTab(view.tab);
+        };
+        return (
+          <div style={{marginBottom:16,borderRadius:12,border:`1.5px solid ${C.border}`,background:C.bg,boxShadow:"0 4px 24px rgba(0,0,0,0.06)",overflow:"hidden"}}>
+            {/* Saved Views Bar */}
+            {views.length > 0 && (
+              <div style={{display:"flex",alignItems:"center",gap:6,padding:"10px 16px",borderBottom:`1px solid ${C.borderLight}`,background:C.surface,flexWrap:"wrap"}}>
+                <span style={{fontSize:11,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",marginRight:4}}>Views</span>
+                {views.map(v => (
+                  <div key={v.id} style={{display:"inline-flex",alignItems:"center",gap:3}}>
+                    <button onClick={() => loadView(v)}
+                      style={{padding:"4px 10px",borderRadius:6,border:`1.5px solid ${activeViewId===v.id?C.pri:C.border}`,background:activeViewId===v.id?C.priLt:"transparent",color:activeViewId===v.id?C.pri:C.textSec,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
+                      {v.name}
+                    </button>
+                    {isAdmin && (
+                      <button onClick={() => deleteView(v.id)}
+                        style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:0,display:"flex",lineHeight:1,opacity:0.5,transition:"opacity 0.15s"}}
+                        onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0.5"}
+                        title="Delete view">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {activeViewId && (
+                  <button onClick={() => { setActiveViewId(null); setDraftFilters({}); setLcFilters({}); }}
+                    style={{fontSize:10,fontWeight:600,color:C.textMut,border:"none",background:"none",cursor:"pointer",fontFamily:"inherit",textDecoration:"underline",marginLeft:4}}>
+                    Clear view
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Filter Rows */}
+            <div style={{padding:"12px 16px"}}>
+              {usedKeys.length === 0 && (
+                <div style={{fontSize:13,color:C.textMut,padding:"8px 0",textAlign:"center"}}>
+                  No filters added. Click "+ Add Filter" below to get started.
+                </div>
+              )}
+              {usedKeys.map(key => {
+                const fd = LC_FILTER_FIELDS.find(f => f.key === key);
+                if (!fd) return null;
+                const f = draftFilters[key];
+                return (
+                  <div key={key} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
+                    <div style={{minWidth:120,fontSize:12,fontWeight:600,color:C.text}}>{fd.label}</div>
+                    <select value={f.op} onChange={e => {
+                      const newOp = e.target.value;
+                      updateFilter(key, "op", newOp);
+                      if (!needsValue(newOp)) updateFilter(key, "val", "");
+                    }} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:12,fontFamily:"inherit",background:C.bg,color:C.text,minWidth:100}}>
+                      {fd.ops.map(op => <option key={op} value={op}>{LC_OP_LABELS[op] || op}</option>)}
+                    </select>
+                    {needsValue(f.op) && (
+                      fd.type === "select" ? (
+                        <select value={f.val} onChange={e => updateFilter(key, "val", e.target.value)}
+                          style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:12,fontFamily:"inherit",background:C.bg,color:C.text,minWidth:100}}>
+                          <option value="">Select...</option>
+                          {(fd.options||[]).map(o => <option key={o} value={o}>{o || "(none)"}</option>)}
+                        </select>
+                      ) : (
+                        <input
+                          type={fd.type === "date" ? (f.op === "inLastDays" ? "number" : "date") : fd.type === "number" || fd.type === "currency" ? "number" : "text"}
+                          value={f.val}
+                          onChange={e => updateFilter(key, "val", e.target.value)}
+                          placeholder={f.op === "inLastDays" ? "# days" : fd.type === "currency" ? "0.00" : ""}
+                          style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:12,fontFamily:"inherit",background:C.bg,color:C.text,width:fd.type==="date"&&f.op!=="inLastDays"?140:100}}
+                        />
+                      )
+                    )}
+                    <button onClick={() => removeFilter(key)}
+                      style={{border:"none",background:"none",cursor:"pointer",color:C.dan,padding:2,display:"flex",alignItems:"center",opacity:0.6,transition:"opacity 0.15s"}}
+                      onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0.6"}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                  </div>
+                );
+              })}
+
+              {/* Add Filter Dropdown */}
+              {availableFields.length > 0 && (
+                <div style={{marginTop:usedKeys.length > 0 ? 4 : 0}}>
+                  <select
+                    value=""
+                    onChange={e => { if (e.target.value) addFilter(e.target.value); }}
+                    style={{padding:"6px 10px",borderRadius:6,border:`1.5px dashed ${C.border}`,fontSize:12,fontWeight:600,fontFamily:"inherit",background:"transparent",color:C.pri,cursor:"pointer",minWidth:140}}>
+                    <option value="">+ Add Filter</option>
+                    {sections.map(sec => (
+                      <optgroup key={sec} label={sec}>
+                        {availableFields.filter(f => f.section === sec).map(f => (
+                          <option key={f.key} value={f.key}>{f.label}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+
+            {/* Action Bar */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"10px 16px",borderTop:`1px solid ${C.borderLight}`,background:C.surface}}>
+              <div style={{display:"flex",gap:6}}>
+                <button onClick={applyFilters}
+                  style={{padding:"7px 18px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
+                  Apply Filters
+                </button>
+                <button onClick={clearAll}
+                  style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                  Clear All
+                </button>
+                <button onClick={() => setLcFilterOpen(false)}
+                  style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.textMut,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                  Close
+                </button>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6}}>
+                {isAdmin && !showSaveView && usedKeys.length > 0 && (
+                  <button onClick={() => setShowSaveView(true)}
+                    style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                    Save as View
+                  </button>
+                )}
+                {showSaveView && (
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <input value={viewName} onChange={e => setViewName(e.target.value)} placeholder="View name..."
+                      autoFocus onKeyDown={e => { if (e.key === "Enter") saveView(); if (e.key === "Escape") setShowSaveView(false); }}
+                      style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:12,fontFamily:"inherit",width:160,background:C.bg,color:C.text}} />
+                    <button onClick={saveView} disabled={!viewName.trim()}
+                      style={{padding:"6px 14px",borderRadius:6,border:"none",background:viewName.trim()?C.suc:C.textMut,color:"#fff",fontSize:11,fontWeight:700,cursor:viewName.trim()?"pointer":"default",fontFamily:"inherit"}}>
+                      Save
+                    </button>
+                    <button onClick={() => setShowSaveView(false)}
+                      style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Main Card */}
       <Card style={{padding:0,overflow:"hidden"}}>
@@ -2654,6 +2849,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               <div style={colHeaderStyle("name")} onClick={()=>handleSort("name")}>Client <SortIcon col="name"/></div>
               <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
               <div style={colHeaderStyle("dogCount")} onClick={()=>handleSort("dogCount")}>Dogs <SortIcon col="dogCount"/></div>
+              <div style={colHeaderStyle("createdAt")} onClick={()=>handleSort("createdAt")}>Created <SortIcon col="createdAt"/></div>
+              <div style={colHeaderStyle("totalRes")} onClick={()=>handleSort("totalRes")}>Appts <SortIcon col="totalRes"/></div>
+              <div style={colHeaderStyle("totalSpent")} onClick={()=>handleSort("totalSpent")}>Spent <SortIcon col="totalSpent"/></div>
               <div>Source</div>
               <div style={colHeaderStyle("followUp")} onClick={()=>handleSort("followUp")}>Follow-Up <SortIcon col="followUp"/></div>
               <div>Notes</div>
@@ -2665,6 +2863,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             ) : displayedList.map(c => {
               const isExp = expandedUpdates.has(c.id);
               const updates = c.lifecycle?.conversion?.updates || [];
+              const cStats = clientStats[c.id] || {};
               return (
                 <div key={c.id}>
                   <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center",fontSize:12,transition:"background 0.1s"}}
@@ -2672,6 +2871,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                     <div>{renderName(c)}</div>
                     <div style={{fontSize:11}}>{fmtPhone(c.fields.phone)}</div>
                     <div>{renderDogCount(c)}</div>
+                    <div style={{fontSize:11,color:C.textSec}}>{c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}) : "—"}</div>
+                    <div style={{fontSize:11,color:C.textSec}}>{cStats.totalRes || 0}</div>
+                    <div style={{fontSize:11,color:C.textSec}}>{cStats.totalSpent ? `$${cStats.totalSpent.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0})}` : "$0"}</div>
                     <div>{renderSource(c)}</div>
                     <div>{renderFollowUp(c, "conversion")}</div>
                     <div>{renderNotes(c, "conversion")}</div>
@@ -2906,6 +3108,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               <div style={colHeaderStyle("name")} onClick={()=>handleSort("name")}>Client <SortIcon col="name"/></div>
               <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
               <div style={colHeaderStyle("dogCount")} onClick={()=>handleSort("dogCount")}>Dogs <SortIcon col="dogCount"/></div>
+              <div style={colHeaderStyle("createdAt")} onClick={()=>handleSort("createdAt")}>Created <SortIcon col="createdAt"/></div>
               <div>Source</div>
               <div style={colHeaderStyle("followUp")} onClick={()=>handleSort("followUp")}>Follow-Up <SortIcon col="followUp"/></div>
               <div>Notes</div>
@@ -2928,6 +3131,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                     <div>{renderName(c)}</div>
                     <div style={{fontSize:11}}>{fmtPhone(c.fields.phone)}</div>
                     <div>{renderDogCount(c)}</div>
+                    <div style={{fontSize:11,color:C.textSec}}>{c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}) : "—"}</div>
                     <div>{renderSource(c)}</div>
                     <div>{renderFollowUp(c, "retention")}</div>
                     <div>{renderNotes(c, "retention")}</div>
@@ -2962,6 +3166,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               <div style={colHeaderStyle("name")} onClick={()=>handleSort("name")}>Client <SortIcon col="name"/></div>
               <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
               <div style={colHeaderStyle("dogCount")} onClick={()=>handleSort("dogCount")}>Dogs <SortIcon col="dogCount"/></div>
+              <div style={colHeaderStyle("createdAt")} onClick={()=>handleSort("createdAt")}>Created <SortIcon col="createdAt"/></div>
               <div>Source</div>
               <div style={colHeaderStyle("coldDate")} onClick={()=>handleSort("coldDate")}>Date Cold <SortIcon col="coldDate"/></div>
               <div>Last Notes</div>
@@ -2979,6 +3184,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                     <div>{renderName(c)}</div>
                     <div style={{fontSize:11}}>{fmtPhone(c.fields.phone)}</div>
                     <div>{renderDogCount(c)}</div>
+                    <div style={{fontSize:11,color:C.textSec}}>{c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}) : "—"}</div>
                     <div>{renderSource(c)}</div>
                     <div style={{fontSize:11}}>{c.lifecycle?.coldDate ? fmtDate(c.lifecycle.coldDate) : "—"}</div>
                     <div style={{fontSize:11,color:C.text,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{lastUpdate?.notes || <span style={{color:C.textMut}}>—</span>}</div>
@@ -2999,6 +3205,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               <div style={colHeaderStyle("first_name")} onClick={()=>handleSort("first_name")}>First <SortIcon col="first_name"/></div>
               <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
               <div style={colHeaderStyle("dogCount")} onClick={()=>handleSort("dogCount")}>Dogs <SortIcon col="dogCount"/></div>
+              <div style={colHeaderStyle("createdAt")} onClick={()=>handleSort("createdAt")}>Created <SortIcon col="createdAt"/></div>
               {shownDataCols.map(k => {
                 const labels = {totalRes:"Res",lastRes:"Last Res",daysSince:"Days",daycare:"DC",boarding:"BD",eval:"Eval",postEval:"P-Eval",tours:"Tours",postTour:"P-Tour",totalSpent:"Spent",nextRes:"Next"};
                 return <div key={k} style={colHeaderStyle(k)} onClick={()=>handleSort(k)}>{labels[k]||k} <SortIcon col={k}/></div>;
@@ -3017,6 +3224,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                     <div style={{color:C.text}}>{c.fields.first_name||""}</div>
                     <div style={{fontSize:11,color:C.textSec}}>{fmtPhone?.(c.fields.phone)||c.fields.phone||""}</div>
                     <div>{renderDogCount(c)}</div>
+                    <div style={{fontSize:11,color:C.textSec}}>{c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}) : "—"}</div>
                     {shownDataCols.map(k => {
                       switch(k) {
                         case "totalRes": return <div key={k} style={{fontSize:11,fontWeight:600}}>{s.totalRes||0}</div>;
@@ -9911,6 +10119,7 @@ function LeanAppInner() {
             addGlobalToast={addGlobalToast}
             lcFilters={lcFilters}
             setLcFilters={setLcFilters}
+            lcFilterOpen={lcFilterOpen}
             setLcFilterOpen={setLcFilterOpen}
             locationSlug={currentLocation}
           />
