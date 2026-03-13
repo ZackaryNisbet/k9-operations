@@ -11,6 +11,35 @@ import ReactDOM from "react-dom";
 import { useAuth } from "./AuthProvider";
 import { supabase } from "./supabaseClient";
 
+// ─── IndexedDB cache for instant page loads ─────────────────────────────────
+const IDB_NAME = "k9_cache";
+const IDB_STORE = "data";
+const IDB_VERSION = 1;
+const idbOpen = () => new Promise((resolve, reject) => {
+  const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+  req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+  req.onsuccess = () => resolve(req.result);
+  req.onerror = () => reject(req.error);
+});
+const idbGet = async (key) => {
+  try {
+    const db = await idbOpen();
+    return new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    });
+  } catch { return null; }
+};
+const idbSet = async (key, val) => {
+  try {
+    const db = await idbOpen();
+    const tx = db.transaction(IDB_STORE, "readwrite");
+    tx.objectStore(IDB_STORE).put(val, key);
+  } catch {}
+};
+
 // ─── Color palette (matches POS brand) ──────────────────────────────────────
 const C = {
   bg: "#F5F6F8", surface: "#FFFFFF", surfaceHover: "#EEF0F4",
@@ -237,6 +266,7 @@ const I = {
   Image: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>,
   Layers: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>,
   Book: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
+  TrendingUp: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
 };
 const Icons = I;
 
@@ -1386,10 +1416,28 @@ function useGingrData(locationId) {
   const [resTypes, setResTypes] = useState([]);
   const [immunizationTypes, setImmunizationTypes] = useState([]);
   const [syncState, setSyncState] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [serverStats, setServerStats] = useState(null); // RPC-computed client stats
+  const [loading, setLoading] = useState(false);
+  const hasLoadedOnce = useRef(false);
   const [error, setError] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState(null);
+
+  // ── Restore cached data instantly on mount (zero network wait) ──
+  const cacheRestored = useRef(false);
+  useEffect(() => {
+    if (!locationId || cacheRestored.current) return;
+    cacheRestored.current = true;
+    idbGet(`data_v2_${locationId}`).then(cached => {
+      if (cached && !hasLoadedOnce.current) {
+        if (cached.clients) setClients(cached.clients);
+        if (cached.dogs) setDogs(cached.dogs);
+        if (cached.serverStats) setServerStats(cached.serverStats);
+        if (cached.resTypes) setResTypes(cached.resTypes);
+        if (cached.immunizationTypes) setImmunizationTypes(cached.immunizationTypes);
+      }
+    });
+  }, [locationId]);
   const refreshTimerRef = useRef(null);
 
   // ── Transform Gingr owners → Lite client shape ──
@@ -1536,57 +1584,144 @@ function useGingrData(locationId) {
   }, []);
 
   // ── Paginated fetch helper (Supabase default limit is 1000) ──
-  const fetchAll = useCallback(async (table, locationId, orderCol, ascending = true) => {
+  const fetchAll = useCallback(async (table, locationId, orderCol, ascending = true, selectCols = "*") => {
     const PAGE = 1000;
-    let allRows = [];
-    let from = 0;
-    let done = false;
-    while (!done) {
-      const { data, error } = await supabase
-        .from(table)
-        .select("*")
-        .eq("location_id", locationId)
-        .order(orderCol, { ascending })
-        .range(from, from + PAGE - 1);
-      if (error) throw error;
-      if (!data || data.length === 0) { done = true; break; }
-      allRows = allRows.concat(data);
-      if (data.length < PAGE) done = true;
-      else from += PAGE;
+    const PARALLEL = 10;
+    // First fetch to get total feel
+    const { data: first, error: firstErr, count } = await supabase
+      .from(table)
+      .select(selectCols, { count: "exact", head: false })
+      .eq("location_id", locationId)
+      .order(orderCol, { ascending })
+      .range(0, PAGE - 1);
+    if (firstErr) throw firstErr;
+    if (!first || first.length === 0) return [];
+    if (first.length < PAGE) return first;
+    // We know total count — fire all remaining pages in parallel
+    const total = count || first.length;
+    const remaining = [];
+    for (let from = PAGE; from < total; from += PAGE) {
+      remaining.push(
+        supabase
+          .from(table)
+          .select(selectCols)
+          .eq("location_id", locationId)
+          .order(orderCol, { ascending })
+          .range(from, from + PAGE - 1)
+      );
+    }
+    // Execute in parallel batches
+    let allRows = [...first];
+    for (let i = 0; i < remaining.length; i += PARALLEL) {
+      const batch = remaining.slice(i, i + PARALLEL);
+      const results = await Promise.all(batch);
+      for (const r of results) {
+        if (r.error) throw r.error;
+        if (r.data) allRows = allRows.concat(r.data);
+      }
     }
     return allRows;
   }, []);
 
   // ── Load all data from Supabase ──
+  // Phase 1: owners, animals, RPC stats (fast — renders lifecycle page instantly)
+  // Phase 2: reservations loaded in background (needed for ops hub, client detail)
   const loadData = useCallback(async () => {
     if (!locationId) return;
     try {
-      setLoading(true);
       setError(null);
 
-      // Parallel fetch all tables (paginated for large datasets)
-      const [rawOwners, rawAnimals, rawRes, typesRes, immTypesRes, syncRes, roomCountRes] = await Promise.all([
+      // Phase 1: Fast fetch — everything the lifecycle page needs
+      const [rawOwners, rawAnimals, statsRes, typesRes, immTypesRes, syncRes, roomCountRes, lcRes] = await Promise.all([
         fetchAll("gingr_owners", locationId, "last_name"),
         fetchAll("gingr_animals", locationId, "name"),
-        fetchAll("gingr_reservations", locationId, "start_date", false),
+        supabase.rpc("get_client_stats", { p_location_id: locationId }),
         supabase.from("gingr_reservation_types").select("*").eq("location_id", locationId),
         supabase.from("gingr_immunization_types").select("*").eq("location_id", locationId),
         supabase.from("gingr_sync_state").select("*").eq("location_id", locationId),
         supabase.from("lite_settings").select("setting_value").eq("location_id", locationId).eq("setting_key", "room_counts").maybeSingle(),
+        supabase.from("lite_client_lifecycle").select("gingr_id,lifecycle_data").eq("location_id", locationId),
       ]);
 
       const roomCounts = roomCountRes?.data?.setting_value || null;
       if (roomCounts) setRoomCountConfig(roomCounts);
 
+      // Build server stats lookup: owner_gingr_id → stats
+      const sMap = {};
+      (statsRes.data || []).forEach(s => { sMap[s.owner_gingr_id] = s; });
+      setServerStats(sMap);
+
+      // Build lifecycle lookup: gingr_id → lifecycle_data
+      const lcMap = {};
+      (lcRes.data || []).forEach(r => { lcMap[r.gingr_id] = r.lifecycle_data; });
+
       const tClients = transformOwners(rawOwners);
       const tDogs = transformAnimals(rawAnimals);
-      const tReservations = transformReservations(rawRes);
-      const tRooms = buildRooms(typesRes.data || [], tReservations, roomCounts);
+      // Merge persisted lifecycle data onto clients (loaded from lite_client_lifecycle)
+      tClients.forEach(c => {
+        const lc = lcMap[String(c.gingrId)];
+        if (lc) c.lifecycle = lc;
+      });
+
+      // Auto-set follow-up for NEW clients that arrived after the initial DB seed
+      const newClientsNeedingLC = tClients.filter(c => !c.lifecycle && c.createdAt);
+      if (newClientsNeedingLC.length > 0) {
+        const rows = newClientsNeedingLC.map(c => {
+          const fuDate = new Date(c.createdAt.split("T")[0] + "T12:00:00");
+          fuDate.setDate(fuDate.getDate() + 1);
+          const lc = {
+            conversion: { notes: "", followUpDate: fuDate.toISOString().split("T")[0], updates: [], source: "", sourceDate: "", sourceReservationId: "" },
+            retention: { notes: "", followUpDate: "", updates: [] },
+            cold: false, coldDate: "", coldFrom: "",
+          };
+          c.lifecycle = lc;
+          return { location_id: locationId, gingr_id: String(c.gingrId), lifecycle_data: lc, updated_at: new Date().toISOString() };
+        });
+        supabase.from("lite_client_lifecycle").upsert(rows, { onConflict: "location_id,gingr_id" }).then(({ error }) => {
+          if (error) console.log("[K9 Lite] New client lifecycle seed error:", error.message);
+        });
+      }
+
+      // Auto-set retention follow-up dates for clients missing one
+      // Lapse date = last_res_date + threshold (90 daycare / 180 boarding-heavy)
+      // Mirrors conversion follow-up logic: computed once, persisted to Postgres
+      const retentionNeedingFU = tClients.filter(c => {
+        if (c.lifecycle?.retention?.followUpDate) return false; // already set
+        const gingrId = String(c.gingrId);
+        const srv = sMap[gingrId];
+        if (!srv?.last_res_date || !srv.has_real_booking) return false;
+        if (srv.has_upcoming) return false; // active, not retention
+        const totalRes = Number(srv.total_res) || 0;
+        if (totalRes === 0) return false;
+        const daysSince = Math.floor((Date.now() - new Date(srv.last_res_date).getTime()) / 86400000);
+        const bdPct = (Number(srv.boarding_count) || 0) / totalRes;
+        const dcThresh = 90, bdThresh = 180;
+        const thresh = bdPct > 0.5 ? bdThresh : dcThresh;
+        return daysSince >= thresh; // actually in retention
+      });
+      if (retentionNeedingFU.length > 0) {
+        const retRows = retentionNeedingFU.map(c => {
+          const gingrId = String(c.gingrId);
+          const srv = sMap[gingrId];
+          const totalRes = Number(srv.total_res) || 1;
+          const bdPct = (Number(srv.boarding_count) || 0) / totalRes;
+          const thresh = bdPct > 0.5 ? 180 : 90;
+          const lapseDate = new Date(srv.last_res_date + "T12:00:00");
+          lapseDate.setDate(lapseDate.getDate() + thresh);
+          const lapseDateStr = lapseDate.toISOString().split("T")[0];
+          const lc = c.lifecycle || { conversion: { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }, retention: { notes:"",followUpDate:"",updates:[] }, cold:false, coldDate:"", coldFrom:"" };
+          const updatedLC = { ...lc, retention: { ...lc.retention, followUpDate: lapseDateStr } };
+          c.lifecycle = updatedLC;
+          return { location_id: locationId, gingr_id: gingrId, lifecycle_data: updatedLC, updated_at: new Date().toISOString() };
+        });
+        supabase.from("lite_client_lifecycle").upsert(retRows, { onConflict: "location_id,gingr_id" }).then(({ error }) => {
+          if (error) console.log("[K9 Lite] Retention follow-up seed error:", error.message);
+          else console.log(`[K9 Lite] Seeded ${retRows.length} retention follow-up dates`);
+        });
+      }
 
       setClients(tClients);
       setDogs(tDogs);
-      setReservations(tReservations);
-      setRooms(tRooms);
       setResTypes(typesRes.data || []);
       setImmunizationTypes(immTypesRes.data || []);
       setSyncState(syncRes.data || []);
@@ -1595,11 +1730,27 @@ function useGingrData(locationId) {
       const ownerSync = (syncRes.data || []).find(s => s.entity_type === "owners");
       if (ownerSync?.last_sync_at) setLastSyncAt(ownerSync.last_sync_at);
 
-      setLoading(false);
+      hasLoadedOnce.current = true;
+
+      // Cache for instant loads on next visit (versioned to bust stale caches)
+      idbSet(`data_v2_${locationId}`, {
+        clients: tClients, dogs: tDogs, serverStats: sMap,
+        resTypes: typesRes.data || [], immunizationTypes: immTypesRes.data || [],
+      });
+
+      // Phase 2: Background fetch reservations (for ops hub, client detail, etc.)
+      fetchAll("gingr_reservations", locationId, "start_date", false,
+        "gingr_id,location_id,owner_gingr_id,animal_gingr_id,reservation_type_name,reservation_type_id,start_date,end_date,check_in_date,check_out_date,cancelled_date,transaction,deposit,services,animal_name,owner_first_name,owner_last_name,notes_reservation"
+      ).then(rawRes => {
+        const tReservations = transformReservations(rawRes);
+        const tRooms = buildRooms(typesRes.data || [], tReservations, roomCounts);
+        setReservations(tReservations);
+        setRooms(tRooms);
+      }).catch(err => console.error("Background reservation fetch failed:", err));
+
     } catch (err) {
-      console.error("Failed to load Gingr data:", err);
+      console.error("Failed to load data:", err);
       setError(err.message);
-      setLoading(false);
     }
   }, [locationId, transformOwners, transformAnimals, transformReservations, buildRooms]);
 
@@ -1710,6 +1861,7 @@ function useGingrData(locationId) {
     dogs,
     reservations,
     rooms,
+    serverStats,
     dailyOps,
     payments: [],
     messages: [],
@@ -1830,9 +1982,27 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [massTextBody, setMassTextBody] = useState("");
   const [showMassTextHistory, setShowMassTextHistory] = useState(false);
   const [displayLimit, setDisplayLimit] = useState(100);
+  const [showBulkUpdate, setShowBulkUpdate] = useState(false);
+  const [bulkReason, setBulkReason] = useState("");
+  const [bulkProcessing, setBulkProcessing] = useState(false);
   const [activeViewId, setActiveViewId] = useState(null);
   const [showSaveView, setShowSaveView] = useState(false);
   const [viewName, setViewName] = useState("");
+  const [savedViews, setSavedViews] = useState([]);
+
+  // Load saved views from lite_settings on mount
+  useEffect(() => {
+    if (!locationSlug) return;
+    supabase.from("lite_settings").select("setting_value").eq("location_id", locationSlug).eq("setting_key", "lifecycle_views").maybeSingle().then(({ data: row }) => {
+      if (row?.setting_value) setSavedViews(row.setting_value);
+    });
+  }, [locationSlug]);
+
+  // Persist views helper
+  const persistViews = async (views) => {
+    setSavedViews(views);
+    await supabase.from("lite_settings").upsert({ location_id: locationSlug, setting_key: "lifecycle_views", setting_value: views }, { onConflict: "location_id,setting_key" });
+  };
   const [draftFilters, setDraftFilters] = useState({});
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [filterPickerReady, setFilterPickerReady] = useState(false);
@@ -1862,74 +2032,96 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     return m;
   }, [data.payments]);
 
-  // ── Client stats (optimized with lookup maps + Gingr owner-level fallbacks) ──
+  // ── Client stats (uses server-computed RPC when available, falls back to JS) ──
   const clientStats = useMemo(() => {
     const map = {};
     const td = todayStr();
     const tdNoon = new Date(td + "T12:00:00");
+    const ss = data.serverStats; // RPC results keyed by owner_gingr_id
     data.clients.forEach(c => {
-      const cRes = resByClient[c.id] || [];
       const dogs = dogsByClient[c.id] || [];
-      const daycareCount = cRes.filter(r => r.type === "daycare").length;
-      const boardingCount = cRes.filter(r => r.type === "boarding").length;
-      const evalCount = cRes.filter(r => r.type === "evaluation").length;
-      const tourCount = cRes.filter(r => r.type === "tour").length;
-      const sorted = [...cRes].sort((a, b) => b.checkIn.localeCompare(a.checkIn));
-      const lastResSynced = sorted.find(r => r.checkIn <= td);
-      const nextResSynced = sorted.filter(r => r.checkIn >= td && r.status === "upcoming").sort((a, b) => a.checkIn.localeCompare(b.checkIn))[0];
-      const resSpent = cRes.reduce((s, r) => s + ((r.pricing && r.pricing.total) || 0), 0);
-      const pmtSpent = (pmtByClient[c.id] || []).reduce((s, p) => s + (p.amount || 0), 0);
-      const totalSpent = resSpent + pmtSpent;
-
-      // Use Gingr owner-level _lastReservation as fallback when synced data is incomplete
-      // (Edge Function syncs full history — 3 years of reservations)
-      let lastRes = lastResSynced || null;
-      let daysSinceLast = lastRes ? Math.round((tdNoon - new Date(lastRes.checkIn + "T12:00:00")) / 86400000) : null;
-      if (daysSinceLast == null && c._lastReservation) {
-        const lrDate = c._lastReservation.split("T")[0];
-        daysSinceLast = Math.round((tdNoon - new Date(lrDate + "T12:00:00")) / 86400000);
-        lastRes = { checkIn: lrDate, _fromGingrOwner: true };
-      }
-
-      // Use Gingr owner-level _numReservations as fallback for total reservation count
-      const totalRes = cRes.length || (c._numReservations || 0);
-
-      // Use _nextReservation from Gingr owner data as fallback for upcoming detection
-      let nextRes = nextResSynced || null;
-      const hasGingrUpcoming = !nextRes && c._nextReservation && c._nextReservation.split("T")[0] >= td;
-      if (hasGingrUpcoming) {
-        nextRes = { checkIn: c._nextReservation.split("T")[0], _fromGingrOwner: true };
-      }
-
-      // Whether the client has ever had real bookings (from Gingr owner data or synced data)
-      const hasEverBooked = totalRes > 0;
-
       const dogNames = dogs.map(d => d.fields.name || "Unknown");
-      let postEvalAppts = 0;
-      const evalsSorted = cRes.filter(r => r.type === "evaluation").sort((a, b) => a.checkIn.localeCompare(b.checkIn));
-      if (evalsSorted.length > 0) { postEvalAppts = cRes.filter(r => r.checkIn > evalsSorted[0].checkIn).length; }
-      let postTourAppts = 0;
-      const toursSorted = cRes.filter(r => r.type === "tour").sort((a, b) => a.checkIn.localeCompare(b.checkIn));
-      if (toursSorted.length > 0) { postTourAppts = cRes.filter(r => r.checkIn > toursSorted[0].checkIn).length; }
-      map[c.id] = { dogCount: dogs.length, dogNames, daycareCount, boardingCount, evalCount, tourCount, lastRes, nextRes, totalSpent, totalRes, daysSinceLast, postEvalAppts, postTourAppts, hasEverBooked, hasGingrUpcoming: !!hasGingrUpcoming };
+      const gingrId = String(c.gingrId);
+
+      // Use server-computed stats if available (instant), otherwise fall back to JS computation
+      if (ss && ss[gingrId]) {
+        const s = ss[gingrId];
+        const lastResDate = s.last_res_date || "";
+        const nextResDate = s.next_res_date || "";
+        const lastRes = lastResDate ? { checkIn: lastResDate } : (c._lastReservation ? { checkIn: c._lastReservation.split("T")[0], _fromGingrOwner: true } : null);
+        const nextRes = (nextResDate && nextResDate >= td) ? { checkIn: nextResDate } : null;
+        const daysSinceLast = lastRes ? Math.round((tdNoon - new Date(lastRes.checkIn + "T12:00:00")) / 86400000) : null;
+        const totalRes = Number(s.total_res) || (c._numReservations || 0);
+        const totalSpent = Number(s.total_spent) || 0;
+        const hasGingrUpcoming = !nextRes && c._nextReservation && c._nextReservation.split("T")[0] >= td;
+        const finalNextRes = nextRes || (hasGingrUpcoming ? { checkIn: c._nextReservation.split("T")[0], _fromGingrOwner: true } : null);
+        map[c.id] = {
+          dogCount: dogs.length, dogNames,
+          daycareCount: Number(s.daycare_count) || 0,
+          boardingCount: Number(s.boarding_count) || 0,
+          evalCount: Number(s.eval_count) || 0,
+          tourCount: Number(s.tour_count) || 0,
+          lastRes, nextRes: finalNextRes, totalSpent, totalRes,
+          daysSinceLast,
+          postEvalAppts: Number(s.post_eval_appts) || 0,
+          postTourAppts: Number(s.post_tour_appts) || 0,
+          hasEverBooked: totalRes > 0,
+          hasGingrUpcoming: !!hasGingrUpcoming,
+        };
+      } else {
+        // Fallback: compute from client-side reservation data
+        const cRes = resByClient[c.id] || [];
+        const daycareCount = cRes.filter(r => r.type === "daycare").length;
+        const boardingCount = cRes.filter(r => r.type === "boarding").length;
+        const evalCount = cRes.filter(r => r.type === "evaluation").length;
+        const tourCount = cRes.filter(r => r.type === "tour").length;
+        const sorted = [...cRes].sort((a, b) => b.checkIn.localeCompare(a.checkIn));
+        const lastResSynced = sorted.find(r => r.checkIn <= td);
+        const nextResSynced = sorted.filter(r => r.checkIn >= td && r.status === "upcoming").sort((a, b) => a.checkIn.localeCompare(b.checkIn))[0];
+        const resSpent = cRes.reduce((s, r) => s + ((r.pricing && r.pricing.total) || 0), 0);
+        const pmtSpent = (pmtByClient[c.id] || []).reduce((s, p) => s + (p.amount || 0), 0);
+        const totalSpent = resSpent + pmtSpent;
+        let lastRes = lastResSynced || null;
+        let daysSinceLast = lastRes ? Math.round((tdNoon - new Date(lastRes.checkIn + "T12:00:00")) / 86400000) : null;
+        if (daysSinceLast == null && c._lastReservation) {
+          const lrDate = c._lastReservation.split("T")[0];
+          daysSinceLast = Math.round((tdNoon - new Date(lrDate + "T12:00:00")) / 86400000);
+          lastRes = { checkIn: lrDate, _fromGingrOwner: true };
+        }
+        const totalRes = cRes.length || (c._numReservations || 0);
+        let nextRes = nextResSynced || null;
+        const hasGingrUpcoming = !nextRes && c._nextReservation && c._nextReservation.split("T")[0] >= td;
+        if (hasGingrUpcoming) { nextRes = { checkIn: c._nextReservation.split("T")[0], _fromGingrOwner: true }; }
+        const hasEverBooked = totalRes > 0;
+        let postEvalAppts = 0;
+        const evalsSorted = cRes.filter(r => r.type === "evaluation").sort((a, b) => a.checkIn.localeCompare(b.checkIn));
+        if (evalsSorted.length > 0) { postEvalAppts = cRes.filter(r => r.checkIn > evalsSorted[0].checkIn).length; }
+        let postTourAppts = 0;
+        const toursSorted = cRes.filter(r => r.type === "tour").sort((a, b) => a.checkIn.localeCompare(b.checkIn));
+        if (toursSorted.length > 0) { postTourAppts = cRes.filter(r => r.checkIn > toursSorted[0].checkIn).length; }
+        map[c.id] = { dogCount: dogs.length, dogNames, daycareCount, boardingCount, evalCount, tourCount, lastRes, nextRes, totalSpent, totalRes, daysSinceLast, postEvalAppts, postTourAppts, hasEverBooked, hasGingrUpcoming: !!hasGingrUpcoming };
+      }
     });
     return map;
-  }, [data.clients, resByClient, dogsByClient, pmtByClient]);
+  }, [data.clients, data.serverStats, resByClient, dogsByClient, pmtByClient]);
 
-  // ── Tab membership (uses Gingr owner-level data for accurate classification) ──
+  // ── Tab membership (uses server stats or Gingr owner-level data for classification) ──
   const clientTabMap = useMemo(() => {
     const map = {};
     const dcThresh = data.resortPolicies?.retentionDaycareDays ?? 90;
     const bdThresh = data.resortPolicies?.retentionBoardingDays ?? 180;
     const td = todayStr();
+    const ss = data.serverStats;
     data.clients.forEach(c => {
       const s = clientStats[c.id] || {};
       const hasSpent = (s.totalSpent || 0) > 0;
-      const cRes = resByClient[c.id] || [];
-      const hasRealBookingSynced = cRes.some(r => r.type !== "tour" && r.type !== "evaluation");
-      const hasUpcomingSynced = cRes.some(r => r.checkIn >= td && r.status === "upcoming" && r.type !== "tour" && r.type !== "evaluation");
+      const gingrId = String(c.gingrId);
+      const srv = ss && ss[gingrId];
 
-      // Use Gingr owner data as fallback: _numReservations > 0 means they've booked before
+      // Use server stats for has_real_booking/has_upcoming when available
+      const hasRealBookingSynced = srv ? (srv.has_real_booking || false) : (resByClient[c.id] || []).some(r => r.type !== "tour" && r.type !== "evaluation");
+      const hasUpcomingSynced = srv ? (srv.has_upcoming || false) : (resByClient[c.id] || []).some(r => r.checkIn >= td && r.status === "upcoming" && r.type !== "tour" && r.type !== "evaluation");
+
       const hasEverBooked = s.hasEverBooked || false;
       const hasRealBooking = hasRealBookingSynced || hasEverBooked;
       const hasUpcoming = hasUpcomingSynced || s.hasGingrUpcoming;
@@ -1939,18 +2131,15 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       const isCold = c.lifecycle?.cold === true;
       let isRetention = false;
 
-      // Retention: has booked before, no upcoming, days since last visit exceeds threshold
       if (hasRealBooking && !hasUpcoming && totalRes > 0 && daysSince != null) {
-        // If we have synced reservation data, use type percentages for threshold selection
-        const syncedResCount = cRes.length;
-        if (syncedResCount > 0) {
-          const dcPct = (s.daycareCount || 0) / syncedResCount;
-          const bdPct = (s.boardingCount || 0) / syncedResCount;
+        const resCount = srv ? Number(srv.total_res) : (resByClient[c.id] || []).length;
+        if (resCount > 0) {
+          const dcPct = (s.daycareCount || 0) / resCount;
+          const bdPct = (s.boardingCount || 0) / resCount;
           if (bdPct > 0.5 && daysSince >= bdThresh) isRetention = true;
           else if (dcPct >= 0.5 && daysSince >= dcThresh) isRetention = true;
           else if (dcPct < 0.5 && bdPct < 0.5 && daysSince >= dcThresh) isRetention = true;
         } else {
-          // No synced res detail — use daycare threshold as default (more conservative)
           if (daysSince >= dcThresh) isRetention = true;
         }
       }
@@ -1961,7 +2150,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       map[c.id] = { isConversion, isActive, isRetention: isRetention && !isCold, isCold, isAll: true };
     });
     return map;
-  }, [data.clients, clientStats, resByClient, data.resortPolicies?.retentionDaycareDays, data.resortPolicies?.retentionBoardingDays]);
+  }, [data.clients, data.serverStats, clientStats, resByClient, data.resortPolicies?.retentionDaycareDays, data.resortPolicies?.retentionBoardingDays]);
 
   // ── TEMP DIAGNOSTIC: why are clients in conversion? ──
   // ── Lifecycle event tracking ──
@@ -1980,7 +2169,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       if (event) {
         changed = true;
         let updated = { ...c, lifecycleEvents: [...(c.lifecycleEvents || []), event] };
-        // When moving to retention, auto-set follow-up date to today
+        // When moving to retention, set follow-up date to lapse date (today = day they crossed threshold)
         if (event.event === "moved_to_retention") {
           const lc = updated.lifecycle || { conversion: { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }, retention: { notes:"",followUpDate:"",updates:[] }, cold:false, coldDate:"", coldFrom:"" };
           updated = { ...updated, lifecycle: { ...lc, retention: { ...lc.retention, followUpDate: todayStr() } } };
@@ -1992,6 +2181,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     prevTabMapRef.current = clientTabMap;
     if (changed) save({ ...data, clients: updatedClients });
   }, [clientTabMap]);
+
+
 
   // ── Source lookup helpers ──
   const getClientSource = useCallback((client) => {
@@ -2226,7 +2417,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     { key: "eval", label: "Eval" }, { key: "postEval", label: "P-Eval" },
     { key: "tours", label: "Tours" }, { key: "postTour", label: "P-Tour" },
   ];
-  const baseCols = ["totalRes","lastRes","daysSince","totalSpent","nextRes"];
+  const baseCols = ["nextRes","lastRes","daysSince","totalRes","totalSpent"];
   const extraCols = ["daycare","boarding","eval","postEval","tours","postTour"];
   const shownDataCols = showExtraCols ? [...baseCols.slice(0,3), ...extraCols, ...baseCols.slice(3)] : baseCols;
 
@@ -2261,6 +2452,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     if (src.base && (!isIgnite || src.base !== "Ignite") && src.base !== "Online Booking") parts.push({ label: src.base, type: "base" });
     if (src.hasEval) parts.push({ label: "Eval", type: "eval", res: src.evalRes });
     if (src.hasTour) parts.push({ label: "Tour", type: "tour", res: src.tourRes });
+    if (parts.length === 0 && client.gingrId) parts.push({ label: "Gingr", type: "gingr" });
     if (parts.length === 0) return <span style={{color:C.textMut}}>—</span>;
     const igniteExpanded = expandedIgnite.has(client.id);
     return (
@@ -2476,8 +2668,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     if (activeTab === "conversion") return "minmax(110px,1.3fr) minmax(75px,0.9fr) 50px 75px 55px 55px minmax(80px,1fr) minmax(80px,1fr) minmax(90px,1.3fr) 85px 55px";
     if (activeTab === "retention") return "minmax(100px,1.2fr) minmax(75px,0.9fr) 45px 75px minmax(80px,0.9fr) minmax(80px,0.9fr) minmax(85px,1.2fr) 80px minmax(65px,0.7fr) minmax(60px,0.6fr) 50px 50px";
     if (activeTab === "cold") return "minmax(110px,1.3fr) minmax(75px,0.9fr) 50px 75px minmax(90px,1fr) minmax(80px,1fr) minmax(110px,1.3fr) 65px";
-    // Active / All
-    const base = "minmax(80px,1fr) minmax(80px,1fr) minmax(80px,0.8fr) 50px 75px";
+    // Active / All — Client, Phone, Dogs, Created
+    const base = "minmax(120px,1.3fr) minmax(80px,0.9fr) 50px 75px";
     const dataCols = shownDataCols.map(k => {
       if (k==="lastRes"||k==="nextRes") return "minmax(70px,0.8fr)";
       return "minmax(50px,0.6fr)";
@@ -2488,7 +2680,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   // ── Render ──
   if (data.loading) return (
     <div style={{padding:"60px 28px",textAlign:"center"}}>
-      <K9LoadingAnimation size={56} message="Loading client data..." subMessage="Syncing from Gingr" />
+      <K9LoadingAnimation size={56} message="Loading client data..." subMessage="Fetching from cache" />
     </div>
   );
 
@@ -2506,6 +2698,13 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
             Filter{activeFilterCount>0 && <span style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minWidth:18,height:18,padding:"0 5px",borderRadius:9,fontSize:10,fontWeight:800,background:C.pri,color:"#fff"}}>{activeFilterCount}</span>}
           </button>
+          {activeFilterCount > 0 && (
+            <button onClick={() => { setShowBulkUpdate(true); setBulkReason(""); }}
+              style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:8,border:`1.5px solid ${C.dan}40`,background:`${C.dan}08`,color:C.dan,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20M2 12h20"/></svg>
+              Bulk Update ({activeList.length})
+            </button>
+          )}
           <Btn variant="ghost" onClick={() => {
             setMassTextSelected(new Set(activeList.filter(c => c.fields?.phone).map(c => c.id)));
             setShowMassText(true);
@@ -2552,10 +2751,73 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         </div>
       </div>
 
+      {/* ═══ BULK UPDATE MODAL ═══ */}
+      {showBulkUpdate && (() => {
+        const isAdmin = profile?.role === "owner" || profile?.role === "enterprise_admin";
+        if (!isAdmin) return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setShowBulkUpdate(false)}>
+          <div style={{background:"#fff",borderRadius:16,padding:32,maxWidth:400}} onClick={e=>e.stopPropagation()}>
+            <p style={{margin:0,color:C.text,fontWeight:600}}>Only admins can perform bulk updates.</p>
+            <button onClick={()=>setShowBulkUpdate(false)} style={{marginTop:16,padding:"8px 20px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>OK</button>
+          </div>
+        </div>;
+
+        const handleBulkCold = async () => {
+          if (!bulkReason.trim()) return;
+          setBulkProcessing(true);
+          const today = todayStr();
+          const ids = activeList.map(c => c.id);
+          const newClients = data.clients.map(c => {
+            if (!ids.includes(c.id)) return c;
+            return {
+              ...c,
+              lifecycle: { ...(c.lifecycle || {}), cold: true, coldDate: today, coldFrom: activeTab === "retention" ? "retention" : "conversion", coldReason: bulkReason.trim() },
+              lifecycleEvents: [...(c.lifecycleEvents || []), { event: "bulk_marked_cold", date: today, details: `Bulk marked as cold: ${bulkReason.trim()}` }],
+            };
+          });
+          await save({ ...data, clients: newClients });
+          setShowBulkUpdate(false);
+          setBulkProcessing(false);
+          addGlobalToast?.({ message: `${ids.length} clients marked as cold`, type: "success" });
+        };
+
+        return (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)"}} onClick={()=>setShowBulkUpdate(false)}>
+            <div style={{background:"#fff",borderRadius:16,padding:32,maxWidth:480,width:"90%",boxShadow:"0 20px 60px rgba(0,0,0,0.2)",animation:"filterFadeIn 0.2s ease-out"}} onClick={e=>e.stopPropagation()}>
+              <h3 style={{margin:"0 0 4px",fontSize:18,fontWeight:800,color:C.text}}>Bulk Update</h3>
+              <p style={{margin:"0 0 20px",fontSize:13,color:C.textSec}}>
+                This will mark <strong style={{color:C.dan}}>{activeList.length} filtered clients</strong> as Cold.
+              </p>
+
+              <label style={{display:"block",fontSize:12,fontWeight:700,color:C.text,marginBottom:6}}>Reason <span style={{color:C.dan}}>*</span></label>
+              <textarea
+                value={bulkReason} onChange={e => setBulkReason(e.target.value)}
+                placeholder="e.g. Legacy clients older than 6 months with no activity — likely lost"
+                rows={3}
+                style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:13,fontFamily:"inherit",resize:"vertical",outline:"none",boxSizing:"border-box",transition:"border-color 0.15s"}}
+                onFocus={e=>e.target.style.borderColor=C.pri}
+                onBlur={e=>e.target.style.borderColor=C.border}
+              />
+              <p style={{margin:"8px 0 20px",fontSize:11,color:C.textMut}}>This reason will be stored on each client record for audit purposes.</p>
+
+              <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+                <button onClick={()=>setShowBulkUpdate(false)}
+                  style={{padding:"10px 20px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                  Cancel
+                </button>
+                <button onClick={handleBulkCold} disabled={!bulkReason.trim() || bulkProcessing}
+                  style={{padding:"10px 20px",borderRadius:8,border:"none",background:bulkReason.trim()?C.dan:"#ccc",color:"#fff",fontSize:13,fontWeight:700,cursor:bulkReason.trim()?"pointer":"not-allowed",fontFamily:"inherit",opacity:bulkProcessing?0.6:1,transition:"all 0.15s"}}>
+                  {bulkProcessing ? "Processing..." : `Mark ${activeList.length} as Cold`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ═══ FILTER PANEL ═══ */}
       {lcFilterOpen && (() => {
         const isAdmin = profile?.role === "owner" || profile?.role === "enterprise_admin";
-        const views = data.lifecycleViews || [];
+        const views = savedViews;
         const usedKeys = Object.keys(draftFilters);
         const availableFields = LC_FILTER_FIELDS.filter(f => !usedKeys.includes(f.key));
         const sections = [...new Set(LC_FILTER_FIELDS.map(f => f.section))];
@@ -2567,12 +2829,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         const saveView = async () => {
           if (!viewName.trim()) return;
           const newView = { id: Date.now().toString(36), name: viewName.trim(), filters: { ...draftFilters }, tab: activeTab, createdBy: profile?.id || "unknown", createdAt: new Date().toISOString() };
-          await save({ ...data, lifecycleViews: [...(data.lifecycleViews || []), newView] });
+          await persistViews([...savedViews, newView]);
           setActiveViewId(newView.id); setViewName(""); setShowSaveView(false);
           addGlobalToast?.({ message: `View "${newView.name}" saved`, type: "success" });
         };
         const deleteView = async (viewId) => {
-          await save({ ...data, lifecycleViews: (data.lifecycleViews || []).filter(v => v.id !== viewId) });
+          await persistViews(savedViews.filter(v => v.id !== viewId));
           if (activeViewId === viewId) setActiveViewId(null);
           addGlobalToast?.({ message: "View deleted" });
         };
@@ -2989,8 +3251,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
               <div style={colHeaderStyle("dogCount")} onClick={()=>handleSort("dogCount")}>Dogs <SortIcon col="dogCount"/></div>
               <div style={colHeaderStyle("createdAt")} onClick={()=>handleSort("createdAt")}>Created <SortIcon col="createdAt"/></div>
-              <div style={colHeaderStyle("totalRes")} onClick={()=>handleSort("totalRes")}>Appts <SortIcon col="totalRes"/></div>
-              <div style={colHeaderStyle("totalSpent")} onClick={()=>handleSort("totalSpent")}>Spent <SortIcon col="totalSpent"/></div>
+              <div style={colHeaderStyle("totalRes")} onClick={()=>handleSort("totalRes")}>Total Res <SortIcon col="totalRes"/></div>
+              <div style={colHeaderStyle("totalSpent")} onClick={()=>handleSort("totalSpent")}>Total Spent <SortIcon col="totalSpent"/></div>
               <div>Source</div>
               <div style={colHeaderStyle("followUp")} onClick={()=>handleSort("followUp")}>Follow-Up <SortIcon col="followUp"/></div>
               <div>Notes</div>
@@ -3253,8 +3515,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               <div>Notes</div>
               <div>Updates</div>
               <div style={colHeaderStyle("lastRes")} onClick={()=>handleSort("lastRes")}>Last Res <SortIcon col="lastRes"/></div>
-              <div style={colHeaderStyle("totalPaid")} onClick={()=>handleSort("totalPaid")}>Paid <SortIcon col="totalPaid"/></div>
-              <div style={colHeaderStyle("totalAppts")} onClick={()=>handleSort("totalAppts")}>Appts <SortIcon col="totalAppts"/></div>
+              <div style={colHeaderStyle("totalPaid")} onClick={()=>handleSort("totalPaid")}>Total Spent <SortIcon col="totalPaid"/></div>
+              <div style={colHeaderStyle("totalAppts")} onClick={()=>handleSort("totalAppts")}>Total Res <SortIcon col="totalAppts"/></div>
               <div></div>
             </div>
             {displayedList.length === 0 ? (
@@ -3340,13 +3602,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           const grid = getGrid();
           return <>
             <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
-              <div style={colHeaderStyle("last_name")} onClick={()=>handleSort("last_name")}>Last <SortIcon col="last_name"/></div>
-              <div style={colHeaderStyle("first_name")} onClick={()=>handleSort("first_name")}>First <SortIcon col="first_name"/></div>
+              <div style={colHeaderStyle("name")} onClick={()=>handleSort("name")}>Client <SortIcon col="name"/></div>
               <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
               <div style={colHeaderStyle("dogCount")} onClick={()=>handleSort("dogCount")}>Dogs <SortIcon col="dogCount"/></div>
               <div style={colHeaderStyle("createdAt")} onClick={()=>handleSort("createdAt")}>Created <SortIcon col="createdAt"/></div>
               {shownDataCols.map(k => {
-                const labels = {totalRes:"Res",lastRes:"Last Res",daysSince:"Days",daycare:"DC",boarding:"BD",eval:"Eval",postEval:"P-Eval",tours:"Tours",postTour:"P-Tour",totalSpent:"Spent",nextRes:"Next"};
+                const labels = {nextRes:"Next Res",lastRes:"Last Res",daysSince:"Days Since",totalRes:"Total Res",daycare:"DC",boarding:"BD",eval:"Eval",postEval:"P-Eval",tours:"Tours",postTour:"P-Tour",totalSpent:"Total Spent"};
                 return <div key={k} style={colHeaderStyle(k)} onClick={()=>handleSort(k)}>{labels[k]||k} <SortIcon col={k}/></div>;
               })}
               {/* Column toggle moved to search bar */}
@@ -3359,8 +3620,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                 <div key={c.id}>
                   <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center",fontSize:12,transition:"background 0.1s"}}
                     onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <div><span onClick={()=>nav("client-detail",{clientId:c.id})} style={{fontWeight:700,color:C.pri,cursor:"pointer",fontSize:12}} onMouseEnter={e=>e.currentTarget.style.textDecoration="underline"} onMouseLeave={e=>e.currentTarget.style.textDecoration="none"}>{c.fields.last_name||""}</span></div>
-                    <div style={{color:C.text}}>{c.fields.first_name||""}</div>
+                    <div>{renderName(c)}</div>
                     <div style={{fontSize:11,color:C.textSec}}>{fmtPhone?.(c.fields.phone)||c.fields.phone||""}</div>
                     <div>{renderDogCount(c)}</div>
                     <div style={{fontSize:11,color:C.textSec}}>{c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}) : "—"}</div>
@@ -3596,6 +3856,292 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── FUNNEL REPORT ───────────────────────────────────────────────────────
+function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
+  const [range, setRange] = useState("mtd");
+  const [animReady, setAnimReady] = useState(false);
+  const initialMount = useRef(true);
+  useEffect(() => { if (initialMount.current) { initialMount.current = false; const t = setTimeout(() => setAnimReady(true), 50); return () => clearTimeout(t); } setAnimReady(true); }, [range]);
+
+  const ranges = [
+    { id: "wtd", label: "WTD", desc: "Week to Date" },
+    { id: "past-week", label: "Past Week", desc: "Last 7 Days" },
+    { id: "mtd", label: "MTD", desc: "Month to Date" },
+    { id: "past-30", label: "Past 30", desc: "Last 30 Days" },
+    { id: "qtd", label: "QTD", desc: "Quarter to Date" },
+    { id: "ytd", label: "YTD", desc: "Year to Date" },
+  ];
+
+  // ── Date range computation ──
+  const { startDate, endDate, rangeLabel } = useMemo(() => {
+    const now = new Date();
+    const end = todayStr();
+    let start;
+    switch (range) {
+      case "wtd": { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); start = d.toISOString().split("T")[0]; break; }
+      case "past-week": { const d = new Date(now); d.setDate(d.getDate() - 7); start = d.toISOString().split("T")[0]; break; }
+      case "mtd": { start = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`; break; }
+      case "past-30": { const d = new Date(now); d.setDate(d.getDate() - 30); start = d.toISOString().split("T")[0]; break; }
+      case "qtd": { const qm = Math.floor(now.getMonth() / 3) * 3; start = `${now.getFullYear()}-${String(qm+1).padStart(2,"0")}-01`; break; }
+      case "ytd": { start = `${now.getFullYear()}-01-01`; break; }
+      default: start = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-01`;
+    }
+    const rd = ranges.find(r => r.id === range);
+    return { startDate: start, endDate: end, rangeLabel: rd?.desc || "" };
+  }, [range]);
+
+  // ── Funnel metrics computation (uses serverStats RPC — no reservation dependency) ──
+  const metrics = useMemo(() => {
+    const clients = data.clients || [];
+    const ss = data.serverStats || {};
+    const allClients = clients.length;
+
+    // Build per-client stats from server RPC
+    const statsMap = {};
+    clients.forEach(c => {
+      const gid = String(c.gingrId);
+      const srv = ss[gid];
+      if (srv) {
+        statsMap[c.id] = {
+          totalSpent: Number(srv.total_spent) || 0,
+          totalRes: Number(srv.total_res) || 0,
+          hasRealBooking: srv.has_real_booking || false,
+          hasSpent: (Number(srv.total_spent) || 0) > 0,
+          lastResDate: srv.last_res_date || "",
+        };
+      } else {
+        // Fallback to Gingr owner-level data
+        statsMap[c.id] = {
+          totalSpent: 0,
+          totalRes: c._numReservations || 0,
+          hasRealBooking: (c._numReservations || 0) > 0,
+          hasSpent: false,
+          lastResDate: c._lastReservation ? c._lastReservation.split("T")[0] : "",
+        };
+      }
+    });
+
+    const inRange = (dateStr) => {
+      if (!dateStr) return false;
+      const d = dateStr.split("T")[0];
+      return d >= startDate && d <= endDate;
+    };
+
+    // LEADS: Clients created in timeframe that started as leads (no prior bookings)
+    const createdInRange = clients.filter(c => inRange(c.createdAt));
+    const leadsInRange = createdInRange.filter(c => {
+      const s = statsMap[c.id];
+      // If client was created in range, they were a new lead unless they had activity
+      // from before this range (unlikely for newly created, but check lastResDate)
+      if (s.lastResDate && s.lastResDate < startDate && s.hasRealBooking) return false;
+      return true;
+    });
+
+    // CONTACTED: Leads who have log entries in timeframe OR converted
+    const contactedLeads = leadsInRange.filter(c => {
+      const updates = c.lifecycle?.conversion?.updates || [];
+      const retUpdates = c.lifecycle?.retention?.updates || [];
+      const allUpdates = [...updates, ...retUpdates];
+      const hasLog = allUpdates.some(u => {
+        const logDate = u.loggedAt ? u.loggedAt.split("T")[0] : "";
+        return logDate >= startDate && logDate <= endDate;
+      });
+      const s = statsMap[c.id];
+      const becameCustomer = s.hasSpent || s.hasRealBooking;
+      return hasLog || becameCustomer;
+    });
+
+    // NEW CUSTOMERS: Leads who have spent or have real bookings
+    const newCustomers = leadsInRange.filter(c => {
+      const s = statsMap[c.id];
+      return s.hasSpent || s.hasRealBooking;
+    });
+
+    // Revenue from new customers (use their total spend since we can't date-filter without reservations)
+    const newCustomerRevenue = newCustomers.reduce((sum, c) => sum + (statsMap[c.id]?.totalSpent || 0), 0);
+
+    // LTV: Average lifetime value across all paying customers
+    const spendingClients = clients.filter(c => statsMap[c.id]?.hasSpent || statsMap[c.id]?.hasRealBooking);
+    const totalLTV = spendingClients.reduce((sum, c) => sum + (statsMap[c.id]?.totalSpent || 0), 0);
+    const avgLTV = spendingClients.length > 0 ? totalLTV / spendingClients.length : 0;
+
+    const conversionRate = leadsInRange.length > 0 ? (newCustomers.length / leadsInRange.length * 100) : 0;
+    const forecastedUplift = newCustomers.length * avgLTV;
+
+    return {
+      leads: leadsInRange.length,
+      contacted: contactedLeads.length,
+      newCustomers: newCustomers.length,
+      conversionRate,
+      newCustomerRevenue,
+      avgLTV,
+      forecastedUplift,
+      totalClients: allClients,
+      spendingClientsCount: spendingClients.length,
+    };
+  }, [data.clients, data.serverStats, startDate, endDate]);
+
+  const fmtMoney = (n) => "$" + Math.round(n).toLocaleString();
+
+  // Fixed max scale = YTD leads count (so bar widths are proportional across timeframes)
+  const ytdLeads = useMemo(() => {
+    const clients = data.clients || [];
+    const yearStart = `${new Date().getFullYear()}-01-01`;
+    return Math.max(clients.filter(c => {
+      const d = c.createdAt ? c.createdAt.split("T")[0] : "";
+      return d >= yearStart;
+    }).length, 1);
+  }, [data.clients]);
+  const maxFunnel = ytdLeads;
+
+  return (
+    <div style={{padding:"24px 28px",maxWidth:1100,margin:"0 auto"}}>
+      <style>{`
+        @keyframes funnelSlideIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes funnelGrow { from { transform:scaleX(0); } to { transform:scaleX(1); } }
+        @keyframes funnelFade { from { opacity:0; transform:scale(0.96); } to { opacity:1; transform:scale(1); } }
+        @keyframes funnelCount { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes funnelPulse { 0%,100% { transform:scale(1); } 50% { transform:scale(1.02); } }
+        @keyframes metricReveal { from { opacity:0; transform:translateY(16px) scale(0.97); } to { opacity:1; transform:translateY(0) scale(1); } }
+        @keyframes rangePill { from { opacity:0; transform:translateX(-4px); } to { opacity:1; transform:translateX(0); } }
+        @keyframes shimmer { 0% { background-position:-200% 0; } 100% { background-position:200% 0; } }
+      `}</style>
+
+      {/* ── Header ── */}
+      <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:24,animation:"funnelSlideIn 0.3s ease-out"}}>
+        <div>
+          <h1 style={{margin:0,fontSize:26,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>Conversion Funnel</h1>
+          <p style={{margin:"4px 0 0",fontSize:13,color:C.textSec}}>{rangeLabel} — {new Date(startDate).toLocaleDateString("en-US",{month:"short",day:"numeric"})} to {new Date(endDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</p>
+        </div>
+      </div>
+
+      {/* ── Date Range Selector ── */}
+      <div style={{display:"flex",gap:6,marginBottom:28,padding:"4px",borderRadius:14,background:C.surface,border:`1.5px solid ${C.borderLight}`,width:"fit-content",animation:"funnelSlideIn 0.3s ease-out 0.05s both"}}>
+        {ranges.map((r, i) => {
+          const active = range === r.id;
+          return (
+            <button key={r.id} onClick={() => setRange(r.id)}
+              style={{padding:"8px 18px",borderRadius:10,border:"none",background:active?C.pri:"transparent",color:active?"#fff":C.textSec,fontSize:12,fontWeight:active?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.25s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:active?"0 2px 12px rgba(0,52,98,0.25)":"none",animation:`rangePill 0.2s ease-out ${i*0.03}s both`,position:"relative",overflow:"hidden"}}
+              onMouseEnter={e=>{if(!active){e.currentTarget.style.background=`${C.pri}08`;e.currentTarget.style.color=C.pri;}}}
+              onMouseLeave={e=>{if(!active){e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.textSec;}}}>
+              {r.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Funnel Visualization ── */}
+      <div style={{background:"#fff",borderRadius:16,border:`1.5px solid ${C.borderLight}`,boxShadow:"0 4px 24px rgba(0,0,0,0.04)",padding:"32px 40px",marginBottom:24,animation:"funnelFade 0.35s ease-out 0.1s both"}}>
+
+        {[
+          { label: "Total Leads", value: metrics.leads, color: "#003462", lightColor: "#003462", desc: "New clients entering the funnel" },
+          { label: "Leads Contacted", value: metrics.contacted, color: "#AF8D54", lightColor: "#AF8D54", desc: "Leads with logged outreach or converted" },
+          { label: "New Customers", value: metrics.newCustomers, color: "#16A34A", lightColor: "#16A34A", desc: "Converted to active with spend/booking" },
+        ].map((stage, i) => {
+          const pct = maxFunnel > 0 ? stage.value / maxFunnel : 0;
+          const widthPct = Math.max(20 + pct * 80, stage.value > 0 ? 25 : 15); // proportional to YTD, min 25% if has data
+          const convFromPrev = i === 1 ? (metrics.leads > 0 ? (metrics.contacted / metrics.leads * 100).toFixed(0) : 0)
+            : i === 2 ? (metrics.contacted > 0 ? (metrics.newCustomers / metrics.contacted * 100).toFixed(0) : 0) : null;
+          return (
+            <div key={stage.label} style={{marginBottom:i<2?0:0}}>
+              {/* Drop-off indicator between stages */}
+              {i > 0 && (
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:"6px 0",opacity:animReady?1:0,transition:"opacity 0.4s ease-out",transitionDelay:`${0.15+i*0.12}s`}}>
+                  <div style={{height:1,flex:1,background:`linear-gradient(90deg, transparent, ${C.borderLight}, transparent)`}}/>
+                  <span style={{padding:"2px 12px",fontSize:10,fontWeight:700,color:C.textMut,letterSpacing:"0.06em"}}>
+                    {convFromPrev}% pass-through
+                  </span>
+                  <div style={{height:1,flex:1,background:`linear-gradient(90deg, transparent, ${C.borderLight}, transparent)`}}/>
+                </div>
+              )}
+              {/* Funnel bar */}
+              <div style={{display:"flex",alignItems:"center",gap:16,padding:"6px 0"}}>
+                <div style={{flex:1,display:"flex",justifyContent:"center"}}>
+                  <div style={{width:animReady?`${widthPct}%`:"0%",borderRadius:12,overflow:"hidden",transition:"width 0.7s cubic-bezier(0.2,0.8,0.2,1)",position:"relative"}}>
+                    <div style={{
+                      padding:"16px 20px",
+                      background:`linear-gradient(135deg, ${stage.color}, ${stage.color}dd)`,
+                      borderRadius:12,
+                      display:"flex",
+                      alignItems:"center",
+                      justifyContent:"space-between",
+                      cursor:"default",
+                      position:"relative",
+                      overflow:"hidden",
+                    }}>
+                      {/* Shimmer effect */}
+                      <div style={{position:"absolute",inset:0,background:"linear-gradient(90deg,transparent 0%,rgba(255,255,255,0.08) 50%,transparent 100%)",backgroundSize:"200% 100%",animation:"shimmer 3s ease-in-out infinite",pointerEvents:"none"}}/>
+                      <div style={{position:"relative",zIndex:1}}>
+                        <div style={{fontSize:11,fontWeight:600,color:"rgba(255,255,255,0.75)",textTransform:"uppercase",letterSpacing:"0.08em"}}>{stage.label}</div>
+                        <div style={{fontSize:10,fontWeight:400,color:"rgba(255,255,255,0.5)",marginTop:1}}>{stage.desc}</div>
+                      </div>
+                      <div style={{position:"relative",zIndex:1,fontSize:28,fontWeight:800,color:"#fff",letterSpacing:"-0.02em",opacity:animReady?1:0,transition:"opacity 0.3s ease-out",transitionDelay:`${0.2+i*0.12}s`}}>
+                        {stage.value.toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Key Metrics Row ── */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:16,marginBottom:24}}>
+        {[
+          { label: "Conversion Rate", value: `${metrics.conversionRate.toFixed(1)}%`, sub: `${metrics.newCustomers} of ${metrics.leads} leads`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>, color: C.pri },
+          { label: "New Customer Revenue", value: fmtMoney(metrics.newCustomerRevenue), sub: `From ${metrics.newCustomers} new customers`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>, color: "#16A34A" },
+          { label: "Avg Customer LTV", value: fmtMoney(metrics.avgLTV), sub: `Across ${metrics.spendingClientsCount.toLocaleString()} customers`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#AF8D54" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, color: "#AF8D54" },
+          { label: "Forecasted Revenue Uplift", value: fmtMoney(metrics.forecastedUplift), sub: `${metrics.newCustomers} new × ${fmtMoney(metrics.avgLTV)} LTV`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.dan} strokeWidth="2" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>, color: C.dan },
+        ].map((m, i) => (
+          <div key={m.label} style={{
+            background:"#fff",borderRadius:14,border:`1.5px solid ${C.borderLight}`,padding:"20px 22px",
+            boxShadow:"0 2px 12px rgba(0,0,0,0.03)",
+            transition:"all 0.25s cubic-bezier(0.2,0.8,0.2,1)",
+            animation:`metricReveal 0.35s ease-out ${0.3+i*0.08}s both`,
+            cursor:"default",
+          }}
+            onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-2px)";e.currentTarget.style.boxShadow="0 8px 24px rgba(0,0,0,0.08)";e.currentTarget.style.borderColor=m.color+"40";}}
+            onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 2px 12px rgba(0,0,0,0.03)";e.currentTarget.style.borderColor=C.borderLight;}}>
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+              <div style={{width:32,height:32,borderRadius:8,background:`${m.color}10`,display:"flex",alignItems:"center",justifyContent:"center"}}>{m.icon}</div>
+              <div style={{fontSize:11,fontWeight:700,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.06em"}}>{m.label}</div>
+            </div>
+            <div style={{fontSize:26,fontWeight:800,color:C.text,letterSpacing:"-0.02em",lineHeight:1}}>{m.value}</div>
+            <div style={{fontSize:11,color:C.textMut,marginTop:6,fontWeight:500}}>{m.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── LTV Breakdown Card ── */}
+      <div style={{background:"#fff",borderRadius:14,border:`1.5px solid ${C.borderLight}`,padding:"20px 24px",boxShadow:"0 2px 12px rgba(0,0,0,0.03)",animation:"metricReveal 0.35s ease-out 0.65s both"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:14}}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <span style={{fontSize:12,fontWeight:700,color:C.text,textTransform:"uppercase",letterSpacing:"0.06em"}}>LTV Methodology</span>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:16}}>
+          <div style={{padding:"14px 16px",borderRadius:10,background:C.surface,border:`1px solid ${C.borderLight}`}}>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>Total Revenue Pool</div>
+            <div style={{fontSize:20,fontWeight:800,color:C.text}}>{fmtMoney(metrics.spendingClientsCount > 0 ? metrics.avgLTV * metrics.spendingClientsCount : 0)}</div>
+            <div style={{fontSize:10,color:C.textMut,marginTop:2}}>All-time revenue from all customers</div>
+          </div>
+          <div style={{padding:"14px 16px",borderRadius:10,background:C.surface,border:`1px solid ${C.borderLight}`}}>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>Paying Customers</div>
+            <div style={{fontSize:20,fontWeight:800,color:C.text}}>{metrics.spendingClientsCount.toLocaleString()}</div>
+            <div style={{fontSize:10,color:C.textMut,marginTop:2}}>Clients with at least one transaction</div>
+          </div>
+          <div style={{padding:"14px 16px",borderRadius:10,background:C.surface,border:`1px solid ${C.borderLight}`}}>
+            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>Avg LTV per Customer</div>
+            <div style={{fontSize:20,fontWeight:800,color:"#AF8D54"}}>{fmtMoney(metrics.avgLTV)}</div>
+            <div style={{fontSize:10,color:C.textMut,marginTop:2}}>Total revenue / paying customers</div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -3893,7 +4439,7 @@ function OperationsHub({ data, save, nav, profile }) {
 
   if (data.loading) return (
     <div style={{ padding: 60, textAlign: "center" }}>
-      <K9LoadingAnimation size={56} message="Loading operations data..." subMessage="Syncing from Gingr" />
+      <K9LoadingAnimation size={56} message="Loading operations data..." subMessage="Fetching from cache" />
     </div>
   );
 
@@ -9920,6 +10466,7 @@ class LeanAppErrorBoundary extends React.Component {
 // ─── Navigation Config ───────────────────────────────────────────────────
 const LEAN_NAV_ITEMS = [
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
+  { id: "funnel", label: "Funnel", icon: "TrendingUp" },
   { id: "ops-hub", label: "Operations", icon: "Clipboard" },
   { id: "reports", label: "Reports", icon: "BarChart" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -10117,11 +10664,27 @@ function LeanAppInner() {
 
         setLiveAuditLog(newData.auditLog);
       }
+
+      // Save client lifecycle changes (followUp, notes, cold, etc.)
+      if (newData.clients && mockData?.clients) {
+        const changed = [];
+        newData.clients.forEach(c => {
+          if (!c.gingrId) return;
+          const old = mockData.clients.find(o => o.id === c.id);
+          if (c.lifecycle && JSON.stringify(c.lifecycle) !== JSON.stringify(old?.lifecycle)) {
+            changed.push({ location_id: currentLocation, gingr_id: String(c.gingrId), lifecycle_data: c.lifecycle, updated_at: new Date().toISOString() });
+          }
+        });
+        if (changed.length > 0) {
+          const { error } = await supabase.from("lite_client_lifecycle").upsert(changed, { onConflict: "location_id,gingr_id" });
+          if (error) console.log("[K9 Lite] Lifecycle save error:", error.message);
+        }
+      }
     } catch (err) {
       console.log("[K9 Lite] Save error:", err.message);
     }
     return true;
-  }, [currentLocation, user?.id, liveAuditLog.length]);
+  }, [currentLocation, user?.id, liveAuditLog.length, mockData?.clients]);
 
   // Navigation function with breadcrumb stack
   const TOP_LEVEL_PAGES = useMemo(() => new Set(["lifecycle", "ops-hub", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
@@ -10139,6 +10702,7 @@ function LeanAppInner() {
   const breadcrumbLabel = useCallback((pg, prms) => {
     switch(pg) {
       case "lifecycle": return "Customer Lifecycle";
+      case "funnel": return "Conversion Funnel";
       case "ops-hub": return "Operations";
       case "ops-opening": return "Opening Checklist";
       case "ops-fe": return "FE Checklist";
@@ -10262,6 +10826,10 @@ function LeanAppInner() {
             setLcFilterOpen={setLcFilterOpen}
             locationSlug={currentLocation}
           />
+        );
+      case "funnel":
+        return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Funnel not available on Enterprise view</div> : (
+          <FunnelPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />
         );
       case "ops-hub":
         return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Operations Hub not available on Enterprise view</div> : (

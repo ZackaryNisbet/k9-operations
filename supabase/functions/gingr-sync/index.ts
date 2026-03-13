@@ -270,7 +270,7 @@ async function syncReservations(
 
   const chunks = getDateChunks(start, end, 30);
   let total = 0;
-  const MAX_CHUNKS_PER_RUN = 4; // ~4 chunks per invocation to stay under timeout
+  const MAX_CHUNKS_PER_RUN = 10; // ~10 chunks per invocation — empty chunks are fast
   let chunksProcessed = 0;
   let lastChunkEnd = start;
   const errors: string[] = [];

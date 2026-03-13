@@ -1,0 +1,27 @@
+<svg width="200" height="200" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- Concept A: Subtle dog face — center hub = nose, two upper nodes = eyes, bottom node = tongue -->
+  <defs>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#C4A46A"/>
+      <stop offset="100%" stop-color="#AF8D54"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Connection lines (whisker-like) -->
+  <line x1="50" y1="50" x2="30" y2="32" stroke="#AF8D54" stroke-width="1.5" opacity="0.3"/>
+  <line x1="50" y1="50" x2="70" y2="32" stroke="#AF8D54" stroke-width="1.5" opacity="0.3"/>
+  <line x1="50" y1="50" x2="50" y2="76" stroke="#AF8D54" stroke-width="1.5" opacity="0.3"/>
+
+  <!-- Nose (center hub) — slightly oval -->
+  <ellipse cx="50" cy="50" rx="12" ry="10" fill="url(#gold)"/>
+  <ellipse cx="50" cy="48" rx="5" ry="3.5" fill="#003462" opacity="0.2"/>
+
+  <!-- Eyes (upper orbiting nodes) — with pupils -->
+  <circle cx="30" cy="32" r="9" fill="#AF8D54" opacity="0.6"/>
+  <circle cx="30" cy="31" r="4" fill="#003462" opacity="0.4"/>
+  <circle cx="70" cy="32" r="9" fill="#AF8D54" opacity="0.6"/>
+  <circle cx="70" cy="31" r="4" fill="#003462" opacity="0.4"/>
+
+  <!-- Tongue (bottom node) — slightly elongated, pinkish-gold -->
+  <ellipse cx="50" cy="76" rx="6" ry="8" fill="#C4A46A" opacity="0.5"/>
+</svg>
