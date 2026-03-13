@@ -5696,6 +5696,7 @@ function GingrIntegrationTab() {
   const [syncMessage, setSyncMessage] = useState("");
   const [syncState, setSyncState] = useState([]);
   const [lastErrorLog, setLastErrorLog] = useState(null);
+  const [errorCopied, setErrorCopied] = useState(false);
   const { profile } = useAuth();
 
   const extractEdgeFnError = async (fnError) => {
@@ -5953,7 +5954,7 @@ function GingrIntegrationTab() {
           <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 8, background: C.surface, border: `1px solid ${C.borderLight}`, fontSize: 12, fontFamily: "monospace" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
               <span style={{ fontWeight: 600, color: C.textSec, fontFamily: "inherit" }}>Error Log</span>
-              <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(lastErrorLog, null, 2)); }} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.borderLight}`, background: C.bg, color: C.textSec, fontSize: 11, cursor: "pointer", fontFamily: "inherit" }}>Copy</button>
+              <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(lastErrorLog, null, 2)); setErrorCopied(true); setTimeout(() => setErrorCopied(false), 2000); }} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${errorCopied ? C.suc : C.borderLight}`, background: errorCopied ? C.sucLt : C.bg, color: errorCopied ? C.suc : C.textSec, fontSize: 11, cursor: "pointer", fontFamily: "inherit", transition: "all 0.2s ease", display: "flex", alignItems: "center", gap: 4 }}>{errorCopied ? <><svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied</> : "Copy"}</button>
             </div>
             <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", color: C.dan, fontSize: 11, lineHeight: 1.4 }}>{JSON.stringify(lastErrorLog, null, 2)}</pre>
           </div>
