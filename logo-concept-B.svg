@@ -1,0 +1,35 @@
+<svg width="200" height="200" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- Concept B: Minimal dog face — ears as top nodes, nose center, eyes as small dots -->
+  <defs>
+    <linearGradient id="gold2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#C4A46A"/>
+      <stop offset="100%" stop-color="#AF8D54"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Ear connection lines -->
+  <line x1="50" y1="46" x2="25" y2="22" stroke="#AF8D54" stroke-width="1.5" opacity="0.3"/>
+  <line x1="50" y1="46" x2="75" y2="22" stroke="#AF8D54" stroke-width="1.5" opacity="0.3"/>
+
+  <!-- Head shape (center hub — larger, round) -->
+  <circle cx="50" cy="50" r="22" fill="url(#gold2)" opacity="0.15"/>
+  <circle cx="50" cy="50" r="18" fill="url(#gold2)" opacity="0.2"/>
+
+  <!-- Ears (floppy, teardrop-shaped nodes) -->
+  <ellipse cx="25" cy="22" rx="8" ry="11" fill="#AF8D54" opacity="0.5" transform="rotate(-15 25 22)"/>
+  <ellipse cx="75" cy="22" rx="8" ry="11" fill="#AF8D54" opacity="0.5" transform="rotate(15 75 22)"/>
+
+  <!-- Eyes -->
+  <circle cx="40" cy="44" r="4" fill="#003462" opacity="0.35"/>
+  <circle cx="60" cy="44" r="4" fill="#003462" opacity="0.35"/>
+  <!-- Eye shine -->
+  <circle cx="41.5" cy="42.5" r="1.2" fill="white" opacity="0.5"/>
+  <circle cx="61.5" cy="42.5" r="1.2" fill="white" opacity="0.5"/>
+
+  <!-- Nose -->
+  <ellipse cx="50" cy="55" rx="5" ry="4" fill="#AF8D54"/>
+  <ellipse cx="50" cy="54" rx="2.5" ry="1.5" fill="#003462" opacity="0.15"/>
+
+  <!-- Mouth line -->
+  <path d="M 45 60 Q 50 65 55 60" stroke="#AF8D54" stroke-width="1.2" fill="none" opacity="0.4"/>
+</svg>
