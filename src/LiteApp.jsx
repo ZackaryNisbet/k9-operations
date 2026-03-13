@@ -5695,7 +5695,24 @@ function GingrIntegrationTab() {
   const [syncStatus, setSyncStatus] = useState(null); // null | 'syncing' | 'success' | 'error'
   const [syncMessage, setSyncMessage] = useState("");
   const [syncState, setSyncState] = useState([]);
+  const [lastErrorLog, setLastErrorLog] = useState(null);
   const { profile } = useAuth();
+
+  const extractEdgeFnError = async (fnError) => {
+    if (!fnError) return null;
+    try {
+      if (fnError.context?.body) {
+        const reader = fnError.context.body.getReader?.();
+        if (reader) {
+          const { value } = await reader.read();
+          const text = new TextDecoder().decode(value);
+          try { const j = JSON.parse(text); return j.error || j.message || text; } catch (_) { return text; }
+        }
+      }
+      if (typeof fnError.message === "string" && fnError.message !== "Edge Function returned a non-2xx status code") return fnError.message;
+    } catch (_) {}
+    return fnError.message || "Unknown edge function error";
+  };
 
   useEffect(() => {
     if (!profile?.location_id) return;
