@@ -1834,8 +1834,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [showSaveView, setShowSaveView] = useState(false);
   const [viewName, setViewName] = useState("");
   const [draftFilters, setDraftFilters] = useState({});
+  const [showFilterPicker, setShowFilterPicker] = useState(false);
+  const [filterPickerReady, setFilterPickerReady] = useState(false);
+  const [configuringKey, setConfiguringKey] = useState(null);
+  const [configStep, setConfigStep] = useState(0); // 0=pick op, 1=enter value
   const prevFilterOpen = useRef(false);
-  useEffect(() => { if (lcFilterOpen && !prevFilterOpen.current) setDraftFilters({...lcFilters}); prevFilterOpen.current = lcFilterOpen; }, [lcFilterOpen, lcFilters]);
+  useEffect(() => { if (lcFilterOpen && !prevFilterOpen.current) { setDraftFilters({...lcFilters}); setShowFilterPicker(false); setConfiguringKey(null); } prevFilterOpen.current = lcFilterOpen; }, [lcFilterOpen, lcFilters]);
   const logBtnRef = useRef({});
   const colToggleRef = useRef(null);
 
@@ -2539,178 +2543,304 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         </div>
       </div>
 
-      {/* ═══ FILTER MODAL ═══ */}
+      {/* ═══ FILTER PANEL ═══ */}
       {lcFilterOpen && (() => {
         const isAdmin = profile?.role === "owner" || profile?.role === "enterprise_admin";
         const views = data.lifecycleViews || [];
         const usedKeys = Object.keys(draftFilters);
         const availableFields = LC_FILTER_FIELDS.filter(f => !usedKeys.includes(f.key));
-        const sections = [...new Set(availableFields.map(f => f.section))];
-        const addFilter = (key) => {
-          const fd = LC_FILTER_FIELDS.find(f => f.key === key);
-          if (fd) setDraftFilters(prev => ({ ...prev, [key]: { op: fd.ops[0], val: "" } }));
-        };
-        const removeFilter = (key) => { setDraftFilters(prev => { const n = { ...prev }; delete n[key]; return n; }); };
+        const sections = [...new Set(LC_FILTER_FIELDS.map(f => f.section))];
+        const removeFilter = (key) => { setDraftFilters(prev => { const n = { ...prev }; delete n[key]; return n; }); if (configuringKey === key) setConfiguringKey(null); };
         const updateFilter = (key, field, val) => { setDraftFilters(prev => ({ ...prev, [key]: { ...prev[key], [field]: val } })); };
-        const applyFilters = () => { setLcFilters(draftFilters); setLcFilterOpen(false); };
-        const clearAll = () => { setDraftFilters({}); setLcFilters({}); };
+        const applyFilters = () => { setLcFilters(draftFilters); setLcFilterOpen(false); setShowFilterPicker(false); setConfiguringKey(null); };
+        const clearAll = () => { setDraftFilters({}); setLcFilters({}); setConfiguringKey(null); setShowFilterPicker(false); };
         const needsValue = (op) => !["empty","notEmpty","has","missing","overdue","today","thisWeek","hasDate","noDate"].includes(op);
         const saveView = async () => {
           if (!viewName.trim()) return;
           const newView = { id: Date.now().toString(36), name: viewName.trim(), filters: { ...draftFilters }, tab: activeTab, createdBy: profile?.id || "unknown", createdAt: new Date().toISOString() };
-          const updated = [...(data.lifecycleViews || []), newView];
-          await save({ ...data, lifecycleViews: updated });
-          setActiveViewId(newView.id);
-          setViewName("");
-          setShowSaveView(false);
+          await save({ ...data, lifecycleViews: [...(data.lifecycleViews || []), newView] });
+          setActiveViewId(newView.id); setViewName(""); setShowSaveView(false);
           addGlobalToast?.({ message: `View "${newView.name}" saved`, type: "success" });
         };
         const deleteView = async (viewId) => {
-          const updated = (data.lifecycleViews || []).filter(v => v.id !== viewId);
-          await save({ ...data, lifecycleViews: updated });
+          await save({ ...data, lifecycleViews: (data.lifecycleViews || []).filter(v => v.id !== viewId) });
           if (activeViewId === viewId) setActiveViewId(null);
           addGlobalToast?.({ message: "View deleted" });
         };
         const loadView = (view) => {
-          setDraftFilters({ ...view.filters });
-          setLcFilters({ ...view.filters });
-          setActiveViewId(view.id);
+          setDraftFilters({ ...view.filters }); setLcFilters({ ...view.filters }); setActiveViewId(view.id);
           if (view.tab) setActiveTab(view.tab);
+          setShowFilterPicker(false); setConfiguringKey(null);
         };
+        const selectField = (key) => {
+          const fd = LC_FILTER_FIELDS.find(f => f.key === key);
+          if (!fd) return;
+          // If only one op and it doesn't need a value, just add it directly
+          if (fd.ops.length === 1 && !needsValue(fd.ops[0])) {
+            setDraftFilters(prev => ({ ...prev, [key]: { op: fd.ops[0], val: "" } }));
+            setShowFilterPicker(false); setConfiguringKey(null);
+            return;
+          }
+          setDraftFilters(prev => ({ ...prev, [key]: { op: fd.ops[0], val: "" } }));
+          setConfiguringKey(key); setConfigStep(0);
+        };
+        const confirmConfig = () => { setConfiguringKey(null); setShowFilterPicker(false); };
+        const sectionIcons = {
+          "Client Info": <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>,
+          "Activity": <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+          "Services": <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
+          "Lifecycle": <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+        };
+        const cfgFd = configuringKey ? LC_FILTER_FIELDS.find(f => f.key === configuringKey) : null;
+        const cfgVal = configuringKey ? draftFilters[configuringKey] : null;
+        let fieldIdx = 0;
         return (
-          <div style={{marginBottom:16,borderRadius:12,border:`1.5px solid ${C.border}`,background:C.bg,boxShadow:"0 4px 24px rgba(0,0,0,0.06)",overflow:"hidden"}}>
-            {/* Saved Views Bar */}
+          <div style={{marginBottom:16,borderRadius:14,border:`1.5px solid ${C.border}`,background:C.bg,boxShadow:"0 8px 40px rgba(0,0,0,0.08)",overflow:"hidden"}}>
+            <style>{`
+              @keyframes filterSlideIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+              @keyframes filterFadeIn { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
+              @keyframes filterChipIn { from { opacity:0; transform:translateX(-6px) scale(0.9); } to { opacity:1; transform:translateX(0) scale(1); } }
+              @keyframes filterPulse { 0%,100% { box-shadow:0 0 0 0 rgba(0,52,98,0.15); } 50% { box-shadow:0 0 0 4px rgba(0,52,98,0.08); } }
+              @keyframes configSlide { from { opacity:0; max-height:0; transform:translateY(-4px); } to { opacity:1; max-height:200px; transform:translateY(0); } }
+            `}</style>
+
+            {/* ── Saved Views Bar ── */}
             {views.length > 0 && (
-              <div style={{display:"flex",alignItems:"center",gap:6,padding:"10px 16px",borderBottom:`1px solid ${C.borderLight}`,background:C.surface,flexWrap:"wrap"}}>
-                <span style={{fontSize:11,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",marginRight:4}}>Views</span>
-                {views.map(v => (
-                  <div key={v.id} style={{display:"inline-flex",alignItems:"center",gap:3}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,padding:"10px 16px",borderBottom:`1px solid ${C.borderLight}`,background:C.surface,flexWrap:"wrap",animation:"filterSlideIn 0.2s ease-out"}}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                <span style={{fontSize:10,fontWeight:800,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.08em"}}>Saved Views</span>
+                <div style={{width:1,height:16,background:C.border,margin:"0 2px"}}/>
+                {views.map((v,vi) => (
+                  <div key={v.id} style={{display:"inline-flex",alignItems:"center",gap:2,animation:`filterChipIn 0.25s ease-out ${vi*0.05}s both`}}>
                     <button onClick={() => loadView(v)}
-                      style={{padding:"4px 10px",borderRadius:6,border:`1.5px solid ${activeViewId===v.id?C.pri:C.border}`,background:activeViewId===v.id?C.priLt:"transparent",color:activeViewId===v.id?C.pri:C.textSec,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
+                      style={{padding:"5px 12px",borderRadius:8,border:`1.5px solid ${activeViewId===v.id?C.pri:C.borderLight}`,background:activeViewId===v.id?C.pri:"#fff",color:activeViewId===v.id?"#fff":C.text,fontSize:11,fontWeight:activeViewId===v.id?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:activeViewId===v.id?"0 2px 8px rgba(0,52,98,0.2)":"0 1px 3px rgba(0,0,0,0.04)"}}
+                      onMouseEnter={e=>{if(activeViewId!==v.id){e.currentTarget.style.borderColor=C.pri;e.currentTarget.style.color=C.pri;}}}
+                      onMouseLeave={e=>{if(activeViewId!==v.id){e.currentTarget.style.borderColor=C.borderLight;e.currentTarget.style.color=C.text;}}}>
                       {v.name}
+                      {activeViewId===v.id && <span style={{marginLeft:4,fontSize:9}}>({Object.keys(v.filters).length})</span>}
                     </button>
-                    {isAdmin && (
-                      <button onClick={() => deleteView(v.id)}
-                        style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:0,display:"flex",lineHeight:1,opacity:0.5,transition:"opacity 0.15s"}}
-                        onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0.5"}
-                        title="Delete view">
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                      </button>
-                    )}
+                    {isAdmin && <button onClick={() => deleteView(v.id)} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:"2px",display:"flex",opacity:0,transition:"opacity 0.15s"}}
+                      onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0"} title="Delete view">
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
                   </div>
                 ))}
-                {activeViewId && (
-                  <button onClick={() => { setActiveViewId(null); setDraftFilters({}); setLcFilters({}); }}
-                    style={{fontSize:10,fontWeight:600,color:C.textMut,border:"none",background:"none",cursor:"pointer",fontFamily:"inherit",textDecoration:"underline",marginLeft:4}}>
-                    Clear view
-                  </button>
-                )}
+                {activeViewId && <button onClick={() => { setActiveViewId(null); setDraftFilters({}); setLcFilters({}); }}
+                  style={{fontSize:10,fontWeight:600,color:C.dan,border:"none",background:"none",cursor:"pointer",fontFamily:"inherit",marginLeft:4,opacity:0.7,transition:"opacity 0.15s"}}
+                  onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0.7"}>Clear</button>}
               </div>
             )}
 
-            {/* Filter Rows */}
-            <div style={{padding:"12px 16px"}}>
-              {usedKeys.length === 0 && (
-                <div style={{fontSize:13,color:C.textMut,padding:"8px 0",textAlign:"center"}}>
-                  No filters added. Click "+ Add Filter" below to get started.
+            {/* ── Active Filter Chips ── */}
+            <div style={{padding:"14px 18px",minHeight:48}}>
+              {usedKeys.length === 0 && !showFilterPicker && (
+                <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"12px 0",animation:"filterFadeIn 0.2s ease-out"}}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="1.5" strokeLinecap="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                  <span style={{fontSize:13,color:C.textMut,fontWeight:500}}>No filters active</span>
                 </div>
               )}
-              {usedKeys.map(key => {
-                const fd = LC_FILTER_FIELDS.find(f => f.key === key);
-                if (!fd) return null;
-                const f = draftFilters[key];
-                return (
-                  <div key={key} style={{display:"flex",alignItems:"center",gap:8,marginBottom:8,flexWrap:"wrap"}}>
-                    <div style={{minWidth:120,fontSize:12,fontWeight:600,color:C.text}}>{fd.label}</div>
-                    <select value={f.op} onChange={e => {
-                      const newOp = e.target.value;
-                      updateFilter(key, "op", newOp);
-                      if (!needsValue(newOp)) updateFilter(key, "val", "");
-                    }} style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:12,fontFamily:"inherit",background:C.bg,color:C.text,minWidth:100}}>
-                      {fd.ops.map(op => <option key={op} value={op}>{LC_OP_LABELS[op] || op}</option>)}
-                    </select>
-                    {needsValue(f.op) && (
-                      fd.type === "select" ? (
-                        <select value={f.val} onChange={e => updateFilter(key, "val", e.target.value)}
-                          style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:12,fontFamily:"inherit",background:C.bg,color:C.text,minWidth:100}}>
-                          <option value="">Select...</option>
-                          {(fd.options||[]).map(o => <option key={o} value={o}>{o || "(none)"}</option>)}
-                        </select>
-                      ) : (
-                        <input
-                          type={fd.type === "date" ? (f.op === "inLastDays" ? "number" : "date") : fd.type === "number" || fd.type === "currency" ? "number" : "text"}
-                          value={f.val}
-                          onChange={e => updateFilter(key, "val", e.target.value)}
-                          placeholder={f.op === "inLastDays" ? "# days" : fd.type === "currency" ? "0.00" : ""}
-                          style={{padding:"5px 8px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:12,fontFamily:"inherit",background:C.bg,color:C.text,width:fd.type==="date"&&f.op!=="inLastDays"?140:100}}
-                        />
-                      )
-                    )}
-                    <button onClick={() => removeFilter(key)}
-                      style={{border:"none",background:"none",cursor:"pointer",color:C.dan,padding:2,display:"flex",alignItems:"center",opacity:0.6,transition:"opacity 0.15s"}}
-                      onMouseEnter={e=>e.currentTarget.style.opacity="1"} onMouseLeave={e=>e.currentTarget.style.opacity="0.6"}>
+
+              {usedKeys.length > 0 && (
+                <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:showFilterPicker?12:0}}>
+                  {usedKeys.map((key, i) => {
+                    const fd = LC_FILTER_FIELDS.find(f => f.key === key);
+                    if (!fd) return null;
+                    const f = draftFilters[key];
+                    const isConfiguring = configuringKey === key;
+                    return (
+                      <div key={key} style={{animation:`filterChipIn 0.2s ease-out ${i*0.04}s both`}}>
+                        <div style={{display:"inline-flex",alignItems:"center",gap:0,borderRadius:10,border:`1.5px solid ${isConfiguring?C.pri:C.border}`,background:isConfiguring?`${C.pri}06`:"#fff",boxShadow:isConfiguring?"0 0 0 3px rgba(0,52,98,0.06)":"0 1px 3px rgba(0,0,0,0.04)",transition:"all 0.25s cubic-bezier(0.2,0.8,0.2,1)",overflow:"hidden"}}>
+                          {/* Field name */}
+                          <button onClick={() => { setConfiguringKey(isConfiguring?null:key); setConfigStep(0); setShowFilterPicker(false); }}
+                            style={{padding:"6px 10px",border:"none",background:"transparent",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,color:C.pri,whiteSpace:"nowrap",transition:"background 0.15s"}}
+                            onMouseEnter={e=>e.currentTarget.style.background=`${C.pri}08`} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                            {fd.label}
+                          </button>
+                          {/* Operator pill */}
+                          <div style={{padding:"6px 0",display:"flex",alignItems:"center"}}>
+                            <span style={{padding:"2px 8px",borderRadius:6,background:`${C.pri}12`,fontSize:10,fontWeight:700,color:C.pri,whiteSpace:"nowrap"}}>{LC_OP_LABELS[f.op]||f.op}</span>
+                          </div>
+                          {/* Value */}
+                          {needsValue(f.op) && f.val !== "" && (
+                            <span style={{padding:"6px 8px 6px 4px",fontSize:11,fontWeight:600,color:C.text,whiteSpace:"nowrap"}}>{fd.type==="currency"?"$":""}{f.val}</span>
+                          )}
+                          {needsValue(f.op) && f.val === "" && (
+                            <span style={{padding:"6px 8px 6px 4px",fontSize:11,fontWeight:500,color:C.dan,fontStyle:"italic",whiteSpace:"nowrap"}}>set value</span>
+                          )}
+                          {/* Remove X */}
+                          <button onClick={(e) => { e.stopPropagation(); removeFilter(key); }}
+                            style={{padding:"6px 8px 6px 2px",border:"none",background:"transparent",cursor:"pointer",display:"flex",alignItems:"center",color:C.textMut,transition:"color 0.15s"}}
+                            onMouseEnter={e=>e.currentTarget.style.color=C.dan} onMouseLeave={e=>e.currentTarget.style.color=C.textMut}>
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                          </button>
+                        </div>
+
+                        {/* ── Inline Config Popover ── */}
+                        {isConfiguring && (
+                          <div style={{marginTop:6,padding:"10px 14px",borderRadius:10,background:"#fff",border:`1.5px solid ${C.pri}30`,boxShadow:"0 6px 24px rgba(0,52,98,0.1)",animation:"configSlide 0.25s ease-out",overflow:"hidden"}}>
+                            {/* Operator pills */}
+                            <div style={{marginBottom:needsValue(f.op)?10:0}}>
+                              <div style={{fontSize:9,fontWeight:800,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>Condition</div>
+                              <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                                {fd.ops.map((op,oi) => (
+                                  <button key={op} onClick={() => { updateFilter(key,"op",op); if(!needsValue(op)) updateFilter(key,"val",""); }}
+                                    style={{padding:"5px 12px",borderRadius:8,border:`1.5px solid ${f.op===op?C.pri:C.borderLight}`,background:f.op===op?C.pri:"#fff",color:f.op===op?"#fff":C.text,fontSize:11,fontWeight:f.op===op?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:f.op===op?"0 2px 8px rgba(0,52,98,0.15)":"none",animation:`filterFadeIn 0.2s ease-out ${oi*0.03}s both`}}
+                                    onMouseEnter={e=>{if(f.op!==op){e.currentTarget.style.borderColor=C.pri;e.currentTarget.style.background=`${C.pri}06`;}}}
+                                    onMouseLeave={e=>{if(f.op!==op){e.currentTarget.style.borderColor=C.borderLight;e.currentTarget.style.background="#fff";}}}>
+                                    {LC_OP_LABELS[op]||op}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            {/* Value input */}
+                            {needsValue(f.op) && (
+                              <div style={{animation:"filterFadeIn 0.2s ease-out 0.1s both"}}>
+                                <div style={{fontSize:9,fontWeight:800,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>Value</div>
+                                {fd.type === "select" ? (
+                                  <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+                                    {(fd.options||[]).map((o,oi) => (
+                                      <button key={o} onClick={() => updateFilter(key,"val",o)}
+                                        style={{padding:"5px 12px",borderRadius:8,border:`1.5px solid ${f.val===o?C.pri:C.borderLight}`,background:f.val===o?C.pri:"#fff",color:f.val===o?"#fff":C.text,fontSize:11,fontWeight:f.val===o?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",animation:`filterFadeIn 0.15s ease-out ${oi*0.03}s both`}}
+                                        onMouseEnter={e=>{if(f.val!==o){e.currentTarget.style.borderColor=C.pri;}}}
+                                        onMouseLeave={e=>{if(f.val!==o){e.currentTarget.style.borderColor=C.borderLight;}}}>
+                                        {o || "(none)"}
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                                    {fd.type==="currency" && <span style={{fontSize:13,fontWeight:700,color:C.textMut}}>$</span>}
+                                    <input
+                                      type={fd.type==="date"?(f.op==="inLastDays"?"number":"date"):fd.type==="number"||fd.type==="currency"?"number":"text"}
+                                      value={f.val}
+                                      onChange={e => updateFilter(key,"val",e.target.value)}
+                                      onKeyDown={e => { if (e.key==="Enter") confirmConfig(); }}
+                                      placeholder={f.op==="inLastDays"?"Number of days":fd.type==="date"?"YYYY-MM-DD":fd.type==="currency"?"Amount":"Type a value..."}
+                                      autoFocus
+                                      style={{padding:"8px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:13,fontFamily:"inherit",background:"#fff",color:C.text,width:"100%",maxWidth:220,transition:"border-color 0.2s",outline:"none"}}
+                                      onFocus={e=>e.currentTarget.style.borderColor=C.pri}
+                                      onBlur={e=>e.currentTarget.style.borderColor=C.border}
+                                    />
+                                    <button onClick={confirmConfig}
+                                      style={{padding:"8px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",transition:"all 0.15s",boxShadow:"0 2px 8px rgba(0,52,98,0.15)"}}>
+                                      Done
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {!needsValue(f.op) && (
+                              <button onClick={confirmConfig}
+                                style={{marginTop:8,padding:"6px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",animation:"filterFadeIn 0.2s ease-out",boxShadow:"0 2px 8px rgba(0,52,98,0.15)"}}>
+                                Done
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* ── Add Filter Button / Cascading Field Picker ── */}
+              {!showFilterPicker ? (
+                <div style={{marginTop:usedKeys.length>0?8:0,animation:"filterFadeIn 0.2s ease-out"}}>
+                  <button onClick={() => { setShowFilterPicker(true); setFilterPickerReady(false); setConfiguringKey(null); setTimeout(()=>setFilterPickerReady(true),10); }}
+                    disabled={availableFields.length===0}
+                    style={{padding:"8px 16px",borderRadius:10,border:`1.5px dashed ${availableFields.length>0?C.pri:C.border}`,background:"transparent",color:availableFields.length>0?C.pri:C.textMut,fontSize:12,fontWeight:700,cursor:availableFields.length>0?"pointer":"default",fontFamily:"inherit",transition:"all 0.2s",display:"flex",alignItems:"center",gap:6}}
+                    onMouseEnter={e=>{if(availableFields.length>0){e.currentTarget.style.background=`${C.pri}06`;e.currentTarget.style.borderColor=C.pri;}}}
+                    onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.borderColor=availableFields.length>0?C.pri:C.border;}}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add Filter
+                  </button>
+                </div>
+              ) : (
+                <div style={{marginTop:usedKeys.length>0?8:0,borderRadius:12,border:`1.5px solid ${C.borderLight}`,background:"#fff",boxShadow:"0 4px 20px rgba(0,0,0,0.06)",overflow:"hidden",animation:"filterSlideIn 0.25s ease-out"}}>
+                  {/* Close picker bar */}
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 14px",borderBottom:`1px solid ${C.borderLight}`,background:C.surface}}>
+                    <span style={{fontSize:11,fontWeight:700,color:C.text}}>Choose a filter</span>
+                    <button onClick={()=>setShowFilterPicker(false)} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex",transition:"color 0.15s"}}
+                      onMouseEnter={e=>e.currentTarget.style.color=C.text} onMouseLeave={e=>e.currentTarget.style.color=C.textMut}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                   </div>
-                );
-              })}
-
-              {/* Add Filter Dropdown */}
-              {availableFields.length > 0 && (
-                <div style={{marginTop:usedKeys.length > 0 ? 4 : 0}}>
-                  <select
-                    value=""
-                    onChange={e => { if (e.target.value) addFilter(e.target.value); }}
-                    style={{padding:"6px 10px",borderRadius:6,border:`1.5px dashed ${C.border}`,fontSize:12,fontWeight:600,fontFamily:"inherit",background:"transparent",color:C.pri,cursor:"pointer",minWidth:140}}>
-                    <option value="">+ Add Filter</option>
-                    {sections.map(sec => (
-                      <optgroup key={sec} label={sec}>
-                        {availableFields.filter(f => f.section === sec).map(f => (
-                          <option key={f.key} value={f.key}>{f.label}</option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
+                  {/* Sections with cascading fields */}
+                  <div style={{padding:"6px 0"}}>
+                    {sections.map((sec, si) => {
+                      const secFields = availableFields.filter(f => f.section === sec);
+                      if (secFields.length === 0) return null;
+                      return (
+                        <div key={sec}>
+                          <div style={{padding:"8px 16px 4px",fontSize:9,fontWeight:800,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.1em",display:"flex",alignItems:"center",gap:6,animation:filterPickerReady?`filterFadeIn 0.2s ease-out ${si*0.06}s both`:"none"}}>
+                            {sectionIcons[sec]||null} {sec}
+                          </div>
+                          <div style={{display:"flex",flexWrap:"wrap",gap:5,padding:"4px 16px 8px"}}>
+                            {secFields.map((f,fi) => {
+                              const delay = si * 0.06 + fi * 0.03 + 0.05;
+                              fieldIdx++;
+                              return (
+                                <button key={f.key} onClick={() => { selectField(f.key); setShowFilterPicker(false); }}
+                                  style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${C.borderLight}`,background:"#fff",color:C.text,fontSize:11,fontWeight:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:"0 1px 3px rgba(0,0,0,0.03)",animation:filterPickerReady?`filterChipIn 0.25s ease-out ${delay}s both`:"none"}}
+                                  onMouseEnter={e=>{e.currentTarget.style.borderColor=C.pri;e.currentTarget.style.background=`${C.pri}06`;e.currentTarget.style.color=C.pri;e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="0 3px 12px rgba(0,52,98,0.1)";}}
+                                  onMouseLeave={e=>{e.currentTarget.style.borderColor=C.borderLight;e.currentTarget.style.background="#fff";e.currentTarget.style.color=C.text;e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 1px 3px rgba(0,0,0,0.03)";}}>
+                                  {f.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* Action Bar */}
-            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"10px 16px",borderTop:`1px solid ${C.borderLight}`,background:C.surface}}>
+            {/* ── Bottom Action Bar ── */}
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"10px 18px",borderTop:`1px solid ${C.borderLight}`,background:C.surface}}>
               <div style={{display:"flex",gap:6}}>
                 <button onClick={applyFilters}
-                  style={{padding:"7px 18px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}>
-                  Apply Filters
+                  style={{padding:"8px 20px",borderRadius:10,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:"0 2px 12px rgba(0,52,98,0.2)"}}
+                  onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="0 4px 16px rgba(0,52,98,0.25)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 2px 12px rgba(0,52,98,0.2)";}}>
+                  Apply{usedKeys.length>0?` (${usedKeys.length})`:""}
                 </button>
-                <button onClick={clearAll}
-                  style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-                  Clear All
-                </button>
-                <button onClick={() => setLcFilterOpen(false)}
-                  style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.textMut,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                {usedKeys.length > 0 && (
+                  <button onClick={clearAll}
+                    style={{padding:"8px 14px",borderRadius:10,border:`1.5px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor=C.dan;e.currentTarget.style.color=C.dan;}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.color=C.textSec;}}>
+                    Clear All
+                  </button>
+                )}
+                <button onClick={() => { setLcFilterOpen(false); setShowFilterPicker(false); setConfiguringKey(null); }}
+                  style={{padding:"8px 14px",borderRadius:10,border:`1.5px solid ${C.borderLight}`,background:"transparent",color:C.textMut,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s"}}
+                  onMouseEnter={e=>e.currentTarget.style.color=C.text} onMouseLeave={e=>e.currentTarget.style.color=C.textMut}>
                   Close
                 </button>
               </div>
               <div style={{display:"flex",alignItems:"center",gap:6}}>
                 {isAdmin && !showSaveView && usedKeys.length > 0 && (
                   <button onClick={() => setShowSaveView(true)}
-                    style={{padding:"7px 14px",borderRadius:8,border:`1px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:4}}>
+                    style={{padding:"7px 14px",borderRadius:10,border:`1.5px solid ${C.borderLight}`,background:"#fff",color:C.text,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:5,transition:"all 0.2s",boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}
+                    onMouseEnter={e=>{e.currentTarget.style.borderColor=C.pri;e.currentTarget.style.color=C.pri;e.currentTarget.style.transform="translateY(-1px)";}}
+                    onMouseLeave={e=>{e.currentTarget.style.borderColor=C.borderLight;e.currentTarget.style.color=C.text;e.currentTarget.style.transform="translateY(0)";}}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
                     Save as View
                   </button>
                 )}
                 {showSaveView && (
-                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <div style={{display:"flex",alignItems:"center",gap:6,animation:"filterFadeIn 0.2s ease-out"}}>
                     <input value={viewName} onChange={e => setViewName(e.target.value)} placeholder="View name..."
                       autoFocus onKeyDown={e => { if (e.key === "Enter") saveView(); if (e.key === "Escape") setShowSaveView(false); }}
-                      style={{padding:"6px 10px",borderRadius:6,border:`1px solid ${C.border}`,fontSize:12,fontFamily:"inherit",width:160,background:C.bg,color:C.text}} />
+                      style={{padding:"7px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:12,fontFamily:"inherit",width:160,background:"#fff",color:C.text,transition:"border-color 0.2s",outline:"none"}}
+                      onFocus={e=>e.currentTarget.style.borderColor=C.pri} onBlur={e=>e.currentTarget.style.borderColor=C.border} />
                     <button onClick={saveView} disabled={!viewName.trim()}
-                      style={{padding:"6px 14px",borderRadius:6,border:"none",background:viewName.trim()?C.suc:C.textMut,color:"#fff",fontSize:11,fontWeight:700,cursor:viewName.trim()?"pointer":"default",fontFamily:"inherit"}}>
+                      style={{padding:"7px 16px",borderRadius:8,border:"none",background:viewName.trim()?C.suc:C.textMut,color:"#fff",fontSize:11,fontWeight:700,cursor:viewName.trim()?"pointer":"default",fontFamily:"inherit",transition:"all 0.2s",boxShadow:viewName.trim()?"0 2px 8px rgba(22,163,74,0.2)":"none"}}>
                       Save
                     </button>
-                    <button onClick={() => setShowSaveView(false)}
-                      style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <button onClick={() => setShowSaveView(false)} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                     </button>
                   </div>
                 )}
