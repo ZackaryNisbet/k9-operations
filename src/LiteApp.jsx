@@ -5851,22 +5851,38 @@ function GingrIntegrationTab() {
     setSyncStatus("syncing");
     setSyncMessage("Starting full sync from Gingr...");
     try {
-      const { data: fnData, error: fnError } = await supabase.functions.invoke("gingr-sync", {
-        body: { location_id: profile.location_id, sync_type: "full" },
-      });
-      if (fnError) {
-        const detail = await extractEdgeFnError(fnError);
-        throw new Error(detail);
+      let backfillComplete = false;
+      let totalResSynced = 0;
+      let iteration = 0;
+      const startTime = Date.now();
+      while (!backfillComplete) {
+        iteration++;
+        const { data: fnData, error: fnError } = await supabase.functions.invoke("gingr-sync", {
+          body: { location_id: profile.location_id, sync_type: "full" },
+        });
+        if (fnError) {
+          const detail = await extractEdgeFnError(fnError);
+          throw new Error(detail);
+        }
+        const resResult = fnData?.results?.reservations;
+        totalResSynced += resResult?.synced || 0;
+        if (resResult && resResult.backfill_complete === false && resResult.chunks_remaining > 0) {
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
+          setSyncMessage(`Backfilling history... ${totalResSynced.toLocaleString()} reservations synced (batch ${iteration}, ~${resResult.chunks_remaining} batches left, ${elapsed}s elapsed)`);
+          await new Promise(r => setTimeout(r, 500));
+        } else {
+          backfillComplete = true;
+        }
       }
-      const r = fnData?.results || {};
+      const r = (await supabase.functions.invoke("gingr-sync", { body: { location_id: profile.location_id, sync_type: "full" } }))?.data?.results || {};
       const parts = [];
       if (r.owners?.synced) parts.push(`${r.owners.synced} owners`);
       if (r.animals?.synced) parts.push(`${r.animals.synced} animals`);
-      if (r.reservations?.synced) parts.push(`${r.reservations.synced} reservations`);
+      parts.push(`${totalResSynced.toLocaleString()} reservations`);
       if (r.reservation_types?.synced) parts.push(`${r.reservation_types.synced} reservation types`);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       setSyncStatus("success");
-      setSyncMessage(`Sync complete! Imported ${parts.join(", ")}. Duration: ${((fnData?.duration_ms || 0) / 1000).toFixed(1)}s`);
-      // Refresh sync state
+      setSyncMessage(`Sync complete! Imported ${parts.join(", ")} in ${iteration} batches (${elapsed}s).`);
       const { data: newState } = await supabase.from("gingr_sync_state").select("*").eq("location_id", profile.location_id);
       if (newState) setSyncState(newState);
     } catch (err) {
