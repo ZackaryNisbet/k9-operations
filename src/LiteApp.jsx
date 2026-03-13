@@ -510,15 +510,20 @@ function K9LoadingAnimation({ size = 56, message = "Loading...", subMessage }) {
             <stop offset="100%" stopColor="#AF8D54"/>
           </linearGradient>
         </defs>
-        <circle cx="50" cy="50" r="14" fill="url(#k9LoadGold)" style={{ animation: "k9pulse 2s ease-in-out infinite" }}/>
-        <circle cx="50" cy="50" r="5" fill="#003462" opacity="0.25"/>
-        <g style={{ transformOrigin: "50px 50px", animation: "k9orbit 3s linear infinite" }}>
-          <line x1="50" y1="50" x2="28" y2="26" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
-          <line x1="50" y1="50" x2="76" y2="34" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
-          <line x1="50" y1="50" x2="52" y2="78" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
-          <circle cx="28" cy="26" r="7" fill="#AF8D54" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out infinite" }}/>
-          <circle cx="76" cy="34" r="7" fill="#AF8D54" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out 0.7s infinite" }}/>
-          <circle cx="52" cy="78" r="7" fill="#AF8D54" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out 1.4s infinite" }}/>
+        {/* Head hub */}
+        <circle cx="50" cy="46" r="14" fill="url(#k9LoadGold)" style={{ animation: "k9pulse 2s ease-in-out infinite" }}/>
+        <circle cx="50" cy="46" r="5" fill="#003462" opacity="0.18"/>
+        {/* Orbiting ears + collar tag */}
+        <g style={{ transformOrigin: "50px 46px", animation: "k9orbit 3s linear infinite" }}>
+          <line x1="50" y1="46" x2="26" y2="22" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
+          <line x1="50" y1="46" x2="74" y2="22" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
+          <line x1="50" y1="46" x2="50" y2="74" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
+          {/* Left ear — angled ellipse */}
+          <ellipse cx="26" cy="22" rx="6" ry="8.5" fill="#AF8D54" opacity="0.5" transform="rotate(-20 26 22)" style={{ animation: "k9fade 2s ease-in-out infinite" }}/>
+          {/* Right ear — angled ellipse */}
+          <ellipse cx="74" cy="22" rx="6" ry="8.5" fill="#AF8D54" opacity="0.5" transform="rotate(20 74 22)" style={{ animation: "k9fade 2s ease-in-out 0.7s infinite" }}/>
+          {/* Collar tag */}
+          <circle cx="50" cy="74" r="6" fill="#AF8D54" opacity="0.45" style={{ animation: "k9fade 2s ease-in-out 1.4s infinite" }}/>
         </g>
       </svg>
       <div style={{ textAlign: "center" }}>
@@ -1942,34 +1947,6 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   }, [data.clients, clientStats, resByClient, data.resortPolicies?.retentionDaycareDays, data.resortPolicies?.retentionBoardingDays]);
 
   // ── TEMP DIAGNOSTIC: why are clients in conversion? ──
-  const conversionDiag = useMemo(() => {
-    const convClients = data.clients.filter(c => clientTabMap[c.id]?.isConversion);
-    let noSyncedRes = 0, noGingrNumRes = 0, hasGingrNumButNoSynced = 0, onlyToursEvals = 0;
-    let sampleNoRes = [];
-    convClients.forEach(c => {
-      const cRes = resByClient[c.id] || [];
-      const s = clientStats[c.id] || {};
-      const syncedNonTourEval = cRes.filter(r => r.type !== "tour" && r.type !== "evaluation").length;
-      if (cRes.length === 0) noSyncedRes++;
-      if ((c._numReservations || 0) === 0) noGingrNumRes++;
-      if ((c._numReservations || 0) > 0 && syncedNonTourEval === 0) hasGingrNumButNoSynced++;
-      if (cRes.length > 0 && syncedNonTourEval === 0) onlyToursEvals++;
-      if (sampleNoRes.length < 3 && cRes.length === 0 && (c._numReservations || 0) > 0) {
-        sampleNoRes.push({ id: c.id, name: `${c.fields?.first_name} ${c.fields?.last_name}`, _numRes: c._numReservations, _lastRes: c._lastReservation });
-      }
-    });
-    return {
-      total: convClients.length,
-      totalClients: data.clients.length,
-      totalReservations: (data.reservations || []).length,
-      noSyncedRes,
-      noGingrNumRes,
-      hasGingrNumButNoSynced,
-      onlyToursEvals,
-      sampleNoRes,
-    };
-  }, [data.clients, clientTabMap, resByClient, clientStats]);
-
   // ── Lifecycle event tracking ──
   const prevTabMapRef = useRef(null);
   useEffect(() => {
@@ -2673,15 +2650,6 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         {activeTab === "conversion" && (() => {
           const grid = getGrid();
           return <>
-            {/* TEMP DIAGNOSTIC — remove after debugging */}
-            <div style={{margin:"0 14px 8px",padding:"10px 14px",borderRadius:8,background:"#FFF7ED",border:"1px solid #FDBA74",fontSize:12,fontFamily:"monospace",lineHeight:1.6}}>
-              <div style={{fontWeight:700,marginBottom:4,color:"#9A3412"}}>Conversion Diagnostic</div>
-              <div>Total clients: {conversionDiag.totalClients} | Total reservations synced: {conversionDiag.totalReservations}</div>
-              <div>In conversion: {conversionDiag.total} | No synced reservations: {conversionDiag.noSyncedRes} | Gingr _numReservations=0: {conversionDiag.noGingrNumRes}</div>
-              <div>Has Gingr _numRes but no synced non-tour/eval: {conversionDiag.hasGingrNumButNoSynced} | Only tours/evals: {conversionDiag.onlyToursEvals}</div>
-              {conversionDiag.sampleNoRes.length > 0 && <div style={{marginTop:4}}>Samples (have _numRes but no synced): {conversionDiag.sampleNoRes.map(s => `${s.name} (_numRes=${s._numRes}, _lastRes=${s._lastRes})`).join(" | ")}</div>}
-              <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(conversionDiag, null, 2)); }} style={{marginTop:6,padding:"3px 8px",borderRadius:4,border:"1px solid #FDBA74",background:"#FFF",cursor:"pointer",fontSize:11}}>Copy Diagnostic</button>
-            </div>
             <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
               <div style={colHeaderStyle("name")} onClick={()=>handleSort("name")}>Client <SortIcon col="name"/></div>
               <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
