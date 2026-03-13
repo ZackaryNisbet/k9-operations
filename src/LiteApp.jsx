@@ -1397,7 +1397,7 @@ function useGingrData(locationId) {
     return owners.map(o => ({
       id: `g${o.gingr_id}`,
       gingrId: o.gingr_id,
-      createdAt: o.owner_created_at || o.created_at || "2025-01-01T00:00:00",
+      createdAt: o.owner_created_at || "2019-10-14T00:00:00", // legacy clients pre-date Gingr tracking
       source: "online",
       sourceData: null,
       fields: {
