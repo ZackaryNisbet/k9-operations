@@ -272,7 +272,7 @@ const TRACKER_DATA = {
       title: "Move Dashboard to Top of Navbar",
       category: "Operations Hub",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Reposition Dashboard as the first/top item in the navigation bar.",
       spec: "The consolidated Dashboard should be the very first thing users see when logging in. Move it to the top of the navbar hierarchy.\n\nThis is a powerful first impression — the daily ops overview should be front and center.",
       dataRequirements: [],
