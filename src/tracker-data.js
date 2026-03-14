@@ -759,7 +759,7 @@ const TRACKER_DATA = {
       title: "Phase 3 — Animal Enrichment",
       category: "Data Expansion",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Sync feeding, medications, immunizations, vets, and animal icon data from Gingr.",
       spec: "**Phase 3** of the Data Expansion plan.\n\n**Tables to sync:**\n- `feeding_schedules` — Dog feeding instructions and schedules\n- `medications` — Medication records for animals\n- `immunizations` — Actual immunization records (not just types)\n- `vets` — Veterinarian information linked to animals\n- `animal_icons` — Custom animal icons/photos (includes small/large dog playgroup icons)\n\n**Purpose:** Required for the Dog Detail Page Enhancement (CLM-006), Large vs Small Dog TV differentiation (TV-003), and complete animal profiles.",
       dataRequirements: ["feeding_schedules", "medications", "immunizations", "vets", "animal_icons"],
