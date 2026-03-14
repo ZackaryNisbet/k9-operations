@@ -1,6 +1,7 @@
 // K9 Operations — CheckoutTVPage
 // Isolated page component. See AGENTS.md for development contract.
-// Fixes: TV-001 (daycare count), TV-002 (checkout detection), TV-004 (room numbers), TV-006 (checkout highlight animation)
+// Fixes: TV-001 (daycare count), TV-002 (checkout detection), TV-003 (large/small dog differentiation),
+//        TV-004 (room numbers), TV-006 (checkout highlight animation)
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
@@ -57,16 +58,42 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
   document.head.appendChild(style);
 }
 
+/* ── TV-003: Size classification — matches getDogDaycareSize in App.jsx ── */
+const SIZE_THRESHOLD = 35; // lbs
+function getDogSize(dog) {
+  if (!dog) return "large";
+  if (dog.daycareGroupOverride) return dog.daycareGroupOverride;
+  const w = parseInt(dog.fields?.weight);
+  if (!w || isNaN(w)) return "large"; // default if no weight
+  return w < SIZE_THRESHOLD ? "small" : "large";
+}
+
+/* ── TV-003: Size theme colors ────────────────────────────────────────── */
+const SIZE_THEME = {
+  large: {
+    accent: "#0EA5E9",     // Sky blue
+    accentRgb: "14,165,233",
+    label: "Large Dog Daycare",
+    badge: "LG",
+    icon: "L",
+  },
+  small: {
+    accent: "#8B5CF6",     // Violet/purple
+    accentRgb: "139,92,246",
+    label: "Small Dog Daycare",
+    badge: "SM",
+    icon: "S",
+  },
+};
+
 /* ── Room parser (TV-004) ─────────────────────────────────────────────── */
 function parseRoom(room) {
   if (!room) return { label: "", number: "" };
-  // Matches: "Luxury - 101", "Executive - 301 Private Play", "Double - 2C", "Single - 3A"
   const dashMatch = room.match(/^(.+?)\s*-\s*(\d{1,3}\w*)/);
   if (dashMatch) {
     const typeShort = dashMatch[1].trim().replace(/\s*(Suite|Room|Compartment)/i, "");
     return { label: typeShort, number: dashMatch[2] };
   }
-  // "Luxury Suite 1" (fallback numbered) — fake room, suppress number
   const fallbackMatch = room.match(/^(.+?)\s+(\d{1,2})$/);
   if (fallbackMatch) {
     return { label: fallbackMatch[1], number: "" };
@@ -105,15 +132,36 @@ function CountdownCircle({ remaining, total = 60, size = 56, strokeWidth = 4 }) 
   );
 }
 
+/* ── TV-003: Size Badge — visible indicator on dog cards ──────────────── */
+function SizeBadge({ size }) {
+  const theme = SIZE_THEME[size] || SIZE_THEME.large;
+  return (
+    <div style={{
+      display: "inline-flex", alignItems: "center", justifyContent: "center",
+      fontSize: 11, fontWeight: 900, letterSpacing: "0.06em",
+      color: theme.accent,
+      background: `rgba(${theme.accentRgb},0.15)`,
+      border: `1.5px solid rgba(${theme.accentRgb},0.35)`,
+      borderRadius: 6, padding: "2px 8px",
+      lineHeight: 1.4,
+    }}>
+      {theme.badge}
+    </div>
+  );
+}
+
 /* ── TV-006: Hero Checkout Card — enlarged, prominent, center-stage ──── */
-function HeroCheckoutCard({ entry, dogs, clients, fading, queuePosition }) {
+function HeroCheckoutCard({ entry, dogs, clients, fading, animalIcons }) {
   const dog = dogs.find(d => d.gingrId === Number(entry.animalGingrId) || d.id === `g${entry.animalGingrId}`);
   const name = dog?.fields?.name || entry.animalName || "Unknown";
   const breed = dog?.fields?.breed || "";
   const ownerLast = entry.ownerLastName || "";
   const roomInfo = parseRoom(entry.room);
-  const image = dog?._image;
+  const iconData = animalIcons[dog?.gingrId];
+  const image = iconData?.icon_url || dog?._image;
   const isUrgent = entry.remaining <= 10;
+  const size = getDogSize(dog);
+  const theme = SIZE_THEME[size];
 
   return (
     <div style={{
@@ -175,6 +223,15 @@ function HeroCheckoutCard({ entry, dogs, clients, fading, queuePosition }) {
           }}>
             {isUrgent ? "Leaving Now" : "Checking Out"}
           </span>
+          {/* TV-003: Size badge on hero card */}
+          <span style={{
+            fontSize: 13, fontWeight: 800, letterSpacing: "0.08em",
+            color: theme.accent,
+            background: `rgba(${theme.accentRgb},0.15)`,
+            padding: "5px 14px", borderRadius: 8,
+          }}>
+            {theme.badge === "LG" ? "LARGE" : "SMALL"}
+          </span>
           {roomInfo.number && (
             <span style={{
               fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)",
@@ -197,6 +254,11 @@ function HeroCheckoutCard({ entry, dogs, clients, fading, queuePosition }) {
           {ownerLast && (
             <span style={{ fontSize: 17, color: "rgba(175,141,84,0.8)", fontWeight: 700 }}>
               Owner: {ownerLast}
+            </span>
+          )}
+          {dog?.fields?.weight && (
+            <span style={{ fontSize: 15, color: "rgba(255,255,255,0.35)", fontWeight: 600 }}>
+              {dog.fields.weight} lbs
             </span>
           )}
         </div>
@@ -277,6 +339,43 @@ function CheckoutTVPage({ data, nav, profile }) {
   const dogs = data.dogs || [];
   const clients = data.clients || [];
 
+  /* ── TV-003: Fetch animal icons from Supabase ─────────────────────── */
+  const locationId = profile?.location_id;
+  const [animalIcons, setAnimalIcons] = useState({}); // keyed by animal_gingr_id
+
+  useEffect(() => {
+    if (!locationId) return;
+    let cancelled = false;
+
+    const fetchIcons = async () => {
+      try {
+        const { data: icons, error } = await supabase
+          .from("gingr_animal_icons")
+          .select("animal_gingr_id,icon_url,icon_type,is_primary")
+          .eq("location_id", locationId);
+
+        if (cancelled || error) return;
+
+        // Build lookup: prefer is_primary, then photo type, then any
+        const map = {};
+        for (const icon of (icons || [])) {
+          const existing = map[icon.animal_gingr_id];
+          if (!existing || icon.is_primary || (!existing.is_primary && icon.icon_type === "photo")) {
+            map[icon.animal_gingr_id] = icon;
+          }
+        }
+        setAnimalIcons(map);
+      } catch (e) {
+        // Silently ignore — icons are a progressive enhancement
+      }
+    };
+
+    fetchIcons();
+    // Refresh icons every 5 minutes
+    const interval = setInterval(fetchIcons, 5 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [locationId]);
+
   /* ── TV-001: Fix daycare count ──────────────────────────────────────── *
    * The old filter checked (type === "daycare" || type === "boarding") AND
    * date range r.checkIn <= today && r.checkOut >= today.
@@ -312,8 +411,23 @@ function CheckoutTVPage({ data, nav, profile }) {
   const daycareDogs = uniqueDogs.filter(r => DAYCARE_TYPES.has(r.type));
   const boardingDogs = uniqueDogs.filter(r => BOARDING_TYPES.has(r.type));
 
+  /* ── TV-003: Split daycare dogs into large and small groups ─────────── */
+  const { largeDaycare, smallDaycare } = useMemo(() => {
+    const large = [];
+    const small = [];
+    for (const res of daycareDogs) {
+      const dog = dogs.find(d => d.id === res.dogId);
+      const size = getDogSize(dog);
+      if (size === "small") {
+        small.push(res);
+      } else {
+        large.push(res);
+      }
+    }
+    return { largeDaycare: large, smallDaycare: small };
+  }, [daycareDogs, dogs]);
+
   /* ── TV-002: Checkout detection polling ─────────────────────────────── */
-  const locationId = profile?.location_id;
   const prevCheckedInRef = useRef(null);     // Set of gingr_ids from last poll
   const [checkingOut, setCheckingOut] = useState([]); // { id, animalGingrId, animalName, ownerLastName, room, remaining, fading }
   const checkingOutRef = useRef(checkingOut);
@@ -413,8 +527,6 @@ function CheckoutTVPage({ data, nav, profile }) {
   }, [checkingOut]);
 
   /* ── TV-006: Compute active (hero) and queued checkouts ────────────── */
-  // The first non-fading entry is the hero. Fading entries still render as hero during fade-out.
-  // Remaining non-fading entries are queued.
   const activeCheckout = checkingOut.find(e => !e.fading) || checkingOut.find(e => e.fading) || null;
   const fadingCheckouts = activeCheckout ? checkingOut.filter(e => e.fading && e !== activeCheckout) : [];
   const queuedCheckouts = checkingOut.filter(e => !e.fading && e !== activeCheckout);
@@ -433,8 +545,8 @@ function CheckoutTVPage({ data, nav, profile }) {
   const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
   const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
-  /* ── TV-004: DogCard with fixed room parsing ────────────────────────── */
-  const DogCard = ({ res }) => {
+  /* ── TV-003 + TV-004: DogCard with size differentiation + fixed room parsing */
+  const DogCard = ({ res, sizeGroup }) => {
     const dog = dogs.find(d => d.id === res.dogId);
     const client = clients.find(c => c.id === res.clientId);
     const name = dog?.fields?.name || res._animalName || "Unknown";
@@ -445,6 +557,12 @@ function CheckoutTVPage({ data, nav, profile }) {
       ? `${roomInfo.label} ${roomInfo.number}`
       : roomInfo.label || "";
 
+    // TV-003: Get dog photo from animal icons or fall back to _image
+    const iconData = animalIcons[dog?.gingrId];
+    const image = iconData?.icon_url || dog?._image;
+    const size = sizeGroup || getDogSize(dog);
+    const theme = SIZE_THEME[size] || SIZE_THEME.large;
+
     // TV-006: Dim dogs that are being checked out (they appear in hero card above)
     const isCheckingOut = checkingOutDogIds.has(res.dogId);
 
@@ -452,30 +570,67 @@ function CheckoutTVPage({ data, nav, profile }) {
       <div style={{
         display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 12px",
         background: isCheckingOut ? "rgba(175,141,84,0.08)" : "rgba(255,255,255,0.06)",
-        borderRadius: 16, border: isCheckingOut ? "1px solid rgba(175,141,84,0.2)" : "1px solid rgba(255,255,255,0.08)",
+        borderRadius: 16,
+        border: isCheckingOut
+          ? "1px solid rgba(175,141,84,0.2)"
+          : `2px solid rgba(${theme.accentRgb},0.25)`,
         minWidth: 140, transition: "transform 0.2s, opacity 0.5s, background 0.3s",
         opacity: isCheckingOut ? 0.35 : 1,
+        position: "relative",
       }}>
-        {dog?._image ? (
-          <img src={dog._image} alt={name} style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover", border: "2px solid rgba(255,255,255,0.15)", marginBottom: 8 }} />
+        {/* TV-003: Size badge — top-right corner */}
+        <div style={{
+          position: "absolute", top: 8, right: 8,
+        }}>
+          <SizeBadge size={size} />
+        </div>
+
+        {/* Dog photo/icon from gingr_animal_icons or fallback */}
+        {image ? (
+          <img src={image} alt={name} style={{
+            width: 64, height: 64, borderRadius: 14, objectFit: "cover",
+            border: `2px solid rgba(${theme.accentRgb},0.4)`,
+            marginBottom: 8,
+          }} />
         ) : (
-          <div style={{ width: 64, height: 64, borderRadius: 14, background: "rgba(175,141,84,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 800, color: "#AF8D54", marginBottom: 8 }}>
+          <div style={{
+            width: 64, height: 64, borderRadius: 14,
+            background: `rgba(${theme.accentRgb},0.15)`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 24, fontWeight: 800,
+            color: theme.accent,
+            marginBottom: 8,
+            border: `2px solid rgba(${theme.accentRgb},0.3)`,
+          }}>
             {name[0]}
           </div>
         )}
         <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", textAlign: "center", lineHeight: 1.2 }}>{name}</div>
         {breed && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2, textAlign: "center" }}>{breed}</div>}
-        <div style={{ fontSize: 11, color: "rgba(175,141,84,0.8)", marginTop: 4, fontWeight: 600 }}>{ownerLast}</div>
+        <div style={{ fontSize: 11, color: `rgba(${theme.accentRgb},0.8)`, marginTop: 4, fontWeight: 600 }}>{ownerLast}</div>
         {roomDisplay && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>{roomDisplay}</div>}
       </div>
     );
   };
 
-  const SectionLabel = ({ label, count, color }) => (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, marginTop: 24 }}>
-      <div style={{ width: 6, height: 28, borderRadius: 3, background: color }} />
-      <div style={{ fontSize: 20, fontWeight: 800, color: "#fff", letterSpacing: "0.02em" }}>{label}</div>
-      <div style={{ fontSize: 16, fontWeight: 700, color: "rgba(255,255,255,0.4)" }}>({count})</div>
+  /* ── TV-003: Enhanced Section Label with dog count and colored accent ── */
+  const SectionLabel = ({ label, count, color, subtitle }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, marginTop: 28 }}>
+      <div style={{ width: 6, height: 32, borderRadius: 3, background: color }} />
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 22, fontWeight: 900, color: "#fff", letterSpacing: "0.02em" }}>{label}</div>
+          <div style={{
+            fontSize: 18, fontWeight: 800, color, background: `${color}22`,
+            padding: "2px 12px", borderRadius: 8,
+          }}>
+            {count}
+          </div>
+        </div>
+        {subtitle && (
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", fontWeight: 600, marginTop: 2 }}>{subtitle}</div>
+        )}
+      </div>
     </div>
   );
 
@@ -498,10 +653,15 @@ function CheckoutTVPage({ data, nav, profile }) {
         </div>
       </div>
 
-      {/* Stats bar */}
-      <div style={{ display: "flex", gap: 24, padding: "14px 0", borderTop: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 8 }}>
+      {/* Stats bar — TV-003: Updated with large/small daycare counts */}
+      <div style={{ display: "flex", gap: 24, padding: "14px 0", borderTop: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 8, flexWrap: "wrap" }}>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Total: <span style={{ fontWeight: 800, color: "#fff" }}>{uniqueDogs.length}</span></div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Daycare: <span style={{ fontWeight: 800, color: "#0EA5E9" }}>{daycareDogs.length}</span></div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>
+          Large Daycare: <span style={{ fontWeight: 800, color: SIZE_THEME.large.accent }}>{largeDaycare.length}</span>
+        </div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>
+          Small Daycare: <span style={{ fontWeight: 800, color: SIZE_THEME.small.accent }}>{smallDaycare.length}</span>
+        </div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#AF8D54" }}>{boardingDogs.length}</span></div>
         {hasCheckouts && (
           <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: "auto" }}>
@@ -521,6 +681,7 @@ function CheckoutTVPage({ data, nav, profile }) {
               dogs={dogs}
               clients={clients}
               fading={activeCheckout.fading}
+              animalIcons={animalIcons}
             />
           )}
 
@@ -532,6 +693,7 @@ function CheckoutTVPage({ data, nav, profile }) {
                 dogs={dogs}
                 clients={clients}
                 fading={true}
+                animalIcons={animalIcons}
               />
             </div>
           ))}
@@ -561,12 +723,32 @@ function CheckoutTVPage({ data, nav, profile }) {
         </div>
       )}
 
-      {/* Daycare section */}
-      {daycareDogs.length > 0 && (
+      {/* TV-003: Large Dog Daycare section */}
+      {largeDaycare.length > 0 && (
         <div>
-          <SectionLabel label="Daycare" count={daycareDogs.length} color="#0EA5E9" />
+          <SectionLabel
+            label="Large Dog Daycare"
+            count={largeDaycare.length}
+            color={SIZE_THEME.large.accent}
+            subtitle={`Dogs ${SIZE_THRESHOLD}+ lbs`}
+          />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
-            {daycareDogs.map(r => <DogCard key={r.id} res={r} />)}
+            {largeDaycare.map(r => <DogCard key={r.id} res={r} sizeGroup="large" />)}
+          </div>
+        </div>
+      )}
+
+      {/* TV-003: Small Dog Daycare section */}
+      {smallDaycare.length > 0 && (
+        <div>
+          <SectionLabel
+            label="Small Dog Daycare"
+            count={smallDaycare.length}
+            color={SIZE_THEME.small.accent}
+            subtitle={`Dogs under ${SIZE_THRESHOLD} lbs`}
+          />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+            {smallDaycare.map(r => <DogCard key={r.id} res={r} sizeGroup="small" />)}
           </div>
         </div>
       )}
