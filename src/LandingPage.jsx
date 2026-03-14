@@ -375,83 +375,199 @@ function FeatureSection({ icon, title, subtitle, description, bullets, reversed,
 // Abstract feature graphics (no fake screenshots)
 function FeatureGraphic({ type, color }) {
   if (type === 'lifecycle') {
-    // Triangle layout: Gingr feeds into K9 Ops (center of triangle)
-    // Triangle vertices: Conversion (top), Active (bottom-right), Retention (bottom-left)
-    // Flow: Gingr → K9 Ops → Conversion → Active ↔ Retention (no backflow to Conversion)
-    return (
-      <svg width="300" height="300" viewBox="0 0 300 300" fill="none">
-        {/* Gingr node — outside triangle, top-left */}
-        <g>
-          <circle cx="60" cy="35" r="24" fill="#fff" stroke="#6366F1" strokeWidth="2"/>
-          <circle cx="60" cy="35" r="16" fill="#6366F130"/>
-          <text x="60" y="39" textAnchor="middle" fontSize="10" fontWeight="800" fill="#6366F1">Gingr</text>
-        </g>
+    // Premium horizontal pipeline: Gingr → K9 Ops → Conversion → Active ↔ Retention
+    // Customer NEVER goes back to New/Conversion. Active ↔ Retention is the ONLY bidirectional flow.
+    const navy = '#003462';
+    const gold = '#AF8D54';
+    const teal = '#0EA5E9';
+    const green = '#10B981';
 
-        {/* Arrow from Gingr to K9 Ops center */}
-        <path d="M80 52 L135 108" stroke="#6366F1" strokeWidth="2" strokeDasharray="5 3" opacity="0.5" markerEnd="url(#arrowGingr)"/>
+    // Stage definitions for the flow
+    const stages = [
+      { id: 'gingr', label: 'Gingr', sub: 'Data Source', x: 30, y: 95, color: '#6366F1', icon: 'db' },
+      { id: 'k9ops', label: 'K9 Ops', sub: 'Intelligence', x: 120, y: 95, color: navy, icon: 'hub', isHub: true },
+      { id: 'conv', label: 'Conversion', sub: 'New Leads', x: 210, y: 95, color: green, icon: 'funnel' },
+      { id: 'active', label: 'Active', sub: 'Engaged', x: 300, y: 55, color: teal, icon: 'bolt' },
+      { id: 'retention', label: 'Retention', sub: 'Re-engage', x: 300, y: 135, color: gold, icon: 'refresh' },
+    ];
+
+    return (
+      <svg width="380" height="200" viewBox="0 0 380 200" fill="none" style={{ maxWidth: '100%', height: 'auto' }}>
         <defs>
-          <marker id="arrowGingr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#6366F180"/>
+          {/* Glow filters */}
+          <filter id="lcGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"/>
+            <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+          </filter>
+          <filter id="lcSoftGlow" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur"/>
+            <feFlood floodColor={navy} floodOpacity="0.15" result="color"/>
+            <feComposite in="color" in2="blur" operator="in" result="shadow"/>
+            <feComposite in="SourceGraphic" in2="shadow" operator="over"/>
+          </filter>
+          {/* Gradient for connection lines */}
+          <linearGradient id="lcLineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor={navy} stopOpacity="0.15"/>
+            <stop offset="50%" stopColor={navy} stopOpacity="0.3"/>
+            <stop offset="100%" stopColor={navy} stopOpacity="0.15"/>
+          </linearGradient>
+          {/* Hub radial gradient */}
+          <radialGradient id="lcHubGrad" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor={navy} stopOpacity="0.08"/>
+            <stop offset="100%" stopColor={navy} stopOpacity="0.02"/>
+          </radialGradient>
+          {/* Arrow markers */}
+          <marker id="lcArrow" viewBox="0 0 8 6" refX="7" refY="3" markerWidth="8" markerHeight="6" orient="auto">
+            <path d="M0 0 L8 3 L0 6Z" fill={navy} opacity="0.35"/>
           </marker>
-          <marker id="arrowNav" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill={color + '60'}/>
+          <marker id="lcArrowGold" viewBox="0 0 8 6" refX="7" refY="3" markerWidth="8" markerHeight="6" orient="auto">
+            <path d="M0 0 L8 3 L0 6Z" fill={gold} opacity="0.45"/>
           </marker>
-          <marker id="arrowBi" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="#F59E0B80"/>
+          <marker id="lcArrowTeal" viewBox="0 0 8 6" refX="7" refY="3" markerWidth="8" markerHeight="6" orient="auto">
+            <path d="M0 0 L8 3 L0 6Z" fill={teal} opacity="0.45"/>
           </marker>
         </defs>
 
-        {/* Triangle outline (subtle) */}
-        <path d="M150 80 L250 240 L50 240 Z" fill={color + '04'} stroke={color + '15'} strokeWidth="1.5" strokeDasharray="6 4"/>
+        {/* Background decoration — subtle grid dots */}
+        {Array.from({ length: 12 }).map((_, i) =>
+          Array.from({ length: 6 }).map((_, j) => (
+            <circle key={`dot-${i}-${j}`} cx={20 + i * 32} cy={15 + j * 32} r="0.8" fill={navy} opacity="0.06"/>
+          ))
+        )}
 
-        {/* K9 Ops center hub */}
-        <circle cx="150" cy="175" r="32" fill="#fff" stroke={color} strokeWidth="2.5"/>
-        <circle cx="150" cy="175" r="22" fill={color + '08'}/>
-        <text x="150" y="172" textAnchor="middle" fontSize="10" fontWeight="800" fill={color}>K9 Ops</text>
-        <text x="150" y="184" textAnchor="middle" fontSize="7" fontWeight="500" fill={color + '70'}>Intelligence</text>
-
-        {/* Triangle vertex: Conversion (top) */}
-        <g>
-          <circle cx="150" cy="80" r="22" fill="#fff" stroke="#10B981" strokeWidth="2"/>
-          <circle cx="150" cy="80" r="14" fill="#10B98115"/>
-          <text x="150" y="77" textAnchor="middle" fontSize="7" fontWeight="700" fill="#10B981">CONVER-</text>
-          <text x="150" y="87" textAnchor="middle" fontSize="7" fontWeight="700" fill="#10B981">SION</text>
-        </g>
-
-        {/* Triangle vertex: Active (bottom-right) */}
-        <g>
-          <circle cx="248" cy="240" r="22" fill="#fff" stroke={color} strokeWidth="2"/>
-          <circle cx="248" cy="240" r="14" fill={color + '12'}/>
-          <text x="248" y="244" textAnchor="middle" fontSize="8" fontWeight="700" fill={color}>ACTIVE</text>
-        </g>
-
-        {/* Triangle vertex: Retention (bottom-left) */}
-        <g>
-          <circle cx="52" cy="240" r="22" fill="#fff" stroke="#F59E0B" strokeWidth="2"/>
-          <circle cx="52" cy="240" r="14" fill="#F59E0B15"/>
-          <text x="52" y="237" textAnchor="middle" fontSize="7" fontWeight="700" fill="#F59E0B">RETEN-</text>
-          <text x="52" y="247" textAnchor="middle" fontSize="7" fontWeight="700" fill="#F59E0B">TION</text>
-        </g>
-
-        {/* Flow arrows: K9 Ops → Conversion */}
-        <line x1="150" y1="143" x2="150" y2="103" stroke={color + '40'} strokeWidth="1.5" markerEnd="url(#arrowNav)"/>
-
-        {/* Conversion → Active (one-way down-right) */}
-        <line x1="170" y1="92" x2="230" y2="224" stroke="#10B98150" strokeWidth="1.5" markerEnd="url(#arrowNav)"/>
-
-        {/* Active ↔ Retention (bidirectional bottom) */}
-        <line x1="226" y1="237" x2="78" y2="237" stroke={color + '40'} strokeWidth="1.5" markerEnd="url(#arrowBi)"/>
-        <line x1="74" y1="245" x2="226" y2="245" stroke="#F59E0B50" strokeWidth="1.5" markerEnd="url(#arrowNav)"/>
-
-        {/* Animated pulse on K9 Ops center */}
-        <circle cx="150" cy="175" r="32" fill="none" stroke={color} strokeWidth="1" opacity="0.3">
-          <animate attributeName="r" values="32;44;32" dur="3s" repeatCount="indefinite"/>
-          <animate attributeName="opacity" values="0.3;0;0.3" dur="3s" repeatCount="indefinite"/>
+        {/* ── Connection Lines ── */}
+        {/* Gingr → K9 Ops */}
+        <line x1="62" y1="95" x2="90" y2="95" stroke={navy} strokeWidth="1.5" strokeOpacity="0.2" strokeDasharray="4 3"/>
+        <circle r="3" fill="#6366F1" opacity="0.6">
+          <animateMotion dur="2s" repeatCount="indefinite" path="M62,95 L90,95"/>
+          <animate attributeName="opacity" values="0;0.7;0" dur="2s" repeatCount="indefinite"/>
         </circle>
 
-        {/* Flow labels */}
-        <text x="255" y="158" textAnchor="middle" fontSize="7" fontWeight="600" fill={color + '50'} transform="rotate(55 240 160)">one way</text>
-        <text x="150" y="268" textAnchor="middle" fontSize="7" fontWeight="600" fill="#F59E0B80">← back &amp; forth →</text>
+        {/* K9 Ops → Conversion */}
+        <line x1="152" y1="95" x2="182" y2="95" stroke={navy} strokeWidth="1.8" strokeOpacity="0.25" markerEnd="url(#lcArrow)"/>
+        <circle r="3" fill={navy} opacity="0.5">
+          <animateMotion dur="1.8s" repeatCount="indefinite" path="M152,95 L182,95"/>
+          <animate attributeName="opacity" values="0;0.6;0" dur="1.8s" repeatCount="indefinite"/>
+        </circle>
+
+        {/* Conversion → Active (curves up) */}
+        <path d="M238 82 C260 60, 270 55, 280 55" fill="none" stroke={green} strokeWidth="1.5" strokeOpacity="0.25" markerEnd="url(#lcArrowTeal)"/>
+        <circle r="2.5" fill={green} opacity="0.5">
+          <animateMotion dur="2.2s" repeatCount="indefinite" path="M238,82 C260,60 270,55 280,55"/>
+          <animate attributeName="opacity" values="0;0.6;0" dur="2.2s" repeatCount="indefinite"/>
+        </circle>
+
+        {/* Conversion → Retention (curves down) */}
+        <path d="M238 108 C260 130, 270 135, 280 135" fill="none" stroke={green} strokeWidth="1.5" strokeOpacity="0.2" markerEnd="url(#lcArrowGold)"/>
+        <circle r="2.5" fill={green} opacity="0.4">
+          <animateMotion dur="2.5s" repeatCount="indefinite" path="M238,108 C260,130 270,135 280,135"/>
+          <animate attributeName="opacity" values="0;0.5;0" dur="2.5s" repeatCount="indefinite"/>
+        </circle>
+
+        {/* Active ↔ Retention (bidirectional — the ONLY bidirectional flow) */}
+        {/* Active → Retention */}
+        <line x1="310" y1="73" x2="310" y2="117" stroke={teal} strokeWidth="1.5" strokeOpacity="0.25" markerEnd="url(#lcArrowGold)"/>
+        <circle r="2.5" fill={teal} opacity="0.5">
+          <animateMotion dur="2s" repeatCount="indefinite" path="M310,73 L310,117"/>
+          <animate attributeName="opacity" values="0;0.6;0" dur="2s" repeatCount="indefinite"/>
+        </circle>
+        {/* Retention → Active */}
+        <line x1="290" y1="117" x2="290" y2="73" stroke={gold} strokeWidth="1.5" strokeOpacity="0.25" markerEnd="url(#lcArrowTeal)"/>
+        <circle r="2.5" fill={gold} opacity="0.5">
+          <animateMotion dur="2.3s" repeatCount="indefinite" path="M290,117 L290,73" begin="0.8s"/>
+          <animate attributeName="opacity" values="0;0.6;0" dur="2.3s" repeatCount="indefinite" begin="0.8s"/>
+        </circle>
+        {/* Bidirectional label */}
+        <text x="340" y="98" fontSize="6.5" fontWeight="600" fill={navy} opacity="0.35" textAnchor="middle">↕</text>
+
+        {/* ── Stage Nodes ── */}
+        {stages.map((s) => {
+          const isHub = s.isHub;
+          const r = isHub ? 30 : 24;
+          return (
+            <g key={s.id}>
+              {/* Card background */}
+              <rect
+                x={s.x - r} y={s.y - r} width={r * 2} height={r * 2}
+                rx={isHub ? 16 : 12}
+                fill="#FFFFFF"
+                stroke={s.color}
+                strokeWidth={isHub ? 2 : 1.5}
+                strokeOpacity={isHub ? 0.6 : 0.3}
+                filter={isHub ? 'url(#lcSoftGlow)' : undefined}
+              />
+              {/* Inner accent fill */}
+              <rect
+                x={s.x - r + 2} y={s.y - r + 2} width={r * 2 - 4} height={r * 2 - 4}
+                rx={isHub ? 14 : 10}
+                fill={s.color}
+                opacity={isHub ? 0.06 : 0.04}
+              />
+              {/* Icon area */}
+              {s.icon === 'db' && (
+                <g transform={`translate(${s.x - 6},${s.y - 14})`}>
+                  <ellipse cx="6" cy="3" rx="6" ry="3" fill="none" stroke={s.color} strokeWidth="1.2" opacity="0.6"/>
+                  <path d="M0 3v6c0 1.7 2.7 3 6 3s6-1.3 6-3V3" fill="none" stroke={s.color} strokeWidth="1.2" opacity="0.6"/>
+                  <path d="M0 6c0 1.7 2.7 3 6 3s6-1.3 6-3" fill="none" stroke={s.color} strokeWidth="1" opacity="0.35"/>
+                </g>
+              )}
+              {s.icon === 'hub' && (
+                <g transform={`translate(${s.x},${s.y - 12})`}>
+                  <circle cx="0" cy="0" r="3" fill={s.color} opacity="0.5"/>
+                  <circle cx="-8" cy="6" r="2" fill={s.color} opacity="0.3"/>
+                  <circle cx="8" cy="6" r="2" fill={s.color} opacity="0.3"/>
+                  <line x1="0" y1="0" x2="-8" y2="6" stroke={s.color} strokeWidth="0.8" opacity="0.3"/>
+                  <line x1="0" y1="0" x2="8" y2="6" stroke={s.color} strokeWidth="0.8" opacity="0.3"/>
+                  <circle cx="0" cy="0" r="6" fill="none" stroke={s.color} strokeWidth="0.6" opacity="0.15">
+                    <animate attributeName="r" values="6;10;6" dur="3s" repeatCount="indefinite"/>
+                    <animate attributeName="opacity" values="0.15;0;0.15" dur="3s" repeatCount="indefinite"/>
+                  </circle>
+                </g>
+              )}
+              {s.icon === 'funnel' && (
+                <g transform={`translate(${s.x - 5},${s.y - 14})`}>
+                  <path d="M0 0h10l-3 6v4l-4 0v-4z" fill="none" stroke={s.color} strokeWidth="1.2" opacity="0.5"/>
+                </g>
+              )}
+              {s.icon === 'bolt' && (
+                <g transform={`translate(${s.x - 4},${s.y - 14})`}>
+                  <path d="M5 0L1 6h3l-1 6 5-7H5z" fill={s.color} opacity="0.4"/>
+                </g>
+              )}
+              {s.icon === 'refresh' && (
+                <g transform={`translate(${s.x},${s.y - 12})`}>
+                  <path d="M4-1A5 5 0 1 1-3 3" fill="none" stroke={s.color} strokeWidth="1.2" opacity="0.5" strokeLinecap="round"/>
+                  <path d="M-3 0v3h3" fill="none" stroke={s.color} strokeWidth="1.2" opacity="0.5" strokeLinecap="round"/>
+                </g>
+              )}
+              {/* Label */}
+              <text x={s.x} y={s.y + (isHub ? 8 : 6)} textAnchor="middle" fontSize={isHub ? '8.5' : '7.5'} fontWeight="700" fill={s.color} letterSpacing="0.02em">{s.label}</text>
+              {/* Subtitle */}
+              <text x={s.x} y={s.y + (isHub ? 18 : 15)} textAnchor="middle" fontSize="6" fontWeight="500" fill={s.color} opacity="0.5">{s.sub}</text>
+
+              {/* Hub pulse ring */}
+              {isHub && (
+                <>
+                  <rect x={s.x - r} y={s.y - r} width={r * 2} height={r * 2} rx="16" fill="none" stroke={s.color} strokeWidth="1" opacity="0.2">
+                    <animate attributeName="rx" values="16;20;16" dur="3s" repeatCount="indefinite"/>
+                    <animate attributeName="opacity" values="0.2;0;0.2" dur="3s" repeatCount="indefinite"/>
+                  </rect>
+                </>
+              )}
+            </g>
+          );
+        })}
+
+        {/* ── Flow direction indicators ── */}
+        <text x="76" y="88" fontSize="6" fontWeight="600" fill="#6366F1" opacity="0.3">DATA</text>
+        <text x="167" y="88" fontSize="6" fontWeight="600" fill={navy} opacity="0.3">STAGE</text>
+
+        {/* "One-way" label between Conversion and Active/Retention fork */}
+        <text x="258" y="92" fontSize="5.5" fontWeight="600" fill={navy} opacity="0.25" textAnchor="middle">ONE WAY →</text>
+
+        {/* Bottom annotation */}
+        <text x="190" y="188" textAnchor="middle" fontSize="7" fontWeight="600" fill={navy} opacity="0.2" letterSpacing="0.15em">CUSTOMER LIFECYCLE FLOW</text>
+        <line x1="90" y1="192" x2="290" y2="192" stroke={navy} strokeWidth="0.5" opacity="0.08"/>
       </svg>
     );
   }
