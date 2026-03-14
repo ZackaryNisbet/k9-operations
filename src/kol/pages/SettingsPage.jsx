@@ -14,6 +14,7 @@ import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 import useGingrData from "../../hooks/useGingrData";
+import { useAuth } from "../../AuthProvider";
 
 // Settings tab imports
 import GingrIntegrationTab from "../settings/GingrIntegrationTab";

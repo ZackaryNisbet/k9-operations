@@ -193,11 +193,11 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
   // ─── Dynamic data queries ───
   const allRooms = data.rooms || {};
-  const boardingToday = data.reservations.filter(r => r.type === "boarding" && r.checkIn <= viewDate && r.checkOut >= viewDate && (r.status === "checked-in" || r.status === "upcoming"));
-  const boardingCheckedOut = data.reservations.filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-out");
+  const boardingToday = (data.reservations || []).filter(r => r.type === "boarding" && r.checkIn <= viewDate && r.checkOut >= viewDate && (r.status === "checked-in" || r.status === "upcoming"));
+  const boardingCheckedOut = (data.reservations || []).filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-out");
 
   // PP checklist: checked-in dogs with Private Play add-on OR day boarding dogs
-  const ppReservations = data.reservations.filter(r =>
+  const ppReservations = (data.reservations || []).filter(r =>
     (r.type === "boarding" || r.type === "daycare" || r.type === "dayboarding") &&
     r.status === "checked-in" &&
     r.checkIn <= viewDate && r.checkOut >= viewDate &&
@@ -307,8 +307,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const prevItems = prevEntry ? (prevEntry.items || {}) : {};
 
     // Figure out which rooms needed disinfect / as-needed yesterday
-    const prevBoardingCheckedOut = data.reservations.filter(r => r.type === "boarding" && r.checkOut === prevDate && r.status === "checked-out");
-    const prevBoardingToday = data.reservations.filter(r => r.type === "boarding" && r.checkIn <= prevDate && r.checkOut >= prevDate && (r.status === "checked-in" || r.status === "upcoming" || r.status === "checked-out"));
+    const prevBoardingCheckedOut = (data.reservations || []).filter(r => r.type === "boarding" && r.checkOut === prevDate && r.status === "checked-out");
+    const prevBoardingToday = (data.reservations || []).filter(r => r.type === "boarding" && r.checkIn <= prevDate && r.checkOut >= prevDate && (r.status === "checked-in" || r.status === "upcoming" || r.status === "checked-out"));
 
     // Build a map: room → { missedDisinfect, missedAsNeeded }
     const missedMap = {};
