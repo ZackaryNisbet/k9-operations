@@ -860,7 +860,7 @@ const TRACKER_DATA = {
       title: "Phase 6 — Application Feature Tables",
       category: "Data Expansion",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Create app-specific tables: lifecycle_events, field_mappings, ignite, email, enterprise, checklists.",
       spec: "**Phase 6** of the Data Expansion plan.\n\n**Tables to create (K9 Ops-specific, not from Gingr):**\n- `lifecycle_events` — Track all lifecycle stage transitions and events\n- `field_mappings` — Store K9 Ops ↔ Gingr field mapping configurations\n- `ignite_records` — Parsed Ignite lead data\n- `email_config` — Email report distribution group settings\n- `enterprise_config` — Multi-location configuration\n- `checklists` — Checklist templates and completion records\n\n**Purpose:** These are application-level tables that power K9 Ops features independent of Gingr data.",
       dataRequirements: ["lifecycle_events", "field_mappings", "ignite_records", "email_config", "enterprise_config", "checklists"],
