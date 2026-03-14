@@ -30,6 +30,7 @@ CREATE INDEX IF NOT EXISTS idx_k9_gingr_creds_loc ON k9_gingr_credentials(locati
 ALTER TABLE k9_gingr_credentials ENABLE ROW LEVEL SECURITY;
 
 -- Select: users can read their own location's credentials
+DROP POLICY IF EXISTS "Users can view own location gingr credentials" ON k9_gingr_credentials;
 CREATE POLICY "Users can view own location gingr credentials"
   ON k9_gingr_credentials FOR SELECT
   USING (
@@ -37,6 +38,7 @@ CREATE POLICY "Users can view own location gingr credentials"
   );
 
 -- Insert: users can insert credentials for their own location
+DROP POLICY IF EXISTS "Users can insert own location gingr credentials" ON k9_gingr_credentials;
 CREATE POLICY "Users can insert own location gingr credentials"
   ON k9_gingr_credentials FOR INSERT
   WITH CHECK (
@@ -44,6 +46,7 @@ CREATE POLICY "Users can insert own location gingr credentials"
   );
 
 -- Update: users can update their own location's credentials
+DROP POLICY IF EXISTS "Users can update own location gingr credentials" ON k9_gingr_credentials;
 CREATE POLICY "Users can update own location gingr credentials"
   ON k9_gingr_credentials FOR UPDATE
   USING (
@@ -54,6 +57,7 @@ CREATE POLICY "Users can update own location gingr credentials"
   );
 
 -- Delete: users can delete their own location's credentials
+DROP POLICY IF EXISTS "Users can delete own location gingr credentials" ON k9_gingr_credentials;
 CREATE POLICY "Users can delete own location gingr credentials"
   ON k9_gingr_credentials FOR DELETE
   USING (
