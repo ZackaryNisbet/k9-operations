@@ -168,7 +168,7 @@ const TRACKER_DATA = {
       title: "Fix Total Spent on Client Page",
       category: "Customer Lifecycle",
       priority: "P2",
-      status: "backlog",
+      status: "done",
       description: "Sync the total spent value between Customer Lifecycle table and individual client pages.",
       spec: "The \"Total Spent\" field on the individual client page does not update accurately. The Customer Lifecycle module table shows what appears to be the correct total spent, but this value is not reflected on the client detail page.\n\n**Fix:** Ensure both views pull from the same data source and display consistent values.",
       dataRequirements: ["gingr_owners", "invoices", "transactions"],
