@@ -1,0 +1,1213 @@
+// K9 Operations — Enterprise Dashboard Aggregation
+// ENT-001: Multi-location dashboard for franchise owners.
+// Aggregates metrics across all resort locations with toggle controls.
+
+import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
+import { supabase } from "../../supabaseClient";
+import {
+  C, LITE_DEF_PRICING, CHART_PTS, OPS_TYPES, OPERATIONS_CATALOG,
+  todayStr, addDays, countNights, countHours, fmtDate, fmtDateFull, fmtDateShort,
+  formatTime12hr, DAY_NAMES_SHORT, ROOM_TYPES, K9_LOCATIONS,
+} from "../../shared/theme";
+import { I, Icons } from "../../shared/icons";
+import { Tip, Badge, Btn, Card, Modal } from "../../shared/ui";
+import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
+import InteractiveLineChart from "../../shared/InteractiveLineChart";
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CSS Animations
+   ═══════════════════════════════════════════════════════════════════════════ */
+const ENT_CSS = `
+@keyframes entSlideIn {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes entFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes entCountUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes entBarGrow {
+  from { transform: scaleX(0); }
+  to   { transform: scaleX(1); }
+}
+@keyframes entPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0,52,98,0.12); }
+  50%      { box-shadow: 0 0 0 8px rgba(0,52,98,0); }
+}
+@keyframes entShimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes entScaleIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.ent-card {
+  background: ${C.surface};
+  border-radius: 15px;
+  border: 1.5px solid ${C.border};
+  padding: 22px;
+  animation: entSlideIn 0.45s cubic-bezier(0.22,1,0.36,1) both;
+  transition: box-shadow 0.22s, transform 0.22s;
+}
+.ent-card:hover {
+  box-shadow: 0 8px 28px rgba(0,52,98,0.10);
+  transform: translateY(-2px);
+}
+.ent-hero-num {
+  animation: entCountUp 0.5s cubic-bezier(0.22,1,0.36,1) both;
+}
+.ent-bar-fill {
+  transform-origin: left;
+  animation: entBarGrow 0.7s cubic-bezier(0.22,1,0.36,1) both;
+}
+.ent-snapshot-stat {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: ${C.surface};
+  border: 1.5px solid ${C.border};
+  text-align: center;
+  transition: all 0.2s;
+  cursor: default;
+}
+.ent-snapshot-stat:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(0,52,98,0.08);
+}
+.ent-loc-row {
+  transition: all 0.15s;
+  cursor: pointer;
+}
+.ent-loc-row:hover {
+  background: ${C.priLt} !important;
+}
+.ent-alert-card {
+  padding: 14px 18px;
+  border-radius: 12px;
+  border: 1.5px solid transparent;
+  transition: all 0.2s;
+  cursor: default;
+}
+.ent-alert-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(0,52,98,0.06);
+}
+.ent-toggle-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: 1.5px solid transparent;
+  font-family: inherit;
+  user-select: none;
+}
+.ent-toggle-chip:hover {
+  transform: scale(1.03);
+}
+`;
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Timeframe config
+   ═══════════════════════════════════════════════════════════════════════════ */
+const RANGES = [
+  { key: "wtd",      label: "WTD" },
+  { key: "past-week", label: "Past Week" },
+  { key: "mtd",      label: "MTD" },
+  { key: "past-30",  label: "Past 30" },
+  { key: "qtd",      label: "QTD" },
+  { key: "ytd",      label: "YTD" },
+  { key: "lifetime", label: "Lifetime" },
+  { key: "custom",   label: "Custom" },
+];
+
+/* Location colors — visually distinct for charts */
+const LOC_COLORS = [C.pri, C.acc, C.suc, C.info, C.warn, "#6366F1", "#059669", C.dan, "#7C3AED", "#DB2777", "#D97706", "#0891B2"];
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Animated number
+   ═══════════════════════════════════════════════════════════════════════════ */
+function AnimatedNumber({ value, prefix = "", suffix = "", decimals = 0, duration = 700 }) {
+  const ref = useRef(null);
+  const prevVal = useRef(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const from = prevVal.current;
+    const to = typeof value === "number" ? value : 0;
+    prevVal.current = to;
+    if (from === to) { el.textContent = prefix + fmt(to) + suffix; return; }
+    const start = performance.now();
+    function tick(now) {
+      const t = Math.min((now - start) / duration, 1);
+      const ease = 1 - Math.pow(1 - t, 3);
+      const cur = from + (to - from) * ease;
+      el.textContent = prefix + fmt(cur) + suffix;
+      if (t < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+    function fmt(n) {
+      if (decimals === 0) return Math.round(n).toLocaleString("en-US");
+      return n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    }
+  }, [value, prefix, suffix, decimals, duration]);
+  const fmt = (n) => {
+    if (decimals === 0) return Math.round(n).toLocaleString("en-US");
+    return n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  };
+  return <span ref={ref}>{prefix}{fmt(typeof value === "number" ? value : 0)}{suffix}</span>;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Tiny helpers
+   ═══════════════════════════════════════════════════════════════════════════ */
+const fmt$ = (v) => typeof v === "number" ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00";
+const fmt$k = (v) => v >= 10000 ? `${(v / 1000).toFixed(1)}k` : v >= 1000 ? `${(v / 1000).toFixed(2)}k` : fmt$(v);
+const fmtMoney = (n) => "$" + Math.round(n).toLocaleString();
+const fmtDateLabel = (d) => {
+  if (!d) return "";
+  const dt = new Date(d + "T00:00:00");
+  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Trend badge
+   ═══════════════════════════════════════════════════════════════════════════ */
+function TrendBadge({ value, invert = false }) {
+  if (value == null || !isFinite(value) || value === 0) return null;
+  const positive = invert ? value < 0 : value > 0;
+  const color = positive ? C.suc : C.dan;
+  const bg = positive ? C.sucLt : C.danLt;
+  const arrow = value > 0 ? "↑" : "↓";
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 11, fontWeight: 700, color, background: bg, padding: "2px 7px", borderRadius: 6 }}>
+      {arrow} {Math.abs(value).toFixed(1)}%
+    </span>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Demo location data generator
+   For real usage, this pulls from Supabase across location_ids.
+   The structure mirrors the data object shape from the page contract.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function generateLocationData() {
+  return [
+    {
+      id: "cherry-hill",
+      name: "Cherry Hill",
+      region: "New Jersey",
+      totalDogs: 47,
+      boardingDogs: 32,
+      daycareDogs: 15,
+      arriving: 8,
+      goingHome: 6,
+      totalRooms: 42,
+      occupiedRooms: 32,
+      occupancyRate: 76.2,
+      revenueTotal: 48720,
+      revenuePrev: 42100,
+      revenueTrend: 15.7,
+      boardingRevenue: 35800,
+      daycareRevenue: 12920,
+      avgTransaction: 285,
+      bookings: 171,
+      bookingsPrev: 158,
+      newLeads: 24,
+      contacted: 18,
+      newCustomers: 9,
+      conversionRate: 37.5,
+      churnRate: 4.2,
+      avgLTV: 1850,
+      opsCompletion: 92,
+      staffCount: 14,
+      revPAR: 38.50,
+      revenueByDay: generateDailyRevenue(48720, 30, 0.85),
+      occupancyByDay: generateDailyOccupancy(76.2, 30, 0.9),
+    },
+    {
+      id: "mount-laurel",
+      name: "Mount Laurel",
+      region: "New Jersey",
+      totalDogs: 38,
+      boardingDogs: 25,
+      daycareDogs: 13,
+      arriving: 5,
+      goingHome: 7,
+      totalRooms: 36,
+      occupiedRooms: 25,
+      occupancyRate: 69.4,
+      revenueTotal: 39450,
+      revenuePrev: 36200,
+      revenueTrend: 8.9,
+      boardingRevenue: 28200,
+      daycareRevenue: 11250,
+      avgTransaction: 268,
+      bookings: 147,
+      bookingsPrev: 139,
+      newLeads: 19,
+      contacted: 14,
+      newCustomers: 7,
+      conversionRate: 36.8,
+      churnRate: 5.1,
+      avgLTV: 1720,
+      opsCompletion: 88,
+      staffCount: 12,
+      revPAR: 34.20,
+      revenueByDay: generateDailyRevenue(39450, 30, 0.78),
+      occupancyByDay: generateDailyOccupancy(69.4, 30, 0.85),
+    },
+    {
+      id: "princeton",
+      name: "Princeton",
+      region: "New Jersey",
+      totalDogs: 52,
+      boardingDogs: 38,
+      daycareDogs: 14,
+      arriving: 9,
+      goingHome: 8,
+      totalRooms: 48,
+      occupiedRooms: 40,
+      occupancyRate: 83.3,
+      revenueTotal: 62100,
+      revenuePrev: 54800,
+      revenueTrend: 13.3,
+      boardingRevenue: 46500,
+      daycareRevenue: 15600,
+      avgTransaction: 310,
+      bookings: 200,
+      bookingsPrev: 185,
+      newLeads: 31,
+      contacted: 25,
+      newCustomers: 14,
+      conversionRate: 45.2,
+      churnRate: 2.8,
+      avgLTV: 2100,
+      opsCompletion: 96,
+      staffCount: 16,
+      revPAR: 42.70,
+      revenueByDay: generateDailyRevenue(62100, 30, 0.92),
+      occupancyByDay: generateDailyOccupancy(83.3, 30, 0.95),
+    },
+    {
+      id: "moorestown",
+      name: "Moorestown",
+      region: "New Jersey",
+      totalDogs: 28,
+      boardingDogs: 18,
+      daycareDogs: 10,
+      arriving: 4,
+      goingHome: 3,
+      totalRooms: 30,
+      occupiedRooms: 18,
+      occupancyRate: 60.0,
+      revenueTotal: 26300,
+      revenuePrev: 28900,
+      revenueTrend: -9.0,
+      boardingRevenue: 18400,
+      daycareRevenue: 7900,
+      avgTransaction: 248,
+      bookings: 106,
+      bookingsPrev: 118,
+      newLeads: 12,
+      contacted: 8,
+      newCustomers: 4,
+      conversionRate: 33.3,
+      churnRate: 7.8,
+      avgLTV: 1540,
+      opsCompletion: 74,
+      staffCount: 9,
+      revPAR: 28.40,
+      revenueByDay: generateDailyRevenue(26300, 30, 0.65),
+      occupancyByDay: generateDailyOccupancy(60.0, 30, 0.7),
+    },
+    {
+      id: "hamilton",
+      name: "Hamilton",
+      region: "New Jersey",
+      totalDogs: 34,
+      boardingDogs: 22,
+      daycareDogs: 12,
+      arriving: 6,
+      goingHome: 5,
+      totalRooms: 34,
+      occupiedRooms: 24,
+      occupancyRate: 70.6,
+      revenueTotal: 35800,
+      revenuePrev: 33100,
+      revenueTrend: 8.2,
+      boardingRevenue: 25600,
+      daycareRevenue: 10200,
+      avgTransaction: 272,
+      bookings: 132,
+      bookingsPrev: 125,
+      newLeads: 17,
+      contacted: 12,
+      newCustomers: 6,
+      conversionRate: 35.3,
+      churnRate: 5.5,
+      avgLTV: 1680,
+      opsCompletion: 85,
+      staffCount: 11,
+      revPAR: 32.80,
+      revenueByDay: generateDailyRevenue(35800, 30, 0.75),
+      occupancyByDay: generateDailyOccupancy(70.6, 30, 0.82),
+    },
+  ];
+}
+
+function generateDailyRevenue(total, days, consistency) {
+  const avg = total / days;
+  const result = [];
+  const today = todayStr();
+  for (let i = days - 1; i >= 0; i--) {
+    const date = addDays(today, -i);
+    const variance = 1 + (Math.sin(i * 0.8) * (1 - consistency));
+    const dayOfWeek = new Date(date + "T00:00:00").getDay();
+    const weekendBoost = (dayOfWeek === 0 || dayOfWeek === 6) ? 1.15 : 1;
+    result.push({ date, value: Math.round(avg * variance * weekendBoost) });
+  }
+  return result;
+}
+
+function generateDailyOccupancy(avg, days, consistency) {
+  const result = [];
+  const today = todayStr();
+  for (let i = days - 1; i >= 0; i--) {
+    const date = addDays(today, -i);
+    const variance = 1 + (Math.cos(i * 0.6) * (1 - consistency) * 0.5);
+    const dayOfWeek = new Date(date + "T00:00:00").getDay();
+    const weekendBoost = (dayOfWeek === 5 || dayOfWeek === 6) ? 1.08 : 1;
+    result.push({ date, value: Math.min(100, Math.round(avg * variance * weekendBoost * 10) / 10) });
+  }
+  return result;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Main Component
+   ═══════════════════════════════════════════════════════════════════════════ */
+export default function EnterpriseDashboard({ data, save, nav, profile, addGlobalToast }) {
+  const [range, setRange] = useState("mtd");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+  const [animEpoch, setAnimEpoch] = useState(0);
+  const [selectedLocations, setSelectedLocations] = useState(new Set());
+  const [drillLocation, setDrillLocation] = useState(null);
+  const [alertsExpanded, setAlertsExpanded] = useState(true);
+  const today = todayStr();
+
+  // Location data
+  const allLocations = useMemo(() => generateLocationData(), []);
+
+  // Initialize all locations as selected
+  useEffect(() => {
+    if (selectedLocations.size === 0 && allLocations.length > 0) {
+      setSelectedLocations(new Set(allLocations.map(l => l.id)));
+    }
+  }, [allLocations]);
+
+  // Re-trigger animations on range change
+  useEffect(() => { setAnimEpoch(e => e + 1); }, [range]);
+
+  // Active locations based on toggle
+  const activeLocations = useMemo(
+    () => allLocations.filter(l => selectedLocations.has(l.id)),
+    [allLocations, selectedLocations]
+  );
+
+  /* ─── Toggle location ────────────────────────────────────────────── */
+  const toggleLocation = useCallback((locId) => {
+    setSelectedLocations(prev => {
+      const next = new Set(prev);
+      if (next.has(locId)) {
+        if (next.size > 1) next.delete(locId); // Keep at least one
+      } else {
+        next.add(locId);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleAll = useCallback(() => {
+    if (selectedLocations.size === allLocations.length) {
+      setSelectedLocations(new Set([allLocations[0].id]));
+    } else {
+      setSelectedLocations(new Set(allLocations.map(l => l.id)));
+    }
+  }, [allLocations, selectedLocations]);
+
+  /* ─── Date range computation ──────────────────────────────────────── */
+  const { dateFrom, dateTo, days, prevFrom, prevTo } = useMemo(() => {
+    const now = new Date();
+    const end = today;
+    let start;
+    switch (range) {
+      case "wtd": {
+        const d = new Date(now); d.setDate(d.getDate() - d.getDay());
+        start = d.toISOString().split("T")[0]; break;
+      }
+      case "past-week": start = addDays(today, -7); break;
+      case "mtd": start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`; break;
+      case "past-30": start = addDays(today, -30); break;
+      case "qtd": {
+        const qm = Math.floor(now.getMonth() / 3) * 3;
+        start = `${now.getFullYear()}-${String(qm + 1).padStart(2, "0")}-01`; break;
+      }
+      case "ytd": start = `${now.getFullYear()}-01-01`; break;
+      case "lifetime": start = "2020-01-01"; break;
+      case "custom": start = customFrom || today; break;
+      default: start = addDays(today, -30);
+    }
+    const to = range === "custom" && customTo ? customTo : end;
+    const d1 = new Date(start + "T00:00:00");
+    const d2 = new Date(to + "T00:00:00");
+    const dayCount = Math.max(1, Math.round((d2 - d1) / 86400000) + 1);
+    const pTo = addDays(start, -1);
+    const pFrom = addDays(pTo, -(dayCount - 1));
+    return { dateFrom: start, dateTo: to, days: dayCount, prevFrom: pFrom, prevTo: pTo };
+  }, [range, today, customFrom, customTo]);
+
+  /* ─── Aggregated metrics ─────────────────────────────────────────── */
+  const agg = useMemo(() => {
+    const locs = activeLocations;
+    if (locs.length === 0) return null;
+    const totalDogs = locs.reduce((s, l) => s + l.totalDogs, 0);
+    const totalBoarding = locs.reduce((s, l) => s + l.boardingDogs, 0);
+    const totalDaycare = locs.reduce((s, l) => s + l.daycareDogs, 0);
+    const totalArriving = locs.reduce((s, l) => s + l.arriving, 0);
+    const totalGoingHome = locs.reduce((s, l) => s + l.goingHome, 0);
+    const totalRooms = locs.reduce((s, l) => s + l.totalRooms, 0);
+    const totalOccupied = locs.reduce((s, l) => s + l.occupiedRooms, 0);
+    const avgOccupancy = totalRooms > 0 ? (totalOccupied / totalRooms) * 100 : 0;
+    const totalRevenue = locs.reduce((s, l) => s + l.revenueTotal, 0);
+    const totalPrevRevenue = locs.reduce((s, l) => s + l.revenuePrev, 0);
+    const revTrend = totalPrevRevenue > 0 ? ((totalRevenue - totalPrevRevenue) / totalPrevRevenue) * 100 : 0;
+    const totalBoardingRev = locs.reduce((s, l) => s + l.boardingRevenue, 0);
+    const totalDaycareRev = locs.reduce((s, l) => s + l.daycareRevenue, 0);
+    const totalBookings = locs.reduce((s, l) => s + l.bookings, 0);
+    const totalPrevBookings = locs.reduce((s, l) => s + l.bookingsPrev, 0);
+    const bookingsTrend = totalPrevBookings > 0 ? ((totalBookings - totalPrevBookings) / totalPrevBookings) * 100 : 0;
+    const avgTransaction = totalBookings > 0 ? totalRevenue / totalBookings : 0;
+    const totalLeads = locs.reduce((s, l) => s + l.newLeads, 0);
+    const totalContacted = locs.reduce((s, l) => s + l.contacted, 0);
+    const totalNewCustomers = locs.reduce((s, l) => s + l.newCustomers, 0);
+    const convRate = totalLeads > 0 ? (totalNewCustomers / totalLeads) * 100 : 0;
+    const avgLTV = locs.reduce((s, l) => s + l.avgLTV, 0) / locs.length;
+    const totalStaff = locs.reduce((s, l) => s + l.staffCount, 0);
+    const avgOpsCompletion = Math.round(locs.reduce((s, l) => s + l.opsCompletion, 0) / locs.length);
+    const avgRevPAR = totalRooms > 0 ? totalBoardingRev / totalRooms / 30 : 0;
+    return {
+      totalDogs, totalBoarding, totalDaycare, totalArriving, totalGoingHome,
+      totalRooms, totalOccupied, avgOccupancy,
+      totalRevenue, totalPrevRevenue, revTrend,
+      totalBoardingRev, totalDaycareRev,
+      totalBookings, totalPrevBookings, bookingsTrend,
+      avgTransaction,
+      totalLeads, totalContacted, totalNewCustomers, convRate,
+      avgLTV, totalStaff, avgOpsCompletion, avgRevPAR,
+      locationCount: locs.length,
+    };
+  }, [activeLocations]);
+
+  /* ─── Revenue chart data (aggregated across locations) ──────────── */
+  const revenueChartData = useMemo(() => {
+    if (activeLocations.length === 0) return [];
+    const dateMap = {};
+    activeLocations.forEach(loc => {
+      (loc.revenueByDay || []).forEach(d => {
+        dateMap[d.date] = (dateMap[d.date] || 0) + d.value;
+      });
+    });
+    return Object.entries(dateMap)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, value]) => ({ date, label: fmtDateLabel(date), value }));
+  }, [activeLocations]);
+
+  /* ─── Per-location revenue chart data (for comparison) ──────────── */
+  const perLocationChartData = useMemo(() => {
+    return activeLocations.map((loc, idx) => ({
+      id: loc.id,
+      name: loc.name,
+      color: LOC_COLORS[idx % LOC_COLORS.length],
+      data: (loc.revenueByDay || []).map(d => ({ date: d.date, label: fmtDateLabel(d.date), value: d.value })),
+    }));
+  }, [activeLocations]);
+
+  /* ─── Alerts engine ─────────────────────────────────────────────── */
+  const alerts = useMemo(() => {
+    const result = [];
+    activeLocations.forEach(loc => {
+      if (loc.occupancyRate < 65) {
+        result.push({ type: "warning", location: loc.name, metric: "Low Occupancy", value: `${loc.occupancyRate.toFixed(1)}%`, detail: "Below 65% threshold — consider promotional campaigns", severity: 2 });
+      }
+      if (loc.revenueTrend < -5) {
+        result.push({ type: "danger", location: loc.name, metric: "Revenue Decline", value: `${loc.revenueTrend.toFixed(1)}%`, detail: "Declining revenue vs. prior period", severity: 3 });
+      }
+      if (loc.churnRate > 6) {
+        result.push({ type: "danger", location: loc.name, metric: "High Churn", value: `${loc.churnRate.toFixed(1)}%`, detail: "Churn rate exceeds 6% — retention action needed", severity: 3 });
+      }
+      if (loc.opsCompletion < 80) {
+        result.push({ type: "warning", location: loc.name, metric: "Ops Below Target", value: `${loc.opsCompletion}%`, detail: "Operations completion under 80%", severity: 1 });
+      }
+      if (loc.conversionRate < 35) {
+        result.push({ type: "info", location: loc.name, metric: "Low Conversion", value: `${loc.conversionRate.toFixed(1)}%`, detail: "Below average conversion rate", severity: 1 });
+      }
+    });
+    return result.sort((a, b) => b.severity - a.severity);
+  }, [activeLocations]);
+
+  /* ─── Grid base ──────────────────────────────────────────────────── */
+  const gridBase = { display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 20 };
+
+  if (!agg) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 400 }}>
+        <K9LoadingAnimation message="Loading enterprise dashboard..." />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "0 4px 40px", maxWidth: 1440, margin: "0 auto" }}>
+      <style>{ENT_CSS}</style>
+
+      {/* ─── Header ──────────────────────────────────────────────────── */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 16, marginBottom: 20 }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+            <h1 className="brand-headline" style={{ fontSize: 28, fontWeight: 700, color: C.text, margin: 0, lineHeight: 1.2 }}>Enterprise Dashboard</h1>
+            <Badge color="blue">{agg.locationCount} Location{agg.locationCount !== 1 ? "s" : ""}</Badge>
+          </div>
+          <p style={{ fontSize: 12, color: C.textMut, margin: 0 }}>
+            {fmtDateLabel(dateFrom)} – {fmtDateLabel(dateTo)} · {days} day{days !== 1 ? "s" : ""} · Aggregated view
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {RANGES.map(r => (
+            <button
+              key={r.key}
+              onClick={() => setRange(r.key)}
+              style={{
+                padding: "5px 12px", borderRadius: 8, border: `1.5px solid ${range === r.key ? C.pri : C.border}`,
+                background: range === r.key ? C.pri : C.surface, color: range === r.key ? "#fff" : C.textSec,
+                fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+              }}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Custom date pickers */}
+      {range === "custom" && (
+        <div style={{ display: "flex", gap: 12, marginBottom: 20, alignItems: "center", animation: "entFadeIn 0.3s ease" }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: C.textSec }}>
+            From
+            <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+              style={{ marginLeft: 6, padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", color: C.text }} />
+          </label>
+          <label style={{ fontSize: 11, fontWeight: 600, color: C.textSec }}>
+            To
+            <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
+              style={{ marginLeft: 6, padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", color: C.text }} />
+          </label>
+        </div>
+      )}
+
+      {/* ─── Location Toggle Bar ─────────────────────────────────────── */}
+      <div className="ent-card" style={{ marginBottom: 20, padding: "14px 20px", animationDelay: "0.01s" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Resort Selection</span>
+          <button
+            onClick={toggleAll}
+            style={{ fontSize: 11, fontWeight: 600, color: C.pri, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}
+          >
+            {selectedLocations.size === allLocations.length ? "Deselect All" : "Select All"}
+          </button>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {allLocations.map((loc, idx) => {
+            const isActive = selectedLocations.has(loc.id);
+            const color = LOC_COLORS[idx % LOC_COLORS.length];
+            return (
+              <button
+                key={loc.id}
+                className="ent-toggle-chip"
+                onClick={() => toggleLocation(loc.id)}
+                style={{
+                  background: isActive ? `${color}15` : C.bg,
+                  color: isActive ? color : C.textMut,
+                  borderColor: isActive ? `${color}40` : C.border,
+                  opacity: isActive ? 1 : 0.6,
+                }}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: isActive ? color : C.textMut, flexShrink: 0 }} />
+                {loc.name}
+                {isActive && <span style={{ fontSize: 10, opacity: 0.7 }}>✓</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ═══ OVERVIEW CARDS — Aggregated hero KPIs ═════════════════════ */}
+      <div style={{ ...gridBase, marginBottom: 20 }}>
+        <HeroCard delay={0} label="Total Dogs" value={agg.totalDogs} sub={`${agg.totalBoarding} boarding · ${agg.totalDaycare} daycare`} icon="🐕" color={C.pri} />
+        <HeroCard delay={1} label="Net Revenue" value={agg.totalRevenue} prefix="$" decimals={0} trend={agg.revTrend} icon="$" color={C.suc} />
+        <HeroCard delay={2} label="Avg Occupancy" value={agg.avgOccupancy} suffix="%" decimals={1} icon="◉" color={C.acc} />
+        <HeroCard delay={3} label="Total Bookings" value={agg.totalBookings} trend={agg.bookingsTrend} icon="📋" color={C.info} />
+      </div>
+
+      {/* ═══ LIVE SNAPSHOT — Facility stats ════════════════════════════ */}
+      <div className="ent-card" style={{ marginBottom: 20, animationDelay: "0.10s", padding: "18px 22px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.suc, animation: "entPulse 2s infinite" }} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Live Enterprise Snapshot</span>
+          </div>
+          <span style={{ fontSize: 11, color: C.textSec }}>{fmtDateLabel(today)} · {agg.locationCount} locations</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
+          <SnapshotStat label="Dogs In House" value={agg.totalDogs} sub={`Across ${agg.locationCount} resorts`} color={C.pri} delay={0} />
+          <SnapshotStat label="Arriving Today" value={agg.totalArriving} sub="Expected check-ins" color={C.info} delay={1} />
+          <SnapshotStat label="Going Home" value={agg.totalGoingHome} sub="Pending checkout" color={C.acc} delay={2} />
+          <SnapshotStat label="Total Rooms" value={`${agg.totalOccupied}/${agg.totalRooms}`} sub={`${agg.avgOccupancy.toFixed(1)}% occupied`} color={C.suc} delay={3} />
+          <SnapshotStat label="Total Staff" value={agg.totalStaff} sub="Active across resorts" color="#7C3AED" delay={4} />
+          <SnapshotStat label="Ops Completion" value={`${agg.avgOpsCompletion}%`} sub="Average today" color={agg.avgOpsCompletion >= 90 ? C.suc : C.warn} delay={5} />
+        </div>
+      </div>
+
+      {/* ═══ ALERTS — Underperforming Locations ═══════════════════════ */}
+      {alerts.length > 0 && (
+        <div className="ent-card" style={{ marginBottom: 20, animationDelay: "0.14s" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: alertsExpanded ? 14 : 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.warn} strokeWidth="2" strokeLinecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Alerts & Action Items</span>
+              <Badge color={alerts.some(a => a.type === "danger") ? "red" : "default"}>{alerts.length}</Badge>
+            </div>
+            <button
+              onClick={() => setAlertsExpanded(!alertsExpanded)}
+              style={{ fontSize: 11, fontWeight: 600, color: C.textSec, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit" }}
+            >
+              {alertsExpanded ? "Collapse" : "Expand"}
+            </button>
+          </div>
+          {alertsExpanded && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 10 }}>
+              {alerts.map((alert, i) => {
+                const alertColor = alert.type === "danger" ? C.dan : alert.type === "warning" ? C.warn : C.info;
+                const alertBg = alert.type === "danger" ? C.danLt : alert.type === "warning" ? C.warnLt : C.infoLt;
+                return (
+                  <div
+                    key={i}
+                    className="ent-alert-card"
+                    style={{ background: alertBg, borderColor: `${alertColor}30`, animation: `entFadeIn 0.3s ${0.05 * i + 0.15}s both` }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: alertColor }}>{alert.metric}</span>
+                      </div>
+                      <span style={{ fontSize: 14, fontWeight: 800, color: alertColor }}>{alert.value}</span>
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: C.text, marginBottom: 2 }}>{alert.location}</div>
+                    <div style={{ fontSize: 11, color: C.textSec }}>{alert.detail}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ═══ REVENUE TREND — Aggregated chart + Composition ═══════════ */}
+      <div style={{ ...gridBase, marginBottom: 20 }}>
+        <div className="ent-card" style={{ gridColumn: "span 8", animationDelay: "0.18s" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Revenue Trend — All Locations</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: C.text, marginTop: 2 }}>
+                <AnimatedNumber value={agg.totalRevenue} prefix="$" decimals={0} />
+              </div>
+            </div>
+            <TrendBadge value={agg.revTrend} />
+          </div>
+          <InteractiveLineChart
+            chartData={revenueChartData}
+            color={C.pri}
+            height={220}
+            id="ent-rev-agg"
+            animationEpoch={animEpoch}
+          />
+        </div>
+
+        {/* Revenue composition */}
+        <div className="ent-card" style={{ gridColumn: "span 4", animationDelay: "0.22s" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Revenue Composition</div>
+          {/* Stacked bar */}
+          <div style={{ height: 12, borderRadius: 6, overflow: "hidden", display: "flex", marginBottom: 16 }}>
+            <div className="ent-bar-fill" style={{ width: `${agg.totalRevenue > 0 ? (agg.totalBoardingRev / agg.totalRevenue) * 100 : 0}%`, height: "100%", background: C.pri, animationDelay: "0.3s" }} />
+            <div className="ent-bar-fill" style={{ width: `${agg.totalRevenue > 0 ? (agg.totalDaycareRev / agg.totalRevenue) * 100 : 0}%`, height: "100%", background: C.acc, animationDelay: "0.4s" }} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 10, height: 10, borderRadius: 3, background: C.pri }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>Boarding</span>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>${fmt$k(agg.totalBoardingRev)}</span>
+                <span style={{ fontSize: 10, color: C.textMut, marginLeft: 4 }}>({(agg.totalRevenue > 0 ? (agg.totalBoardingRev / agg.totalRevenue) * 100 : 0).toFixed(1)}%)</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 10, height: 10, borderRadius: 3, background: C.acc }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>Daycare</span>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>${fmt$k(agg.totalDaycareRev)}</span>
+                <span style={{ fontSize: 10, color: C.textMut, marginLeft: 4 }}>({(agg.totalRevenue > 0 ? (agg.totalDaycareRev / agg.totalRevenue) * 100 : 0).toFixed(1)}%)</span>
+              </div>
+            </div>
+          </div>
+          {/* Enterprise KPIs */}
+          <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div style={{ padding: "10px 12px", borderRadius: 10, background: C.accLt, textAlign: "center" }}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: C.accDk, marginBottom: 2 }}>Avg RevPAR</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.accDk }}>${agg.avgRevPAR.toFixed(2)}</div>
+            </div>
+            <div style={{ padding: "10px 12px", borderRadius: 10, background: C.priLt, textAlign: "center" }}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: C.pri, marginBottom: 2 }}>Avg Transaction</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.pri }}>${agg.avgTransaction.toFixed(0)}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ═══ COMPARISON CHARTS — Per-location revenue ══════════════════ */}
+      <div style={{ ...gridBase, marginBottom: 20 }}>
+        <div className="ent-card" style={{ gridColumn: "span 12", animationDelay: "0.26s" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Revenue Comparison by Location</div>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(activeLocations.length, 3)}, 1fr)`, gap: 16 }}>
+            {perLocationChartData.map((loc, idx) => (
+              <div key={loc.id} style={{ animation: `entFadeIn 0.4s ${0.08 * idx + 0.3}s both` }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: loc.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{loc.name}</span>
+                </div>
+                <InteractiveLineChart
+                  chartData={loc.data}
+                  color={loc.color}
+                  height={120}
+                  id={`ent-rev-${loc.id}`}
+                  animationEpoch={animEpoch}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ═══ PER-LOCATION BREAKDOWN TABLE ═════════════════════════════ */}
+      <div className="ent-card" style={{ marginBottom: 20, animationDelay: "0.30s", padding: "22px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Per-Location Breakdown</div>
+            <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>Click a row to drill down</div>
+          </div>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr style={{ borderBottom: `2px solid ${C.border}` }}>
+                <Th align="left">Location</Th>
+                <Th>Dogs</Th>
+                <Th>Revenue</Th>
+                <Th>Trend</Th>
+                <Th>Occupancy</Th>
+                <Th>Bookings</Th>
+                <Th>Leads</Th>
+                <Th>Conv. Rate</Th>
+                <Th>Churn</Th>
+                <Th>Ops %</Th>
+                <Th>Avg LTV</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeLocations.map((loc, idx) => (
+                <tr
+                  key={loc.id}
+                  className="ent-loc-row"
+                  onClick={() => setDrillLocation(loc)}
+                  style={{
+                    borderBottom: `1px solid ${C.borderLight}`,
+                    background: idx % 2 === 0 ? C.surface : "rgba(245,246,248,0.5)",
+                    animation: `entFadeIn 0.35s ${0.04 * idx + 0.32}s both`,
+                  }}
+                >
+                  <td style={{ padding: "14px 16px", fontWeight: 700, color: C.text }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: LOC_COLORS[idx % LOC_COLORS.length], flexShrink: 0 }} />
+                      <div>
+                        <div>{loc.name}</div>
+                        <div style={{ fontSize: 10, fontWeight: 400, color: C.textMut }}>{loc.region}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <Td>{loc.totalDogs}</Td>
+                  <Td bold>${fmt$k(loc.revenueTotal)}</Td>
+                  <Td><TrendBadge value={loc.revenueTrend} /></Td>
+                  <Td>
+                    <OccupancyPill value={loc.occupancyRate} />
+                  </Td>
+                  <Td>{loc.bookings}</Td>
+                  <Td>{loc.newLeads}</Td>
+                  <Td>
+                    <span style={{ color: loc.conversionRate >= 40 ? C.suc : loc.conversionRate >= 30 ? C.text : C.warn, fontWeight: 600 }}>
+                      {loc.conversionRate.toFixed(1)}%
+                    </span>
+                  </Td>
+                  <Td>
+                    <span style={{ color: loc.churnRate > 6 ? C.dan : loc.churnRate > 4 ? C.warn : C.suc, fontWeight: 600 }}>
+                      {loc.churnRate.toFixed(1)}%
+                    </span>
+                  </Td>
+                  <Td>
+                    <OpsCompletionPill value={loc.opsCompletion} />
+                  </Td>
+                  <Td bold>${loc.avgLTV.toLocaleString()}</Td>
+                </tr>
+              ))}
+              {/* Totals row */}
+              <tr style={{ borderTop: `2px solid ${C.pri}`, background: C.priLt }}>
+                <td style={{ padding: "14px 16px", fontWeight: 800, color: C.pri, fontSize: 13 }}>TOTAL / AVG</td>
+                <Td bold color={C.pri}>{agg.totalDogs}</Td>
+                <Td bold color={C.pri}>${fmt$k(agg.totalRevenue)}</Td>
+                <Td><TrendBadge value={agg.revTrend} /></Td>
+                <Td bold color={C.pri}>{agg.avgOccupancy.toFixed(1)}%</Td>
+                <Td bold color={C.pri}>{agg.totalBookings}</Td>
+                <Td bold color={C.pri}>{agg.totalLeads}</Td>
+                <Td bold color={C.pri}>{agg.convRate.toFixed(1)}%</Td>
+                <Td color={C.textMut}>—</Td>
+                <Td bold color={C.pri}>{agg.avgOpsCompletion}%</Td>
+                <Td bold color={C.pri}>${Math.round(agg.avgLTV).toLocaleString()}</Td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ═══ FUNNEL + OCCUPANCY COMPARISON ════════════════════════════ */}
+      <div style={{ ...gridBase, marginBottom: 20 }}>
+        {/* Acquisition Funnel */}
+        <div className="ent-card" style={{ gridColumn: "span 4", animationDelay: "0.34s" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Enterprise Funnel</div>
+          {[
+            { label: "Total Leads", count: agg.totalLeads, color: C.pri, pct: 100 },
+            { label: "Contacted", count: agg.totalContacted, color: C.acc, pct: agg.totalLeads > 0 ? (agg.totalContacted / agg.totalLeads) * 100 : 0 },
+            { label: "New Customers", count: agg.totalNewCustomers, color: C.suc, pct: agg.totalLeads > 0 ? (agg.totalNewCustomers / agg.totalLeads) * 100 : 0 },
+          ].map((stage, i) => (
+            <div key={stage.label} style={{ marginBottom: i < 2 ? 12 : 0, animation: `entSlideIn 0.5s ${0.1 * i + 0.35}s cubic-bezier(0.22,1,0.36,1) both` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{stage.label}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: stage.color }}>{stage.count}</span>
+              </div>
+              <div style={{ height: 28, background: C.bg, borderRadius: 8, overflow: "hidden", position: "relative" }}>
+                <div style={{
+                  width: `${Math.max(stage.pct, stage.count > 0 ? 8 : 0)}%`, height: "100%",
+                  background: `linear-gradient(90deg, ${stage.color}, ${stage.color}dd)`,
+                  borderRadius: 8, position: "relative", overflow: "hidden",
+                  transition: "width 0.7s cubic-bezier(0.2,0.8,0.2,1)",
+                }}>
+                  <div style={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%)", backgroundSize: "200% 100%", animation: "entShimmer 2.5s infinite" }} />
+                  <span style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", fontSize: 10, fontWeight: 700, color: "#fff", zIndex: 1 }}>
+                    {stage.pct.toFixed(0)}%
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+          <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 10, background: C.priLt, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: C.pri }}>Conversion Rate</span>
+            <span style={{ fontSize: 16, fontWeight: 700, color: C.pri }}>{agg.convRate.toFixed(1)}%</span>
+          </div>
+        </div>
+
+        {/* Occupancy comparison */}
+        <div className="ent-card" style={{ gridColumn: "span 4", animationDelay: "0.38s" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Occupancy by Location</div>
+          {activeLocations
+            .sort((a, b) => b.occupancyRate - a.occupancyRate)
+            .map((loc, i) => {
+              const color = loc.occupancyRate >= 80 ? C.suc : loc.occupancyRate >= 65 ? C.acc : C.dan;
+              return (
+                <div key={loc.id} style={{ marginBottom: 14, animation: `entFadeIn 0.4s ${0.08 * i + 0.4}s both` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{loc.name}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color }}>{loc.occupancyRate.toFixed(1)}%</span>
+                  </div>
+                  <div style={{ height: 8, background: C.bg, borderRadius: 4, overflow: "hidden" }}>
+                    <div className="ent-bar-fill" style={{ width: `${loc.occupancyRate}%`, height: "100%", background: color, borderRadius: 4, animationDelay: `${0.1 * i + 0.4}s` }} />
+                  </div>
+                  <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{loc.occupiedRooms}/{loc.totalRooms} rooms</div>
+                </div>
+              );
+            })}
+        </div>
+
+        {/* Enterprise Funnel Metrics */}
+        <div className="ent-card" style={{ gridColumn: "span 4", animationDelay: "0.42s" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Enterprise KPIs</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <MetricTile label="Avg LTV" value={`$${fmt$k(agg.avgLTV)}`} color={C.acc} icon="♦" />
+            <MetricTile label="Avg Transaction" value={`$${agg.avgTransaction.toFixed(0)}`} color={C.pri} icon="$" />
+            <MetricTile label="Total Staff" value={agg.totalStaff.toString()} color="#7C3AED" icon="👤" />
+            <MetricTile label="Locations" value={agg.locationCount.toString()} color={C.info} icon="📍" />
+          </div>
+          <div style={{ marginTop: 16, padding: "12px", borderRadius: 10, background: C.sucLt, border: `1px solid ${C.suc}20` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: C.suc }}>Projected Monthly Revenue</span>
+              <span style={{ fontSize: 16, fontWeight: 700, color: C.suc }}>
+                ${fmt$k(agg.totalRevenue * (30 / Math.max(days, 1)))}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ═══ REVENUE RANKING — Horizontal bar chart ═══════════════════ */}
+      <div className="ent-card" style={{ marginBottom: 20, animationDelay: "0.46s" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Revenue Ranking</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {[...activeLocations]
+            .sort((a, b) => b.revenueTotal - a.revenueTotal)
+            .map((loc, i) => {
+              const maxRev = Math.max(...activeLocations.map(l => l.revenueTotal));
+              const pct = maxRev > 0 ? (loc.revenueTotal / maxRev) * 100 : 0;
+              const share = agg.totalRevenue > 0 ? (loc.revenueTotal / agg.totalRevenue) * 100 : 0;
+              const color = LOC_COLORS[allLocations.findIndex(l => l.id === loc.id) % LOC_COLORS.length];
+              return (
+                <div key={loc.id} style={{ animation: `entFadeIn 0.35s ${0.06 * i + 0.48}s both` }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ width: 22, height: 22, borderRadius: "50%", background: `${color}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color }}>{i + 1}</span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{loc.name}</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>${fmt$k(loc.revenueTotal)}</span>
+                      <span style={{ fontSize: 10, color: C.textMut }}>({share.toFixed(1)}%)</span>
+                      <TrendBadge value={loc.revenueTrend} />
+                    </div>
+                  </div>
+                  <div style={{ height: 10, background: C.bg, borderRadius: 5, overflow: "hidden" }}>
+                    <div className="ent-bar-fill" style={{
+                      width: `${pct}%`, height: "100%",
+                      background: `linear-gradient(90deg, ${color}, ${color}bb)`,
+                      borderRadius: 5, animationDelay: `${0.08 * i + 0.5}s`,
+                    }} />
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      </div>
+
+      {/* ═══ DRILL-DOWN MODAL ════════════════════════════════════════ */}
+      {drillLocation && (
+        <Modal title={`${drillLocation.name} — Detailed View`} onClose={() => setDrillLocation(null)} wide>
+          <DrillDownView location={drillLocation} allLocations={allLocations} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Sub-components
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function HeroCard({ delay, label, value, prefix = "", suffix = "", decimals = 0, trend, sub, icon, color }) {
+  return (
+    <div
+      className="ent-card"
+      style={{ gridColumn: "span 3", animationDelay: `${delay * 0.08 + 0.04}s`, position: "relative", overflow: "hidden" }}
+    >
+      <div style={{ position: "absolute", top: 10, right: 14, opacity: 0.08, fontSize: 36, color }}>{icon}</div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>{label}</div>
+      <div className="ent-hero-num" style={{ fontSize: 26, fontWeight: 700, color: C.text, lineHeight: 1.1, marginBottom: 6 }}>
+        <AnimatedNumber value={value} prefix={prefix} suffix={suffix} decimals={decimals} />
+      </div>
+      {trend != null && <TrendBadge value={trend} />}
+      {sub && <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function MetricTile({ label, value, color, icon }) {
+  return (
+    <div style={{
+      padding: "14px", borderRadius: 12, border: `1.5px solid ${color}20`,
+      background: `${color}08`, textAlign: "center",
+    }}>
+      <div style={{ fontSize: 18, marginBottom: 4 }}>{icon}</div>
+      <div style={{ fontSize: 16, fontWeight: 700, color, marginBottom: 2 }}>{value}</div>
+      <div style={{ fontSize: 10, fontWeight: 600, color: C.textMut }}>{label}</div>
+    </div>
+  );
+}
+
+function SnapshotStat({ label, value, sub, color, delay }) {
+  return (
+    <div className="ent-snapshot-stat" style={{ animation: `entScaleIn 0.4s ${delay * 0.06 + 0.05}s cubic-bezier(0.22,1,0.36,1) both` }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1, marginBottom: 4 }}>{value}</div>
+      <div style={{ fontSize: 10, color: C.textMut, fontWeight: 500 }}>{sub}</div>
+    </div>
+  );
+}
+
+function Th({ children, align = "center" }) {
+  return (
+    <th style={{ padding: "10px 12px", textAlign: align, fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
+      {children}
+    </th>
+  );
+}
+
+function Td({ children, bold, color }) {
+  return (
+    <td style={{ padding: "12px 12px", textAlign: "center", fontWeight: bold ? 700 : 400, color: color || C.text, fontSize: 13 }}>
+      {children}
+    </td>
+  );
+}
+
+function OccupancyPill({ value }) {
+  const color = value >= 80 ? C.suc : value >= 65 ? C.acc : C.dan;
+  const bg = value >= 80 ? C.sucLt : value >= 65 ? C.accLt : C.danLt;
+  return (
+    <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 20, background: bg, color, fontWeight: 700, fontSize: 12 }}>
+      {value.toFixed(1)}%
+    </span>
+  );
+}
+
+function OpsCompletionPill({ value }) {
+  const color = value >= 90 ? C.suc : value >= 75 ? C.warn : C.dan;
+  const bg = value >= 90 ? C.sucLt : value >= 75 ? C.warnLt : C.danLt;
+  return (
+    <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 20, background: bg, color, fontWeight: 700, fontSize: 12 }}>
+      {value}%
+    </span>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Drill-Down View (displayed in Modal)
+   ═══════════════════════════════════════════════════════════════════════════ */
+function DrillDownView({ location: loc, allLocations }) {
+  const idx = allLocations.findIndex(l => l.id === loc.id);
+  const color = LOC_COLORS[idx % LOC_COLORS.length];
+  const allAvg = {
+    occupancyRate: allLocations.reduce((s, l) => s + l.occupancyRate, 0) / allLocations.length,
+    revenueTotal: allLocations.reduce((s, l) => s + l.revenueTotal, 0) / allLocations.length,
+    conversionRate: allLocations.reduce((s, l) => s + l.conversionRate, 0) / allLocations.length,
+    opsCompletion: Math.round(allLocations.reduce((s, l) => s + l.opsCompletion, 0) / allLocations.length),
+    churnRate: allLocations.reduce((s, l) => s + l.churnRate, 0) / allLocations.length,
+  };
+
+  const compareVal = (val, avg, suffix = "", higherIsBetter = true) => {
+    const diff = val - avg;
+    const isBetter = higherIsBetter ? diff > 0 : diff < 0;
+    return (
+      <span style={{ fontSize: 11, fontWeight: 600, color: isBetter ? C.suc : C.dan }}>
+        {diff > 0 ? "+" : ""}{diff.toFixed(1)}{suffix} vs avg
+      </span>
+    );
+  };
+
+  return (
+    <div style={{ padding: "0 4px" }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+        <div style={{ width: 42, height: 42, borderRadius: "50%", background: `${color}15`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <span style={{ fontSize: 18, fontWeight: 700, color }}>📍</span>
+        </div>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{loc.name}</div>
+          <div style={{ fontSize: 12, color: C.textSec }}>{loc.region} · {loc.staffCount} staff · {loc.totalRooms} rooms</div>
+        </div>
+      </div>
+
+      {/* KPI Grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
+        <DrillKPI label="Revenue" value={`$${fmt$k(loc.revenueTotal)}`} color={color} compare={compareVal(loc.revenueTotal, allAvg.revenueTotal, "", true)} />
+        <DrillKPI label="Occupancy" value={`${loc.occupancyRate.toFixed(1)}%`} color={loc.occupancyRate >= 80 ? C.suc : C.acc} compare={compareVal(loc.occupancyRate, allAvg.occupancyRate, "%", true)} />
+        <DrillKPI label="Conversion" value={`${loc.conversionRate.toFixed(1)}%`} color={loc.conversionRate >= 40 ? C.suc : C.acc} compare={compareVal(loc.conversionRate, allAvg.conversionRate, "%", true)} />
+        <DrillKPI label="Ops Completion" value={`${loc.opsCompletion}%`} color={loc.opsCompletion >= 90 ? C.suc : C.warn} compare={compareVal(loc.opsCompletion, allAvg.opsCompletion, "%", true)} />
+      </div>
+
+      {/* Detailed metrics */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        {/* Left — Revenue breakdown */}
+        <Card style={{ padding: 18 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 12 }}>Revenue Breakdown</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <DrillRow label="Boarding Revenue" value={`$${fmt$k(loc.boardingRevenue)}`} />
+            <DrillRow label="Daycare Revenue" value={`$${fmt$k(loc.daycareRevenue)}`} />
+            <DrillRow label="Avg Transaction" value={`$${loc.avgTransaction}`} />
+            <DrillRow label="RevPAR" value={`$${loc.revPAR.toFixed(2)}`} />
+            <DrillRow label="Avg LTV" value={`$${loc.avgLTV.toLocaleString()}`} />
+            <DrillRow label="Revenue Trend" value={<TrendBadge value={loc.revenueTrend} />} />
+          </div>
+        </Card>
+
+        {/* Right — Operational stats */}
+        <Card style={{ padding: 18 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.text, marginBottom: 12 }}>Operations & Funnel</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <DrillRow label="Dogs In House" value={loc.totalDogs} />
+            <DrillRow label="Boarding / Daycare" value={`${loc.boardingDogs} / ${loc.daycareDogs}`} />
+            <DrillRow label="Total Bookings" value={loc.bookings} />
+            <DrillRow label="New Leads" value={loc.newLeads} />
+            <DrillRow label="Contacted" value={loc.contacted} />
+            <DrillRow label="New Customers" value={loc.newCustomers} />
+            <DrillRow label="Churn Rate" value={<span style={{ color: loc.churnRate > 6 ? C.dan : C.suc, fontWeight: 600 }}>{loc.churnRate.toFixed(1)}%</span>} compare={compareVal(loc.churnRate, allAvg.churnRate, "%", false)} />
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function DrillKPI({ label, value, color, compare }) {
+  return (
+    <div style={{ padding: "16px", borderRadius: 12, background: `${color}08`, border: `1.5px solid ${color}20`, textAlign: "center" }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color, marginBottom: 4 }}>{value}</div>
+      {compare}
+    </div>
+  );
+}
+
+function DrillRow({ label, value, compare }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.borderLight}` }}>
+      <span style={{ fontSize: 12, color: C.textSec }}>{label}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{value}</span>
+        {compare}
+      </div>
+    </div>
+  );
+}
