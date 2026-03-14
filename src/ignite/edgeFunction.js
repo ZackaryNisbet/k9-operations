@@ -1,10 +1,11 @@
 /**
  * Ignite Email Webhook — Supabase Edge Function Template
- * IGN-001
+ * IGN-001 / IGN-002
  *
  * Deploy as a Supabase Edge Function. Receives POST webhooks from an
  * email forwarding service (e.g., Resend inbound), parses the Ignite
- * email, matches to existing clients, and stores in the database.
+ * email, matches to existing clients using enhanced matching (IGN-002),
+ * and stores in the database.
  *
  * To deploy:
  *   supabase functions deploy ignite-webhook --project-ref <ref>
@@ -13,8 +14,8 @@
  * the Vite app — it's a standalone edge function template.
  */
 
-import { parseIgniteEmail, parseRegex } from './parser.js';
-import { matchLeadToClient } from './matchClient.js';
+import { parseIgniteEmail } from './parser.js';
+import { matchLeadToClient, classifyMatchStatus } from './matchClient.js';
 import { IGNITE_SENDER_EMAIL, MATCH_STATUSES, AUTO_MATCH_THRESHOLD } from './constants.js';
 
 const CORS_HEADERS = {
@@ -135,13 +136,13 @@ export async function handleWebhook(req, supabaseClient) {
       });
     }
 
-    // Match to existing clients
-    const { data: clients } = await supabaseClient
-      .from('clients')
+    // Match to existing clients via gingr_owners (IGN-002 enhanced matching)
+    const { data: owners } = await supabaseClient
+      .from('gingr_owners')
       .select('id, email, phone, first_name, last_name')
       .eq('location_id', locationId);
 
-    const clientList = (clients || []).map((c) => ({
+    const clientList = (owners || []).map((c) => ({
       id: c.id,
       email: c.email,
       phone: c.phone,
@@ -150,16 +151,13 @@ export async function handleWebhook(req, supabaseClient) {
     }));
 
     const matchResult = matchLeadToClient(parsed, clientList);
+    const matchStatus = classifyMatchStatus(matchResult);
 
-    // Determine match status
-    let matchStatus = MATCH_STATUSES.NEW;
-    if (matchResult.matched) {
-      matchStatus = matchResult.confidence >= AUTO_MATCH_THRESHOLD
-        ? MATCH_STATUSES.MATCHED
-        : MATCH_STATUSES.REVIEW;
-    } else {
-      matchStatus = MATCH_STATUSES.NO_MATCH;
-    }
+    // Build candidate list for review queue
+    const candidates = (matchResult.allMatches || [])
+      .filter((m) => m.confidence >= 0.5)
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 5);
 
     // Insert the lead
     const { data: lead, error: insertError } = await supabaseClient
@@ -180,6 +178,14 @@ export async function handleWebhook(req, supabaseClient) {
         matched_client_id: matchResult.clientId,
         match_status: matchStatus,
         match_confidence: matchResult.confidence || null,
+        match_type: matchResult.matchType || null,
+        match_candidates: matchStatus === MATCH_STATUSES.REVIEW
+          ? candidates.map((c) => ({
+              client_id: c.clientId,
+              confidence: c.confidence,
+              match_type: c.matchType,
+            }))
+          : null,
         processed_at: new Date().toISOString(),
       })
       .select('id')
@@ -201,6 +207,7 @@ export async function handleWebhook(req, supabaseClient) {
       matchStatus,
       matchConfidence: matchResult.confidence,
       matchType: matchResult.matchType,
+      candidateCount: candidates.length,
     }), {
       status: 200,
       headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },

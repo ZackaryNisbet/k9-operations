@@ -1,4 +1,4 @@
--- IGN-001: Ignite Email Parser — Supabase Migration
+-- IGN-001 + IGN-002: Ignite Email Parser & Client Matching — Supabase Migration
 -- Run this in the Supabase SQL Editor (Dashboard → SQL Editor → New Query)
 
 -- ─── ignite_leads ─────────────────────────────────────────────────────────────
@@ -20,6 +20,10 @@ CREATE TABLE IF NOT EXISTS ignite_leads (
   matched_client_id   uuid,
   match_status        text NOT NULL DEFAULT 'new' CHECK (match_status IN ('new', 'matched', 'review', 'no_match')),
   match_confidence    real,
+  match_type          text,                          -- IGN-002: email, phone, name, phone_name
+  match_candidates    jsonb,                         -- IGN-002: array of { client_id, confidence, match_type }
+  resolved_by         uuid,                          -- IGN-002: user who resolved a review item
+  resolved_at         timestamptz,                   -- IGN-002: when the review was resolved
   processed_at        timestamptz,
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now()
@@ -33,6 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_ignite_leads_email         ON ignite_leads(email)
 CREATE INDEX IF NOT EXISTS idx_ignite_leads_phone         ON ignite_leads(phone);
 CREATE INDEX IF NOT EXISTS idx_ignite_leads_match_status  ON ignite_leads(match_status);
 CREATE INDEX IF NOT EXISTS idx_ignite_leads_created_at    ON ignite_leads(created_at);
+CREATE INDEX IF NOT EXISTS idx_ignite_leads_matched_client ON ignite_leads(matched_client_id);  -- IGN-002
 
 -- ─── ignite_config ────────────────────────────────────────────────────────────
 
@@ -110,3 +115,12 @@ CREATE TRIGGER ignite_leads_updated_at
 CREATE TRIGGER ignite_config_updated_at
   BEFORE UPDATE ON ignite_config
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ─── IGN-002 Migration (add columns to existing tables) ──────────────────────
+-- Run this section if tables already exist from IGN-001:
+
+-- ALTER TABLE ignite_leads ADD COLUMN IF NOT EXISTS match_type text;
+-- ALTER TABLE ignite_leads ADD COLUMN IF NOT EXISTS match_candidates jsonb;
+-- ALTER TABLE ignite_leads ADD COLUMN IF NOT EXISTS resolved_by uuid;
+-- ALTER TABLE ignite_leads ADD COLUMN IF NOT EXISTS resolved_at timestamptz;
+-- CREATE INDEX IF NOT EXISTS idx_ignite_leads_matched_client ON ignite_leads(matched_client_id);
