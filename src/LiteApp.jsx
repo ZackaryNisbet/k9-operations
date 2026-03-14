@@ -4827,6 +4827,7 @@ function OperationsHub({ data, save, nav, profile }) {
         // Dynamically discover all unique services from today's in-house reservations
         const EXCLUDED_SERVICES = ["food from home", "medication administration", "private play overnight rate"];
         const reservations = data.reservations || [];
+        const dataLoaded = reservations.length > 0;
         const inHouseToday = reservations.filter(r =>
           (r.status === "checked-in" || r.status === "upcoming") &&
           r.checkIn <= viewDate && r.checkOut >= viewDate
@@ -4849,27 +4850,31 @@ function OperationsHub({ data, save, nav, profile }) {
         svcSet.delete("Pamper Package");
         svcSet.delete("Pamper Package Plus");
 
+        // Always show Bathing + Pamper as core services, even before data loads
         const orderedServices = [];
-        if (svcSet.has("Bath")) { orderedServices.push({ name: "Bath", routeKey: "bathing", desc: "Auto-pulled bath types from Gingr" }); svcSet.delete("Bath"); }
-        if (hasPamper) { orderedServices.push({ name: "Pamper Package Plus", routeKey: "pamper", desc: "Luxury Suite + Add-On dogs" }); }
+        orderedServices.push({ name: "Bath", routeKey: "bathing", desc: "Auto-pulled bath types from Gingr" });
+        svcSet.delete("Bath");
+        orderedServices.push({ name: "Pamper Package Plus", routeKey: "pamper", desc: "Luxury Suite + Add-On dogs" });
+        // Add any additional discovered services
         Array.from(svcSet).sort().forEach(name => {
           const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/_+$/, "");
           orderedServices.push({ name, routeKey: `svc_${key}`, desc: "Service report" });
         });
 
-        if (orderedServices.length === 0) return null;
+        const dynamicCount = orderedServices.length - 2; // extra beyond bath + pamper
         return (
           <div style={{ marginBottom: 32 }}>
             <div style={{ margin: "8px 0 18px", height: 1, background: C.borderLight }} />
             <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
               Services
               <span style={{ fontSize: 12, fontWeight: 500, color: C.textMut, marginLeft: 4 }}>
-                ({orderedServices.length} active)
+                {dataLoaded ? `(${orderedServices.length} active)` : ""}
               </span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
               {orderedServices.map(item => {
                 let count = 0;
+                let countReady = dataLoaded;
                 if (item.routeKey === "bathing") {
                   count = inHouseToday.filter(r => {
                     const svcs = r._services;
@@ -4911,7 +4916,7 @@ function OperationsHub({ data, save, nav, profile }) {
                     <div style={{ marginBottom: 6 }}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{item.name === "Bath" ? "Bathing Report" : item.name}</div>
                       <div style={{ fontSize: 12, color: C.textSec, marginTop: 3 }}>
-                        {count > 0 ? `${count} dog${count !== 1 ? "s" : ""} today` : "No dogs today"}{item.desc ? ` · ${item.desc}` : ""}
+                        {countReady ? (count > 0 ? `${count} dog${count !== 1 ? "s" : ""} today` : "No dogs today") : "Loading…"}{item.desc ? ` · ${item.desc}` : ""}
                       </div>
                     </div>
                     <span style={{ position: "absolute", top: 18, right: 16, color: C.textMut, fontSize: 16 }}>›</span>

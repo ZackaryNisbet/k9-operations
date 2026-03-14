@@ -80,6 +80,7 @@ ALTER TABLE lite_daily_ops ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lite_audit_log ENABLE ROW LEVEL SECURITY;
 
 -- lite_daily_ops: location members can read; managers+ can write
+DROP POLICY IF EXISTS "lite_daily_ops_select" ON lite_daily_ops;
 CREATE POLICY lite_daily_ops_select ON lite_daily_ops
   FOR SELECT USING (
     EXISTS (
@@ -91,6 +92,7 @@ CREATE POLICY lite_daily_ops_select ON lite_daily_ops
     )
   );
 
+DROP POLICY IF EXISTS "lite_daily_ops_insert" ON lite_daily_ops;
 CREATE POLICY lite_daily_ops_insert ON lite_daily_ops
   FOR INSERT WITH CHECK (
     EXISTS (
@@ -102,6 +104,7 @@ CREATE POLICY lite_daily_ops_insert ON lite_daily_ops
     )
   );
 
+DROP POLICY IF EXISTS "lite_daily_ops_update" ON lite_daily_ops;
 CREATE POLICY lite_daily_ops_update ON lite_daily_ops
   FOR UPDATE USING (
     EXISTS (
@@ -113,6 +116,7 @@ CREATE POLICY lite_daily_ops_update ON lite_daily_ops
     )
   );
 
+DROP POLICY IF EXISTS "lite_daily_ops_delete" ON lite_daily_ops;
 CREATE POLICY lite_daily_ops_delete ON lite_daily_ops
   FOR DELETE USING (
     EXISTS (
@@ -125,6 +129,7 @@ CREATE POLICY lite_daily_ops_delete ON lite_daily_ops
   );
 
 -- lite_audit_log: location members can read; system and managers+ can write
+DROP POLICY IF EXISTS "lite_audit_log_select" ON lite_audit_log;
 CREATE POLICY lite_audit_log_select ON lite_audit_log
   FOR SELECT USING (
     EXISTS (
@@ -136,6 +141,7 @@ CREATE POLICY lite_audit_log_select ON lite_audit_log
     )
   );
 
+DROP POLICY IF EXISTS "lite_audit_log_insert" ON lite_audit_log;
 CREATE POLICY lite_audit_log_insert ON lite_audit_log
   FOR INSERT WITH CHECK (
     EXISTS (
@@ -148,9 +154,11 @@ CREATE POLICY lite_audit_log_insert ON lite_audit_log
   );
 
 -- Audit logs should generally never be updated or deleted
+DROP POLICY IF EXISTS "lite_audit_log_update" ON lite_audit_log;
 CREATE POLICY lite_audit_log_update ON lite_audit_log
   FOR UPDATE USING (false);  -- No updates allowed
 
+DROP POLICY IF EXISTS "lite_audit_log_delete" ON lite_audit_log;
 CREATE POLICY lite_audit_log_delete ON lite_audit_log
   FOR DELETE USING (
     EXISTS (
