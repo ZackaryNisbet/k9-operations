@@ -493,7 +493,7 @@ const TRACKER_DATA = {
       title: "TV Navigation",
       category: "Checkout TV",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Add view buttons: All, Small Daycare, Large Daycare, Private Play.",
       spec: "Rename the navbar item to \"TV\". When clicked, show four navigation buttons for different full-screen views:\n\n1. **All** — The current view showing all dogs (already built)\n2. **Small Daycare** — Only small daycare dogs\n3. **Large Daycare** — Only large daycare dogs\n4. **Private Play** — Only private play dogs\n\nEach view should be a full-screen TV-optimized display.",
       dataRequirements: ["gingr_reservations", "gingr_animals", "animal_icons"],
