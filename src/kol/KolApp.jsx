@@ -31,6 +31,7 @@ import CheckoutTVPage from "./pages/CheckoutTVPage";
 import LiteReportsPage from "./pages/ReportsPage";
 import PhotosPage from "./pages/PhotosPage";
 import SettingsPage from "./pages/SettingsPage";
+import DashboardPage from "./pages/DashboardPage";
 import EnterpriseOpsMatrix from "./enterprise/OpsMatrix";
 import EnterpriseAttendance from "./enterprise/Attendance";
 import EnterpriseUserManagement from "./enterprise/UserManagement";
@@ -52,6 +53,7 @@ class LeanAppErrorBoundary extends React.Component {
 
 // ─── Navigation Config ───────────────────────────────────────────────────
 const LEAN_NAV_ITEMS = [
+  { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
   { id: "funnel", label: "Funnel", icon: "TrendingUp" },
   { id: "ops-hub", label: "Operations", icon: "Clipboard" },
@@ -63,6 +65,7 @@ const LEAN_NAV_ITEMS = [
 ];
 
 const LEAN_ENTERPRISE_NAV_ITEMS = [
+  { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "enterprise-ops", label: "Operations Matrix", icon: "Dashboard" },
   { id: "enterprise-attendance", label: "Attendance", icon: "Calendar" },
   { id: "enterprise-users", label: "User Management", icon: "Users" },
@@ -78,9 +81,9 @@ const K9_LEAN_LOCATIONS = [
 // ─── Main App Component ───────────────────────────────────────────────────
 function LeanAppInner() {
   const { user, profile: authProfile } = useAuth();
-  const [page, setPage] = useState("lifecycle");
+  const [page, setPage] = useState("dashboard");
   const [params, setParams] = useState({});
-  const [navStack, setNavStack] = useState([{ page: "lifecycle", params: {} }]);
+  const [navStack, setNavStack] = useState([{ page: "dashboard", params: {} }]);
   const [lcFilters, setLcFilters] = useState({});
   const [lcFilterOpen, setLcFilterOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -276,7 +279,7 @@ function LeanAppInner() {
   }, [currentLocation, user?.id, liveAuditLog.length, mockData?.clients]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["lifecycle", "funnel", "ops-hub", "reports", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard", "lifecycle", "funnel", "ops-hub", "reports", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -290,6 +293,7 @@ function LeanAppInner() {
   // Breadcrumb label formatter
   const breadcrumbLabel = useCallback((pg, prms) => {
     switch(pg) {
+      case "dashboard": return "Dashboard";
       case "lifecycle": return "Customer Lifecycle";
       case "funnel": return "Conversion Funnel";
       case "ops-hub": return "Operations";
@@ -409,6 +413,8 @@ function LeanAppInner() {
     }
 
     switch (page) {
+      case "dashboard":
+        return <DashboardPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "lifecycle":
         return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Customer Lifecycle not available on Enterprise view</div> : (
           <ClientsPage
