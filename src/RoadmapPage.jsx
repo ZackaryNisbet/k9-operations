@@ -741,22 +741,6 @@ const TRACKER_DATA = {
       screenshots: [],
       notes: "Quick win — rename in nav and page header."
     },
-    {
-      id: "SET-002",
-      title: "Remove Dayboarding Section from Settings",
-      category: "Settings",
-      priority: "P3",
-      status: "completed",
-      description: "Remove the irrelevant Dayboarding section from Settings.",
-      spec: "The Dayboarding section in Settings has been removed as it was not relevant to K9 Ops Lite.",
-      dataRequirements: [],
-      dependencies: [],
-      activityLog: [
-        { date: "2026-03-14", entry: "Task completed previously — already removed" }
-      ],
-      screenshots: [],
-      notes: "Done."
-    },
 
     // ─── Data Expansion ───
     {
