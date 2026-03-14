@@ -4,7 +4,7 @@
 -- Creates animal enrichment tables synced from Gingr:
 --   - gingr_feeding_schedules: dog feeding instructions and schedules
 --   - gingr_medications: medication records for animals
---   - gingr_immunizations: actual immunization records per animal
+--   - gingr_immunizations: ADD COLUMNS to existing table for enriched records
 --   - gingr_vets: veterinarian information linked to animals
 --   - gingr_animal_icons: custom animal icons/photos (playgroup icons)
 --
@@ -12,6 +12,10 @@
 -- Dog TV differentiation (TV-003), and complete animal profiles.
 --
 -- Dependencies: DE-002 (Phase 1 reference tables must be in place)
+--
+-- Note: gingr_immunizations already exists in the current schema
+-- (20260313_gingr_sync_tables.sql). This migration adds missing columns
+-- via ALTER TABLE instead of creating a conflicting table.
 -- =============================================================================
 
 -- ─── gingr_feeding_schedules ─────────────────────────────────────────────────
@@ -20,9 +24,9 @@
 
 CREATE TABLE IF NOT EXISTS gingr_feeding_schedules (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
-  animal_gingr_id BIGINT NOT NULL,               -- FK to gingr_animals.gingr_id
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
+  animal_gingr_id TEXT NOT NULL,                  -- FK to gingr_animals.gingr_id
   food_type       TEXT,                           -- dry, wet, raw, prescription, etc.
   food_brand      TEXT,                           -- brand/product name
   amount          TEXT,                           -- e.g. '1 cup', '0.5 can'
@@ -44,15 +48,13 @@ CREATE INDEX IF NOT EXISTS idx_gingr_feeding_schedules_location
 CREATE INDEX IF NOT EXISTS idx_gingr_feeding_schedules_animal
   ON gingr_feeding_schedules(location_id, animal_gingr_id);
 
--- RLS policy: location-scoped access
+-- RLS policy: authenticated read + service_role write (matches existing pattern)
 ALTER TABLE gingr_feeding_schedules ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_feeding_schedules_location_policy
-  ON gingr_feeding_schedules
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_feeding_schedules_read" ON gingr_feeding_schedules;
+CREATE POLICY "gingr_feeding_schedules_read" ON gingr_feeding_schedules FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_feeding_schedules_service" ON gingr_feeding_schedules;
+CREATE POLICY "gingr_feeding_schedules_service" ON gingr_feeding_schedules FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── gingr_medications ───────────────────────────────────────────────────────
@@ -61,9 +63,9 @@ CREATE POLICY gingr_feeding_schedules_location_policy
 
 CREATE TABLE IF NOT EXISTS gingr_medications (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
-  animal_gingr_id BIGINT NOT NULL,               -- FK to gingr_animals.gingr_id
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
+  animal_gingr_id TEXT NOT NULL,                  -- FK to gingr_animals.gingr_id
   medication_name TEXT NOT NULL,
   dosage          TEXT,                           -- e.g. '10mg', '1 tablet'
   frequency       TEXT,                           -- e.g. 'twice daily', 'as needed'
@@ -90,56 +92,103 @@ CREATE INDEX IF NOT EXISTS idx_gingr_medications_active
 
 ALTER TABLE gingr_medications ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_medications_location_policy
-  ON gingr_medications
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_medications_read" ON gingr_medications;
+CREATE POLICY "gingr_medications_read" ON gingr_medications FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_medications_service" ON gingr_medications;
+CREATE POLICY "gingr_medications_service" ON gingr_medications FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
--- ─── gingr_immunizations ─────────────────────────────────────────────────────
--- Actual immunization records per animal synced from Gingr. Links to
--- gingr_immunization_types for the type definition.
+-- ─── gingr_immunizations (ADD COLUMNS to existing table) ─────────────────────
+-- The gingr_immunizations table already exists with:
+--   (id, gingr_id TEXT, location_id TEXT, animal_gingr_id TEXT, type_name,
+--    type_id, expiration_date BIGINT, formatted_expiry, last_updated_at,
+--    updated_by, note, synced_at)
+-- We add extra columns needed for enriched immunization records.
 
-CREATE TABLE IF NOT EXISTS gingr_immunizations (
-  id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id             UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id                BIGINT,
-  animal_gingr_id         BIGINT NOT NULL,        -- FK to gingr_animals.gingr_id
-  immunization_type_gingr_id BIGINT,              -- FK to gingr_immunization_types.gingr_id
-  vaccination_name        TEXT,                    -- name/label of the vaccination
-  date_administered       DATE,
-  expiration_date         DATE,                    -- when this immunization expires
-  administered_by         TEXT,                    -- vet or clinic name
-  lot_number              TEXT,                    -- vaccine lot number
-  is_verified             BOOLEAN NOT NULL DEFAULT FALSE,
-  verification_notes      TEXT,                    -- notes on verification status
-  raw_data                JSONB DEFAULT '{}',      -- full Gingr API response
-  synced_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_immunizations' AND column_name = 'immunization_type_gingr_id'
+  ) THEN
+    ALTER TABLE gingr_immunizations ADD COLUMN immunization_type_gingr_id TEXT;
+  END IF;
 
-  UNIQUE (location_id, gingr_id)
-);
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_immunizations' AND column_name = 'vaccination_name'
+  ) THEN
+    ALTER TABLE gingr_immunizations ADD COLUMN vaccination_name TEXT;
+  END IF;
 
-CREATE INDEX IF NOT EXISTS idx_gingr_immunizations_location
-  ON gingr_immunizations(location_id);
-CREATE INDEX IF NOT EXISTS idx_gingr_immunizations_animal
-  ON gingr_immunizations(location_id, animal_gingr_id);
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_immunizations' AND column_name = 'date_administered'
+  ) THEN
+    ALTER TABLE gingr_immunizations ADD COLUMN date_administered DATE;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_immunizations' AND column_name = 'expiration_date_formatted'
+  ) THEN
+    ALTER TABLE gingr_immunizations ADD COLUMN expiration_date_formatted DATE;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_immunizations' AND column_name = 'administered_by'
+  ) THEN
+    ALTER TABLE gingr_immunizations ADD COLUMN administered_by TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_immunizations' AND column_name = 'lot_number'
+  ) THEN
+    ALTER TABLE gingr_immunizations ADD COLUMN lot_number TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_immunizations' AND column_name = 'is_verified'
+  ) THEN
+    ALTER TABLE gingr_immunizations ADD COLUMN is_verified BOOLEAN NOT NULL DEFAULT FALSE;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_immunizations' AND column_name = 'verification_notes'
+  ) THEN
+    ALTER TABLE gingr_immunizations ADD COLUMN verification_notes TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_immunizations' AND column_name = 'raw_data'
+  ) THEN
+    ALTER TABLE gingr_immunizations ADD COLUMN raw_data JSONB DEFAULT '{}';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_immunizations' AND column_name = 'created_at'
+  ) THEN
+    ALTER TABLE gingr_immunizations ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_immunizations' AND column_name = 'updated_at'
+  ) THEN
+    ALTER TABLE gingr_immunizations ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_gingr_immunizations_type
   ON gingr_immunizations(location_id, immunization_type_gingr_id);
-CREATE INDEX IF NOT EXISTS idx_gingr_immunizations_expiration
-  ON gingr_immunizations(location_id, expiration_date);
-
-ALTER TABLE gingr_immunizations ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY gingr_immunizations_location_policy
-  ON gingr_immunizations
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+CREATE INDEX IF NOT EXISTS idx_gingr_immunizations_expiration_fmt
+  ON gingr_immunizations(location_id, expiration_date_formatted);
 
 
 -- ─── gingr_vets ──────────────────────────────────────────────────────────────
@@ -148,10 +197,10 @@ CREATE POLICY gingr_immunizations_location_policy
 
 CREATE TABLE IF NOT EXISTS gingr_vets (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
-  animal_gingr_id BIGINT,                        -- FK to gingr_animals.gingr_id (nullable for shared vets)
-  owner_gingr_id  BIGINT,                        -- FK to gingr_owners.gingr_id
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
+  animal_gingr_id TEXT,                           -- FK to gingr_animals.gingr_id (nullable for shared vets)
+  owner_gingr_id  TEXT,                           -- FK to gingr_owners.gingr_id
   vet_name        TEXT NOT NULL,
   clinic_name     TEXT,
   phone           TEXT,
@@ -179,12 +228,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_vets_owner
 
 ALTER TABLE gingr_vets ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_vets_location_policy
-  ON gingr_vets
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_vets_read" ON gingr_vets;
+CREATE POLICY "gingr_vets_read" ON gingr_vets FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_vets_service" ON gingr_vets;
+CREATE POLICY "gingr_vets_service" ON gingr_vets FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── gingr_animal_icons ──────────────────────────────────────────────────────
@@ -193,9 +240,9 @@ CREATE POLICY gingr_vets_location_policy
 
 CREATE TABLE IF NOT EXISTS gingr_animal_icons (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
-  animal_gingr_id BIGINT NOT NULL,               -- FK to gingr_animals.gingr_id
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
+  animal_gingr_id TEXT NOT NULL,                  -- FK to gingr_animals.gingr_id
   icon_url        TEXT,                           -- URL or path to the icon/photo
   icon_type       TEXT NOT NULL DEFAULT 'photo',  -- photo, playgroup_icon, profile_icon
   is_primary      BOOLEAN NOT NULL DEFAULT FALSE, -- primary display icon for this animal
@@ -219,12 +266,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_animal_icons_type
 
 ALTER TABLE gingr_animal_icons ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_animal_icons_location_policy
-  ON gingr_animal_icons
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_animal_icons_read" ON gingr_animal_icons;
+CREATE POLICY "gingr_animal_icons_read" ON gingr_animal_icons FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_animal_icons_service" ON gingr_animal_icons;
+CREATE POLICY "gingr_animal_icons_service" ON gingr_animal_icons FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── Sync state entries for new tables ──────────────────────────────────────
