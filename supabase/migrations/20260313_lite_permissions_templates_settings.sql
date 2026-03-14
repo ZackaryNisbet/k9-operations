@@ -114,6 +114,7 @@ CREATE TRIGGER trg_lite_settings_updated_at
 -- lite_permissions
 ALTER TABLE lite_permissions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "lite_permissions_select" ON lite_permissions;
 CREATE POLICY lite_permissions_select ON lite_permissions
   FOR SELECT USING (
     EXISTS (
@@ -125,6 +126,7 @@ CREATE POLICY lite_permissions_select ON lite_permissions
     )
   );
 
+DROP POLICY IF EXISTS "lite_permissions_insert" ON lite_permissions;
 CREATE POLICY lite_permissions_insert ON lite_permissions
   FOR INSERT WITH CHECK (
     EXISTS (
@@ -136,6 +138,7 @@ CREATE POLICY lite_permissions_insert ON lite_permissions
     )
   );
 
+DROP POLICY IF EXISTS "lite_permissions_update" ON lite_permissions;
 CREATE POLICY lite_permissions_update ON lite_permissions
   FOR UPDATE USING (
     EXISTS (
@@ -147,6 +150,7 @@ CREATE POLICY lite_permissions_update ON lite_permissions
     )
   );
 
+DROP POLICY IF EXISTS "lite_permissions_delete" ON lite_permissions;
 CREATE POLICY lite_permissions_delete ON lite_permissions
   FOR DELETE USING (
     EXISTS (
@@ -162,6 +166,7 @@ CREATE POLICY lite_permissions_delete ON lite_permissions
 -- lite_checklist_templates
 ALTER TABLE lite_checklist_templates ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "lite_checklist_templates_select" ON lite_checklist_templates;
 CREATE POLICY lite_checklist_templates_select ON lite_checklist_templates
   FOR SELECT USING (
     EXISTS (
@@ -173,6 +178,7 @@ CREATE POLICY lite_checklist_templates_select ON lite_checklist_templates
     )
   );
 
+DROP POLICY IF EXISTS "lite_checklist_templates_insert" ON lite_checklist_templates;
 CREATE POLICY lite_checklist_templates_insert ON lite_checklist_templates
   FOR INSERT WITH CHECK (
     EXISTS (
@@ -185,6 +191,7 @@ CREATE POLICY lite_checklist_templates_insert ON lite_checklist_templates
     )
   );
 
+DROP POLICY IF EXISTS "lite_checklist_templates_update" ON lite_checklist_templates;
 CREATE POLICY lite_checklist_templates_update ON lite_checklist_templates
   FOR UPDATE USING (
     EXISTS (
@@ -197,6 +204,7 @@ CREATE POLICY lite_checklist_templates_update ON lite_checklist_templates
     )
   );
 
+DROP POLICY IF EXISTS "lite_checklist_templates_delete" ON lite_checklist_templates;
 CREATE POLICY lite_checklist_templates_delete ON lite_checklist_templates
   FOR DELETE USING (
     EXISTS (
@@ -212,6 +220,7 @@ CREATE POLICY lite_checklist_templates_delete ON lite_checklist_templates
 -- lite_settings
 ALTER TABLE lite_settings ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "lite_settings_select" ON lite_settings;
 CREATE POLICY lite_settings_select ON lite_settings
   FOR SELECT USING (
     EXISTS (
@@ -223,6 +232,7 @@ CREATE POLICY lite_settings_select ON lite_settings
     )
   );
 
+DROP POLICY IF EXISTS "lite_settings_insert" ON lite_settings;
 CREATE POLICY lite_settings_insert ON lite_settings
   FOR INSERT WITH CHECK (
     EXISTS (
@@ -235,6 +245,7 @@ CREATE POLICY lite_settings_insert ON lite_settings
     )
   );
 
+DROP POLICY IF EXISTS "lite_settings_update" ON lite_settings;
 CREATE POLICY lite_settings_update ON lite_settings
   FOR UPDATE USING (
     EXISTS (
@@ -247,6 +258,7 @@ CREATE POLICY lite_settings_update ON lite_settings
     )
   );
 
+DROP POLICY IF EXISTS "lite_settings_delete" ON lite_settings;
 CREATE POLICY lite_settings_delete ON lite_settings
   FOR DELETE USING (
     EXISTS (

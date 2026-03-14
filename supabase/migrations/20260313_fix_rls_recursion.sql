@@ -48,6 +48,7 @@ DROP POLICY IF EXISTS lite_profiles_update ON lite_profiles;
 DROP POLICY IF EXISTS lite_profiles_delete ON lite_profiles;
 
 -- Step 3: Recreate non-recursive policies using the helper functions
+DROP POLICY IF EXISTS "lite_profiles_select" ON lite_profiles;
 CREATE POLICY lite_profiles_select ON lite_profiles
   FOR SELECT TO authenticated USING (
     user_id = auth.uid()
@@ -55,17 +56,20 @@ CREATE POLICY lite_profiles_select ON lite_profiles
     OR is_lite_owner_or_enterprise()
   );
 
+DROP POLICY IF EXISTS "lite_profiles_insert" ON lite_profiles;
 CREATE POLICY lite_profiles_insert ON lite_profiles
   FOR INSERT TO authenticated WITH CHECK (
     is_lite_manager_plus()
   );
 
+DROP POLICY IF EXISTS "lite_profiles_update" ON lite_profiles;
 CREATE POLICY lite_profiles_update ON lite_profiles
   FOR UPDATE TO authenticated USING (
     user_id = auth.uid()
     OR is_lite_manager_plus()
   );
 
+DROP POLICY IF EXISTS "lite_profiles_delete" ON lite_profiles;
 CREATE POLICY lite_profiles_delete ON lite_profiles
   FOR DELETE TO authenticated USING (
     is_lite_owner_or_enterprise()
@@ -80,16 +84,20 @@ DROP POLICY IF EXISTS lite_settings_insert ON lite_settings;
 DROP POLICY IF EXISTS lite_settings_update ON lite_settings;
 DROP POLICY IF EXISTS lite_settings_delete ON lite_settings;
 
+DROP POLICY IF EXISTS "lite_settings_select" ON lite_settings;
 CREATE POLICY lite_settings_select ON lite_settings
   FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "lite_settings_insert" ON lite_settings;
 CREATE POLICY lite_settings_insert ON lite_settings
   FOR INSERT TO authenticated WITH CHECK (
     location_id IN (SELECT get_my_lite_location_ids()) OR is_lite_owner_or_enterprise()
   );
+DROP POLICY IF EXISTS "lite_settings_update" ON lite_settings;
 CREATE POLICY lite_settings_update ON lite_settings
   FOR UPDATE TO authenticated USING (
     location_id IN (SELECT get_my_lite_location_ids()) OR is_lite_owner_or_enterprise()
   );
+DROP POLICY IF EXISTS "lite_settings_delete" ON lite_settings;
 CREATE POLICY lite_settings_delete ON lite_settings
   FOR DELETE TO authenticated USING (
     is_lite_owner_or_enterprise()
@@ -101,16 +109,20 @@ DROP POLICY IF EXISTS lite_checklist_templates_insert ON lite_checklist_template
 DROP POLICY IF EXISTS lite_checklist_templates_update ON lite_checklist_templates;
 DROP POLICY IF EXISTS lite_checklist_templates_delete ON lite_checklist_templates;
 
+DROP POLICY IF EXISTS "lite_checklist_templates_select" ON lite_checklist_templates;
 CREATE POLICY lite_checklist_templates_select ON lite_checklist_templates
   FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "lite_checklist_templates_insert" ON lite_checklist_templates;
 CREATE POLICY lite_checklist_templates_insert ON lite_checklist_templates
   FOR INSERT TO authenticated WITH CHECK (
     location_id IN (SELECT get_my_lite_location_ids()) OR is_lite_owner_or_enterprise()
   );
+DROP POLICY IF EXISTS "lite_checklist_templates_update" ON lite_checklist_templates;
 CREATE POLICY lite_checklist_templates_update ON lite_checklist_templates
   FOR UPDATE TO authenticated USING (
     location_id IN (SELECT get_my_lite_location_ids()) OR is_lite_owner_or_enterprise()
   );
+DROP POLICY IF EXISTS "lite_checklist_templates_delete" ON lite_checklist_templates;
 CREATE POLICY lite_checklist_templates_delete ON lite_checklist_templates
   FOR DELETE TO authenticated USING (
     is_lite_owner_or_enterprise()
@@ -122,12 +134,16 @@ DROP POLICY IF EXISTS lite_permissions_insert ON lite_permissions;
 DROP POLICY IF EXISTS lite_permissions_update ON lite_permissions;
 DROP POLICY IF EXISTS lite_permissions_delete ON lite_permissions;
 
+DROP POLICY IF EXISTS "lite_permissions_select" ON lite_permissions;
 CREATE POLICY lite_permissions_select ON lite_permissions
   FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "lite_permissions_insert" ON lite_permissions;
 CREATE POLICY lite_permissions_insert ON lite_permissions
   FOR INSERT TO authenticated WITH CHECK (is_lite_manager_plus());
+DROP POLICY IF EXISTS "lite_permissions_update" ON lite_permissions;
 CREATE POLICY lite_permissions_update ON lite_permissions
   FOR UPDATE TO authenticated USING (is_lite_manager_plus());
+DROP POLICY IF EXISTS "lite_permissions_delete" ON lite_permissions;
 CREATE POLICY lite_permissions_delete ON lite_permissions
   FOR DELETE TO authenticated USING (is_lite_owner_or_enterprise());
 
@@ -137,16 +153,20 @@ DROP POLICY IF EXISTS lite_daily_ops_insert ON lite_daily_ops;
 DROP POLICY IF EXISTS lite_daily_ops_update ON lite_daily_ops;
 DROP POLICY IF EXISTS lite_daily_ops_delete ON lite_daily_ops;
 
+DROP POLICY IF EXISTS "lite_daily_ops_select" ON lite_daily_ops;
 CREATE POLICY lite_daily_ops_select ON lite_daily_ops
   FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "lite_daily_ops_insert" ON lite_daily_ops;
 CREATE POLICY lite_daily_ops_insert ON lite_daily_ops
   FOR INSERT TO authenticated WITH CHECK (
     location_id IN (SELECT get_my_lite_location_ids()) OR is_lite_owner_or_enterprise()
   );
+DROP POLICY IF EXISTS "lite_daily_ops_update" ON lite_daily_ops;
 CREATE POLICY lite_daily_ops_update ON lite_daily_ops
   FOR UPDATE TO authenticated USING (
     location_id IN (SELECT get_my_lite_location_ids()) OR is_lite_owner_or_enterprise()
   );
+DROP POLICY IF EXISTS "lite_daily_ops_delete" ON lite_daily_ops;
 CREATE POLICY lite_daily_ops_delete ON lite_daily_ops
   FOR DELETE TO authenticated USING (
     is_lite_owner_or_enterprise()
@@ -158,11 +178,15 @@ DROP POLICY IF EXISTS lite_audit_log_insert ON lite_audit_log;
 DROP POLICY IF EXISTS lite_audit_log_update ON lite_audit_log;
 DROP POLICY IF EXISTS lite_audit_log_delete ON lite_audit_log;
 
+DROP POLICY IF EXISTS "lite_audit_log_select" ON lite_audit_log;
 CREATE POLICY lite_audit_log_select ON lite_audit_log
   FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "lite_audit_log_insert" ON lite_audit_log;
 CREATE POLICY lite_audit_log_insert ON lite_audit_log
   FOR INSERT TO authenticated WITH CHECK (true);
+DROP POLICY IF EXISTS "lite_audit_log_update" ON lite_audit_log;
 CREATE POLICY lite_audit_log_update ON lite_audit_log
   FOR UPDATE TO authenticated USING (false);
+DROP POLICY IF EXISTS "lite_audit_log_delete" ON lite_audit_log;
 CREATE POLICY lite_audit_log_delete ON lite_audit_log
   FOR DELETE TO authenticated USING (false);

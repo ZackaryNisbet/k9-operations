@@ -207,26 +207,43 @@ ALTER TABLE gingr_sync_state ENABLE ROW LEVEL SECURITY;
 
 -- Allow authenticated users to read all gingr data
 -- (location-level filtering happens in app queries)
+DROP POLICY IF EXISTS "gingr_owners_read" ON gingr_owners;
 CREATE POLICY "gingr_owners_read" ON gingr_owners FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_animals_read" ON gingr_animals;
 CREATE POLICY "gingr_animals_read" ON gingr_animals FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_reservations_read" ON gingr_reservations;
 CREATE POLICY "gingr_reservations_read" ON gingr_reservations FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_immunizations_read" ON gingr_immunizations;
 CREATE POLICY "gingr_immunizations_read" ON gingr_immunizations FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_reservation_types_read" ON gingr_reservation_types;
 CREATE POLICY "gingr_reservation_types_read" ON gingr_reservation_types FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_breeds_read" ON gingr_breeds;
 CREATE POLICY "gingr_breeds_read" ON gingr_breeds FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_immunization_types_read" ON gingr_immunization_types;
 CREATE POLICY "gingr_immunization_types_read" ON gingr_immunization_types FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_sync_state_read" ON gingr_sync_state;
 CREATE POLICY "gingr_sync_state_read" ON gingr_sync_state FOR SELECT TO authenticated USING (true);
 
 -- Allow service_role (Edge Functions) to do everything
+DROP POLICY IF EXISTS "gingr_owners_service" ON gingr_owners;
 CREATE POLICY "gingr_owners_service" ON gingr_owners FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "gingr_animals_service" ON gingr_animals;
 CREATE POLICY "gingr_animals_service" ON gingr_animals FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "gingr_reservations_service" ON gingr_reservations;
 CREATE POLICY "gingr_reservations_service" ON gingr_reservations FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "gingr_immunizations_service" ON gingr_immunizations;
 CREATE POLICY "gingr_immunizations_service" ON gingr_immunizations FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "gingr_reservation_types_service" ON gingr_reservation_types;
 CREATE POLICY "gingr_reservation_types_service" ON gingr_reservation_types FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "gingr_breeds_service" ON gingr_breeds;
 CREATE POLICY "gingr_breeds_service" ON gingr_breeds FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "gingr_immunization_types_service" ON gingr_immunization_types;
 CREATE POLICY "gingr_immunization_types_service" ON gingr_immunization_types FOR ALL TO service_role USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "gingr_sync_state_service" ON gingr_sync_state;
 CREATE POLICY "gingr_sync_state_service" ON gingr_sync_state FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- Also allow authenticated users to trigger sync (update sync_state)
+DROP POLICY IF EXISTS "gingr_sync_state_write" ON gingr_sync_state;
 CREATE POLICY "gingr_sync_state_write" ON gingr_sync_state FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- ─── Updated_at triggers ───────────────────────────────────────────────────

@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS lite_client_lifecycle (
 -- RLS
 ALTER TABLE lite_client_lifecycle ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "anon_all_lite_client_lifecycle" ON lite_client_lifecycle;
 CREATE POLICY "anon_all_lite_client_lifecycle"
   ON lite_client_lifecycle FOR ALL TO anon
   USING (true) WITH CHECK (true);
