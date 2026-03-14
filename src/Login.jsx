@@ -201,14 +201,10 @@ export default function Login() {
         }}>
           {/* Logo */}
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
-            <div style={{
-              width: 56, height: 56, borderRadius: 14, background: C.navy,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              margin: '0 auto 14px',
-              boxShadow: '0 4px 14px rgba(0,52,98,0.2)',
-            }}>
-              <span style={{ fontSize: 22, fontWeight: 900, color: '#fff', fontFamily: "'GT Eesti', system-ui, sans-serif" }}>K9</span>
-            </div>
+            <img src="/k9-logo.png" alt="K9 Operations" style={{
+              width: 56, height: 'auto', objectFit: 'contain',
+              margin: '0 auto 14px', display: 'block',
+            }} />
             <div style={{ fontSize: 28, fontWeight: 800, color: C.navy, letterSpacing: '-0.02em' }}>
               K9 Operations
             </div>

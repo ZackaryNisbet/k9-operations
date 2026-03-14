@@ -265,12 +265,7 @@ function NavBar() {
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 32, height: 32, borderRadius: 8, background: C.navy,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-          }}>
-            <span style={{ fontSize: 13, fontWeight: 900, color: '#fff', fontFamily: "'GT Eesti', system-ui, sans-serif" }}>K9</span>
-          </div>
+          <img src="/k9-logo.png" alt="K9 Operations" style={{ width: 32, height: 'auto', objectFit: 'contain' }} />
           <span style={{ fontSize: 15, fontWeight: 800, color: C.navy, letterSpacing: '-0.02em' }}>K9 Operations</span>
         </div>
         <a href="/" style={{
