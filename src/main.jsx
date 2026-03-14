@@ -40,7 +40,7 @@ import { AuthProvider, useAuth } from './AuthProvider';
 import { supabase } from './supabaseClient';
 import Login from './Login';
 import App from './App';
-import LiteApp from './LiteApp';
+import LiteApp from './kol/KolApp';
 import BookingPage from './BookingPage';
 import PublicPage from './PublicPages';
 import LandingPage from './LandingPage';
