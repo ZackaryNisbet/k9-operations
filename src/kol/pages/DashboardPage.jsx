@@ -13,6 +13,7 @@ import {
   formatTime12hr, DAY_NAMES_SHORT, ROOM_TYPES,
 } from "../../shared/theme";
 import { I } from "../../shared/icons";
+import { supabase } from "../../supabaseClient";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { getRoomCleaningStats, getPPStats, getOpsProgress, getOpsCountLabel } from "../../shared/opsHelpers";
@@ -196,6 +197,40 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
 
   // Re-trigger animations on range change
   useEffect(() => { setAnimEpoch(e => e + 1); }, [range]);
+
+  // ─── Inventory widget data ──────────────────────────────────────────
+  const [invWidget, setInvWidget] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = new Date(); const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        const mon = new Date(d.getFullYear(), d.getMonth(), diff);
+        const weekStart = mon.toISOString().split("T")[0];
+        const locId = data.locationId || profile?.locationId || "cherry-hill";
+        // Total catalog items
+        const { count: catalogCount } = await supabase.from("inventory_catalog").select("id", { count: "exact", head: true }).eq("location_id", locId).eq("is_active", true);
+        // Below par
+        const { data: belowPar } = await supabase.rpc("exec_sql", {
+          query: "SELECT count(*) as cnt FROM inventory_counts ic JOIN inventory_catalog cat ON cat.id = ic.catalog_item_id JOIN inventory_snapshots s ON s.id = ic.snapshot_id WHERE s.location_id = $1 AND s.week_start = $2 AND ic.stock_count < cat.par_level AND cat.par_level > 0",
+          params: [locId, weekStart]
+        }).catch(() => ({ data: null }));
+        // Current snapshot
+        const { data: snaps } = await supabase.from("inventory_snapshots").select("id, status, completed_at").eq("location_id", locId).eq("week_start", weekStart).limit(1);
+        if (cancelled) return;
+        const snap = snaps?.[0];
+        const belowParCount = belowPar?.[0]?.cnt || 0;
+        setInvWidget({
+          totalItems: catalogCount || 0,
+          belowPar: Number(belowParCount),
+          weekStatus: snap?.status || "not_started",
+          completedAt: snap?.completed_at || null,
+        });
+      } catch { if (!cancelled) setInvWidget(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [data.locationId]);
 
   /* ─── Date range computation ──────────────────────────────────────── */
   const { dateFrom, dateTo, days, prevFrom, prevTo } = useMemo(() => {
@@ -887,6 +922,45 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
           </div>
         </div>
       </div>
+
+      {/* ═══ Inventory Quick-Glance ════════════════════════════════════ */}
+      {invWidget && (
+        <div style={{ ...gridBase, marginBottom: 20 }}>
+          <div className="dash-card" style={{ gridColumn: "span 12", animationDelay: "0.40s", cursor: "pointer" }}
+            onClick={() => nav && nav("inventory")}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <I.Package />
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Weekly Inventory</span>
+              </div>
+              <span style={{
+                fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, textTransform: "uppercase", letterSpacing: "0.04em",
+                background: invWidget.weekStatus === "completed" ? "#D1FAE5" : invWidget.weekStatus === "in_progress" ? "#FEF3C7" : "#F3F4F6",
+                color: invWidget.weekStatus === "completed" ? "#059669" : invWidget.weekStatus === "in_progress" ? "#D97706" : "#6B7280",
+              }}>
+                {invWidget.weekStatus === "completed" ? "Completed" : invWidget.weekStatus === "in_progress" ? "In Progress" : "Not Started"}
+              </span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+              <div style={{ padding: "14px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}`, textAlign: "center" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Catalog Items</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: C.text }}>{invWidget.totalItems}</div>
+              </div>
+              <div style={{ padding: "14px 16px", borderRadius: 10, background: invWidget.belowPar > 0 ? "#FEF3C7" : C.bg, border: `1px solid ${invWidget.belowPar > 0 ? "#F59E0B40" : C.borderLight}`, textAlign: "center" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Below Par Level</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: invWidget.belowPar > 0 ? "#D97706" : C.suc }}>{invWidget.belowPar}</div>
+              </div>
+              <div style={{ padding: "14px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}`, textAlign: "center" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Last Count</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginTop: 4 }}>
+                  {invWidget.completedAt ? new Date(invWidget.completedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ ROW 5 — LTV Methodology (6col) + Discount Analysis (6col) ═══ */}
       <div style={{ ...gridBase, marginBottom: 20 }}>
