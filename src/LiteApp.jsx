@@ -855,13 +855,13 @@ function getPPStats(data, date) {
   const entryId = `ops_pp_${td}`;
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   const ei = entry ? entry.items || {} : {};
-  // Count PP dogs: dogs with "Extra Private Playtime" service on their reservation
+  // Count PP dogs: dogs with "Private Play" add-on OR day boarding dogs
   const reservations = data.reservations || [];
   const ppRes = reservations.filter(r =>
-    (r.type === "boarding" || r.type === "daycare") &&
+    (r.type === "boarding" || r.type === "daycare" || r.type === "dayboarding") &&
     r.status === "checked-in" &&
     r.checkIn <= td && r.checkOut >= td &&
-    resSvcIncludes(r, "Private Play")
+    (resSvcIncludes(r, "Private Play") || r.type === "dayboarding")
   );
   const totalDogs = ppRes.length;
   const requiredSessions = totalDogs * 3; // 3 required let-outs per dog
@@ -5738,13 +5738,18 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   // Picture checklist: boarding, not first day, not last day
   const pictureDogs = data.reservations.filter(r => r.type === "boarding" && r.status === "checked-in" && r.checkIn < viewDate && r.checkOut > viewDate);
 
-  // PP checklist: checked-in dogs (boarding or daycare) with "Extra Private Playtime" in _services
+  // PP checklist: checked-in dogs with Private Play add-on OR day boarding dogs
   const ppReservations = data.reservations.filter(r =>
-    (r.type === "boarding" || r.type === "daycare") &&
+    (r.type === "boarding" || r.type === "daycare" || r.type === "dayboarding") &&
     r.status === "checked-in" &&
     r.checkIn <= viewDate && r.checkOut >= viewDate &&
-    resSvcIncludes(r, "Private Play")
-  ).sort((a, b) => {
+    (resSvcIncludes(r, "Private Play") || r.type === "dayboarding")
+  ).map(r => ({
+    ...r,
+    _ppSource: r.type === "dayboarding"
+      ? (resSvcIncludes(r, "Private Play") ? "Day Boarding + Add-On" : "Day Boarding")
+      : "Private Play Add-On"
+  })).sort((a, b) => {
     const aNum = a.room ? (a.room.match(/(\d+)/) || [])[1] || "" : "";
     const bNum = b.room ? (b.room.match(/(\d+)/) || [])[1] || "" : "";
     return aNum.localeCompare(bNum, undefined, { numeric: true });
@@ -6094,6 +6099,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                 <tr style={{ background: C.surfaceHover }}>
                   <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.textMut, fontSize: 11, borderBottom: `2px solid ${C.border}` }}>DOG</th>
                   <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.textMut, fontSize: 11, borderBottom: `2px solid ${C.border}` }}>ROOM</th>
+                  <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.textMut, fontSize: 11, borderBottom: `2px solid ${C.border}` }}>SOURCE</th>
                   <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: C.textMut, fontSize: 11, borderBottom: `2px solid ${C.border}` }}>OWNER</th>
                   {sesLabels.map((s, si) => (
                     <th key={si} colSpan={3} style={{ padding: "10px 6px", textAlign: "center", fontWeight: isRequired(si) ? 800 : 500, color: isRequired(si) ? C.pri : C.textMut, fontSize: 11, borderBottom: `2px solid ${isRequired(si) ? C.pri : C.border}`, borderLeft: `1px solid ${C.border}`, background: isRequired(si) ? C.priLt : C.surfaceHover }}>
@@ -6102,7 +6108,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                   ))}
                 </tr>
                 <tr style={{ background: C.surfaceHover }}>
-                  <th /><th /><th />
+                  <th /><th /><th /><th />
                   {sesLabels.map((_, si) => (
                     <React.Fragment key={si}>
                       <th style={{ padding: "4px 4px", fontSize: 10, color: C.textMut, fontWeight: 600, textAlign: "center", borderLeft: `1px solid ${C.border}`, background: isRequired(si) ? C.priLt : "transparent" }}>Time</th>
@@ -6121,6 +6127,9 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                     <tr key={r.id} style={{ borderBottom: ri < dogs.length - 1 ? `1px solid ${C.border}` : "none" }}>
                       <td style={{ padding: "8px 12px", fontWeight: 700, color: C.text }}>{d ? d.fields.name : "?"}</td>
                       <td style={{ padding: "8px 12px", color: C.pri, fontWeight: 700, fontSize: 11 }}>{r.room ? (r.room.match(/(\d+)/) || [])[1] || r.room : "—"}</td>
+                      <td style={{ padding: "8px 12px", fontSize: 10, fontWeight: 600, color: r._ppSource === "Day Boarding" ? C.acc : r._ppSource === "Day Boarding + Add-On" ? C.warn : C.pri }}>
+                        <span style={{ padding: "2px 7px", borderRadius: 6, background: r._ppSource === "Day Boarding" ? C.acc + "18" : r._ppSource === "Day Boarding + Add-On" ? C.warn + "18" : C.priLt, whiteSpace: "nowrap" }}>{r._ppSource}</span>
+                      </td>
                       <td style={{ padding: "8px 12px", color: C.textSec, fontSize: 11 }}>{ownerName(r.clientId)}</td>
                       {ses.map((s, si) => {
                         const isEditingTime = ppEditTimePopover && ppEditTimePopover.dogId === r.dogId && ppEditTimePopover.si === si;
