@@ -15,10 +15,10 @@
 
 CREATE TABLE IF NOT EXISTS gingr_invoices (
   id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id       UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id          BIGINT NOT NULL,         -- Gingr invoice ID
-  owner_gingr_id    BIGINT,                  -- FK to gingr_owners.gingr_id
-  reservation_gingr_id BIGINT,               -- FK to gingr_reservations.gingr_id (nullable)
+  location_id       TEXT NOT NULL,
+  gingr_id          TEXT NOT NULL,            -- Gingr invoice ID
+  owner_gingr_id    TEXT,                     -- FK to gingr_owners.gingr_id
+  reservation_gingr_id TEXT,                  -- FK to gingr_reservations.gingr_id (nullable)
   invoice_number    TEXT,                     -- human-readable invoice number
   status            TEXT NOT NULL DEFAULT 'pending', -- pending, paid, partial, void, refunded
   subtotal          NUMERIC(12,2) DEFAULT 0,
@@ -54,12 +54,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_invoices_reservation
 
 ALTER TABLE gingr_invoices ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_invoices_location_policy
-  ON gingr_invoices
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_invoices_read" ON gingr_invoices;
+CREATE POLICY "gingr_invoices_read" ON gingr_invoices FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_invoices_service" ON gingr_invoices;
+CREATE POLICY "gingr_invoices_service" ON gingr_invoices FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── gingr_transactions ─────────────────────────────────────────────────────
@@ -68,10 +66,10 @@ CREATE POLICY gingr_invoices_location_policy
 
 CREATE TABLE IF NOT EXISTS gingr_transactions (
   id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id         UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id            BIGINT NOT NULL,         -- Gingr transaction ID
-  invoice_gingr_id    BIGINT,                  -- FK to gingr_invoices.gingr_id
-  owner_gingr_id      BIGINT,                  -- FK to gingr_owners.gingr_id
+  location_id         TEXT NOT NULL,
+  gingr_id            TEXT NOT NULL,            -- Gingr transaction ID
+  invoice_gingr_id    TEXT,                     -- FK to gingr_invoices.gingr_id
+  owner_gingr_id      TEXT,                     -- FK to gingr_owners.gingr_id
   transaction_type    TEXT NOT NULL DEFAULT 'payment', -- payment, refund, credit, adjustment, void
   payment_method      TEXT,                    -- credit_card, cash, check, account_credit, etc.
   amount              NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -107,12 +105,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_transactions_status
 
 ALTER TABLE gingr_transactions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_transactions_location_policy
-  ON gingr_transactions
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_transactions_read" ON gingr_transactions;
+CREATE POLICY "gingr_transactions_read" ON gingr_transactions FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_transactions_service" ON gingr_transactions;
+CREATE POLICY "gingr_transactions_service" ON gingr_transactions FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── Helpful views for revenue reporting ────────────────────────────────────

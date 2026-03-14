@@ -2,7 +2,7 @@
 -- DE-002: Phase 1 — Reference / Lookup Tables
 -- =============================================================================
 -- Creates reference tables synced from Gingr:
---   - breeds: dog breed reference data
+--   - breeds: dog breed reference data (ADD COLUMNS to existing table)
 --   - species: species types
 --   - immunization_types: vaccination/immunization type definitions
 --   - temperaments: temperament classifications
@@ -10,45 +10,71 @@
 -- Purpose: Needed for dog detail display (CLM-006), Dog Detail Page Enhancement,
 -- and enriching animal profiles across the app.
 --
--- Note: gingr_immunization_types already exists in the current schema. This
--- migration creates the remaining reference tables and ensures immunization_types
--- has all needed columns.
+-- Note: gingr_breeds already exists in the current schema (20260313_gingr_sync_tables.sql).
+-- This migration adds missing columns to the existing table via ALTER TABLE.
+-- gingr_immunization_types also already exists; we add any missing columns.
 -- =============================================================================
 
--- ─── breeds ─────────────────────────────────────────────────────────────────
--- Dog breed reference data synced from Gingr.
+-- ─── breeds (ADD COLUMNS to existing table) ─────────────────────────────────
+-- The gingr_breeds table already exists with (id, gingr_id TEXT, location_id TEXT, name TEXT).
+-- We add the extra columns needed for enriched breed data.
 
-CREATE TABLE IF NOT EXISTS gingr_breeds (
-  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
-  name            TEXT NOT NULL,
-  species_id      BIGINT,                  -- FK to gingr_species.gingr_id
-  size_category   TEXT,                    -- small, medium, large, giant
-  is_active       BOOLEAN NOT NULL DEFAULT TRUE,
-  raw_data        JSONB DEFAULT '{}',
-  synced_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_breeds' AND column_name = 'species_id'
+  ) THEN
+    ALTER TABLE gingr_breeds ADD COLUMN species_id TEXT;
+  END IF;
 
-  UNIQUE (location_id, gingr_id)
-);
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_breeds' AND column_name = 'size_category'
+  ) THEN
+    ALTER TABLE gingr_breeds ADD COLUMN size_category TEXT;
+  END IF;
 
-CREATE INDEX IF NOT EXISTS idx_gingr_breeds_location
-  ON gingr_breeds(location_id);
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_breeds' AND column_name = 'is_active'
+  ) THEN
+    ALTER TABLE gingr_breeds ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_breeds' AND column_name = 'raw_data'
+  ) THEN
+    ALTER TABLE gingr_breeds ADD COLUMN raw_data JSONB DEFAULT '{}';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_breeds' AND column_name = 'synced_at'
+  ) THEN
+    ALTER TABLE gingr_breeds ADD COLUMN synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_breeds' AND column_name = 'created_at'
+  ) THEN
+    ALTER TABLE gingr_breeds ADD COLUMN created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'gingr_breeds' AND column_name = 'updated_at'
+  ) THEN
+    ALTER TABLE gingr_breeds ADD COLUMN updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_gingr_breeds_species
   ON gingr_breeds(location_id, species_id);
 CREATE INDEX IF NOT EXISTS idx_gingr_breeds_name
   ON gingr_breeds(location_id, name);
-
-ALTER TABLE gingr_breeds ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY gingr_breeds_location_policy
-  ON gingr_breeds
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
 
 
 -- ─── species ────────────────────────────────────────────────────────────────
@@ -56,8 +82,8 @@ CREATE POLICY gingr_breeds_location_policy
 
 CREATE TABLE IF NOT EXISTS gingr_species (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
   name            TEXT NOT NULL,           -- e.g. 'Dog', 'Cat', 'Bird'
   is_active       BOOLEAN NOT NULL DEFAULT TRUE,
   raw_data        JSONB DEFAULT '{}',
@@ -73,12 +99,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_species_location
 
 ALTER TABLE gingr_species ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_species_location_policy
-  ON gingr_species
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_species_read" ON gingr_species;
+CREATE POLICY "gingr_species_read" ON gingr_species FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_species_service" ON gingr_species;
+CREATE POLICY "gingr_species_service" ON gingr_species FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── temperaments ───────────────────────────────────────────────────────────
@@ -86,8 +110,8 @@ CREATE POLICY gingr_species_location_policy
 
 CREATE TABLE IF NOT EXISTS gingr_temperaments (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
   name            TEXT NOT NULL,           -- e.g. 'Friendly', 'Shy', 'Aggressive'
   description     TEXT,
   severity_level  INT,                     -- optional ranking for display/sorting
@@ -105,12 +129,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_temperaments_location
 
 ALTER TABLE gingr_temperaments ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_temperaments_location_policy
-  ON gingr_temperaments
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_temperaments_read" ON gingr_temperaments;
+CREATE POLICY "gingr_temperaments_read" ON gingr_temperaments FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_temperaments_service" ON gingr_temperaments;
+CREATE POLICY "gingr_temperaments_service" ON gingr_temperaments FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── Enhance existing gingr_immunization_types if needed ────────────────────
@@ -131,7 +153,7 @@ BEGIN
     SELECT 1 FROM information_schema.columns
     WHERE table_name = 'gingr_immunization_types' AND column_name = 'species_id'
   ) THEN
-    ALTER TABLE gingr_immunization_types ADD COLUMN species_id BIGINT;
+    ALTER TABLE gingr_immunization_types ADD COLUMN species_id TEXT;
   END IF;
 
   -- Add validity_period_days if not present (how long the immunization is valid)

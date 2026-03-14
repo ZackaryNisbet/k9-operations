@@ -15,8 +15,8 @@
 
 CREATE TABLE IF NOT EXISTS gingr_form_definitions (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
   form_type       TEXT NOT NULL,           -- e.g. 'owner_registration', 'animal_profile', 'reservation'
   field_name      TEXT NOT NULL,           -- field identifier in Gingr
   field_label     TEXT,                    -- display label
@@ -44,12 +44,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_form_defs_form_type
 -- RLS policy: location-scoped access
 ALTER TABLE gingr_form_definitions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_form_definitions_location_policy
-  ON gingr_form_definitions
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_form_definitions_read" ON gingr_form_definitions;
+CREATE POLICY "gingr_form_definitions_read" ON gingr_form_definitions FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_form_definitions_service" ON gingr_form_definitions;
+CREATE POLICY "gingr_form_definitions_service" ON gingr_form_definitions FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── gingr_icon_templates ───────────────────────────────────────────────────
@@ -58,8 +56,8 @@ CREATE POLICY gingr_form_definitions_location_policy
 
 CREATE TABLE IF NOT EXISTS gingr_icon_templates (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
   template_name   TEXT NOT NULL,           -- e.g. 'small_dog', 'large_dog', 'cat'
   icon_url        TEXT,                    -- URL or path to the icon asset
   icon_type       TEXT DEFAULT 'animal',   -- animal, service, status, etc.
@@ -82,12 +80,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_icon_templates_type
 
 ALTER TABLE gingr_icon_templates ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_icon_templates_location_policy
-  ON gingr_icon_templates
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_icon_templates_read" ON gingr_icon_templates;
+CREATE POLICY "gingr_icon_templates_read" ON gingr_icon_templates FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_icon_templates_service" ON gingr_icon_templates;
+CREATE POLICY "gingr_icon_templates_service" ON gingr_icon_templates FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── Sync state entries for new tables ──────────────────────────────────────

@@ -20,7 +20,7 @@
 
 CREATE TABLE IF NOT EXISTS lifecycle_events (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  location_id     TEXT NOT NULL,
   client_id       UUID,
   event_type      TEXT NOT NULL,                -- e.g. 'stage_change', 'note', 'follow_up'
   from_stage      TEXT,                         -- previous lifecycle stage (NULL for initial)
@@ -40,15 +40,15 @@ CREATE INDEX IF NOT EXISTS idx_lifecycle_events_type
 CREATE INDEX IF NOT EXISTS idx_lifecycle_events_created_at
   ON lifecycle_events(location_id, created_at);
 
--- RLS policy: location-scoped access
+-- RLS policy: authenticated read + service_role write (matches existing pattern)
 ALTER TABLE lifecycle_events ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY lifecycle_events_location_policy
-  ON lifecycle_events
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "lifecycle_events_read" ON lifecycle_events;
+CREATE POLICY "lifecycle_events_read" ON lifecycle_events FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "lifecycle_events_write" ON lifecycle_events;
+CREATE POLICY "lifecycle_events_write" ON lifecycle_events FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "lifecycle_events_service" ON lifecycle_events;
+CREATE POLICY "lifecycle_events_service" ON lifecycle_events FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── field_mappings ───────────────────────────────────────────────────────────
@@ -57,7 +57,7 @@ CREATE POLICY lifecycle_events_location_policy
 
 CREATE TABLE IF NOT EXISTS field_mappings (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  location_id     TEXT NOT NULL,
   k9_field        TEXT NOT NULL,                -- K9 Ops field identifier
   gingr_field     TEXT NOT NULL,                -- Gingr field identifier
   direction       TEXT NOT NULL CHECK (direction IN ('k9_to_gingr', 'gingr_to_k9', 'bidirectional')),
@@ -72,15 +72,15 @@ CREATE INDEX IF NOT EXISTS idx_field_mappings_location
 CREATE INDEX IF NOT EXISTS idx_field_mappings_direction
   ON field_mappings(location_id, direction);
 
--- RLS policy: location-scoped access
+-- RLS policy: authenticated access (matches existing pattern)
 ALTER TABLE field_mappings ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY field_mappings_location_policy
-  ON field_mappings
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "field_mappings_read" ON field_mappings;
+CREATE POLICY "field_mappings_read" ON field_mappings FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "field_mappings_write" ON field_mappings;
+CREATE POLICY "field_mappings_write" ON field_mappings FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "field_mappings_service" ON field_mappings;
+CREATE POLICY "field_mappings_service" ON field_mappings FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── email_report_configs ─────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ CREATE POLICY field_mappings_location_policy
 
 CREATE TABLE IF NOT EXISTS email_report_configs (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  location_id     TEXT NOT NULL,
   report_type     TEXT NOT NULL CHECK (report_type IN ('daily', 'weekly')),
   enabled         BOOLEAN NOT NULL DEFAULT TRUE,
   recipients      JSONB DEFAULT '[]',           -- array of email addresses
@@ -106,15 +106,15 @@ CREATE INDEX IF NOT EXISTS idx_email_report_configs_location
 CREATE INDEX IF NOT EXISTS idx_email_report_configs_type
   ON email_report_configs(location_id, report_type);
 
--- RLS policy: location-scoped access
+-- RLS policy: authenticated access (matches existing pattern)
 ALTER TABLE email_report_configs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY email_report_configs_location_policy
-  ON email_report_configs
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "email_report_configs_read" ON email_report_configs;
+CREATE POLICY "email_report_configs_read" ON email_report_configs FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "email_report_configs_write" ON email_report_configs;
+CREATE POLICY "email_report_configs_write" ON email_report_configs FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "email_report_configs_service" ON email_report_configs;
+CREATE POLICY "email_report_configs_service" ON email_report_configs FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── tv_display_configs ───────────────────────────────────────────────────────
@@ -123,7 +123,7 @@ CREATE POLICY email_report_configs_location_policy
 
 CREATE TABLE IF NOT EXISTS tv_display_configs (
   id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  location_id             UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  location_id             TEXT NOT NULL,
   auto_cycle              BOOLEAN NOT NULL DEFAULT TRUE,
   cycle_interval_seconds  INTEGER NOT NULL DEFAULT 30,
   default_view            TEXT,                  -- which view to show first
@@ -136,15 +136,15 @@ CREATE TABLE IF NOT EXISTS tv_display_configs (
 CREATE INDEX IF NOT EXISTS idx_tv_display_configs_location
   ON tv_display_configs(location_id);
 
--- RLS policy: location-scoped access
+-- RLS policy: authenticated access (matches existing pattern)
 ALTER TABLE tv_display_configs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY tv_display_configs_location_policy
-  ON tv_display_configs
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "tv_display_configs_read" ON tv_display_configs;
+CREATE POLICY "tv_display_configs_read" ON tv_display_configs FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "tv_display_configs_write" ON tv_display_configs;
+CREATE POLICY "tv_display_configs_write" ON tv_display_configs FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "tv_display_configs_service" ON tv_display_configs;
+CREATE POLICY "tv_display_configs_service" ON tv_display_configs FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── sync_logs ────────────────────────────────────────────────────────────────
@@ -153,7 +153,7 @@ CREATE POLICY tv_display_configs_location_policy
 
 CREATE TABLE IF NOT EXISTS sync_logs (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
+  location_id     TEXT NOT NULL,
   sync_type       TEXT NOT NULL,                -- e.g. 'full', 'incremental', 'manual'
   table_name      TEXT,                         -- which table was synced
   records_synced  INTEGER NOT NULL DEFAULT 0,
@@ -174,15 +174,13 @@ CREATE INDEX IF NOT EXISTS idx_sync_logs_table
 CREATE INDEX IF NOT EXISTS idx_sync_logs_started_at
   ON sync_logs(location_id, started_at);
 
--- RLS policy: location-scoped access
+-- RLS policy: authenticated access (matches existing pattern)
 ALTER TABLE sync_logs ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY sync_logs_location_policy
-  ON sync_logs
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "sync_logs_read" ON sync_logs;
+CREATE POLICY "sync_logs_read" ON sync_logs FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "sync_logs_service" ON sync_logs;
+CREATE POLICY "sync_logs_service" ON sync_logs FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── Sync state entry for sync_logs table ─────────────────────────────────────

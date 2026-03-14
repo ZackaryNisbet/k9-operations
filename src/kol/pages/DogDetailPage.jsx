@@ -100,12 +100,12 @@ function DogDetailPage({ data, clientId, dogId, nav, profile }) {
 
   // ─── Fetch enrichment data from Supabase ────────────────────────────────
   useEffect(() => {
-    if (!profile?.location_id || !dog._gingr_id) {
+    if (!profile?.location_id || !dog.gingrId) {
       setEnrichmentLoading(false);
       return;
     }
     const locId = profile.location_id;
-    const animalGingrId = dog._gingr_id;
+    const animalGingrId = dog.gingrId;
     let cancelled = false;
 
     const fetchAll = async () => {
@@ -131,7 +131,7 @@ function DogDetailPage({ data, clientId, dogId, nav, profile }) {
     };
     fetchAll();
     return () => { cancelled = true; };
-  }, [profile?.location_id, dog._gingr_id]);
+  }, [profile?.location_id, dog.gingrId]);
 
   // ─── Reservation data ───────────────────────────────────────────────────
   const allReservations = (data.reservations || []).filter(r => r.dogId === dogId).sort((a, b) => b.checkIn.localeCompare(a.checkIn));
