@@ -775,7 +775,7 @@ const TRACKER_DATA = {
       title: "Phase 4 — Client Enrichment",
       category: "Data Expansion",
       priority: "P2",
-      status: "backlog",
+      status: "done",
       description: "Sync enhanced owner/animal fields and subscription data from Gingr.",
       spec: "**Phase 4** of the Data Expansion plan.\n\n**Tables to sync:**\n- Enhanced `owner` fields — Additional client data beyond basic info\n- Enhanced `animal` fields — Additional dog data beyond basic info\n- `subscriptions` — Client subscription/membership data\n\n**Purpose:** Provides complete client profiles for the Push to Gingr feature (CLM-005) and enriched client page displays.",
       dataRequirements: ["gingr_owners", "gingr_animals", "subscriptions"],
