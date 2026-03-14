@@ -562,7 +562,7 @@ const TRACKER_DATA = {
       title: "Checkout Highlight Animation",
       category: "Checkout TV",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Enlarge and highlight a dog on TV when checked out, with 60-second countdown and fade.",
       spec: "When a CSR checks a dog out (detected via Gingr polling), the TV should:\n\n1. **Enlarge** the dog's card/icon to be prominently bigger than all other dogs\n2. **Center** it on screen or overlay it on top of the grid\n3. **Start a 60-second countdown** timer visible on screen\n4. **Fade out** the dog after the 60 seconds expire\n\n**Purpose:** This serves as a tool for group play employees to know which dog to retrieve. The dog should NOT instantly disappear on checkout — the 60-second window gives staff time to see and act.\n\n**Technical:** Requires real-time checkout detection (TV-002) to trigger the animation.",
       dataRequirements: ["gingr_reservations", "gingr_animals"],
