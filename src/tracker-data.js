@@ -395,7 +395,7 @@ const TRACKER_DATA = {
       title: "Daily Email Reports",
       category: "Operations Hub",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Automated 8 PM daily email summarizing dashboard metrics to configurable distribution groups.",
       spec: "**Feature:** Automated daily email report sent at 8 PM local time.\n\n**Content:** Summary of all dashboard metrics for the day.\n\n**Distribution:**\n- Sent to specified distribution group(s) configured in Settings\n- Only managers can configure distribution groups\n- Emails sent as a group thread so recipients can reply and discuss\n\n**Settings integration:** Add a \"Daily Email Reports\" section in Settings where managers can:\n- Enable/disable daily emails\n- Configure recipient distribution groups\n- Set preferred send time (default 8 PM local)",
       dataRequirements: ["email_config", "gingr_reservations", "invoices"],
