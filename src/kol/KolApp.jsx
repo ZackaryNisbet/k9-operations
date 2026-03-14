@@ -32,6 +32,7 @@ import LiteReportsPage from "./pages/ReportsPage";
 import PhotosPage from "./pages/PhotosPage";
 import SettingsPage from "./pages/SettingsPage";
 import DashboardPage from "./pages/DashboardPage";
+import RefundsPage from "./pages/RefundsPage";
 import EnterpriseOpsMatrix from "./enterprise/OpsMatrix";
 import EnterpriseAttendance from "./enterprise/Attendance";
 import EnterpriseUserManagement from "./enterprise/UserManagement";
@@ -55,9 +56,7 @@ class LeanAppErrorBoundary extends React.Component {
 const LEAN_NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
-  { id: "funnel", label: "Funnel", icon: "TrendingUp" },
   { id: "ops-hub", label: "Operations", icon: "Clipboard" },
-  { id: "reports", label: "Reports", icon: "BarChart" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "TV", icon: "Monitor" },
   { id: "roadmap", label: "Roadmap", icon: "Map" },
@@ -316,6 +315,7 @@ function LeanAppInner() {
         return c ? `${c.fields?.first_name||""} ${c.fields?.last_name||""}`.trim() || "Client" : "Client";
       }
       case "new-client": return "New Client";
+      case "refunds": return "Refunds";
       case "photos": return "Photos";
       case "settings": return "Settings";
       case "enterprise-ops": return "Operations Matrix";
@@ -514,6 +514,8 @@ function LeanAppInner() {
         return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Reports not available on Enterprise view</div> : (
           <LiteReportsPage data={data} nav={nav} />
         );
+      case "refunds":
+        return <RefundsPage data={data} nav={nav} profile={profile} />;
       case "photos":
         return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Photos not available on Enterprise view</div> : <PhotosPage />;
       case "enterprise-ops":
