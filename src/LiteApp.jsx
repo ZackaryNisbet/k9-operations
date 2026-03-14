@@ -294,6 +294,7 @@ const PAGE_SLUGS = {
   messages:"messages", payments:"payments", operations:"operations",
   "ops-opening":"ops/opening", "ops-fe":"ops/front-end", "ops-be":"ops/back-end", "ops-rooms":"ops/rooms",
   "ops-pictures":"ops/pictures", "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
+  "ops-bathing":"ops/bathing", "ops-pamper":"ops/pamper",
   management:"management", "mgmt-attendance":"management/attendance", "mgmt-audit-log":"management/audit-log",
   eod:"eod", ai:"ai", settings:"settings", "evaluation-form":"evaluation", "online-bookings":"bookings",
   "settings-team":"settings/team-management", "settings-roles":"settings/roles",
@@ -689,7 +690,7 @@ const InteractiveLineChart = React.memo(({ chartData, color = "#003462", compare
 });
 
 // ─── Operations Constants ──────────────────────────────────────────────────
-const OPS_TYPES = {opening:{key:"openingTemplate",def:DEF_OPENING_TEMPLATE,title:"Opening Checklist"},fe:{key:"feTemplate",def:DEF_FE_TEMPLATE,title:"Front-End Checklist",showTime:true},be:{key:"beTemplate",def:DEF_BE_TEMPLATE,title:"Back-End Checklist",showTime:true},closing:{key:"closingTemplate",def:DEF_CLOSING_TEMPLATE,title:"Closing Checklist"},room_cleaning:{title:"Room Cleaning"},pictures:{title:"Picture Checklist"},pp:{title:"Private Play Checklist"},eod:{title:"End-of-Day Report",isEod:true}};
+const OPS_TYPES = {opening:{key:"openingTemplate",def:DEF_OPENING_TEMPLATE,title:"Opening Checklist"},fe:{key:"feTemplate",def:DEF_FE_TEMPLATE,title:"Front-End Checklist",showTime:true},be:{key:"beTemplate",def:DEF_BE_TEMPLATE,title:"Back-End Checklist",showTime:true},closing:{key:"closingTemplate",def:DEF_CLOSING_TEMPLATE,title:"Closing Checklist"},room_cleaning:{title:"Room Cleaning"},pictures:{title:"Picture Checklist"},pp:{title:"Private Play Checklist"},bathing:{title:"Bathing Report"},pamper:{title:"Pamper Package Plus"},eod:{title:"End-of-Day Report",isEod:true}};
 
 const DEF_LITE_EOD_TEMPLATE = [
   { id:"sales", title:"Sales", emoji:"💵", type:"text", defaultContent:"Today's Goal:\nWTD:\nMTD:\nYTD:" },
@@ -723,6 +724,9 @@ const OPERATIONS_CATALOG = [
   { id:"ops-pictures", label:"Pictures", frequency:"daily", dataKey:"dailyOps", typeSub:"pictures", routeTo:"ops-pictures", permission:"view_daily_ops" },
   { id:"ops-pp", label:"Private Play Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"pp", routeTo:"ops-pp", permission:"view_daily_ops" },
   { id:"ops-closing", label:"Closing Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"closing", routeTo:"ops-closing", permission:"view_daily_ops" },
+  // Services (auto-generated from Gingr data)
+  { id:"ops-bathing", label:"Bathing Report", frequency:"services", routeTo:"ops-bathing", permission:"view_daily_ops" },
+  { id:"ops-pamper", label:"Pamper Package Plus", frequency:"services", routeTo:"ops-pamper", permission:"view_daily_ops" },
   { id:"eod", label:"EOD Report", frequency:"daily", dataKey:"eodEntries", typeSub:null, routeTo:"eod", permission:"view_eod" },
   // Weekly placeholders
   { id:"weekly-inventory", label:"Weekly Inventory", frequency:"weekly", comingSoon:true },
@@ -4820,6 +4824,48 @@ function OperationsHub({ data, save, nav, profile }) {
         );
       })}
 
+
+      {/* ─── Services Section ─────────────────────────────── */}
+      {(hp("view_daily_ops")) && (() => {
+        const serviceItems = OPERATIONS_CATALOG.filter(c => c.frequency === "services");
+        if (serviceItems.length === 0) return null;
+        return (
+          <div style={{ marginBottom: 32 }}>
+            <div style={{ margin: "8px 0 18px", height: 1, background: C.borderLight }} />
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+              Services
+              <span style={{ fontSize: 12, fontWeight: 500, color: C.textMut, marginLeft: 4 }}>
+                (Gingr Service Reports)
+              </span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
+              {serviceItems.map(item => (
+                <div key={item.id}
+                  onClick={() => nav(item.routeTo)}
+                  style={{
+                    background: C.surface, borderRadius: 14, padding: "18px 20px",
+                    border: `1.5px solid ${C.pri}40`,
+                    cursor: "pointer",
+                    transition: "all 0.2s",
+                    position: "relative",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}
+                >
+                  <div style={{ marginBottom: 6 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{item.label}</div>
+                    <div style={{ fontSize: 12, color: C.textSec, marginTop: 3 }}>
+                      {item.id === "ops-bathing" ? "Auto-pulled bath types from Gingr" : "Luxury Suite + Add-On dogs"}
+                    </div>
+                  </div>
+                  <span style={{ position: "absolute", top: 18, right: 16, color: C.textMut, fontSize: 16 }}>›</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Management Section */}
       {(hp("view_management") || hp("view_daily_ops")) && (
         <div style={{ marginBottom: 32 }}>
@@ -5088,6 +5134,8 @@ function LiteEODPage({ data, save, nav, profile, addGlobalToast }) {
 
   // Calendar dots for days with saved EOD
   const eodDates = useMemo(() => new Set((data.eodEntries || []).map(e => e.date)), [data.eodEntries]);
+
+
 
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -6105,6 +6153,431 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast }) {
     );
   };
 
+
+  // ─── Bathing Report (auto-pulled from Gingr) ───────────────────────────────
+  const [bathTypeMap, setBathTypeMap] = useState({});
+  const [bathTypeLoading, setBathTypeLoading] = useState(false);
+  const [bathCompleted, setBathCompleted] = useState({});
+
+  // Load bath completions from Supabase
+  useEffect(() => {
+    if (sub !== "bathing" || !profile?.location_id) return;
+    const entryId = `ops_bathing_${viewDate}`;
+    supabase.from("lite_settings").select("setting_value")
+      .eq("location_id", profile.location_id)
+      .eq("setting_key", entryId)
+      .limit(1)
+      .then(({ data: rows }) => {
+        if (rows && rows.length > 0 && rows[0].setting_value) {
+          setBathCompleted(rows[0].setting_value);
+        } else {
+          setBathCompleted({});
+        }
+      });
+  }, [sub, viewDate, profile?.location_id]);
+
+  // Auto-fetch bath types from Gingr existing_reservation_estimate
+  useEffect(() => {
+    if (sub !== "bathing") return;
+    const reservations = data.reservations || [];
+    const dogs = data.dogs || [];
+    const inHouse = reservations.filter(r =>
+      r.type === "boarding" && r.status === "checked-in" &&
+      r.checkIn <= viewDate && r.checkOut >= viewDate
+    );
+    // Find dogs that have "Bath" in their services
+    const bathRes = inHouse.filter(r => {
+      const svcs = r._services;
+      if (!svcs) return false;
+      if (Array.isArray(svcs)) return svcs.some(s => typeof s === "string" && s.toLowerCase() === "bath");
+      if (typeof svcs === "string") return svcs.toLowerCase().includes("bath");
+      return false;
+    });
+    if (bathRes.length === 0) return;
+
+    // Don't re-fetch if we already have data for these reservations
+    const needsFetch = bathRes.filter(r => !bathTypeMap[r.id]);
+    if (needsFetch.length === 0) return;
+
+    setBathTypeLoading(true);
+
+    // Fetch gingr_config to get API credentials
+    const locationId = profile?.location_id;
+    if (!locationId) { setBathTypeLoading(false); return; }
+
+    supabase.from("lite_settings").select("setting_value")
+      .eq("location_id", locationId)
+      .eq("setting_key", "gingr_config")
+      .limit(1)
+      .then(async ({ data: cfgRows }) => {
+        if (!cfgRows || cfgRows.length === 0) { setBathTypeLoading(false); return; }
+        const cfg = cfgRows[0].setting_value;
+        const subdomain = cfg.subdomain;
+        const apiKey = cfg.api_key;
+        if (!subdomain || !apiKey) { setBathTypeLoading(false); return; }
+
+        const BATH_ADDON_MAP = {
+          38: "Premium",
+          39: "Hypoallergenic - NO SPRAY",
+          79: "Hypoallergenic - WITH SPRAY",
+          40: "Medicated",
+          75: "Whitening",
+          76: "Shampoo From Home",
+        };
+
+        const newMap = { ...bathTypeMap };
+        // Fetch in batches of 5 to avoid overwhelming the API
+        for (let i = 0; i < needsFetch.length; i += 5) {
+          const batch = needsFetch.slice(i, i + 5);
+          await Promise.all(batch.map(async (res) => {
+            try {
+              const gingrId = res.gingrId?.replace?.("g", "") || res.gingrId;
+              if (!gingrId) { newMap[res.id] = "Premium"; return; }
+              const resp = await fetch(
+                `https://${subdomain}.gingrapp.com/api/v1/existing_reservation_estimate?key=${apiKey}&id=${gingrId}`
+              );
+              const json = await resp.json();
+              if (json.error) { newMap[res.id] = "Premium"; return; }
+              // Look through reservation_services for bath addon
+              const resSvcs = json.data?.reservations?.[0]?.reservation_services || [];
+              let foundBathType = null;
+              for (const svc of resSvcs) {
+                const sid = parseInt(svc.s_id);
+                if (BATH_ADDON_MAP[sid]) {
+                  foundBathType = BATH_ADDON_MAP[sid];
+                  break;
+                }
+              }
+              newMap[res.id] = foundBathType || "Premium";
+            } catch (err) {
+              console.error("Failed to fetch bath type for", res.id, err);
+              newMap[res.id] = "Premium";
+            }
+          }));
+        }
+        setBathTypeMap(newMap);
+        setBathTypeLoading(false);
+      });
+  }, [sub, viewDate, data.reservations, data.dogs, profile?.location_id]);
+
+  const saveBathCompleted = async (newCompleted) => {
+    setBathCompleted(newCompleted);
+    if (!profile?.location_id) return;
+    const entryId = `ops_bathing_${viewDate}`;
+    await supabase.from("lite_settings").upsert({
+      location_id: profile.location_id,
+      setting_key: entryId,
+      setting_value: newCompleted,
+    }, { onConflict: "location_id,setting_key" });
+  };
+
+  const renderBathing = () => {
+    const reservations = data.reservations || [];
+    const dogs = data.dogs || [];
+    const inHouse = reservations.filter(r =>
+      r.type === "boarding" && r.status === "checked-in" &&
+      r.checkIn <= viewDate && r.checkOut >= viewDate
+    );
+    // Dogs with Bath service
+    const bathRows = [];
+    inHouse.forEach(res => {
+      const svcs = res._services;
+      let hasBath = false;
+      if (Array.isArray(svcs)) hasBath = svcs.some(s => typeof s === "string" && s.toLowerCase() === "bath");
+      else if (typeof svcs === "string") hasBath = svcs.toLowerCase().includes("bath");
+      if (!hasBath) return;
+
+      const dog = dogs.find(d => d.id === res.dogId);
+      const dogName = dog?.fields?.name || res._animalName || "Unknown";
+      const roomNum = res.room ? (res.room.match(/(\d+)/) || [])[1] || res.room : "—";
+      const bathType = bathTypeMap[res.id] || (bathTypeLoading ? "Loading…" : "Premium");
+      const coTime = res.scheduledCheckOutTime || res.checkOutTime || "—";
+      const completedInfo = bathCompleted[res.id];
+      const isDone = !!completedInfo;
+      bathRows.push({ resId: res.id, dogName, roomNum, bathType, coTime, isDone, completedInfo, dogId: res.dogId });
+    });
+    bathRows.sort((a, b) => (a.roomNum || "").localeCompare(b.roomNum || "", undefined, { numeric: true }));
+
+    const totalBaths = bathRows.length;
+    const doneBaths = bathRows.filter(r => r.isDone).length;
+
+    const toggleBath = (resId) => {
+      const newCompleted = { ...bathCompleted };
+      if (newCompleted[resId]) {
+        delete newCompleted[resId];
+      } else {
+        newCompleted[resId] = {
+          by: profile?.name || profile?.email || "Staff",
+          at: new Date().toISOString(),
+        };
+      }
+      saveBathCompleted(newCompleted);
+    };
+
+    return (
+      <div>
+        {/* Header stats */}
+        <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Bathing Report</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>{doneBaths}/{totalBaths} complete</span>
+            </div>
+            {bathTypeLoading && (
+              <span style={{ fontSize: 12, color: C.pri, fontWeight: 600 }}>Fetching bath types from Gingr…</span>
+            )}
+          </div>
+          {totalBaths > 0 && (
+            <div style={{ marginTop: 10, height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
+              <div style={{ width: `${totalBaths > 0 ? Math.round((doneBaths / totalBaths) * 100) : 0}%`, height: "100%", borderRadius: 3, background: doneBaths === totalBaths ? "#10B981" : "#F59E0B", transition: "width 0.3s" }} />
+            </div>
+          )}
+        </Card>
+
+        {totalBaths === 0 ? (
+          <Card style={{ padding: 32, textAlign: "center" }}>
+            <div style={{ fontSize: 14, color: C.textMut }}>No baths scheduled for today</div>
+          </Card>
+        ) : (
+          <Card style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: C.bg, borderBottom: `2px solid ${C.border}` }}>
+                    <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>DOG</th>
+                    <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>ROOM</th>
+                    <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>BATH TYPE</th>
+                    <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>CHECKOUT</th>
+                    <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>COMPLETED</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bathRows.map((row, i) => (
+                    <tr key={row.resId} style={{
+                      borderBottom: i < bathRows.length - 1 ? `1px solid ${C.borderLight}` : "none",
+                      background: row.isDone ? "#F0FDF4" : "transparent",
+                      transition: "background 0.2s",
+                    }}>
+                      <td style={{ padding: "12px 14px", fontWeight: 600, color: C.text }}>{row.dogName}</td>
+                      <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri }}>{row.roomNum}</td>
+                      <td style={{ padding: "12px 14px", color: C.text }}>
+                        <span style={{
+                          display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700,
+                          background: row.bathType === "Loading…" ? "#F3F4F6" : row.bathType === "Premium" ? "#DBEAFE" : row.bathType.includes("Hypoallergenic") ? "#FEF3C7" : row.bathType === "Medicated" ? "#FEE2E2" : row.bathType === "Whitening" ? "#F3E8FF" : row.bathType === "Shampoo From Home" ? "#ECFDF5" : "#F3F4F6",
+                          color: row.bathType === "Loading…" ? "#9CA3AF" : row.bathType === "Premium" ? "#1D4ED8" : row.bathType.includes("Hypoallergenic") ? "#D97706" : row.bathType === "Medicated" ? "#DC2626" : row.bathType === "Whitening" ? "#7C3AED" : row.bathType === "Shampoo From Home" ? "#059669" : "#6B7280",
+                        }}>
+                          {row.bathType}
+                        </span>
+                      </td>
+                      <td style={{ padding: "12px 14px", textAlign: "center", color: C.textSec, fontSize: 12 }}>{row.coTime}</td>
+                      <td style={{ padding: "12px 14px", textAlign: "center" }}>
+                        <button
+                          onClick={() => toggleBath(row.resId)}
+                          style={{
+                            width: 28, height: 28, borderRadius: 8,
+                            border: row.isDone ? "2px solid #10B981" : `2px solid ${C.border}`,
+                            background: row.isDone ? "#10B981" : "transparent",
+                            cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                            color: row.isDone ? "#fff" : "transparent",
+                            fontSize: 14, fontWeight: 700, transition: "all 0.15s",
+                          }}
+                        >
+                          {row.isDone ? "✓" : ""}
+                        </button>
+                        {row.isDone && row.completedInfo && (
+                          <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>
+                            {row.completedInfo.by} · {new Date(row.completedInfo.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+      </div>
+    );
+  };
+
+  // ─── Pamper Package Plus Report ─────────────────────────────────────────────
+  const [pamperCompleted, setPamperCompleted] = useState({});
+
+  // Load pamper completions from Supabase
+  useEffect(() => {
+    if (sub !== "pamper" || !profile?.location_id) return;
+    const entryId = `ops_pamper_${viewDate}`;
+    supabase.from("lite_settings").select("setting_value")
+      .eq("location_id", profile.location_id)
+      .eq("setting_key", entryId)
+      .limit(1)
+      .then(({ data: rows }) => {
+        if (rows && rows.length > 0 && rows[0].setting_value) {
+          setPamperCompleted(rows[0].setting_value);
+        } else {
+          setPamperCompleted({});
+        }
+      });
+  }, [sub, viewDate, profile?.location_id]);
+
+  const savePamperCompleted = async (newCompleted) => {
+    setPamperCompleted(newCompleted);
+    if (!profile?.location_id) return;
+    const entryId = `ops_pamper_${viewDate}`;
+    await supabase.from("lite_settings").upsert({
+      location_id: profile.location_id,
+      setting_key: entryId,
+      setting_value: newCompleted,
+    }, { onConflict: "location_id,setting_key" });
+  };
+
+  const renderPamper = () => {
+    const reservations = data.reservations || [];
+    const dogs = data.dogs || [];
+    const inHouse = reservations.filter(r =>
+      r.type === "boarding" && r.status === "checked-in" &&
+      r.checkIn <= viewDate && r.checkOut >= viewDate
+    );
+
+    // Collect pamper package dogs
+    const pamperRows = [];
+    const seenDogs = new Set();
+    inHouse.forEach(res => {
+      if (seenDogs.has(res.dogId)) return;
+      const isLuxurySuite = res._resTypeId == 5 || (res._resTypeName || "").toLowerCase().includes("luxury suite");
+      const svcs = res._services;
+      let hasPPAddon = false;
+      if (Array.isArray(svcs)) hasPPAddon = svcs.some(s => typeof s === "string" && s.toLowerCase().includes("pamper"));
+      else if (typeof svcs === "string") hasPPAddon = svcs.toLowerCase().includes("pamper");
+
+      if (!isLuxurySuite && !hasPPAddon) return;
+      seenDogs.add(res.dogId);
+
+      const dog = dogs.find(d => d.id === res.dogId);
+      const dogName = dog?.fields?.name || res._animalName || "Unknown";
+      const roomNum = res.room ? (res.room.match(/(\d+)/) || [])[1] || res.room : "—";
+      const ownerName = res._ownerName || "Unknown";
+      const source = isLuxurySuite ? "Luxury Suite" : "Add-On";
+      const completedInfo = pamperCompleted[res.id];
+      const isDone = !!completedInfo;
+      pamperRows.push({ resId: res.id, dogName, roomNum, ownerName, source, isDone, completedInfo, dogId: res.dogId });
+    });
+    pamperRows.sort((a, b) => (a.roomNum || "").localeCompare(b.roomNum || "", undefined, { numeric: true }));
+
+    // Group by room for display
+    const roomGroups = {};
+    pamperRows.forEach(row => {
+      if (!roomGroups[row.roomNum]) roomGroups[row.roomNum] = [];
+      roomGroups[row.roomNum].push(row);
+    });
+
+    const totalPamper = pamperRows.length;
+    const donePamper = pamperRows.filter(r => r.isDone).length;
+
+    const togglePamper = (resId) => {
+      const newCompleted = { ...pamperCompleted };
+      if (newCompleted[resId]) {
+        delete newCompleted[resId];
+      } else {
+        newCompleted[resId] = {
+          by: profile?.name || profile?.email || "Staff",
+          at: new Date().toISOString(),
+        };
+      }
+      savePamperCompleted(newCompleted);
+    };
+
+    return (
+      <div>
+        {/* Header stats */}
+        <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Pamper Package Plus</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>{donePamper}/{totalPamper} complete</span>
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Luxury Suite dogs (automatic) + Pamper Package add-on dogs</div>
+          {totalPamper > 0 && (
+            <div style={{ marginTop: 10, height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
+              <div style={{ width: `${totalPamper > 0 ? Math.round((donePamper / totalPamper) * 100) : 0}%`, height: "100%", borderRadius: 3, background: donePamper === totalPamper ? "#10B981" : "#F59E0B", transition: "width 0.3s" }} />
+            </div>
+          )}
+        </Card>
+
+        {totalPamper === 0 ? (
+          <Card style={{ padding: 32, textAlign: "center" }}>
+            <div style={{ fontSize: 14, color: C.textMut }}>No Pamper Package dogs for today</div>
+          </Card>
+        ) : (
+          <Card style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: C.bg, borderBottom: `2px solid ${C.border}` }}>
+                    <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>DOG</th>
+                    <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>ROOM</th>
+                    <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>OWNER</th>
+                    <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>SOURCE</th>
+                    <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>COMPLETED</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(roomGroups).map(([roomNum, groupRows], gi) => (
+                    groupRows.map((row, ri) => (
+                      <tr key={row.resId} style={{
+                        borderBottom: (gi < Object.keys(roomGroups).length - 1 || ri < groupRows.length - 1) ? `1px solid ${C.borderLight}` : "none",
+                        background: row.isDone ? "#F0FDF4" : "transparent",
+                        transition: "background 0.2s",
+                      }}>
+                        <td style={{ padding: "12px 14px", fontWeight: 600, color: C.text }}>{row.dogName}</td>
+                        <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri }}>
+                          {ri === 0 ? roomNum : ""}
+                        </td>
+                        <td style={{ padding: "12px 14px", color: C.textSec }}>{row.ownerName}</td>
+                        <td style={{ padding: "12px 14px", textAlign: "center" }}>
+                          <span style={{
+                            display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700,
+                            background: row.source === "Luxury Suite" ? "#EDE9FE" : "#DBEAFE",
+                            color: row.source === "Luxury Suite" ? "#7C3AED" : "#1D4ED8",
+                          }}>
+                            {row.source}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 14px", textAlign: "center" }}>
+                          <button
+                            onClick={() => togglePamper(row.resId)}
+                            style={{
+                              width: 28, height: 28, borderRadius: 8,
+                              border: row.isDone ? "2px solid #10B981" : `2px solid ${C.border}`,
+                              background: row.isDone ? "#10B981" : "transparent",
+                              cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                              color: row.isDone ? "#fff" : "transparent",
+                              fontSize: 14, fontWeight: 700, transition: "all 0.15s",
+                            }}
+                          >
+                            {row.isDone ? "✓" : ""}
+                          </button>
+                          {row.isDone && row.completedInfo && (
+                            <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>
+                              {row.completedInfo.by} · {new Date(row.completedInfo.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+      </div>
+    );
+  };
+
+
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto" }}>
       <button onClick={() => nav("ops-hub")} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, color: C.pri, padding: "0 0 12px", fontFamily: "inherit" }}>← Operations</button>
@@ -6128,6 +6601,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast }) {
         : sub === "room_cleaning" ? renderRoomCleaning()
         : sub === "pictures" ? renderPicturesFixed()
         : sub === "pp" ? renderPP()
+        : sub === "bathing" ? renderBathing()
+        : sub === "pamper" ? renderPamper()
         : <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec }}>Unknown checklist type</div></Card>}
       {dirty && !isLocked && <div style={{ position: "sticky", bottom: 16, display: "flex", justifyContent: "center", marginTop: 20 }}>
         <Btn onClick={saveEntry} style={{ padding: "10px 40px", fontSize: 14 }}>Save Changes</Btn>
@@ -10954,6 +11429,8 @@ function LeanAppInner() {
       case "ops-pictures": return "Pictures";
       case "ops-pp": return "Private Play";
       case "ops-closing": return "Closing Checklist";
+      case "ops-bathing": return "Bathing Report";
+      case "ops-pamper": return "Pamper Package Plus";
       case "eod": return "End of Day";
       case "daily-ops": return "Daily Ops";
       case "attendance": case "mgmt-attendance": return "Attendance Tracker";
@@ -11109,6 +11586,10 @@ function LeanAppInner() {
         return <DailyOpsPage data={data} save={save} sub="pp" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "ops-closing":
         return <DailyOpsPage data={data} save={save} sub="closing" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "ops-bathing":
+        return <DailyOpsPage data={data} save={save} sub="bathing" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "ops-pamper":
+        return <DailyOpsPage data={data} save={save} sub="pamper" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "eod":
         return <LiteEODPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "mgmt-audit-log":
