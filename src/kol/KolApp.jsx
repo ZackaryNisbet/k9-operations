@@ -59,7 +59,7 @@ const LEAN_NAV_ITEMS = [
   { id: "ops-hub", label: "Operations", icon: "Clipboard" },
   { id: "reports", label: "Reports", icon: "BarChart" },
   { id: "photos", label: "Photos", icon: "Image" },
-  { id: "checkout-tv", label: "Checkout TV", icon: "Monitor" },
+  { id: "checkout-tv", label: "TV", icon: "Monitor" },
   { id: "roadmap", label: "Roadmap", icon: "Map" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
