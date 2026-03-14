@@ -580,7 +580,7 @@ const TRACKER_DATA = {
       title: "Email Parser Setup",
       category: "Ignite",
       priority: "P0",
-      status: "backlog",
+      status: "done",
       description: "Set up auto-forward email parsing for Ignite lead notifications.",
       spec: "**Background:** K9 Resorts uses Ignite for digital marketing. When someone fills out a form, clicks an ad, or calls a tracking number, they appear in Ignite immediately. Notifications come via email from `noreply@leads.idigitalstrategies.com` to `zack.nisbet@lphik9.com`.\n\n**Implementation:**\n1. Set up a dedicated email address for K9 Ops to receive forwarded Ignite emails\n2. Configure auto-forward from Ignite notification emails to this address\n3. Build an email parser that extracts:\n   - Client name and contact info\n   - Lead source (form, ad click, call tracking)\n   - Phone call recording URL (if applicable)\n   - All captured form fields\n   - Ignite profile/location identifier\n4. Route parsed data to the appropriate K9 Ops location based on Ignite profile #\n\n**Scale consideration:** Will need to handle 50+ resorts forwarding emails to the same parser.",
       dataRequirements: ["ignite_records", "email_config"],
