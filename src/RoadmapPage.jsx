@@ -174,7 +174,7 @@ const TRACKER_DATA = {
       title: "Lifecycle Event Logging",
       category: "Customer Lifecycle",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Auto-log lifecycle events on sync, stage transitions, and display on client pages.",
       spec: "Every customer in the lifecycle module should have at least 1 log entry. Currently they all show 0.\n\n**Requirements:**\n- **Initial sync logging:** When the Gingr sync runs, each client should get a log entry like \"Identified as [Conversion/Retention/etc.] client during initial sync on [date]\"\n- **Stage transition logging:** When a client moves from one lifecycle stage to another (e.g., Conversion → Retention), auto-log the transition with timestamp\n- **Dual display:** All lifecycle events should be stored and visible in:\n  1. The \"Updates\" column on the Customer Lifecycle module table\n  2. The \"Lifecycle\" tab on the individual client page\n- Events should include timestamp, event type, and description",
       dataRequirements: ["lifecycle_events", "gingr_owners"],
