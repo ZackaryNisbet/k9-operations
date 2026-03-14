@@ -267,6 +267,7 @@ const I = {
   Layers: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>,
   Book: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>,
   TrendingUp: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+  Monitor: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>,
 };
 const Icons = I;
 
@@ -296,6 +297,7 @@ const PAGE_SLUGS = {
   "ops-pictures":"ops/pictures", "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
   "ops-bathing":"ops/bathing", "ops-pamper":"ops/pamper", "ops-svc":"ops/service",
   management:"management", "mgmt-attendance":"management/attendance", "mgmt-audit-log":"management/audit-log",
+  "checkout-tv":"checkout-tv",
   eod:"eod", ai:"ai", settings:"settings", "evaluation-form":"evaluation", "online-bookings":"bookings",
   "settings-team":"settings/team-management", "settings-roles":"settings/roles",
   "settings-fields":"settings/fields", "settings-tags":"settings/tags", "settings-vaccines":"settings/vaccines",
@@ -10384,6 +10386,160 @@ function EnterpriseUserManagement({ profile }) {
 }
 
 // ─── Revenue Intelligence Reports (Lite) ────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// CHECKOUT TV PAGE
+// ════════════════════════════════════════════════════════════════════════════
+function CheckoutTVPage({ data, nav }) {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const today = todayStr();
+  const reservations = data.reservations || [];
+  const dogs = data.dogs || [];
+  const clients = data.clients || [];
+
+  // All checked-in daycare + boarding dogs
+  const checkedIn = reservations.filter(r =>
+    (r.type === "boarding" || r.type === "daycare") &&
+    r.status === "checked-in" &&
+    r.checkIn <= today && r.checkOut >= today
+  );
+
+  // Deduplicate by dogId (one dog could have overlapping reservations)
+  const seen = new Set();
+  const uniqueDogs = checkedIn.filter(r => {
+    if (seen.has(r.dogId)) return false;
+    seen.add(r.dogId);
+    return true;
+  }).sort((a, b) => {
+    const aD = dogs.find(d => d.id === a.dogId);
+    const bD = dogs.find(d => d.id === b.dogId);
+    return ((aD?.fields?.name || "").localeCompare(bD?.fields?.name || ""));
+  });
+
+  const daycareDogs = uniqueDogs.filter(r => r.type === "daycare");
+  const boardingDogs = uniqueDogs.filter(r => r.type === "boarding");
+
+  const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
+  const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
+  const DogCard = ({ res }) => {
+    const dog = dogs.find(d => d.id === res.dogId);
+    const client = clients.find(c => c.id === res.clientId);
+    const name = dog?.fields?.name || res._animalName || "Unknown";
+    const breed = dog?.fields?.breed || "";
+    const ownerLast = client?.fields?.last_name || res._ownerName?.split(" ").pop() || "";
+    const roomNum = res.room ? (res.room.match(/(\d+)/) || [])[1] || "" : "";
+
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 12px",
+        background: "rgba(255,255,255,0.06)", borderRadius: 16, border: "1px solid rgba(255,255,255,0.08)",
+        minWidth: 140, transition: "transform 0.2s",
+      }}>
+        {dog?._image ? (
+          <img src={dog._image} alt={name} style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover", border: "2px solid rgba(255,255,255,0.15)", marginBottom: 8 }} />
+        ) : (
+          <div style={{ width: 64, height: 64, borderRadius: 14, background: "rgba(175,141,84,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 800, color: "#AF8D54", marginBottom: 8 }}>
+            {name[0]}
+          </div>
+        )}
+        <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", textAlign: "center", lineHeight: 1.2 }}>{name}</div>
+        {breed && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2, textAlign: "center" }}>{breed}</div>}
+        <div style={{ fontSize: 11, color: "rgba(175,141,84,0.8)", marginTop: 4, fontWeight: 600 }}>{ownerLast}</div>
+        {roomNum && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>Room {roomNum}</div>}
+      </div>
+    );
+  };
+
+  const SectionLabel = ({ label, count, color }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, marginTop: 24 }}>
+      <div style={{ width: 6, height: 28, borderRadius: 3, background: color }} />
+      <div style={{ fontSize: 20, fontWeight: 800, color: "#fff", letterSpacing: "0.02em" }}>{label}</div>
+      <div style={{ fontSize: 16, fontWeight: 700, color: "rgba(255,255,255,0.4)" }}>({count})</div>
+    </div>
+  );
+
+  return (
+    <div style={{
+      minHeight: "100vh", background: "linear-gradient(180deg, #001A33 0%, #00112A 50%, #000A1A 100%)",
+      padding: "32px 40px", fontFamily: "'GT Eesti', -apple-system, sans-serif", overflow: "auto",
+    }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <div>
+          <div style={{ fontSize: 28, fontWeight: 900, color: "#fff", letterSpacing: "-0.02em" }}>K9 Cherry Hill</div>
+          <div style={{ fontSize: 13, color: "rgba(175,141,84,0.7)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 2 }}>Checkout Board</div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 36, fontWeight: 900, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{timeStr}</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>{dateStr}</div>
+        </div>
+      </div>
+
+      {/* Stats bar */}
+      <div style={{ display: "flex", gap: 24, padding: "14px 0", borderTop: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 8 }}>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Total: <span style={{ fontWeight: 800, color: "#fff" }}>{uniqueDogs.length}</span></div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Daycare: <span style={{ fontWeight: 800, color: "#0EA5E9" }}>{daycareDogs.length}</span></div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#AF8D54" }}>{boardingDogs.length}</span></div>
+      </div>
+
+      {/* Daycare section */}
+      {daycareDogs.length > 0 && (
+        <div>
+          <SectionLabel label="Daycare" count={daycareDogs.length} color="#0EA5E9" />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+            {daycareDogs.map(r => <DogCard key={r.id} res={r} />)}
+          </div>
+        </div>
+      )}
+
+      {/* Boarding section */}
+      {boardingDogs.length > 0 && (
+        <div>
+          <SectionLabel label="Boarding" count={boardingDogs.length} color="#AF8D54" />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+            {boardingDogs.map(r => <DogCard key={r.id} res={r} />)}
+          </div>
+        </div>
+      )}
+
+      {uniqueDogs.length === 0 && (
+        <div style={{ textAlign: "center", padding: "80px 0" }}>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "rgba(255,255,255,0.3)" }}>No dogs checked in today</div>
+        </div>
+      )}
+
+      {/* Footer */}
+      <div style={{ textAlign: "center", marginTop: 40, padding: "16px 0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations Lite · Auto-refreshes in real-time</div>
+      </div>
+
+      {/* Floating Exit Button — subtle, top-left corner */}
+      <button
+        onClick={() => nav("operations")}
+        onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.background = "rgba(255,255,255,0.15)"; }}
+        onMouseLeave={e => { e.currentTarget.style.opacity = 0.3; e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
+        style={{
+          position: "fixed", top: 16, left: 16, zIndex: 100,
+          width: 36, height: 36, borderRadius: 10,
+          background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.08)",
+          color: "rgba(255,255,255,0.8)", cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 16, fontWeight: 700, opacity: 0.3,
+          transition: "opacity 0.2s, background 0.2s",
+        }}
+        title="Exit Checkout TV"
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
 function LiteReportsPage({ data, nav }) {
   const today = todayStr();
   const [timeRange, setTimeRange] = useState("month");
@@ -11529,6 +11685,7 @@ const LEAN_NAV_ITEMS = [
   { id: "ops-hub", label: "Operations", icon: "Clipboard" },
   { id: "reports", label: "Reports", icon: "BarChart" },
   { id: "photos", label: "Photos", icon: "Image" },
+  { id: "checkout-tv", label: "Checkout TV", icon: "Monitor" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -11949,6 +12106,8 @@ function LeanAppInner() {
         return <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile} />;
       case "dog-detail":
         return <DogDetailPage data={data} clientId={params.clientId} dogId={params.dogId} nav={nav} />;
+      case "checkout-tv":
+        return <CheckoutTVPage data={data} nav={nav} />;
       case "client-detail":
         return <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "new-client":
@@ -11972,10 +12131,12 @@ function LeanAppInner() {
     }
   };
 
+  const isFullscreenPage = page === "checkout-tv";
+
   return (
     <div style={{ display: "flex", height: "100vh", background: C.bg, fontFamily: "'GT Eesti', -apple-system, BlinkMacSystemFont, sans-serif" }}>
-      {/* Sidebar */}
-      <div
+      {/* Sidebar — hidden on fullscreen pages like Checkout TV */}
+      {!isFullscreenPage && <div
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
         style={{
@@ -12099,6 +12260,7 @@ function LeanAppInner() {
           {sbExpanded && <div style={{ textAlign: "center", fontSize: 9, color: "rgba(255,255,255,0.5)", marginTop: 4, lineHeight: 1.4 }}>&copy; 2026 K9 Operations LLC<br/>All Rights Reserved</div>}
 
           {switchTarget && ReactDOM.createPortal(
+            /* NOTE: closing </div> for sidebar is inside the !isFullscreenPage conditional */
             <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }} onClick={() => { setSwitchTarget(null); setSwitchPassword(""); setSwitchError(""); }}>
               <div onClick={e => e.stopPropagation()} style={{ background: C.surface, borderRadius: 16, padding: 28, width: 380, maxWidth: "90vw", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
                 <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 4 }}>Switch Account</div>
@@ -12123,7 +12285,7 @@ function LeanAppInner() {
             document.body
           )}
         </div>
-      </div>
+      </div>}
 
       {/* Toast Notifications */}
       {toasts.length > 0 && (
@@ -12144,9 +12306,9 @@ function LeanAppInner() {
       )}
 
       {/* Main Content */}
-      <div style={{ flex: 1, overflow: "auto", background: C.bg, padding: "32px 40px" }}>
-        <div style={{ maxWidth: 1440, margin: "0 auto" }}>
-          {navStack.length > 1 && (
+      <div style={{ flex: 1, overflow: "auto", background: isFullscreenPage ? "transparent" : C.bg, padding: isFullscreenPage ? 0 : "32px 40px" }}>
+        <div style={{ maxWidth: isFullscreenPage ? "none" : 1440, margin: "0 auto" }}>
+          {navStack.length > 1 && !isFullscreenPage && (
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:16,fontSize:13,flexWrap:"wrap"}}>
               {navStack.map((entry, i) => (
                 <React.Fragment key={i}>
