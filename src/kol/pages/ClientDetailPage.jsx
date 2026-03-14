@@ -237,7 +237,6 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               ↗ Push to Gingr
             </button>
             <Btn variant="primary" onClick={()=>nav("new-reservation",{clientId})} icon={<I.Plus/>} size="sm">New</Btn>
-            <Btn variant="ghost" onClick={()=>nav("messages")} icon={<I.MessageSquare/>} size="sm">Message</Btn>
           </div>
         </div>
 
