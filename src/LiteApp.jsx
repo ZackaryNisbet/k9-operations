@@ -4332,7 +4332,7 @@ function OperationsHub({ data, save, nav, profile }) {
     const bathsTotal = bathRows.length;
     const bathsDone = bathRows.filter(b => b.done).length;
 
-    // Pictures: boarding dogs not on first or last day (same logic as renderPictures)
+    // Pictures: boarding dogs not on first or last day (same logic as renderPictures checklist)
     const pictureDogs = reservations.filter(r => r.type === "boarding" && r.status === "checked-in" && r.checkIn < viewDate && r.checkOut > viewDate);
     const picEntryId = `ops_pictures_${viewDate}`;
     const picEntry = allOps.find(e => e.id === picEntryId);
@@ -6003,42 +6003,6 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     );
   };
 
-  // ─── Picture Checklist ───
-  const renderPictures = () => {
-    const dogs = pictureDogs;
-    const picItems = items;
-    const done = dogs.filter(r => picItems[r.dogId]).length;
-    return (
-      <div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-          <div style={{ flex: 1, height: 8, background: C.surfaceHover, borderRadius: 4, overflow: "hidden" }}>
-            <div style={{ width: dogs.length ? `${(done / dogs.length) * 100}%` : "0%", height: "100%", background: done === dogs.length && dogs.length ? C.suc : C.pri, borderRadius: 4, transition: "width 0.3s" }} />
-          </div>
-          <span style={{ fontSize: 13, fontWeight: 600, color: done === dogs.length && dogs.length ? C.suc : C.text }}>{done}/{dogs.length} photos</span>
-        </div>
-        {dogs.length === 0 ? <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No dogs qualify for pictures today.</div><div style={{ color: C.textMut, fontSize: 12, marginTop: 4 }}>Boarding dogs on their first or last day are excluded.</div></Card> : (
-          <Card>
-            {dogs.map((r, i) => {
-              const d = getDog(r.dogId);
-              const c = getClient(r.clientId);
-              return (
-                <div key={r.id} style={{ display: "flex", alignItems: "center", padding: "10px 14px", borderBottom: i < dogs.length - 1 ? `1px solid ${C.border}` : "none", gap: 12 }}>
-                  <input type="checkbox" checked={!!picItems[r.dogId]} disabled={isLocked} onChange={e => toggleItem(r.dogId, null, e.target.checked)} style={{ width: 20, height: 20, accentColor: C.suc }} />
-                  <div style={{ flex: 1 }}>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: picItems[r.dogId] ? C.textMut : C.text, textDecoration: picItems[r.dogId] ? "line-through" : "none" }}>{d ? d.fields.name : "?"}</span>
-                    <span style={{ fontSize: 12, color: C.textMut, marginLeft: 8 }}>{c ? `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.trim() : ""}</span>
-                  </div>
-                  <Badge color="primary" size="sm">{r.roomType} · {r.room}</Badge>
-                  {d && d.fields.breed && <Badge color="default" size="sm">{d.fields.breed}</Badge>}
-                </div>
-              );
-            })}
-          </Card>
-        )}
-      </div>
-    );
-  };
-
   // Override toggleItem for pictures (flat boolean instead of object)
   const togglePicture = (dogId, val) => {
     if (isLocked) return;
@@ -6178,8 +6142,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     );
   };
 
-  // Fix pictures toggle to use flat boolean
-  const renderPicturesFixed = () => {
+  // ─── Picture Checklist ───
+  const renderPictures = () => {
     const dogs = pictureDogs;
     const picItems = items;
     const done = dogs.filter(r => picItems[r.dogId]).length;
@@ -6756,7 +6720,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       )}
       {isTemplate ? renderTemplateChecklist()
         : sub === "room_cleaning" ? renderRoomCleaning()
-        : sub === "pictures" ? renderPicturesFixed()
+        : sub === "pictures" ? renderPictures()
         : sub === "pp" ? renderPP()
         : sub === "bathing" ? renderBathing()
         : sub === "pamper" ? renderPamper()
@@ -11561,7 +11525,7 @@ function LeanAppInner() {
   }, [currentLocation, user?.id, liveAuditLog.length, mockData?.clients]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["lifecycle", "ops-hub", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["lifecycle", "funnel", "ops-hub", "reports", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -11606,9 +11570,12 @@ function LeanAppInner() {
     }
   }, [mockData]);
 
-  // Toast function (no-op)
-  const addGlobalToast = useCallback((msg, type) => {
-    console.log("Toast:", msg, type);
+  // Toast notification system
+  const [toasts, setToasts] = useState([]);
+  const addGlobalToast = useCallback((msg, type = "info") => {
+    const id = Date.now() + Math.random();
+    setToasts(prev => [...prev, { id, msg, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
   }, []);
 
   // Load fonts
@@ -11631,6 +11598,7 @@ function LeanAppInner() {
         input:focus,select:focus,textarea:focus{border-color:${C.pri}!important;box-shadow:0 0 0 3px rgba(0,52,98,0.08);}
         h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Canela', Georgia, serif !important;font-weight:700;}
         body { margin: 0; padding: 0; font-family: 'GT Eesti', -apple-system, BlinkMacSystemFont, sans-serif; }
+        @keyframes k9-toast-in { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
       `;
       document.head.appendChild(style);
     }
@@ -11932,6 +11900,24 @@ function LeanAppInner() {
           )}
         </div>
       </div>
+
+      {/* Toast Notifications */}
+      {toasts.length > 0 && (
+        <div style={{ position: "fixed", top: 24, right: 24, zIndex: 9999, display: "flex", flexDirection: "column", gap: 8 }}>
+          {toasts.map(t => (
+            <div key={t.id} style={{
+              padding: "12px 20px", borderRadius: 10, fontSize: 13, fontWeight: 600, fontFamily: "inherit",
+              background: t.type === "success" ? C.suc : t.type === "error" ? C.dan : t.type === "warning" ? C.warn : C.pri,
+              color: "#fff", boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+              animation: "k9-toast-in 0.25s ease",
+              display: "flex", alignItems: "center", gap: 8, maxWidth: 380,
+            }}>
+              <span>{t.type === "success" ? "\u2713" : t.type === "error" ? "\u2717" : t.type === "warning" ? "\u26A0" : "\u2139"}</span>
+              {t.msg}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Main Content */}
       <div style={{ flex: 1, overflow: "auto", background: C.bg, padding: "32px 40px" }}>
