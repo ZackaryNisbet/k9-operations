@@ -10,6 +10,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import ReactDOM from "react-dom";
 import { useAuth } from "./AuthProvider";
 import { supabase } from "./supabaseClient";
+import RoadmapPage from "./RoadmapPage";
 
 // ─── IndexedDB cache for instant page loads ─────────────────────────────────
 const IDB_NAME = "k9_cache";
@@ -11664,6 +11665,7 @@ const LEAN_NAV_ITEMS = [
   { id: "reports", label: "Reports", icon: "BarChart" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "Checkout TV", icon: "Monitor" },
+  { id: "roadmap", label: "Roadmap", icon: "Map" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -12102,6 +12104,8 @@ function LeanAppInner() {
         return <EnterpriseAttendance />;
       case "enterprise-users":
         return <EnterpriseUserManagement profile={profile} />;
+      case "roadmap":
+        return <RoadmapPage nav={nav} />;
       case "settings":
         return <SettingsPage profile={profile} addGlobalToast={addGlobalToast} />;
       default:
