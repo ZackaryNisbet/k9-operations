@@ -1,6 +1,10 @@
 // K9 Operations — Consolidated Dashboard
 // Merges Today's Progress, Revenue Intelligence, and Funnel into one view.
 // OPS-001: Full consolidation of DailyOpsPage, ReportsPage, and FunnelPage.
+// OPS-003: Timeframe selectors verified (WTD, Past Week, MTD, Past 30, QTD, YTD, Lifetime, Custom with date range picker)
+// OPS-004: Top Category metric removed
+// OPS-005: Accrual/Net Revenue consolidated into single "Revenue" metric
+// OPS-006: Booking Source & Payment Method removed
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import {
@@ -40,6 +44,10 @@ const DASH_CSS = `
 @keyframes dashShimmer {
   0%   { background-position: -200% 0; }
   100% { background-position: 200% 0; }
+}
+@keyframes calFadeIn {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 @keyframes dashScaleIn {
   from { opacity: 0; transform: scale(0.92); }
@@ -366,10 +374,10 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
     return { current, previous, revenueTrend, occupancyRate, revPAR, totalRoomCount, days: current.days };
   }, [data.reservations, data.rooms, dateFrom, dateTo, prevFrom, prevTo]);
 
-  /* ─── Net Revenue (consolidated: accrual = net, since discounts are 0) */
-  const netRevenue = accrualData.current.totals.netRevenue;
-  const prevNetRevenue = accrualData.previous.totals.netRevenue;
-  const netRevTrend = prevNetRevenue > 0 ? ((netRevenue - prevNetRevenue) / prevNetRevenue) * 100 : 0;
+  /* ─── Revenue (OPS-005: consolidated accrual + net into single metric) */
+  const revenue = accrualData.current.totals.totalRevenue;
+  const prevRevenue = accrualData.previous.totals.totalRevenue;
+  const revenueTrend = prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue) * 100 : 0;
 
   /* ─── Revenue Composition (from ReportsPage — Boarding vs Daycare split) */
   const revenueComposition = useMemo(() => {
@@ -409,7 +417,7 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
     return { discounted, atRack, totalRackRevenue, totalActualRevenue, totalDiscounts };
   }, [data.reservations, dateFrom, dateTo]);
 
-  /* ─── Category data (revenue breakdown — no Top Category) ──────────── */
+  /* ─── Category data (revenue breakdown — OPS-004: Top Category removed) ── */
   const categoryData = useMemo(() => {
     const cats = cashBasisData.current.byCategory;
     const total = cashBasisData.current.total;
@@ -623,20 +631,14 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
         </div>
       </div>
 
-      {/* Custom date pickers */}
+      {/* Custom date range picker (OPS-003) */}
       {range === "custom" && (
-        <div style={{ display: "flex", gap: 12, marginBottom: 20, alignItems: "center", animation: "dashFadeIn 0.3s ease" }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: C.textSec }}>
-            From
-            <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
-              style={{ marginLeft: 6, padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", color: C.text }} />
-          </label>
-          <label style={{ fontSize: 11, fontWeight: 600, color: C.textSec }}>
-            To
-            <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
-              style={{ marginLeft: 6, padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, fontSize: 12, fontFamily: "inherit", color: C.text }} />
-          </label>
-        </div>
+        <DateRangePicker
+          customFrom={customFrom}
+          customTo={customTo}
+          setCustomFrom={setCustomFrom}
+          setCustomTo={setCustomTo}
+        />
       )}
 
       {/* ═══ TODAY'S SNAPSHOT — Live facility stats (from DailyOpsPage) ═══ */}
@@ -696,7 +698,7 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
 
       {/* ═══ ROW 1 — Hero KPIs (4 cards, 3-col each) ═══════════════════ */}
       <div style={{ ...gridBase, marginBottom: 20 }}>
-        <HeroCard delay={0} label="Net Revenue" value={netRevenue} prefix="$" decimals={2} trend={netRevTrend} icon={<I.DollarSign />} />
+        <HeroCard delay={0} label="Revenue" value={revenue} prefix="$" decimals={2} trend={revenueTrend} icon={<I.DollarSign />} />
         <HeroCard delay={1} label="Bookings" value={cashBasisData.current.count} trend={cashBasisData.previous.count > 0 ? ((cashBasisData.current.count - cashBasisData.previous.count) / cashBasisData.previous.count) * 100 : 0} icon={<I.Calendar />} />
         <HeroCard delay={2} label="Occupancy Rate" value={accrualData.occupancyRate} suffix="%" decimals={1} icon={<I.Layers />} />
         <HeroCard delay={3} label="Avg Transaction" value={cashBasisData.current.avgTransaction} prefix="$" decimals={2} trend={cashBasisData.trendAvg} icon={<I.CreditCard />} />
@@ -988,6 +990,213 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
               ))}
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DateRangePicker — inline calendar for Custom timeframe (OPS-003)
+   ═══════════════════════════════════════════════════════════════════════════ */
+const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const DOW = ["Su","Mo","Tu","We","Th","Fr","Sa"];
+
+function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
+  const today = todayStr();
+  const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
+  const [viewMonth, setViewMonth] = useState(() => new Date().getMonth());
+  const [hovered, setHovered] = useState(null);
+
+  // Quick presets for the custom picker
+  const presets = [
+    { label: "Last 7 days", fn: () => { setCustomFrom(addDays(today, -6)); setCustomTo(today); } },
+    { label: "Last 14 days", fn: () => { setCustomFrom(addDays(today, -13)); setCustomTo(today); } },
+    { label: "Last 30 days", fn: () => { setCustomFrom(addDays(today, -29)); setCustomTo(today); } },
+    { label: "Last 90 days", fn: () => { setCustomFrom(addDays(today, -89)); setCustomTo(today); } },
+    { label: "This month", fn: () => {
+      const now = new Date();
+      setCustomFrom(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`);
+      setCustomTo(today);
+    }},
+    { label: "Last month", fn: () => {
+      const now = new Date();
+      const pm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const pmEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+      setCustomFrom(`${pm.getFullYear()}-${String(pm.getMonth() + 1).padStart(2, "0")}-01`);
+      setCustomTo(`${pmEnd.getFullYear()}-${String(pmEnd.getMonth() + 1).padStart(2, "0")}-${String(pmEnd.getDate()).padStart(2, "0")}`);
+    }},
+  ];
+
+  // Build calendar grid for current viewMonth
+  const calDays = useMemo(() => {
+    const first = new Date(viewYear, viewMonth, 1);
+    const startDow = first.getDay();
+    const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+    const cells = [];
+    // Leading blanks
+    for (let i = 0; i < startDow; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const iso = `${viewYear}-${String(viewMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      cells.push(iso);
+    }
+    return cells;
+  }, [viewYear, viewMonth]);
+
+  const handleDayClick = (iso) => {
+    if (!customFrom || (customFrom && customTo)) {
+      // Start new selection
+      setCustomFrom(iso);
+      setCustomTo("");
+    } else {
+      // Complete the selection
+      if (iso < customFrom) {
+        setCustomTo(customFrom);
+        setCustomFrom(iso);
+      } else {
+        setCustomTo(iso);
+      }
+    }
+  };
+
+  const prevMonth = () => {
+    if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); }
+    else setViewMonth(m => m - 1);
+  };
+  const nextMonth = () => {
+    if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); }
+    else setViewMonth(m => m + 1);
+  };
+
+  const isInRange = (iso) => {
+    if (!iso) return false;
+    const rangeEnd = customTo || hovered;
+    if (!customFrom || !rangeEnd) return false;
+    const start = customFrom < rangeEnd ? customFrom : rangeEnd;
+    const end = customFrom < rangeEnd ? rangeEnd : customFrom;
+    return iso >= start && iso <= end;
+  };
+
+  const isStart = (iso) => iso && iso === customFrom;
+  const isEnd = (iso) => iso && (customTo ? iso === customTo : iso === hovered && customFrom && !customTo);
+  const isToday = (iso) => iso === today;
+  const isFuture = (iso) => iso > today;
+
+  return (
+    <div style={{
+      display: "flex", gap: 16, marginBottom: 20, padding: "18px 22px",
+      background: C.surface, borderRadius: 15, border: `1.5px solid ${C.border}`,
+      animation: "calFadeIn 0.3s cubic-bezier(0.22,1,0.36,1)",
+      boxShadow: "0 2px 12px rgba(0,52,98,0.05)",
+    }}>
+      {/* Presets sidebar */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 120, borderRight: `1px solid ${C.borderLight}`, paddingRight: 16 }}>
+        <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Quick Select</div>
+        {presets.map(p => (
+          <button
+            key={p.label}
+            onClick={p.fn}
+            style={{
+              padding: "6px 10px", borderRadius: 7, border: "none",
+              background: "transparent", color: C.textSec,
+              fontSize: 11, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+              textAlign: "left", transition: "all 0.12s",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = C.priLt; e.currentTarget.style.color = C.pri; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = C.textSec; }}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Calendar */}
+      <div style={{ flex: 1 }}>
+        {/* Month/year header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <button onClick={prevMonth} style={{
+            width: 28, height: 28, borderRadius: 7, border: `1px solid ${C.borderLight}`,
+            background: C.surface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 12, color: C.textSec, fontFamily: "inherit", transition: "all 0.12s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = C.bg; }}
+          onMouseLeave={e => { e.currentTarget.style.background = C.surface; }}
+          >‹</button>
+          <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+            {MONTH_NAMES[viewMonth]} {viewYear}
+          </span>
+          <button onClick={nextMonth} style={{
+            width: 28, height: 28, borderRadius: 7, border: `1px solid ${C.borderLight}`,
+            background: C.surface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 12, color: C.textSec, fontFamily: "inherit", transition: "all 0.12s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = C.bg; }}
+          onMouseLeave={e => { e.currentTarget.style.background = C.surface; }}
+          >›</button>
+        </div>
+
+        {/* Day-of-week headers */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, marginBottom: 4 }}>
+          {DOW.map(d => (
+            <div key={d} style={{ textAlign: "center", fontSize: 9, fontWeight: 700, color: C.textMut, letterSpacing: "0.05em", padding: "4px 0" }}>{d}</div>
+          ))}
+        </div>
+
+        {/* Calendar grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+          {calDays.map((iso, idx) => {
+            if (!iso) return <div key={`blank-${idx}`} />;
+            const dayNum = parseInt(iso.split("-")[2], 10);
+            const inRange = isInRange(iso);
+            const start = isStart(iso);
+            const end = isEnd(iso);
+            const fut = isFuture(iso);
+            const td = isToday(iso);
+
+            return (
+              <button
+                key={iso}
+                onClick={() => !fut && handleDayClick(iso)}
+                onMouseEnter={() => !fut && setHovered(iso)}
+                onMouseLeave={() => setHovered(null)}
+                style={{
+                  width: "100%", aspectRatio: "1", borderRadius: start || end ? 8 : inRange ? 0 : 8,
+                  borderTopLeftRadius: start ? 8 : inRange ? 0 : 8,
+                  borderBottomLeftRadius: start ? 8 : inRange ? 0 : 8,
+                  borderTopRightRadius: end ? 8 : inRange ? 0 : 8,
+                  borderBottomRightRadius: end ? 8 : inRange ? 0 : 8,
+                  border: td ? `1.5px solid ${C.pri}` : "1.5px solid transparent",
+                  background: (start || end) ? C.pri : inRange ? `${C.pri}15` : "transparent",
+                  color: (start || end) ? "#fff" : fut ? `${C.textMut}60` : C.text,
+                  fontSize: 11, fontWeight: (start || end || td) ? 700 : 500,
+                  cursor: fut ? "default" : "pointer",
+                  fontFamily: "inherit",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  transition: "all 0.1s",
+                  opacity: fut ? 0.4 : 1,
+                }}
+              >
+                {dayNum}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Selection summary */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, padding: "8px 0" }}>
+          <div style={{
+            flex: 1, padding: "6px 10px", borderRadius: 7, border: `1.5px solid ${customFrom ? C.pri : C.border}`,
+            background: customFrom ? `${C.pri}08` : C.bg, fontSize: 11, fontWeight: 600, color: customFrom ? C.text : C.textMut, textAlign: "center",
+          }}>
+            {customFrom ? fmtDateLabel(customFrom) : "Start date"}
+          </div>
+          <span style={{ fontSize: 10, color: C.textMut, fontWeight: 600 }}>→</span>
+          <div style={{
+            flex: 1, padding: "6px 10px", borderRadius: 7, border: `1.5px solid ${customTo ? C.pri : C.border}`,
+            background: customTo ? `${C.pri}08` : C.bg, fontSize: 11, fontWeight: 600, color: customTo ? C.text : C.textMut, textAlign: "center",
+          }}>
+            {customTo ? fmtDateLabel(customTo) : "End date"}
+          </div>
         </div>
       </div>
     </div>
