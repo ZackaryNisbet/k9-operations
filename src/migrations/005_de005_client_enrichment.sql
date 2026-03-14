@@ -21,9 +21,9 @@
 
 CREATE TABLE IF NOT EXISTS gingr_emergency_contacts (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
-  owner_gingr_id  BIGINT NOT NULL,               -- FK to gingr_owners.gingr_id
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
+  owner_gingr_id  TEXT NOT NULL,                  -- FK to gingr_owners.gingr_id
   contact_name    TEXT NOT NULL,
   relationship    TEXT,                           -- spouse, parent, neighbor, friend, etc.
   phone           TEXT,
@@ -50,12 +50,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_emergency_contacts_owner
 -- RLS policy: location-scoped access
 ALTER TABLE gingr_emergency_contacts ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_emergency_contacts_location_policy
-  ON gingr_emergency_contacts
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_emergency_contacts_read" ON gingr_emergency_contacts;
+CREATE POLICY "gingr_emergency_contacts_read" ON gingr_emergency_contacts FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_emergency_contacts_service" ON gingr_emergency_contacts;
+CREATE POLICY "gingr_emergency_contacts_service" ON gingr_emergency_contacts FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── gingr_client_notes ───────────────────────────────────────────────────────
@@ -64,9 +62,9 @@ CREATE POLICY gingr_emergency_contacts_location_policy
 
 CREATE TABLE IF NOT EXISTS gingr_client_notes (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
-  owner_gingr_id  BIGINT NOT NULL,               -- FK to gingr_owners.gingr_id
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
+  owner_gingr_id  TEXT NOT NULL,                  -- FK to gingr_owners.gingr_id
   note_type       TEXT NOT NULL DEFAULT 'general', -- general, alert, flag, incident, behavioral
   title           TEXT,
   content         TEXT,                           -- the actual note text
@@ -95,12 +93,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_client_notes_alert
 
 ALTER TABLE gingr_client_notes ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_client_notes_location_policy
-  ON gingr_client_notes
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_client_notes_read" ON gingr_client_notes;
+CREATE POLICY "gingr_client_notes_read" ON gingr_client_notes FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_client_notes_service" ON gingr_client_notes;
+CREATE POLICY "gingr_client_notes_service" ON gingr_client_notes FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── gingr_communication_preferences ──────────────────────────────────────────
@@ -109,9 +105,9 @@ CREATE POLICY gingr_client_notes_location_policy
 
 CREATE TABLE IF NOT EXISTS gingr_communication_preferences (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
-  owner_gingr_id  BIGINT NOT NULL,               -- FK to gingr_owners.gingr_id
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
+  owner_gingr_id  TEXT NOT NULL,                  -- FK to gingr_owners.gingr_id
   channel         TEXT NOT NULL,                  -- email, sms, phone, push, mail
   category        TEXT NOT NULL DEFAULT 'general', -- general, marketing, reminders, reports, promotions
   is_opted_in     BOOLEAN NOT NULL DEFAULT TRUE,
@@ -132,12 +128,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_comm_prefs_owner
 
 ALTER TABLE gingr_communication_preferences ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_communication_preferences_location_policy
-  ON gingr_communication_preferences
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_communication_preferences_read" ON gingr_communication_preferences;
+CREATE POLICY "gingr_communication_preferences_read" ON gingr_communication_preferences FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_communication_preferences_service" ON gingr_communication_preferences;
+CREATE POLICY "gingr_communication_preferences_service" ON gingr_communication_preferences FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── gingr_referral_sources ───────────────────────────────────────────────────
@@ -146,9 +140,9 @@ CREATE POLICY gingr_communication_preferences_location_policy
 
 CREATE TABLE IF NOT EXISTS gingr_referral_sources (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
-  owner_gingr_id  BIGINT NOT NULL,               -- FK to gingr_owners.gingr_id
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
+  owner_gingr_id  TEXT NOT NULL,                  -- FK to gingr_owners.gingr_id
   source_type     TEXT NOT NULL,                  -- google, yelp, friend, veterinarian, social_media, walk_in, other
   source_detail   TEXT,                           -- specific detail: vet name, friend name, ad campaign, etc.
   referral_date   DATE,
@@ -169,12 +163,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_referral_sources_type
 
 ALTER TABLE gingr_referral_sources ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_referral_sources_location_policy
-  ON gingr_referral_sources
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_referral_sources_read" ON gingr_referral_sources;
+CREATE POLICY "gingr_referral_sources_read" ON gingr_referral_sources FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_referral_sources_service" ON gingr_referral_sources;
+CREATE POLICY "gingr_referral_sources_service" ON gingr_referral_sources FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── gingr_agreements ─────────────────────────────────────────────────────────
@@ -183,9 +175,9 @@ CREATE POLICY gingr_referral_sources_location_policy
 
 CREATE TABLE IF NOT EXISTS gingr_agreements (
   id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id     UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id        BIGINT,
-  owner_gingr_id  BIGINT NOT NULL,               -- FK to gingr_owners.gingr_id
+  location_id     TEXT NOT NULL,
+  gingr_id        TEXT,
+  owner_gingr_id  TEXT NOT NULL,                  -- FK to gingr_owners.gingr_id
   agreement_type  TEXT NOT NULL,                  -- liability_waiver, service_agreement, vaccination_policy, cancellation_policy
   agreement_name  TEXT,                           -- display name of the agreement
   status          TEXT NOT NULL DEFAULT 'pending', -- pending, signed, expired, declined
@@ -212,12 +204,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_agreements_expiration
 
 ALTER TABLE gingr_agreements ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_agreements_location_policy
-  ON gingr_agreements
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_agreements_read" ON gingr_agreements;
+CREATE POLICY "gingr_agreements_read" ON gingr_agreements FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_agreements_service" ON gingr_agreements;
+CREATE POLICY "gingr_agreements_service" ON gingr_agreements FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── gingr_subscriptions ──────────────────────────────────────────────────────
@@ -226,9 +216,9 @@ CREATE POLICY gingr_agreements_location_policy
 
 CREATE TABLE IF NOT EXISTS gingr_subscriptions (
   id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  location_id       UUID NOT NULL REFERENCES locations(id) ON DELETE CASCADE,
-  gingr_id          BIGINT NOT NULL,               -- Gingr subscription ID
-  owner_gingr_id    BIGINT NOT NULL,               -- FK to gingr_owners.gingr_id
+  location_id       TEXT NOT NULL,
+  gingr_id          TEXT NOT NULL,                  -- Gingr subscription ID
+  owner_gingr_id    TEXT NOT NULL,                  -- FK to gingr_owners.gingr_id
   subscription_name TEXT NOT NULL,                  -- e.g. 'Daycare 10-Pack', 'Monthly Unlimited'
   subscription_type TEXT,                           -- package, membership, plan, punch_card
   status            TEXT NOT NULL DEFAULT 'active', -- active, paused, cancelled, expired
@@ -262,12 +252,10 @@ CREATE INDEX IF NOT EXISTS idx_gingr_subscriptions_renewal
 
 ALTER TABLE gingr_subscriptions ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY gingr_subscriptions_location_policy
-  ON gingr_subscriptions
-  FOR ALL
-  USING (location_id IN (
-    SELECT location_id FROM user_locations WHERE user_id = auth.uid()
-  ));
+DROP POLICY IF EXISTS "gingr_subscriptions_read" ON gingr_subscriptions;
+CREATE POLICY "gingr_subscriptions_read" ON gingr_subscriptions FOR SELECT TO authenticated USING (true);
+DROP POLICY IF EXISTS "gingr_subscriptions_service" ON gingr_subscriptions;
+CREATE POLICY "gingr_subscriptions_service" ON gingr_subscriptions FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 
 -- ─── Sync state entries for new tables ──────────────────────────────────────

@@ -14,6 +14,7 @@ import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
+import { useAuth } from "../../AuthProvider";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -322,6 +323,7 @@ function MappingStats({ mappings, leftCount, rightCount }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 function RequiredFieldsTab() {
+  const { profile } = useAuth();
   // State
   const [activeSection, setActiveSection] = useState("client");
   const [mappings, setMappings] = useState({ client: [], dog: [] });
@@ -350,6 +352,7 @@ function RequiredFieldsTab() {
         const { data, error } = await supabase
           .from("gingr_form_definitions")
           .select("*")
+          .eq("location_id", profile?.location_id || "cherry-hill")
           .order("display_order", { ascending: true });
 
         if (!error && data && data.length > 0 && !cancelled) {
