@@ -23,6 +23,7 @@ import PermissionsTab from "../settings/PermissionsTab";
 import RequiredFieldsTab from "../settings/RequiredFieldsTab";
 import ChecklistTemplatesTab from "../settings/ChecklistTemplatesTab";
 import RetentionThresholdsTab from "../settings/RetentionThresholdsTab";
+import IgniteSettingsTab from "../settings/IgniteSettingsTab";
 
 function SettingsPage({ profile: parentProfile, addGlobalToast }) {
   const [tab, setTab] = useState(null); // null = show grid, set = show detail
@@ -38,6 +39,13 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       label: "Integrations",
       cards: [
         { id: "gingr", label: "Gingr Integration", desc: "Connect and configure Gingr POS" },
+      ],
+    },
+    {
+      id: "ignite",
+      label: "Ignite",
+      cards: [
+        { id: "ignite-settings", label: "Ignite Configuration", desc: "Configure Ignite profile, email forwarding, and connection status per location" },
       ],
     },
     {
@@ -59,7 +67,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       id: "data",
       label: "Data & Fields",
       cards: [
-        { id: "required-fields", label: "Required Fields", desc: "Configure which fields are required when creating records" },
+        { id: "required-fields", label: "Field Mapping", desc: "Map fields between K9 Ops and Gingr" },
         { id: "checklist-templates", label: "Checklist Templates", desc: "Customize opening, closing, FE, and BE checklists" },
       ],
     },
@@ -89,6 +97,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
         return <RequiredFieldsTab />;
       case "checklist-templates":
         return <ChecklistTemplatesTab />;
+      case "ignite-settings":
+        return <IgniteSettingsTab />;
       default:
         return null;
     }
