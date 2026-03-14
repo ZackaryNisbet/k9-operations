@@ -75,9 +75,28 @@ const Icon = ({ name, size = 24, color = 'currentColor' }) => {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none">{icons[name]}</svg>;
 };
 
-// ─── K9 Logo (real dog silhouette from brand assets) ─────────────────────────
+// ─── K9 Operations Node/Nexus Brand Mark (SVG) ──────────────────────────────
+// Central hub with connected nodes — represents the data nexus / intelligence layer
 const K9Logo = ({ size = 36 }) => (
-  <img src="/k9-logo.png" alt="K9 Operations" style={{ width: size, height: 'auto', objectFit: 'contain' }} />
+  <svg width={size} height={size} viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="K9 Operations">
+    {/* Connection lines */}
+    <line x1="24" y1="24" x2="12" y2="10" stroke="#AF8D54" strokeWidth="1.8" opacity="0.5" />
+    <line x1="24" y1="24" x2="38" y2="12" stroke="#AF8D54" strokeWidth="1.8" opacity="0.5" />
+    <line x1="24" y1="24" x2="10" y2="36" stroke="#AF8D54" strokeWidth="1.8" opacity="0.5" />
+    <line x1="24" y1="24" x2="38" y2="36" stroke="#AF8D54" strokeWidth="1.8" opacity="0.5" />
+    {/* Secondary connections between outer nodes */}
+    <line x1="12" y1="10" x2="38" y2="12" stroke="#003462" strokeWidth="1" opacity="0.2" />
+    <line x1="10" y1="36" x2="38" y2="36" stroke="#003462" strokeWidth="1" opacity="0.2" />
+    {/* Outer nodes */}
+    <circle cx="12" cy="10" r="4.5" fill="#003462" opacity="0.85" />
+    <circle cx="38" cy="12" r="3.5" fill="#003462" opacity="0.7" />
+    <circle cx="10" cy="36" r="3.5" fill="#003462" opacity="0.7" />
+    <circle cx="38" cy="36" r="4" fill="#003462" opacity="0.8" />
+    {/* Center hub — K9 Ops nexus */}
+    <circle cx="24" cy="24" r="9" fill="#003462" />
+    <circle cx="24" cy="24" r="6" fill="#AF8D54" opacity="0.9" />
+    <circle cx="24" cy="24" r="2.5" fill="#FFFFFF" />
+  </svg>
 );
 
 
