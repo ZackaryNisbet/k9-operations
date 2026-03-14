@@ -712,7 +712,7 @@ const TRACKER_DATA = {
       title: "Permission-Based Dashboard Views",
       category: "Dashboard",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Restrict CSRs/PCTs from seeing revenue and funnel data on the Dashboard.",
       spec: "The consolidated Dashboard needs role-based views:\n\n**Managers/Owners:** See everything — ops, revenue, funnel\n**CSRs (Customer Service Reps):** See ops data only — no revenue or funnel metrics\n**PCTs (Pet Care Technicians):** See ops data only — no revenue or funnel metrics\n\nThe UI should gracefully handle restricted sections — don't show empty placeholders, just don't render the restricted widgets at all.",
       dataRequirements: [],
