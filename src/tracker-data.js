@@ -411,7 +411,7 @@ const TRACKER_DATA = {
       title: "Weekly Email Reports",
       category: "Operations Hub",
       priority: "P2",
-      status: "backlog",
+      status: "done",
       description: "Weekly email summary report with aggregated metrics.",
       spec: "Similar to daily email reports but aggregated on a weekly basis. Include week-over-week trends and highlights.\n\nShould use the same distribution group configuration as daily emails.",
       dataRequirements: ["email_config", "gingr_reservations", "invoices"],
