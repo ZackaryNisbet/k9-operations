@@ -1,25 +1,23 @@
 // © 2026 K9 Operations LLC. All Rights Reserved.
-// Proprietary and Confidential. Unauthorized copying, modification,
-// distribution, or use of this software is strictly prohibited.
+// Proprietary and Confidential.
 
 import { useState } from 'react';
 import { useAuth } from './AuthProvider';
 
-// ─── Dark Luxury Color System ─────────────────────────────────────────────────
-const D = {
-  bg: '#0A0F1C',
-  bgAlt: '#0D1425',
-  surface: '#141B2D',
-  surfaceHover: '#1A2340',
-  border: '#1E2A42',
-  borderLight: '#2A3A5C',
-  text: '#F0F2F5',
-  textSec: '#8B95A8',
-  textMut: '#5A647A',
+// ─── Light Theme Colors ──────────────────────────────────────────────────────
+const C = {
+  bg: '#F5F6F8',
+  bgAlt: '#FAFBFC',
+  surface: '#FFFFFF',
+  surfaceHover: '#F0F2F5',
+  border: '#E2E6ED',
+  borderLight: '#EEF0F4',
+  text: '#1A1F2E',
+  textSec: '#5A6478',
+  textMut: '#8B95A8',
   gold: '#AF8D54',
   goldLight: '#C4A46A',
   goldDark: '#8B6F3C',
-  goldGlow: 'rgba(175,141,84,0.15)',
   navy: '#003462',
   navyLight: '#0A4D8A',
   danger: '#EF4444',
@@ -67,73 +65,44 @@ function LegalModal({ type, onClose }) {
   const sections = isTos ? TOS_SECTIONS : PRIVACY_SECTIONS;
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 9999,
-        background: 'rgba(5,8,16,0.8)',
-        backdropFilter: 'blur(8px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 20,
-      }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: '100%', maxWidth: 640, maxHeight: '80vh',
-          background: D.surface,
-          border: `1px solid ${D.border}`,
-          borderRadius: 16,
-          overflow: 'hidden',
-          display: 'flex', flexDirection: 'column',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
-        }}
-      >
-        {/* Header */}
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, zIndex: 9999,
+      background: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(8px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '100%', maxWidth: 640, maxHeight: '80vh',
+        background: '#fff', border: `1px solid ${C.border}`, borderRadius: 16,
+        overflow: 'hidden', display: 'flex', flexDirection: 'column',
+        boxShadow: '0 24px 80px rgba(0,0,0,0.15)',
+      }}>
         <div style={{
-          padding: '20px 28px',
-          borderBottom: `1px solid ${D.border}`,
+          padding: '20px 28px', borderBottom: `1px solid ${C.border}`,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          flexShrink: 0,
-          background: D.bgAlt,
+          flexShrink: 0, background: C.bgAlt,
         }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: D.gold, fontFamily: "'Playfair Display', Georgia, serif" }}>
-              {title}
-            </div>
-            <div style={{ fontSize: 11, color: D.textMut, marginTop: 2 }}>Effective February 10, 2026</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: C.navy }}>{title}</div>
+            <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>Effective February 10, 2026</div>
           </div>
-          <button
-            onClick={onClose}
-            style={{
-              width: 32, height: 32, borderRadius: 8,
-              border: `1.5px solid ${D.border}`, background: D.surface,
-              cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: D.textSec, fontSize: 18, fontFamily: 'inherit', lineHeight: 1,
-              transition: 'all 0.15s',
-            }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = D.borderLight; e.currentTarget.style.color = D.text; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = D.border; e.currentTarget.style.color = D.textSec; }}
-          >
-            &times;
-          </button>
+          <button onClick={onClose} style={{
+            width: 32, height: 32, borderRadius: 8, border: `1.5px solid ${C.border}`, background: '#fff',
+            cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            color: C.textSec, fontSize: 18, fontFamily: 'inherit', lineHeight: 1,
+          }}>&times;</button>
         </div>
-
-        {/* Body */}
         <div style={{ flex: 1, overflow: 'auto', padding: '24px 28px' }}>
-          <p style={{ fontSize: 13, color: D.textSec, lineHeight: 1.7, marginTop: 0, marginBottom: 20 }}>{intro}</p>
+          <p style={{ fontSize: 13, color: C.textSec, lineHeight: 1.7, marginTop: 0, marginBottom: 20 }}>{intro}</p>
           {sections.map((s, i) => (
             <div key={i} style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: D.text, marginBottom: 4 }}>{s.t}</div>
-              <div style={{ fontSize: 13, color: D.textSec, lineHeight: 1.7 }}>{s.b}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>{s.t}</div>
+              <div style={{ fontSize: 13, color: C.textSec, lineHeight: 1.7 }}>{s.b}</div>
             </div>
           ))}
           <div style={{
-            textAlign: 'center', fontSize: 11, color: D.textMut, marginTop: 24,
-            paddingTop: 16, borderTop: `1px solid ${D.border}`,
-          }}>
-            &copy; 2026 K9 Operations LLC. All Rights Reserved.
-          </div>
+            textAlign: 'center', fontSize: 11, color: C.textMut, marginTop: 24,
+            paddingTop: 16, borderTop: `1px solid ${C.border}`,
+          }}>&copy; 2026 K9 Operations LLC. All Rights Reserved.</div>
         </div>
       </div>
     </div>
@@ -143,19 +112,18 @@ function LegalModal({ type, onClose }) {
 // ─── Login Component ──────────────────────────────────────────────────────────
 export default function Login() {
   const { signIn, resetPassword } = useAuth();
-  const [mode, setMode] = useState('login'); // 'login' or 'forgot'
+  const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [resetSent, setResetSent] = useState(false);
-  const [legalModal, setLegalModal] = useState(null); // 'tos' or 'privacy'
+  const [legalModal, setLegalModal] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-
     if (mode === 'forgot') {
       if (!email.trim()) { setError('Enter your email address'); setLoading(false); return; }
       const { error } = await resetPassword(email);
@@ -164,7 +132,6 @@ export default function Login() {
       setLoading(false);
       return;
     }
-
     const { error } = await signIn(email, password);
     if (error) setError(error.message);
     setLoading(false);
@@ -172,267 +139,160 @@ export default function Login() {
 
   const inputStyle = {
     width: '100%', padding: '12px 14px',
-    border: `1.5px solid ${D.border}`,
-    borderRadius: 10, fontSize: 15, color: D.text,
-    background: D.surfaceHover,
+    border: `1.5px solid ${C.border}`,
+    borderRadius: 10, fontSize: 15, color: C.text,
+    background: C.bgAlt,
     outline: 'none', fontFamily: 'inherit',
     boxSizing: 'border-box',
     transition: 'border-color 0.2s, box-shadow 0.2s',
   };
 
   const linkBtnStyle = {
-    background: 'none', border: 'none', color: D.textMut,
+    background: 'none', border: 'none', color: C.textMut,
     fontSize: 10, cursor: 'pointer', fontFamily: 'inherit',
     textDecoration: 'underline', padding: 0,
-    transition: 'color 0.15s',
   };
 
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&display=swap');
         * { box-sizing: border-box; }
         body { margin: 0; }
-        input::placeholder { color: ${D.textMut}; }
+        input::placeholder { color: ${C.textMut}; }
         input:focus {
-          border-color: ${D.gold} !important;
-          box-shadow: 0 0 0 3px rgba(175,141,84,0.15) !important;
+          border-color: ${C.navy} !important;
+          box-shadow: 0 0 0 3px rgba(0,52,98,0.1) !important;
         }
       `}</style>
 
-      {/* Page */}
       <div style={{
-        minHeight: '100vh',
-        background: D.bg,
+        minHeight: '100vh', background: C.bg,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: "system-ui, -apple-system, 'Inter', sans-serif",
-        padding: 20,
-        position: 'relative',
-        overflow: 'hidden',
+        fontFamily: "'GT Eesti', system-ui, -apple-system, sans-serif",
+        padding: 20, position: 'relative', overflow: 'hidden',
       }}>
-
-        {/* Radial gold glow — hero background effect */}
+        {/* Subtle radial glow */}
         <div style={{
-          position: 'absolute', top: '30%', left: '50%',
-          transform: 'translate(-50%, -50%)',
+          position: 'absolute', top: '30%', left: '50%', transform: 'translate(-50%, -50%)',
           width: 600, height: 600, borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(175,141,84,0.07) 0%, transparent 70%)',
-          pointerEvents: 'none',
-        }} />
-        <div style={{
-          position: 'absolute', bottom: '10%', right: '10%',
-          width: 300, height: 300, borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(10,77,138,0.08) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, rgba(0,52,98,0.04) 0%, transparent 70%)',
           pointerEvents: 'none',
         }} />
 
-        {/* Back to Home — top left, outside card */}
-        <a
-          href="/"
-          style={{
-            position: 'fixed', top: 20, left: 20,
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            fontSize: 13, color: D.textSec, textDecoration: 'none',
-            padding: '6px 12px', borderRadius: 8,
-            border: `1px solid ${D.border}`,
-            background: 'rgba(20,27,45,0.8)',
-            backdropFilter: 'blur(8px)',
-            transition: 'all 0.15s',
-            zIndex: 10,
-          }}
-          onMouseEnter={e => { e.currentTarget.style.color = D.text; e.currentTarget.style.borderColor = D.borderLight; }}
-          onMouseLeave={e => { e.currentTarget.style.color = D.textSec; e.currentTarget.style.borderColor = D.border; }}
-        >
-          <span style={{ fontSize: 11 }}>←</span>
+        {/* Back to Home */}
+        <a href="/" style={{
+          position: 'fixed', top: 20, left: 20,
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          fontSize: 13, color: C.textSec, textDecoration: 'none',
+          padding: '6px 12px', borderRadius: 8,
+          border: `1px solid ${C.border}`, background: 'rgba(255,255,255,0.9)',
+          backdropFilter: 'blur(8px)', zIndex: 10,
+        }}>
+          <span style={{ fontSize: 11 }}>&larr;</span>
           <span>Back to Home</span>
         </a>
 
         {/* Login Card */}
         <div style={{
-          width: '100%', maxWidth: 420,
-          background: D.surface,
-          borderRadius: 20,
-          padding: '40px 36px',
-          border: `1px solid ${D.border}`,
-          boxShadow: '0 20px 60px rgba(0,0,0,0.5), 0 0 120px rgba(175,141,84,0.05)',
+          width: '100%', maxWidth: 420, background: '#fff', borderRadius: 20,
+          padding: '40px 36px', border: `1px solid ${C.border}`,
+          boxShadow: '0 20px 60px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)',
           position: 'relative', zIndex: 1,
         }}>
-
           {/* Logo */}
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 100 100"
-              width="56"
-              height="56"
-              style={{ display: 'block', margin: '0 auto 14px' }}
-            >
-              <defs>
-                <linearGradient id="loginNxG" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#C4A46A" />
-                  <stop offset="100%" stopColor="#AF8D54" />
-                </linearGradient>
-              </defs>
-              <g transform="translate(50,50)">
-                <line x1="0" y1="0" x2="-22" y2="-24" stroke={D.borderLight} strokeWidth="2" opacity="0.5" />
-                <line x1="0" y1="0" x2="26" y2="-16" stroke={D.borderLight} strokeWidth="2" opacity="0.5" />
-                <line x1="0" y1="0" x2="2" y2="28" stroke={D.borderLight} strokeWidth="2" opacity="0.5" />
-                <circle cx="0" cy="0" r="16" fill="url(#loginNxG)" />
-                <circle cx="0" cy="0" r="6" fill="rgba(10,15,28,0.3)" />
-                <circle cx="-22" cy="-24" r="9" fill={D.navyLight} />
-                <circle cx="26" cy="-16" r="9" fill={D.navyLight} />
-                <circle cx="2" cy="28" r="9" fill={D.navyLight} />
-              </g>
-            </svg>
-
             <div style={{
-              fontSize: 28, fontWeight: 700, color: D.text,
-              fontFamily: "'Playfair Display', Georgia, serif",
-              letterSpacing: '0.02em',
+              width: 56, height: 56, borderRadius: 14, background: C.navy,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 14px',
+              boxShadow: '0 4px 14px rgba(0,52,98,0.2)',
             }}>
+              <span style={{ fontSize: 22, fontWeight: 900, color: '#fff', fontFamily: "'GT Eesti', system-ui, sans-serif" }}>K9</span>
+            </div>
+            <div style={{ fontSize: 28, fontWeight: 800, color: C.navy, letterSpacing: '-0.02em' }}>
               K9 Operations
             </div>
             <div style={{
-              fontSize: 11, color: D.gold, fontWeight: 600,
-              letterSpacing: '0.1em', textTransform: 'uppercase',
-              marginTop: 5,
+              fontSize: 11, color: C.gold, fontWeight: 700,
+              letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 5,
             }}>
-              Luxury Pet Hotel Management
+              Pet Care Facility Management
             </div>
           </div>
 
-          {/* ── Reset Sent State ── */}
+          {/* Reset Sent State */}
           {resetSent ? (
             <div style={{ textAlign: 'center', padding: '20px 0' }}>
               <div style={{ fontSize: 48, marginBottom: 16 }}>&#9993;</div>
-              <h3 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700, color: D.text }}>
-                Reset link sent
-              </h3>
-              <p style={{ fontSize: 14, color: D.textSec, lineHeight: 1.6, margin: 0 }}>
-                We sent a password reset link to <strong style={{ color: D.text }}>{email}</strong>.
+              <h3 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700, color: C.text }}>Reset link sent</h3>
+              <p style={{ fontSize: 14, color: C.textSec, lineHeight: 1.6, margin: 0 }}>
+                We sent a password reset link to <strong style={{ color: C.text }}>{email}</strong>.
                 Click it to set a new password, then come back here to sign in.
               </p>
               <button
                 onClick={() => { setMode('login'); setResetSent(false); setError(''); }}
                 style={{
-                  marginTop: 20, padding: '10px 24px',
-                  background: D.gold, color: D.bg,
-                  border: 'none', borderRadius: 8,
-                  fontSize: 14, fontWeight: 700,
+                  marginTop: 20, padding: '10px 24px', background: C.navy, color: '#fff',
+                  border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700,
                   cursor: 'pointer', fontFamily: 'inherit',
-                  transition: 'background 0.15s',
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = D.goldLight; }}
-                onMouseLeave={e => { e.currentTarget.style.background = D.gold; }}
-              >
-                Back to Sign In
-              </button>
+              >Back to Sign In</button>
             </div>
           ) : (
             <>
-              {/* Forgot mode heading */}
               {mode === 'forgot' && (
                 <div style={{ marginBottom: 20 }}>
-                  <h3 style={{ margin: '0 0 6px', fontSize: 18, fontWeight: 700, color: D.text }}>
-                    Reset your password
-                  </h3>
-                  <p style={{ margin: 0, fontSize: 13, color: D.textSec, lineHeight: 1.5 }}>
+                  <h3 style={{ margin: '0 0 6px', fontSize: 18, fontWeight: 700, color: C.text }}>Reset your password</h3>
+                  <p style={{ margin: 0, fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>
                     Enter your email and we'll send you a link to set a new password.
                   </p>
                 </div>
               )}
 
-              {/* Form */}
               <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: D.textSec, marginBottom: 6 }}>
-                    Email
-                  </label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    placeholder=""
-                    style={inputStyle}
-                    autoComplete="email"
-                    required
-                  />
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Email</label>
+                  <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+                    style={inputStyle} autoComplete="email" required />
                 </div>
-
                 {mode !== 'forgot' && (
                   <div>
-                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: D.textSec, marginBottom: 6 }}>
-                      Password
-                    </label>
-                    <input
-                      type="password"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      placeholder="Enter your password"
-                      style={inputStyle}
-                      autoComplete="current-password"
-                      required
-                    />
+                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Password</label>
+                    <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                      placeholder="Enter your password" style={inputStyle} autoComplete="current-password" required />
                   </div>
                 )}
-
-                {/* Error message */}
                 {error && (
                   <div style={{
                     padding: '10px 14px', borderRadius: 8,
-                    background: 'rgba(239,68,68,0.1)',
-                    border: '1px solid rgba(239,68,68,0.2)',
-                    color: D.danger, fontSize: 13, fontWeight: 500,
-                  }}>
-                    {error}
-                  </div>
+                    background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)',
+                    color: C.danger, fontSize: 13, fontWeight: 500,
+                  }}>{error}</div>
                 )}
-
-                {/* Submit button */}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  style={{
-                    width: '100%', padding: '13px',
-                    background: loading ? D.textMut : D.gold,
-                    color: loading ? D.bg : D.bg,
-                    border: 'none', borderRadius: 10,
-                    fontSize: 15, fontWeight: 700,
-                    cursor: loading ? 'default' : 'pointer',
-                    fontFamily: 'inherit', marginTop: 4,
-                    transition: 'background 0.2s',
-                    letterSpacing: '0.02em',
-                  }}
-                  onMouseEnter={e => { if (!loading) e.currentTarget.style.background = D.goldLight; }}
-                  onMouseLeave={e => { if (!loading) e.currentTarget.style.background = D.gold; }}
-                >
+                <button type="submit" disabled={loading} style={{
+                  width: '100%', padding: '13px', background: loading ? C.textMut : C.navy,
+                  color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700,
+                  cursor: loading ? 'default' : 'pointer', fontFamily: 'inherit', marginTop: 4,
+                  transition: 'background 0.2s', letterSpacing: '0.02em',
+                  boxShadow: loading ? 'none' : '0 4px 14px rgba(0,52,98,0.2)',
+                }}>
                   {loading ? 'Please wait...' : mode === 'forgot' ? 'Send Reset Link' : 'Sign In'}
                 </button>
               </form>
 
-              {/* Forgot password link */}
               {mode === 'login' && (
                 <div style={{ textAlign: 'center', marginTop: 16 }}>
-                  <button
-                    onClick={() => { setMode('forgot'); setError(''); }}
-                    style={{ background: 'none', border: 'none', color: D.textMut, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', padding: 0 }}
-                    onMouseEnter={e => { e.currentTarget.style.color = D.textSec; }}
-                    onMouseLeave={e => { e.currentTarget.style.color = D.textMut; }}
-                  >
+                  <button onClick={() => { setMode('forgot'); setError(''); }}
+                    style={{ background: 'none', border: 'none', color: C.textMut, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', padding: 0 }}>
                     Forgot your password?
                   </button>
                 </div>
               )}
 
-              {/* Back to sign in link */}
               {mode === 'forgot' && (
                 <div style={{ textAlign: 'center', marginTop: 16 }}>
-                  <button
-                    onClick={() => { setMode('login'); setError(''); }}
-                    style={{ background: 'none', border: 'none', color: D.textMut, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', padding: 0 }}
-                    onMouseEnter={e => { e.currentTarget.style.color = D.textSec; }}
-                    onMouseLeave={e => { e.currentTarget.style.color = D.textMut; }}
-                  >
+                  <button onClick={() => { setMode('login'); setError(''); }}
+                    style={{ background: 'none', border: 'none', color: C.textMut, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', padding: 0 }}>
                     Back to Sign In
                   </button>
                 </div>
@@ -440,33 +300,18 @@ export default function Login() {
             </>
           )}
 
-          {/* Footer: copyright + legal links */}
-          <div style={{ textAlign: 'center', marginTop: 24, fontSize: 11, color: D.textMut }}>
+          {/* Footer */}
+          <div style={{ textAlign: 'center', marginTop: 24, fontSize: 11, color: C.textMut }}>
             <span style={{ fontSize: 10, opacity: 0.7 }}>&copy; 2026 K9 Operations LLC. All Rights Reserved.</span>
             <div style={{ marginTop: 6, display: 'flex', justifyContent: 'center', gap: 12 }}>
-              <button
-                onClick={() => setLegalModal('tos')}
-                style={linkBtnStyle}
-                onMouseEnter={e => { e.currentTarget.style.color = D.textSec; }}
-                onMouseLeave={e => { e.currentTarget.style.color = D.textMut; }}
-              >
-                Terms of Service
-              </button>
-              <span style={{ color: D.border, fontSize: 10 }}>|</span>
-              <button
-                onClick={() => setLegalModal('privacy')}
-                style={linkBtnStyle}
-                onMouseEnter={e => { e.currentTarget.style.color = D.textSec; }}
-                onMouseLeave={e => { e.currentTarget.style.color = D.textMut; }}
-              >
-                Privacy Policy
-              </button>
+              <button onClick={() => setLegalModal('tos')} style={linkBtnStyle}>Terms of Service</button>
+              <span style={{ color: C.border, fontSize: 10 }}>|</span>
+              <button onClick={() => setLegalModal('privacy')} style={linkBtnStyle}>Privacy Policy</button>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Legal Modal */}
       {legalModal && <LegalModal type={legalModal} onClose={() => setLegalModal(null)} />}
     </>
   );
