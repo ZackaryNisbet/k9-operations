@@ -1,7 +1,10 @@
 // K9 Operations — CheckoutTVPage
 // Isolated page component. See AGENTS.md for development contract.
 // Fixes: TV-001 (daycare count), TV-002 (checkout detection), TV-003 (large/small dog differentiation),
-//        TV-004 (room numbers), TV-006 (checkout highlight animation)
+//        TV-004 (room numbers), TV-005 (TV navigation with filtered views), TV-006 (checkout highlight animation)
+//
+// TV-005 NOTE: In KolApp.jsx, the nav item for this page should be renamed from "Checkout TV" to "TV".
+// We cannot edit KolApp.jsx per AGENTS.md rules — only page files. This rename should be done separately.
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
@@ -54,6 +57,14 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
       60% { transform: translateX(-1px); }
       80% { transform: translateX(1px); }
     }
+    @keyframes tvNavFadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes tvGridFadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
   `;
   document.head.appendChild(style);
 }
@@ -66,6 +77,17 @@ function getDogSize(dog) {
   const w = parseInt(dog.fields?.weight);
   if (!w || isNaN(w)) return "large"; // default if no weight
   return w < SIZE_THRESHOLD ? "small" : "large";
+}
+
+/* ── Private Play detection helper ─────────────────────────────────────── */
+function hasPrivatePlay(res) {
+  const svcs = res._services;
+  if (!svcs) return false;
+  const arr = Array.isArray(svcs) ? svcs : [];
+  return arr.some(s => {
+    const name = typeof s === "string" ? s : (s && s.name ? s.name : "");
+    return name.toLowerCase().includes("private play");
+  });
 }
 
 /* ── TV-003: Size theme colors ────────────────────────────────────────── */
@@ -85,6 +107,17 @@ const SIZE_THEME = {
     icon: "S",
   },
 };
+
+/* ── TV-005: Navigation view definitions ──────────────────────────────── */
+const NAV_VIEWS = [
+  { id: "all",           label: "All",            color: "#fff",     colorRgb: "255,255,255" },
+  { id: "small-daycare", label: "Small Daycare",  color: "#8B5CF6",  colorRgb: "139,92,246" },
+  { id: "large-daycare", label: "Large Daycare",  color: "#0EA5E9",  colorRgb: "14,165,233" },
+  { id: "private-play",  label: "Private Play",   color: "#F59E0B",  colorRgb: "245,158,11" },
+  { id: "boarding",      label: "Boarding",        color: "#AF8D54",  colorRgb: "175,141,84" },
+];
+
+const AUTO_CYCLE_INTERVAL = 30000; // 30 seconds
 
 /* ── Room parser (TV-004) ─────────────────────────────────────────────── */
 function parseRoom(room) {
@@ -327,6 +360,70 @@ function QueueCard({ entry, dogs, index }) {
   );
 }
 
+/* ── TV-005: Navigation Button ────────────────────────────────────────── */
+function TVNavButton({ view, isActive, count, onClick }) {
+  const [hovered, setHovered] = useState(false);
+  const { label, color, colorRgb } = view;
+
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
+        height: 64, minWidth: 160, padding: "0 28px",
+        borderRadius: 16,
+        border: isActive
+          ? `2px solid ${color}`
+          : `2px solid rgba(${colorRgb},${hovered ? 0.4 : 0.15})`,
+        background: isActive
+          ? `rgba(${colorRgb},0.2)`
+          : hovered
+            ? `rgba(${colorRgb},0.08)`
+            : "rgba(255,255,255,0.03)",
+        cursor: "pointer",
+        transition: "all 0.25s ease",
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
+      {/* Active indicator glow */}
+      {isActive && (
+        <div style={{
+          position: "absolute", inset: 0,
+          background: `radial-gradient(ellipse at center, rgba(${colorRgb},0.12) 0%, transparent 70%)`,
+          pointerEvents: "none",
+        }} />
+      )}
+      <span style={{
+        fontSize: 18, fontWeight: isActive ? 900 : 700,
+        color: isActive ? color : hovered ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.55)",
+        letterSpacing: isActive ? "0.02em" : "0",
+        transition: "all 0.25s ease",
+        position: "relative", zIndex: 1,
+        whiteSpace: "nowrap",
+      }}>
+        {label}
+      </span>
+      {/* Count badge */}
+      <span style={{
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        fontSize: 15, fontWeight: 900,
+        color: isActive ? color : "rgba(255,255,255,0.4)",
+        background: isActive ? `rgba(${colorRgb},0.2)` : "rgba(255,255,255,0.06)",
+        border: `1.5px solid ${isActive ? `rgba(${colorRgb},0.4)` : "rgba(255,255,255,0.08)"}`,
+        borderRadius: 10, padding: "2px 10px", minWidth: 32,
+        transition: "all 0.25s ease",
+        position: "relative", zIndex: 1,
+        fontVariantNumeric: "tabular-nums",
+      }}>
+        {count}
+      </span>
+    </button>
+  );
+}
+
 /* ── Main Component ───────────────────────────────────────────────────── */
 function CheckoutTVPage({ data, nav, profile }) {
   const [now, setNow] = useState(new Date());
@@ -334,6 +431,35 @@ function CheckoutTVPage({ data, nav, profile }) {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  /* ── TV-005: Navigation state ──────────────────────────────────────── */
+  const [activeView, setActiveView] = useState("all");
+  const [autoCycle, setAutoCycle] = useState(false);
+  const [gridKey, setGridKey] = useState(0); // triggers fade animation on view change
+
+  // TV-005: Auto-cycle through views
+  useEffect(() => {
+    if (!autoCycle) return;
+    const interval = setInterval(() => {
+      setActiveView(prev => {
+        const idx = NAV_VIEWS.findIndex(v => v.id === prev);
+        const next = (idx + 1) % NAV_VIEWS.length;
+        return NAV_VIEWS[next].id;
+      });
+      setGridKey(k => k + 1);
+    }, AUTO_CYCLE_INTERVAL);
+    return () => clearInterval(interval);
+  }, [autoCycle]);
+
+  const handleViewChange = useCallback((viewId) => {
+    setActiveView(viewId);
+    setGridKey(k => k + 1);
+    // Reset auto-cycle timer on manual interaction
+    if (autoCycle) {
+      setAutoCycle(false);
+      setTimeout(() => setAutoCycle(true), 0);
+    }
+  }, [autoCycle]);
 
   const reservations = data.reservations || [];
   const dogs = data.dogs || [];
@@ -426,6 +552,20 @@ function CheckoutTVPage({ data, nav, profile }) {
     }
     return { largeDaycare: large, smallDaycare: small };
   }, [daycareDogs, dogs]);
+
+  /* ── TV-005: Private play dogs ─────────────────────────────────────── */
+  const privatePlayDogs = useMemo(() => {
+    return uniqueDogs.filter(r => hasPrivatePlay(r) || r.type === "dayboarding");
+  }, [uniqueDogs]);
+
+  /* ── TV-005: Counts for navigation badges ──────────────────────────── */
+  const viewCounts = useMemo(() => ({
+    "all": uniqueDogs.length,
+    "small-daycare": smallDaycare.length,
+    "large-daycare": largeDaycare.length,
+    "private-play": privatePlayDogs.length,
+    "boarding": boardingDogs.length,
+  }), [uniqueDogs, smallDaycare, largeDaycare, privatePlayDogs, boardingDogs]);
 
   /* ── TV-002: Checkout detection polling ─────────────────────────────── */
   const prevCheckedInRef = useRef(null);     // Set of gingr_ids from last poll
@@ -566,6 +706,9 @@ function CheckoutTVPage({ data, nav, profile }) {
     // TV-006: Dim dogs that are being checked out (they appear in hero card above)
     const isCheckingOut = checkingOutDogIds.has(res.dogId);
 
+    // TV-005: Private play badge
+    const isPP = hasPrivatePlay(res) || res.type === "dayboarding";
+
     return (
       <div style={{
         display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 12px",
@@ -584,6 +727,22 @@ function CheckoutTVPage({ data, nav, profile }) {
         }}>
           <SizeBadge size={size} />
         </div>
+
+        {/* TV-005: Private Play badge — top-left corner */}
+        {isPP && (
+          <div style={{
+            position: "absolute", top: 8, left: 8,
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            fontSize: 10, fontWeight: 900, letterSpacing: "0.06em",
+            color: "#F59E0B",
+            background: "rgba(245,158,11,0.15)",
+            border: "1.5px solid rgba(245,158,11,0.35)",
+            borderRadius: 6, padding: "2px 6px",
+            lineHeight: 1.4,
+          }}>
+            PP
+          </div>
+        )}
 
         {/* Dog photo/icon from gingr_animal_icons or fallback */}
         {image ? (
@@ -636,6 +795,29 @@ function CheckoutTVPage({ data, nav, profile }) {
 
   const hasCheckouts = checkingOut.length > 0;
 
+  /* ── TV-005: Determine which sections to render based on active view ── */
+  const showLargeDaycare = activeView === "all" || activeView === "large-daycare";
+  const showSmallDaycare = activeView === "all" || activeView === "small-daycare";
+  const showBoarding = activeView === "all" || activeView === "boarding";
+  const showPrivatePlay = activeView === "all" || activeView === "private-play";
+
+  // For filtered views (not "all"), skip the section header and show a flat grid
+  const isFilteredView = activeView !== "all";
+
+  // Get the filtered dogs for single-category views
+  const filteredDogList = useMemo(() => {
+    switch (activeView) {
+      case "small-daycare": return smallDaycare;
+      case "large-daycare": return largeDaycare;
+      case "private-play": return privatePlayDogs;
+      case "boarding": return boardingDogs;
+      default: return null; // "all" uses the sectioned layout
+    }
+  }, [activeView, smallDaycare, largeDaycare, privatePlayDogs, boardingDogs]);
+
+  // Get accent color & label for filtered view
+  const filteredViewMeta = NAV_VIEWS.find(v => v.id === activeView);
+
   return (
     <div style={{
       minHeight: "100vh", background: "linear-gradient(180deg, #001A33 0%, #00112A 50%, #000A1A 100%)",
@@ -653,8 +835,69 @@ function CheckoutTVPage({ data, nav, profile }) {
         </div>
       </div>
 
+      {/* TV-005: Navigation bar — large, touch-friendly buttons */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 10,
+        padding: "12px 0", marginBottom: 4,
+        borderTop: "1px solid rgba(255,255,255,0.06)",
+        borderBottom: "1px solid rgba(255,255,255,0.06)",
+        overflowX: "auto",
+        animation: "tvNavFadeIn 0.4s ease-out",
+      }}>
+        {NAV_VIEWS.map(view => (
+          <TVNavButton
+            key={view.id}
+            view={view}
+            isActive={activeView === view.id}
+            count={viewCounts[view.id]}
+            onClick={() => handleViewChange(view.id)}
+          />
+        ))}
+
+        {/* Auto-cycle toggle */}
+        <div style={{ marginLeft: "auto", flexShrink: 0 }}>
+          <button
+            onClick={() => setAutoCycle(prev => !prev)}
+            onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = autoCycle ? "rgba(175,141,84,0.12)" : "rgba(255,255,255,0.03)"; }}
+            style={{
+              display: "flex", alignItems: "center", gap: 8,
+              height: 48, padding: "0 20px",
+              borderRadius: 12,
+              border: autoCycle ? "2px solid rgba(175,141,84,0.4)" : "2px solid rgba(255,255,255,0.08)",
+              background: autoCycle ? "rgba(175,141,84,0.12)" : "rgba(255,255,255,0.03)",
+              cursor: "pointer",
+              transition: "all 0.25s ease",
+            }}
+          >
+            {/* Rotating icon indicator */}
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              style={{
+                transition: "transform 0.3s",
+                transform: autoCycle ? "rotate(360deg)" : "rotate(0deg)",
+              }}
+            >
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10"
+                stroke={autoCycle ? "#AF8D54" : "rgba(255,255,255,0.35)"}
+                strokeWidth="2.5" strokeLinecap="round" />
+              <path d="M22 4l-2 6-6-2"
+                stroke={autoCycle ? "#AF8D54" : "rgba(255,255,255,0.35)"}
+                strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span style={{
+              fontSize: 14, fontWeight: 700,
+              color: autoCycle ? "#AF8D54" : "rgba(255,255,255,0.35)",
+              transition: "color 0.25s",
+              whiteSpace: "nowrap",
+            }}>
+              {autoCycle ? "Auto" : "Auto"}
+            </span>
+          </button>
+        </div>
+      </div>
+
       {/* Stats bar — TV-003: Updated with large/small daycare counts */}
-      <div style={{ display: "flex", gap: 24, padding: "14px 0", borderTop: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 8, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 24, padding: "10px 0", marginBottom: 8, flexWrap: "wrap" }}>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Total: <span style={{ fontWeight: 800, color: "#fff" }}>{uniqueDogs.length}</span></div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>
           Large Daycare: <span style={{ fontWeight: 800, color: SIZE_THEME.large.accent }}>{largeDaycare.length}</span>
@@ -662,6 +905,7 @@ function CheckoutTVPage({ data, nav, profile }) {
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>
           Small Daycare: <span style={{ fontWeight: 800, color: SIZE_THEME.small.accent }}>{smallDaycare.length}</span>
         </div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Private Play: <span style={{ fontWeight: 800, color: "#F59E0B" }}>{privatePlayDogs.length}</span></div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#AF8D54" }}>{boardingDogs.length}</span></div>
         {hasCheckouts && (
           <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: "auto" }}>
@@ -723,51 +967,113 @@ function CheckoutTVPage({ data, nav, profile }) {
         </div>
       )}
 
-      {/* TV-003: Large Dog Daycare section */}
-      {largeDaycare.length > 0 && (
-        <div>
-          <SectionLabel
-            label="Large Dog Daycare"
-            count={largeDaycare.length}
-            color={SIZE_THEME.large.accent}
-            subtitle={`Dogs ${SIZE_THRESHOLD}+ lbs`}
-          />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
-            {largeDaycare.map(r => <DogCard key={r.id} res={r} sizeGroup="large" />)}
-          </div>
-        </div>
-      )}
+      {/* TV-005: Grid content — switches between "all" sectioned view and filtered single-category view */}
+      <div key={gridKey} style={{ animation: "tvGridFadeIn 0.35s ease-out" }}>
+        {isFilteredView && filteredDogList ? (
+          /* ── Filtered single-category view ────────────────────────────── */
+          <>
+            {filteredDogList.length > 0 ? (
+              <div>
+                <SectionLabel
+                  label={filteredViewMeta?.label || ""}
+                  count={filteredDogList.length}
+                  color={filteredViewMeta?.color || "#fff"}
+                  subtitle={
+                    activeView === "large-daycare" ? `Dogs ${SIZE_THRESHOLD}+ lbs` :
+                    activeView === "small-daycare" ? `Dogs under ${SIZE_THRESHOLD} lbs` :
+                    activeView === "private-play" ? "Dogs with private play or day boarding" :
+                    activeView === "boarding" ? "Overnight boarding dogs" :
+                    undefined
+                  }
+                />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                  {filteredDogList.map(r => (
+                    <DogCard
+                      key={r.id}
+                      res={r}
+                      sizeGroup={
+                        activeView === "large-daycare" ? "large" :
+                        activeView === "small-daycare" ? "small" :
+                        undefined
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{ textAlign: "center", padding: "80px 0" }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "rgba(255,255,255,0.3)" }}>
+                  No {filteredViewMeta?.label?.toLowerCase()} dogs checked in
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          /* ── "All" view — sectioned layout (original) ─────────────────── */
+          <>
+            {/* TV-003: Large Dog Daycare section */}
+            {largeDaycare.length > 0 && (
+              <div>
+                <SectionLabel
+                  label="Large Dog Daycare"
+                  count={largeDaycare.length}
+                  color={SIZE_THEME.large.accent}
+                  subtitle={`Dogs ${SIZE_THRESHOLD}+ lbs`}
+                />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                  {largeDaycare.map(r => <DogCard key={r.id} res={r} sizeGroup="large" />)}
+                </div>
+              </div>
+            )}
 
-      {/* TV-003: Small Dog Daycare section */}
-      {smallDaycare.length > 0 && (
-        <div>
-          <SectionLabel
-            label="Small Dog Daycare"
-            count={smallDaycare.length}
-            color={SIZE_THEME.small.accent}
-            subtitle={`Dogs under ${SIZE_THRESHOLD} lbs`}
-          />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
-            {smallDaycare.map(r => <DogCard key={r.id} res={r} sizeGroup="small" />)}
-          </div>
-        </div>
-      )}
+            {/* TV-003: Small Dog Daycare section */}
+            {smallDaycare.length > 0 && (
+              <div>
+                <SectionLabel
+                  label="Small Dog Daycare"
+                  count={smallDaycare.length}
+                  color={SIZE_THEME.small.accent}
+                  subtitle={`Dogs under ${SIZE_THRESHOLD} lbs`}
+                />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                  {smallDaycare.map(r => <DogCard key={r.id} res={r} sizeGroup="small" />)}
+                </div>
+              </div>
+            )}
 
-      {/* Boarding section */}
-      {boardingDogs.length > 0 && (
-        <div>
-          <SectionLabel label="Boarding" count={boardingDogs.length} color="#AF8D54" />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
-            {boardingDogs.map(r => <DogCard key={r.id} res={r} />)}
-          </div>
-        </div>
-      )}
+            {/* Private Play section */}
+            {privatePlayDogs.length > 0 && (
+              <div>
+                <SectionLabel
+                  label="Private Play"
+                  count={privatePlayDogs.length}
+                  color="#F59E0B"
+                  subtitle="Dogs with private play or day boarding"
+                />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                  {privatePlayDogs.map(r => <DogCard key={r.id} res={r} />)}
+                </div>
+              </div>
+            )}
 
-      {uniqueDogs.length === 0 && checkingOut.length === 0 && (
-        <div style={{ textAlign: "center", padding: "80px 0" }}>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "rgba(255,255,255,0.3)" }}>No dogs checked in today</div>
-        </div>
-      )}
+            {/* Boarding section */}
+            {boardingDogs.length > 0 && (
+              <div>
+                <SectionLabel label="Boarding" count={boardingDogs.length} color="#AF8D54" subtitle="Overnight boarding dogs" />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                  {boardingDogs.map(r => <DogCard key={r.id} res={r} />)}
+                </div>
+              </div>
+            )}
+
+            {uniqueDogs.length === 0 && checkingOut.length === 0 && (
+              <div style={{ textAlign: "center", padding: "80px 0" }}>
+                <div style={{ fontSize: 20, fontWeight: 700, color: "rgba(255,255,255,0.3)" }}>No dogs checked in today</div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
 
       {/* Footer */}
       <div style={{ textAlign: "center", marginTop: 40, padding: "16px 0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
