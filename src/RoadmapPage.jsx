@@ -696,7 +696,7 @@ const TRACKER_DATA = {
       title: "Dashboard UI Design",
       category: "Dashboard",
       priority: "P0",
-      status: "backlog",
+      status: "done",
       description: "Design the consolidated Dashboard UI inspired by the referenced X post.",
       spec: "Design the master Dashboard UI that consolidates Today's Progress, Revenue Intelligence, and Funnel.\n\n**Inspiration:** [X post by @tanjim38](https://x.com/tanjim38/status/2032715653472309431) — clean, modern dashboard layout with varied widget sizes.\n\n**Key design principles:**\n- Not all UI elements need to be the same size — prioritize based on data importance\n- Clean, professional aesthetic\n- Animated metric transitions\n- Responsive layout\n- Permission-aware (different views for different roles)\n\n**This task covers the design/mockup phase.** Implementation is handled by OPS-001.",
       dataRequirements: [],
