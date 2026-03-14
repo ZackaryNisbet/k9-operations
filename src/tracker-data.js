@@ -821,16 +821,17 @@ const TRACKER_DATA = {
       title: "Data Expansion Proposal Document",
       category: "Data Expansion",
       priority: "P1",
-      status: "needs_review",
+      status: "done",
       description: "Comprehensive data expansion proposal document for review.",
-      spec: "The Data Expansion Proposal has been created and shared. It outlines all 7 phases (0-6) of the data expansion plan, including:\n\n- Current state analysis\n- Proposed new tables and fields\n- Sync strategy and scheduling\n- Impact on existing features\n- Rollback plan\n- Timeline estimates\n\n**Status:** Awaiting Zack's review and approval before proceeding with implementation.",
+      spec: "The Data Expansion Proposal has been created and shared. It outlines all 7 phases (0-6) of the data expansion plan, including:\n\n- Current state analysis\n- Proposed new tables and fields\n- Sync strategy and scheduling\n- Impact on existing features\n- Rollback plan\n- Timeline estimates\n\n**Status:** Reviewed and approved.",
       dataRequirements: [],
       dependencies: [],
       activityLog: [
-        { date: "2026-03-14", entry: "Proposal document created and shared with Zack for review" }
+        { date: "2026-03-14", entry: "Proposal document created and shared with Zack for review" },
+        { date: "2026-03-14", entry: "Proposal reviewed and approved. Moved to done." }
       ],
       screenshots: [],
-      notes: "Awaiting review. This gates all data expansion work."
+      notes: "Proposal complete. Data expansion phases DE-001 through DE-007 can now proceed."
     },
     {
       id: "PUB-001",
@@ -847,6 +848,26 @@ const TRACKER_DATA = {
       ],
       screenshots: [],
       notes: "Part of the public site polish. Landing page must be world-class."
+    },
+    {
+      id: "ARCH-001",
+      title: "Refactor KOL Codebase — One File Per Page",
+      category: "Architecture",
+      priority: "P0",
+      status: "done",
+      description: "Refactor the monolithic LiteApp.jsx (12,321 lines) into individual page files so multiple agents can work in parallel without merge conflicts.",
+      spec: "**Completed refactor:**\n- Split LiteApp.jsx into 35 files across src/shared/, src/hooks/, src/kol/pages/, src/kol/settings/, src/kol/enterprise/\n- KolApp.jsx is the thin shell (router + sidebar)\n- Each page file has comprehensive imports from shared modules\n- Build verified clean (109 modules, 0 errors)\n- All 8 nav pages verified via Playwright — zero runtime errors\n- Original LiteApp.jsx preserved for reference\n\n**File count:** 35 files totaling 12,854 lines (extra from import headers)",
+      dataRequirements: [],
+      dependencies: [],
+      activityLog: [
+        { date: "2026-03-14", entry: "Refactor planned — regex-based extraction script (refactor_v2.py) written" },
+        { date: "2026-03-14", entry: "Extraction complete — 35 files created across shared/, hooks/, kol/" },
+        { date: "2026-03-14", entry: "Import fixes applied, build passing clean" },
+        { date: "2026-03-14", entry: "All 8 nav pages verified via Playwright — zero runtime errors" },
+        { date: "2026-03-14", entry: "Pushed to GitHub as commit 0bf8730. Marked done." }
+      ],
+      screenshots: [],
+      notes: "Enables parallel agent development. Each agent can now own a single page file."
     }
   ]
 };
