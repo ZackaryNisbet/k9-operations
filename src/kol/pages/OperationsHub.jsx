@@ -123,6 +123,37 @@ function OperationsHub({ data, save, nav, profile }) {
   const dateLbl = new Date(viewDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
   const hp = (k) => hasPermission(profile, data, k);
 
+  // ─── Inventory snapshot status for weekly-inventory card ────────────────────
+  const [invStatus, setInvStatus] = useState(null); // { status, itemsCounted, totalItems }
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = new Date(viewDate + "T12:00:00");
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        const mon = new Date(d.getFullYear(), d.getMonth(), diff);
+        const weekStart = mon.toISOString().split("T")[0];
+        const locId = data.locationId || profile?.locationId || "cherry-hill";
+        const { data: snaps } = await supabase
+          .from("inventory_snapshots")
+          .select("id, status, completed_at")
+          .eq("location_id", locId)
+          .eq("week_start", weekStart)
+          .limit(1);
+        if (cancelled) return;
+        if (!snaps || snaps.length === 0) { setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0 }); return; }
+        const snap = snaps[0];
+        if (snap.status === "completed") { setInvStatus({ status: "completed", itemsCounted: 0, totalItems: 0 }); return; }
+        // Count items
+        const { count: counted } = await supabase.from("inventory_counts").select("id", { count: "exact", head: true }).eq("snapshot_id", snap.id).gt("stock_count", 0);
+        const { count: total } = await supabase.from("inventory_counts").select("id", { count: "exact", head: true }).eq("snapshot_id", snap.id);
+        if (!cancelled) setInvStatus({ status: snap.status === "in_progress" ? "in_progress" : "not_started", itemsCounted: counted || 0, totalItems: total || 0 });
+      } catch { if (!cancelled) setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0 }); }
+    })();
+    return () => { cancelled = true; };
+  }, [viewDate, data.locationId]);
+
   // Calendar popup
   const [showCalendar, setShowCalendar] = useState(false);
   const [calMonth, setCalMonth] = useState(() => new Date(viewDate + "T12:00:00").getMonth());
@@ -650,9 +681,11 @@ function OperationsHub({ data, save, nav, profile }) {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
               {visibleItems.map(item => {
-                const status = getOpsCardStatus(data, item, viewDate);
-                const progress = getOpsProgress(data, item, viewDate);
-                const countLabel = getOpsCountLabel(data, item, viewDate);
+                // Inventory card: override status from Supabase snapshot
+                const isInv = item.id === "weekly-inventory";
+                const status = isInv && invStatus ? invStatus.status : getOpsCardStatus(data, item, viewDate);
+                const progress = isInv && invStatus ? (invStatus.status === "completed" ? 100 : invStatus.totalItems > 0 ? Math.round((invStatus.itemsCounted / invStatus.totalItems) * 100) : 0) : getOpsProgress(data, item, viewDate);
+                const countLabel = isInv && invStatus ? (invStatus.status === "completed" ? "Completed this week" : invStatus.totalItems > 0 ? `${invStatus.itemsCounted}/${invStatus.totalItems} items counted` : "Not started this week") : getOpsCountLabel(data, item, viewDate);
                 const sc = statusConfig[status];
                 const isComingSoon = item.comingSoon;
                 const isEod = item.dataKey === "eodEntries";
