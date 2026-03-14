@@ -55,7 +55,7 @@ const TRACKER_DATA = {
       title: "Required Fields / Field Mapping Module",
       category: "Customer Lifecycle",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Two-column field mapping UI between K9 Ops Lite and Gingr fields in Settings.",
       spec: "Vision: A two-column module in Settings showing K9 Ops Lite fields alongside Gingr fields.\n\n**K9 Ops Lite Fields Column:**\n- Auto-populated with unique K9 Ops data fields (EOD data, lifecycle data)\n- Ability to create new custom fields that feed into the new client creation form\n- Each field should have a toggle for required/optional\n- Covers both **client fields** and **dog fields**\n\n**Gingr Fields Column:**\n- Ideally pulled programmatically from Gingr API (may not be possible — might need manual config at resort setup)\n- Shows all required Gingr fields for client/dog records\n\n**Drag-and-Drop Mapping:**\n- Each field has a small dot on its side\n- Drag from one dot to another to create a mapping between K9 Ops and Gingr fields\n- Visual lines/connections showing active mappings\n\n**Purpose:** Every record we create in K9 Ops Lite should sync 1:1 to Gingr. This module ensures data compatibility.\n\nConsider renaming from \"Required Fields\" to \"Field Mapping\" in the settings nav.",
       dataRequirements: ["field_mappings", "gingr_form_definitions"],
