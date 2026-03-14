@@ -65,6 +65,7 @@ const LEAN_PERMISSION_AREAS = [
   "Gingr Integration",
   "Checklist Templates",
   "Enterprise View",
+  "Inventory Management",
 ];
 
 const LEAN_PERMISSION_MATRIX = {
@@ -79,6 +80,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Gingr Integration": false,
     "Checklist Templates": false,
     "Enterprise View": false,
+    "Inventory Management": false,
   },
   csr: {
     "Operations Hub": true,
@@ -91,6 +93,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Gingr Integration": false,
     "Checklist Templates": false,
     "Enterprise View": false,
+    "Inventory Management": false,
   },
   supervisor: {
     "Operations Hub": true,
@@ -103,6 +106,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Gingr Integration": false,
     "Checklist Templates": false,
     "Enterprise View": false,
+    "Inventory Management": true,
   },
   manager: {
     "Operations Hub": true,
@@ -115,6 +119,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Gingr Integration": false,
     "Checklist Templates": true,
     "Enterprise View": false,
+    "Inventory Management": true,
   },
   location_admin: {
     "Operations Hub": true,
@@ -127,6 +132,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Gingr Integration": true,
     "Checklist Templates": true,
     "Enterprise View": false,
+    "Inventory Management": true,
   },
   enterprise_admin: {
     "Operations Hub": true,
@@ -139,6 +145,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Gingr Integration": true,
     "Checklist Templates": true,
     "Enterprise View": true,
+    "Inventory Management": true,
   },
 };
 
@@ -152,6 +159,7 @@ const NAV_ITEMS = [
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Lifecycle" },
   { id: "ops-hub", label: "Operations Hub", icon: "OpsHub" },
   { id: "photos", label: "Photos", icon: "Photos" },
+  { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -240,6 +248,7 @@ const PAGE_SLUGS = {
   "settings-closed-dates":"settings/closed-dates", "settings-policies":"settings/policies", "settings-compliance-rules":"settings/compliance-rules",
   "settings-booking-settings":"settings/booking-settings", "settings-vets":"settings/vets",
   "settings-legal":"settings/legal", "settings-hotkeys":"settings/hotkeys", "settings-reset":"settings/reset",
+  "inventory":"inventory", "inventory-report":"inventory/report",
   "enterprise-locations":"locations", "enterprise-operations":"oversight", "enterprise-packages":"packages", "enterprise-users":"users", "enterprise-management":"management",
 };
 const SLUG_TO_PAGE = {};
@@ -377,7 +386,7 @@ const OPERATIONS_CATALOG = [
   // Services are dynamically generated from reservation data — see OperationsHub component
   { id:"eod", label:"EOD Report", frequency:"daily", dataKey:"eodEntries", typeSub:null, routeTo:"eod", permission:"view_eod" },
   // Weekly placeholders
-  { id:"weekly-inventory", label:"Weekly Inventory", frequency:"weekly", comingSoon:true },
+  { id:"weekly-inventory", label:"Weekly Inventory", frequency:"weekly", routeTo:"inventory", permission:"view_inventory" },
   { id:"weekly-maintenance", label:"Weekly Maintenance", frequency:"weekly", comingSoon:true },
 ];
 
