@@ -87,7 +87,7 @@ const TRACKER_DATA = {
       title: "Dog Detail Page Enhancement",
       category: "Customer Lifecycle",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Match POS app dog detail UI and add vaccination data + all Gingr dog data.",
       spec: "When clicking on a client's dog, the detail page doesn't match the POS app layout and is missing key data.\n\n**Required enhancements:**\n- Match the POS app's dog detail page UI exactly\n- Pull and display **vaccination data** from Gingr\n- Show **all unique Gingr dog data** including:\n  - Breed, species, weight, age\n  - Temperament notes\n  - Feeding instructions\n  - Medications\n  - Vet information\n  - Custom animal icons\n  - Immunization records\n\nThis requires the Data Expansion phases to provide the underlying data.",
       dataRequirements: ["gingr_animals", "immunizations", "medications", "feeding_schedules", "vets", "animal_icons"],
