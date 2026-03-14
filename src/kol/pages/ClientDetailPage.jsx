@@ -126,10 +126,11 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const sc=(s)=>s==="checked-in"?"success":s==="upcoming"?"info":"default";
   const isFieldRequired = () => false;
 
-  // Stats calculations
+  // Stats calculations — use serverStats (same source as ClientsPage/Lifecycle module)
   const stats = useMemo(() => {
-    const pmts = (data.payments || []).filter(p => p.clientId === clientId);
-    const totalSpent = pmts.filter(p => p.status === "completed" && p.type !== "refund").reduce((s, p) => s + p.amount, 0);
+    const gingrId = String(client.gingrId);
+    const srv = data.serverStats && data.serverStats[gingrId];
+    const totalSpent = srv ? Number(srv.total_spent) || 0 : 0;
     const sorted = [...reservations].sort((a, b) => b.checkIn.localeCompare(a.checkIn));
     const lastRes = sorted.find(r => r.checkIn <= todayStr());
     let daysSince = null;
@@ -139,7 +140,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
       daysSince = Math.floor((now - lastDate) / (1000 * 60 * 60 * 24));
     }
     return { totalSpent, totalRes: reservations.length, daysSince };
-  }, [reservations, data.payments, clientId]);
+  }, [reservations, data.serverStats, client.gingrId]);
 
   // Notes data
   const handleSaveNote = async () => {
@@ -485,7 +486,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                 <Card key={res.id} style={{ padding: "12px 18px" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                     <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{res.roomType || "Standard"}</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{res.roomType || tl(res.type)}</div>
                       <div style={{ fontSize: 12, color: C.textMut, marginTop: 2 }}>{fmtDateFull(res.checkIn)} to {fmtDateFull(res.checkOut)}</div>
                     </div>
                     <Badge color={res.status === "checked-in" ? "success" : res.status === "upcoming" ? "info" : "default"}>{titleCase(res.status || "upcoming")}</Badge>
