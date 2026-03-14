@@ -75,12 +75,9 @@ const Icon = ({ name, size = 24, color = 'currentColor' }) => {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none">{icons[name]}</svg>;
 };
 
-// ─── K9 Logo SVG ──────────────────────────────────────────────────────────────
-const K9Logo = ({ size = 32, color = C.navy }) => (
-  <svg width={size} height={size} viewBox="0 0 40 40" fill="none">
-    <rect width="40" height="40" rx="10" fill={color}/>
-    <text x="20" y="27" textAnchor="middle" fontFamily="'GT Eesti', system-ui, sans-serif" fontWeight="900" fontSize="20" fill="#fff" letterSpacing="-0.5">K9</text>
-  </svg>
+// ─── K9 Logo (real dog silhouette from brand assets) ─────────────────────────
+const K9Logo = ({ size = 36 }) => (
+  <img src="/k9-logo.png" alt="K9 Operations" style={{ width: size, height: 'auto', objectFit: 'contain' }} />
 );
 
 
@@ -359,31 +356,83 @@ function FeatureSection({ icon, title, subtitle, description, bullets, reversed,
 // Abstract feature graphics (no fake screenshots)
 function FeatureGraphic({ type, color }) {
   if (type === 'lifecycle') {
+    // Triangle layout: Gingr feeds into K9 Ops (center of triangle)
+    // Triangle vertices: Conversion (top), Active (bottom-right), Retention (bottom-left)
+    // Flow: Gingr → K9 Ops → Conversion → Active ↔ Retention (no backflow to Conversion)
     return (
-      <svg width="280" height="280" viewBox="0 0 280 280" fill="none">
-        {/* Circular lifecycle diagram */}
-        <circle cx="140" cy="140" r="100" fill="none" stroke={color + '20'} strokeWidth="2" strokeDasharray="6 4"/>
-        <circle cx="140" cy="140" r="70" fill="none" stroke={color + '12'} strokeWidth="1.5"/>
+      <svg width="300" height="300" viewBox="0 0 300 300" fill="none">
+        {/* Gingr node — outside triangle, top-left */}
+        <g>
+          <circle cx="60" cy="35" r="24" fill="#fff" stroke="#6366F1" strokeWidth="2"/>
+          <circle cx="60" cy="35" r="16" fill="#6366F130"/>
+          <text x="60" y="39" textAnchor="middle" fontSize="10" fontWeight="800" fill="#6366F1">Gingr</text>
+        </g>
 
-        {/* Stage nodes */}
-        <g transform="translate(140,40)"><circle r="20" fill="#fff" stroke="#10B981" strokeWidth="2"/><text textAnchor="middle" y="5" fontSize="9" fontWeight="700" fill="#10B981">NEW</text></g>
-        <g transform="translate(240,140)"><circle r="20" fill="#fff" stroke={color} strokeWidth="2"/><text textAnchor="middle" y="5" fontSize="8" fontWeight="700" fill={color}>ACTIVE</text></g>
-        <g transform="translate(140,240)"><circle r="20" fill="#fff" stroke="#F59E0B" strokeWidth="2"/><text textAnchor="middle" y="5" fontSize="7" fontWeight="700" fill="#F59E0B">RETAIN</text></g>
-        <g transform="translate(40,140)"><circle r="20" fill="#fff" stroke="#64748B" strokeWidth="2"/><text textAnchor="middle" y="5" fontSize="9" fontWeight="700" fill="#64748B">COLD</text></g>
+        {/* Arrow from Gingr to K9 Ops center */}
+        <path d="M80 52 L135 108" stroke="#6366F1" strokeWidth="2" strokeDasharray="5 3" opacity="0.5" markerEnd="url(#arrowGingr)"/>
+        <defs>
+          <marker id="arrowGingr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#6366F180"/>
+          </marker>
+          <marker id="arrowNav" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill={color + '60'}/>
+          </marker>
+          <marker id="arrowBi" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="#F59E0B80"/>
+          </marker>
+        </defs>
 
-        {/* Directional arrows */}
-        <path d="M158 45 L220 120" stroke="#10B981" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.5"/>
-        <path d="M235 160 L160 230" stroke={color} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.5"/>
-        <path d="M120 235 L60 160" stroke="#F59E0B" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.5"/>
+        {/* Triangle outline (subtle) */}
+        <path d="M150 80 L250 240 L50 240 Z" fill={color + '04'} stroke={color + '15'} strokeWidth="1.5" strokeDasharray="6 4"/>
 
-        {/* Center label */}
-        <text x="140" y="137" textAnchor="middle" fontSize="11" fontWeight="800" fill={color}>CRM</text>
-        <text x="140" y="151" textAnchor="middle" fontSize="8" fontWeight="500" fill={color + '80'}>Auto-stage</text>
+        {/* K9 Ops center hub */}
+        <circle cx="150" cy="175" r="32" fill="#fff" stroke={color} strokeWidth="2.5"/>
+        <circle cx="150" cy="175" r="22" fill={color + '08'}/>
+        <text x="150" y="172" textAnchor="middle" fontSize="10" fontWeight="800" fill={color}>K9 Ops</text>
+        <text x="150" y="184" textAnchor="middle" fontSize="7" fontWeight="500" fill={color + '70'}>Intelligence</text>
 
-        {/* Animated ring */}
-        <circle cx="140" cy="140" r="100" fill="none" stroke={color} strokeWidth="2" strokeDasharray="20 580" strokeLinecap="round">
-          <animateTransform attributeName="transform" type="rotate" from="0 140 140" to="360 140 140" dur="8s" repeatCount="indefinite"/>
+        {/* Triangle vertex: Conversion (top) */}
+        <g>
+          <circle cx="150" cy="80" r="22" fill="#fff" stroke="#10B981" strokeWidth="2"/>
+          <circle cx="150" cy="80" r="14" fill="#10B98115"/>
+          <text x="150" y="77" textAnchor="middle" fontSize="7" fontWeight="700" fill="#10B981">CONVER-</text>
+          <text x="150" y="87" textAnchor="middle" fontSize="7" fontWeight="700" fill="#10B981">SION</text>
+        </g>
+
+        {/* Triangle vertex: Active (bottom-right) */}
+        <g>
+          <circle cx="248" cy="240" r="22" fill="#fff" stroke={color} strokeWidth="2"/>
+          <circle cx="248" cy="240" r="14" fill={color + '12'}/>
+          <text x="248" y="244" textAnchor="middle" fontSize="8" fontWeight="700" fill={color}>ACTIVE</text>
+        </g>
+
+        {/* Triangle vertex: Retention (bottom-left) */}
+        <g>
+          <circle cx="52" cy="240" r="22" fill="#fff" stroke="#F59E0B" strokeWidth="2"/>
+          <circle cx="52" cy="240" r="14" fill="#F59E0B15"/>
+          <text x="52" y="237" textAnchor="middle" fontSize="7" fontWeight="700" fill="#F59E0B">RETEN-</text>
+          <text x="52" y="247" textAnchor="middle" fontSize="7" fontWeight="700" fill="#F59E0B">TION</text>
+        </g>
+
+        {/* Flow arrows: K9 Ops → Conversion */}
+        <line x1="150" y1="143" x2="150" y2="103" stroke={color + '40'} strokeWidth="1.5" markerEnd="url(#arrowNav)"/>
+
+        {/* Conversion → Active (one-way down-right) */}
+        <line x1="170" y1="92" x2="230" y2="224" stroke="#10B98150" strokeWidth="1.5" markerEnd="url(#arrowNav)"/>
+
+        {/* Active ↔ Retention (bidirectional bottom) */}
+        <line x1="226" y1="237" x2="78" y2="237" stroke={color + '40'} strokeWidth="1.5" markerEnd="url(#arrowBi)"/>
+        <line x1="74" y1="245" x2="226" y2="245" stroke="#F59E0B50" strokeWidth="1.5" markerEnd="url(#arrowNav)"/>
+
+        {/* Animated pulse on K9 Ops center */}
+        <circle cx="150" cy="175" r="32" fill="none" stroke={color} strokeWidth="1" opacity="0.3">
+          <animate attributeName="r" values="32;44;32" dur="3s" repeatCount="indefinite"/>
+          <animate attributeName="opacity" values="0.3;0;0.3" dur="3s" repeatCount="indefinite"/>
         </circle>
+
+        {/* Flow labels */}
+        <text x="255" y="158" textAnchor="middle" fontSize="7" fontWeight="600" fill={color + '50'} transform="rotate(55 240 160)">one way</text>
+        <text x="150" y="268" textAnchor="middle" fontSize="7" fontWeight="600" fill="#F59E0B80">← back &amp; forth →</text>
       </svg>
     );
   }
@@ -591,16 +640,6 @@ export default function LandingPage() {
         }} />
 
         <div style={{ position: 'relative', maxWidth: 800, margin: '0 auto', padding: '0 24px' }}>
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            padding: '6px 16px', borderRadius: 100, background: '#fff',
-            border: `1px solid ${C.border}`, marginBottom: 24,
-            boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-          }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.success, animation: 'pulse-dot 2s ease infinite' }} />
-            <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>The operating system for pet care facilities</span>
-          </div>
-
           <h1 style={{
             fontSize: 'clamp(36px, 5.5vw, 64px)', fontWeight: 900, lineHeight: 1.08,
             color: C.navy, margin: '0 0 20px', letterSpacing: '-0.03em',
@@ -609,6 +648,15 @@ export default function LandingPage() {
             <span style={{ color: C.gold }}>transformed</span> into<br />
             operational intelligence
           </h1>
+
+          {/* Tagline — key brand statement */}
+          <div style={{
+            fontSize: 'clamp(18px, 2.5vw, 24px)', fontWeight: 700, color: C.navy,
+            letterSpacing: '0.12em', textTransform: 'uppercase',
+            margin: '0 0 24px', opacity: 0.7,
+          }}>
+            The operating system for pet care facilities
+          </div>
 
           <p style={{
             fontSize: 'clamp(16px, 2vw, 19px)', color: C.textSec, lineHeight: 1.6,
@@ -998,11 +1046,6 @@ export default function LandingPage() {
 
       {/* ─── GLOBAL STYLES ─── */}
       <style>{`
-        @keyframes pulse-dot {
-          0%, 100% { opacity: 1; transform: scale(1); }
-          50% { opacity: 0.5; transform: scale(1.5); }
-        }
-
         @media (max-width: 768px) {
           .nav-links { display: none !important; }
           .mobile-menu-btn { display: flex !important; }
