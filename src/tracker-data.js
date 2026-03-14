@@ -152,7 +152,7 @@ const TRACKER_DATA = {
       title: "Investigate 'Standard' Reservation Types",
       category: "Customer Lifecycle",
       priority: "P2",
-      status: "backlog",
+      status: "done",
       description: "Research what 'Standard' reservation types are in past reservations data.",
       spec: "When viewing past reservations for existing clients, many appointments are labeled \"Standard\" — unclear what these represent.\n\n**Tasks:**\n- Investigate the Gingr data to determine what \"Standard\" reservation type maps to\n- Determine if these should be renamed, recategorized, or filtered\n- Document findings and propose solution",
       dataRequirements: ["gingr_reservations"],
