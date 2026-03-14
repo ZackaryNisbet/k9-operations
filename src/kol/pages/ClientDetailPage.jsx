@@ -1,6 +1,6 @@
 // K9 Operations — ClientDetailPage
 // Isolated page component. See AGENTS.md for development contract.
-// CLM-005: Push to Gingr   |   IGN-003: Ignite Lead Section
+// CLM-005: Push to Gingr   |   IGN-003: Ignite Lead Section   |   CLM-008: Lifecycle Event Logging
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import ReactDOM from "react-dom";
@@ -63,6 +63,67 @@ function confidenceLabel(c) {
   if (c >= 0.5) return "Review";
   return "Low";
 }
+
+// ─── CLM-008: Lifecycle Event Type Styling ─────────────────────────────────
+const EVENT_TYPE_STYLES = {
+  stage_change: { color: C.info, bg: C.infoLt, icon: "stage", label: "Stage Change" },
+  note:         { color: "#6B7280", bg: "#F3F4F6", icon: "note", label: "Note" },
+  follow_up:    { color: C.acc, bg: C.accLt, icon: "followup", label: "Follow-up" },
+  initial_sync: { color: C.pri, bg: C.priLt, icon: "sync", label: "Initial Sync" },
+};
+
+function getEventStyle(eventType) {
+  return EVENT_TYPE_STYLES[eventType] || { color: C.textMut, bg: C.bg, icon: "note", label: titleCase(eventType || "Event") };
+}
+
+// ─── CLM-008: Timeline Event Icon ──────────────────────────────────────────
+function TimelineIcon({ type, color }) {
+  if (type === "stage") return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+  );
+  if (type === "followup") return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+  );
+  if (type === "sync") return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+  );
+  // Default: note icon
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+  );
+}
+
+// ─── CLM-008: Lifecycle stage detection helper ─────────────────────────────
+function detectClientStage(client, serverStats) {
+  const gingrId = String(client.gingrId);
+  const srv = serverStats && serverStats[gingrId];
+  if (!srv) return "Conversion";
+
+  const isCold = client.lifecycle?.cold === true;
+  if (isCold) return "Cold";
+
+  const hasSpent = Number(srv.total_spent) > 0;
+  const hasRealBooking = !!srv.has_real_booking;
+  const totalRes = Number(srv.total_res) || 0;
+
+  if (!hasSpent && !hasRealBooking) return "Conversion";
+
+  const hasUpcoming = !!srv.has_upcoming;
+  const daysSince = srv.last_res_date ? Math.floor((Date.now() - new Date(srv.last_res_date).getTime()) / 86400000) : 999;
+  const bdPct = totalRes > 0 ? (Number(srv.boarding_count) || 0) / totalRes : 0;
+  const dcThresh = 90, bdThresh = 180;
+
+  let isRetention = false;
+  if (!hasUpcoming && totalRes > 0) {
+    if (bdPct > 0.5 && daysSince >= bdThresh) isRetention = true;
+    else if (daysSince >= dcThresh) isRetention = true;
+  }
+
+  if (isRetention) return "Retention";
+  if (hasSpent || hasRealBooking) return "Active";
+  return "Conversion";
+}
+
 
 function ClientDetailPage({ data, save, clientId, nav, profile, openReservationId, addGlobalToast }) {
   const client = data.clients.find(c=>c.id===clientId);
@@ -140,6 +201,15 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const [igniteLinking, setIgniteLinking] = useState(false);
   const [igniteExpandedId, setIgniteExpandedId] = useState(null);
 
+  // ─── CLM-008: Lifecycle events state ───────────────────────────────────────
+  const [lifecycleEvents, setLifecycleEvents] = useState([]);
+  const [lcEventsLoading, setLcEventsLoading] = useState(false);
+  const [lcNoteText, setLcNoteText] = useState("");
+  const [lcFollowUpDate, setLcFollowUpDate] = useState("");
+  const [lcSubmitting, setLcSubmitting] = useState(false);
+  const [lcSeedDone, setLcSeedDone] = useState(false);
+  const lcSeedRef = useRef(false);
+
   // Fetch Ignite leads on mount
   useEffect(() => {
     let cancelled = false;
@@ -164,6 +234,191 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     loadIgniteLeads();
     return () => { cancelled = true; };
   }, [clientId]);
+
+  // ─── CLM-008: Fetch lifecycle events from Supabase ─────────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    async function loadLifecycleEvents() {
+      setLcEventsLoading(true);
+      try {
+        const { data: events, error } = await supabase
+          .from('lifecycle_events')
+          .select('*')
+          .eq('client_id', clientId)
+          .order('created_at', { ascending: false });
+        if (!cancelled) {
+          if (error) {
+            console.log("[CLM-008] lifecycle_events query error:", error.message);
+            setLifecycleEvents([]);
+          } else {
+            setLifecycleEvents(events || []);
+          }
+        }
+      } catch (e) {
+        if (!cancelled) {
+          console.log("[CLM-008] lifecycle_events fetch error:", e.message);
+          setLifecycleEvents([]);
+        }
+      }
+      if (!cancelled) setLcEventsLoading(false);
+    }
+    loadLifecycleEvents();
+    return () => { cancelled = true; };
+  }, [clientId]);
+
+  // ─── CLM-008: Auto-seed initial lifecycle event if none exist ──────────────
+  useEffect(() => {
+    if (lcEventsLoading || lcSeedRef.current || lcSeedDone) return;
+    if (lifecycleEvents.length > 0) { setLcSeedDone(true); return; }
+    // Also check in-memory events from client object
+    const inMemoryEvents = client.lifecycleEvents || [];
+    const convUpdates = client.lifecycle?.conversion?.updates || [];
+    const retUpdates = client.lifecycle?.retention?.updates || [];
+    if (inMemoryEvents.length > 0 || convUpdates.length > 0 || retUpdates.length > 0) {
+      setLcSeedDone(true);
+      return;
+    }
+
+    lcSeedRef.current = true;
+    const stage = detectClientStage(client, data.serverStats);
+    const syncDate = client.createdAt ? new Date(client.createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+
+    const seedEvent = {
+      client_id: clientId,
+      event_type: "initial_sync",
+      from_stage: null,
+      to_stage: stage.toLowerCase(),
+      details: { description: `Identified as ${stage} client during initial sync on ${syncDate}` },
+      created_by: null,
+    };
+
+    supabase.from('lifecycle_events').insert(seedEvent).select().then(({ data: inserted, error }) => {
+      if (error) {
+        console.log("[CLM-008] Seed event insert error:", error.message);
+      } else if (inserted && inserted.length > 0) {
+        setLifecycleEvents(prev => [...inserted, ...prev]);
+      }
+      setLcSeedDone(true);
+    });
+  }, [lcEventsLoading, lifecycleEvents, client, data.serverStats, clientId, lcSeedDone]);
+
+  // ─── CLM-008: Add manual lifecycle note ────────────────────────────────────
+  const handleAddLifecycleNote = async () => {
+    if (!lcNoteText.trim() && !lcFollowUpDate) return;
+    setLcSubmitting(true);
+
+    const eventType = lcFollowUpDate ? "follow_up" : "note";
+    const details = {};
+    if (lcNoteText.trim()) details.description = lcNoteText.trim();
+    if (lcFollowUpDate) details.follow_up_date = lcFollowUpDate;
+
+    const newEvent = {
+      client_id: clientId,
+      event_type: eventType,
+      from_stage: null,
+      to_stage: null,
+      details,
+      created_by: profile?.id || null,
+    };
+
+    try {
+      const { data: inserted, error } = await supabase
+        .from('lifecycle_events')
+        .insert(newEvent)
+        .select();
+      if (error) {
+        console.log("[CLM-008] Note insert error:", error.message);
+        if (addGlobalToast) addGlobalToast({ message: `Failed to add note: ${error.message}`, type: "error" });
+      } else if (inserted && inserted.length > 0) {
+        setLifecycleEvents(prev => [...inserted, ...prev]);
+        setLcNoteText("");
+        setLcFollowUpDate("");
+        if (addGlobalToast) addGlobalToast({ message: eventType === "follow_up" ? "Follow-up scheduled" : "Note added", type: "success" });
+      }
+    } catch (e) {
+      console.log("[CLM-008] Note insert exception:", e.message);
+      if (addGlobalToast) addGlobalToast({ message: `Failed to add note`, type: "error" });
+    }
+    setLcSubmitting(false);
+  };
+
+  // ─── CLM-008: Combined lifecycle event count (DB + in-memory) ──────────────
+  const lifecycleEventCount = useMemo(() => {
+    const dbCount = lifecycleEvents.length;
+    const inMemory = (client.lifecycleEvents || []).length;
+    const convUpdates = (client.lifecycle?.conversion?.updates || []).length;
+    const retUpdates = (client.lifecycle?.retention?.updates || []).length;
+    return dbCount + inMemory + convUpdates + retUpdates;
+  }, [lifecycleEvents, client.lifecycleEvents, client.lifecycle]);
+
+  // ─── CLM-008: Merge all events for timeline display ────────────────────────
+  const allTimelineEvents = useMemo(() => {
+    const events = [];
+
+    // DB lifecycle_events
+    lifecycleEvents.forEach(evt => {
+      events.push({
+        id: evt.id,
+        date: evt.created_at,
+        eventType: evt.event_type,
+        fromStage: evt.from_stage,
+        toStage: evt.to_stage,
+        description: evt.details?.description || "",
+        followUpDate: evt.details?.follow_up_date || null,
+        triggeredBy: evt.created_by ? "Staff" : "System",
+        source: "db",
+      });
+    });
+
+    // In-memory lifecycle events (client.lifecycleEvents)
+    (client.lifecycleEvents || []).forEach(evt => {
+      events.push({
+        id: evt.id || `mem-${evt.event}-${evt.date}`,
+        date: evt.date ? new Date(evt.date + "T12:00:00").toISOString() : new Date().toISOString(),
+        eventType: evt.event === "moved_to_active" || evt.event === "moved_to_retention" || evt.event === "marked_cold" ? "stage_change" : "note",
+        fromStage: null,
+        toStage: evt.event === "moved_to_active" ? "active" : evt.event === "moved_to_retention" ? "retention" : evt.event === "marked_cold" ? "cold" : null,
+        description: evt.details || titleCase(evt.event || "Event"),
+        followUpDate: null,
+        triggeredBy: "System",
+        source: "memory",
+      });
+    });
+
+    // Conversion updates
+    (client.lifecycle?.conversion?.updates || []).forEach((u, i) => {
+      events.push({
+        id: `conv-${i}`,
+        date: u.date ? new Date(u.date + "T12:00:00").toISOString() : new Date().toISOString(),
+        eventType: "note",
+        fromStage: null,
+        toStage: null,
+        description: u.notes || u.text || "Conversion update",
+        followUpDate: null,
+        triggeredBy: u.by || "Staff",
+        source: "memory",
+      });
+    });
+
+    // Retention updates
+    (client.lifecycle?.retention?.updates || []).forEach((u, i) => {
+      events.push({
+        id: `ret-${i}`,
+        date: u.date ? new Date(u.date + "T12:00:00").toISOString() : new Date().toISOString(),
+        eventType: "note",
+        fromStage: null,
+        toStage: null,
+        description: u.notes || u.text || "Retention update",
+        followUpDate: null,
+        triggeredBy: u.by || "Staff",
+        source: "memory",
+      });
+    });
+
+    // Sort newest first
+    events.sort((a, b) => new Date(b.date) - new Date(a.date));
+    return events;
+  }, [lifecycleEvents, client.lifecycleEvents, client.lifecycle]);
 
   // ─── CLM-005: Build Gingr payload from field mappings ──────────────────────
   const gingrPayload = useMemo(() => {
@@ -378,7 +633,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const pastRes = reservations.filter(r => r.status === "checked-out");
   const cancelledRes = reservations.filter(r => r.status === "cancelled");
 
-  // Tab config
+  // Tab config — CLM-008: Use real lifecycle event count
   const clientNotes = client.clientNotes || [];
   const notesCount = clientNotes.length + eodMentions.length;
   const clientSalesForCount = (data.packageSales || []).filter(s => s.clientId === clientId);
@@ -389,7 +644,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     { id: "payments", label: "Payments", count: pmts.length, color: C.info },
     { id: "packages", label: "Packages", count: activePkgCount, color: "#EC4899" },
     { id: "ignite", label: "Ignite", count: igniteLeads.length, color: "#F97316" },
-    { id: "lifecycle", label: "Lifecycle", count: (() => { const le = (client.lifecycleEvents || []).length; const cu = (client.lifecycle?.conversion?.updates || []).length; const ru = (client.lifecycle?.retention?.updates || []).length; return le + cu + ru; })(), color: "#8B5CF6" },
+    { id: "lifecycle", label: "Lifecycle", count: lifecycleEventCount, color: "#8B5CF6" },
     { id: "notes", label: "Notes", count: notesCount, color: "#F59E0B" },
     { id: "history", label: "History", count: ((data.auditLog || []).filter(e => e.tableName === 'k9_clients' && e.recordId === clientId)).length, color: "#6B7280" },
   ];
@@ -934,27 +1189,212 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
         </div>
       )}
 
-      {/* Lifecycle Tab */}
+      {/* ──── LIFECYCLE TAB (CLM-008) ──── */}
       {activeTab === "lifecycle" && (
         <div>
-          {(client.lifecycleEvents || []).length === 0 ? (
-            <Card style={{ textAlign: "center", padding: 32 }}>
-              <div style={{ fontSize: 14, color: C.textSec }}>No lifecycle events yet</div>
+          {/* Header */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#8B5CF6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+              </svg>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text }}>Activity Log</h3>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 24, height: 24, padding: "0 7px", borderRadius: 12, fontSize: 12, fontWeight: 800, background: "#8B5CF6", color: "#fff" }}>{allTimelineEvents.length}</span>
+            </div>
+            {/* Current stage badge */}
+            {(() => {
+              const stage = detectClientStage(client, data.serverStats);
+              const stageColors = { Active: C.suc, Conversion: C.acc, Retention: C.dan, Cold: C.textMut };
+              const stageBgs = { Active: C.sucLt, Conversion: C.accLt, Retention: C.danLt, Cold: C.bg };
+              return (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, background: stageBgs[stage] || C.bg, border: `1.5px solid ${(stageColors[stage] || C.textMut)}25` }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: stageColors[stage] || C.textMut }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: stageColors[stage] || C.textMut }}>Current: {stage}</span>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* ── Manual Note/Follow-Up Entry Form ── */}
+          <Card style={{ padding: "16px 20px", marginBottom: 20 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 12 }}>Add Log Entry</div>
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+              <div style={{ flex: 1 }}>
+                <textarea
+                  value={lcNoteText}
+                  onChange={e => setLcNoteText(e.target.value)}
+                  placeholder="Add a note or observation..."
+                  rows={2}
+                  style={{
+                    width: "100%", padding: "10px 14px", borderRadius: 10, border: `1.5px solid ${C.border}`,
+                    fontSize: 13, fontFamily: "inherit", background: C.surface, color: C.text,
+                    resize: "vertical", outline: "none", boxSizing: "border-box", lineHeight: 1.5,
+                    transition: "border-color 0.15s",
+                  }}
+                  onFocus={e => e.currentTarget.style.borderColor = C.pri}
+                  onBlur={e => e.currentTarget.style.borderColor = C.border}
+                />
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
+                <label style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em" }}>Follow-up</label>
+                <input
+                  type="date"
+                  value={lcFollowUpDate}
+                  onChange={e => setLcFollowUpDate(e.target.value)}
+                  style={{
+                    padding: "8px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`,
+                    fontSize: 12, fontFamily: "inherit", background: C.surface, color: C.text,
+                    outline: "none", width: 140,
+                  }}
+                />
+              </div>
+              <button
+                onClick={handleAddLifecycleNote}
+                disabled={lcSubmitting || (!lcNoteText.trim() && !lcFollowUpDate)}
+                style={{
+                  padding: "10px 20px", borderRadius: 10, border: "none",
+                  background: (!lcNoteText.trim() && !lcFollowUpDate) ? C.surfaceHover : C.pri,
+                  color: (!lcNoteText.trim() && !lcFollowUpDate) ? C.textMut : "#fff",
+                  fontSize: 13, fontWeight: 700, cursor: (!lcNoteText.trim() && !lcFollowUpDate) ? "not-allowed" : "pointer",
+                  fontFamily: "inherit", transition: "all 0.15s", flexShrink: 0,
+                  opacity: lcSubmitting ? 0.6 : 1,
+                }}
+                onMouseEnter={e => { if (lcNoteText.trim() || lcFollowUpDate) e.currentTarget.style.background = C.priL; }}
+                onMouseLeave={e => { if (lcNoteText.trim() || lcFollowUpDate) e.currentTarget.style.background = C.pri; }}
+              >
+                {lcSubmitting ? "Adding..." : lcFollowUpDate ? "Schedule" : "Add Note"}
+              </button>
+            </div>
+          </Card>
+
+          {/* ── Timeline ── */}
+          {lcEventsLoading ? (
+            <Card style={{ textAlign: "center", padding: 48 }}>
+              <div style={{ fontSize: 14, color: C.textSec }}>Loading activity log...</div>
+            </Card>
+          ) : allTimelineEvents.length === 0 ? (
+            <Card style={{ textAlign: "center", padding: 48 }}>
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12 }}>
+                <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+              </svg>
+              <div style={{ fontSize: 14, color: C.textSec, marginBottom: 4 }}>No activity yet</div>
+              <div style={{ fontSize: 12, color: C.textMut }}>Lifecycle events will appear here as they occur</div>
             </Card>
           ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {(client.lifecycleEvents || []).map(evt => (
-                <Card key={evt.id || `${evt.event}-${evt.date}`} style={{ padding: "14px 18px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.pri, flexShrink: 0 }} />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{titleCase(evt.event || "Event")}</div>
-                      <div style={{ fontSize: 12, color: C.textMut, marginTop: 2 }}>{evt.details || ""}</div>
+            <div style={{ position: "relative" }}>
+              {/* Vertical timeline line */}
+              <div style={{
+                position: "absolute", left: 23, top: 24, bottom: 24,
+                width: 2, background: `linear-gradient(to bottom, ${C.border}, ${C.borderLight})`,
+                borderRadius: 1, zIndex: 0,
+              }} />
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+                {allTimelineEvents.map((evt, idx) => {
+                  const style = getEventStyle(evt.eventType);
+                  const evtDate = new Date(evt.date);
+                  const isFirst = idx === 0;
+                  const isLast = idx === allTimelineEvents.length - 1;
+
+                  return (
+                    <div key={evt.id} style={{
+                      display: "flex", gap: 16, position: "relative", zIndex: 1,
+                      padding: isFirst ? "0 0 4px 0" : isLast ? "4px 0 0 0" : "4px 0",
+                    }}>
+                      {/* Timeline dot */}
+                      <div style={{
+                        display: "flex", flexDirection: "column", alignItems: "center",
+                        flexShrink: 0, width: 48, paddingTop: 2,
+                      }}>
+                        <div style={{
+                          width: 28, height: 28, borderRadius: "50%",
+                          background: style.bg, border: `2.5px solid ${style.color}`,
+                          display: "flex", alignItems: "center", justifyContent: "center",
+                          boxShadow: `0 0 0 4px ${C.surface}`,
+                          transition: "transform 0.15s",
+                        }}>
+                          <TimelineIcon type={style.icon} color={style.color} />
+                        </div>
+                      </div>
+
+                      {/* Event content card */}
+                      <div style={{
+                        flex: 1, minWidth: 0, padding: "14px 18px",
+                        background: C.surface, borderRadius: 12,
+                        border: `1px solid ${C.borderLight}`,
+                        marginBottom: 8,
+                        transition: "box-shadow 0.15s, border-color 0.15s",
+                      }}
+                        onMouseEnter={e => { e.currentTarget.style.boxShadow = `0 2px 8px ${style.color}10`; e.currentTarget.style.borderColor = style.color + "30"; }}
+                        onMouseLeave={e => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.borderColor = C.borderLight; }}
+                      >
+                        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            {/* Event type badge */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                              <span style={{
+                                display: "inline-flex", alignItems: "center", gap: 4,
+                                padding: "2px 10px", borderRadius: 6,
+                                fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em",
+                                background: style.bg, color: style.color, border: `1px solid ${style.color}20`,
+                              }}>
+                                {style.label}
+                              </span>
+                              {/* Stage change badges */}
+                              {evt.eventType === "stage_change" && evt.fromStage && evt.toStage && (
+                                <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11 }}>
+                                  <span style={{ fontWeight: 600, color: C.textMut }}>{titleCase(evt.fromStage)}</span>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                                  <span style={{ fontWeight: 700, color: style.color }}>{titleCase(evt.toStage)}</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Description */}
+                            {evt.description && (
+                              <div style={{ fontSize: 13, color: C.text, lineHeight: 1.55, fontWeight: 500 }}>
+                                {evt.description}
+                              </div>
+                            )}
+
+                            {/* Follow-up date */}
+                            {evt.followUpDate && (
+                              <div style={{
+                                display: "inline-flex", alignItems: "center", gap: 6,
+                                marginTop: 8, padding: "5px 12px", borderRadius: 6,
+                                background: C.accLt, border: `1px solid ${C.acc}20`,
+                              }}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={C.acc} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
+                                </svg>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: C.accDk }}>
+                                  Follow-up: {new Date(evt.followUpDate + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Timestamp + triggered by */}
+                          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: C.text, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                              {evtDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                            </span>
+                            <span style={{ fontSize: 10, color: C.textMut, whiteSpace: "nowrap" }}>
+                              {evtDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                            </span>
+                            <span style={{
+                              fontSize: 10, fontWeight: 600, color: C.textMut, marginTop: 2,
+                              padding: "1px 6px", borderRadius: 4, background: C.bg,
+                            }}>
+                              {evt.triggeredBy}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <div style={{ fontSize: 12, color: C.textMut, whiteSpace: "nowrap" }}>{fmtDate(evt.date)}</div>
-                  </div>
-                </Card>
-              ))}
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
