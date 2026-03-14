@@ -394,6 +394,7 @@ function LeanAppInner() {
   const renderPage = () => {
     // Permission area mapping: page id → LEAN_PERMISSION_AREAS key
     const PAGE_PERM_MAP = {
+      "dashboard": null, // dashboard handles its own per-section permissions via props
       "lifecycle": "Customer Lifecycle",
       "client-detail": "Customer Lifecycle",
       "dog-detail": "Customer Lifecycle",
@@ -413,8 +414,26 @@ function LeanAppInner() {
     }
 
     switch (page) {
-      case "dashboard":
-        return <DashboardPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "dashboard": {
+        // DASH-002: Permission-based dashboard views
+        const role = (profile.role || "pct").toLowerCase();
+        const isOwnerOrManager = role === "owner" || role === "manager" || role === "admin" || role === "enterprise_admin" || role === "regional" || role === "developer";
+        const isCSR = role === "csr" || role === "supervisor";
+        const dashboardPermissions = {
+          showSnapshot: true,
+          showRevenue: isOwnerOrManager,
+          showFunnel: isOwnerOrManager,
+          showLTV: isOwnerOrManager,
+          showRevenueComposition: isOwnerOrManager,
+          showRevenueByCategory: isOwnerOrManager,
+          showDiscountAnalysis: isOwnerOrManager,
+          showTopClients: isOwnerOrManager,
+          showOps: isOwnerOrManager || isCSR,
+          showFunnelMetrics: isOwnerOrManager,
+          showHeroKPIs: isOwnerOrManager,
+        };
+        return <DashboardPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} {...dashboardPermissions} />;
+      }
       case "lifecycle":
         return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Customer Lifecycle not available on Enterprise view</div> : (
           <ClientsPage
