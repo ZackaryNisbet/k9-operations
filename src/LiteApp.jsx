@@ -10729,11 +10729,39 @@ function LiteReportsPage({ data, nav }) {
   }, [data.reservations, data.rooms, dateFrom, dateTo, prevFrom, prevTo, compareMode]);
 
   const discountBreakdown = useMemo(() => {
-    const byType = { none: 0, percent: 0, flat: 0, coupon: 0, multidog: 0 };
-    const byAmount = { none: 0, percent: 0, flat: 0, coupon: 0, multidog: 0 };
+    // Estimate discounts by comparing actual price to rack rate × nights
+    const rackRates = LITE_DEF_PRICING.boardingRates;
+    const reservations = (data.reservations || []).filter(r =>
+      r.status !== "cancelled" && r.type === "boarding" &&
+      r.checkIn >= dateFrom && r.checkIn <= dateTo
+    );
+    let discounted = 0, atRack = 0, totalRackRevenue = 0, totalActualRevenue = 0;
+    reservations.forEach(res => {
+      const nights = countNights(res.checkIn, res.checkOut);
+      if (nights <= 0) return;
+      const actual = res.pricing?.total || 0;
+      // Determine rack rate from reservation type name
+      const typeName = res._resTypeName || "";
+      const rackRate = Object.entries(rackRates).find(([k]) => typeName.toLowerCase().includes(k.toLowerCase()))?.[1] || 0;
+      const expectedRack = rackRate * nights;
+      totalRackRevenue += expectedRack;
+      totalActualRevenue += actual;
+      if (expectedRack > 0 && actual < expectedRack * 0.98) { // 2% tolerance
+        discounted++;
+      } else {
+        atRack++;
+      }
+    });
+    const totalDiscounts = Math.max(0, totalRackRevenue - totalActualRevenue);
     const grossRevenue = accrualData.current.totals.totalRevenue;
-    return { byType, byAmount, grossRevenue, totalDiscounts: 0 };
-  }, [accrualData.current]);
+    return {
+      byType: { none: atRack, percent: 0, flat: 0, coupon: 0, multidog: discounted },
+      byAmount: { none: 0, percent: 0, flat: 0, coupon: 0, multidog: totalDiscounts },
+      grossRevenue,
+      totalDiscounts,
+      hasEstimates: true,
+    };
+  }, [accrualData.current, data.reservations, dateFrom, dateTo]);
 
   const transactionsData = useMemo(() => {
     let transactions = (cashBasisData.current.payments || []).map(p => {
@@ -11625,18 +11653,19 @@ function LiteReportsPage({ data, nav }) {
             </div>
           </div>
           <div style={{ padding: 16, background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, marginBottom: 10 }}>
-            <h3 style={{ margin: "0 0 12px 0", fontSize: 14, fontWeight: 700, color: C.text }}>Discount Transparency</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 12px 0" }}>
+              <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: C.text }}>Discount Transparency</h3>
+              <span style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>(estimated from rack rates)</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
               {[
-                { label: "None", count: discountBreakdown.byType.none },
-                { label: "%", count: discountBreakdown.byType.percent },
-                { label: "Flat", count: discountBreakdown.byType.flat },
-                { label: "Coupon", count: discountBreakdown.byType.coupon },
-                { label: "Multi", count: discountBreakdown.byType.multidog },
+                { label: "At Rack Rate", count: discountBreakdown.byType.none },
+                { label: "Discounted", count: discountBreakdown.byType.multidog },
+                { label: "Est. Discount", count: discountBreakdown.totalDiscounts > 0 ? `$${Math.round(discountBreakdown.totalDiscounts).toLocaleString()}` : "$0" },
               ].map((item, i) => (
                 <div key={i} style={{ textAlign: "center", padding: 12, background: C.bg, borderRadius: 8 }}>
                   <div style={{ fontSize: 11, color: C.textMut, marginBottom: 4 }}>{item.label}</div>
-                  <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>{item.count}</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: i === 2 && discountBreakdown.totalDiscounts > 0 ? C.dan : C.text }}>{item.count}</div>
                 </div>
               ))}
             </div>
