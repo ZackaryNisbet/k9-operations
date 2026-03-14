@@ -1,5 +1,6 @@
 // K9 Operations — Consolidated Dashboard
 // Merges Today's Progress, Revenue Intelligence, and Funnel into one view.
+// OPS-001: Full consolidation of DailyOpsPage, ReportsPage, and FunnelPage.
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import {
@@ -40,6 +41,14 @@ const DASH_CSS = `
   0%   { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
+@keyframes dashScaleIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes dashWidthGrow {
+  from { max-width: 0; opacity: 0; }
+  to   { max-width: 100%; opacity: 1; }
+}
 .dash-card {
   background: ${C.surface};
   border-radius: 15px;
@@ -72,6 +81,19 @@ const DASH_CSS = `
   background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.25) 50%, transparent 100%);
   background-size: 200% 100%;
   animation: dashShimmer 2.5s infinite;
+}
+.dash-snapshot-stat {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: ${C.surface};
+  border: 1.5px solid ${C.border};
+  text-align: center;
+  transition: all 0.2s;
+  cursor: default;
+}
+.dash-snapshot-stat:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(0,52,98,0.08);
 }
 `;
 
@@ -131,7 +153,7 @@ function AnimatedNumber({ value, prefix = "", suffix = "", decimals = 0, duratio
    ═══════════════════════════════════════════════════════════════════════════ */
 const fmt$ = (v) => `${typeof v === "number" ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}`;
 const fmt$k = (v) => v >= 10000 ? `${(v / 1000).toFixed(1)}k` : v >= 1000 ? `${(v / 1000).toFixed(2)}k` : fmt$(v);
-const fmtPercent = (v) => `${typeof v === "number" ? v.toFixed(1) : "0.0"}%`;
+const fmtMoney = (n) => "$" + Math.round(n).toLocaleString();
 const fmtDateLabel = (d) => {
   if (!d) return "";
   const dt = new Date(d + "T00:00:00");
@@ -197,6 +219,71 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
     const pFrom = addDays(pTo, -(dayCount - 1));
     return { dateFrom: start, dateTo: to, days: dayCount, prevFrom: pFrom, prevTo: pTo };
   }, [range, today, customFrom, customTo]);
+
+  /* ─── Today's Snapshot (from DailyOpsPage) ─────────────────────────── */
+  const todaySnapshot = useMemo(() => {
+    const reservations = data.reservations || [];
+    const dogs = data.dogs || [];
+
+    // Dogs currently in house (checked-in, spanning today)
+    const inHouse = reservations.filter(r =>
+      r.status === "checked-in" && r.checkIn <= today && r.checkOut >= today
+    );
+    const boardingInHouse = inHouse.filter(r => r.type === "boarding").length;
+    const daycareInHouse = inHouse.filter(r => r.type === "daycare" || r.type === "dayboarding").length;
+
+    // Going home today (checked-in, checkout = today)
+    const goingHome = reservations.filter(r =>
+      r.status === "checked-in" && r.checkOut === today
+    ).length;
+
+    // Already checked out today
+    const checkedOut = reservations.filter(r =>
+      r.checkOut === today && r.status === "checked-out"
+    ).length;
+
+    // Arriving today (check-in = today, upcoming)
+    const arriving = reservations.filter(r =>
+      r.checkIn === today && (r.status === "upcoming" || r.status === "checked-in")
+    ).length;
+
+    // Baths due today (going-home dogs with bath service)
+    const goingHomeRes = reservations.filter(r =>
+      r.status === "checked-in" && r.checkOut === today
+    );
+    let bathsTotal = 0;
+    let bathsDone = 0;
+    goingHomeRes.forEach(res => {
+      const dog = dogs.find(d => d.id === res.dogId);
+      const bathType = res.careOverrides?.bath_type || (dog && dog.fields?.bath_type);
+      if (bathType) {
+        bathsTotal++;
+        const log = res.activityLog?.[`${today}|bathing`];
+        if (log && log.administered) bathsDone++;
+      }
+    });
+
+    // Room cleaning stats
+    const cleaningStats = getRoomCleaningStats(data, today);
+
+    // PP stats
+    const ppStats = getPPStats(data, today);
+
+    return {
+      dogsInHouse: boardingInHouse + daycareInHouse,
+      boardingInHouse,
+      daycareInHouse,
+      goingHome,
+      checkedOut,
+      arriving,
+      bathsTotal,
+      bathsDone,
+      roomsToClean: cleaningStats.totalNeeded || 0,
+      roomsCleaned: cleaningStats.totalDone || 0,
+      ppTotal: ppStats.ppTotalDogs || 0,
+      ppCompleted: ppStats.ppCompletedRequired || 0,
+    };
+  }, [data, today]);
 
   /* ─── Cash-basis revenue ──────────────────────────────────────────── */
   const cashBasisData = useMemo(() => {
@@ -276,13 +363,28 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
     const revenueTrend = previous.totals.totalRevenue > 0 ? ((current.totals.totalRevenue - previous.totals.totalRevenue) / previous.totals.totalRevenue) * 100 : 0;
     const occupancyRate = totalRoomCount > 0 && current.days.length > 0 ? (current.totals.roomsOccupied / (totalRoomCount * current.days.length)) * 100 : 0;
     const revPAR = totalRoomCount > 0 && current.days.length > 0 ? current.totals.boardingRevenue / (totalRoomCount * current.days.length) : 0;
-    return { current, previous, revenueTrend, occupancyRate, revPAR, days: current.days };
+    return { current, previous, revenueTrend, occupancyRate, revPAR, totalRoomCount, days: current.days };
   }, [data.reservations, data.rooms, dateFrom, dateTo, prevFrom, prevTo]);
 
-  /* ─── Net Revenue (consolidated: accrual - discounts) ─────────────── */
+  /* ─── Net Revenue (consolidated: accrual = net, since discounts are 0) */
   const netRevenue = accrualData.current.totals.netRevenue;
   const prevNetRevenue = accrualData.previous.totals.netRevenue;
   const netRevTrend = prevNetRevenue > 0 ? ((netRevenue - prevNetRevenue) / prevNetRevenue) * 100 : 0;
+
+  /* ─── Revenue Composition (from ReportsPage — Boarding vs Daycare split) */
+  const revenueComposition = useMemo(() => {
+    const totals = accrualData.current.totals;
+    const total = totals.totalRevenue;
+    const boardingPct = total > 0 ? (totals.boardingRevenue / total) * 100 : 0;
+    const daycarePct = total > 0 ? (totals.daycareRevenue / total) * 100 : 0;
+    return {
+      boarding: totals.boardingRevenue,
+      daycare: totals.daycareRevenue,
+      total,
+      boardingPct,
+      daycarePct,
+    };
+  }, [accrualData.current.totals]);
 
   /* ─── Discount breakdown ──────────────────────────────────────────── */
   const discountBreakdown = useMemo(() => {
@@ -304,11 +406,10 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
       if (expectedRack > 0 && actual < expectedRack * 0.98) { discounted++; } else { atRack++; }
     });
     const totalDiscounts = Math.max(0, totalRackRevenue - totalActualRevenue);
-    const grossRevenue = accrualData.current.totals.totalRevenue;
-    return { discounted, atRack, totalRackRevenue, totalActualRevenue, grossRevenue, totalDiscounts };
-  }, [accrualData.current, data.reservations, dateFrom, dateTo]);
+    return { discounted, atRack, totalRackRevenue, totalActualRevenue, totalDiscounts };
+  }, [data.reservations, dateFrom, dateTo]);
 
-  /* ─── Category data (revenue breakdown) ───────────────────────────── */
+  /* ─── Category data (revenue breakdown — no Top Category) ──────────── */
   const categoryData = useMemo(() => {
     const cats = cashBasisData.current.byCategory;
     const total = cashBasisData.current.total;
@@ -381,7 +482,7 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
       }));
   }, [cashBasisData.current, data.reservations, data.clients]);
 
-  /* ─── Funnel metrics ──────────────────────────────────────────────── */
+  /* ─── Funnel metrics (enhanced from FunnelPage) ────────────────────── */
   const funnelMetrics = useMemo(() => {
     const clients = data.clients || [];
     const ss = data.serverStats || {};
@@ -397,33 +498,60 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
     });
     const inRange = (dateStr) => { if (!dateStr) return false; const d = dateStr.split("T")[0]; return d >= dateFrom && d <= dateTo; };
     const createdInRange = clients.filter(c => inRange(c.createdAt));
+
+    // Leads: created in range, from FunnelPage logic — include all new created in range as potential leads
     const leadsInRange = createdInRange.filter(c => {
       const s = statsMap[c.id];
-      return !s.hasSpent && !s.hasRealBooking;
+      if (s.lastResDate && s.lastResDate < dateFrom && s.hasRealBooking) return false;
+      return true;
     });
+
+    // Contacted: leads who have lifecycle log entries or converted
     const contactedLeads = leadsInRange.filter(c => {
-      const updates = c.lifecycleUpdates || [];
-      return updates.some(u => u.type === "outreach" || u.type === "follow_up" || u.type === "note");
+      const convUpdates = c.lifecycle?.conversion?.updates || [];
+      const retUpdates = c.lifecycle?.retention?.updates || [];
+      const allUpdates = [...convUpdates, ...retUpdates];
+      const hasLog = allUpdates.some(u => {
+        const logDate = u.loggedAt ? u.loggedAt.split("T")[0] : "";
+        return logDate >= dateFrom && logDate <= dateTo;
+      });
+      // Also check lifecycleUpdates array (used in DashboardPage's original code)
+      const lcUpdates = c.lifecycleUpdates || [];
+      const hasLcLog = lcUpdates.some(u => u.type === "outreach" || u.type === "follow_up" || u.type === "note");
+      const s = statsMap[c.id];
+      const becameCustomer = s.hasSpent || s.hasRealBooking;
+      return hasLog || hasLcLog || becameCustomer;
     });
-    const newCustomers = createdInRange.filter(c => {
+
+    // New customers: leads who have spent or have real bookings
+    const newCustomers = leadsInRange.filter(c => {
       const s = statsMap[c.id];
       return s.hasSpent || s.hasRealBooking;
     });
+
     const newCustomerRevenue = newCustomers.reduce((sum, c) => sum + (statsMap[c.id]?.totalSpent || 0), 0);
     const spendingClients = clients.filter(c => statsMap[c.id]?.hasSpent || statsMap[c.id]?.hasRealBooking);
     const totalLTV = spendingClients.reduce((sum, c) => sum + (statsMap[c.id]?.totalSpent || 0), 0);
     const avgLTV = spendingClients.length > 0 ? totalLTV / spendingClients.length : 0;
-    const conversionRate = createdInRange.length > 0 ? (newCustomers.length / createdInRange.length * 100) : 0;
+    const conversionRate = leadsInRange.length > 0 ? (newCustomers.length / leadsInRange.length * 100) : 0;
     const forecastedUplift = newCustomers.length * avgLTV;
 
+    // Pass-through rates (from FunnelPage)
+    const leadToContact = leadsInRange.length > 0 ? (contactedLeads.length / leadsInRange.length * 100) : 0;
+    const contactToCustomer = contactedLeads.length > 0 ? (newCustomers.length / contactedLeads.length * 100) : 0;
+
     return {
-      leads: leadsInRange.length + newCustomers.length,
-      contacted: contactedLeads.length + newCustomers.length,
+      leads: leadsInRange.length,
+      contacted: contactedLeads.length,
       newCustomers: newCustomers.length,
       conversionRate,
       newCustomerRevenue,
       avgLTV,
       forecastedUplift,
+      totalLTV,
+      spendingClientsCount: spendingClients.length,
+      leadToContact,
+      contactToCustomer,
     };
   }, [data.clients, data.serverStats, dateFrom, dateTo]);
 
@@ -511,6 +639,61 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
         </div>
       )}
 
+      {/* ═══ TODAY'S SNAPSHOT — Live facility stats (from DailyOpsPage) ═══ */}
+      <div className="dash-card" style={{ marginBottom: 20, animationDelay: "0.02s", padding: "18px 22px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.suc, animation: "dashPulse 2s infinite" }} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Live Facility Snapshot</span>
+          </div>
+          <span style={{ fontSize: 11, color: C.textSec }}>{fmtDateLabel(today)}</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 12 }}>
+          <SnapshotStat
+            label="Dogs In House"
+            value={todaySnapshot.dogsInHouse}
+            sub={`${todaySnapshot.boardingInHouse} boarding · ${todaySnapshot.daycareInHouse} daycare`}
+            color={C.pri}
+            delay={0}
+          />
+          <SnapshotStat
+            label="Arriving"
+            value={todaySnapshot.arriving}
+            sub="Check-ins today"
+            color={C.info}
+            delay={1}
+          />
+          <SnapshotStat
+            label="Going Home"
+            value={todaySnapshot.goingHome}
+            sub="Pending checkout"
+            color={C.acc}
+            delay={2}
+          />
+          <SnapshotStat
+            label="Checked Out"
+            value={todaySnapshot.checkedOut}
+            sub="Completed today"
+            color={C.suc}
+            delay={3}
+          />
+          <SnapshotStat
+            label="Baths"
+            value={`${todaySnapshot.bathsDone}/${todaySnapshot.bathsTotal}`}
+            sub={todaySnapshot.bathsTotal > 0 ? `${Math.round(todaySnapshot.bathsTotal > 0 ? (todaySnapshot.bathsDone / todaySnapshot.bathsTotal) * 100 : 0)}% done` : "None due"}
+            color="#7C3AED"
+            delay={4}
+          />
+          <SnapshotStat
+            label="Room Cleaning"
+            value={`${todaySnapshot.roomsCleaned}/${todaySnapshot.roomsToClean}`}
+            sub={todaySnapshot.roomsToClean > 0 ? `${Math.round((todaySnapshot.roomsCleaned / todaySnapshot.roomsToClean) * 100)}% done` : "All clear"}
+            color={C.warn}
+            delay={5}
+          />
+        </div>
+      </div>
+
       {/* ═══ ROW 1 — Hero KPIs (4 cards, 3-col each) ═══════════════════ */}
       <div style={{ ...gridBase, marginBottom: 20 }}>
         <HeroCard delay={0} label="Net Revenue" value={netRevenue} prefix="$" decimals={2} trend={netRevTrend} icon={<I.DollarSign />} />
@@ -541,40 +724,102 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
           />
         </div>
 
-        {/* Funnel visualization */}
+        {/* Funnel visualization — enhanced with pass-through rates from FunnelPage */}
         <div className="dash-card" style={{ gridColumn: "span 4", animationDelay: "0.22s" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Acquisition Funnel</div>
           {[
-            { label: "Leads", count: funnelMetrics.leads, pct: 100 },
-            { label: "Contacted", count: funnelMetrics.contacted, pct: funnelMetrics.leads > 0 ? (funnelMetrics.contacted / funnelMetrics.leads) * 100 : 0 },
-            { label: "Customers", count: funnelMetrics.newCustomers, pct: funnelMetrics.leads > 0 ? (funnelMetrics.newCustomers / funnelMetrics.leads) * 100 : 0 },
+            { label: "Total Leads", count: funnelMetrics.leads, color: C.pri, pct: 100 },
+            { label: "Contacted", count: funnelMetrics.contacted, color: C.acc, pct: funnelMetrics.leads > 0 ? (funnelMetrics.contacted / funnelMetrics.leads) * 100 : 0, passThrough: funnelMetrics.leadToContact },
+            { label: "New Customers", count: funnelMetrics.newCustomers, color: C.suc, pct: funnelMetrics.leads > 0 ? (funnelMetrics.newCustomers / funnelMetrics.leads) * 100 : 0, passThrough: funnelMetrics.contactToCustomer },
           ].map((stage, i) => (
-            <div key={stage.label} style={{ marginBottom: i < 2 ? 14 : 0, animation: `dashSlideIn 0.5s ${0.1 * i + 0.3}s cubic-bezier(0.22,1,0.36,1) both` }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{stage.label}</span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>{stage.count}</span>
-              </div>
-              <div style={{ height: 28, background: C.bg, borderRadius: 8, overflow: "hidden" }}>
-                <div className="dash-funnel-bar" style={{ width: `${Math.max(stage.pct, stage.count > 0 ? 8 : 0)}%`, height: "100%", animationDelay: `${0.15 * i + 0.3}s` }}>
-                  <span style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", fontSize: 10, fontWeight: 700, color: "#fff", zIndex: 1 }}>
-                    {stage.pct.toFixed(0)}%
+            <div key={stage.label}>
+              {/* Pass-through indicator between stages */}
+              {stage.passThrough != null && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "4px 0", opacity: 0.7 }}>
+                  <div style={{ height: 1, flex: 1, background: `linear-gradient(90deg, transparent, ${C.borderLight}, transparent)` }} />
+                  <span style={{ padding: "1px 10px", fontSize: 9, fontWeight: 700, color: C.textMut, letterSpacing: "0.06em" }}>
+                    {stage.passThrough.toFixed(0)}% pass-through
                   </span>
+                  <div style={{ height: 1, flex: 1, background: `linear-gradient(90deg, transparent, ${C.borderLight}, transparent)` }} />
+                </div>
+              )}
+              <div style={{ marginBottom: i < 2 ? 6 : 0, animation: `dashSlideIn 0.5s ${0.1 * i + 0.3}s cubic-bezier(0.22,1,0.36,1) both` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{stage.label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: stage.color }}>{stage.count}</span>
+                </div>
+                <div style={{ height: 28, background: C.bg, borderRadius: 8, overflow: "hidden", position: "relative" }}>
+                  <div style={{
+                    width: `${Math.max(stage.pct, stage.count > 0 ? 8 : 0)}%`, height: "100%",
+                    background: `linear-gradient(90deg, ${stage.color}, ${stage.color}dd)`,
+                    borderRadius: 8, position: "relative", overflow: "hidden",
+                    transition: "width 0.7s cubic-bezier(0.2,0.8,0.2,1)",
+                  }}>
+                    {/* Shimmer effect */}
+                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%)", backgroundSize: "200% 100%", animation: "dashShimmer 2.5s infinite" }} />
+                    <span style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", fontSize: 10, fontWeight: 700, color: "#fff", zIndex: 1 }}>
+                      {stage.pct.toFixed(0)}%
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
           ))}
-          {/* Pass-through rate */}
-          <div style={{ marginTop: 16, padding: "10px 12px", borderRadius: 10, background: C.priLt, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          {/* Conversion rate callout */}
+          <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 10, background: C.priLt, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: C.pri }}>Conversion Rate</span>
             <span style={{ fontSize: 16, fontWeight: 700, color: C.pri }}>{funnelMetrics.conversionRate.toFixed(1)}%</span>
           </div>
         </div>
       </div>
 
-      {/* ═══ ROW 3 — Rev Breakdown (6col) + Funnel Metrics (6col) ═════ */}
+      {/* ═══ ROW 3 — Revenue Composition (4col) + Rev by Category (4col) + Funnel Metrics (4col) ═══ */}
       <div style={{ ...gridBase, marginBottom: 20 }}>
+        {/* Revenue Composition — from ReportsPage (Boarding vs Daycare accrual split) */}
+        <div className="dash-card" style={{ gridColumn: "span 4", animationDelay: "0.26s" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Revenue Composition</div>
+          {/* Stacked bar visual */}
+          <div style={{ height: 12, borderRadius: 6, overflow: "hidden", display: "flex", marginBottom: 16 }}>
+            <div className="dash-bar-fill" style={{ width: `${revenueComposition.boardingPct}%`, height: "100%", background: C.pri, animationDelay: "0.3s" }} />
+            <div className="dash-bar-fill" style={{ width: `${revenueComposition.daycarePct}%`, height: "100%", background: C.acc, animationDelay: "0.4s" }} />
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 10, height: 10, borderRadius: 3, background: C.pri }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>Boarding</span>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>${fmt$k(revenueComposition.boarding)}</span>
+                <span style={{ fontSize: 10, color: C.textMut, marginLeft: 4 }}>({revenueComposition.boardingPct.toFixed(1)}%)</span>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 10, height: 10, borderRadius: 3, background: C.acc }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>Daycare</span>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>${fmt$k(revenueComposition.daycare)}</span>
+                <span style={{ fontSize: 10, color: C.textMut, marginLeft: 4 }}>({revenueComposition.daycarePct.toFixed(1)}%)</span>
+              </div>
+            </div>
+          </div>
+          {/* RevPAR + Rooms callout */}
+          <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div style={{ padding: "10px 12px", borderRadius: 10, background: C.accLt, textAlign: "center" }}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: C.accDk, marginBottom: 2 }}>RevPAR</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.accDk }}>${accrualData.revPAR.toFixed(2)}</div>
+            </div>
+            <div style={{ padding: "10px 12px", borderRadius: 10, background: C.priLt, textAlign: "center" }}>
+              <div style={{ fontSize: 10, fontWeight: 600, color: C.pri, marginBottom: 2 }}>Total Rooms</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.pri }}>{accrualData.totalRoomCount}</div>
+            </div>
+          </div>
+        </div>
+
         {/* Revenue breakdown by category */}
-        <div className="dash-card" style={{ gridColumn: "span 6", animationDelay: "0.28s" }}>
+        <div className="dash-card" style={{ gridColumn: "span 4", animationDelay: "0.30s" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Revenue by Category</div>
           {categoryData.length === 0 && <div style={{ fontSize: 13, color: C.textMut, padding: 20, textAlign: "center" }}>No data for this period</div>}
           {categoryData.map((cat, i) => (
@@ -588,15 +833,10 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
               </div>
             </div>
           ))}
-          {/* RevPAR callout */}
-          <div style={{ marginTop: 16, padding: "10px 14px", borderRadius: 10, background: C.accLt, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: C.accDk }}>RevPAR</span>
-            <span style={{ fontSize: 15, fontWeight: 700, color: C.accDk }}>${accrualData.revPAR.toFixed(2)}</span>
-          </div>
         </div>
 
         {/* Funnel key metrics */}
-        <div className="dash-card" style={{ gridColumn: "span 6", animationDelay: "0.32s" }}>
+        <div className="dash-card" style={{ gridColumn: "span 4", animationDelay: "0.34s" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Funnel Metrics</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <MetricTile label="Conversion Rate" value={`${funnelMetrics.conversionRate.toFixed(1)}%`} color={C.suc} icon="%" />
@@ -646,24 +886,55 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
         </div>
       </div>
 
-      {/* ═══ ROW 5 — Discount Analysis (6col) + Top Clients (6col) ═══ */}
-      <div style={gridBase}>
+      {/* ═══ ROW 5 — LTV Methodology (6col) + Discount Analysis (6col) ═══ */}
+      <div style={{ ...gridBase, marginBottom: 20 }}>
+        {/* LTV Methodology — from FunnelPage */}
+        <div className="dash-card" style={{ gridColumn: "span 6", animationDelay: "0.42s" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>LTV Methodology</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+            <div style={{ padding: "14px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}` }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Total Revenue Pool</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>
+                <AnimatedNumber value={funnelMetrics.totalLTV} prefix="$" decimals={0} />
+              </div>
+              <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>All-time customer revenue</div>
+            </div>
+            <div style={{ padding: "14px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}` }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Paying Customers</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>
+                <AnimatedNumber value={funnelMetrics.spendingClientsCount} />
+              </div>
+              <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>With at least 1 transaction</div>
+            </div>
+            <div style={{ padding: "14px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.borderLight}` }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Avg LTV / Customer</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: C.acc }}>
+                <AnimatedNumber value={funnelMetrics.avgLTV} prefix="$" decimals={0} />
+              </div>
+              <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>Revenue ÷ customers</div>
+            </div>
+          </div>
+        </div>
+
         {/* Discount analysis */}
-        <div className="dash-card" style={{ gridColumn: "span 6", animationDelay: "0.44s" }}>
+        <div className="dash-card" style={{ gridColumn: "span 6", animationDelay: "0.46s" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Discount Analysis</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 16 }}>
             <div style={{ padding: "14px", borderRadius: 10, background: C.bg }}>
               <div style={{ fontSize: 10, fontWeight: 600, color: C.textMut, marginBottom: 4 }}>At Rack Rate</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: C.suc }}>{discountBreakdown.atRack}</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: C.suc }}><AnimatedNumber value={discountBreakdown.atRack} /></div>
             </div>
             <div style={{ padding: "14px", borderRadius: 10, background: C.bg }}>
               <div style={{ fontSize: 10, fontWeight: 600, color: C.textMut, marginBottom: 4 }}>Discounted</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: C.warn }}>{discountBreakdown.discounted}</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: C.warn }}><AnimatedNumber value={discountBreakdown.discounted} /></div>
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", padding: "12px 14px", borderRadius: 10, background: C.warnLt, border: `1px solid ${C.warn}20` }}>
             <span style={{ fontSize: 12, fontWeight: 600, color: C.warn }}>Total Discount Value</span>
-            <span style={{ fontSize: 14, fontWeight: 700, color: C.warn }}>${fmt$(discountBreakdown.totalDiscounts)}</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: C.warn }}><AnimatedNumber value={discountBreakdown.totalDiscounts} prefix="$" decimals={2} /></span>
           </div>
           {discountBreakdown.totalRackRevenue > 0 && (
             <div style={{ marginTop: 12 }}>
@@ -678,37 +949,45 @@ export default function DashboardPage({ data, save, nav, profile, addGlobalToast
           )}
           <div style={{ fontSize: 9, color: C.textMut, marginTop: 10, fontStyle: "italic" }}>* Estimates based on rack rates vs. actual pricing</div>
         </div>
+      </div>
 
-        {/* Top clients */}
-        <div className="dash-card" style={{ gridColumn: "span 6", animationDelay: "0.48s" }}>
+      {/* ═══ ROW 6 — Top Clients (full width) ═════════════════════════ */}
+      <div style={gridBase}>
+        <div className="dash-card" style={{ gridColumn: "span 12", animationDelay: "0.50s" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Top Clients</div>
           {topClients.length === 0 && <div style={{ fontSize: 13, color: C.textMut, padding: 20, textAlign: "center" }}>No client data for this period</div>}
-          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-            {/* Header */}
-            {topClients.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 0.8fr 0.6fr", padding: "0 4px 8px", borderBottom: `1.5px solid ${C.border}` }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut }}>CLIENT</span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textAlign: "right" }}>SPEND</span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textAlign: "right" }}>SHARE</span>
-                <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textAlign: "right" }}>VISITS</span>
-              </div>
-            )}
-            {topClients.map((cl, i) => (
-              <div
-                key={cl.name}
-                style={{
-                  display: "grid", gridTemplateColumns: "2fr 1fr 0.8fr 0.6fr", padding: "8px 4px",
-                  borderBottom: i < topClients.length - 1 ? `1px solid ${C.borderLight}` : "none",
-                  animation: `dashFadeIn 0.35s ${0.05 * i + 0.5}s both`,
-                }}
-              >
-                <span style={{ fontSize: 12, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cl.name}</span>
-                <span style={{ fontSize: 12, fontWeight: 600, color: C.text, textAlign: "right" }}>${fmt$(cl.spend)}</span>
-                <span style={{ fontSize: 11, color: C.textSec, textAlign: "right" }}>{cl.share.toFixed(1)}%</span>
-                <span style={{ fontSize: 11, color: C.textSec, textAlign: "right" }}>{cl.visits}</span>
-              </div>
-            ))}
-          </div>
+          {topClients.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+              {topClients.map((cl, i) => (
+                <div
+                  key={cl.name}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "12px 16px", borderRadius: 10, background: C.bg,
+                    animation: `dashFadeIn 0.35s ${0.05 * i + 0.5}s both`,
+                    transition: "all 0.15s", cursor: "default",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = C.priLt; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = C.bg; }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                    <div style={{
+                      width: 32, height: 32, borderRadius: "50%", background: `${C.pri}15`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 12, fontWeight: 700, color: C.pri, flexShrink: 0,
+                    }}>
+                      {i + 1}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cl.name}</div>
+                      <div style={{ fontSize: 10, color: C.textMut }}>{cl.visits} visit{cl.visits !== 1 ? "s" : ""} · {cl.share.toFixed(1)}% share</div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text, flexShrink: 0, marginLeft: 12 }}>${fmt$(cl.spend)}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -745,6 +1024,16 @@ function MetricTile({ label, value, color, icon }) {
       <div style={{ fontSize: 18, marginBottom: 4 }}>{icon}</div>
       <div style={{ fontSize: 16, fontWeight: 700, color, marginBottom: 2 }}>{value}</div>
       <div style={{ fontSize: 10, fontWeight: 600, color: C.textMut }}>{label}</div>
+    </div>
+  );
+}
+
+function SnapshotStat({ label, value, sub, color, delay }) {
+  return (
+    <div className="dash-snapshot-stat" style={{ animation: `dashScaleIn 0.4s ${delay * 0.06 + 0.05}s cubic-bezier(0.22,1,0.36,1) both` }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1, marginBottom: 4 }}>{value}</div>
+      <div style={{ fontSize: 10, color: C.textMut, fontWeight: 500 }}>{sub}</div>
     </div>
   );
 }
