@@ -6789,6 +6789,7 @@ function DogDetailPage({ data, clientId, dogId, nav }) {
   const client = data.clients.find(c => c.id === clientId);
   const dog = data.dogs.find(d => d.id === dogId);
   if (!dog || !client) return <div style={{ padding: 40, textAlign: "center", color: C.textSec }}>Dog not found</div>;
+  const df = dog.fields || {}; // safe access to dog fields
 
   const allReservations = (data.reservations || []).filter(r => r.dogId === dogId).sort((a, b) => b.checkIn.localeCompare(a.checkIn));
   const activeRes = allReservations.filter(r => r.status === "checked-in" || r.status === "upcoming");
@@ -6813,7 +6814,7 @@ function DogDetailPage({ data, clientId, dogId, nav }) {
 
   // Gender label
   const genderLabel = dog._gender === "male" ? "Male" : dog._gender === "female" ? "Female" : dog._gender || "";
-  const fixedLabel = dog.fields.spayed_neutered ? (dog._gender === "male" ? "Neutered" : "Spayed") : "Intact";
+  const fixedLabel = df.spayed_neutered ? (dog._gender === "male" ? "Neutered" : "Spayed") : "Intact";
 
   return (
     <div style={{ maxWidth: 860, margin: "0 auto" }}>
@@ -6854,7 +6855,7 @@ function DogDetailPage({ data, clientId, dogId, nav }) {
         </div>
 
         {/* Immunization notice */}
-        {dog._nextImm && (() => {
+        {dog._nextImm && typeof dog._nextImm === "string" && (() => {
           const immDate = dog._nextImm.split("T")[0];
           const isExpired = immDate < today;
           const isSoon = !isExpired && immDate <= (() => { const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().split("T")[0]; })();
@@ -7419,13 +7420,27 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {dogs.map(dog => (
-                <Card key={dog.id} style={{ padding: "16px 20px" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div>
-                      <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{dog.fields?.name || "Unknown Dog"}</div>
-                      <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>{dog.fields?.breed || "Breed unknown"} • {dog.fields?.weight || "—"} lbs</div>
+                <Card key={dog.id} style={{ padding: "16px 20px", cursor: "pointer", transition: "box-shadow 0.15s" }}
+                  onClick={() => nav("dog-detail", { clientId, dogId: dog.id })}
+                  onMouseEnter={e => e.currentTarget.style.boxShadow = `0 0 0 2px ${C.pri}30`}
+                  onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 14, flex: 1 }}>
+                      {dog._image ? (
+                        <img src={dog._image} alt={dog.fields?.name} style={{ width: 44, height: 44, borderRadius: 12, objectFit: "cover", border: `2px solid ${C.border}`, flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: 44, height: 44, borderRadius: 12, background: C.priLt, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: C.pri, flexShrink: 0 }}>
+                          {(dog.fields?.name || "?")[0]}
+                        </div>
+                      )}
+                      <div>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{dog.fields?.name || "Unknown Dog"}</div>
+                        <div style={{ fontSize: 12, color: C.textMut, marginTop: 2 }}>{dog.fields?.breed || "Breed unknown"} {dog.fields?.weight ? `• ${dog.fields.weight} lbs` : ""}</div>
+                      </div>
                     </div>
-                    <div style={{ fontSize: 12, color: C.pri, fontWeight: 600 }}>View</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: C.pri, fontWeight: 600, flexShrink: 0 }}>
+                      View <I.ChevronRight />
+                    </div>
                   </div>
                 </Card>
               ))}
