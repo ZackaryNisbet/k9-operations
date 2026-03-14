@@ -1,6 +1,6 @@
 /**
  * Ignite Email Parser — Shared Constants
- * IGN-001
+ * IGN-001 / IGN-002
  */
 
 export const IGNITE_SENDER_EMAIL = 'noreply@leads.idigitalstrategies.com';
@@ -22,18 +22,24 @@ export const MATCH_TYPES = {
   EMAIL: 'email',
   PHONE: 'phone',
   NAME: 'name',
+  PHONE_NAME: 'phone_name', // phone + partial name combo
 };
 
 /** Cherry Hill flagship location */
 export const CHERRY_HILL_LOCATION_ID = '8ea382b0-63f7-44ac-b6f8-83243c03d946';
 
-/** Minimum confidence threshold to auto-match */
+/** Minimum confidence threshold to auto-match (no review needed) */
 export const AUTO_MATCH_THRESHOLD = 0.85;
+
+/** Minimum confidence to enter review queue (below this = no_match) */
+export const REVIEW_THRESHOLD = 0.5;
 
 /** Confidence scores by match type */
 export const MATCH_CONFIDENCE = {
   EMAIL_EXACT: 1.0,
   PHONE_EXACT: 0.95,
-  NAME_HIGH: 0.75,
-  NAME_LOW: 0.5,
+  PHONE_NAME_COMBO: 0.9,  // phone match + last name similarity
+  NAME_HIGH: 0.8,         // very similar full name (>=0.9 composite)
+  NAME_MEDIUM: 0.65,      // moderate name similarity (nickname/partial)
+  NAME_LOW: 0.5,          // weak name similarity (review candidate)
 };
