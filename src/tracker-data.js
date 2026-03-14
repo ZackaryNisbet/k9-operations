@@ -543,7 +543,7 @@ const TRACKER_DATA = {
       title: "Client Matching Logic",
       category: "Ignite",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Match incoming Ignite leads to existing clients or create new records.",
       spec: "When an Ignite lead is parsed:\n\n**If client exists in K9 Ops:**\n- Match based on email, phone, or name\n- Add the Ignite record to their existing client profile\n- Show in the new \"Ignite\" section on the client page (IGN-003)\n\n**If client does NOT exist in K9 Ops:**\n- Create a new client record\n- Set the source as \"Ignite\"\n- If you click on the Ignite source indicator on the Customer Lifecycle module, it should display all details from the lead\n- Decision: Nest into the Log section or the Source Ignite dropdown on Customer Lifecycle",
       dataRequirements: ["gingr_owners", "ignite_records"],
