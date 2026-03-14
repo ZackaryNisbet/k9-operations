@@ -13,9 +13,9 @@ You are one of potentially 50 concurrent agents working on this codebase. You MU
 
 1. Read this file completely
 2. Read `src/tracker-data.js` to see the full backlog
-3. Read `src/agent-comms.json` to see what other agents are doing
-4. Choose an unclaimed task from the backlog
-5. Announce yourself in agent-comms.json (see "Communication Protocol" below)
+3. Connect to Slack and read the `#new-channel` channel (workspace: `k9operations.slack.com`, channel ID: `C0ALF91BUKV`) to see what other agents are doing
+4. Choose an unclaimed task — search Slack for `CLAIM:` messages to see what's taken
+5. Post your claim in Slack (see "Communication Protocol" below)
 6. Begin work
 
 ---
@@ -24,26 +24,19 @@ You are one of potentially 50 concurrent agents working on this codebase. You MU
 
 ### Rules for Claiming
 
-1. Open `src/agent-comms.json` and check the `claims` array
-2. Pick a task from `src/tracker-data.js` that is NOT in the `claims` array
-3. Add your claim to the `claims` array (see format below)
-4. Post a message in the `messages` array announcing what you're working on
-5. **Never claim a task that's already claimed** — if the task ID appears in `claims`, it's taken
+1. Connect to Slack (use the Slack connector) and read `#new-channel` (`C0ALF91BUKV`)
+2. Search for `CLAIM:` messages to see which tasks are already claimed
+3. Pick a task from `src/tracker-data.js` that is NOT claimed
+4. Post your claim message in `#new-channel` (see format below)
+5. **Never claim a task that's already claimed** — if you see a `CLAIM:` message for that task ID, it's taken
 
-### Claim Format
+### Claim Message Format (post to Slack)
 
-```json
-{
-  "taskId": "CLM-003",
-  "agent": "agent-<short-unique-id>",
-  "status": "in_progress",
-  "claimedAt": "2026-03-14T14:00:00Z",
-  "files": ["src/kol/pages/ClientsPage.jsx"],
-  "description": "Building the new client form"
-}
+```
+CLAIM: CLM-003 — Building the new client form — files: src/kol/pages/NewClientPage.jsx — branch: agent/CLM-003
 ```
 
-Generate your `agent` ID by using the first 6 chars of a UUID or a descriptive name like `agent-funnel-fix` or `agent-clm003`.
+Generate your agent name using a descriptive ID like `agent-funnel-fix` or `agent-clm003`. Include it in your messages.
 
 ---
 
@@ -190,57 +183,53 @@ import InteractiveLineChart from '../../shared/InteractiveLineChart';
 
 ## Step 4: Communication Protocol
 
-All agents communicate through `src/agent-comms.json`. This file is your message bus.
+All agents communicate through **Slack** in the `#new-channel` channel.
 
-### Posting a Message
+- **Workspace:** `k9operations.slack.com`
+- **Channel ID:** `C0ALF91BUKV`
+- **Channel name:** `#new-channel`
 
-Add to the `messages` array:
+Use the Slack connector tools: `slack_send_message` to post, `slack_read_channel` to check for updates, `slack_search_public` to search history.
 
-```json
-{
-  "timestamp": "2026-03-14T14:05:00Z",
-  "agent": "agent-clm003",
-  "type": "announcement|question|alert|completed|dependency",
-  "taskId": "CLM-003",
-  "message": "Starting work on New Client Form. Will need ClientsPage to export a helper — pinging agent working on CLM-001.",
-  "mentions": ["agent-clm001"]
-}
+### Message Formats
+
+Use these prefixes so messages are machine-searchable:
+
+**Claiming a task:**
+```
+CLAIM: CLM-003 — Building the new client form — files: src/kol/pages/NewClientPage.jsx — branch: agent/CLM-003
 ```
 
-### Message Types
+**Completing a task:**
+```
+DONE: CLM-003 — New client form built with 4 sections, validation, Supabase save. Branch agent/CLM-003 ready for review.
+```
 
-| Type | When to Use |
-|------|-------------|
-| `announcement` | When you claim a task or start working |
-| `question` | When you need info from another agent |
-| `alert` | When your changes might affect another agent's work |
-| `dependency` | When you're blocked on another agent's task |
-| `completed` | When you finish your task |
+**Asking for help / pinging another agent:**
+```
+NEED: Looking for the agent working on CLM-001 — I need to know if you’re changing the client data shape in ClientsPage.
+```
+
+**Alerting about changes that affect other files:**
+```
+ALERT: CLM-003 — I added a new field `preferredContact` to the client save flow. If you’re working on ClientDetailPage or ClientsPage, you may need to handle this field. — affects: ClientDetailPage.jsx, ClientsPage.jsx
+```
+
+**Reporting a blocker:**
+```
+BLOCKED: OPS-005 — I need the shared `MiniDatePicker` to support a `maxDate` prop but I cannot edit shared/. Requesting promotion of this change.
+```
 
 ### Checking for Messages
 
-**Every 15-20 minutes** (or after completing a major subtask), re-read `src/agent-comms.json` and check:
+**Every 15-20 minutes** (or after completing a major subtask), read the Slack channel and check:
 
-1. Are there any messages that `mention` your agent ID?
-2. Are there any `alert` or `dependency` messages related to your files?
-3. Has any agent completed work that unblocks you?
+1. Are there any `NEED:` messages looking for you (search for your task ID or agent name)?
+2. Are there any `ALERT:` messages mentioning files you’re working on?
+3. Has any agent posted `DONE:` for work that unblocks you?
 
-### Updating Your Claim Status
-
-When you finish, update your claim:
-
-```json
-{
-  "taskId": "CLM-003",
-  "agent": "agent-clm003",
-  "status": "completed",
-  "claimedAt": "2026-03-14T14:00:00Z",
-  "completedAt": "2026-03-14T15:30:00Z",
-  "files": ["src/kol/pages/NewClientPage.jsx"],
-  "description": "New client form built and tested",
-  "summary": "Added 4 form sections, validation, Supabase save. Ready for review."
-}
-```
+Use `slack_read_channel` with channel_id `C0ALF91BUKV` and check the latest messages.
+Use `slack_search_public` with queries like `CLAIM: CLM-003` or `ALERT:` to find specific messages.
 
 ---
 
@@ -304,8 +293,7 @@ Only Zack (the owner) merges branches to main. Push to your feature branch only.
 - [ ] No console errors or warnings
 - [ ] UI matches the visual quality of the rest of the app
 - [ ] Code is clean and commented where non-obvious
-- [ ] Your claim in agent-comms.json is updated to `completed`
-- [ ] A completion message is posted in agent-comms.json
+- [ ] A `DONE:` message is posted in Slack `#new-channel`
 - [ ] Changes are committed and pushed to your feature branch
 - [ ] Screenshots or descriptions of changes are in the commit message
 
@@ -362,14 +350,14 @@ Any in-house reservation (boarding OR daycare, any stay length) with "Bath" in t
 ```
 □ Read this doc fully
 □ Read src/tracker-data.js (backlog)
-□ Read src/agent-comms.json (current state)
+□ Connect to Slack and read #new-channel (C0ALF91BUKV)
+□ Search Slack for CLAIM: messages to see what's taken
 □ Pick an unclaimed task
-□ Add your claim to agent-comms.json
-□ Post announcement message
+□ Post your CLAIM: message in Slack
 □ Create your feature branch: git checkout -b agent/<task-id>
 □ Do the work (only edit your page file)
+□ Check Slack every 15 min for NEED:/ALERT: messages
 □ Test it
 □ Commit and push to your branch
-□ Update claim to "completed"
-□ Post completion message with summary
+□ Post DONE: message in Slack with summary
 ```
