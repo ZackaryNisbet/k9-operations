@@ -38,60 +38,80 @@ function OperationsHub({ data, save, nav, profile }) {
   // Today's Progress snapshot
   const [showTodayProgress, setShowTodayProgress] = useState(false);
 
-  // Summary analytics — LAZY: only compute today stats eagerly; weekly/MTD only when expanded
-  const [expandSummary, setExpandSummary] = useState(false);
+  // Summary stats — lightweight: only today's completion for the progress footer
   const summaryStats = useMemo(() => {
     const activeItems = OPERATIONS_CATALOG.filter(c => c.frequency === "daily" && !c.comingSoon && c.dataKey !== "eodEntries");
-    // Today stats (cheap — single day, small catalog)
     const todayCompleted = activeItems.filter(c => getOpsCardStatus(data, c, viewDate) === "completed").length;
     const todayTotal = activeItems.length;
     const todayPct = todayTotal > 0 ? Math.round((todayCompleted / todayTotal) * 100) : 0;
+    return { todayCompleted, todayTotal, todayPct };
+  }, [data, viewDate]);
 
-    // Weekly/MTD only when summary is expanded (avoids 14+ days × catalog loop on every render)
-    if (!expandSummary) return { todayCompleted, todayTotal, todayPct, rows: [] };
+  // ─── Inline Checklist Expansion (OPS-007, OPS-008, OPS-009) ────────────────
+  const [expandedCard, setExpandedCard] = useState(null);
+  const [savingCard, setSavingCard] = useState(null);
 
-    const weeklyByChecklist = {};
-    const lastWeekByChecklist = {};
-    for (let i = 0; i < 14; i++) {
-      const d = addDays(viewDate, -i);
-      activeItems.forEach(item => {
-        const status = getOpsCardStatus(data, item, d);
-        const completed = status === "completed" ? 1 : 0;
-        if (i < 7) {
-          if (!weeklyByChecklist[item.label]) weeklyByChecklist[item.label] = { sum: 0, count: 0 };
-          weeklyByChecklist[item.label].sum += completed;
-          weeklyByChecklist[item.label].count++;
-        } else {
-          if (!lastWeekByChecklist[item.label]) lastWeekByChecklist[item.label] = { sum: 0, count: 0 };
-          lastWeekByChecklist[item.label].sum += completed;
-          lastWeekByChecklist[item.label].count++;
-        }
-      });
+  // Resolve template items for a given checklist type
+  const getTemplateForType = useCallback((typeSub) => {
+    const templates = { opening: data.openingTemplate || DEF_OPENING_TEMPLATE, fe: data.feTemplate || DEF_FE_TEMPLATE, be: data.beTemplate || DEF_BE_TEMPLATE, closing: data.closingTemplate || DEF_CLOSING_TEMPLATE };
+    const template = templates[typeSub];
+    if (!template) return [];
+    const dayIdx = new Date(viewDate + "T12:00:00").getDay();
+    return template.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
+  }, [data, viewDate]);
+
+  // Get saved items for an ops entry
+  const getOpsEntry = useCallback((typeSub) => {
+    const entryId = `ops_${typeSub}_${viewDate}`;
+    const allOps = data.dailyOps || [];
+    return allOps.find(e => e.id === entryId);
+  }, [data, viewDate]);
+
+  // Format timestamp for display
+  const fmtCompletionTime = (isoStr) => {
+    if (!isoStr) return "";
+    const d = new Date(isoStr);
+    const h = d.getHours();
+    const m = String(d.getMinutes()).padStart(2, "0");
+    const ampm = h >= 12 ? "PM" : "AM";
+    const hr = h > 12 ? h - 12 : h || 12;
+    return `${hr}:${m} ${ampm}`;
+  };
+
+  // Auto-save toggle handler (OPS-008: auto-save on toggle, OPS-007: records timestamp)
+  const handleChecklistToggle = useCallback(async (typeSub, itemId, checked) => {
+    const entryId = `ops_${typeSub}_${viewDate}`;
+    const allOps = [...(data.dailyOps || [])];
+    const idx = allOps.findIndex(e => e.id === entryId);
+    const existingEntry = idx >= 0 ? allOps[idx] : null;
+    const existingItems = existingEntry ? (existingEntry.items || {}) : {};
+    const userName = profile?.full_name || profile?.name || profile?.email || "";
+
+    const updatedItems = {
+      ...existingItems,
+      [itemId]: checked
+        ? { checked: true, initials: userName, completedAt: new Date().toISOString() }
+        : { checked: false, initials: "", completedAt: "" }
+    };
+
+    const entry = {
+      id: entryId,
+      type: typeSub,
+      date: viewDate,
+      locked: existingEntry?.locked || false,
+      items: updatedItems,
+      history: [...(existingEntry?.history || []), { ts: new Date().toISOString(), action: idx < 0 ? "created" : "saved" }],
+    };
+
+    if (idx >= 0) allOps[idx] = entry; else allOps.push(entry);
+
+    setSavingCard(typeSub);
+    try {
+      await save({ ...data, dailyOps: allOps });
+    } finally {
+      setSavingCard(null);
     }
-    const mtdByChecklist = {};
-    const dObj = new Date(viewDate + "T12:00:00");
-    const dayOfMonth = dObj.getDate();
-    for (let i = 0; i < dayOfMonth; i++) {
-      const d = addDays(viewDate, -i);
-      activeItems.forEach(item => {
-        const status = getOpsCardStatus(data, item, d);
-        if (!mtdByChecklist[item.label]) mtdByChecklist[item.label] = { sum: 0, count: 0 };
-        mtdByChecklist[item.label].sum += (status === "completed" ? 1 : 0);
-        mtdByChecklist[item.label].count++;
-      });
-    }
-    const rows = activeItems.map(item => {
-      const wk = weeklyByChecklist[item.label] || { sum: 0, count: 1 };
-      const lw = lastWeekByChecklist[item.label] || { sum: 0, count: 1 };
-      const mt = mtdByChecklist[item.label] || { sum: 0, count: 1 };
-      const weeklyAvg = Math.round((wk.sum / wk.count) * 100);
-      const lastWeekAvg = Math.round((lw.sum / lw.count) * 100);
-      const mtdAvg = Math.round((mt.sum / mt.count) * 100);
-      const wowDiff = weeklyAvg - lastWeekAvg;
-      return { label: item.label, weeklyAvg, lastWeekAvg, wowDiff, mtdAvg };
-    });
-    return { todayCompleted, todayTotal, todayPct, rows };
-  }, [data, viewDate, expandSummary]);
+  }, [data, viewDate, profile, save]);
 
   // ─── Today's Progress snapshot data (LAZY: only compute when panel open) ───
   const todayProgressData = useMemo(() => {
@@ -413,7 +433,7 @@ function OperationsHub({ data, save, nav, profile }) {
                       <div style={{ marginTop: 6 }}>
                         {tp.bathRows.map((b, i) => (
                           <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.textSec, padding: "2px 0" }}>
-                            <span style={{ width: 14, height: 14, borderRadius: 7, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9, background: b.done ? C.sucLt : C.borderLight, color: b.done ? C.suc : C.textMut }}>{b.done ? "✓" : "○"}</span>
+                            <span style={{ width: 16, height: 16, borderRadius: 4, display: "inline-flex", alignItems: "center", justifyContent: "center", border: `1.5px solid ${b.done ? C.suc : C.border}`, background: b.done ? C.suc : "transparent", flexShrink: 0 }}>{b.done ? <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2 6L5 9L10 3" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg> : null}</span>
                             <span style={{ fontWeight: 600 }}>{b.dogName}</span>
                             <span style={{ color: C.pri, fontWeight: 700, fontSize: 10 }}>Rm {b.room}</span>
                             <span style={{ color: C.textMut }}>({b.bathType})</span>
@@ -515,46 +535,6 @@ function OperationsHub({ data, save, nav, profile }) {
         );
       })()}
 
-      {/* Summary section */}
-      <Card style={{ marginBottom: 20, padding: "14px 20px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }} onClick={() => setExpandSummary(v => !v)}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
-              {isToday ? "Today" : dateLbl}: <span style={{ color: summaryStats.todayCompleted === summaryStats.todayTotal && summaryStats.todayTotal > 0 ? "#059669" : C.text }}>{summaryStats.todayCompleted}/{summaryStats.todayTotal}</span> completed ({summaryStats.todayPct}%)
-            </span>
-            <div style={{ width: 100, height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
-              <div style={{ width: `${summaryStats.todayPct}%`, height: "100%", borderRadius: 3, background: summaryStats.todayPct === 100 ? "#10B981" : "#F59E0B", transition: "width 0.3s" }} />
-            </div>
-          </div>
-          <span style={{ fontSize: 12, color: C.textMut, fontWeight: 600 }}>{expandSummary ? "Hide Details" : "View Analytics"}</span>
-        </div>
-        {expandSummary && (
-          <div style={{ marginTop: 14, borderTop: `1px solid ${C.borderLight}`, paddingTop: 14, overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ borderBottom: `2px solid ${C.border}` }}>
-                  <th style={{ textAlign: "left", padding: "6px 8px", fontWeight: 700, color: C.textMut, fontSize: 11 }}>CHECKLIST</th>
-                  <th style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: C.textMut, fontSize: 11 }}>7-DAY AVG</th>
-                  <th style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: C.textMut, fontSize: 11 }}>WoW</th>
-                  <th style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: C.textMut, fontSize: 11 }}>MTD AVG</th>
-                  <th style={{ textAlign: "center", padding: "6px 8px", fontWeight: 700, color: C.textMut, fontSize: 11 }}>TREND</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summaryStats.rows.map(row => (
-                  <tr key={row.label} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                    <td style={{ padding: "8px 8px", fontWeight: 600, color: C.text }}>{row.label}</td>
-                    <td style={{ padding: "8px 8px", textAlign: "center", fontWeight: 600, color: row.weeklyAvg >= 80 ? "#059669" : row.weeklyAvg >= 50 ? "#D97706" : "#6B7280" }}>{row.weeklyAvg}%</td>
-                    <td style={{ padding: "8px 8px", textAlign: "center", fontWeight: 700, color: row.wowDiff > 0 ? "#059669" : row.wowDiff < 0 ? "#DC2626" : C.textMut }}>{row.wowDiff > 0 ? "+" : ""}{row.wowDiff}%</td>
-                    <td style={{ padding: "8px 8px", textAlign: "center", fontWeight: 600, color: row.mtdAvg >= 80 ? "#059669" : row.mtdAvg >= 50 ? "#D97706" : "#6B7280" }}>{row.mtdAvg}%</td>
-                    <td style={{ padding: "8px 8px", textAlign: "center", fontSize: 14 }}>{row.wowDiff > 0 ? "↑" : row.wowDiff < 0 ? "↓" : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
 
       {groups.map(group => {
         const visibleItems = group.items.filter(item => item.comingSoon || !item.permission || hp(item.permission));
@@ -575,39 +555,118 @@ function OperationsHub({ data, save, nav, profile }) {
                 const sc = statusConfig[status];
                 const isComingSoon = item.comingSoon;
                 const isEod = item.dataKey === "eodEntries";
+                const hasInlineChecklist = ["opening", "fe", "be", "closing"].includes(item.typeSub);
+                const isExpanded = expandedCard === item.id;
+                const templateItems = isExpanded && hasInlineChecklist ? getTemplateForType(item.typeSub) : [];
+                const opsEntry = isExpanded && hasInlineChecklist ? getOpsEntry(item.typeSub) : null;
+                const savedItems = opsEntry?.items || {};
+                const isLocked = opsEntry?.locked || false;
                 return (
                   <div key={item.id}
-                    onClick={() => !isComingSoon && nav(item.routeTo)}
                     style={{
-                      background: C.surface, borderRadius: 14, padding: "18px 20px",
+                      background: C.surface, borderRadius: 14,
                       border: `1.5px solid ${isEod ? C.border : status === "completed" ? "#10B981" : status === "in_progress" ? "#F59E0B" : C.border}`,
                       cursor: isComingSoon ? "default" : "pointer",
                       opacity: isComingSoon ? 0.55 : 1,
                       transition: "all 0.2s",
                       position: "relative",
+                      gridColumn: isExpanded ? "1 / -1" : undefined,
                     }}
-                    onMouseEnter={e => { if (!isComingSoon) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)"; }}}
-                    onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}
+                    onMouseEnter={e => { if (!isComingSoon && !isExpanded) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)"; }}}
+                    onMouseLeave={e => { if (!isExpanded) { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; } }}
                   >
-                    <div style={{ marginBottom: 10 }}>
-                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{item.label}</div>
-                      {countLabel && <div style={{ fontSize: 12, color: C.textSec, marginTop: 3 }}>{countLabel}</div>}
-                    </div>
-                    {!isEod && (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: sc.bg, color: sc.color, textTransform: "uppercase", letterSpacing: "0.04em" }}>
-                        {sc.label}
-                      </span>
-                      {!isComingSoon && <span style={{ fontSize: 12, fontWeight: 600, color: sc.color }}>{progress}%</span>}
-                    </div>
-                    )}
-                    {!isComingSoon && !isEod && (
-                      <div style={{ marginTop: 8, height: 5, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
-                        <div style={{ width: `${progress}%`, height: "100%", borderRadius: 3, background: sc.barColor, transition: "width 0.3s" }} />
+                    {/* Card header */}
+                    <div style={{ padding: "18px 20px" }} onClick={() => {
+                      if (isComingSoon) return;
+                      if (hasInlineChecklist) { setExpandedCard(isExpanded ? null : item.id); }
+                      else { nav(item.routeTo); }
+                    }}>
+                      <div style={{ marginBottom: 10, display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{item.label}</div>
+                          {countLabel && <div style={{ fontSize: 12, color: C.textSec, marginTop: 3 }}>{countLabel}</div>}
+                        </div>
+                        {!isComingSoon && hasInlineChecklist && (
+                          <span style={{ fontSize: 12, color: C.textMut, fontWeight: 600, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.2s", marginTop: 2 }}>›</span>
+                        )}
+                        {!isComingSoon && !hasInlineChecklist && (
+                          <span style={{ color: C.textMut, fontSize: 16, marginTop: -2 }}>›</span>
+                        )}
                       </div>
-                    )}
-                    {!isComingSoon && (
-                      <div style={{ position: "absolute", top: 18, right: 16, color: C.textMut, fontSize: 16 }}>›</div>
+                      {!isEod && (
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
+                        <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: sc.bg, color: sc.color, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                          {sc.label}
+                        </span>
+                        {!isComingSoon && <span style={{ fontSize: 12, fontWeight: 600, color: sc.color }}>{progress}%</span>}
+                      </div>
+                      )}
+                      {!isComingSoon && !isEod && (
+                        <div style={{ marginTop: 8, height: 5, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
+                          <div style={{ width: `${progress}%`, height: "100%", borderRadius: 3, background: sc.barColor, transition: "width 0.3s" }} />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Inline checklist expansion (OPS-007/008/009) */}
+                    {isExpanded && hasInlineChecklist && (
+                      <div style={{ borderTop: `1px solid ${C.borderLight}`, padding: "0 20px 16px" }}>
+                        {savingCard === item.typeSub && (
+                          <div style={{ padding: "6px 0", fontSize: 11, color: C.pri, fontWeight: 600, textAlign: "right" }}>Saving...</div>
+                        )}
+                        {isLocked && (
+                          <div style={{ padding: "8px 12px", margin: "12px 0 4px", background: C.warnLt, borderRadius: 8, fontSize: 12, color: C.warn, fontWeight: 600 }}>This checklist is locked.</div>
+                        )}
+                        {templateItems.map(t => {
+                          const it = savedItems[t.id] || {};
+                          const isChecked = !!it.checked;
+                          return (
+                            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: `1px solid ${C.borderLight}` }}>
+                              {/* OPS-009: Standardized checkbox UI */}
+                              <div
+                                onClick={(e) => { e.stopPropagation(); if (!isLocked) handleChecklistToggle(item.typeSub, t.id, !isChecked); }}
+                                style={{
+                                  width: 22, height: 22, borderRadius: 6, flexShrink: 0, cursor: isLocked ? "default" : "pointer",
+                                  border: `2px solid ${isChecked ? C.pri : C.border}`,
+                                  background: isChecked ? C.pri : "transparent",
+                                  display: "flex", alignItems: "center", justifyContent: "center",
+                                  transition: "all 0.15s ease",
+                                }}
+                              >
+                                {isChecked && (
+                                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                    <path d="M2 6L5 9L10 3" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                )}
+                              </div>
+                              {/* Task label + time */}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 13, fontWeight: 500, color: isChecked ? C.textMut : C.text, textDecoration: isChecked ? "line-through" : "none", lineHeight: 1.4 }}>
+                                  {t.time && <span style={{ color: C.pri, fontWeight: 700, fontSize: 11, marginRight: 6 }}>{t.time}</span>}
+                                  {t.label}
+                                </div>
+                                {/* OPS-007: Timestamp logging */}
+                                {isChecked && it.initials && (
+                                  <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>
+                                    Completed by {it.initials}{it.completedAt ? ` at ${fmtCompletionTime(it.completedAt)}` : ""}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {/* Link to full view */}
+                        <div style={{ marginTop: 12, textAlign: "center" }}>
+                          <span
+                            onClick={(e) => { e.stopPropagation(); nav(item.routeTo); }}
+                            style={{ fontSize: 12, fontWeight: 600, color: C.pri, cursor: "pointer", padding: "6px 16px", borderRadius: 8, background: C.priLt, transition: "background 0.15s" }}
+                            onMouseEnter={e => { e.currentTarget.style.background = C.pri + "20"; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = C.priLt; }}
+                          >
+                            Open Full View →
+                          </span>
+                        </div>
+                      </div>
                     )}
                   </div>
                 );
