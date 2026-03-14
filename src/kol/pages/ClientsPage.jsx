@@ -34,10 +34,6 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [showExtraCols, setShowExtraCols] = useState(false);
   const [editingBanner, setEditingBanner] = useState(null); // which tab's banner is being edited
   const [bannerDraft, setBannerDraft] = useState("");
-  const [showMassText, setShowMassText] = useState(false);
-  const [massTextSelected, setMassTextSelected] = useState(new Set());
-  const [massTextBody, setMassTextBody] = useState("");
-  const [showMassTextHistory, setShowMassTextHistory] = useState(false);
   const [displayLimit, setDisplayLimit] = useState(100);
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
   const [bulkReason, setBulkReason] = useState("");
@@ -202,9 +198,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       }
 
       const isConversion = !hasSpent && !hasRealBooking && !isCold;
+      // CLM-001: Gingr-sourced conversion clients created >14 days ago go to "Old From Gingr Sync"
+      const fourteenDaysAgo = addDays(td, -14);
+      const isOldGingrSync = isConversion && !!c.gingrId && c.createdAt && c.createdAt.split("T")[0] < fourteenDaysAgo;
       const isActive = (hasSpent || hasRealBooking) && !isRetention && !isCold;
       if (isCold) isRetention = false;
-      map[c.id] = { isConversion, isActive, isRetention: isRetention && !isCold, isCold, isAll: true };
+      map[c.id] = { isConversion: isConversion && !isOldGingrSync, isOldGingrSync, isActive, isRetention: isRetention && !isCold, isCold, isAll: true };
     });
     return map;
   }, [data.clients, data.serverStats, clientStats, resByClient, data.resortPolicies?.retentionDaycareDays, data.resortPolicies?.retentionBoardingDays]);
@@ -264,10 +263,11 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       });
     }
     const conv = all.filter(c => clientTabMap[c.id]?.isConversion);
+    const oldGingrSync = all.filter(c => clientTabMap[c.id]?.isOldGingrSync);
     const active = all.filter(c => clientTabMap[c.id]?.isActive);
     const ret = all.filter(c => clientTabMap[c.id]?.isRetention);
     const cold = all.filter(c => clientTabMap[c.id]?.isCold);
-    return { conversion: conv, active, retention: ret, cold, all };
+    return { conversion: conv, oldGingrSync, active, retention: ret, cold, all };
   }, [data.clients, search, clientTabMap, clientStats, activeTab]);
 
   // ── Apply sub-filters (structured filters, source filter, overdue toggle) ──
@@ -278,14 +278,13 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     if (activeFilterCount > 0) {
       list = applyStructuredFilters(list, clientStats, clientTabMap, lcFilters);
     }
-    // Source filter (Conversion tab only)
-    if (activeTab === "conversion" && sourceFilter.size > 0) {
+    // Source filter (Conversion + Old From Gingr Sync tabs)
+    if ((activeTab === "conversion" || activeTab === "oldGingrSync") && sourceFilter.size > 0) {
       list = list.filter(c => {
         const src = getClientSource(c);
         if (sourceFilter.has("eval") && src.hasEval) return true;
         if (sourceFilter.has("tour") && src.hasTour) return true;
         if (sourceFilter.has("ignite") && c.lifecycle?.conversion?.source === "ignite") return true;
-        if (sourceFilter.has("online") && (c.fields?.referral_source === "Online Booking" || c.lifecycle?.conversion?.source === "online_booking")) return true;
         return false;
       });
     }
@@ -293,7 +292,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     if (showOverdueOnly) {
       const today = todayStr();
       list = list.filter(c => {
-        const tab = activeTab === "conversion" ? "conversion" : activeTab === "retention" ? "retention" : null;
+        const tab = (activeTab === "conversion" || activeTab === "oldGingrSync") ? "conversion" : activeTab === "retention" ? "retention" : null;
         if (!tab) return false;
         const fu = c.lifecycle?.[tab]?.followUpDate;
         return fu && fu < today;
@@ -396,64 +395,11 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     });
   };
 
-  // ── Mass Text handler (personalizes variables per client) ──
-  const personalizeMsg = (body, clientId) => {
-    const c = data.clients.find(cl => cl.id === clientId);
-    const cDogs = (data.dogs || []).filter(d => d.clientId === clientId);
-    let msg = body;
-    msg = msg.replace(/\{clientName\}/g, c ? `${c.fields?.first_name || ""} ${c.fields?.last_name || ""}`.trim() || "Client" : "Client");
-    msg = msg.replace(/\{dogName\}/g, formatDogNames(cDogs));
-    msg = msg.replace(/\{checkInDate\}/g, "TBD");
-    msg = msg.replace(/\{checkOutDate\}/g, "TBD");
-    msg = msg.replace(/\{roomType\}/g, "TBD");
-    msg = msg.replace(/\{totalPrice\}/g, "TBD");
-    return msg;
-  };
-
-  const handleMassTextSend = async () => {
-    if (!massTextBody.trim() || massTextSelected.size === 0) return;
-    const now = new Date().toISOString();
-    const newMsgs = [...massTextSelected].map(cid => ({
-      id: gid(),
-      clientId: cid,
-      direction: "outbound",
-      channel: "sms",
-      body: personalizeMsg(massTextBody.trim(), cid),
-      timestamp: now,
-      status: "sent",
-      twilioSid: null,
-      templateId: null,
-      readAt: null,
-      isMassText: true
-    }));
-    const historyEntry = {
-      id: gid(),
-      sentAt: now,
-      sentBy: profile?.full_name || profile?.email || "Unknown",
-      body: massTextBody.trim(),
-      recipientCount: massTextSelected.size,
-      recipientIds: [...massTextSelected],
-      recipientNames: [...massTextSelected].map(cid => {
-        const c = data.clients.find(cl => cl.id === cid);
-        return c ? `${c.fields?.first_name || ""} ${c.fields?.last_name || ""}`.trim() : "Unknown";
-      })
-    };
-    await save({
-      ...data,
-      messages: [...(data.messages || []), ...newMsgs],
-      massTextHistory: [...(data.massTextHistory || []), historyEntry]
-    });
-    setShowMassText(false);
-    setMassTextBody("");
-    setMassTextSelected(new Set());
-    addGlobalToast?.({ message: `Mass text sent to ${massTextSelected.size} client${massTextSelected.size !== 1 ? "s" : ""}`, type: "success" });
-  };
-
   // ── Tab config ──
   const filteredTabCounts = useMemo(() => {
     if (activeFilterCount === 0) return null;
     const out = {};
-    for (const key of ["conversion","active","retention","cold","all"]) {
+    for (const key of ["conversion","oldGingrSync","active","retention","cold","all"]) {
       out[key] = applyStructuredFilters(tabLists[key] || [], clientStats, clientTabMap, lcFilters).length;
     }
     return out;
@@ -461,6 +407,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   const tabDefs = [
     { id: "conversion", label: "Conversion", count: filteredTabCounts ? filteredTabCounts.conversion : tabLists.conversion.length, color: C.acc },
+    { id: "oldGingrSync", label: "Old From Gingr Sync", count: filteredTabCounts ? filteredTabCounts.oldGingrSync : tabLists.oldGingrSync.length, color: C.textMut },
     { id: "active", label: "Active Customers", count: filteredTabCounts ? filteredTabCounts.active : tabLists.active.length, color: C.pri },
     { id: "retention", label: "Retention", count: filteredTabCounts ? filteredTabCounts.retention : tabLists.retention.length, color: C.dan },
     { id: "cold", label: "Cold", count: filteredTabCounts ? filteredTabCounts.cold : tabLists.cold.length, color: C.textSec },
@@ -468,6 +415,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   ];
 
   // ── Toggleable columns for Active/All tabs ──
+  // CLM-012: Kept for Lite — DC/BD/Eval/Tour breakdowns help operators understand per-service engagement patterns across active clients.
   const toggleCols = [
     { key: "daycare", label: "DC" }, { key: "boarding", label: "BD" },
     { key: "eval", label: "Eval" }, { key: "postEval", label: "P-Eval" },
@@ -721,7 +669,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Grid templates per tab ──
   const getGrid = () => {
-    if (activeTab === "conversion") return "minmax(110px,1.3fr) minmax(75px,0.9fr) 50px 75px 55px 55px minmax(80px,1fr) minmax(80px,1fr) minmax(90px,1.3fr) 85px 55px";
+    if (activeTab === "conversion" || activeTab === "oldGingrSync") return "minmax(110px,1.3fr) minmax(75px,0.9fr) 50px 75px 55px 55px minmax(80px,1fr) minmax(80px,1fr) minmax(90px,1.3fr) 85px 55px";
     if (activeTab === "retention") return "minmax(100px,1.2fr) minmax(75px,0.9fr) 45px 75px minmax(80px,0.9fr) minmax(80px,0.9fr) minmax(85px,1.2fr) 80px minmax(65px,0.7fr) minmax(60px,0.6fr) 50px 50px";
     if (activeTab === "cold") return "minmax(110px,1.3fr) minmax(75px,0.9fr) 50px 75px minmax(90px,1fr) minmax(80px,1fr) minmax(110px,1.3fr) 65px";
     // Active / All — Client, Phone, Dogs, Created
@@ -762,14 +710,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             </button>
           )}
           <Btn variant="ghost" onClick={() => {
-            setMassTextSelected(new Set(activeList.filter(c => c.fields?.phone).map(c => c.id)));
-            setShowMassText(true);
-          }}>
-            <I.MessageSquare /> Mass Text ({activeList.filter(c => c.fields?.phone).length})
-          </Btn>
-          <Btn variant="ghost" onClick={() => {
             // Export current lifecycle tab to CSV
-            const headers = activeTab === "conversion"
+            const headers = (activeTab === "conversion" || activeTab === "oldGingrSync")
               ? ["First Name","Last Name","Phone","Email","Dogs","Source","Follow-Up Date","Notes"]
               : activeTab === "active"
               ? ["First Name","Last Name","Phone","Email","Dogs","Reservations","Last Visit","Days Since","Total Spent"]
@@ -780,7 +722,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               const f = c.fields || {};
               const dogs = (data.dogs || []).filter(d => d.clientId === c.id).map(d => d.fields?.name).join(", ");
               const base = [f.first_name||"", f.last_name||"", f.phone||"", f.email||"", dogs];
-              if (activeTab === "conversion") {
+              if (activeTab === "conversion" || activeTab === "oldGingrSync") {
                 const lc = c.lifecycle?.conversion || {};
                 return [...base, c.referralSource || "", lc.followUpDate || "", lc.notes || ""];
               } else if (activeTab === "active") {
@@ -1191,15 +1133,15 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             {search && <button onClick={()=>setSearch("")} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
             {/* Filter pills area */}
             <div style={{display:"flex",gap:4,marginLeft:8,flexShrink:0}}>
-              {activeTab === "conversion" && <>
-                {[{id:"eval",label:"Eval",color:C.acc},{id:"tour",label:"Tour",color:C.info},{id:"ignite",label:"Ignite",color:"#F97316"},{id:"online",label:"Online Booking",color:C.pri}].map(f => {
+              {(activeTab === "conversion" || activeTab === "oldGingrSync") && <>
+                {[{id:"eval",label:"Eval",color:C.acc},{id:"tour",label:"Tour",color:C.info},{id:"ignite",label:"Ignite",color:"#F97316"}].map(f => {
                   const on = sourceFilter.has(f.id);
                   return <button key={f.id} onClick={()=>toggleSourceFilter(f.id)} style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on?f.color:C.border}`,background:on?f.color:"transparent",color:on?"#fff":C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{f.label}</button>;
                 })}
                 {sourceFilter.size > 0 && <button onClick={()=>setSourceFilter(new Set())} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:"0 2px",display:"flex",alignItems:"center"}} title="Clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
                 <div style={{width:1,height:20,background:C.border,margin:"0 4px",flexShrink:0}} />
               </>}
-              {(activeTab === "conversion" || activeTab === "retention") && (
+              {(activeTab === "conversion" || activeTab === "oldGingrSync" || activeTab === "retention") && (
                 <button onClick={()=>setShowOverdueOnly(v=>!v)}
                   style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${showOverdueOnly?C.dan:C.border}`,background:showOverdueOnly?`${C.dan}12`:"transparent",color:showOverdueOnly?C.dan:C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>
                   Overdue
@@ -1473,9 +1415,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                 const matchesClient = (dPhone && clientPhones.has(dPhone)) || (dEmail && clientEmails.has(dEmail));
                 return !matchesClient;
               });
-              // If "online" source filter is active but no other filter, show unmatched drafts
-              // If any source filter is active that ISN'T "online", hide them
-              if (sourceFilter.size > 0 && !sourceFilter.has("online")) return null;
+              // Hide unmatched drafts when source filters are active
+              if (sourceFilter.size > 0) return null;
               if (unmatchedDrafts.length === 0) return null;
               const stepNames = { splash:"Landing Page", avail_step_0:"Service Selection", avail_step_1:"Date Selection", avail_step_2:"Room / Time Selection", avail_step_3:"Room Recommendation", reg_step_0:"Client Info", reg_step_1:"Dog Info", reg_step_2:"Vaccine Records", reg_step_3:"Feeding & Care", reg_step_4:"Stay Details", reg_step_5:"Review & Book", confirmation:"Confirmed" };
               return unmatchedDrafts.map(draft => {
@@ -1555,6 +1496,62 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                 );
               });
             })()}
+          </>;
+        })()}
+
+        {activeTab === "oldGingrSync" && (() => {
+          const grid = getGrid();
+          return <>
+            <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
+              <div style={colHeaderStyle("name")} onClick={()=>handleSort("name")}>Client <SortIcon col="name"/></div>
+              <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
+              <div style={colHeaderStyle("dogCount")} onClick={()=>handleSort("dogCount")}>Dogs <SortIcon col="dogCount"/></div>
+              <div style={colHeaderStyle("createdAt")} onClick={()=>handleSort("createdAt")}>Created <SortIcon col="createdAt"/></div>
+              <div style={colHeaderStyle("totalRes")} onClick={()=>handleSort("totalRes")}>Total Res <SortIcon col="totalRes"/></div>
+              <div style={colHeaderStyle("totalSpent")} onClick={()=>handleSort("totalSpent")}>Total Spent <SortIcon col="totalSpent"/></div>
+              <div>Source</div>
+              <div style={colHeaderStyle("followUp")} onClick={()=>handleSort("followUp")}>Follow-Up <SortIcon col="followUp"/></div>
+              <div>Notes</div>
+              <div>Updates</div>
+              <div></div>
+            </div>
+            {displayedList.length === 0 ? (
+              <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No old Gingr sync records{search?" matching search":""}</div></div>
+            ) : displayedList.map(c => {
+              const isExp = expandedUpdates.has(c.id);
+              const updates = c.lifecycle?.conversion?.updates || [];
+              const cStats = clientStats[c.id] || {};
+              return (
+                <div key={c.id}>
+                  <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center",fontSize:12,transition:"background 0.1s"}}
+                    onMouseEnter={e=>e.currentTarget.style.background=C.surfaceHover} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                    <div>{renderName(c)}</div>
+                    <div style={{fontSize:11}}>{fmtPhone(c.fields.phone)}</div>
+                    <div>{renderDogCount(c)}</div>
+                    <div style={{fontSize:11,color:C.textSec}}>{c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}) : "—"}</div>
+                    <div style={{fontSize:11,color:C.textSec}}>{cStats.totalRes || 0}</div>
+                    <div style={{fontSize:11,color:C.textSec}}>{cStats.totalSpent ? `$${cStats.totalSpent.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0})}` : "$0"}</div>
+                    <div>{renderSource(c)}</div>
+                    <div>{renderFollowUp(c, "conversion")}</div>
+                    <div>{renderNotes(c, "conversion")}</div>
+                    <div>{renderUpdatesLog(c, "conversion")}</div>
+                    <div>{renderColdBtn(c)}</div>
+                  </div>
+                  {renderDogDetails(c)}
+                  {isExp && updates.length > 0 && (
+                    <div style={{padding:"12px 20px",background:C.bg,borderBottom:`1px solid ${C.borderLight}`,borderLeft:`3px solid ${C.acc}`}}>
+                      {updates.map(u => (
+                        <div key={u.id} style={{marginBottom:10,paddingBottom:10,borderBottom:`1px solid ${C.borderLight}`}}>
+                          <div style={{fontSize:11,fontWeight:700,color:C.pri,marginBottom:3}}>{u.loggedBy} — {new Date(u.loggedAt).toLocaleDateString()} {new Date(u.loggedAt).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</div>
+                          <div style={{fontSize:12,color:C.text,marginBottom:3,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{u.notes}</div>
+                          <div style={{fontSize:10,color:C.textSec}}>Target: {u.previousFollowUp ? fmtDate(u.previousFollowUp) : "—"} → Next: {fmtDate(u.newFollowUp)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </>;
         })()}
 
@@ -1724,166 +1721,6 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           </div>
         )}
       </Card>
-
-      {/* Mass Text Modal */}
-      {showMassText && (
-        <div style={{position:"fixed",top:0,left:0,width:"100%",height:"100%",background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:10000}} onClick={() => setShowMassText(false)}>
-          <div onClick={e => e.stopPropagation()} style={{background:C.surface,borderRadius:12,border:`1.5px solid ${C.border}`,width:"90%",maxWidth:700,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
-            {/* Header */}
-            <div style={{padding:"20px 24px",borderBottom:`1.5px solid ${C.borderLight}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div>
-                <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.text}}>Mass Text</h2>
-                <p style={{margin:"4px 0 0",fontSize:12,color:C.textSec}}>{massTextSelected.size} client{massTextSelected.size !== 1 ? "s" : ""} selected</p>
-              </div>
-              <button onClick={() => setShowMassText(false)} style={{background:"none",border:"none",cursor:"pointer",padding:"4px 8px",color:C.textMut,fontSize:20,fontFamily:"inherit"}}>×</button>
-            </div>
-
-            {/* Body */}
-            <div style={{display:"flex",flexDirection:"column",flex:1,overflow:"hidden"}}>
-              {/* Client List */}
-              <div style={{flex:1,overflow:"auto",borderBottom:`1.5px solid ${C.borderLight}`,maxHeight:300}}>
-                <div style={{padding:"12px 16px"}}>
-                  <div style={{display:"flex",gap:8,marginBottom:12}}>
-                    <Btn size="sm" variant="ghost" onClick={() => setMassTextSelected(new Set(activeList.filter(c => c.fields?.phone).map(c => c.id)))}>
-                      Select All
-                    </Btn>
-                    <Btn size="sm" variant="ghost" onClick={() => setMassTextSelected(new Set())}>
-                      Deselect All
-                    </Btn>
-                  </div>
-                  {activeList.filter(c => c.fields?.phone).map(client => (
-                    <div key={client.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 8px",borderRadius:8,background:massTextSelected.has(client.id)?C.priLt:"transparent",marginBottom:8,cursor:"pointer"}} onClick={() => {
-                      const n = new Set(massTextSelected);
-                      if (n.has(client.id)) n.delete(client.id);
-                      else n.add(client.id);
-                      setMassTextSelected(n);
-                    }}>
-                      <input type="checkbox" checked={massTextSelected.has(client.id)} onChange={() => {}} style={{cursor:"pointer",width:18,height:18}} />
-                      <div style={{flex:1}}>
-                        <div style={{fontSize:13,fontWeight:600,color:C.text}}>{client.fields?.first_name} {client.fields?.last_name}</div>
-                        <div style={{fontSize:11,color:C.textSec}}>{client.fields?.phone}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Message Compose */}
-              <div style={{padding:"16px 20px",borderBottom:`1.5px solid ${C.borderLight}`}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                  <label style={{fontSize:12,fontWeight:700,color:C.text}}>Message</label>
-                  {(data.messageTemplates || []).filter(t => t.active !== false).length > 0 && (
-                    <div style={{position:"relative"}}>
-                      <Btn size="sm" variant="ghost" onClick={e => { e.stopPropagation(); const el = e.currentTarget; el.dataset.open = el.dataset.open === "1" ? "" : "1"; el.nextSibling.style.display = el.dataset.open === "1" ? "block" : "none"; }}>
-                        <I.FileText /> Use Template
-                      </Btn>
-                      <div style={{display:"none",position:"absolute",right:0,top:"100%",zIndex:10,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:8,boxShadow:"0 4px 16px rgba(0,0,0,0.15)",minWidth:240,maxHeight:200,overflow:"auto"}}>
-                        {(data.messageTemplates || []).filter(t => t.active !== false).map(tpl => (
-                          <button key={tpl.id} onClick={e => { setMassTextBody(tpl.body); e.currentTarget.parentNode.style.display = "none"; e.currentTarget.parentNode.previousSibling.dataset.open = ""; }}
-                            style={{display:"block",width:"100%",padding:"10px 14px",border:"none",borderBottom:`1px solid ${C.borderLight}`,background:"transparent",textAlign:"left",cursor:"pointer",fontFamily:"inherit",fontSize:12,color:C.text}}
-                            onMouseEnter={e => e.currentTarget.style.background = C.priLt}
-                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                            <div style={{fontWeight:600,marginBottom:2}}>{tpl.name}</div>
-                            <div style={{color:C.textSec,fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{tpl.body.slice(0,80)}…</div>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <textarea
-                  value={massTextBody}
-                  onChange={e => setMassTextBody(e.target.value)}
-                  placeholder="Type your message here or use a template..."
-                  rows={4}
-                  style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:13,fontFamily:"inherit",resize:"vertical",outline:"none",background:C.bg,boxSizing:"border-box"}}
-                  onFocus={e => e.target.style.borderColor=C.pri}
-                  onBlur={e => e.target.style.borderColor=C.border}
-                />
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:6,marginBottom:12}}>
-                  <div style={{fontSize:11,color:C.textMut}}>Character count: {massTextBody.length}</div>
-                  <div style={{fontSize:10,color:C.textSec}}>Variables will be personalized per client</div>
-                </div>
-                {/* Available Template Variables Reference (Item 18) */}
-                <div style={{padding:12,background:C.bg,borderRadius:8,border:`1px solid ${C.borderLight}`}}>
-                  <div style={{fontSize:11,fontWeight:700,color:C.textMut,textTransform:"uppercase",marginBottom:8}}>Available Variables</div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(2,1fr)",gap:8,fontSize:11,color:C.text}}>
-                    <div><code style={{background:C.surface,padding:"2px 6px",borderRadius:4,fontFamily:"monospace"}}>{"{clientName}"}</code> — Client first &amp; last name</div>
-                    <div><code style={{background:C.surface,padding:"2px 6px",borderRadius:4,fontFamily:"monospace"}}>{"{dogName}"}</code> — Dog's name</div>
-                    <div><code style={{background:C.surface,padding:"2px 6px",borderRadius:4,fontFamily:"monospace"}}>{"{checkInDate}"}</code> — Check-in date</div>
-                    <div><code style={{background:C.surface,padding:"2px 6px",borderRadius:4,fontFamily:"monospace"}}>{"{checkOutDate}"}</code> — Check-out date</div>
-                    <div><code style={{background:C.surface,padding:"2px 6px",borderRadius:4,fontFamily:"monospace"}}>{"{roomType}"}</code> — Room type</div>
-                    <div><code style={{background:C.surface,padding:"2px 6px",borderRadius:4,fontFamily:"monospace"}}>{"{totalPrice}"}</code> — Total cost</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div style={{padding:"16px 20px",display:"flex",gap:10,justifyContent:"space-between",alignItems:"center"}}>
-              <button onClick={() => setShowMassTextHistory(true)} style={{background:"none",border:"none",color:C.pri,cursor:"pointer",fontSize:12,fontWeight:600,textDecoration:"underline",padding:0,fontFamily:"inherit"}}>
-                View History
-              </button>
-              <div style={{display:"flex",gap:8}}>
-                <Btn variant="ghost" onClick={() => setShowMassText(false)}>Cancel</Btn>
-                <Btn onClick={handleMassTextSend} disabled={!massTextBody.trim() || massTextSelected.size === 0}>
-                  Send Mass Text
-                </Btn>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Mass Text History Modal */}
-      {showMassTextHistory && (
-        <div style={{position:"fixed",top:0,left:0,width:"100%",height:"100%",background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:10001}} onClick={() => setShowMassTextHistory(false)}>
-          <div onClick={e => e.stopPropagation()} style={{background:C.surface,borderRadius:12,border:`1.5px solid ${C.border}`,width:"90%",maxWidth:800,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
-            {/* Header */}
-            <div style={{padding:"20px 24px",borderBottom:`1.5px solid ${C.borderLight}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <h2 style={{margin:0,fontSize:18,fontWeight:800,color:C.text}}>Mass Text History</h2>
-              <button onClick={() => setShowMassTextHistory(false)} style={{background:"none",border:"none",cursor:"pointer",padding:"4px 8px",color:C.textMut,fontSize:20,fontFamily:"inherit"}}>×</button>
-            </div>
-
-            {/* Body */}
-            <div style={{flex:1,overflow:"auto"}}>
-              {(!data.massTextHistory || data.massTextHistory.length === 0) ? (
-                <div style={{padding:"40px 24px",textAlign:"center"}}>
-                  <p style={{color:C.textSec,fontSize:13}}>No mass texts sent yet</p>
-                </div>
-              ) : (
-                <div>
-                  {data.massTextHistory.map(entry => (
-                    <div key={entry.id} style={{padding:"16px 20px",borderBottom:`1.5px solid ${C.borderLight}`,background:C.bg}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-                        <div>
-                          <div style={{fontSize:13,fontWeight:600,color:C.text}}>
-                            {entry.recipientCount} client{entry.recipientCount !== 1 ? "s" : ""}
-                          </div>
-                          <div style={{fontSize:11,color:C.textSec,marginTop:2}}>
-                            {new Date(entry.sentAt).toLocaleDateString()} at {new Date(entry.sentAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})} by {entry.sentBy}
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{fontSize:12,color:C.text,marginBottom:10,padding:"10px 12px",background:C.surface,borderRadius:6,borderLeft:`3px solid ${C.pri}`}}>
-                        "{entry.body}"
-                      </div>
-                      <div style={{fontSize:11,color:C.textSec}}>
-                        Recipients: {entry.recipientNames.join(", ")}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div style={{padding:"16px 20px",borderTop:`1.5px solid ${C.borderLight}`,display:"flex",justifyContent:"flex-end"}}>
-              <Btn variant="ghost" onClick={() => setShowMassTextHistory(false)}>Close</Btn>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Log Popover */}
       {logPopover && (
