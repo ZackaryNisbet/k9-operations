@@ -158,7 +158,7 @@ const TRACKER_DATA = {
       title: "Remove Message Button",
       category: "Customer Lifecycle",
       priority: "P3",
-      status: "backlog",
+      status: "done",
       description: "Remove the non-functional message button from client pages in K9 Ops Lite.",
       spec: "The \"Message\" button on the client page should be removed since K9 Ops Lite does not have messaging capabilities. This is a POS-only feature.",
       dataRequirements: [],
