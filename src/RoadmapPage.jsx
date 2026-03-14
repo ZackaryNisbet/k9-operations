@@ -94,7 +94,7 @@ const TRACKER_DATA = {
       title: "New Client Form",
       category: "Customer Lifecycle",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Build a fully functional new client form matching the POS app UI.",
       spec: "The current \"New Client\" form is completely non-functional. We need the same UI and behavior from the POS app.\n\n**Requirements:**\n- Match the POS app's new client creation form layout and fields\n- Integrate with the Field Mapping module (CLM-004) so required fields are enforced\n- All fields must map to Gingr-compatible data structures for eventual push-to-Gingr functionality\n- Include both client fields and dog fields\n- Validation on required fields before submission\n- Success/error feedback after creation",
       dataRequirements: ["gingr_owners", "gingr_animals", "field_mappings"],
