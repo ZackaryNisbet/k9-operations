@@ -13,6 +13,7 @@ import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
+import { useAuth } from "../../AuthProvider";
 
 function ChecklistTemplatesTab() {
   const { profile } = useAuth();

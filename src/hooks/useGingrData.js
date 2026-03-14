@@ -8,7 +8,7 @@ import { classifyReservationType, classifyReservationStatus, extractRoomFromType
 function useGingrData(locationId) {
   const [clients, setClients] = useState([]);
   const [dogs, setDogs] = useState([]);
-  const [reservations, setReservations] = useState([]);
+  const [reservations, setReservations] = useState(null);
   const [rooms, setRooms] = useState({});
   const [resTypes, setResTypes] = useState([]);
   const [immunizationTypes, setImmunizationTypes] = useState([]);
