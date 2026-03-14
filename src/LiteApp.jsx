@@ -730,9 +730,6 @@ const OPERATIONS_CATALOG = [
   // Weekly placeholders
   { id:"weekly-inventory", label:"Weekly Inventory", frequency:"weekly", comingSoon:true },
   { id:"weekly-maintenance", label:"Weekly Maintenance", frequency:"weekly", comingSoon:true },
-  // Monthly placeholders
-  { id:"monthly-safety", label:"Monthly Safety Audit", frequency:"monthly", comingSoon:true },
-  { id:"monthly-deep-clean", label:"Monthly Deep Clean", frequency:"monthly", comingSoon:true },
 ];
 
 // ─── Client & Dog Field Definitions ───────────────────────────────────────
@@ -4365,83 +4362,81 @@ function OperationsHub({ data, save, nav, profile }) {
       closingDone = !Array.isArray(ci) ? Object.values(ci).filter(i => i && i.checked).length : ci.filter(i => i.checked).length;
     }
 
-    // ─── Lifecycle stats ───
+    // ─── Lifecycle stats (optimized with pre-built lookup maps) ───
     const clients = data.clients || [];
     const payments = data.payments || [];
+    const allRes = data.reservations || [];
+    const td = todayStr();
 
-    // Build local stage map (mirrors Customer Lifecycle page's clientTabMap logic)
+    // Build O(1) lookup maps to avoid O(n*m) per-client filtering
+    const resByClient = {};
+    const pmtsByClient = {};
+    allRes.forEach(r => { (resByClient[r.clientId] || (resByClient[r.clientId] = [])).push(r); });
+    payments.forEach(p => {
+      if (p.status === "completed" && p.type !== "refund") {
+        (pmtsByClient[p.clientId] || (pmtsByClient[p.clientId] = [])).push(p);
+      }
+    });
+
     const dcThresh = data.resortPolicies?.retentionDaycareDays ?? 90;
     const bdThresh = data.resortPolicies?.retentionBoardingDays ?? 180;
-    const localStageMap = {};
+    let overdueFollowUps = 0;
+    let dueTodayFollowUps = 0;
+    let logsToday = 0;
+    let newCustomersToday = 0;
+
     clients.forEach(c => {
-      const cRes = (data.reservations || []).filter(r => r.clientId === c.id);
-      const cDogs = (data.dogs || []).filter(d => d.clientId === c.id);
-      const cPmts = (data.payments || []).filter(p => p.clientId === c.id && p.status === "completed" && p.type !== "refund");
-      const totalSpent = cPmts.reduce((s, p) => s + (p.amount || 0), 0);
-      const hasSpent = totalSpent > 0;
-      const hasRealBooking = cRes.some(r => r.type !== "tour" && r.type !== "evaluation");
-      const hasUpcoming = cRes.some(r => r.checkIn >= todayStr() && r.status === "upcoming" && r.type !== "tour" && r.type !== "evaluation");
-      const totalRes = cRes.length;
-      const pastRes = cRes.filter(r => r.checkOut && r.checkOut < todayStr()).sort((a, b) => b.checkOut.localeCompare(a.checkOut));
-      const daysSince = pastRes.length > 0 ? Math.floor((new Date() - new Date(pastRes[0].checkOut + "T12:00:00")) / 86400000) : null;
-      const daycareCount = cRes.filter(r => r.type === "daycare").length;
-      const boardingCount = cRes.filter(r => r.type === "boarding").length;
+      // Stage classification (inlined, single-pass)
+      const cRes = resByClient[c.id] || [];
+      const cPmts = pmtsByClient[c.id] || [];
+      const hasSpent = cPmts.length > 0;
       const isCold = c.lifecycle?.cold === true;
+      let hasRealBooking = false, hasUpcoming = false, daycareCount = 0, boardingCount = 0, latestCheckOut = "";
+      for (let i = 0; i < cRes.length; i++) {
+        const r = cRes[i];
+        if (r.type !== "tour" && r.type !== "evaluation") hasRealBooking = true;
+        if (r.checkIn >= td && r.status === "upcoming" && r.type !== "tour" && r.type !== "evaluation") hasUpcoming = true;
+        if (r.type === "daycare") daycareCount++;
+        if (r.type === "boarding") boardingCount++;
+        if (r.checkOut && r.checkOut < td && r.checkOut > latestCheckOut) latestCheckOut = r.checkOut;
+      }
+      const totalRes = cRes.length;
+      const daysSince = latestCheckOut ? Math.floor((new Date() - new Date(latestCheckOut + "T12:00:00")) / 86400000) : null;
       let isRetention = false;
       if (hasSpent && !hasUpcoming && totalRes > 0 && daysSince != null) {
-        const dcPct = totalRes > 0 ? (daycareCount / totalRes) : 0;
-        const bdPct = totalRes > 0 ? (boardingCount / totalRes) : 0;
+        const dcPct = daycareCount / totalRes;
+        const bdPct = boardingCount / totalRes;
         if (bdPct > 0.5 && daysSince >= bdThresh) isRetention = true;
         else if (dcPct >= 0.5 && daysSince >= dcThresh) isRetention = true;
         else if (dcPct < 0.5 && bdPct < 0.5 && daysSince >= dcThresh) isRetention = true;
       }
-      const isConversion = !hasSpent && !hasRealBooking && !isCold;
-      const isActive = (hasSpent || hasRealBooking) && !isRetention && !isCold;
       if (isCold) isRetention = false;
-      localStageMap[c.id] = { isConversion, isActive, isRetention: isRetention && !isCold, isCold };
-    });
+      const isConversion = !hasSpent && !hasRealBooking && !isCold;
 
-    // Overdue follow-ups: only count clients actually in conversion or retention stages
-    let overdueFollowUps = 0;
-    let dueTodayFollowUps = 0;
-    clients.forEach(c => {
-      const tab = localStageMap[c.id];
-      // Only count conversion follow-ups for clients in conversion stage
-      const convFu = (tab?.isConversion && c.lifecycle?.conversion?.followUpDate) || "";
-      // Only count retention follow-ups for clients in retention stage
-      const retFu = (tab?.isRetention && c.lifecycle?.retention?.followUpDate) || "";
+      // Follow-up check (inline with stage)
+      const convFu = (isConversion && c.lifecycle?.conversion?.followUpDate) || "";
+      const retFu = (isRetention && c.lifecycle?.retention?.followUpDate) || "";
       const fu = convFu || retFu;
       if (fu && fu < viewDate) overdueFollowUps++;
       if (fu && fu === viewDate) dueTodayFollowUps++;
-    });
 
-    // Lifecycle logs/updates made today (conversion + retention updates with loggedAt on viewDate)
-    let logsToday = 0;
-    clients.forEach(c => {
-      const convUpdates = c.lifecycle?.conversion?.updates || [];
-      const retUpdates = c.lifecycle?.retention?.updates || [];
-      [...convUpdates, ...retUpdates].forEach(u => {
-        if (u.loggedAt && u.loggedAt.startsWith(viewDate)) logsToday++;
-      });
-    });
+      // Logs today
+      const convUpdates = c.lifecycle?.conversion?.updates;
+      const retUpdates = c.lifecycle?.retention?.updates;
+      if (convUpdates) for (let i = 0; i < convUpdates.length; i++) { if (convUpdates[i].loggedAt?.startsWith(viewDate)) logsToday++; }
+      if (retUpdates) for (let i = 0; i < retUpdates.length; i++) { if (retUpdates[i].loggedAt?.startsWith(viewDate)) logsToday++; }
 
-    // New customers created today
-    const newCustomersToday = clients.filter(c => {
+      // New customer
       const ca = c.createdAt || "";
-      return ca.startsWith(viewDate) || ca === viewDate;
-    }).length;
+      if (ca.startsWith(viewDate) || ca === viewDate) newCustomersToday++;
+    });
 
     // New PAYING customers: clients whose first-ever completed payment was on viewDate
     let newPayingToday = 0;
-    const paymentsByClient = {};
-    payments.filter(p => p.status === "completed" && p.type !== "refund").forEach(p => {
-      if (!paymentsByClient[p.clientId]) paymentsByClient[p.clientId] = [];
-      paymentsByClient[p.clientId].push(p);
-    });
-    Object.entries(paymentsByClient).forEach(([cid, pmts]) => {
+    Object.values(pmtsByClient).forEach(pmts => {
       pmts.sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
       const first = pmts[0];
-      if (first && first.timestamp && first.timestamp.startsWith(viewDate)) newPayingToday++;
+      if (first?.timestamp?.startsWith(viewDate)) newPayingToday++;
     });
 
     return {
@@ -4474,7 +4469,6 @@ function OperationsHub({ data, save, nav, profile }) {
   const groups = [
     { key: "daily", label: "Daily Operations", items: OPERATIONS_CATALOG.filter(c => c.frequency === "daily") },
     { key: "weekly", label: "Weekly Maintenance", items: OPERATIONS_CATALOG.filter(c => c.frequency === "weekly") },
-    { key: "monthly", label: "Monthly Inspections", items: OPERATIONS_CATALOG.filter(c => c.frequency === "monthly") },
   ];
 
   const statusConfig = {
