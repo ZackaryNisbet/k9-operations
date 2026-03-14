@@ -1,6 +1,6 @@
 // K9 Operations — CheckoutTVPage
 // Isolated page component. See AGENTS.md for development contract.
-// Fixes: TV-001 (daycare count), TV-002 (checkout detection), TV-004 (room numbers)
+// Fixes: TV-001 (daycare count), TV-002 (checkout detection), TV-004 (room numbers), TV-006 (checkout highlight animation)
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
@@ -25,6 +25,34 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
       from { opacity: 1; transform: scale(1); }
       to { opacity: 0; transform: scale(0.92) translateY(-10px); }
     }
+    @keyframes heroEnter {
+      0% { opacity: 0; transform: scale(0.7) translateY(40px); }
+      60% { opacity: 1; transform: scale(1.02) translateY(-4px); }
+      100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    @keyframes heroFadeOut {
+      from { opacity: 1; transform: scale(1); }
+      to { opacity: 0; transform: scale(0.85) translateY(-20px); }
+    }
+    @keyframes heroPulse {
+      0%, 100% { box-shadow: 0 0 40px 10px rgba(175,141,84,0.35), 0 0 120px 30px rgba(175,141,84,0.1), inset 0 1px 0 rgba(255,255,255,0.08); }
+      50% { box-shadow: 0 0 60px 20px rgba(175,141,84,0.55), 0 0 160px 50px rgba(175,141,84,0.2), inset 0 1px 0 rgba(255,255,255,0.08); }
+    }
+    @keyframes heroCountdownPulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.06); }
+    }
+    @keyframes queueSlideIn {
+      from { opacity: 0; transform: translateX(20px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes urgentShake {
+      0%, 100% { transform: translateX(0); }
+      20% { transform: translateX(-2px); }
+      40% { transform: translateX(2px); }
+      60% { transform: translateX(-1px); }
+      80% { transform: translateX(1px); }
+    }
   `;
   document.head.appendChild(style);
 }
@@ -46,11 +74,9 @@ function parseRoom(room) {
   return { label: room, number: "" };
 }
 
-/* ── Countdown Timer (SVG circle) ─────────────────────────────────────── */
-function CountdownCircle({ remaining, total = 60 }) {
-  const size = 56;
-  const stroke = 4;
-  const radius = (size - stroke) / 2;
+/* ── Large Countdown Timer (SVG circle) — for hero card ──────────────── */
+function CountdownCircle({ remaining, total = 60, size = 56, strokeWidth = 4 }) {
+  const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const progress = remaining / total;
   const offset = circumference * (1 - progress);
@@ -61,16 +87,16 @@ function CountdownCircle({ remaining, total = 60 }) {
     <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
       <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
         <circle cx={size / 2} cy={size / 2} r={radius}
-          fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={stroke} />
+          fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={strokeWidth} />
         <circle cx={size / 2} cy={size / 2} r={radius}
-          fill="none" stroke={color} strokeWidth={stroke}
+          fill="none" stroke={color} strokeWidth={strokeWidth}
           strokeDasharray={circumference} strokeDashoffset={offset}
           strokeLinecap="round"
           style={{ transition: "stroke-dashoffset 1s linear, stroke 0.3s" }} />
       </svg>
       <div style={{
         position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: 18, fontWeight: 900, color, fontVariantNumeric: "tabular-nums",
+        fontSize: size * 0.32, fontWeight: 900, color, fontVariantNumeric: "tabular-nums",
         transition: "color 0.3s",
       }}>
         {remaining}
@@ -79,80 +105,162 @@ function CountdownCircle({ remaining, total = 60 }) {
   );
 }
 
-/* ── Checkout Highlight Card ──────────────────────────────────────────── */
-function CheckoutCard({ entry, dogs, clients, fading }) {
+/* ── TV-006: Hero Checkout Card — enlarged, prominent, center-stage ──── */
+function HeroCheckoutCard({ entry, dogs, clients, fading, queuePosition }) {
   const dog = dogs.find(d => d.gingrId === Number(entry.animalGingrId) || d.id === `g${entry.animalGingrId}`);
   const name = dog?.fields?.name || entry.animalName || "Unknown";
   const breed = dog?.fields?.breed || "";
   const ownerLast = entry.ownerLastName || "";
   const roomInfo = parseRoom(entry.room);
   const image = dog?._image;
+  const isUrgent = entry.remaining <= 10;
 
   return (
     <div style={{
-      display: "flex", alignItems: "center", gap: 24,
-      padding: "20px 28px",
-      background: "linear-gradient(135deg, rgba(175,141,84,0.15) 0%, rgba(175,141,84,0.06) 100%)",
-      borderRadius: 20,
-      border: "2px solid rgba(175,141,84,0.5)",
+      display: "flex", alignItems: "center", gap: 36,
+      padding: "32px 40px",
+      background: "linear-gradient(135deg, rgba(175,141,84,0.22) 0%, rgba(175,141,84,0.08) 50%, rgba(0,26,51,0.95) 100%)",
+      borderRadius: 28,
+      border: `3px solid ${isUrgent ? "rgba(239,68,68,0.6)" : "rgba(175,141,84,0.6)"}`,
       animation: fading
-        ? "checkoutFadeOut 1s ease-out forwards"
-        : "checkoutSlideIn 0.4s ease-out, checkoutPulse 2s ease-in-out infinite",
-      minHeight: 100,
+        ? "heroFadeOut 1s ease-out forwards"
+        : `heroEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), heroPulse 2.5s ease-in-out infinite 0.6s`,
+      minHeight: 140,
+      position: "relative",
+      overflow: "hidden",
+      transition: "border-color 0.3s",
     }}>
-      {/* Dog image / avatar */}
+      {/* Subtle background glow */}
+      <div style={{
+        position: "absolute", top: "-50%", left: "-20%",
+        width: "60%", height: "200%",
+        background: `radial-gradient(ellipse, ${isUrgent ? "rgba(239,68,68,0.08)" : "rgba(175,141,84,0.08)"} 0%, transparent 70%)`,
+        pointerEvents: "none",
+        transition: "background 0.3s",
+      }} />
+
+      {/* Dog image / avatar — large */}
       {image ? (
         <img src={image} alt={name} style={{
-          width: 80, height: 80, borderRadius: 18, objectFit: "cover",
-          border: "3px solid rgba(175,141,84,0.6)", flexShrink: 0,
+          width: 120, height: 120, borderRadius: 24, objectFit: "cover",
+          border: `4px solid ${isUrgent ? "rgba(239,68,68,0.5)" : "rgba(175,141,84,0.6)"}`,
+          flexShrink: 0, position: "relative", zIndex: 1,
+          transition: "border-color 0.3s",
         }} />
       ) : (
         <div style={{
-          width: 80, height: 80, borderRadius: 18, flexShrink: 0,
-          background: "rgba(175,141,84,0.25)", display: "flex",
-          alignItems: "center", justifyContent: "center",
-          fontSize: 32, fontWeight: 900, color: "#AF8D54",
+          width: 120, height: 120, borderRadius: 24, flexShrink: 0,
+          background: isUrgent ? "rgba(239,68,68,0.2)" : "rgba(175,141,84,0.25)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 48, fontWeight: 900,
+          color: isUrgent ? "#EF4444" : "#AF8D54",
+          position: "relative", zIndex: 1,
+          border: `4px solid ${isUrgent ? "rgba(239,68,68,0.4)" : "rgba(175,141,84,0.4)"}`,
+          transition: "background 0.3s, color 0.3s, border-color 0.3s",
         }}>
           {name[0]}
         </div>
       )}
 
-      {/* Info */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{
-          display: "flex", alignItems: "center", gap: 12, marginBottom: 4,
-        }}>
+      {/* Info — large text for TV visibility */}
+      <div style={{ flex: 1, minWidth: 0, position: "relative", zIndex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8 }}>
           <span style={{
-            fontSize: 12, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase",
-            color: "#AF8D54", background: "rgba(175,141,84,0.15)",
-            padding: "3px 10px", borderRadius: 6,
+            fontSize: 14, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase",
+            color: isUrgent ? "#EF4444" : "#AF8D54",
+            background: isUrgent ? "rgba(239,68,68,0.15)" : "rgba(175,141,84,0.15)",
+            padding: "5px 14px", borderRadius: 8,
+            animation: isUrgent ? "urgentShake 0.5s ease-in-out infinite" : "none",
+            transition: "color 0.3s, background 0.3s",
           }}>
-            Checking Out
+            {isUrgent ? "Leaving Now" : "Checking Out"}
           </span>
           {roomInfo.number && (
             <span style={{
-              fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.5)",
-              background: "rgba(255,255,255,0.06)", padding: "3px 10px", borderRadius: 6,
+              fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)",
+              background: "rgba(255,255,255,0.06)", padding: "5px 14px", borderRadius: 8,
             }}>
               {roomInfo.label} {roomInfo.number}
             </span>
           )}
         </div>
         <div style={{
-          fontSize: 28, fontWeight: 900, color: "#fff",
-          lineHeight: 1.15, marginBottom: 2,
+          fontSize: 42, fontWeight: 900, color: "#fff",
+          lineHeight: 1.1, marginBottom: 6,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          letterSpacing: "-0.01em",
         }}>
           {name}
         </div>
-        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          {breed && <span style={{ fontSize: 13, color: "rgba(255,255,255,0.45)" }}>{breed}</span>}
-          {ownerLast && <span style={{ fontSize: 13, color: "rgba(175,141,84,0.7)", fontWeight: 600 }}>{ownerLast}</span>}
+        <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+          {breed && <span style={{ fontSize: 17, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>{breed}</span>}
+          {ownerLast && (
+            <span style={{ fontSize: 17, color: "rgba(175,141,84,0.8)", fontWeight: 700 }}>
+              Owner: {ownerLast}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Countdown */}
-      <CountdownCircle remaining={entry.remaining} />
+      {/* Large Countdown */}
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+        position: "relative", zIndex: 1,
+        animation: isUrgent ? "heroCountdownPulse 1s ease-in-out infinite" : "none",
+      }}>
+        <CountdownCircle remaining={entry.remaining} total={60} size={100} strokeWidth={6} />
+        <span style={{
+          fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.35)",
+          textTransform: "uppercase", letterSpacing: "0.08em",
+        }}>
+          seconds
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ── TV-006: Queue indicator for waiting checkouts ───────────────────── */
+function QueueCard({ entry, dogs, index }) {
+  const dog = dogs.find(d => d.gingrId === Number(entry.animalGingrId) || d.id === `g${entry.animalGingrId}`);
+  const name = dog?.fields?.name || entry.animalName || "Unknown";
+  const image = dog?._image;
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 14,
+      padding: "12px 18px",
+      background: "rgba(255,255,255,0.04)",
+      borderRadius: 14,
+      border: "1px solid rgba(175,141,84,0.2)",
+      animation: `queueSlideIn 0.3s ease-out ${index * 0.1}s both`,
+    }}>
+      <div style={{
+        fontSize: 12, fontWeight: 800, color: "rgba(175,141,84,0.5)",
+        width: 22, textAlign: "center",
+      }}>
+        {index + 2}
+      </div>
+      {image ? (
+        <img src={image} alt={name} style={{
+          width: 40, height: 40, borderRadius: 10, objectFit: "cover",
+          border: "2px solid rgba(175,141,84,0.3)",
+        }} />
+      ) : (
+        <div style={{
+          width: 40, height: 40, borderRadius: 10,
+          background: "rgba(175,141,84,0.15)", display: "flex",
+          alignItems: "center", justifyContent: "center",
+          fontSize: 16, fontWeight: 800, color: "#AF8D54",
+        }}>
+          {name[0]}
+        </div>
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>{name}</div>
+        <div style={{ fontSize: 11, color: "rgba(175,141,84,0.6)", fontWeight: 600 }}>Up next</div>
+      </div>
+      <CountdownCircle remaining={entry.remaining} total={60} size={36} strokeWidth={3} />
     </div>
   );
 }
@@ -261,7 +369,7 @@ function CheckoutTVPage({ data, nav, profile }) {
             setCheckingOut(prev => {
               const existingIds = new Set(prev.map(e => e.id));
               const newEntries = departed.filter(d => !existingIds.has(d.id));
-              return [...newEntries, ...prev];
+              return [...prev, ...newEntries];
             });
           }
         }
@@ -288,7 +396,6 @@ function CheckoutTVPage({ data, nav, profile }) {
           if (next <= 0) return { ...e, remaining: 0, fading: true };
           return { ...e, remaining: next };
         });
-        // Remove entries that have been fading for > 1.2s (animation duration)
         return updated;
       });
     }, 1000);
@@ -303,6 +410,24 @@ function CheckoutTVPage({ data, nav, profile }) {
       setCheckingOut(prev => prev.filter(e => !e.fading));
     }, 1200);
     return () => clearTimeout(timeout);
+  }, [checkingOut]);
+
+  /* ── TV-006: Compute active (hero) and queued checkouts ────────────── */
+  // The first non-fading entry is the hero. Fading entries still render as hero during fade-out.
+  // Remaining non-fading entries are queued.
+  const activeCheckout = checkingOut.find(e => !e.fading) || checkingOut.find(e => e.fading) || null;
+  const fadingCheckouts = activeCheckout ? checkingOut.filter(e => e.fading && e !== activeCheckout) : [];
+  const queuedCheckouts = checkingOut.filter(e => !e.fading && e !== activeCheckout);
+
+  // Set of dogIds currently checking out — used to keep them in the grid visually
+  const checkingOutDogIds = useMemo(() => {
+    const ids = new Set();
+    for (const e of checkingOut) {
+      if (e.animalGingrId) {
+        ids.add(`g${e.animalGingrId}`);
+      }
+    }
+    return ids;
   }, [checkingOut]);
 
   const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
@@ -320,11 +445,16 @@ function CheckoutTVPage({ data, nav, profile }) {
       ? `${roomInfo.label} ${roomInfo.number}`
       : roomInfo.label || "";
 
+    // TV-006: Dim dogs that are being checked out (they appear in hero card above)
+    const isCheckingOut = checkingOutDogIds.has(res.dogId);
+
     return (
       <div style={{
         display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 12px",
-        background: "rgba(255,255,255,0.06)", borderRadius: 16, border: "1px solid rgba(255,255,255,0.08)",
-        minWidth: 140, transition: "transform 0.2s",
+        background: isCheckingOut ? "rgba(175,141,84,0.08)" : "rgba(255,255,255,0.06)",
+        borderRadius: 16, border: isCheckingOut ? "1px solid rgba(175,141,84,0.2)" : "1px solid rgba(255,255,255,0.08)",
+        minWidth: 140, transition: "transform 0.2s, opacity 0.5s, background 0.3s",
+        opacity: isCheckingOut ? 0.35 : 1,
       }}>
         {dog?._image ? (
           <img src={dog._image} alt={name} style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover", border: "2px solid rgba(255,255,255,0.15)", marginBottom: 8 }} />
@@ -349,6 +479,8 @@ function CheckoutTVPage({ data, nav, profile }) {
     </div>
   );
 
+  const hasCheckouts = checkingOut.length > 0;
+
   return (
     <div style={{
       minHeight: "100vh", background: "linear-gradient(180deg, #001A33 0%, #00112A 50%, #000A1A 100%)",
@@ -371,20 +503,61 @@ function CheckoutTVPage({ data, nav, profile }) {
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Total: <span style={{ fontWeight: 800, color: "#fff" }}>{uniqueDogs.length}</span></div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Daycare: <span style={{ fontWeight: 800, color: "#0EA5E9" }}>{daycareDogs.length}</span></div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#AF8D54" }}>{boardingDogs.length}</span></div>
+        {hasCheckouts && (
+          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: "auto" }}>
+            Checking out: <span style={{ fontWeight: 800, color: "#EF4444" }}>{checkingOut.filter(e => !e.fading).length}</span>
+          </div>
+        )}
       </div>
 
-      {/* TV-002: Checkout highlight cards */}
-      {checkingOut.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 12 }}>
-          {checkingOut.map(entry => (
-            <CheckoutCard
-              key={entry.id}
-              entry={entry}
+      {/* TV-006: Hero checkout card — enlarged, prominent, above the grid */}
+      {hasCheckouts && (
+        <div style={{ marginBottom: 20 }}>
+          {/* Active hero card */}
+          {activeCheckout && (
+            <HeroCheckoutCard
+              key={activeCheckout.id}
+              entry={activeCheckout}
               dogs={dogs}
               clients={clients}
-              fading={entry.fading}
+              fading={activeCheckout.fading}
             />
+          )}
+
+          {/* Fading out cards (previous heroes completing their fade animation) */}
+          {fadingCheckouts.map(entry => (
+            <div key={entry.id} style={{ marginTop: 8 }}>
+              <HeroCheckoutCard
+                entry={entry}
+                dogs={dogs}
+                clients={clients}
+                fading={true}
+              />
+            </div>
           ))}
+
+          {/* Queued checkouts — compact cards showing who's next */}
+          {queuedCheckouts.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{
+                fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.3)",
+                textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8,
+                paddingLeft: 4,
+              }}>
+                Up Next ({queuedCheckouts.length} waiting)
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {queuedCheckouts.map((entry, i) => (
+                  <QueueCard
+                    key={entry.id}
+                    entry={entry}
+                    dogs={dogs}
+                    index={i}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
