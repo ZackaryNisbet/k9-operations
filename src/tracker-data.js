@@ -461,7 +461,7 @@ const TRACKER_DATA = {
       title: "Large vs Small Dog Differentiation",
       category: "Checkout TV",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Use custom_animal_icons to differentiate large and small dogs on TV display.",
       spec: "Differentiate between large dogs and small dogs on the Checkout TV display.\n\n**Data source:** The animal pages in Gingr store icons for \"small dog playgroup (play)\" and \"large dog playgroup (play)\".\n\n**Implementation:** Use the `custom_animal_icons` template (templates 2/3) to determine dog size classification and display accordingly on the TV.\n\nThis feeds into the TV navigation views (TV-005) which will have separate Small Daycare and Large Daycare views.",
       dataRequirements: ["gingr_animals", "animal_icons"],
