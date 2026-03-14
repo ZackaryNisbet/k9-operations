@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 
 // ─── Color palette (copied from LiteApp.jsx const C) ─────────────────────────
 const C = {
@@ -21,6 +21,7 @@ const CATEGORY_COLORS = {
   "Data Expansion":     { bg: "#ccfbf1", text: "#115e59" },
   "Dashboard":          { bg: "#fef3c7", text: "#92400e" },
   "Settings":           { bg: "#f3f4f6", text: "#374151" },
+  "Public Site":        { bg: "#fce7f3", text: "#9d174d" },
 };
 
 const PRIORITY_COLORS = {
@@ -885,6 +886,22 @@ const TRACKER_DATA = {
       ],
       screenshots: [],
       notes: "Awaiting review. This gates all data expansion work."
+    },
+    {
+      id: "PUB-001",
+      title: "Redesign Customer Lifecycle CRM Graphic",
+      category: "Public Site",
+      priority: "P2",
+      status: "backlog",
+      description: "Redesign the customer lifecycle CRM graphic on the landing page. Current triangle/node graphic needs a polished, world-class visual.",
+      spec: "**Current state:** Triangle graphic with Gingr → K9 Ops center → Conversion → Active ↔ Retention flow.\n\n**Issues:**\n- Visual quality doesn't meet the 'world class UI' bar for public-facing pages\n- Needs to clearly communicate: Gingr (external) → K9 Ops (intelligence layer) → Conversion → Active ↔ Retention\n- Customer NEVER goes back to New or Conversion once progressed\n- Active ↔ Retention is the only bidirectional flow\n\n**Requirements:**\n- Clean, polished graphic that matches the premium feel of the rest of the landing page\n- Animated or interactive preferred\n- Must be visually intuitive for prospects viewing the landing page",
+      dataRequirements: [],
+      dependencies: [],
+      activityLog: [
+        { date: "2026-03-14", entry: "Logged by Zack — current CRM graphic on landing page needs redesign" }
+      ],
+      screenshots: [],
+      notes: "Part of the public site polish. Landing page must be world-class."
     }
   ]
 };
@@ -1343,6 +1360,36 @@ export default function RoadmapPage({ nav }) {
     setPriorityFilter("");
   }, []);
 
+  // Agent comms state
+  const [agentComms, setAgentComms] = useState({ claims: [], messages: [] });
+  const [agentTab, setAgentTab] = useState("messages");
+  const [showAgentPanel, setShowAgentPanel] = useState(true);
+
+  // Fetch agent-comms.json on mount and every 30s
+  useEffect(() => {
+    const load = () => {
+      fetch("/src/agent-comms.json?t=" + Date.now())
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) setAgentComms(d); })
+        .catch(() => {});
+    };
+    load();
+    const interval = setInterval(load, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const activeClaims = useMemo(() =>
+    (agentComms.claims || []).filter(c => c.status === "in_progress"),
+  [agentComms.claims]);
+
+  const completedClaims = useMemo(() =>
+    (agentComms.claims || []).filter(c => c.status === "completed"),
+  [agentComms.claims]);
+
+  const recentMessages = useMemo(() =>
+    [...(agentComms.messages || [])].reverse().slice(0, 50),
+  [agentComms.messages]);
+
   const openTask = useCallback((task) => {
     setSelectedTask(task);
   }, []);
@@ -1418,6 +1465,7 @@ export default function RoadmapPage({ nav }) {
             <option value="Dashboard">Dashboard</option>
             <option value="Settings">Settings</option>
             <option value="Data Expansion">Data Expansion</option>
+            <option value="Public Site">Public Site</option>
           </select>
 
           {/* Priority filter */}
@@ -1541,6 +1589,249 @@ export default function RoadmapPage({ nav }) {
             </div>
           ))}
         </div>
+      </section>
+
+      {/* ═══ AGENT COORDINATION CENTER ═══ */}
+      <section style={{ margin: "0 24px 24px" }}>
+        <div
+          onClick={() => setShowAgentPanel(p => !p)}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "14px 20px", background: C.pri, borderRadius: showAgentPanel ? "10px 10px 0 0" : 10,
+            cursor: "pointer", userSelect: "none",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round">
+              <circle cx="12" cy="8" r="4" /><path d="M20 21a8 8 0 10-16 0" />
+              <circle cx="20" cy="6" r="3" /><path d="M24 17a5 5 0 00-8 0" />
+              <circle cx="4" cy="6" r="3" /><path d="M8 17a5 5 0 00-8 0" />
+            </svg>
+            <h2 style={{ fontSize: 14, fontWeight: 700, color: "#fff", margin: 0, letterSpacing: "0.03em" }}>
+              Agent Coordination Center
+            </h2>
+            {activeClaims.length > 0 && (
+              <span style={{
+                background: "#10B981", color: "#fff", fontSize: 11, fontWeight: 700,
+                padding: "2px 8px", borderRadius: 10, marginLeft: 4,
+              }}>
+                {activeClaims.length} active
+              </span>
+            )}
+          </div>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round"
+            style={{ transform: showAgentPanel ? "rotate(180deg)" : "rotate(0)", transition: "transform 0.2s" }}>
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </div>
+
+        {showAgentPanel && (
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderTop: "none", borderRadius: "0 0 10px 10px", overflow: "hidden" }}>
+            {/* Tab bar */}
+            <div style={{ display: "flex", borderBottom: `1px solid ${C.border}` }}>
+              {[
+                { id: "messages", label: "Chat", count: recentMessages.length },
+                { id: "agents", label: "Active Agents", count: activeClaims.length },
+                { id: "completed", label: "Completed", count: completedClaims.length },
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setAgentTab(tab.id)}
+                  style={{
+                    padding: "10px 20px", border: "none", background: agentTab === tab.id ? C.surface : C.bg,
+                    borderBottom: agentTab === tab.id ? `2px solid ${C.pri}` : "2px solid transparent",
+                    fontSize: 13, fontWeight: agentTab === tab.id ? 600 : 500,
+                    color: agentTab === tab.id ? C.pri : C.textSec,
+                    cursor: "pointer", fontFamily: "inherit",
+                    display: "flex", alignItems: "center", gap: 6,
+                  }}
+                >
+                  {tab.label}
+                  {tab.count > 0 && (
+                    <span style={{
+                      background: agentTab === tab.id ? C.pri : C.bg,
+                      color: agentTab === tab.id ? "#fff" : C.textMut,
+                      fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 8,
+                    }}>
+                      {tab.count}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            {/* Messages/Chat tab */}
+            {agentTab === "messages" && (
+              <div style={{ maxHeight: 400, overflowY: "auto", padding: "12px 0" }}>
+                {recentMessages.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "32px 20px", color: C.textMut, fontSize: 13 }}>
+                    No agent messages yet. Agents will post here when they claim tasks and coordinate.
+                  </div>
+                ) : recentMessages.map((msg, i) => {
+                  const typeColors = {
+                    announcement: { bg: "#dbeafe", text: "#1e40af", icon: "📢" },
+                    question: { bg: "#fef3c7", text: "#92400e", icon: "❓" },
+                    alert: { bg: "#fef2f2", text: "#dc2626", icon: "⚠️" },
+                    completed: { bg: "#dcfce7", text: "#16a34a", icon: "✅" },
+                    dependency: { bg: "#ede9fe", text: "#5b21b6", icon: "🔗" },
+                  };
+                  const tc = typeColors[msg.type] || typeColors.announcement;
+                  return (
+                    <div key={i} style={{
+                      padding: "10px 20px",
+                      borderBottom: i < recentMessages.length - 1 ? `1px solid ${C.borderLight}` : "none",
+                      transition: "background 0.15s",
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                        <span style={{ fontSize: 14 }}>{tc.icon}</span>
+                        <span style={{
+                          fontSize: 12, fontWeight: 700, color: C.pri,
+                          fontFamily: "'SF Mono', 'Fira Code', monospace",
+                        }}>
+                          {msg.agent}
+                        </span>
+                        {msg.taskId && (
+                          <span style={{
+                            fontSize: 10, fontWeight: 600, background: tc.bg, color: tc.text,
+                            padding: "1px 6px", borderRadius: 4,
+                          }}>
+                            {msg.taskId}
+                          </span>
+                        )}
+                        <span style={{ fontSize: 11, color: C.textMut, marginLeft: "auto" }}>
+                          {msg.timestamp ? new Date(msg.timestamp).toLocaleString("en-US", {
+                            month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                          }) : ""}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5, paddingLeft: 22 }}>
+                        {msg.message}
+                      </div>
+                      {msg.mentions && msg.mentions.length > 0 && (
+                        <div style={{ paddingLeft: 22, marginTop: 4, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          {msg.mentions.map((m, j) => (
+                            <span key={j} style={{
+                              fontSize: 10, fontWeight: 600, background: "#ede9fe", color: "#5b21b6",
+                              padding: "1px 6px", borderRadius: 4, fontFamily: "'SF Mono', monospace",
+                            }}>
+                              @{m}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Active Agents tab */}
+            {agentTab === "agents" && (
+              <div style={{ padding: 16 }}>
+                {activeClaims.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "32px 20px", color: C.textMut, fontSize: 13 }}>
+                    No agents currently working. Deploy agents with the instructions in AGENTS.md.
+                  </div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+                    {activeClaims.map((claim, i) => {
+                      const task = TRACKER_DATA.tasks.find(t => t.id === claim.taskId);
+                      const catColor = task ? (CATEGORY_COLORS[task.category] || { bg: C.bg, text: C.textSec }) : { bg: C.bg, text: C.textSec };
+                      return (
+                        <div key={i} style={{
+                          background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10,
+                          padding: 16, display: "flex", flexDirection: "column", gap: 8,
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                            <span style={{
+                              fontSize: 13, fontWeight: 700, color: C.pri,
+                              fontFamily: "'SF Mono', 'Fira Code', monospace",
+                            }}>
+                              {claim.agent}
+                            </span>
+                            <span style={{
+                              fontSize: 10, fontWeight: 600, background: "#dbeafe", color: "#2563eb",
+                              padding: "2px 8px", borderRadius: 10,
+                            }}>
+                              Working
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: C.text }}>
+                            {claim.taskId}: {task ? task.title : claim.description}
+                          </div>
+                          {task && (
+                            <span style={{
+                              fontSize: 10, fontWeight: 600, background: catColor.bg, color: catColor.text,
+                              padding: "2px 8px", borderRadius: 4, alignSelf: "flex-start",
+                            }}>
+                              {task.category}
+                            </span>
+                          )}
+                          {claim.files && claim.files.length > 0 && (
+                            <div style={{ fontSize: 11, color: C.textMut, fontFamily: "'SF Mono', monospace" }}>
+                              {claim.files.join(", ")}
+                            </div>
+                          )}
+                          <div style={{ fontSize: 11, color: C.textMut }}>
+                            Started: {claim.claimedAt ? new Date(claim.claimedAt).toLocaleString("en-US", {
+                              month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                            }) : "Unknown"}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Completed tab */}
+            {agentTab === "completed" && (
+              <div style={{ maxHeight: 400, overflowY: "auto" }}>
+                {completedClaims.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "32px 20px", color: C.textMut, fontSize: 13 }}>
+                    No completed agent work yet.
+                  </div>
+                ) : completedClaims.map((claim, i) => {
+                  const task = TRACKER_DATA.tasks.find(t => t.id === claim.taskId);
+                  return (
+                    <div key={i} style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      padding: "12px 20px",
+                      borderBottom: i < completedClaims.length - 1 ? `1px solid ${C.borderLight}` : "none",
+                    }}>
+                      <span style={{ fontSize: 16 }}>✅</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{
+                            fontSize: 12, fontWeight: 700, color: C.pri,
+                            fontFamily: "'SF Mono', 'Fira Code', monospace",
+                          }}>
+                            {claim.agent}
+                          </span>
+                          <span style={{
+                            fontSize: 10, fontWeight: 600, background: "#dcfce7", color: "#16a34a",
+                            padding: "1px 6px", borderRadius: 4,
+                          }}>
+                            {claim.taskId}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 13, color: C.text, marginTop: 2 }}>
+                          {claim.summary || claim.description}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 11, color: C.textMut, whiteSpace: "nowrap" }}>
+                        {claim.completedAt ? new Date(claim.completedAt).toLocaleString("en-US", {
+                          month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+                        }) : ""}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       {/* Task detail modal */}
