@@ -43,18 +43,23 @@ import App from './App';
 import LiteApp from './LiteApp';
 import BookingPage from './BookingPage';
 import PublicPage from './PublicPages';
+import LandingPage from './LandingPage';
+import PublicRoadmap from './PublicRoadmap';
 
 // Route detection — determine which app to render
 const path = window.location.pathname;
 const isBookingPage = path.startsWith('/book/') || path === '/book';
 const isPublicLink = path.startsWith('/sign/') || path.startsWith('/form/');
+const isPublicRoadmap = path === '/public-roadmap';
+const isLoginPage = path === '/login';
+const isLandingPage = path === '/' || path === '';
 const isPOS = path.startsWith('/pos');
 
 function Root() {
-  // Public booking page — no auth required
+  // Public pages — no auth required
   if (isBookingPage) return <BookingPage />;
-  // Public agreement signing & questionnaire pages — no auth required
   if (isPublicLink) return <PublicPage />;
+  if (isPublicRoadmap) return <PublicRoadmap />;
 
   const { user, profile, loading, signOut, needsPasswordSet, updatePassword } = useAuth();
 
@@ -94,27 +99,36 @@ function Root() {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8F9FB', fontFamily: "'GT Eesti', sans-serif" }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0A0F1C', fontFamily: "'Inter', -apple-system, sans-serif" }}>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 24, fontWeight: 800, color: '#003462', fontFamily: "'Canela', Georgia, serif" }}>K9 Operations</div>
-          <div style={{ fontSize: 13, color: '#6B7280', marginTop: 8 }}>Loading...</div>
-          <div style={{ fontSize: 9, color: '#D1D5DB', marginTop: 16 }}>&copy; 2026 K9 Operations LLC</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: '#F0F2F5', fontFamily: "'Playfair Display', Georgia, serif" }}>K9 Operations</div>
+          <div style={{ fontSize: 13, color: '#8B95A8', marginTop: 8 }}>Loading...</div>
+          <div style={{ fontSize: 9, color: '#5A647A', marginTop: 16 }}>&copy; 2026 K9 Operations LLC</div>
         </div>
       </div>
     );
   }
 
-  // Not logged in → show login page
-  if (!user) return <Login />;
+  // Not logged in
+  if (!user) {
+    // Show login page at /login, landing page everywhere else
+    if (isLoginPage) return <Login />;
+    return <LandingPage />;
+  }
+
+  // Logged-in user hitting landing page or login → redirect to app
+  if (isLandingPage || isLoginPage) {
+    if (isPOS) return <App />;
+    return <LiteApp />;
+  }
 
   // User needs to set a password (came from reset link or invite link)
   if (needsPasswordSet) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#F8F9FB', fontFamily: "'GT Eesti', sans-serif" }}>
-        {/* fonts loaded via App.jsx @font-face */}
-        <div style={{ width: '100%', maxWidth: 420, background: '#fff', borderRadius: 20, padding: '40px 36px', boxShadow: '0 8px 32px rgba(0,0,0,0.08)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0A0F1C', fontFamily: "'Inter', -apple-system, sans-serif" }}>
+        <div style={{ width: '100%', maxWidth: 420, background: '#141B2D', borderRadius: 20, padding: '40px 36px', boxShadow: '0 20px 60px rgba(0,0,0,0.5)', border: '1px solid #1E2A42' }}>
           <div style={{ textAlign: 'center', marginBottom: 28 }}>
-            <div style={{ fontSize: 24, fontWeight: 800, color: '#003462', fontFamily: "'Canela', Georgia, serif" }}>K9 Operations</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: '#F0F2F5', fontFamily: "'Playfair Display', Georgia, serif" }}>K9 Operations</div>
             <div style={{ fontSize: 11, color: '#AF8D54', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 4 }}>Luxury Pet Hotel Management</div>
           </div>
 
@@ -123,39 +137,39 @@ function Root() {
               <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#10B981', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
               </div>
-              <h3 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700, color: '#1A1D23' }}>Password set!</h3>
-              <p style={{ fontSize: 14, color: '#6B7280' }}>Taking you to the app...</p>
+              <h3 style={{ margin: '0 0 8px', fontSize: 18, fontWeight: 700, color: '#F0F2F5' }}>Password set!</h3>
+              <p style={{ fontSize: 14, color: '#8B95A8' }}>Taking you to the app...</p>
             </div>
           ) : (
             <>
-              <h3 style={{ margin: '0 0 6px', fontSize: 18, fontWeight: 700, color: '#1A1D23' }}>Set Your Password</h3>
-              <p style={{ margin: '0 0 24px', fontSize: 13, color: '#6B7280', lineHeight: 1.5 }}>
+              <h3 style={{ margin: '0 0 6px', fontSize: 18, fontWeight: 700, color: '#F0F2F5' }}>Set Your Password</h3>
+              <p style={{ margin: '0 0 24px', fontSize: 13, color: '#8B95A8', lineHeight: 1.5 }}>
                 Welcome! Please set a permanent password for your account.
               </p>
               <form onSubmit={handleSetPassword} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                 <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#1A1D23', marginBottom: 6 }}>New Password</label>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#8B95A8', marginBottom: 6 }}>New Password</label>
                   <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
                     placeholder="At least 6 characters" autoFocus
-                    style={{ width: '100%', padding: '12px 14px', border: '1.5px solid #E5E7EB', borderRadius: 10, fontSize: 15, color: '#1A1D23', background: '#fff', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                    style={{ width: '100%', padding: '12px 14px', border: '1.5px solid #1E2A42', borderRadius: 10, fontSize: 15, color: '#F0F2F5', background: '#1A2340', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#1A1D23', marginBottom: 6 }}>Confirm Password</label>
+                  <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#8B95A8', marginBottom: 6 }}>Confirm Password</label>
                   <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
                     placeholder="Type it again"
-                    style={{ width: '100%', padding: '12px 14px', border: '1.5px solid #E5E7EB', borderRadius: 10, fontSize: 15, color: '#1A1D23', background: '#fff', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+                    style={{ width: '100%', padding: '12px 14px', border: '1.5px solid #1E2A42', borderRadius: 10, fontSize: 15, color: '#F0F2F5', background: '#1A2340', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }} />
                 </div>
-                {pwError && <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', color: '#EF4444', fontSize: 13, fontWeight: 500 }}>{pwError}</div>}
+                {pwError && <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.1)', color: '#EF4444', fontSize: 13, fontWeight: 500 }}>{pwError}</div>}
                 <button type="submit" disabled={pwLoading}
-                  style={{ width: '100%', padding: '13px', background: pwLoading ? '#6B7280' : '#003462', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: pwLoading ? 'default' : 'pointer', fontFamily: 'inherit', marginTop: 4 }}>
+                  style={{ width: '100%', padding: '13px', background: pwLoading ? '#5A647A' : '#AF8D54', color: '#0A0F1C', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: pwLoading ? 'default' : 'pointer', fontFamily: 'inherit', marginTop: 4 }}>
                   {pwLoading ? 'Saving...' : 'Set Password & Continue'}
                 </button>
               </form>
             </>
           )}
 
-          <p style={{ textAlign: 'center', fontSize: 12, color: '#9CA3AF', marginTop: 20 }}>Signed in as {user.email}</p>
-          <p style={{ textAlign: 'center', fontSize: 9, color: '#D1D5DB', marginTop: 12 }}>&copy; 2026 K9 Operations LLC. All Rights Reserved.</p>
+          <p style={{ textAlign: 'center', fontSize: 12, color: '#5A647A', marginTop: 20 }}>Signed in as {user.email}</p>
+          <p style={{ textAlign: 'center', fontSize: 9, color: '#5A647A', marginTop: 12 }}>&copy; 2026 K9 Operations LLC. All Rights Reserved.</p>
         </div>
       </div>
     );
