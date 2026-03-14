@@ -400,7 +400,7 @@ const TRACKER_DATA = {
       title: "Front-End/Back-End Checklist Template Import",
       category: "Operations Hub",
       priority: "P2",
-      status: "backlog",
+      status: "done",
       description: "Import POS app checklist templates as defaults for K9 Ops Lite.",
       spec: "The Front-End and Back-End checklists are properly configured on the POS app but are very condensed on the Lite app.\n\n**Requirements:**\n- Import the full checklist items from the POS app\n- Make these the default template for K9 Ops Lite locations\n- At the enterprise level, support customizing templates and pushing them to individual locations",
       dataRequirements: ["checklists"],
