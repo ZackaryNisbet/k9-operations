@@ -260,7 +260,7 @@ const TRACKER_DATA = {
       description: "Merge Today's Progress + Revenue Intelligence + Funnel into one master Dashboard page.",
       spec: "Consolidate three separate reports into one unified Dashboard:\n\n**Current separate pages:**\n1. Today's Progress — daily ops report for management/employees\n2. Revenue Intelligence — financial metrics and trends\n3. Funnel — conversion/pipeline data\n\n**Consolidated Dashboard vision:**\n- Single, clean master UI (inspired by [this X post](https://x.com/tanjim38/status/2032715653472309431))\n- Permission-based sections: CSRs/PCTs should NOT see revenue/funnel data\n- Metrics should have animated transitions when data updates (like current funnel + revenue intelligence animations)\n- UI elements don't need to be uniform size — vary based on data importance\n- Rename to \"Dashboard\" and move to top of navbar\n\n**Metrics to include (from Revenue Intelligence):**\n- Keep: All revenue metrics, key performance indicators\n- Remove: Top Category, Booking Source, Payment Method\n- Consolidate: Accrual Revenue and Net Revenue (appear to be the same)\n\n**Timeframe selectors:** WTD, Past Week, MTD, Past 30, QTD, YTD, Lifetime, Custom",
       dataRequirements: ["gingr_reservations", "invoices", "transactions", "lifecycle_events"],
-      dependencies: ["DASH-001", "DASH-002"],
+      dependencies: ["DASH-001"],
       activityLog: [
         { date: "2026-03-14", entry: "Task created from feature requirements doc" }
       ],
