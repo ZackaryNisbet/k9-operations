@@ -1,1 +1,1 @@
-SEE_BASH_CONTENT
+__WORKSPACE_FILE__:/<path>/workspace/LiteApp.jsx
