@@ -294,7 +294,7 @@ const PAGE_SLUGS = {
   "new-client":"new-client", "new-dog":"new-dog", "new-reservation":"new-reservation", "unified-new":"new",
   messages:"messages", payments:"payments", operations:"operations",
   "ops-opening":"ops/opening", "ops-fe":"ops/front-end", "ops-be":"ops/back-end", "ops-rooms":"ops/rooms",
-  "ops-pictures":"ops/pictures", "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
+  "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
   "ops-bathing":"ops/bathing", "ops-pamper":"ops/pamper", "ops-svc":"ops/service",
   management:"management", "mgmt-attendance":"management/attendance", "mgmt-audit-log":"management/audit-log",
   "checkout-tv":"checkout-tv",
@@ -692,7 +692,7 @@ const InteractiveLineChart = React.memo(({ chartData, color = "#003462", compare
 });
 
 // ─── Operations Constants ──────────────────────────────────────────────────
-const OPS_TYPES = {opening:{key:"openingTemplate",def:DEF_OPENING_TEMPLATE,title:"Opening Checklist"},fe:{key:"feTemplate",def:DEF_FE_TEMPLATE,title:"Front-End Checklist",showTime:true},be:{key:"beTemplate",def:DEF_BE_TEMPLATE,title:"Back-End Checklist",showTime:true},closing:{key:"closingTemplate",def:DEF_CLOSING_TEMPLATE,title:"Closing Checklist"},room_cleaning:{title:"Room Cleaning"},pictures:{title:"Picture Checklist"},pp:{title:"Private Play Checklist"},bathing:{title:"Bathing Report"},pamper:{title:"Pamper Package Plus"},svc:{title:"Service Report"},eod:{title:"End-of-Day Report",isEod:true}};
+const OPS_TYPES = {opening:{key:"openingTemplate",def:DEF_OPENING_TEMPLATE,title:"Opening Checklist"},fe:{key:"feTemplate",def:DEF_FE_TEMPLATE,title:"Front-End Checklist",showTime:true},be:{key:"beTemplate",def:DEF_BE_TEMPLATE,title:"Back-End Checklist",showTime:true},closing:{key:"closingTemplate",def:DEF_CLOSING_TEMPLATE,title:"Closing Checklist"},room_cleaning:{title:"Room Cleaning"},pp:{title:"Private Play Checklist"},bathing:{title:"Bathing Report"},pamper:{title:"Pamper Package Plus"},svc:{title:"Service Report"},eod:{title:"End-of-Day Report",isEod:true}};
 
 const DEF_LITE_EOD_TEMPLATE = [
   { id:"sales", title:"Sales", emoji:"💵", type:"text", defaultContent:"Today's Goal:\nWTD:\nMTD:\nYTD:" },
@@ -723,7 +723,6 @@ const OPERATIONS_CATALOG = [
   { id:"ops-fe", label:"Front-End Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"fe", routeTo:"ops-fe", permission:"view_daily_ops" },
   { id:"ops-be", label:"Back-End Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"be", routeTo:"ops-be", permission:"view_daily_ops" },
   { id:"ops-rooms", label:"Room Cleaning", frequency:"daily", dataKey:"dailyOps", typeSub:"room_cleaning", routeTo:"ops-rooms", permission:"view_daily_ops" },
-  { id:"ops-pictures", label:"Pictures", frequency:"daily", dataKey:"dailyOps", typeSub:"pictures", routeTo:"ops-pictures", permission:"view_daily_ops" },
   { id:"ops-pp", label:"Private Play Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"pp", routeTo:"ops-pp", permission:"view_daily_ops" },
   { id:"ops-closing", label:"Closing Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"closing", routeTo:"ops-closing", permission:"view_daily_ops" },
   // Services are dynamically generated from reservation data — see OperationsHub component
@@ -942,11 +941,6 @@ function getOpsProgress(data, item, date) {
   }
   const ei = entry.items;
   if (!ei) return 0;
-  if (item.typeSub === "pictures") {
-    const vals = Object.values(ei);
-    const done = vals.filter(v => v === true).length;
-    return vals.length > 0 ? Math.round((done / vals.length) * 100) : 0;
-  }
   if (item.typeSub === "room_cleaning") {
     const stats = getRoomCleaningStats(data, td);
     return stats.totalNeeded > 0 ? Math.round((stats.totalDone / stats.totalNeeded) * 100) : 0;
@@ -986,13 +980,6 @@ function getOpsCountLabel(data, item, date) {
     const stats = getRoomCleaningStats(data, td);
     if (stats.totalNeeded === 0) return "No rooms to clean";
     return `${stats.totalDone}/${stats.totalNeeded} rooms`;
-  }
-  if (item.typeSub === "pictures") {
-    if (!entry || !entry.items) return "0 photos";
-    const ei = entry.items;
-    const done = Object.values(ei).filter(v => v === true).length;
-    const total = Object.keys(ei).length;
-    return `${done}/${total} photos`;
   }
   if (item.typeSub === "pp") {
     const ppStats = getPPStats(data, td);
@@ -1923,7 +1910,6 @@ function useGingrData(locationId) {
     { id: `ops_fe_checklist_${td}`, type: "checklist", typeSub: "fe_checklist", date: td, locked: false, items: DEF_FE_TEMPLATE.map(t => ({ ...t, done: false, completedBy: "", time: "" })) },
     { id: `ops_be_checklist_${td}`, type: "checklist", typeSub: "be_checklist", date: td, locked: false, items: DEF_BE_TEMPLATE.map(t => ({ ...t, done: false, completedBy: "", time: "" })) },
     { id: `ops_room_cleaning_${td}`, type: "room_cleaning", typeSub: "room_cleaning", date: td, locked: false, items: {} },
-    { id: `ops_pictures_${td}`, type: "pictures", typeSub: "pictures", date: td, locked: false, items: {} },
     { id: `ops_pp_${td}`, type: "pp", typeSub: "pp", date: td, locked: false, items: {} },
   ], [td]);
 
@@ -4346,14 +4332,6 @@ function OperationsHub({ data, save, nav, profile }) {
     const bathsTotal = bathRows.length;
     const bathsDone = bathRows.filter(b => b.done).length;
 
-    // Pictures: boarding dogs not on first or last day (same logic as renderPictures checklist)
-    const pictureDogs = reservations.filter(r => r.type === "boarding" && r.status === "checked-in" && r.checkIn < viewDate && r.checkOut > viewDate);
-    const picEntryId = `ops_pictures_${viewDate}`;
-    const picEntry = allOps.find(e => e.id === picEntryId);
-    const picItems = picEntry ? picEntry.items || {} : {};
-    const picturesTotal = pictureDogs.length;
-    const picturesDone = pictureDogs.filter(r => picItems[r.dogId]).length;
-
     // Private play stats (3 required sessions per dog)
     const ppStats = getPPStats(data, viewDate);
     const ppEntryId = `ops_pp_${viewDate}`;
@@ -4477,8 +4455,6 @@ function OperationsHub({ data, save, nav, profile }) {
       bathsTotal,
       bathsDone,
       bathRows,
-      picturesTotal,
-      picturesDone,
       ppTotalDogs: ppStats.totalDogs,
       ppRequiredSessions: ppStats.requiredSessions,
       ppCompletedRequired: ppStats.completedSessions,
@@ -4640,8 +4616,6 @@ function OperationsHub({ data, save, nav, profile }) {
                     )}
                   </div>
 
-                  {/* Pictures */}
-                  {progressRow("Pictures", tp.picturesDone, tp.picturesTotal, C.info)}
                 </div>
 
                 {/* Right column: Private Play & Checklists */}
@@ -5735,9 +5709,6 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const boardingToday = data.reservations.filter(r => r.type === "boarding" && r.checkIn <= viewDate && r.checkOut >= viewDate && (r.status === "checked-in" || r.status === "upcoming"));
   const boardingCheckedOut = data.reservations.filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-out");
 
-  // Picture checklist: boarding, not first day, not last day
-  const pictureDogs = data.reservations.filter(r => r.type === "boarding" && r.status === "checked-in" && r.checkIn < viewDate && r.checkOut > viewDate);
-
   // PP checklist: checked-in dogs with Private Play add-on OR day boarding dogs
   const ppReservations = data.reservations.filter(r =>
     (r.type === "boarding" || r.type === "daycare" || r.type === "dayboarding") &&
@@ -6024,12 +5995,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     );
   };
 
-  // Override toggleItem for pictures (flat boolean instead of object)
-  const togglePicture = (dogId, val) => {
-    if (isLocked) return;
-    setItems(prev => ({ ...prev, [dogId]: val }));
-    setDirty(true);
-  };
+
 
   // ─── Private Play ───
   const [ppEditTimePopover, setPpEditTimePopover] = useState(null); // { dogId, si }
@@ -6167,41 +6133,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     );
   };
 
-  // ─── Picture Checklist ───
-  const renderPictures = () => {
-    const dogs = pictureDogs;
-    const picItems = items;
-    const done = dogs.filter(r => picItems[r.dogId]).length;
-    return (
-      <div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-          <div style={{ flex: 1, height: 8, background: C.surfaceHover, borderRadius: 4, overflow: "hidden" }}>
-            <div style={{ width: dogs.length ? `${(done / dogs.length) * 100}%` : "0%", height: "100%", background: done === dogs.length && dogs.length ? C.suc : C.pri, borderRadius: 4, transition: "width 0.3s" }} />
-          </div>
-          <span style={{ fontSize: 13, fontWeight: 600, color: done === dogs.length && dogs.length ? C.suc : C.text }}>{done}/{dogs.length} photos</span>
-        </div>
-        {dogs.length === 0 ? <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No dogs qualify for pictures today.</div><div style={{ color: C.textMut, fontSize: 12, marginTop: 4 }}>Boarding dogs on their first or last day are excluded.</div></Card> : (
-          <Card>
-            {dogs.map((r, i) => {
-              const d = getDog(r.dogId);
-              const c = getClient(r.clientId);
-              return (
-                <div key={r.id} style={{ display: "flex", alignItems: "center", padding: "10px 14px", borderBottom: i < dogs.length - 1 ? `1px solid ${C.border}` : "none", gap: 12 }}>
-                  <input type="checkbox" checked={!!picItems[r.dogId]} disabled={isLocked} onChange={e => togglePicture(r.dogId, e.target.checked)} style={{ width: 20, height: 20, accentColor: C.suc }} />
-                  <div style={{ flex: 1 }}>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: picItems[r.dogId] ? C.textMut : C.text, textDecoration: picItems[r.dogId] ? "line-through" : "none" }}>{d ? d.fields.name : "?"}</span>
-                    <span style={{ fontSize: 12, color: C.textMut, marginLeft: 8 }}>{c ? `${c.fields.first_name || ""} ${c.fields.last_name || ""}`.trim() : ""}</span>
-                  </div>
-                  <Badge color="primary" size="sm">{r.roomType} · {r.room}</Badge>
-                  {d && d.fields.breed && <Badge color="default" size="sm">{d.fields.breed}</Badge>}
-                </div>
-              );
-            })}
-          </Card>
-        )}
-      </div>
-    );
-  };
+
 
 
   // ─── Service Helper: extract service names from _services (handles both formats) ──
@@ -6745,7 +6677,6 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       )}
       {isTemplate ? renderTemplateChecklist()
         : sub === "room_cleaning" ? renderRoomCleaning()
-        : sub === "pictures" ? renderPictures()
         : sub === "pp" ? renderPP()
         : sub === "bathing" ? renderBathing()
         : sub === "pamper" ? renderPamper()
