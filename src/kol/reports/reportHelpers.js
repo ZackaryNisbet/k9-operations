@@ -529,3 +529,617 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Weekly Email Report — OPS-014
+// ═══════════════════════════════════════════════════════════════════════════
+
+export function getDefaultWeeklyReportConfig() {
+  return {
+    enabled: false,
+    recipients: [],
+    sendDay: "1",    // Monday
+    sendTime: "08:00",
+    sections: {
+      revenueSummary: true,
+      attendanceBreakdown: true,
+      bestWorstDays: true,
+      checklistCompletion: true,
+      newClients: true,
+      funnelMetrics: true,
+    },
+  };
+}
+
+// ─── Weekly Data Aggregation ─────────────────────────────────────────────
+export function aggregateWeeklyReport(data, weekStartDate) {
+  const start = weekStartDate || addDays(todayStr(), -7);
+  const days = [];
+  for (let i = 0; i < 7; i++) days.push(addDays(start, i));
+  const prevStart = addDays(start, -7);
+  const prevDays = [];
+  for (let i = 0; i < 7; i++) prevDays.push(addDays(prevStart, i));
+  const endDate = days[6];
+
+  const reservations = data.reservations || [];
+  const clients = data.clients || [];
+  const allOps = data.dailyOps || [];
+  const rooms = data.rooms || {};
+
+  // — Revenue: this week vs last week —
+  const revenueForDays = (dayList) => {
+    let total = 0;
+    let txCount = 0;
+    dayList.forEach((d) => {
+      const dayRes = reservations.filter(
+        (r) => r.checkIn <= d && r.checkOut >= d && r.status !== "cancelled"
+      );
+      dayRes.forEach((r) => {
+        const cost = parseFloat(r._totalCost) || 0;
+        if (cost > 0) { total += cost; txCount++; }
+      });
+    });
+    return { total, txCount };
+  };
+
+  const thisWeekRevenue = revenueForDays(days);
+  const lastWeekRevenue = revenueForDays(prevDays);
+  const revenuePctChange = lastWeekRevenue.total > 0
+    ? Math.round(((thisWeekRevenue.total - lastWeekRevenue.total) / lastWeekRevenue.total) * 100)
+    : thisWeekRevenue.total > 0 ? 100 : 0;
+
+  // — Attendance by day —
+  let totalCapacity = 0;
+  Object.values(rooms).forEach((roomList) => {
+    if (Array.isArray(roomList)) totalCapacity += roomList.length;
+  });
+
+  const dailyAttendance = days.map((d) => {
+    const boarding = reservations.filter(
+      (r) => r.type === "boarding" && r.checkIn <= d && r.checkOut >= d && (r.status === "checked-in" || r.status === "upcoming")
+    ).length;
+    const daycare = reservations.filter(
+      (r) => r.type === "daycare" && r.checkIn <= d && r.checkOut >= d && (r.status === "checked-in" || r.status === "upcoming")
+    ).length;
+    const dayRevenue = reservations
+      .filter((r) => r.checkIn <= d && r.checkOut >= d && r.status !== "cancelled")
+      .reduce((s, r) => s + (parseFloat(r._totalCost) || 0), 0);
+
+    return { date: d, boarding, daycare, total: boarding + daycare, revenue: dayRevenue };
+  });
+
+  const totalAttendance = dailyAttendance.reduce((s, d) => s + d.total, 0);
+
+  // — Best / Worst days —
+  const sorted = [...dailyAttendance].sort((a, b) => b.revenue - a.revenue);
+  const bestDay = sorted[0] || null;
+  const worstDay = sorted[sorted.length - 1] || null;
+
+  // — Checklist completion for the week —
+  const checklistTypes = ["opening", "closing", "fe", "be"];
+  let totalChecklistItems = 0;
+  let completedChecklistItems = 0;
+  days.forEach((d) => {
+    checklistTypes.forEach((type) => {
+      const entryId = `ops_${type}_${d}`;
+      const entry = allOps.find((e) => e.id === entryId);
+      const items = entry ? entry.items || {} : {};
+      const keys = Object.keys(items);
+      totalChecklistItems += keys.length;
+      completedChecklistItems += keys.filter((k) => items[k]?.checked).length;
+    });
+  });
+  const checklistRate = totalChecklistItems > 0
+    ? Math.round((completedChecklistItems / totalChecklistItems) * 100)
+    : 0;
+
+  // — New clients this week —
+  const newClients = clients.filter((c) => {
+    const created = c.createdAt || c.created_at || "";
+    return created >= start && created <= endDate;
+  });
+
+  // — Funnel metrics —
+  const weekReservations = reservations.filter(
+    (r) => r.checkIn >= start && r.checkIn <= endDate && r.status !== "cancelled"
+  );
+  const tours = weekReservations.filter((r) => (r.type || "").toLowerCase() === "tour").length;
+  const evals = weekReservations.filter((r) => (r.type || "").toLowerCase() === "evaluation").length;
+  const boardingCount = weekReservations.filter((r) => r.type === "boarding").length;
+  const daycareCount = weekReservations.filter((r) => r.type === "daycare").length;
+
+  return {
+    weekStart: start,
+    weekEnd: endDate,
+    prevWeekStart: prevStart,
+    revenue: {
+      thisWeek: thisWeekRevenue.total,
+      lastWeek: lastWeekRevenue.total,
+      pctChange: revenuePctChange,
+      txCount: thisWeekRevenue.txCount,
+    },
+    attendance: {
+      dailyBreakdown: dailyAttendance,
+      totalAttendance,
+      totalCapacity,
+    },
+    bestDay,
+    worstDay,
+    checklists: {
+      completed: completedChecklistItems,
+      total: totalChecklistItems,
+      rate: checklistRate,
+    },
+    newClients: newClients.map((c) => ({
+      name: [c.fields?.first_name, c.fields?.last_name].filter(Boolean).join(" ") || "Unknown",
+      dogs: (data.dogs || []).filter((d) => d.fields?.owner_id === c.id).length,
+    })),
+    funnel: { tours, evals, boarding: boardingCount, daycare: daycareCount },
+  };
+}
+
+// ─── Premium Weekly HTML Email Generation ────────────────────────────────
+export function generateWeeklyEmailHTML(reportData, config) {
+  const cfg = config || getDefaultWeeklyReportConfig();
+  const sections = cfg.sections || getDefaultWeeklyReportConfig().sections;
+
+  const P = {
+    pri: "#003462",
+    acc: "#AF8D54",
+    bg: "#F5F6F8",
+    surface: "#FFFFFF",
+    text: "#1A1D23",
+    textSec: "#5A6170",
+    textMut: "#959BA8",
+    border: "#DFE2E8",
+    suc: "#0D7A56",
+    sucLt: "#ECFDF5",
+    warn: "#C4720C",
+    warnLt: "#FFFBEB",
+    dan: "#C42B2B",
+    danLt: "#FEF2F2",
+  };
+
+  const fmtCurrency = (v) =>
+    "$" + Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+  const fmtDisplayDate = (d) => {
+    const dt = new Date(d + "T12:00:00");
+    return dt.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  };
+
+  const fmtFullDate = (d) => {
+    const dt = new Date(d + "T12:00:00");
+    return dt.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  };
+
+  const trendArrow = (pct) => {
+    if (pct > 0) return `<span style="color:${P.suc};font-weight:700;">&#9650; ${pct}%</span>`;
+    if (pct < 0) return `<span style="color:${P.dan};font-weight:700;">&#9660; ${Math.abs(pct)}%</span>`;
+    return `<span style="color:${P.textMut};font-weight:600;">&#8212; 0%</span>`;
+  };
+
+  const weekRangeLabel = `${fmtDisplayDate(reportData.weekStart)} – ${fmtDisplayDate(reportData.weekEnd)}`;
+
+  let body = "";
+
+  // ── Revenue Summary ──
+  if (sections.revenueSummary) {
+    const r = reportData.revenue;
+    body += `
+    <tr><td style="padding:0 0 8px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+        <tr>
+          <td style="padding:28px 32px 20px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;color:${P.acc};text-transform:uppercase;letter-spacing:0.1em;padding-bottom:16px;">
+                  Revenue Summary
+                </td>
+              </tr>
+            </table>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+              <tr>
+                <td width="50%" style="padding:0 8px 0 0;vertical-align:top;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:linear-gradient(135deg,${P.pri},${P.pri}ee);border-radius:12px;border-collapse:collapse;">
+                    <tr><td style="padding:24px;text-align:center;">
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:600;color:rgba(255,255,255,0.7);margin-bottom:4px;">This Week</div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:36px;font-weight:800;color:#FFFFFF;line-height:1;">${fmtCurrency(r.thisWeek)}</div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:rgba(255,255,255,0.6);margin-top:6px;">${r.txCount} transactions</div>
+                    </td></tr>
+                  </table>
+                </td>
+                <td width="50%" style="padding:0 0 0 8px;vertical-align:top;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${P.bg};border-radius:12px;border-collapse:collapse;">
+                    <tr><td style="padding:24px;text-align:center;">
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:600;color:${P.textMut};margin-bottom:4px;">Last Week</div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:36px;font-weight:800;color:${P.pri};line-height:1;">${fmtCurrency(r.lastWeek)}</div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;margin-top:6px;">${trendArrow(r.pctChange)} week-over-week</div>
+                    </td></tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td></tr>`;
+  }
+
+  // ── Attendance Breakdown (day-by-day table) ──
+  if (sections.attendanceBreakdown) {
+    const att = reportData.attendance;
+    let dayRows = "";
+    att.dailyBreakdown.forEach((d, i) => {
+      const dayLabel = fmtDisplayDate(d.date);
+      const barPct = att.totalCapacity > 0 ? Math.min(100, Math.round((d.boarding / att.totalCapacity) * 100)) : 0;
+      dayRows += `
+              <tr>
+                <td style="padding:10px 0;${i < att.dailyBreakdown.length - 1 ? `border-bottom:1px solid ${P.border};` : ""}">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                    <tr>
+                      <td width="28%" style="font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:600;color:${P.text};">
+                        ${dayLabel}
+                      </td>
+                      <td width="36%" style="padding:0 12px;">
+                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                          <tr><td style="background:${P.bg};border-radius:4px;height:8px;">
+                            <table width="${barPct}%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                              <tr><td style="background:${P.pri};border-radius:4px;height:8px;"></td></tr>
+                            </table>
+                          </td></tr>
+                        </table>
+                      </td>
+                      <td width="18%" style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:${P.textSec};text-align:center;">
+                        <strong style="color:${P.text};">${d.total}</strong> guests
+                      </td>
+                      <td width="18%" style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:${P.textMut};text-align:right;">
+                        ${fmtCurrency(d.revenue)}
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>`;
+    });
+
+    body += `
+    <tr><td style="padding:0 0 8px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+        <tr>
+          <td style="padding:28px 32px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;color:${P.acc};text-transform:uppercase;letter-spacing:0.1em;padding-bottom:4px;">
+                  Daily Attendance Breakdown
+                </td>
+              </tr>
+              <tr>
+                <td style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:${P.textMut};padding-bottom:16px;">
+                  ${att.totalAttendance} total guest-days this week
+                </td>
+              </tr>
+            </table>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+              ${dayRows}
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td></tr>`;
+  }
+
+  // ── Best / Worst Days ──
+  if (sections.bestWorstDays && reportData.bestDay && reportData.worstDay) {
+    const best = reportData.bestDay;
+    const worst = reportData.worstDay;
+    body += `
+    <tr><td style="padding:0 0 8px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+        <tr>
+          <td style="padding:28px 32px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;color:${P.acc};text-transform:uppercase;letter-spacing:0.1em;padding-bottom:16px;">
+                  Highlights &amp; Lowlights
+                </td>
+              </tr>
+            </table>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+              <tr>
+                <td width="50%" style="padding:0 8px 0 0;vertical-align:top;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${P.sucLt};border-radius:12px;border-collapse:collapse;">
+                    <tr><td style="padding:20px;text-align:center;">
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;color:${P.suc};text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">
+                        &#9650; Best Day
+                      </div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:${P.text};margin-bottom:4px;">
+                        ${fmtDisplayDate(best.date)}
+                      </div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:${P.suc};line-height:1;">
+                        ${fmtCurrency(best.revenue)}
+                      </div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;color:${P.textMut};margin-top:4px;">
+                        ${best.total} guests
+                      </div>
+                    </td></tr>
+                  </table>
+                </td>
+                <td width="50%" style="padding:0 0 0 8px;vertical-align:top;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${P.warnLt};border-radius:12px;border-collapse:collapse;">
+                    <tr><td style="padding:20px;text-align:center;">
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;color:${P.warn};text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px;">
+                        &#9660; Needs Attention
+                      </div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:700;color:${P.text};margin-bottom:4px;">
+                        ${fmtDisplayDate(worst.date)}
+                      </div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:24px;font-weight:800;color:${P.warn};line-height:1;">
+                        ${fmtCurrency(worst.revenue)}
+                      </div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;color:${P.textMut};margin-top:4px;">
+                        ${worst.total} guests
+                      </div>
+                    </td></tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td></tr>`;
+  }
+
+  // ── Checklist Completion ──
+  if (sections.checklistCompletion) {
+    const cl = reportData.checklists;
+    const barColor = cl.rate === 100 ? P.suc : cl.rate >= 70 ? P.acc : P.warn;
+    const statusBg = cl.rate === 100 ? P.sucLt : cl.rate >= 70 ? "#FFF9F0" : P.warnLt;
+    body += `
+    <tr><td style="padding:0 0 8px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+        <tr>
+          <td style="padding:28px 32px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;color:${P.acc};text-transform:uppercase;letter-spacing:0.1em;padding-bottom:16px;">
+                  Checklist Completion
+                </td>
+              </tr>
+            </table>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${P.bg};border-radius:12px;border-collapse:collapse;">
+              <tr><td style="padding:24px;">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                  <tr>
+                    <td width="60%" style="vertical-align:middle;">
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:48px;font-weight:800;color:${barColor};line-height:1;">${cl.rate}%</div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:${P.textMut};margin-top:4px;">Weekly completion rate</div>
+                    </td>
+                    <td width="40%" style="vertical-align:middle;text-align:right;">
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:${P.textSec};">
+                        <strong style="color:${P.text};">${cl.completed}</strong> of <strong style="color:${P.text};">${cl.total}</strong> items
+                      </div>
+                      <div style="margin-top:8px;">
+                        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                          <tr><td style="background:${P.border};border-radius:4px;height:8px;">
+                            <table width="${cl.rate}%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                              <tr><td style="background:${barColor};border-radius:4px;height:8px;"></td></tr>
+                            </table>
+                          </td></tr>
+                        </table>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td></tr>`;
+  }
+
+  // ── New Clients ──
+  if (sections.newClients) {
+    const nc = reportData.newClients;
+    let clientRows = "";
+    if (nc.length > 0) {
+      nc.forEach((c, i) => {
+        clientRows += `
+                <tr>
+                  <td style="padding:10px 0;${i < nc.length - 1 ? `border-bottom:1px solid ${P.border};` : ""}">
+                    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                      <tr>
+                        <td style="font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:500;color:${P.text};">
+                          ${escapeHtml(c.name)}
+                        </td>
+                        <td style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:${P.textMut};text-align:right;">
+                          ${c.dogs} dog${c.dogs !== 1 ? "s" : ""}
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>`;
+      });
+    } else {
+      clientRows = `
+                <tr>
+                  <td style="padding:16px 0;text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:13px;color:${P.textMut};">
+                    No new clients this week
+                  </td>
+                </tr>`;
+    }
+
+    body += `
+    <tr><td style="padding:0 0 8px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+        <tr>
+          <td style="padding:28px 32px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;color:${P.acc};text-transform:uppercase;letter-spacing:0.1em;padding-bottom:4px;">
+                  New Clients
+                </td>
+              </tr>
+              <tr>
+                <td style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:${P.textMut};padding-bottom:16px;">
+                  ${nc.length} new client${nc.length !== 1 ? "s" : ""} acquired this week
+                </td>
+              </tr>
+            </table>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+              ${clientRows}
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td></tr>`;
+  }
+
+  // ── Funnel Metrics ──
+  if (sections.funnelMetrics) {
+    const f = reportData.funnel;
+    body += `
+    <tr><td style="padding:0 0 8px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+        <tr>
+          <td style="padding:28px 32px 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td style="font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:700;color:${P.acc};text-transform:uppercase;letter-spacing:0.1em;padding-bottom:16px;">
+                  Funnel Metrics
+                </td>
+              </tr>
+            </table>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+              <tr>
+                <td width="25%" style="padding:0 4px 0 0;vertical-align:top;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${P.bg};border-radius:12px;border-collapse:collapse;">
+                    <tr><td style="padding:18px 12px;text-align:center;">
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:28px;font-weight:800;color:${P.pri};line-height:1;">${f.tours}</div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;color:${P.textMut};text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;">Tours</div>
+                    </td></tr>
+                  </table>
+                </td>
+                <td width="25%" style="padding:0 4px;vertical-align:top;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${P.bg};border-radius:12px;border-collapse:collapse;">
+                    <tr><td style="padding:18px 12px;text-align:center;">
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:28px;font-weight:800;color:${P.pri};line-height:1;">${f.evals}</div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;color:${P.textMut};text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;">Evals</div>
+                    </td></tr>
+                  </table>
+                </td>
+                <td width="25%" style="padding:0 4px;vertical-align:top;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${P.bg};border-radius:12px;border-collapse:collapse;">
+                    <tr><td style="padding:18px 12px;text-align:center;">
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:28px;font-weight:800;color:${P.pri};line-height:1;">${f.boarding}</div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;color:${P.textMut};text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;">Boarding</div>
+                    </td></tr>
+                  </table>
+                </td>
+                <td width="25%" style="padding:0 0 0 4px;vertical-align:top;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${P.bg};border-radius:12px;border-collapse:collapse;">
+                    <tr><td style="padding:18px 12px;text-align:center;">
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:28px;font-weight:800;color:${P.pri};line-height:1;">${f.daycare}</div>
+                      <div style="font-family:Arial,Helvetica,sans-serif;font-size:10px;font-weight:600;color:${P.textMut};text-transform:uppercase;letter-spacing:0.05em;margin-top:4px;">Daycare</div>
+                    </td></tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td></tr>`;
+  }
+
+  // — Assemble full weekly email —
+  return `<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>K9 Operations Weekly Report</title>
+  <!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->
+</head>
+<body style="margin:0;padding:0;background:${P.bg};-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${P.bg};border-collapse:collapse;">
+    <tr><td align="center" style="padding:32px 16px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:640px;border-collapse:collapse;">
+
+        <!-- Header -->
+        <tr><td style="padding:0 0 4px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${P.pri};border-radius:16px 16px 0 0;border-collapse:collapse;">
+            <tr><td style="padding:36px 32px 28px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                <tr>
+                  <td style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:700;color:${P.acc};text-transform:uppercase;letter-spacing:0.15em;padding-bottom:8px;">
+                    Weekly Operations Report
+                  </td>
+                </tr>
+                <tr>
+                  <td style="font-family:Arial,Helvetica,sans-serif;font-size:28px;font-weight:800;color:#FFFFFF;line-height:1.2;padding-bottom:6px;">
+                    K9 Resorts
+                  </td>
+                </tr>
+                <tr>
+                  <td style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:rgba(255,255,255,0.65);font-weight:500;">
+                    ${weekRangeLabel}
+                  </td>
+                </tr>
+              </table>
+            </td></tr>
+          </table>
+        </td></tr>
+
+        <!-- Accent bar -->
+        <tr><td style="padding:0 0 0;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+            <tr><td style="height:4px;background:linear-gradient(90deg,${P.acc},${P.pri});font-size:0;line-height:0;">&nbsp;</td></tr>
+          </table>
+        </td></tr>
+
+        <!-- Content sections on white -->
+        <tr><td style="padding:0;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${P.surface};border-collapse:collapse;">
+            ${body}
+          </table>
+        </td></tr>
+
+        <!-- Footer -->
+        <tr><td style="padding:4px 0 0;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${P.pri};border-radius:0 0 16px 16px;border-collapse:collapse;">
+            <tr><td style="padding:24px 32px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                <tr>
+                  <td style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:rgba(255,255,255,0.45);line-height:1.6;">
+                    This report was automatically generated by K9 Operations.<br>
+                    Reply to this email to discuss with your team.
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding-top:12px;">
+                    <table cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+                      <tr>
+                        <td style="height:1px;width:40px;background:${P.acc};font-size:0;line-height:0;">&nbsp;</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="font-family:Arial,Helvetica,sans-serif;font-size:11px;color:rgba(255,255,255,0.3);padding-top:12px;">
+                    K9 Resorts Luxury Pet Hotel &middot; Powered by K9 Operations
+                  </td>
+                </tr>
+              </table>
+            </td></tr>
+          </table>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
