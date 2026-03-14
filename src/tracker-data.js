@@ -791,7 +791,7 @@ const TRACKER_DATA = {
       title: "Phase 5 — Verify & Test All Existing Features",
       category: "Data Expansion",
       priority: "P0",
-      status: "backlog",
+      status: "done",
       description: "Comprehensive verification that all existing features work correctly with expanded data.",
       spec: "**Phase 5** of the Data Expansion plan — CRITICAL quality gate.\n\n**Scope:**\n- Test every existing feature against the expanded dataset\n- Verify data integrity across all synced tables\n- Check for performance regressions with larger data volumes\n- Validate all calculations (revenue, counts, etc.) are accurate\n- Test edge cases: missing data, null fields, timezone issues\n- Regression test all reports and dashboards\n\n**This phase must pass before any new features are built on top of expanded data.**",
       dataRequirements: [],
