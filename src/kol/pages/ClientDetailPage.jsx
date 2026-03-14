@@ -1,5 +1,6 @@
 // K9 Operations — ClientDetailPage
 // Isolated page component. See AGENTS.md for development contract.
+// CLM-005: Push to Gingr   |   IGN-003: Ignite Lead Section
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import ReactDOM from "react-dom";
@@ -13,6 +14,55 @@ import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
+
+// ─── CLM-004 Gingr field definitions (used by Push to Gingr) ──────────────
+const GINGR_CLIENT_FIELDS = [
+  { id: "g_first_name", gingrField: "first_name", label: "First Name", required: true },
+  { id: "g_last_name", gingrField: "last_name", label: "Last Name", required: true },
+  { id: "g_email", gingrField: "email", label: "Email", required: true },
+  { id: "g_phone", gingrField: "phone", label: "Phone", required: true },
+  { id: "g_address", gingrField: "address_line_1", label: "Street Address" },
+  { id: "g_city", gingrField: "city", label: "City" },
+  { id: "g_state", gingrField: "state", label: "State" },
+  { id: "g_zip", gingrField: "zip_code", label: "Zip Code" },
+  { id: "g_emergency_name", gingrField: "emergency_contact_name", label: "Emergency Contact" },
+  { id: "g_emergency_phone", gingrField: "emergency_contact_phone", label: "Emergency Phone" },
+  { id: "g_referral", gingrField: "referral_source", label: "Referral Source" },
+];
+
+const GINGR_DOG_FIELDS = [
+  { id: "g_dog_name", gingrField: "name", label: "Pet Name", required: true },
+  { id: "g_breed", gingrField: "breed", label: "Breed", required: true },
+  { id: "g_weight", gingrField: "weight", label: "Weight" },
+  { id: "g_dob", gingrField: "date_of_birth", label: "Date of Birth" },
+  { id: "g_sex", gingrField: "sex", label: "Sex", required: true },
+  { id: "g_altered", gingrField: "spayed_neutered", label: "Spayed/Neutered", required: true },
+  { id: "g_color", gingrField: "color", label: "Color/Markings" },
+  { id: "g_vax_rabies", gingrField: "vaccination_rabies", label: "Rabies Vaccination", required: true },
+  { id: "g_vax_dhpp", gingrField: "vaccination_dhpp", label: "DHPP Vaccination", required: true },
+  { id: "g_vax_bordetella", gingrField: "vaccination_bordetella", label: "Bordetella Vaccination", required: true },
+  { id: "g_vet_name", gingrField: "vet_name", label: "Vet Name" },
+  { id: "g_vet_phone", gingrField: "vet_phone", label: "Vet Phone" },
+];
+
+// ─── IGN-003 constants ─────────────────────────────────────────────────────
+const MATCH_TYPE_LABELS = { email: "Email", phone: "Phone", name: "Name", phone_name: "Phone + Name" };
+const LEAD_TYPE_LABELS = { web_form: "Web Form", phone_call: "Phone Call", ad_click: "Ad Click" };
+const LEAD_TYPE_COLORS = { web_form: C.info, phone_call: C.suc, ad_click: C.acc };
+
+function confidenceColor(c) {
+  if (c >= 0.9) return C.suc;
+  if (c >= 0.7) return C.info;
+  if (c >= 0.5) return "#D97706";
+  return C.dan;
+}
+
+function confidenceLabel(c) {
+  if (c >= 0.9) return "High";
+  if (c >= 0.7) return "Good";
+  if (c >= 0.5) return "Review";
+  return "Low";
+}
 
 function ClientDetailPage({ data, save, clientId, nav, profile, openReservationId, addGlobalToast }) {
   const client = data.clients.find(c=>c.id===clientId);
@@ -76,6 +126,162 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     return () => document.removeEventListener("mousedown", handler);
   }, [vetDropOpen]);
 
+  // ─── CLM-005: Push to Gingr state ──────────────────────────────────────────
+  const [gingrModal, setGingrModal] = useState(false);
+  const [gingrSyncing, setGingrSyncing] = useState(false);
+  const [gingrResult, setGingrResult] = useState(null); // { success, message, timestamp }
+  const [lastSyncedAt, setLastSyncedAt] = useState(client.gingrLastSyncedAt || null);
+
+  // ─── IGN-003: Ignite leads state ───────────────────────────────────────────
+  const [igniteLeads, setIgniteLeads] = useState([]);
+  const [igniteLoading, setIgniteLoading] = useState(false);
+  const [igniteError, setIgniteError] = useState(null);
+  const [igniteLinkModal, setIgniteLinkModal] = useState(null); // { leadId, action: 'unlink' }
+  const [igniteLinking, setIgniteLinking] = useState(false);
+  const [igniteExpandedId, setIgniteExpandedId] = useState(null);
+
+  // Fetch Ignite leads on mount
+  useEffect(() => {
+    let cancelled = false;
+    async function loadIgniteLeads() {
+      setIgniteLoading(true);
+      try {
+        const { data: leads, error } = await supabase
+          .from('ignite_leads')
+          .select('id, lead_type, first_name, last_name, email, phone, source_detail, call_recording_url, form_data, match_confidence, match_type, match_status, raw_email_subject, created_at')
+          .eq('matched_client_id', clientId)
+          .eq('match_status', 'matched')
+          .order('created_at', { ascending: false });
+        if (!cancelled) {
+          if (error) { setIgniteError(error.message); setIgniteLeads([]); }
+          else { setIgniteLeads(leads || []); setIgniteError(null); }
+        }
+      } catch (e) {
+        if (!cancelled) { setIgniteError(e.message); setIgniteLeads([]); }
+      }
+      if (!cancelled) setIgniteLoading(false);
+    }
+    loadIgniteLeads();
+    return () => { cancelled = true; };
+  }, [clientId]);
+
+  // ─── CLM-005: Build Gingr payload from field mappings ──────────────────────
+  const gingrPayload = useMemo(() => {
+    const mappings = data.fieldMappings || {};
+    const clientPayload = {};
+    const missingRequired = [];
+
+    GINGR_CLIENT_FIELDS.forEach(gf => {
+      const mapped = mappings[gf.id];
+      const k9FieldId = mapped || gf.gingrField;
+      const val = client.fields[k9FieldId] || client.fields[gf.gingrField] || "";
+      if (val) clientPayload[gf.gingrField] = val;
+      else if (gf.required) missingRequired.push(gf.label);
+    });
+
+    const dogPayloads = dogs.map(dog => {
+      const dp = {};
+      const dogMissing = [];
+      GINGR_DOG_FIELDS.forEach(gf => {
+        const mapped = mappings[gf.id];
+        const k9FieldId = mapped || gf.gingrField;
+        const val = dog.fields?.[k9FieldId] || dog.fields?.[gf.gingrField] || "";
+        if (val) dp[gf.gingrField] = val;
+        else if (gf.required) dogMissing.push(gf.label);
+      });
+      return { dogId: dog.id, dogName: dog.fields?.name || "Unknown", payload: dp, missing: dogMissing };
+    });
+
+    return { client: clientPayload, dogs: dogPayloads, missingRequired };
+  }, [client.fields, dogs, data.fieldMappings]);
+
+  const handlePushToGingr = async () => {
+    setGingrSyncing(true);
+    setGingrResult(null);
+    try {
+      const isUpdate = !!client.gingrId;
+      const now = new Date().toISOString();
+
+      // Push client data to gingr_owners
+      if (isUpdate) {
+        const { error } = await supabase
+          .from('gingr_owners')
+          .update(gingrPayload.client)
+          .eq('id', client.gingrId);
+        if (error) throw new Error(`Client update failed: ${error.message}`);
+      } else {
+        const { data: newOwner, error } = await supabase
+          .from('gingr_owners')
+          .insert({ ...gingrPayload.client, id: gid() })
+          .select('id')
+          .single();
+        if (error) throw new Error(`Client create failed: ${error.message}`);
+        // Save the new gingrId back
+        await save({
+          ...data,
+          clients: data.clients.map(c => c.id === clientId ? { ...c, gingrId: newOwner.id } : c),
+        });
+      }
+
+      // Push each dog
+      for (const dp of gingrPayload.dogs) {
+        const dog = dogs.find(d => d.id === dp.dogId);
+        if (dog?.gingrAnimalId) {
+          await supabase.from('gingr_animals').update(dp.payload).eq('id', dog.gingrAnimalId);
+        }
+      }
+
+      // Audit log
+      const auditEntry = {
+        id: gid(), tableName: 'k9_clients', recordId: clientId,
+        timestamp: now,
+        userName: profile ? (profile.full_name || profile.email || "Staff") : "System",
+        changedBy: profile ? (profile.full_name || profile.email || "Staff") : "System",
+        action: isUpdate ? "Pushed Update to Gingr" : "Created Client in Gingr",
+        details: [{ field: "Gingr Sync", oldVal: lastSyncedAt ? `Last synced ${fmtDate(lastSyncedAt)}` : "Never synced", newVal: `Synced ${fmtDate(now)}` }],
+      };
+      await save({
+        ...data,
+        clients: data.clients.map(c => c.id === clientId ? { ...c, gingrLastSyncedAt: now } : c),
+        auditLog: [...(data.auditLog || []), auditEntry],
+      });
+
+      setLastSyncedAt(now);
+      setGingrResult({ success: true, message: isUpdate ? "Client updated in Gingr successfully" : "Client created in Gingr successfully", timestamp: now });
+      if (addGlobalToast) addGlobalToast({ message: isUpdate ? "Pushed to Gingr — client updated" : "Pushed to Gingr — client created", type: "success" });
+    } catch (e) {
+      setGingrResult({ success: false, message: e.message, timestamp: new Date().toISOString() });
+      if (addGlobalToast) addGlobalToast({ message: `Gingr sync failed: ${e.message}`, type: "error" });
+    }
+    setGingrSyncing(false);
+  };
+
+  // ─── IGN-003: Unlink lead from client ──────────────────────────────────────
+  const handleUnlinkLead = async (leadId) => {
+    setIgniteLinking(true);
+    try {
+      const { error } = await supabase
+        .from('ignite_leads')
+        .update({ matched_client_id: null, match_status: 'no_match', updated_at: new Date().toISOString() })
+        .eq('id', leadId);
+      if (error) throw error;
+      setIgniteLeads(prev => prev.filter(l => l.id !== leadId));
+      if (addGlobalToast) addGlobalToast({ message: "Ignite lead unlinked", type: "info" });
+      // Audit
+      const auditEntry = {
+        id: gid(), tableName: 'k9_clients', recordId: clientId, timestamp: new Date().toISOString(),
+        userName: profile ? (profile.full_name || profile.email || "Staff") : "System",
+        changedBy: profile ? (profile.full_name || profile.email || "Staff") : "System",
+        action: "Unlinked Ignite Lead", details: [{ field: "Lead", oldVal: leadId, newVal: "Unlinked" }],
+      };
+      await save({ ...data, auditLog: [...(data.auditLog || []), auditEntry] });
+    } catch (e) {
+      if (addGlobalToast) addGlobalToast({ message: `Failed to unlink: ${e.message}`, type: "error" });
+    }
+    setIgniteLinking(false);
+    setIgniteLinkModal(null);
+  };
+
   if (!client) return <div style={{padding:40,textAlign:"center",color:C.textSec}}>Client not found</div>;
 
   const startEdit = () => { setEditFields({...client.fields}); setEditRecurringDiscountId(client.recurringDiscountId || null); setEditing(true); };
@@ -124,7 +330,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const dn=(did)=>{const d=data.dogs.find(x=>x.id===did);return d?d.fields.name:"Unknown";};
   const tl=(t)=>t==="boarding"?"Boarding":t==="dayboarding"?"Day Board":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
   const sc=(s)=>s==="checked-in"?"success":s==="upcoming"?"info":"default";
-  const isFieldRequired = () => false;
+  const isFieldReq = () => false;
 
   // Stats calculations — use serverStats (same source as ClientsPage/Lifecycle module)
   const stats = useMemo(() => {
@@ -182,6 +388,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     { id: "reservations", label: "Reservations", count: reservations.length, color: C.acc },
     { id: "payments", label: "Payments", count: pmts.length, color: C.info },
     { id: "packages", label: "Packages", count: activePkgCount, color: "#EC4899" },
+    { id: "ignite", label: "Ignite", count: igniteLeads.length, color: "#F97316" },
     { id: "lifecycle", label: "Lifecycle", count: (() => { const le = (client.lifecycleEvents || []).length; const cu = (client.lifecycle?.conversion?.updates || []).length; const ru = (client.lifecycle?.retention?.updates || []).length; return le + cu + ru; })(), color: "#8B5CF6" },
     { id: "notes", label: "Notes", count: notesCount, color: "#F59E0B" },
     { id: "history", label: "History", count: ((data.auditLog || []).filter(e => e.tableName === 'k9_clients' && e.recordId === clientId)).length, color: "#6B7280" },
@@ -223,20 +430,43 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     </Card>
   );
 
+  // Detect if client was created from an Ignite lead
+  const isIgniteSource = client.source === 'ignite' || igniteLeads.length > 0;
+
   return (
     <div>
       {/* Header */}
       <Card style={{marginBottom:16,padding:"24px 28px"}}>
         <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:16}}>
           <div>
-            <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.text}}>{client.fields.first_name} {client.fields.last_name}</h2>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.text}}>{client.fields.first_name} {client.fields.last_name}</h2>
+              {isIgniteSource && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 6, background: "#FFF7ED", border: "1.5px solid #FDBA7440", fontSize: 11, fontWeight: 700, color: "#C2410C", letterSpacing: "0.02em" }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                  Source: Ignite
+                </span>
+              )}
+            </div>
             <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4,fontSize:14,color:C.textSec}}><I.Phone/><span>{fmtPhone(client.fields.phone)}</span>{client.fields.email&&<span>&middot; {client.fields.email}</span>}</div>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            <button onClick={() => { if (addGlobalToast) addGlobalToast({ message: "Push to Gingr coming soon — requires Gingr API connection" }); }}
-              style={{ padding: "8px 16px", borderRadius: 8, border: `1.5px solid #F59E0B`, background: "#FEF3C7", color: "#92400E", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6 }}>
-              ↗ Push to Gingr
-            </button>
+            {/* CLM-005: Push to Gingr Button */}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+              <button onClick={() => { setGingrResult(null); setGingrModal(true); }}
+                style={{ padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${C.acc}`, background: C.accLt, color: C.accDk, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s" }}
+                onMouseEnter={e => { e.currentTarget.style.background = C.acc + "30"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = C.accLt; }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M7 17l9.2-9.2M17 17V7H7"/></svg>
+                Push to Gingr
+              </button>
+              {lastSyncedAt && (
+                <span style={{ fontSize: 10, color: C.textMut, fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={C.suc} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  Synced {new Date(lastSyncedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })} at {new Date(lastSyncedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                </span>
+              )}
+            </div>
             <Btn variant="primary" onClick={()=>nav("new-reservation",{clientId})} icon={<I.Plus/>} size="sm">New</Btn>
           </div>
         </div>
@@ -255,7 +485,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             {(data.clientFields||[]).filter(f => f.type !== "textarea").map(f => (
               <div key={f.id} style={f.type === "checkbox" ? { display: "flex", alignItems: "end" } : {}}>
-                <Inp label={f.name} type={f.type} value={inlineFields[f.id] || ""} onChange={v => updateInlineField(f.id, v)} required={isFieldRequired(f, "create")} options={f.options} />
+                <Inp label={f.name} type={f.type} value={inlineFields[f.id] || ""} onChange={v => updateInlineField(f.id, v)} required={isFieldReq(f, "create")} options={f.options} />
               </div>
             ))}
             {(() => {
@@ -418,14 +648,14 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
       </Card>
 
       {/* Tab Bar */}
-      <div style={{ display: "flex", borderBottom: `2px solid ${C.borderLight}`, background: C.bg, borderRadius: "12px 12px 0 0", marginBottom: 0 }}>
+      <div style={{ display: "flex", borderBottom: `2px solid ${C.borderLight}`, background: C.bg, borderRadius: "12px 12px 0 0", marginBottom: 0, overflowX: "auto" }}>
         {tabs.map(tab => {
           const active = activeTab === tab.id;
           return (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "14px 16px", border: "none", borderBottom: `3px solid ${active ? tab.color : "transparent"}`, background: active ? C.surface : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", marginBottom: -2 }}>
-              <span style={{ fontSize: 14, fontWeight: active ? 700 : 600, color: active ? C.text : C.textSec }}>{tab.label}</span>
-              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 24, height: 24, padding: "0 8px", borderRadius: 12, fontSize: 13, fontWeight: 800, background: active ? tab.color : C.surfaceHover, color: active ? "#fff" : C.textSec, transition: "all 0.15s" }}>{tab.count}</span>
+              style={{ flex: "0 0 auto", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "14px 14px", border: "none", borderBottom: `3px solid ${active ? tab.color : "transparent"}`, background: active ? C.surface : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", marginBottom: -2, whiteSpace: "nowrap" }}>
+              <span style={{ fontSize: 13, fontWeight: active ? 700 : 600, color: active ? C.text : C.textSec }}>{tab.label}</span>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", minWidth: 22, height: 22, padding: "0 6px", borderRadius: 11, fontSize: 12, fontWeight: 800, background: active ? tab.color : C.surfaceHover, color: active ? "#fff" : C.textSec, transition: "all 0.15s" }}>{tab.count}</span>
             </button>
           );
         })}
@@ -533,6 +763,177 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
         </Card>
       )}
 
+      {/* ──── IGNITE TAB (IGN-003) ──── */}
+      {activeTab === "ignite" && (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text }}>Ignite Leads</h3>
+              <span style={{ fontSize: 12, color: C.textMut }}>{igniteLeads.length} matched lead{igniteLeads.length !== 1 ? "s" : ""}</span>
+            </div>
+          </div>
+
+          {igniteLoading ? (
+            <Card style={{ textAlign: "center", padding: 40 }}>
+              <div style={{ fontSize: 14, color: C.textSec }}>Loading Ignite leads...</div>
+            </Card>
+          ) : igniteError ? (
+            <Card style={{ textAlign: "center", padding: 32, background: C.danLt, border: `1.5px solid ${C.dan}20` }}>
+              <div style={{ fontSize: 14, color: C.dan, fontWeight: 600 }}>Failed to load leads: {igniteError}</div>
+            </Card>
+          ) : igniteLeads.length === 0 ? (
+            <Card style={{ textAlign: "center", padding: 40 }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8 }}><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              <div style={{ fontSize: 14, color: C.textSec, marginBottom: 4 }}>No Ignite leads linked to this client</div>
+              <div style={{ fontSize: 12, color: C.textMut }}>Leads from Ignite marketing will appear here when matched</div>
+            </Card>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {/* Timeline */}
+              {igniteLeads.map((lead, idx) => {
+                const isExpanded = igniteExpandedId === lead.id;
+                const leadColor = LEAD_TYPE_COLORS[lead.lead_type] || C.info;
+                const conf = lead.match_confidence || 0;
+                const confClr = confidenceColor(conf);
+                const createdDate = new Date(lead.created_at);
+
+                return (
+                  <Card key={lead.id} style={{ padding: 0, overflow: "hidden", border: isExpanded ? `1.5px solid ${leadColor}30` : undefined, transition: "border 0.15s" }}>
+                    {/* Lead header */}
+                    <div
+                      onClick={() => setIgniteExpandedId(isExpanded ? null : lead.id)}
+                      style={{ padding: "14px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14, transition: "background 0.1s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = C.bg}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                    >
+                      {/* Timeline dot */}
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0, gap: 4 }}>
+                        <div style={{ width: 10, height: 10, borderRadius: "50%", background: leadColor, boxShadow: `0 0 0 3px ${leadColor}20` }} />
+                        {idx < igniteLeads.length - 1 && <div style={{ width: 2, height: 20, background: C.border }} />}
+                      </div>
+
+                      {/* Lead info */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+                            {lead.first_name || ""} {lead.last_name || ""}
+                          </span>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: leadColor + "15", color: leadColor, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                            {LEAD_TYPE_LABELS[lead.lead_type] || lead.lead_type}
+                          </span>
+                          {lead.match_type && (
+                            <span style={{ fontSize: 10, fontWeight: 600, color: C.textMut, background: C.bg, padding: "2px 6px", borderRadius: 4 }}>
+                              Matched by: {MATCH_TYPE_LABELS[lead.match_type] || lead.match_type}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 12, color: C.textMut, marginTop: 3, display: "flex", alignItems: "center", gap: 8 }}>
+                          <span>{createdDate.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>
+                          <span style={{ color: C.border }}>|</span>
+                          <span>{createdDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>
+                          {lead.source_detail && (
+                            <>
+                              <span style={{ color: C.border }}>|</span>
+                              <span style={{ fontSize: 11 }}>{lead.source_detail}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Confidence badge */}
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{ width: 48, height: 6, borderRadius: 3, background: C.bg, overflow: "hidden" }}>
+                            <div style={{ width: `${Math.round(conf * 100)}%`, height: "100%", borderRadius: 3, background: confClr, transition: "width 0.3s" }} />
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 800, color: confClr, fontVariantNumeric: "tabular-nums", minWidth: 36, textAlign: "right" }}>
+                            {Math.round(conf * 100)}%
+                          </span>
+                        </div>
+                        <span style={{ fontSize: 10, fontWeight: 600, color: confClr }}>{confidenceLabel(conf)}</span>
+                      </div>
+
+                      {/* Expand chevron */}
+                      <div style={{ flexShrink: 0, color: C.textMut, transition: "transform 0.2s", transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>
+                        <I.ChevronDown />
+                      </div>
+                    </div>
+
+                    {/* Expanded detail */}
+                    {isExpanded && (
+                      <div style={{ borderTop: `1px solid ${C.borderLight}`, padding: "16px 18px", background: C.bg + "80" }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+                          {lead.email && (
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Email</div>
+                              <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{lead.email}</div>
+                            </div>
+                          )}
+                          {lead.phone && (
+                            <div>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Phone</div>
+                              <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{fmtPhone(lead.phone)}</div>
+                            </div>
+                          )}
+                          {lead.raw_email_subject && (
+                            <div style={{ gridColumn: "1 / -1" }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Email Subject</div>
+                              <div style={{ fontSize: 13, color: C.text }}>{lead.raw_email_subject}</div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Form data fields */}
+                        {lead.form_data && Object.keys(lead.form_data).length > 0 && (
+                          <div style={{ marginBottom: 16 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Captured Fields</div>
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "12px 14px", background: C.surface, borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
+                              {Object.entries(lead.form_data).map(([key, val]) => (
+                                <div key={key}>
+                                  <div style={{ fontSize: 10, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.03em" }}>{titleCase(key.replace(/_/g, " "))}</div>
+                                  <div style={{ fontSize: 13, color: C.text, marginTop: 1 }}>{String(val)}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Call recording link */}
+                        {lead.call_recording_url && (
+                          <div style={{ marginBottom: 16 }}>
+                            <a href={lead.call_recording_url} target="_blank" rel="noopener noreferrer"
+                              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, background: C.priLt, color: C.pri, fontSize: 13, fontWeight: 600, textDecoration: "none", border: `1px solid ${C.pri}20`, transition: "background 0.15s" }}
+                              onMouseEnter={e => e.currentTarget.style.background = C.pri + "20"}
+                              onMouseLeave={e => e.currentTarget.style.background = C.priLt}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                              Listen to Call Recording
+                            </a>
+                          </div>
+                        )}
+
+                        {/* Actions */}
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", paddingTop: 8, borderTop: `1px solid ${C.borderLight}` }}>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setIgniteLinkModal({ leadId: lead.id, action: 'unlink' }); }}
+                            style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 6, border: `1px solid ${C.dan}30`, background: C.danLt, color: C.dan, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}
+                            onMouseEnter={e => e.currentTarget.style.background = C.dan + "18"}
+                            onMouseLeave={e => e.currentTarget.style.background = C.danLt}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                            Unlink Lead
+                          </button>
+                          <span style={{ fontSize: 11, color: C.textMut, marginLeft: "auto" }}>Lead ID: {lead.id.slice(0, 8)}...</span>
+                        </div>
+                      </div>
+                    )}
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Lifecycle Tab */}
       {activeTab === "lifecycle" && (
         <div>
@@ -623,6 +1024,102 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
       )}
 
       </div>
+
+      {/* ──── CLM-005: Push to Gingr Confirmation Modal ──── */}
+      {gingrModal && (
+        <Modal title="Push to Gingr" onClose={() => { if (!gingrSyncing) setGingrModal(false); }}>
+          {gingrResult ? (
+            <div style={{ textAlign: "center", padding: "16px 0" }}>
+              {gingrResult.success ? (
+                <>
+                  <div style={{ width: 48, height: 48, borderRadius: "50%", background: C.sucLt, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={C.suc} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.suc, marginBottom: 8 }}>{gingrResult.message}</div>
+                  <div style={{ fontSize: 12, color: C.textMut }}>Synced at {new Date(gingrResult.timestamp).toLocaleString()}</div>
+                </>
+              ) : (
+                <>
+                  <div style={{ width: 48, height: 48, borderRadius: "50%", background: C.danLt, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={C.dan} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: C.dan, marginBottom: 8 }}>Sync Failed</div>
+                  <div style={{ fontSize: 13, color: C.textSec, maxWidth: 400, margin: "0 auto" }}>{gingrResult.message}</div>
+                </>
+              )}
+              <div style={{ marginTop: 20 }}>
+                <Btn variant="primary" onClick={() => setGingrModal(false)}>Close</Btn>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize: 14, color: C.textSec, marginBottom: 16 }}>
+                {client.gingrId ? "This will update the existing Gingr record with current K9 Ops data." : "This will create a new client record in Gingr."}
+              </div>
+
+              {/* Missing required fields warning */}
+              {gingrPayload.missingRequired.length > 0 && (
+                <div style={{ padding: "10px 14px", borderRadius: 8, background: C.warnLt, border: `1.5px solid ${C.warn}25`, marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.warn, marginBottom: 4 }}>Missing Required Fields</div>
+                  <div style={{ fontSize: 12, color: "#92400E" }}>{gingrPayload.missingRequired.join(", ")}</div>
+                </div>
+              )}
+
+              {/* Client fields preview */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Client Data</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, padding: "12px 14px", background: C.bg, borderRadius: 8 }}>
+                  {GINGR_CLIENT_FIELDS.filter(gf => gingrPayload.client[gf.gingrField]).map(gf => (
+                    <div key={gf.id}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: C.textMut, textTransform: "uppercase" }}>{gf.label}</div>
+                      <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{gf.gingrField === "phone" ? fmtPhone(gingrPayload.client[gf.gingrField]) : gingrPayload.client[gf.gingrField]}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Dogs preview */}
+              {gingrPayload.dogs.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Dogs ({gingrPayload.dogs.length})</div>
+                  {gingrPayload.dogs.map(dp => (
+                    <div key={dp.dogId} style={{ padding: "10px 14px", background: C.bg, borderRadius: 8, marginBottom: 6 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4 }}>{dp.dogName}</div>
+                      {dp.missing.length > 0 && (
+                        <div style={{ fontSize: 11, color: C.warn }}>Missing: {dp.missing.join(", ")}</div>
+                      )}
+                      <div style={{ fontSize: 11, color: C.textMut }}>{Object.keys(dp.payload).length} fields mapped</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <Btn variant="secondary" onClick={() => setGingrModal(false)} disabled={gingrSyncing}>Cancel</Btn>
+                <Btn variant="primary" onClick={handlePushToGingr} disabled={gingrSyncing}>
+                  {gingrSyncing ? "Syncing..." : client.gingrId ? "Update in Gingr" : "Create in Gingr"}
+                </Btn>
+              </div>
+            </div>
+          )}
+        </Modal>
+      )}
+
+      {/* ──── IGN-003: Unlink Confirmation Modal ──── */}
+      {igniteLinkModal && (
+        <Modal title="Unlink Ignite Lead" onClose={() => { if (!igniteLinking) setIgniteLinkModal(null); }}>
+          <div style={{ fontSize: 14, color: C.textSec, marginBottom: 20 }}>
+            Are you sure you want to unlink this Ignite lead from {client.fields.first_name} {client.fields.last_name}? The lead will be moved back to the unmatched queue.
+          </div>
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" onClick={() => setIgniteLinkModal(null)} disabled={igniteLinking}>Cancel</Btn>
+            <Btn variant="danger" onClick={() => handleUnlinkLead(igniteLinkModal.leadId)} disabled={igniteLinking}>
+              {igniteLinking ? "Unlinking..." : "Unlink Lead"}
+            </Btn>
+          </div>
+        </Modal>
+      )}
+
     </div>
   );
 }
