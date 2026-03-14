@@ -837,18 +837,30 @@ function getRoomCleaningStats(data, date) {
 }
 
 
+// Helper: check if reservation has a specific service (used outside DailyOpsPage)
+function resSvcIncludes(res, partial) {
+  const svcs = res._services;
+  if (!svcs) return false;
+  const arr = Array.isArray(svcs) ? svcs : [];
+  return arr.some(s => {
+    const name = typeof s === "string" ? s : (s && s.name ? s.name : "");
+    return name.toLowerCase().includes(partial.toLowerCase());
+  });
+}
+
 function getPPStats(data, date) {
   const td = date || todayStr();
   const entryId = `ops_pp_${td}`;
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   const ei = entry ? entry.items || {} : {};
-  // Count PP dogs for this date
+  // Count PP dogs: dogs with "Extra Private Playtime" service on their reservation
   const reservations = data.reservations || [];
-  const dogs = data.dogs || [];
-  const ppDogIds = new Set();
-  reservations.forEach(r => { if (r.type === "evaluation" && r.evalResult === "passed_private") ppDogIds.add(r.dogId); });
-  dogs.forEach(d => { if ((d.tags || []).includes("tag_pp")) ppDogIds.add(d.id); });
-  const ppRes = reservations.filter(r => (r.type === "boarding" || r.type === "daycare") && r.status === "checked-in" && r.checkIn <= td && r.checkOut >= td && ppDogIds.has(r.dogId));
+  const ppRes = reservations.filter(r =>
+    (r.type === "boarding" || r.type === "daycare") &&
+    r.status === "checked-in" &&
+    r.checkIn <= td && r.checkOut >= td &&
+    resSvcIncludes(r, "Private Play")
+  );
   const totalDogs = ppRes.length;
   const requiredSessions = totalDogs * 3; // 3 required let-outs per dog
   let completedSessions = 0;
@@ -5724,11 +5736,13 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   // Picture checklist: boarding, not first day, not last day
   const pictureDogs = data.reservations.filter(r => r.type === "boarding" && r.status === "checked-in" && r.checkIn < viewDate && r.checkOut > viewDate);
 
-  // PP checklist: checked-in dogs (boarding or daycare) that have tag_pp or passed_private eval
-  const ppDogIds = new Set();
-  data.reservations.forEach(r => { if (r.type === "evaluation" && r.evalResult === "passed_private") ppDogIds.add(r.dogId); });
-  data.dogs.forEach(d => { if ((d.tags || []).includes("tag_pp")) ppDogIds.add(d.id); });
-  const ppReservations = data.reservations.filter(r => (r.type === "boarding" || r.type === "daycare") && r.status === "checked-in" && r.checkIn <= viewDate && r.checkOut >= viewDate && ppDogIds.has(r.dogId)).sort((a, b) => {
+  // PP checklist: checked-in dogs (boarding or daycare) with "Extra Private Playtime" in _services
+  const ppReservations = data.reservations.filter(r =>
+    (r.type === "boarding" || r.type === "daycare") &&
+    r.status === "checked-in" &&
+    r.checkIn <= viewDate && r.checkOut >= viewDate &&
+    resSvcIncludes(r, "Private Play")
+  ).sort((a, b) => {
     const aNum = a.room ? (a.room.match(/(\d+)/) || [])[1] || "" : "";
     const bNum = b.room ? (b.room.match(/(\d+)/) || [])[1] || "" : "";
     return aNum.localeCompare(bNum, undefined, { numeric: true });
