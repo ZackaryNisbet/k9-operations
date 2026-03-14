@@ -379,7 +379,7 @@ const TRACKER_DATA = {
       title: "Fix EOD @ Mention Dog Suggest",
       category: "Operations Hub",
       priority: "P2",
-      status: "backlog",
+      status: "done",
       description: "Fix the broken @ mention dog suggestion feature in the EOD report.",
       spec: "The \"@\" hyperlink suggest dog feature in the EOD (End of Day) report does not work. Fix the autocomplete/suggestion functionality so that typing \"@\" shows a dropdown of dogs that can be mentioned in the report.",
       dataRequirements: ["gingr_animals"],

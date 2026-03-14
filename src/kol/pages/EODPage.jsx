@@ -14,6 +14,123 @@ import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 
+// @ mention dog suggest dropdown for EOD text sections
+function MentionTextarea({ value, onChange, onFocus, onBlur, placeholder, style, disabled, dogs }) {
+  const textareaRef = useRef(null);
+  const dropdownRef = useRef(null);
+  const [mention, setMention] = useState(null); // { startIdx, query }
+  const [highlightIdx, setHighlightIdx] = useState(0);
+
+  const filtered = useMemo(() => {
+    if (!mention) return [];
+    const q = mention.query.toLowerCase();
+    return dogs.filter(d => d.name.toLowerCase().includes(q));
+  }, [mention, dogs]);
+
+  useEffect(() => { setHighlightIdx(0); }, [filtered.length, mention?.query]);
+
+  const insertMention = (dogName) => {
+    if (!mention || !textareaRef.current) return;
+    const before = value.slice(0, mention.startIdx);
+    const after = value.slice(textareaRef.current.selectionStart);
+    const newValue = before + dogName + " " + after;
+    onChange(newValue);
+    setMention(null);
+    // Restore cursor after React re-render
+    const cursorPos = mention.startIdx + dogName.length + 1;
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(cursorPos, cursorPos);
+      }
+    });
+  };
+
+  const handleChange = (e) => {
+    const val = e.target.value;
+    const cursor = e.target.selectionStart;
+    onChange(val);
+
+    // Find the @ trigger: scan backward from cursor
+    let atIdx = -1;
+    for (let i = cursor - 1; i >= 0; i--) {
+      if (val[i] === "@") { atIdx = i; break; }
+      if (val[i] === " " || val[i] === "\n") break;
+    }
+    if (atIdx >= 0 && (atIdx === 0 || val[atIdx - 1] === " " || val[atIdx - 1] === "\n")) {
+      const query = val.slice(atIdx + 1, cursor);
+      setMention({ startIdx: atIdx, query });
+    } else {
+      setMention(null);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (!mention || filtered.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightIdx(i => (i + 1) % filtered.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightIdx(i => (i - 1 + filtered.length) % filtered.length);
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      insertMention(filtered[highlightIdx].name);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setMention(null);
+    }
+  };
+
+  const handleBlurWithDelay = (e) => {
+    // Delay closing dropdown so click on dropdown item can register
+    setTimeout(() => {
+      setMention(null);
+      if (onBlur) onBlur(e);
+    }, 150);
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <textarea
+        ref={textareaRef}
+        value={value}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        onFocus={onFocus}
+        onBlur={handleBlurWithDelay}
+        placeholder={placeholder}
+        disabled={disabled}
+        style={style}
+      />
+      {mention && filtered.length > 0 && (
+        <div ref={dropdownRef} style={{
+          position: "absolute", left: 0, top: "100%", marginTop: 2, zIndex: 200,
+          background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 10,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.12)", maxHeight: 180, overflowY: "auto",
+          width: 220, padding: "4px 0",
+        }}>
+          <div style={{ padding: "4px 12px 6px", fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em" }}>Dogs</div>
+          {filtered.map((dog, idx) => (
+            <div
+              key={dog.id}
+              onMouseDown={(e) => { e.preventDefault(); insertMention(dog.name); }}
+              onMouseEnter={() => setHighlightIdx(idx)}
+              style={{
+                padding: "6px 12px", fontSize: 13, fontWeight: 500, color: C.text,
+                cursor: "pointer", background: idx === highlightIdx ? C.priLt : "transparent",
+                transition: "background 0.08s",
+              }}
+            >
+              <span style={{ marginRight: 6 }}>🐕</span>{dog.name}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LiteEODPage({ data, save, nav, profile, addGlobalToast }) {
   const td = todayStr();
   const [viewDate, setViewDate] = useState(td);
@@ -237,6 +354,21 @@ function LiteEODPage({ data, save, nav, profile, addGlobalToast }) {
 
   // Calendar dots for days with saved EOD
   const eodDates = useMemo(() => new Set((data.eodEntries || []).map(e => e.date)), [data.eodEntries]);
+
+  // Dogs from current day's reservations (for @ mention suggest)
+  const mentionDogs = useMemo(() => {
+    const dogs = data.dogs || [];
+    const reservations = data.reservations || [];
+    const dayRes = reservations.filter(r =>
+      r.checkIn <= viewDate && r.checkOut >= viewDate &&
+      r.status !== "cancelled"
+    );
+    const dogIds = new Set(dayRes.map(r => r.dogId));
+    return dogs
+      .filter(d => dogIds.has(d.id))
+      .map(d => ({ id: d.id, name: d.fields?.name || "Unknown" }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [data.dogs, data.reservations, viewDate]);
 
 
   return (
@@ -486,10 +618,11 @@ function LiteEODPage({ data, save, nav, profile, addGlobalToast }) {
                     {content || <span style={{ color: C.textMut, fontStyle: "italic" }}>Empty</span>}
                   </div>
                 ) : (
-                  /* Text mode: editable */
-                  <textarea value={content} onChange={(e) => updateSection(sec.id, e.target.value)}
+                  /* Text mode: editable with @ mention dog suggest */
+                  <MentionTextarea value={content} onChange={(val) => updateSection(sec.id, val)}
                     onFocus={() => setFocusedSecId(sec.id)} onBlur={() => setFocusedSecId(f => f === sec.id ? null : f)}
-                    placeholder={sec.defaultContent || "Type here..."}
+                    placeholder={sec.defaultContent || "Type here... (@ to mention a dog)"}
+                    dogs={mentionDogs}
                     style={{ width: "100%", minHeight: 40, padding: 0, border: "none", outline: "none", fontSize: 13, color: C.text, fontFamily: "inherit", lineHeight: 1.6, resize: "vertical", background: "transparent", boxSizing: "border-box" }} />
                 )}
                 {/* Edited-by attribution */}
