@@ -4149,7 +4149,7 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
       <div style={{display:"grid",gridTemplateColumns:"repeat(4, 1fr)",gap:16,marginBottom:24}}>
         {[
           { label: "Conversion Rate", value: `${metrics.conversionRate.toFixed(1)}%`, sub: `${metrics.newCustomers} of ${metrics.leads} leads`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>, color: C.pri },
-          { label: "New Customer Revenue", value: fmtMoney(metrics.newCustomerRevenue), sub: `From ${metrics.newCustomers} new customers`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>, color: "#16A34A" },
+          { label: "Lifetime Revenue (New)", value: fmtMoney(metrics.newCustomerRevenue), sub: `Total lifetime revenue from ${metrics.newCustomers} customers acquired in this period`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>, color: "#16A34A" },
           { label: "Avg Customer LTV", value: fmtMoney(metrics.avgLTV), sub: `Across ${metrics.spendingClientsCount.toLocaleString()} customers`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#AF8D54" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, color: "#AF8D54" },
           { label: "Forecasted Revenue Uplift", value: fmtMoney(metrics.forecastedUplift), sub: `${metrics.newCustomers} new × ${fmtMoney(metrics.avgLTV)} LTV`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.dan} strokeWidth="2" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>, color: C.dan },
         ].map((m, i) => (
@@ -11524,6 +11524,7 @@ function LiteReportsPage({ data, nav }) {
         <div>
           <div style={{ padding: 12, background: `${C.priLt}15`, borderLeft: `3px solid ${C.pri}`, borderRadius: "0 8px 8px 0", marginBottom: 12 }}>
             <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.pri }}>Cash Basis Revenue</h2>
+            <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Revenue recognized on check-in date. Multi-night stays attribute full revenue to the check-in month.</div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
             <KPI label="Total Revenue" value={cashBasisData.current.total} trend={cashBasisData.trend} accentColor={C.pri} delay={0} />
@@ -11570,6 +11571,7 @@ function LiteReportsPage({ data, nav }) {
         <div>
           <div style={{ padding: 12, background: `${C.accLt}15`, borderLeft: `3px solid ${C.acc}`, borderRadius: "0 8px 8px 0", marginBottom: 12 }}>
             <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: C.accDk }}>Accrual Revenue</h2>
+            <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Includes add-on services (baths, play sessions) spread evenly across the stay.</div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
             <KPI label="Total Accrual" value={accrualData.current.totals.totalRevenue} trend={accrualData.revenueTrend} accentColor={C.acc} delay={0} />
@@ -11602,6 +11604,7 @@ function LiteReportsPage({ data, nav }) {
               </div>
             </div>
           </div>
+          {discountBreakdown.totalDiscounts > 0 && (
           <div style={{ padding: 16, background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, marginBottom: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 12px 0" }}>
               <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: C.text }}>Discount Transparency</h3>
@@ -11620,6 +11623,7 @@ function LiteReportsPage({ data, nav }) {
               ))}
             </div>
           </div>
+          )}
           <CollapsibleSection title="Reservations" open={accrualTableOpen} onToggle={() => setAccrualTableOpen(!accrualTableOpen)} count={accrualReservationsData.length}>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
