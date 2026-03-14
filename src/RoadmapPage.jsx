@@ -893,7 +893,7 @@ const TRACKER_DATA = {
       title: "Redesign Customer Lifecycle CRM Graphic",
       category: "Public Site",
       priority: "P2",
-      status: "backlog",
+      status: "done",
       description: "Redesign the customer lifecycle CRM graphic on the landing page. Current triangle/node graphic needs a polished, world-class visual.",
       spec: "**Current state:** Triangle graphic with Gingr → K9 Ops center → Conversion → Active ↔ Retention flow.\n\n**Issues:**\n- Visual quality doesn't meet the 'world class UI' bar for public-facing pages\n- Needs to clearly communicate: Gingr (external) → K9 Ops (intelligence layer) → Conversion → Active ↔ Retention\n- Customer NEVER goes back to New or Conversion once progressed\n- Active ↔ Retention is the only bidirectional flow\n\n**Requirements:**\n- Clean, polished graphic that matches the premium feel of the rest of the landing page\n- Animated or interactive preferred\n- Must be visually intuitive for prospects viewing the landing page",
       dataRequirements: [],
