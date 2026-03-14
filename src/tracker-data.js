@@ -593,7 +593,7 @@ const TRACKER_DATA = {
       title: "Enterprise Dashboard Aggregation",
       category: "Enterprise",
       priority: "P1",
-      status: "backlog",
+      status: "done",
       description: "Aggregate dashboard data across all locations with resort selection controls.",
       spec: "The consolidated Dashboard created at the location level needs an enterprise-level equivalent.\n\n**Requirements:**\n- Same UI as the location-level Dashboard\n- Aggregates data across all configured locations\n- Extra controls to select/deselect which resorts are included\n- Dashboard updates live as resorts are toggled on/off\n- Should handle data from 50+ locations without performance issues",
       dataRequirements: ["gingr_reservations", "invoices", "transactions", "lifecycle_events"],
