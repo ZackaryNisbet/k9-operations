@@ -22,8 +22,8 @@ function RequiredFieldsTab() {
 
   return (
     <div>
-      <h3 style={{ margin: "0 0 6px", fontSize: 18, fontWeight: 700, color: C.text }}>Required Fields</h3>
-      <p style={{ margin: "0 0 16px", fontSize: 14, color: C.textSec }}>Configure which fields are required at each stage of the customer lifecycle.</p>
+      <h3 style={{ margin: "0 0 6px", fontSize: 18, fontWeight: 700, color: C.text }}>Field Mapping</h3>
+      <p style={{ margin: "0 0 16px", fontSize: 14, color: C.textSec }}>Map fields between K9 Ops and Gingr at each stage of the customer lifecycle.</p>
 
       <div style={{ padding: "12px 16px", borderRadius: 10, background: C.priLt, border: `1.5px solid ${C.pri}20`, marginBottom: 16 }}>
         <div style={{ fontSize: 12, color: C.text, lineHeight: 1.5 }}><strong>How it works:</strong> Fields required at a lower level are automatically required at higher levels. Only the "Create" column is active in K9 Operations Lite. Other columns show the POS configuration for reference.</div>
