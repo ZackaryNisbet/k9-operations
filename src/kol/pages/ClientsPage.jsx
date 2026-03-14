@@ -669,11 +669,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Grid templates per tab ──
   const getGrid = () => {
-    if (activeTab === "conversion" || activeTab === "oldGingrSync") return "minmax(110px,1.3fr) minmax(75px,0.9fr) 50px 75px 55px 55px minmax(80px,1fr) minmax(80px,1fr) minmax(90px,1.3fr) 85px 55px";
-    if (activeTab === "retention") return "minmax(100px,1.2fr) minmax(75px,0.9fr) 45px 75px minmax(80px,0.9fr) minmax(80px,0.9fr) minmax(85px,1.2fr) 80px minmax(65px,0.7fr) minmax(60px,0.6fr) 50px 50px";
-    if (activeTab === "cold") return "minmax(110px,1.3fr) minmax(75px,0.9fr) 50px 75px minmax(90px,1fr) minmax(80px,1fr) minmax(110px,1.3fr) 65px";
+    // Consistent base: Client(1.4fr), Phone(1fr), Dogs(45px), Created(75px) — then tab-specific data columns
+    if (activeTab === "conversion" || activeTab === "oldGingrSync") return "minmax(110px,1.4fr) minmax(75px,1fr) 45px 75px minmax(55px,0.7fr) minmax(60px,0.7fr) minmax(70px,0.8fr) minmax(80px,1fr) minmax(80px,1fr) minmax(70px,0.8fr) 50px";
+    if (activeTab === "retention") return "minmax(100px,1.3fr) minmax(75px,1fr) 45px 75px minmax(70px,0.8fr) minmax(70px,0.8fr) minmax(80px,1fr) minmax(70px,0.8fr) minmax(60px,0.7fr) minmax(55px,0.6fr) 50px 50px";
+    if (activeTab === "cold") return "minmax(110px,1.4fr) minmax(75px,1fr) 45px 75px minmax(80px,1fr) minmax(80px,1fr) minmax(100px,1.2fr) 60px";
     // Active / All — Client, Phone, Dogs, Created
-    const base = "minmax(120px,1.3fr) minmax(80px,0.9fr) 50px 75px";
+    const base = "minmax(120px,1.4fr) minmax(80px,1fr) 45px 75px";
     const dataCols = shownDataCols.map(k => {
       if (k==="lastRes"||k==="nextRes") return "minmax(70px,0.8fr)";
       return "minmax(50px,0.6fr)";

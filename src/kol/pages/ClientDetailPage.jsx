@@ -128,7 +128,7 @@ function detectClientStage(client, serverStats) {
 function ClientDetailPage({ data, save, clientId, nav, profile, openReservationId, addGlobalToast }) {
   const client = data.clients.find(c=>c.id===clientId);
   const dogs = data.dogs.filter(d=>d.clientId===clientId);
-  const reservations = data.reservations.filter(r=>r.clientId===clientId).sort((a,b)=>b.checkIn.localeCompare(a.checkIn));
+  const reservations = (data.reservations || []).filter(r=>r.clientId===clientId).sort((a,b)=>b.checkIn.localeCompare(a.checkIn));
   const [editing, setEditing] = useState(false);
   const [editFields, setEditFields] = useState({});
   const [editRecurringDiscountId, setEditRecurringDiscountId] = useState(null);
