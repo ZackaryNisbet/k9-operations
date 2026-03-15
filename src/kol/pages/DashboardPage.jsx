@@ -484,6 +484,52 @@ function Sparkline({ data, width = 200, height = 32, color = C.pri }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   DashGrid — measures container width, enforces 2:1 cell aspect ratio
+   Row height = column width / 2 (matching Excel 128×64)
+   ═══════════════════════════════════════════════════════════════════════════ */
+function DashGrid({ children }) {
+  const COL_GAP = 3;
+  const ROW_GAP = 2;
+  const LABEL_H = 12;
+  const COLS = 9;
+  const ref = useRef(null);
+  const [rowH, setRowH] = useState(64); // default fallback
+
+  useEffect(() => {
+    const measure = () => {
+      if (!ref.current) return;
+      const w = ref.current.clientWidth;
+      const colW = (w - (COLS - 1) * COL_GAP) / COLS;
+      setRowH(Math.floor(colW / 2));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    if (ref.current) ro.observe(ref.current);
+    return () => ro.disconnect();
+  }, []);
+
+  // 11 rows: 4 label rows (LABEL_H each) + 7 data rows (rowH each)
+  const templateRows = `${LABEL_H}px ${rowH}px ${LABEL_H}px ${rowH}px ${LABEL_H}px ${rowH}px ${LABEL_H}px ${rowH}px ${rowH}px ${rowH}px ${rowH}px`;
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        flex: 1, minHeight: 0, overflow: "hidden",
+        display: "grid",
+        gridTemplateColumns: `repeat(${COLS}, 1fr)`,
+        gridTemplateRows: templateRows,
+        gap: `${ROW_GAP}px ${COL_GAP}px`,
+        padding: "0 6px 6px",
+        alignContent: "start",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    Chart container — measures height, renders InteractiveLineChart
    ═══════════════════════════════════════════════════════════════════════════ */
 function ChartFill({ chartData, color, compareColor, animEpoch, id }) {
@@ -1057,19 +1103,10 @@ export default function DashboardPage({
       </div>
 
       {/* ═══ MAIN GRID ═══ 
-           Layout: 4 section-label rows (tiny) + 7 data rows (equal height)
-           Section labels sit above rows 1, 2, 3, 4.
-           Rows 5-7 hold the charts (chart cells span 3 rows).
-           All 7 data rows are equal — matching the Excel 64px uniform height.
+           7×9 grid. Each cell = 2:1 width:height (Excel 128×64).
+           Row height = colWidth / 2, computed from container width.
       */}
-      <div style={{
-        flex: 1, minHeight: 0, overflow: "hidden",
-        display: "grid",
-        gridTemplateColumns: "repeat(9, 1fr)",
-        gridTemplateRows: "12px 1fr 12px 1fr 12px 1fr 12px 1fr 1fr 1fr 1fr",
-        gap: "2px 3px",
-        padding: "0 6px 6px",
-      }}>
+      <DashGrid>
         {/* ─── Section Label: Gingr Data ─── (spans cols 1-7)  +  Daily Checklists (col 8) + Services (col 9) */}
         <div style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
           <span className="dash-section-label">Gingr Data</span>
@@ -1214,7 +1251,7 @@ export default function DashboardPage({
         {/* Row 7: Col 8 empty, Col 9 empty */}
         <div className="dash-grid-cell empty-cell" />
         <div className="dash-grid-cell empty-cell" />
-      </div>
+      </DashGrid>
     </div>
   );
 }
