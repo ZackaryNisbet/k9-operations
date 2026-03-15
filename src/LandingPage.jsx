@@ -915,7 +915,7 @@ export default function LandingPage() {
             title="Checkout TV"
             subtitle="Real-Time Facility Display"
             accentColor="#84CC16"
-            description="A dark, fullscreen display designed for lobby monitors. Shows every checked-in dog with their photo, breed, owner name, and room number — updating in real time."
+            description="A fullscreen display designed for staff to quickly identify dogs. Shows every checked-in dog with their photo, breed, owner name, and room number — updating in real time."
             bullets={[
               'Auto-populates from checked-in daycare and boarding reservations',
               'Dog photos, breed info, and owner last name displayed per card',
