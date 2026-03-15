@@ -1,7 +1,7 @@
 // K9 Operations — Shared UI Components
 // DO NOT MODIFY — stable API consumed by all page files.
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import ReactDOM from "react-dom";
 import { C, K9_LOGO_SRC, K9_LOGO_PNG, DEF_CLIENT_FIELDS, DEF_DOG_FIELDS, DEFAULT_LIFECYCLE_BANNERS, LITE_ACTION_LABELS, LITE_ACTION_LEVELS, fmtPhoneInput } from "./theme";
 import { I } from "./icons";
