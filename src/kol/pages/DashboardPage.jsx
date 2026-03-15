@@ -373,13 +373,22 @@ export default function DashboardPage({
   const todaySnapshot = useMemo(() => {
     const reservations = data.reservations || [];
     const dogs = data.dogs || [];
-    const inHouse = reservations.filter(r => r.status === "checked-in" && r.checkIn <= today && r.checkOut >= today);
+    // Dogs in house: physically checked in (has check_in_date) and not yet checked out (no check_out_date)
+    const inHouseRes = reservations.filter(r => r.status === "checked-in");
+    // Deduplicate by dogId to avoid counting the same dog twice for overlapping reservations
+    const seenDogIds = new Set();
+    const inHouse = inHouseRes.filter(r => {
+      if (!r.dogId) return true;
+      if (seenDogIds.has(r.dogId)) return false;
+      seenDogIds.add(r.dogId);
+      return true;
+    });
     const boardingInHouse = inHouse.filter(r => r.type === "boarding").length;
     const daycareInHouse = inHouse.filter(r => r.type === "daycare" || r.type === "dayboarding").length;
-    const goingHome = reservations.filter(r => r.status === "checked-in" && r.checkOut === today).length;
+    const goingHome = reservations.filter(r => r.status === "checked-in" && (r.checkOut === today || r.scheduledCheckOut === today)).length;
     const checkedOut = reservations.filter(r => r.checkOut === today && r.status === "checked-out").length;
-    const arriving = reservations.filter(r => r.checkIn === today && (r.status === "upcoming" || r.status === "checked-in")).length;
-    const goingHomeRes = reservations.filter(r => r.status === "checked-in" && r.checkOut === today);
+    const arriving = reservations.filter(r => (r.scheduledCheckIn || r.checkIn) === today && (r.status === "upcoming" || r.status === "checked-in")).length;
+    const goingHomeRes = reservations.filter(r => r.status === "checked-in" && (r.checkOut === today || r.scheduledCheckOut === today));
     let bathsTotal = 0, bathsDone = 0;
     goingHomeRes.forEach(res => {
       const dog = dogs.find(d => d.id === res.dogId);
