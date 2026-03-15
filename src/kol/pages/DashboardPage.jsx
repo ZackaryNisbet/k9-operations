@@ -9,7 +9,9 @@ import {
 import { I } from "../../shared/icons";
 import { Tip } from "../../shared/ui";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
-import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
+import SkeletonShimmer from "../../shared/SkeletonShimmer";
+import { getCachedData, setCachedData } from "../../shared/dashboardCache";
+import { useLazyCompute, useSectionVisibility } from "../../hooks/useLazyCompute";
 import {
   computeOccupancyMetrics, computeServiceMetrics, computeLifecycleMetrics,
   computeRefundMetrics, computeCashRevenueMetrics, computeAccrualRevenueMetrics,
@@ -624,6 +626,12 @@ export default function DashboardPage({
   const [showPriorPeriod, setShowPriorPeriod] = useState(true);
   const today = todayStr();
 
+  /* ─── localStorage cache: show stale data instantly, update when fresh ── */
+  const hasFreshData = !!(data && data.reservations);
+
+  /* ─── Lazy-compute refs for below-fold sections ───────────────────── */
+  const { ref: financialRef } = useSectionVisibility();
+
   useEffect(() => { setAnimEpoch(e => e + 1); }, [range]);
 
   const calRef = useRef(null);
@@ -682,22 +690,25 @@ export default function DashboardPage({
   [data.reservations, dateFrom, dateTo, prevFrom, prevTo, today]);
 
   /* ─── Accrual revenue (shared helper) ────────────────────────────── */
+  const reservationsRef = data.reservations;
+  const roomsRef = data.rooms;
   const accrualData = useMemo(() =>
-    computeAccrualRevenueMetrics(data, dateFrom, dateTo, prevFrom, prevTo),
-  [data.reservations, data.rooms, dateFrom, dateTo, prevFrom, prevTo]);
+    computeAccrualRevenueMetrics({ reservations: reservationsRef, rooms: roomsRef }, dateFrom, dateTo, prevFrom, prevTo),
+  [reservationsRef, roomsRef, dateFrom, dateTo, prevFrom, prevTo]);
 
   const revenue = accrualData.current.totals.totalRevenue;
   const prevRevenue = accrualData.previous.totals.totalRevenue;
   const revenueTrend = prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue) * 100 : 0;
 
   /* ─── Revenue Composition ──────────────────────────────────────────── */
+  const accrualTotalRevenue = accrualData.current.totals.totalRevenue;
+  const accrualBoardingRevenue = accrualData.current.totals.boardingRevenue;
+  const accrualDaycareRevenue = accrualData.current.totals.daycareRevenue;
   const revenueComposition = useMemo(() => {
-    const totals = accrualData.current.totals;
-    const total = totals.totalRevenue;
-    const boardingPct = total > 0 ? (totals.boardingRevenue / total) * 100 : 0;
-    const daycarePct = total > 0 ? (totals.daycareRevenue / total) * 100 : 0;
-    return { boarding: totals.boardingRevenue, daycare: totals.daycareRevenue, total, boardingPct, daycarePct };
-  }, [accrualData.current.totals]);
+    const boardingPct = accrualTotalRevenue > 0 ? (accrualBoardingRevenue / accrualTotalRevenue) * 100 : 0;
+    const daycarePct = accrualTotalRevenue > 0 ? (accrualDaycareRevenue / accrualTotalRevenue) * 100 : 0;
+    return { boarding: accrualBoardingRevenue, daycare: accrualDaycareRevenue, total: accrualTotalRevenue, boardingPct, daycarePct };
+  }, [accrualTotalRevenue, accrualBoardingRevenue, accrualDaycareRevenue]);
 
   /* ─── Discount breakdown (shared helper) ─────────────────────────── */
   const discountBreakdown = useMemo(() =>
@@ -750,12 +761,19 @@ export default function DashboardPage({
   }, [accrualData, bucketDays]);
 
   /* ─── Funnel metrics (shared helper) ─────────────────────────────── */
+  const clientsRef = data.clients;
+  const serverStatsRef = data.serverStats;
+  const resortPoliciesRef = data.resortPolicies;
   const funnelMetrics = useMemo(() =>
     computeLifecycleMetrics(data, dateFrom, dateTo, today),
-  [data.clients, data.serverStats, data.reservations, dateFrom, dateTo, today]);
+  [clientsRef, serverStatsRef, reservationsRef, resortPoliciesRef, dateFrom, dateTo, today]);
 
-  /* ─── Ops progress (shared helper) ───────────────────────────────── */
-  const opsProgress = useMemo(() => computeOpsProgress(data, today), [data, today]);
+  /* ─── Ops progress (lazy — deferred until checklist section is visible) ── */
+  const { ref: opsVisRef, value: lazyOpsProgress, isVisible: opsVisible } = useLazyCompute(
+    () => computeOpsProgress(data, today),
+    [data, today]
+  );
+  const opsProgress = lazyOpsProgress || [];
 
   const getChecklistProgress = (id) => {
     const op = opsProgress.find(o => o.id === id);
@@ -795,18 +813,28 @@ export default function DashboardPage({
   /* ─── Prior-period funnel metrics ──────────────────────────────── */
   const prevFunnelMetrics = useMemo(() =>
     computeLifecycleMetrics(data, prevFrom, prevTo, yesterday),
-  [data.clients, data.serverStats, data.reservations, prevFrom, prevTo, yesterday]);
+  [clientsRef, serverStatsRef, reservationsRef, resortPoliciesRef, prevFrom, prevTo, yesterday]);
 
   /* ─── Trend helper ─────────────────────────────────────────────── */
   const pctChange = (cur, prev) => prev > 0 ? ((cur - prev) / prev) * 100 : 0;
 
-  /* ─── Loading gate ────────────────────────────────────────────────── */
+  /* ─── Cache fresh metrics when available ──────────────────────────── */
+  const cacheableMetrics = useMemo(() => {
+    if (!hasFreshData) return null;
+    return {
+      occupancyMetrics, serviceMetrics, todaySnapshot,
+      cashTotal: cashBasisData.current.total,
+      cashCount: cashBasisData.current.count,
+    };
+  }, [hasFreshData, occupancyMetrics, serviceMetrics, todaySnapshot, cashBasisData]);
+
+  useEffect(() => {
+    if (cacheableMetrics) setCachedData(cacheableMetrics);
+  }, [cacheableMetrics]);
+
+  /* ─── Loading gate — skeleton shimmer instead of K9 animation ───── */
   if (!data || !data.reservations) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "calc(100vh - 64px)" }}>
-        <K9LoadingAnimation message="Loading dashboard..." />
-      </div>
-    );
+    return <SkeletonShimmer />;
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
@@ -870,7 +898,7 @@ export default function DashboardPage({
         <div style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
           <span className="dash-section-label">Today's Snapshot</span>
         </div>
-        <div style={{ gridColumn: "8", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 2px" }}>
+        <div ref={opsVisRef} style={{ gridColumn: "8", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 2px" }}>
           <span className="dash-section-label">Checklists</span>
         </div>
         <div style={{ gridColumn: "9", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 2px" }}>
@@ -923,7 +951,7 @@ export default function DashboardPage({
         <ServiceCell label="Ice Cream" done={svcData.iceCreamDone} total={svcData.iceCreamTotal} onClick={() => nav && nav("ops-svc")} />
 
         {/* ─── Section Label: Reporting ─── */}
-        <div style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
+        <div ref={financialRef} style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
           <span className="dash-section-label">Financial Reporting</span>
         </div>
         <div style={{ gridColumn: "8" }} />
