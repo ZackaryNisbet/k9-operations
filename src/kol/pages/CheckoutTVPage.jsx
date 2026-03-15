@@ -10,6 +10,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
 import { C, todayStr } from "../../shared/theme";
+import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { classifyReservationType, classifyReservationStatus } from "../../shared/opsHelpers";
 
 /* ── CSS Keyframes (injected once) ────────────────────────────────────── */
@@ -557,6 +558,22 @@ function TVNavButton({ view, isActive, count, onClick }) {
 
 /* ── Main Component ───────────────────────────────────────────────────── */
 function CheckoutTVPage({ data, nav, profile }) {
+  /* ── Loading gate: pulsing K9 logo until reservation data is ready ── */
+  if (!data || !data.reservations) {
+    return (
+      <div style={{
+        height: "100vh", display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        background: "linear-gradient(135deg, #0A0A0A 0%, #1A1A2E 50%, #0A0A0A 100%)",
+      }}>
+        <K9LoadingAnimation size={72} message="Loading checkout board..." subMessage="Fetching today’s dogs" dark />
+      </div>
+    );
+  }
+  return <CheckoutTVContent data={data} nav={nav} profile={profile} />;
+}
+
+function CheckoutTVContent({ data, nav, profile }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);

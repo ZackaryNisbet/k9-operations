@@ -3,7 +3,7 @@
 import React from "react";
 import { C } from "./theme";
 
-function K9LoadingAnimation({ size = 56, message = "Loading...", subMessage }) {
+function K9LoadingAnimation({ size = 56, message = "Loading...", subMessage, dark = false }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "16px 0" }}>
       <style>{`
@@ -13,7 +13,7 @@ function K9LoadingAnimation({ size = 56, message = "Loading...", subMessage }) {
         }
       `}</style>
       <div style={{ animation: "k9pulse 2s ease-in-out infinite" }}>
-        <svg width={size} height={size} viewBox="163.70 160.20 678.60 678.60" fill={C.pri} xmlns="http://www.w3.org/2000/svg">
+        <svg width={size} height={size} viewBox="163.70 160.20 678.60 678.60" fill={dark ? "#84CC16" : C.pri} xmlns="http://www.w3.org/2000/svg">
           <g transform="translate(0,1024) scale(0.1,-0.1)" stroke="none">
             <path d="M5710 7969 c-414 -27 -846 -110 -1098 -210 -265 -105 -456 -268 -513
 -438 -29 -86 -19 -111 46 -111 51 0 141 29 230 73 l60 29 -25 -27 c-79 -86
@@ -53,8 +53,8 @@ M2633 5000 c-106 -64 -125 -336 -39 -563 86 -229 310 -432 583 -531 140 -50
         </svg>
       </div>
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: C.textSec, fontFamily: "'Outfit', sans-serif" }}>{message}</div>
-        {subMessage && <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, fontFamily: "'Outfit', sans-serif" }}>{subMessage}</div>}
+        <div style={{ fontSize: 15, fontWeight: 600, color: dark ? "rgba(255,255,255,0.8)" : C.textSec, fontFamily: "'Outfit', sans-serif" }}>{message}</div>
+        {subMessage && <div style={{ fontSize: 12, color: dark ? "rgba(255,255,255,0.45)" : C.textMut, marginTop: 4, fontFamily: "'Outfit', sans-serif" }}>{subMessage}</div>}
       </div>
     </div>
   );
