@@ -17,7 +17,7 @@ import { applyStructuredFilters } from "../../hooks/useFilters";
 function PhotosPage() {
   return (
     <div>
-      <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>
+      <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>
         Photos
       </h2>
       <p style={{ margin: "0 0 24px", fontSize: 14, color: C.textSec, lineHeight: 1.6 }}>

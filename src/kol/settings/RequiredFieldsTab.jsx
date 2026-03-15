@@ -55,12 +55,12 @@ const DEFAULT_GINGR_DOG_FIELDS = [
 ];
 
 const FIELD_TYPE_COLORS = {
-  text: { bg: "#E6EEF6", color: "#003462" },
+  text: { bg: "#ECFDF5", color: "#14532D" },
   email: { bg: "#EFF6FF", color: "#1A5EC4" },
   tel: { bg: "#F0FDF4", color: "#0D7A56" },
   number: { bg: "#FFFBEB", color: "#C4720C" },
   date: { bg: "#FDF2F8", color: "#9D174D" },
-  select: { bg: "#F5EDD8", color: "#8B6F3C" },
+  select: { bg: "#D9F99D", color: "#4D7C0F" },
   textarea: { bg: "#F3E8FF", color: "#7C3AED" },
   checkbox: { bg: "#ECFDF5", color: "#0D7A56" },
 };

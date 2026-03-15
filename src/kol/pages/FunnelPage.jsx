@@ -178,7 +178,7 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
           const active = range === r.id;
           return (
             <button key={r.id} onClick={() => setRange(r.id)}
-              style={{padding:"8px 18px",borderRadius:10,border:"none",background:active?C.pri:"transparent",color:active?"#fff":C.textSec,fontSize:12,fontWeight:active?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.25s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:active?"0 2px 12px rgba(0,52,98,0.25)":"none",animation:`rangePill 0.2s ease-out ${i*0.03}s both`,position:"relative",overflow:"hidden"}}
+              style={{padding:"8px 18px",borderRadius:10,border:"none",background:active?C.pri:"transparent",color:active?"#fff":C.textSec,fontSize:12,fontWeight:active?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.25s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:active?"0 2px 12px rgba(20,83,45,0.25)":"none",animation:`rangePill 0.2s ease-out ${i*0.03}s both`,position:"relative",overflow:"hidden"}}
               onMouseEnter={e=>{if(!active){e.currentTarget.style.background=`${C.pri}08`;e.currentTarget.style.color=C.pri;}}}
               onMouseLeave={e=>{if(!active){e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.textSec;}}}>
               {r.label}
@@ -191,8 +191,8 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
       <div style={{background:"#fff",borderRadius:16,border:`1.5px solid ${C.borderLight}`,boxShadow:"0 4px 24px rgba(0,0,0,0.04)",padding:"32px 40px",marginBottom:24,animation:"funnelFade 0.35s ease-out 0.1s both"}}>
 
         {[
-          { label: "Total Leads", value: metrics.leads, color: "#003462", lightColor: "#003462", desc: "New clients entering the funnel" },
-          { label: "Leads Contacted", value: metrics.contacted, color: "#AF8D54", lightColor: "#AF8D54", desc: "Leads with logged outreach or converted" },
+          { label: "Total Leads", value: metrics.leads, color: "#14532D", lightColor: "#14532D", desc: "New clients entering the funnel" },
+          { label: "Leads Contacted", value: metrics.contacted, color: "#84CC16", lightColor: "#84CC16", desc: "Leads with logged outreach or converted" },
           { label: "New Customers", value: metrics.newCustomers, color: "#16A34A", lightColor: "#16A34A", desc: "Converted to active with spend/booking" },
         ].map((stage, i) => {
           const pct = maxFunnel > 0 ? stage.value / maxFunnel : 0;
@@ -249,7 +249,7 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
         {[
           { label: "Conversion Rate", value: `${metrics.conversionRate.toFixed(1)}%`, sub: `${metrics.newCustomers} of ${metrics.leads} leads`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>, color: C.pri },
           { label: "New Customer Revenue", value: fmtMoney(metrics.newCustomerRevenue), sub: `From ${metrics.newCustomers} new customers`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>, color: "#16A34A" },
-          { label: "Avg Customer LTV", value: fmtMoney(metrics.avgLTV), sub: `Across ${metrics.spendingClientsCount.toLocaleString()} customers`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#AF8D54" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, color: "#AF8D54" },
+          { label: "Avg Customer LTV", value: fmtMoney(metrics.avgLTV), sub: `Across ${metrics.spendingClientsCount.toLocaleString()} customers`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#84CC16" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, color: "#84CC16" },
           { label: "Forecasted Revenue Uplift", value: fmtMoney(metrics.forecastedUplift), sub: `${metrics.newCustomers} new × ${fmtMoney(metrics.avgLTV)} LTV`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.dan} strokeWidth="2" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>, color: C.dan },
         ].map((m, i) => (
           <div key={m.label} style={{
@@ -290,7 +290,7 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
           </div>
           <div style={{padding:"14px 16px",borderRadius:10,background:C.surface,border:`1px solid ${C.borderLight}`}}>
             <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>Avg LTV per Customer</div>
-            <div style={{fontSize:20,fontWeight:800,color:"#AF8D54"}}>{fmtMoney(metrics.avgLTV)}</div>
+            <div style={{fontSize:20,fontWeight:800,color:"#84CC16"}}>{fmtMoney(metrics.avgLTV)}</div>
             <div style={{fontSize:10,color:C.textMut,marginTop:2}}>Total revenue / paying customers</div>
           </div>
         </div>
