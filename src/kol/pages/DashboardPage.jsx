@@ -662,6 +662,19 @@ function DashboardContent({
   const [showPriorPeriod, setShowPriorPeriod] = useState(true);
   const today = todayStr();
 
+  /* ─── Stable nav callbacks (prevent re-renders in memo'd children) ─── */
+  const navTo = useMemo(() => {
+    if (!nav) return {};
+    const pages = ["checkout-tv", "ops-bathing", "settings", "lifecycle", "funnel",
+      "ops-opening", "ops-fe", "ops-be", "ops-rooms", "ops-closing",
+      "ops-pamper", "ops-pp", "ops-svc", "eod", "photos", "cash-tips",
+      "checkout-notes", "inventory", "test-health", "reports",
+      "enterprise-attendance", "enterprise-ops"];
+    const map = {};
+    pages.forEach(p => { map[p] = () => nav(p); });
+    return map;
+  }, [nav]);
+
   /* ─── localStorage cache: show stale data instantly, update when fresh ── */
   const hasFreshData = !!(data && data.reservations);
 
@@ -710,9 +723,29 @@ function DashboardContent({
     return { dateFrom: start, dateTo: to, days: dayCount, prevFrom: pFrom, prevTo: pTo };
   }, [range, today, customFrom, customTo]);
 
+  /* ─── Stable sub-property refs (prevent full-data dep) ─────────── */
+  const reservationsRef = data.reservations;
+  const clientsRef = data.clients;
+  const serverStatsRef = data.serverStats;
+  const resortPoliciesRef = data.resortPolicies;
+  const roomsRef = data.rooms;
+  const dogsRef = data.dogs;
+  const dailyOpsRef = data.dailyOps;
+
+  /* ─── Lightweight proxy for compute functions (stable ref) ──────── */
+  const dataProxy = useMemo(() => ({
+    reservations: reservationsRef,
+    clients: clientsRef,
+    serverStats: serverStatsRef,
+    resortPolicies: resortPoliciesRef,
+    rooms: roomsRef,
+    dogs: dogsRef,
+    dailyOps: dailyOpsRef,
+  }), [reservationsRef, clientsRef, serverStatsRef, resortPoliciesRef, roomsRef, dogsRef, dailyOpsRef]);
+
   /* ─── Today's Snapshot (shared helpers) ──────────────────────────── */
-  const occupancyMetrics = useMemo(() => computeOccupancyMetrics(data, today), [data, today]);
-  const serviceMetrics = useMemo(() => computeServiceMetrics(data, today), [data, today]);
+  const occupancyMetrics = useMemo(() => computeOccupancyMetrics(dataProxy, today), [dataProxy, today]);
+  const serviceMetrics = useMemo(() => computeServiceMetrics(dataProxy, today), [dataProxy, today]);
   const todaySnapshot = useMemo(() => ({
     ...occupancyMetrics,
     tours: serviceMetrics.tours, evals: serviceMetrics.evals, bookingsToday: serviceMetrics.bookingsToday,
@@ -723,12 +756,10 @@ function DashboardContent({
 
   /* ─── Cash-basis revenue (shared helper) ─────────────────────────── */
   const cashBasisData = useMemo(() =>
-    computeCashRevenueMetrics(data.reservations, dateFrom, dateTo, prevFrom, prevTo, today),
-  [data.reservations, dateFrom, dateTo, prevFrom, prevTo, today]);
+    computeCashRevenueMetrics(reservationsRef, dateFrom, dateTo, prevFrom, prevTo, today),
+  [reservationsRef, dateFrom, dateTo, prevFrom, prevTo, today]);
 
   /* ─── Accrual revenue (shared helper) ────────────────────────────── */
-  const reservationsRef = data.reservations;
-  const roomsRef = data.rooms;
   const accrualData = useMemo(() =>
     computeAccrualRevenueMetrics({ reservations: reservationsRef, rooms: roomsRef }, dateFrom, dateTo, prevFrom, prevTo),
   [reservationsRef, roomsRef, dateFrom, dateTo, prevFrom, prevTo]);
@@ -749,8 +780,8 @@ function DashboardContent({
 
   /* ─── Discount breakdown (shared helper) ─────────────────────────── */
   const discountBreakdown = useMemo(() =>
-    computeDiscountBreakdown(data.reservations, dateFrom, dateTo),
-  [data.reservations, dateFrom, dateTo]);
+    computeDiscountBreakdown(reservationsRef, dateFrom, dateTo),
+  [reservationsRef, dateFrom, dateTo]);
 
   /* ─── Chart data bucketing ────────────────────────────────────────── */
   const bucketMode = useMemo(() => {
@@ -798,17 +829,14 @@ function DashboardContent({
   }, [accrualData, bucketDays]);
 
   /* ─── Funnel metrics (shared helper) ─────────────────────────────── */
-  const clientsRef = data.clients;
-  const serverStatsRef = data.serverStats;
-  const resortPoliciesRef = data.resortPolicies;
   const funnelMetrics = useMemo(() =>
-    computeLifecycleMetrics(data, dateFrom, dateTo, today),
+    computeLifecycleMetrics(dataProxy, dateFrom, dateTo, today),
   [clientsRef, serverStatsRef, reservationsRef, resortPoliciesRef, dateFrom, dateTo, today]);
 
   /* ─── Ops progress (lazy — deferred until checklist section is visible) ── */
   const { ref: opsVisRef, value: lazyOpsProgress, isVisible: opsVisible } = useLazyCompute(
-    () => computeOpsProgress(data, today),
-    [data, today]
+    () => computeOpsProgress(dataProxy, today),
+    [dataProxy, today]
   );
   const opsProgress = lazyOpsProgress || [];
 
@@ -823,33 +851,33 @@ function DashboardContent({
 
   /* ─── Refund tracker (shared helper) ─────────────────────────────── */
   const refundData = useMemo(() =>
-    computeRefundMetrics(data.reservations, dateFrom, dateTo),
-  [data.reservations, dateFrom, dateTo]);
+    computeRefundMetrics(reservationsRef, dateFrom, dateTo),
+  [reservationsRef, dateFrom, dateTo]);
 
   /* ─── Service data (shared helper) ───────────────────────────────── */
   const svcData = useMemo(() => {
-    const sm = computeServiceMetrics(data, today);
+    const sm = computeServiceMetrics(dataProxy, today);
     return {
       bathsTotal: sm.bathsTotal, bathsDone: sm.bathsDone,
       ppTotal: sm.ppTotal, ppCompleted: sm.ppCompleted,
       pamperTotal: 0, pamperDone: 0,
       iceCreamTotal: sm.iceCreamTotal, iceCreamDone: sm.iceCreamDone,
     };
-  }, [data, today]);
+  }, [dataProxy, today]);
 
   /* ─── Prior-period snapshot (yesterday) ─────────────────────────── */
   const yesterday = addDays(today, -1);
-  const prevOccupancy = useMemo(() => computeOccupancyMetrics(data, yesterday), [data, yesterday]);
-  const prevService = useMemo(() => computeServiceMetrics(data, yesterday), [data, yesterday]);
+  const prevOccupancy = useMemo(() => computeOccupancyMetrics(dataProxy, yesterday), [dataProxy, yesterday]);
+  const prevService = useMemo(() => computeServiceMetrics(dataProxy, yesterday), [dataProxy, yesterday]);
 
   /* ─── Prior-period refunds ─────────────────────────────────────── */
   const prevRefundData = useMemo(() =>
-    computeRefundMetrics(data.reservations, prevFrom, prevTo),
-  [data.reservations, prevFrom, prevTo]);
+    computeRefundMetrics(reservationsRef, prevFrom, prevTo),
+  [reservationsRef, prevFrom, prevTo]);
 
   /* ─── Prior-period funnel metrics ──────────────────────────────── */
   const prevFunnelMetrics = useMemo(() =>
-    computeLifecycleMetrics(data, prevFrom, prevTo, yesterday),
+    computeLifecycleMetrics(dataProxy, prevFrom, prevTo, yesterday),
   [clientsRef, serverStatsRef, reservationsRef, resortPoliciesRef, prevFrom, prevTo, yesterday]);
 
   /* ─── Trend helper ─────────────────────────────────────────────── */
@@ -940,15 +968,15 @@ function DashboardContent({
         </div>
 
         {/* ═══ ROW 1: Gingr Data ═══ */}
-        <MetricCell label="Expected" value={todaySnapshot.expected} hero onClick={() => nav && nav("checkout-tv")} trend={showPriorPeriod ? pctChange(todaySnapshot.expected, prevOccupancy.expected) : null} />
-        <MetricCell label="In House" value={todaySnapshot.dogsInHouse} hero sub={`${todaySnapshot.boardingInHouse}B · ${todaySnapshot.daycareInHouse}D`} onClick={() => nav && nav("checkout-tv")} trend={showPriorPeriod ? pctChange(todaySnapshot.dogsInHouse, prevOccupancy.dogsInHouse) : null} />
-        <MetricCell label="Going Home" value={todaySnapshot.goingHome} hero onClick={() => nav && nav("ops-bathing")} trend={showPriorPeriod ? pctChange(todaySnapshot.goingHome, prevOccupancy.goingHome) : null} />
-        <MetricCell label="Occupancy" value={`${todaySnapshot.occupancyPct}%`} hero onClick={() => nav && nav("settings")} trend={showPriorPeriod ? pctChange(todaySnapshot.occupancyPct, prevOccupancy.occupancyPct) : null} />
+        <MetricCell label="Expected" value={todaySnapshot.expected} hero onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(todaySnapshot.expected, prevOccupancy.expected) : null} />
+        <MetricCell label="In House" value={todaySnapshot.dogsInHouse} hero sub={`${todaySnapshot.boardingInHouse}B · ${todaySnapshot.daycareInHouse}D`} onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(todaySnapshot.dogsInHouse, prevOccupancy.dogsInHouse) : null} />
+        <MetricCell label="Going Home" value={todaySnapshot.goingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(todaySnapshot.goingHome, prevOccupancy.goingHome) : null} />
+        <MetricCell label="Occupancy" value={`${todaySnapshot.occupancyPct}%`} hero onClick={navTo["settings"]} trend={showPriorPeriod ? pctChange(todaySnapshot.occupancyPct, prevOccupancy.occupancyPct) : null} />
         <MetricCell label="Bookings" value={todaySnapshot.bookingsToday} hero />
-        <MetricCell label="Tours" value={todaySnapshot.tours} hero onClick={() => nav && nav("lifecycle")} trend={showPriorPeriod ? pctChange(todaySnapshot.tours, prevService.tours) : null} />
-        <MetricCell label="Evals" value={todaySnapshot.evals} hero onClick={() => nav && nav("lifecycle")} />
-        <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={() => nav && nav("ops-opening")} />
-        <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={() => nav && nav("ops-bathing")} />
+        <MetricCell label="Tours" value={todaySnapshot.tours} hero onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(todaySnapshot.tours, prevService.tours) : null} />
+        <MetricCell label="Evals" value={todaySnapshot.evals} hero onClick={navTo["lifecycle"]} />
+        <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={navTo["ops-opening"]} />
+        <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={navTo["ops-bathing"]} />
 
         {/* ─── Section Label: Customer Lifecycle ─── */}
         <div style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
@@ -957,15 +985,15 @@ function DashboardContent({
         <div style={{ gridColumn: "8 / 10" }} />
 
         {/* ═══ ROW 2: Customer Lifecycle ═══ */}
-        <MetricCell label="Remaining Leads" value={funnelMetrics.remainingLeads} onClick={() => nav && nav("funnel")} trend={showPriorPeriod ? pctChange(funnelMetrics.remainingLeads, prevFunnelMetrics.remainingLeads) : null} />
-        <MetricCell label="At-Risk" value={funnelMetrics.remainingAtRisk} onClick={() => nav && nav("lifecycle")} color={funnelMetrics.remainingAtRisk > 0 ? C.warn : undefined} />
-        <MetricCell label="Outreaches" value={funnelMetrics.todayOutreaches} onClick={() => nav && nav("lifecycle")} trend={showPriorPeriod ? pctChange(funnelMetrics.todayOutreaches, prevFunnelMetrics.todayOutreaches) : null} />
-        <MetricCell label="Converted" value={funnelMetrics.todayConversions} color={funnelMetrics.todayConversions > 0 ? C.suc : undefined} onClick={() => nav && nav("lifecycle")} trend={showPriorPeriod ? pctChange(funnelMetrics.todayConversions, prevFunnelMetrics.todayConversions) : null} />
-        <MetricCell label="First-Time Spenders" value={funnelMetrics.firstTimePayers} onClick={() => nav && nav("lifecycle")} />
-        <MetricCell label="Conversion Rate" value={`${funnelMetrics.conversionRate.toFixed(1)}%`} onClick={() => nav && nav("funnel")} trend={showPriorPeriod ? pctChange(funnelMetrics.conversionRate, prevFunnelMetrics.conversionRate) : null} />
-        <MetricCell label="New Leads" value={funnelMetrics.todayNewLeads} onClick={() => nav && nav("funnel")} trend={showPriorPeriod ? pctChange(funnelMetrics.todayNewLeads, prevFunnelMetrics.todayNewLeads) : null} />
-        <ChecklistCell label="Front-End" progress={getChecklistProgress("ops-fe")} count={getChecklistCount("ops-fe")} onClick={() => nav && nav("ops-fe")} />
-        <ServiceCell label="Pamper" done={svcData.pamperDone} total={svcData.pamperTotal} onClick={() => nav && nav("ops-pamper")} />
+        <MetricCell label="Remaining Leads" value={funnelMetrics.remainingLeads} onClick={navTo["funnel"]} trend={showPriorPeriod ? pctChange(funnelMetrics.remainingLeads, prevFunnelMetrics.remainingLeads) : null} />
+        <MetricCell label="At-Risk" value={funnelMetrics.remainingAtRisk} onClick={navTo["lifecycle"]} color={funnelMetrics.remainingAtRisk > 0 ? C.warn : undefined} />
+        <MetricCell label="Outreaches" value={funnelMetrics.todayOutreaches} onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(funnelMetrics.todayOutreaches, prevFunnelMetrics.todayOutreaches) : null} />
+        <MetricCell label="Converted" value={funnelMetrics.todayConversions} color={funnelMetrics.todayConversions > 0 ? C.suc : undefined} onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(funnelMetrics.todayConversions, prevFunnelMetrics.todayConversions) : null} />
+        <MetricCell label="First-Time Spenders" value={funnelMetrics.firstTimePayers} onClick={navTo["lifecycle"]} />
+        <MetricCell label="Conversion Rate" value={`${funnelMetrics.conversionRate.toFixed(1)}%`} onClick={navTo["funnel"]} trend={showPriorPeriod ? pctChange(funnelMetrics.conversionRate, prevFunnelMetrics.conversionRate) : null} />
+        <MetricCell label="New Leads" value={funnelMetrics.todayNewLeads} onClick={navTo["funnel"]} trend={showPriorPeriod ? pctChange(funnelMetrics.todayNewLeads, prevFunnelMetrics.todayNewLeads) : null} />
+        <ChecklistCell label="Front-End" progress={getChecklistProgress("ops-fe")} count={getChecklistCount("ops-fe")} onClick={navTo["ops-fe"]} />
+        <ServiceCell label="Pamper" done={svcData.pamperDone} total={svcData.pamperTotal} onClick={navTo["ops-pamper"]} />
 
         {/* ─── Section Label: Daily Tasks ─── */}
         <div style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
@@ -974,15 +1002,15 @@ function DashboardContent({
         <div style={{ gridColumn: "8 / 10" }} />
 
         {/* ═══ ROW 3: Daily Tasks (quick-link nav shortcuts) ═══ */}
-        <QuickLinkCell label="EOD Report" icon={<I.FileText />} onClick={() => nav && nav("eod")} />
-        <QuickLinkCell label="Checkout TV" icon={<I.Monitor />} onClick={() => nav && nav("checkout-tv")} />
-        <QuickLinkCell label="Photos" icon={<I.Camera />} onClick={() => nav && nav("photos")} />
-        <QuickLinkCell label="Cash Tips" icon={<I.DollarSign />} onClick={() => nav && nav("cash-tips")} />
-        <QuickLinkCell label="Checkout Notes" icon={<I.Clipboard />} onClick={() => nav && nav("checkout-notes")} />
-        <MetricCell label="Avg LTV" value={`$${funnelMetrics.avgLTV.toFixed(0)}`} onClick={() => nav && nav("lifecycle")} />
-        <MetricCell label="Total Clients" value={funnelMetrics.spendingClientsCount} onClick={() => nav && nav("lifecycle")} />
-        <ChecklistCell label="Back-End" progress={getChecklistProgress("ops-be")} count={getChecklistCount("ops-be")} onClick={() => nav && nav("ops-be")} />
-        <ServiceCell label="Ice Cream" done={svcData.iceCreamDone} total={svcData.iceCreamTotal} onClick={() => nav && nav("ops-svc")} />
+        <QuickLinkCell label="EOD Report" icon={<I.FileText />} onClick={navTo["eod"]} />
+        <QuickLinkCell label="Checkout TV" icon={<I.Monitor />} onClick={navTo["checkout-tv"]} />
+        <QuickLinkCell label="Photos" icon={<I.Camera />} onClick={navTo["photos"]} />
+        <QuickLinkCell label="Cash Tips" icon={<I.DollarSign />} onClick={navTo["cash-tips"]} />
+        <QuickLinkCell label="Checkout Notes" icon={<I.Clipboard />} onClick={navTo["checkout-notes"]} />
+        <MetricCell label="Avg LTV" value={`$${funnelMetrics.avgLTV.toFixed(0)}`} onClick={navTo["lifecycle"]} />
+        <MetricCell label="Total Clients" value={funnelMetrics.spendingClientsCount} onClick={navTo["lifecycle"]} />
+        <ChecklistCell label="Back-End" progress={getChecklistProgress("ops-be")} count={getChecklistCount("ops-be")} onClick={navTo["ops-be"]} />
+        <ServiceCell label="Ice Cream" done={svcData.iceCreamDone} total={svcData.iceCreamTotal} onClick={navTo["ops-svc"]} />
 
         {/* ─── Section Label: Reporting ─── */}
         <div ref={financialRef} style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
@@ -1001,8 +1029,8 @@ function DashboardContent({
         <MetricCell label="$ Refunded" value={`$${fmt$k(refundData.total)}`} color={refundData.total > 0 ? C.dan : undefined} />
         <MetricCell label="Discounted" value={discountBreakdown.discounted} color={discountBreakdown.discounted > 0 ? C.warn : undefined} />
         <MetricCell label="$ Discounted" value={`$${fmt$k(discountBreakdown.totalDiscounts)}`} color={discountBreakdown.totalDiscounts > 0 ? C.warn : undefined} />
-        <ChecklistCell label="Room Clean" progress={getChecklistProgress("ops-rooms")} count={getChecklistCount("ops-rooms")} onClick={() => nav && nav("ops-rooms")} />
-        <MetricCell label="Attendance" value="—" onClick={() => nav && nav("enterprise-attendance")} />
+        <ChecklistCell label="Room Clean" progress={getChecklistProgress("ops-rooms")} count={getChecklistCount("ops-rooms")} onClick={navTo["ops-rooms"]} />
+        <MetricCell label="Attendance" value="—" onClick={navTo["enterprise-attendance"]} />
 
         {/* ═══ ROWS 5-7: Charts ═══ */}
         <div className="dash-chart-cell" style={{ gridColumn: "1 / 4", gridRow: "span 3" }}>
@@ -1054,16 +1082,16 @@ function DashboardContent({
         </div>
 
         {/* Col 8: Private Play (row 5) */}
-        <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={() => nav && nav("ops-pp")} />
+        <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={navTo["ops-pp"]} />
 
         {/* Col 9: Inventory (row 5) */}
-        <MetricCell label="Inventory" value="—" onClick={() => nav && nav("inventory")} />
+        <MetricCell label="Inventory" value="—" onClick={navTo["inventory"]} />
 
         {/* Col 8: Closing (row 6) */}
-        <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={() => nav && nav("ops-closing")} />
+        <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={navTo["ops-closing"]} />
 
         {/* Col 9: Test Health (row 6) */}
-        <MetricCell label="Test Health" value="172" sub="100% pass" onClick={() => nav && nav("test-health")} color={C.suc} />
+        <MetricCell label="Test Health" value="172" sub="100% pass" onClick={navTo["test-health"]} color={C.suc} />
 
         {/* Row 7: Col 8 empty, Col 9 empty */}
         <div className="dash-grid-cell empty-cell" />
@@ -1078,7 +1106,7 @@ function DashboardContent({
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* MetricCell — standard data cell */
-function MetricCell({ label, value, sub, color, trend, onClick, hero }) {
+const MetricCell = memo(function MetricCell({ label, value, sub, color, trend, onClick, hero }) {
   return (
     <div
       className={`dash-grid-cell${onClick ? " clickable" : ""}${hero ? " hero-cell" : ""}`}
@@ -1097,10 +1125,10 @@ function MetricCell({ label, value, sub, color, trend, onClick, hero }) {
       {sub && <div style={{ fontSize: 8, color: hero ? C.textMut : C.textMut, lineHeight: 1, marginTop: 1 }}>{sub}</div>}
     </div>
   );
-}
+});
 
 /* ChecklistCell — progress bar + percentage */
-function ChecklistCell({ label, progress, count, onClick }) {
+const ChecklistCell = memo(function ChecklistCell({ label, progress, count, onClick }) {
   const pct = Math.round(progress);
   const done = pct === 100;
   const barColor = done ? C.suc : C.pri;
@@ -1124,10 +1152,10 @@ function ChecklistCell({ label, progress, count, onClick }) {
       {count && <div style={{ fontSize: 8, color: C.textMut, lineHeight: 1, marginTop: 1 }}>{count}</div>}
     </div>
   );
-}
+});
 
 /* ServiceCell — done/total count */
-function ServiceCell({ label, done, total, onClick }) {
+const ServiceCell = memo(function ServiceCell({ label, done, total, onClick }) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const allDone = total > 0 && done >= total;
   const barColor = allDone ? C.suc : C.acc;
@@ -1150,10 +1178,10 @@ function ServiceCell({ label, done, total, onClick }) {
       </div>
     </div>
   );
-}
+});
 
 /* QuickLinkCell — compact navigation shortcut (no data value) */
-function QuickLinkCell({ label, icon, onClick }) {
+const QuickLinkCell = memo(function QuickLinkCell({ label, icon, onClick }) {
   return (
     <div
       className="dash-quick-link"
@@ -1168,4 +1196,4 @@ function QuickLinkCell({ label, icon, onClick }) {
       </div>
     </div>
   );
-}
+});
