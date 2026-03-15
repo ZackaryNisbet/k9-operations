@@ -743,7 +743,7 @@ function LeanAppInner() {
         {/* Logo Header */}
         <div style={{ padding: "22px 15px 18px", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 12, height: 40, boxSizing: "content-box" }}>
           <div style={{ flexShrink: 0, width: 34, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {sbExpanded ? <K9Logo size={38} /> : <K9LogoMini size={34} />}
+            {sbExpanded ? <K9Logo size={38} variant="white" /> : <K9LogoMini size={34} variant="white" />}
           </div>
           <div style={{ overflow: "hidden", opacity: sbExpanded ? 1 : 0, transition: "opacity 0.1s", whiteSpace: "nowrap" }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: C.acc, fontFamily: "'Outfit', sans-serif", letterSpacing: "0.02em" }}>K9 Operations</div>
