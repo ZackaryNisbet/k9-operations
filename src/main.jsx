@@ -11,6 +11,15 @@ window.addEventListener('error', (e) => {
   }
 });
 window.addEventListener('unhandledrejection', (e) => {
+  // Supabase auth-js uses navigator.locks internally. When a lock is orphaned
+  // (e.g. React double-mount, tab backgrounding), the library recovers by
+  // stealing it. The evicted holder throws this AbortError — it's expected
+  // recovery behavior, not a real error. Suppress it.
+  if (e.reason?.name === 'AbortError' && String(e.reason?.message || '').includes('steal')) {
+    e.preventDefault();
+    console.warn('[Auth] Lock recovered via steal — this is normal');
+    return;
+  }
   const el = document.getElementById('root');
   if (el && !el.dataset.errShown) {
     el.dataset.errShown = '1';
@@ -183,9 +192,7 @@ function Root() {
 }
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <AuthProvider>
-      <Root />
-    </AuthProvider>
-  </React.StrictMode>
+  <AuthProvider>
+    <Root />
+  </AuthProvider>
 );
