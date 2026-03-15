@@ -727,7 +727,7 @@ export default function DashboardPage({
       )}
 
       {/* ═══ ROW 3: MAIN CONTENT — chart left, ops+funnel right ═══ */}
-      <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", gap: 6, height: 370, flexShrink: 0 }}>
 
         {/* LEFT: Revenue chart + composition bar */}
         {showRevenue !== false && (
@@ -773,7 +773,7 @@ export default function DashboardPage({
 
           {/* Operations */}
           {showOps !== false && (
-            <div style={{ ...card(0.10), padding: "10px 14px", flex: 1, display: "flex", flexDirection: "column" }} {...cardHover}>
+            <div style={{ ...card(0.10), padding: "10px 14px", flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }} {...cardHover}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={labelStyle}>Today's Ops</span>
@@ -789,10 +789,10 @@ export default function DashboardPage({
                   <ExpandBtn nav={nav} target="daily-ops" />
                 </div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, flex: 1, alignContent: "stretch" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
                 {opsProgress.slice(0, 8).map((op, i) => (
                   <div key={op.id} style={{
-                    padding: "8px 10px", borderRadius: 6, display: "flex", flexDirection: "column", justifyContent: "center",
+                    padding: "6px 10px", borderRadius: 6,
                     background: op.progress === 100 ? C.sucLt : C.bg,
                     border: `1px solid ${op.progress === 100 ? C.suc + "25" : "transparent"}`,
                     animation: `dashFadeIn 0.2s ${0.03 * i + 0.08}s both`,
@@ -813,13 +813,13 @@ export default function DashboardPage({
 
           {/* Acquisition Funnel — merged with funnel metrics */}
           {showFunnel !== false && (
-            <div style={{ ...card(0.14), padding: "10px 14px", flex: 1, display: "flex", flexDirection: "column" }} {...cardHover}>
+            <div style={{ ...card(0.14), padding: "10px 14px", flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }} {...cardHover}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, flexShrink: 0 }}>
                 <span style={labelStyle}>Acquisition Funnel</span>
                 <ExpandBtn nav={nav} target="funnel" />
               </div>
               {/* Funnel stages */}
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "space-evenly" }}>
+              <div style={{ display: "flex", flexDirection: "column" }}>
                 {[
                   { label: "Leads", count: funnelMetrics.leads, color: C.pri, pct: 100 },
                   { label: "Contacted", count: funnelMetrics.contacted, color: C.acc, pct: funnelMetrics.leads > 0 ? (funnelMetrics.contacted / funnelMetrics.leads) * 100 : 0, passRate: funnelMetrics.leadToContact },
@@ -862,7 +862,7 @@ export default function DashboardPage({
         </div>
       </div>
 
-      {/* spacer removed — main content row takes remaining space */}
+
 
       {/* ═══ ROW 4: BOTTOM STRIP — Discount + Refund as flat inline metrics ═══ */}
       <div style={{ ...card(0.18), padding: "8px 14px", flexShrink: 0, display: "flex", alignItems: "center", gap: 0 }} {...cardHover}>
@@ -922,24 +922,24 @@ function SnapPill({ label, value, color, sub }) {
 /* KPI Card — compact, with optional sparkline */
 function KPICard({ label, value, prefix = "", suffix = "", decimals = 0, trend, color, sparkData, delay = 0 }) {
   return (
-    <div style={{ ...card(delay), padding: "10px 14px" }}
+    <div style={{ ...card(delay), padding: "8px 12px" }}
       onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 3px 10px rgba(0,52,98,0.07)"; e.currentTarget.style.borderColor = C.border; }}
       onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,0.04)"; e.currentTarget.style.borderColor = C.borderLight; }}
     >
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
-        <span style={{ ...labelStyle, fontSize: 10 }}>{label}</span>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
+        <span style={{ ...labelStyle, fontSize: 9 }}>{label}</span>
         {trend != null && <TrendBadge value={trend} size="xs" />}
       </div>
-      <div style={{ fontSize: 22, fontWeight: 800, color: C.text, lineHeight: 1.1, animation: "dashCountUp 0.25s cubic-bezier(0.22,1,0.36,1) both" }}>
+      <div style={{ fontSize: 18, fontWeight: 800, color: C.text, lineHeight: 1.1, animation: "dashCountUp 0.25s cubic-bezier(0.22,1,0.36,1) both" }}>
         <AnimatedNumber value={value} prefix={prefix} suffix={suffix} decimals={decimals} />
       </div>
       {sparkData && sparkData.length > 1 && (
         <div style={{ marginTop: 4, marginLeft: -2, marginRight: -2 }}>
-          <Sparkline data={sparkData} width={200} height={28} color={color} />
+          <Sparkline data={sparkData} width={200} height={24} color={color} />
         </div>
       )}
       {!sparkData && (
-        <div style={{ width: "100%", height: 4, borderRadius: 2, background: `${color}12`, marginTop: 8 }}>
+        <div style={{ width: "100%", height: 3, borderRadius: 2, background: `${color}12`, marginTop: 6 }}>
           <div style={{ width: "55%", height: "100%", borderRadius: 2, background: color, opacity: 0.4, transformOrigin: "left", animation: `dashBarGrow 0.5s ${delay + 0.08}s cubic-bezier(0.22,1,0.36,1) both` }} />
         </div>
       )}
