@@ -7264,7 +7264,7 @@ const LC_FILTER_FIELDS = [
   { section:"Services", key:"postEval", label:"Post-Eval Appts", type:"number", ops:["=",">=","<=",">","<"] },
   { section:"Services", key:"tours", label:"Tours", type:"number", ops:["=",">=","<=",">","<"] },
   { section:"Services", key:"postTour", label:"Post-Tour Appts", type:"number", ops:["=",">=","<=",">","<"] },
-  { section:"Lifecycle", key:"stage", label:"Stage", type:"select", ops:["is","isNot"], options:["conversion","active","retention","cold"] },
+  { section:"Lifecycle", key:"stage", label:"Stage", type:"select", ops:["is","isNot"], options:["leads","active","lapsed","cold"] },
   { section:"Lifecycle", key:"source", label:"Source", type:"select", ops:["is","isNot"], options:["eval","tour","manual","ignite",""] },
   { section:"Lifecycle", key:"followUp", label:"Follow-Up", type:"followUpStatus", ops:["overdue","today","thisWeek","hasDate","noDate"] },
 ];
@@ -7305,7 +7305,7 @@ function applyStructuredFilters(clients, stats, tabMap, filters) {
       if (k === "nextRes") { if (op==="has") return !!s.nextRes; if (op==="missing") return !s.nextRes; }
       // Select (stage)
       if (k === "stage") {
-        const stg = tm.isCold ? "cold" : tm.isRetention ? "retention" : tm.isActive ? "active" : tm.isConversion ? "conversion" : "unknown";
+        const stg = tm.isCold ? "cold" : tm.isRetention ? "lapsed" : tm.isActive ? "active" : tm.isConversion ? "leads" : "unknown";
         if (op==="is") return stg === val; if (op==="isNot") return stg !== val;
       }
       // Select (source)
@@ -7753,10 +7753,10 @@ function GenericFilterPanel({ fields, filters, onChange, onClose, presets = [] }
 
 
 const DEFAULT_LIFECYCLE_BANNERS = {
-  conversion: "Leads auto-feed here after an Eval or Tour with no booking (+1 day follow-up). Log each outreach attempt, set the next follow-up date, and mark leads as Cold when they stop responding.",
+  leads: "Leads auto-feed here after an Eval or Tour with no booking (+1 day follow-up). Log each outreach attempt, set the next follow-up date, and mark leads as Cold when they stop responding.",
   active: "Active customers have a booking history and either have an upcoming reservation or visited recently. Clients move here automatically when they book or pay for the first time.",
-  retention: "Clients lapse here when they have no upcoming reservation and haven't visited within the configurable threshold (see Settings → Resort Policies). Booking a new appointment automatically moves them back to Active.",
-  cold: "Leads or lapsed clients you've manually marked as Cold. Click Revive to re-engage — you'll be prompted to log a note and set a new follow-up, and the client will return to Conversion or Retention based on their history.",
+  lapsed: "Clients lapse here when they have no upcoming reservation and haven't visited within the configurable threshold (see Settings → Resort Policies). Booking a new appointment automatically moves them back to Active.",
+  cold: "Leads or lapsed clients you've manually marked as Cold. Click Revive to re-engage — you'll be prompted to log a note and set a new follow-up, and the client will return to Leads or Lapsed based on their history.",
   all: "Aggregate view of every client record regardless of lifecycle stage. Use the search bar or column headers to sort and find any client quickly.",
 };
 
@@ -7764,7 +7764,7 @@ const DEFAULT_LIFECYCLE_BANNERS = {
 // CLIENTS PAGE — Customer Lifecycle
 // ═══════════════════════════════════════════════════════════════════════════
 function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setLcFilters, setLcFilterOpen, locationSlug }) {
-  const [activeTab, setActiveTab] = useState("conversion");
+  const [activeTab, setActiveTab] = useState("leads");
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
@@ -7908,7 +7908,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     const active = all.filter(c => clientTabMap[c.id]?.isActive);
     const ret = all.filter(c => clientTabMap[c.id]?.isRetention);
     const cold = all.filter(c => clientTabMap[c.id]?.isCold);
-    return { conversion: conv, active, retention: ret, cold, all };
+    return { leads: conv, active, lapsed: ret, cold, all };
   }, [data.clients, search, clientTabMap, clientStats, activeTab]);
 
   // ── Apply sub-filters (structured filters, source filter, overdue toggle) ──
@@ -7920,7 +7920,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       list = applyStructuredFilters(list, clientStats, clientTabMap, lcFilters);
     }
     // Source filter (Conversion tab only)
-    if (activeTab === "conversion" && sourceFilter.size > 0) {
+    if (activeTab === "leads" && sourceFilter.size > 0) {
       list = list.filter(c => {
         const src = getClientSource(c);
         if (sourceFilter.has("eval") && src.hasEval) return true;
@@ -7934,7 +7934,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     if (showOverdueOnly) {
       const today = todayStr();
       list = list.filter(c => {
-        const tab = activeTab === "conversion" ? "conversion" : activeTab === "retention" ? "retention" : null;
+        const tab = activeTab === "leads" ? "conversion" : activeTab === "lapsed" ? "retention" : null;
         if (!tab) return false;
         const fu = c.lifecycle?.[tab]?.followUpDate;
         return fu && fu < today;
@@ -7957,7 +7957,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           case "daysSince": va = sa.daysSinceLast??9999; vb = sb.daysSinceLast??9999; break;
           case "totalSpent": va = sa.totalSpent||0; vb = sb.totalSpent||0; break;
           case "nextRes": va = sa.nextRes?.checkIn||"zzz"; vb = sb.nextRes?.checkIn||"zzz"; break;
-          case "followUp": { const t = activeTab==="retention"?"retention":"conversion"; va = a.lifecycle?.[t]?.followUpDate||"zzz"; vb = b.lifecycle?.[t]?.followUpDate||"zzz"; break; }
+          case "followUp": { const t = activeTab==="lapsed"?"retention":"conversion"; va = a.lifecycle?.[t]?.followUpDate||"zzz"; vb = b.lifecycle?.[t]?.followUpDate||"zzz"; break; }
           case "coldDate": va = a.lifecycle?.coldDate||""; vb = b.lifecycle?.coldDate||""; break;
           case "totalPaid": va = sa.totalSpent||0; vb = sb.totalSpent||0; break;
           case "totalAppts": va = sa.totalRes||0; vb = sb.totalRes||0; break;
@@ -7988,7 +7988,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     const newClients = data.clients.map(c => {
       if (c.id !== clientId) return c;
       const lc = c.lifecycle || { conversion: { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }, retention: { notes:"",followUpDate:"",updates:[] }, cold:false, coldDate:"", coldFrom:"" };
-      const tabKey = isRevive ? (lc.coldFrom || "conversion") : lcTab;
+      const tabKey = isRevive ? ((lc.coldFrom === "retention" || lc.coldFrom === "lapsed") ? "retention" : "conversion") : lcTab;
       const oldDate = lc[tabKey]?.followUpDate || "";
       const entry = { id: gid(), notes: logNotes, previousFollowUp: oldDate, newFollowUp: logDate, loggedBy: profile?.full_name || profile?.email || "Staff", loggedAt: new Date().toISOString() };
       const updatedTab = { ...(lc[tabKey]||{}), notes: "", followUpDate: logDate, updates: [entry, ...(lc[tabKey]?.updates||[])] };
@@ -8012,7 +8012,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       if (c.id !== clientId) return c;
       return {
         ...c,
-        lifecycle: { ...(c.lifecycle||{}), cold: true, coldDate: today, coldFrom: activeTab === "retention" ? "retention" : "conversion" },
+        lifecycle: { ...(c.lifecycle||{}), cold: true, coldDate: today, coldFrom: activeTab === "lapsed" ? "lapsed" : "leads" },
         lifecycleEvents: [...(c.lifecycleEvents||[]), { event: "marked_cold", date: today, details: `Marked as cold from ${activeTab}` }]
       };
     });
@@ -8086,9 +8086,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Tab config ──
   const tabDefs = [
-    { id: "conversion", label: "Leads", count: tabLists.conversion.length, color: C.acc },
+    { id: "leads", label: "Leads", count: tabLists.leads.length, color: C.acc },
     { id: "active", label: "Active Customers", count: tabLists.active.length, color: C.pri },
-    { id: "retention", label: "Lapsed", count: tabLists.retention.length, color: C.dan },
+    { id: "lapsed", label: "Lapsed", count: tabLists.lapsed.length, color: C.dan },
     { id: "cold", label: "Cold", count: tabLists.cold.length, color: C.textSec },
     { id: "all", label: "All", count: tabLists.all.length, color: C.info },
   ];
@@ -8111,7 +8111,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // Load booking drafts when conversion tab is shown — refresh each time tab is opened
   useEffect(() => {
-    if (activeTab === "conversion" && locationSlug) {
+    if (activeTab === "leads" && locationSlug) {
       setDraftsLoaded(false);
       supabase.rpc("get_booking_drafts", { p_location_slug: locationSlug }).then(
         ({ data: d, error: e }) => {
@@ -8324,7 +8324,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Revive button cell ──
   const renderReviveBtn = (client) => (
-    <button onClick={(e) => { e.stopPropagation(); const rect=e.currentTarget.getBoundingClientRect(); setLogPopover({ clientId:client.id, tab:client.lifecycle?.coldFrom||"conversion", isRevive:true, x:rect.left, y:rect.bottom+4 }); setLogNotes(""); setLogDate(""); }}
+    <button onClick={(e) => { e.stopPropagation(); const rect=e.currentTarget.getBoundingClientRect(); setLogPopover({ clientId:client.id, tab:(client.lifecycle?.coldFrom === "retention" || client.lifecycle?.coldFrom === "lapsed") ? "retention" : "conversion", isRevive:true, x:rect.left, y:rect.bottom+4 }); setLogNotes(""); setLogDate(""); }}
       style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${C.suc}30`,background:`${C.suc}08`,color:C.suc,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
       Revive
     </button>
@@ -8346,8 +8346,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Grid templates per tab ──
   const getGrid = () => {
-    if (activeTab === "conversion") return "minmax(120px,1.5fr) minmax(80px,1fr) 60px minmax(100px,1.2fr) minmax(90px,1fr) minmax(100px,1.5fr) 100px 60px";
-    if (activeTab === "retention") return "minmax(110px,1.3fr) minmax(80px,1fr) 50px minmax(90px,1fr) minmax(85px,0.9fr) minmax(90px,1.3fr) 90px minmax(70px,0.8fr) minmax(65px,0.7fr) 55px 55px";
+    if (activeTab === "leads") return "minmax(120px,1.5fr) minmax(80px,1fr) 60px minmax(100px,1.2fr) minmax(90px,1fr) minmax(100px,1.5fr) 100px 60px";
+    if (activeTab === "lapsed") return "minmax(110px,1.3fr) minmax(80px,1fr) 50px minmax(90px,1fr) minmax(85px,0.9fr) minmax(90px,1.3fr) 90px minmax(70px,0.8fr) minmax(65px,0.7fr) 55px 55px";
     if (activeTab === "cold") return "minmax(120px,1.5fr) minmax(80px,1fr) 60px minmax(100px,1.2fr) minmax(90px,1fr) minmax(120px,1.5fr) 70px";
     // Active / All
     const base = "minmax(80px,1fr) minmax(80px,1fr) minmax(80px,0.8fr) 50px";
@@ -8381,7 +8381,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           </Btn>
           <Btn variant="ghost" onClick={() => {
             // Export current lifecycle tab to CSV
-            const headers = activeTab === "conversion"
+            const headers = activeTab === "leads"
               ? ["First Name","Last Name","Phone","Email","Dogs","Source","Follow-Up Date","Notes"]
               : activeTab === "active"
               ? ["First Name","Last Name","Phone","Email","Dogs","Reservations","Last Visit","Days Since","Total Spent"]
@@ -8392,7 +8392,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               const f = c.fields || {};
               const dogs = (data.dogs || []).filter(d => d.clientId === c.id).map(d => d.fields?.name).join(", ");
               const base = [f.first_name||"", f.last_name||"", f.phone||"", f.email||"", dogs];
-              if (activeTab === "conversion") {
+              if (activeTab === "leads") {
                 const lc = c.lifecycle?.conversion || {};
                 return [...base, c.referralSource || "", lc.followUpDate || "", lc.notes || ""];
               } else if (activeTab === "active") {
@@ -8433,7 +8433,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             {search && <button onClick={()=>setSearch("")} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
             {/* Filter pills area */}
             <div style={{display:"flex",gap:4,marginLeft:8,flexShrink:0}}>
-              {activeTab === "conversion" && <>
+              {activeTab === "leads" && <>
                 {[{id:"eval",label:"Eval",color:C.acc},{id:"tour",label:"Tour",color:C.info},{id:"ignite",label:"Ignite",color:"#F97316"},{id:"online",label:"Online Booking",color:C.pri}].map(f => {
                   const on = sourceFilter.has(f.id);
                   return <button key={f.id} onClick={()=>toggleSourceFilter(f.id)} style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on?f.color:C.border}`,background:on?f.color:"transparent",color:on?"#fff":C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{f.label}</button>;
@@ -8441,7 +8441,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                 {sourceFilter.size > 0 && <button onClick={()=>setSourceFilter(new Set())} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:"0 2px",display:"flex",alignItems:"center"}} title="Clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
                 <div style={{width:1,height:20,background:C.border,margin:"0 4px",flexShrink:0}} />
               </>}
-              {(activeTab === "conversion" || activeTab === "retention") && (
+              {(activeTab === "leads" || activeTab === "lapsed") && (
                 <button onClick={()=>setShowOverdueOnly(v=>!v)}
                   style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${showOverdueOnly?C.dan:C.border}`,background:showOverdueOnly?`${C.dan}12`:"transparent",color:showOverdueOnly?C.dan:C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>
                   Overdue
@@ -8541,7 +8541,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         })()}
 
         {/* ═══ TABLE HEADER + ROWS ═══ */}
-        {activeTab === "conversion" && (() => {
+        {activeTab === "leads" && (() => {
           const grid = getGrid();
           return <>
             <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
@@ -8555,7 +8555,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               <div></div>
             </div>
             {activeList.length === 0 ? (
-              <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No conversion leads{search?" matching search":""}</div></div>
+              <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No leads{search?" matching search":""}</div></div>
             ) : activeList.map(c => {
               const isExp = expandedUpdates.has(c.id);
               const updates = c.lifecycle?.conversion?.updates || [];
@@ -8793,7 +8793,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           </>;
         })()}
 
-        {activeTab === "retention" && (() => {
+        {activeTab === "lapsed" && (() => {
           const grid = getGrid();
           return <>
             <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
@@ -8810,7 +8810,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               <div></div>
             </div>
             {activeList.length === 0 ? (
-              <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No retention clients{search?" matching search":""}</div></div>
+              <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No lapsed clients{search?" matching search":""}</div></div>
             ) : activeList.map(c => {
               const s = clientStats[c.id] || {};
               const isExp = expandedUpdates.has(c.id);
@@ -8864,7 +8864,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             {activeList.length === 0 ? (
               <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No cold clients{search?" matching search":""}</div></div>
             ) : activeList.map(c => {
-              const fromTab = c.lifecycle?.coldFrom || "conversion";
+              const fromTab = (c.lifecycle?.coldFrom === "retention" || c.lifecycle?.coldFrom === "lapsed") ? "retention" : "conversion";
               const lastUpdate = c.lifecycle?.[fromTab]?.updates?.[0];
               return (
                 <div key={c.id}>
@@ -9870,8 +9870,8 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
         {activeTab === "lifecycle" && (() => {
           // Merge all lifecycle events and user logs into one chronological timeline
           const sysEvents = (client.lifecycleEvents || []).map(e => ({ type: "system", sortKey: e.date || "", ...e }));
-          const convUpdates = (client.lifecycle?.conversion?.updates || []).map(u => ({ type: "user_log", tab: "conversion", sortKey: u.loggedAt ? u.loggedAt.slice(0,10) : "", ...u }));
-          const retUpdates = (client.lifecycle?.retention?.updates || []).map(u => ({ type: "user_log", tab: "retention", sortKey: u.loggedAt ? u.loggedAt.slice(0,10) : "", ...u }));
+          const convUpdates = (client.lifecycle?.conversion?.updates || []).map(u => ({ type: "user_log", tab: "leads", sortKey: u.loggedAt ? u.loggedAt.slice(0,10) : "", ...u }));
+          const retUpdates = (client.lifecycle?.retention?.updates || []).map(u => ({ type: "user_log", tab: "lapsed", sortKey: u.loggedAt ? u.loggedAt.slice(0,10) : "", ...u }));
           const allEvents = [...sysEvents, ...convUpdates, ...retUpdates].sort((a, b) => (b.sortKey || "").localeCompare(a.sortKey || ""));
 
           const sysLabels = {
@@ -9913,7 +9913,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                             <div style={{flex:1,minWidth:0}}>
                               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
                                 <span style={{fontSize:13,fontWeight:700,color:C.text}}>{item.loggedBy || "Staff"}</span>
-                                <Badge color="default" size="sm">{item.tab === "conversion" ? "Leads" : "Lapsed"}</Badge>
+                                <Badge color="default" size="sm">{item.tab === "leads" ? "Leads" : "Lapsed"}</Badge>
                                 {dt && <span style={{fontSize:11,color:C.textMut}}>{dt.toLocaleDateString()} {dt.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</span>}
                               </div>
                               <div style={{fontSize:13,color:C.text,lineHeight:1.5,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{item.notes}</div>
