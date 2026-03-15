@@ -699,7 +699,7 @@ export default function DashboardPage({
 
       {/* ═══ ROW 1: LIVE SNAPSHOT — thin strip ═══ */}
       {showSnapshot !== false && (
-        <div style={{ ...card(0.02), padding: "5px 12px", flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }} {...cardHover}>
+        <div style={{ ...card(0.02), padding: "6px 14px", flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }} {...cardHover}>
           <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
             <div style={{ width: 5, height: 5, borderRadius: "50%", background: C.suc, animation: "dashPulse 2s infinite" }} />
             <span style={{ ...labelStyle, fontSize: 8 }}>LIVE</span>
@@ -727,11 +727,11 @@ export default function DashboardPage({
       )}
 
       {/* ═══ ROW 3: MAIN CONTENT — chart left, ops+funnel right ═══ */}
-      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "3fr 2fr", gap: 6, overflow: "hidden" }}>
+      <div style={{ display: "flex", gap: 6, height: 370, flexShrink: 0 }}>
 
         {/* LEFT: Revenue chart + composition bar */}
         {showRevenue !== false && (
-          <div style={{ ...card(0.08), padding: "10px 14px", display: "flex", flexDirection: "column", overflow: "hidden" }} {...cardHover}>
+          <div style={{ ...card(0.08), padding: "10px 14px", display: "flex", flexDirection: "column", overflow: "hidden", flex: 3, minWidth: 0 }} {...cardHover}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={labelStyle}>Revenue Trend</span>
@@ -769,11 +769,11 @@ export default function DashboardPage({
         )}
 
         {/* RIGHT: Stacked — Ops + Funnel */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, overflow: "hidden", minHeight: 0 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, minHeight: 0, flex: 2, minWidth: 0 }}>
 
           {/* Operations */}
           {showOps !== false && (
-            <div style={{ ...card(0.10), padding: "8px 12px", flexShrink: 0 }} {...cardHover}>
+            <div style={{ ...card(0.10), padding: "10px 14px", flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }} {...cardHover}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={labelStyle}>Today's Ops</span>
@@ -789,22 +789,22 @@ export default function DashboardPage({
                   <ExpandBtn nav={nav} target="daily-ops" />
                 </div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 4 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
                 {opsProgress.slice(0, 8).map((op, i) => (
                   <div key={op.id} style={{
-                    padding: "4px 8px", borderRadius: 6,
+                    padding: "6px 10px", borderRadius: 6,
                     background: op.progress === 100 ? C.sucLt : C.bg,
                     border: `1px solid ${op.progress === 100 ? C.suc + "25" : "transparent"}`,
                     animation: `dashFadeIn 0.2s ${0.03 * i + 0.08}s both`,
                   }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>
-                      <span style={{ fontSize: 9, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{op.label}</span>
-                      <span style={{ fontSize: 8, fontWeight: 700, color: op.progress === 100 ? C.suc : C.pri, flexShrink: 0, marginLeft: 3 }}>{op.progress}%</span>
+                      <span style={{ fontSize: 10, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{op.label}</span>
+                      <span style={{ fontSize: 9, fontWeight: 700, color: op.progress === 100 ? C.suc : C.pri, flexShrink: 0, marginLeft: 3 }}>{op.progress}%</span>
                     </div>
-                    <div style={{ height: 3, background: op.progress === 100 ? C.suc + "20" : C.borderLight, borderRadius: 2, overflow: "hidden" }}>
+                    <div style={{ height: 6, background: op.progress === 100 ? C.suc + "20" : C.borderLight, borderRadius: 3, overflow: "hidden", marginTop: 4 }}>
                       <div style={{ width: `${op.progress}%`, height: "100%", background: op.progress === 100 ? C.suc : C.pri, borderRadius: 2, transformOrigin: "left", animation: `dashBarGrow 0.4s ${0.03 * i + 0.1}s cubic-bezier(0.22,1,0.36,1) both` }} />
                     </div>
-                    <div style={{ fontSize: 8, color: C.textMut, marginTop: 2, fontWeight: 500 }}>{op.countLabel || ""}</div>
+                    <div style={{ fontSize: 9, color: C.textMut, marginTop: 3, fontWeight: 500 }}>{op.countLabel || ""}</div>
                   </div>
                 ))}
               </div>
@@ -813,19 +813,19 @@ export default function DashboardPage({
 
           {/* Acquisition Funnel — merged with funnel metrics */}
           {showFunnel !== false && (
-            <div style={{ ...card(0.14), padding: "8px 12px", flexShrink: 0, display: "flex", flexDirection: "column" }} {...cardHover}>
+            <div style={{ ...card(0.14), padding: "10px 14px", flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }} {...cardHover}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, flexShrink: 0 }}>
                 <span style={labelStyle}>Acquisition Funnel</span>
                 <ExpandBtn nav={nav} target="funnel" />
               </div>
               {/* Funnel stages */}
-              <div style={{ flexShrink: 0 }}>
+              <div style={{ display: "flex", flexDirection: "column" }}>
                 {[
                   { label: "Leads", count: funnelMetrics.leads, color: C.pri, pct: 100 },
                   { label: "Contacted", count: funnelMetrics.contacted, color: C.acc, pct: funnelMetrics.leads > 0 ? (funnelMetrics.contacted / funnelMetrics.leads) * 100 : 0, passRate: funnelMetrics.leadToContact },
                   { label: "Customers", count: funnelMetrics.newCustomers, color: C.suc, pct: funnelMetrics.leads > 0 ? (funnelMetrics.newCustomers / funnelMetrics.leads) * 100 : 0, passRate: funnelMetrics.contactToCustomer },
                 ].map((stage, i) => (
-                  <div key={stage.label} style={{ marginBottom: i < 2 ? 4 : 0 }}>
+                  <div key={stage.label} style={{ marginBottom: i < 2 ? 6 : 0 }}>
                     {stage.passRate != null && (
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "0px 0", marginBottom: 1 }}>
                         <div style={{ height: 1, flex: 1, background: C.borderLight }} />
@@ -833,11 +833,11 @@ export default function DashboardPage({
                         <div style={{ height: 1, flex: 1, background: C.borderLight }} />
                       </div>
                     )}
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
-                      <span style={{ fontSize: 9, fontWeight: 600, color: C.text }}>{stage.label}</span>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: stage.color, fontVariantNumeric: "tabular-nums" }}>{stage.count}</span>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{stage.label}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: stage.color, fontVariantNumeric: "tabular-nums" }}>{stage.count}</span>
                     </div>
-                    <div style={{ height: 5, background: C.bg, borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ height: 10, background: C.bg, borderRadius: 5, overflow: "hidden" }}>
                       <div style={{
                         width: `${Math.max(stage.pct, stage.count > 0 ? 8 : 0)}%`, height: "100%",
                         background: `linear-gradient(90deg, ${stage.color}, ${stage.color}cc)`,
@@ -862,8 +862,10 @@ export default function DashboardPage({
         </div>
       </div>
 
+
+
       {/* ═══ ROW 4: BOTTOM STRIP — Discount + Refund as flat inline metrics ═══ */}
-      <div style={{ ...card(0.18), padding: "6px 14px", flexShrink: 0, display: "flex", alignItems: "center", gap: 0 }} {...cardHover}>
+      <div style={{ ...card(0.18), padding: "8px 14px", flexShrink: 0, display: "flex", alignItems: "center", gap: 0 }} {...cardHover}>
         {/* Discount metrics */}
         {showDiscountAnalysis !== false && (<>
           <span style={{ ...labelStyle, fontSize: 8, marginRight: 10 }}>DISCOUNTS</span>
@@ -964,8 +966,8 @@ function FlatMetric({ label, value, color, border }) {
       textAlign: "center", padding: "0 6px",
       borderLeft: border ? `1px solid ${C.borderLight}` : "none",
     }}>
-      <div style={{ fontSize: 12, fontWeight: 800, color, lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-      <div style={{ fontSize: 7, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 1 }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 800, color, lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      <div style={{ fontSize: 8, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 2 }}>{label}</div>
     </div>
   );
 }
@@ -974,8 +976,8 @@ function FlatMetric({ label, value, color, border }) {
 function InlineMetric({ label, value, color }) {
   return (
     <div style={{ display: "flex", alignItems: "baseline", gap: 4, padding: "0 6px" }}>
-      <span style={{ fontSize: 8, color: C.textMut, fontWeight: 500 }}>{label}</span>
-      <span style={{ fontSize: 12, fontWeight: 800, color, fontVariantNumeric: "tabular-nums" }}>{value}</span>
+      <span style={{ fontSize: 9, color: C.textMut, fontWeight: 500 }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 800, color, fontVariantNumeric: "tabular-nums" }}>{value}</span>
     </div>
   );
 }
