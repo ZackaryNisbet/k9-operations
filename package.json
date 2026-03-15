@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "prebuild": "node scripts/generate-test-results.js",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:report": "node scripts/generate-test-results.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",
