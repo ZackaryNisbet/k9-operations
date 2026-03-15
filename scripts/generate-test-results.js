@@ -5,9 +5,16 @@ import { startVitest } from 'vitest/node';
 import { writeFileSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import testDescriptions from '../src/__tests__/testDescriptions.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const outputPath = resolve(__dirname, '..', 'public', 'test-results.json');
+
+// Build a lookup key from Vitest's ancestorTitles + title using " > " separator.
+// This matches the keys in testDescriptions.js.
+function buildDescriptionKey(ancestorTitles, title) {
+  return [...(ancestorTitles || []), title].join(' > ');
+}
 
 async function run() {
   const vitest = await startVitest('test', [], {
@@ -34,15 +41,28 @@ async function run() {
     process.exit(1);
   }
 
+  // Track description coverage
+  let matched = 0;
+  let unmatched = 0;
+  const unmatchedNames = [];
+
   // Transform into our dashboard format
   const timestamp = new Date().toISOString();
   const testSuites = (raw.testResults || []).map(suite => {
     const fileName = suite.name.split('/').pop();
-    const tests = (suite.assertionResults || []).map(t => ({
-      name: t.fullName || t.title,
-      status: t.status === 'passed' ? 'passed' : t.status === 'failed' ? 'failed' : 'skipped',
-      duration: t.duration || 0,
-    }));
+    const tests = (suite.assertionResults || []).map(t => {
+      const key = buildDescriptionKey(t.ancestorTitles, t.title);
+      const description = testDescriptions[key] || null;
+      if (description) { matched++; } else { unmatched++; unmatchedNames.push(key); }
+      return {
+        name: t.fullName || t.title,
+        title: t.title,
+        ancestors: t.ancestorTitles || [],
+        description,
+        status: t.status === 'passed' ? 'passed' : t.status === 'failed' ? 'failed' : 'skipped',
+        duration: t.duration || 0,
+      };
+    });
     const passed = tests.filter(t => t.status === 'passed').length;
     const failed = tests.filter(t => t.status === 'failed').length;
     const skipped = tests.filter(t => t.status === 'skipped').length;
@@ -78,6 +98,11 @@ async function run() {
   writeFileSync(outputPath, JSON.stringify(results, null, 2));
   console.log(`Test results written to ${outputPath}`);
   console.log(`  Total: ${totalTests} | Passed: ${totalPassed} | Failed: ${totalFailed} | Pass rate: ${results.summary.passRate}%`);
+  console.log(`  Descriptions: ${matched} matched, ${unmatched} missing`);
+  if (unmatchedNames.length > 0) {
+    console.log('  Missing descriptions for:');
+    unmatchedNames.forEach(n => console.log(`    - "${n}"`));
+  }
 
   // Clean up raw file
   try { unlinkSync(outputPath + '.raw'); } catch {}
