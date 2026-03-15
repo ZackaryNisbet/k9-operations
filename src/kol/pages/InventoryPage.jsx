@@ -566,7 +566,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         if (currentWeekStart === thisWeekStart) {
           const { data: created, error: createErr } = await supabase
             .from("inventory_snapshots")
-            .insert({
+            .upsert({
               location_id: locationId,
               week_start: currentWeekStart,
               status: "in_progress",
@@ -574,11 +574,22 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
               notes: null,
               completed_at: null,
               completed_by: null,
-            })
+            }, { onConflict: "location_id,week_start", ignoreDuplicates: true })
             .select()
             .single();
-          if (createErr) throw createErr;
-          snap = created;
+          if (createErr && createErr.code !== "PGRST116") throw createErr;
+          // If upsert returned nothing (race condition), re-fetch
+          if (!created) {
+            const { data: refetched } = await supabase
+              .from("inventory_snapshots")
+              .select("*")
+              .eq("location_id", locationId)
+              .eq("week_start", currentWeekStart)
+              .maybeSingle();
+            snap = refetched;
+          } else {
+            snap = created;
+          }
         }
       }
       setSnapshot(snap);
