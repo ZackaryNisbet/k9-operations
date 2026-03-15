@@ -25,6 +25,7 @@ import RequiredFieldsTab from "../settings/RequiredFieldsTab";
 import ChecklistTemplatesTab from "../settings/ChecklistTemplatesTab";
 import RetentionThresholdsTab from "../settings/RetentionThresholdsTab";
 import IgniteSettingsTab from "../settings/IgniteSettingsTab";
+import IgniteParserConfigTab from "../settings/IgniteParserConfigTab";
 
 function SettingsPage({ profile: parentProfile, addGlobalToast }) {
   const [tab, setTab] = useState(null); // null = show grid, set = show detail
@@ -47,6 +48,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       label: "Ignite",
       cards: [
         { id: "ignite-settings", label: "Ignite Configuration", desc: "Configure Ignite profile, email forwarding, and connection status per location" },
+        { id: "ignite-parser", label: "Email Parser Rules", desc: "Configure email parsing rules and map inbound leads to Gingr customer records" },
       ],
     },
     {
@@ -100,6 +102,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
         return <ChecklistTemplatesTab />;
       case "ignite-settings":
         return <IgniteSettingsTab />;
+      case "ignite-parser":
+        return <IgniteParserConfigTab />;
       default:
         return null;
     }
