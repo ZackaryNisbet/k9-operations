@@ -38,6 +38,7 @@ import EnterpriseAttendance from "./enterprise/Attendance";
 import EnterpriseUserManagement from "./enterprise/UserManagement";
 import InventoryPage from "./pages/InventoryPage";
 import InventoryReportPage from "./pages/InventoryReportPage";
+import CashTipsPage from "./pages/CashTipsPage";
 
 class LeanAppErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null, info: null }; }
@@ -60,6 +61,7 @@ const LEAN_NAV_ITEMS = [
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
   { id: "ops-hub", label: "Operations", icon: "Clipboard" },
   { id: "inventory", label: "Inventory", icon: "Package" },
+  { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "TV", icon: "Monitor" },
   { id: "roadmap", label: "Roadmap", icon: "Map" },
@@ -281,7 +283,7 @@ function LeanAppInner() {
   }, [currentLocation, user?.id, liveAuditLog.length, mockData?.clients]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -326,6 +328,7 @@ function LeanAppInner() {
       case "enterprise-users": return "User Management";
       case "inventory": return "Inventory";
       case "inventory-report": return "Inventory Reports";
+      case "cash-tips": return "Cash Tips";
       default: return pg;
     }
   }, [mockData]);
@@ -411,6 +414,7 @@ function LeanAppInner() {
       "settings": null, // settings handles its own per-tab permissions
       "inventory": "Inventory Management",
       "inventory-report": "Inventory Management",
+      "cash-tips": null,
       "enterprise-ops": "Enterprise View",
       "enterprise-attendance": "Enterprise View",
       "enterprise-users": "Enterprise View",
@@ -535,6 +539,8 @@ function LeanAppInner() {
         return <InventoryPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "inventory-report":
         return <InventoryReportPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "cash-tips":
+        return <CashTipsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "roadmap":
         return <RoadmapPage nav={nav} />;
       case "settings":
