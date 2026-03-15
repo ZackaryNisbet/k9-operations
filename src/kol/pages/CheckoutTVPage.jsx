@@ -1082,7 +1082,7 @@ function CheckoutTVPage({ data, nav, profile }) {
 
       {/* Floating Exit Button — subtle, top-left corner */}
       <button
-        onClick={() => nav("operations")}
+        onClick={() => nav("ops-hub")}
         onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.background = "rgba(255,255,255,0.15)"; }}
         onMouseLeave={e => { e.currentTarget.style.opacity = 0.3; e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
         style={{
