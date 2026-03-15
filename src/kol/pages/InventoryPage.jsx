@@ -4,7 +4,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
 import { C, todayStr, addDays, gid, fmtDate } from "../../shared/theme";
-import { Btn, Modal, Card, Inp } from "../../shared/ui";
+import { Btn, Modal, Card, Inp, Badge, CustomSelect } from "../../shared/ui";
 import { I } from "../../shared/icons";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -33,6 +33,44 @@ function clampPositive(val) {
   const n = parseInt(val, 10);
   if (isNaN(n) || n < 0) return 0;
   return n;
+}
+
+// ─── Dog-Days Helpers ─────────────────────────────────────────────────────────
+
+function getDogDaysForWeek(reservations, weekStart) {
+  if (!reservations || !reservations.length) return 0;
+  const start = new Date(weekStart + "T00:00:00");
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6); // Sunday
+  let totalDogDays = 0;
+  const validRes = reservations.filter(r => r.status !== "cancelled");
+  for (const res of validRes) {
+    const checkIn = new Date(res.checkIn + "T00:00:00");
+    const checkOut = new Date(res.checkOut + "T00:00:00");
+    const overlapStart = Math.max(checkIn.getTime(), start.getTime());
+    const overlapEnd = Math.min(checkOut.getTime(), end.getTime());
+    if (overlapEnd >= overlapStart) {
+      const days = Math.ceil((overlapEnd - overlapStart) / (1000 * 60 * 60 * 24)) + 1;
+      totalDogDays += days;
+    }
+  }
+  return totalDogDays;
+}
+
+function getAvgDogsPerDay(reservations, weekStart) {
+  if (!reservations || !reservations.length) return 0;
+  const start = new Date(weekStart + "T00:00:00");
+  let total = 0;
+  for (let d = 0; d < 7; d++) {
+    const day = new Date(start);
+    day.setDate(day.getDate() + d);
+    const dayStr = day.toISOString().split('T')[0];
+    const dogsThisDay = reservations.filter(r =>
+      r.status !== "cancelled" && r.checkIn <= dayStr && r.checkOut >= dayStr
+    ).length;
+    total += dogsThisDay;
+  }
+  return Math.round(total / 7);
 }
 
 // ─── Skeleton Loader ──────────────────────────────────────────────────────────
@@ -476,6 +514,714 @@ function SubmitModal({ onClose, onConfirm, saving }) {
   );
 }
 
+// ─── Catalog Editor Row ───────────────────────────────────────────────────────
+
+const CatalogEditorRow = React.memo(function CatalogEditorRow({ item, onChange, onToggleActive }) {
+  const [hovered, setHovered] = useState(false);
+
+  const cellStyle = (width, align = "left") => ({
+    fontSize: 12,
+    padding: "4px 6px",
+    borderRadius: 6,
+    border: `1px solid ${C.border}`,
+    background: C.surface,
+    fontFamily: "inherit",
+    color: C.text,
+    outline: "none",
+    width: width || "100%",
+    textAlign: align,
+    boxSizing: "border-box",
+  });
+
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "1.8fr 0.7fr 0.8fr 0.8fr 0.8fr 0.7fr 0.5fr 0.6fr 0.6fr 0.6fr 0.5fr 50px",
+        gap: 6,
+        alignItems: "center",
+        padding: "6px 12px",
+        borderBottom: `1px solid ${C.borderLight}`,
+        background: !item.is_active ? (C.bg + "80") : hovered ? C.surfaceHover : C.surface,
+        opacity: item.is_active ? 1 : 0.6,
+        transition: "background 0.15s",
+      }}
+    >
+      <input
+        value={item.item_name || ""}
+        onChange={e => onChange("item_name", e.target.value)}
+        placeholder="Item name"
+        style={{ ...cellStyle(), fontWeight: 600 }}
+      />
+      <input
+        value={item.size || ""}
+        onChange={e => onChange("size", e.target.value)}
+        placeholder="Size"
+        style={cellStyle()}
+      />
+      <input
+        value={item.vendor || ""}
+        onChange={e => onChange("vendor", e.target.value)}
+        placeholder="Vendor"
+        style={cellStyle()}
+      />
+      <input
+        value={item.vendor_link || ""}
+        onChange={e => onChange("vendor_link", e.target.value)}
+        placeholder="URL"
+        style={{ ...cellStyle(), fontSize: 11 }}
+      />
+      <input
+        value={item.category || ""}
+        onChange={e => onChange("category", e.target.value)}
+        placeholder="Category"
+        style={cellStyle()}
+      />
+      <input
+        value={item.subcategory || ""}
+        onChange={e => onChange("subcategory", e.target.value)}
+        placeholder="Subcat"
+        style={cellStyle()}
+      />
+      <input
+        value={item.gl_account || ""}
+        onChange={e => onChange("gl_account", e.target.value)}
+        placeholder="GL"
+        style={cellStyle()}
+      />
+      <input
+        type="number"
+        min="0"
+        value={item.par_level ?? ""}
+        onChange={e => onChange("par_level", e.target.value === "" ? null : parseInt(e.target.value, 10))}
+        placeholder="Par"
+        style={cellStyle("100%", "center")}
+      />
+      <input
+        type="number"
+        min="0"
+        value={item.min_reorder_qty ?? ""}
+        onChange={e => onChange("min_reorder_qty", e.target.value === "" ? null : parseInt(e.target.value, 10))}
+        placeholder="Min"
+        style={cellStyle("100%", "center")}
+      />
+      <input
+        type="number"
+        min="0"
+        step="0.01"
+        value={item.unit_price ?? ""}
+        onChange={e => onChange("unit_price", e.target.value === "" ? null : parseFloat(e.target.value))}
+        placeholder="$0.00"
+        style={cellStyle("100%", "right")}
+      />
+      <input
+        type="number"
+        min="0"
+        value={item.sort_order ?? ""}
+        onChange={e => onChange("sort_order", e.target.value === "" ? null : parseInt(e.target.value, 10))}
+        placeholder="#"
+        style={cellStyle("100%", "center")}
+      />
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <button
+          onClick={onToggleActive}
+          title={item.is_active ? "Deactivate" : "Activate"}
+          style={{
+            width: 28,
+            height: 28,
+            borderRadius: 7,
+            border: `1.5px solid ${item.is_active ? C.suc + "60" : C.dan + "60"}`,
+            background: item.is_active ? C.sucLt : C.danLt,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: item.is_active ? C.suc : C.dan,
+            transition: "all 0.15s",
+          }}
+        >
+          {item.is_active ? <I.Check /> : <I.X />}
+        </button>
+      </div>
+    </div>
+  );
+});
+
+// ─── Catalog Editor Component ─────────────────────────────────────────────────
+
+function CatalogEditor({ locationId, onClose, addGlobalToast, onCatalogChange }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchFilter, setSearchFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
+  const saveTimers = useRef({});
+
+  // Load all catalog items (including inactive)
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from("inventory_catalog")
+          .select("*")
+          .eq("location_id", locationId)
+          .order("sort_order", { ascending: true });
+        if (error) throw error;
+        setItems(data || []);
+      } catch (err) {
+        console.error("Catalog load error:", err);
+        if (addGlobalToast) addGlobalToast({ type: "error", message: "Failed to load catalog." });
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [locationId, addGlobalToast]);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(saveTimers.current).forEach(t => clearTimeout(t));
+    };
+  }, []);
+
+  // Unique categories for filter
+  const categories = useMemo(() =>
+    Array.from(new Set(items.map(i => i.category).filter(Boolean))).sort(),
+    [items]
+  );
+
+  // Filtered items
+  const filteredItems = useMemo(() => {
+    let result = items;
+    if (categoryFilter) {
+      result = result.filter(i => i.category === categoryFilter);
+    }
+    if (searchFilter.trim()) {
+      const q = searchFilter.toLowerCase().trim();
+      result = result.filter(i =>
+        (i.item_name || "").toLowerCase().includes(q) ||
+        (i.vendor || "").toLowerCase().includes(q) ||
+        (i.category || "").toLowerCase().includes(q) ||
+        (i.subcategory || "").toLowerCase().includes(q)
+      );
+    }
+    return result;
+  }, [items, searchFilter, categoryFilter]);
+
+  // Save a single item change with debounce
+  const saveItemField = useCallback((itemId, updates) => {
+    if (saveTimers.current[itemId]) clearTimeout(saveTimers.current[itemId]);
+
+    setSaveStatus("saving");
+    saveTimers.current[itemId] = setTimeout(async () => {
+      try {
+        const { error } = await supabase
+          .from("inventory_catalog")
+          .update({ ...updates, updated_at: new Date().toISOString() })
+          .eq("id", itemId);
+        if (error) throw error;
+        setSaveStatus("saved");
+        setTimeout(() => setSaveStatus("idle"), 2200);
+        if (onCatalogChange) onCatalogChange();
+      } catch (err) {
+        console.error("Catalog save error:", err);
+        setSaveStatus("error");
+        setTimeout(() => setSaveStatus("idle"), 3000);
+      }
+    }, 1500);
+  }, [onCatalogChange]);
+
+  // Handle field change on a row
+  const handleChange = useCallback((itemId, field, value) => {
+    setItems(prev => prev.map(i => i.id === itemId ? { ...i, [field]: value } : i));
+    saveItemField(itemId, { [field]: value });
+  }, [saveItemField]);
+
+  // Toggle is_active
+  const handleToggleActive = useCallback((itemId, currentActive) => {
+    const newActive = !currentActive;
+    setItems(prev => prev.map(i => i.id === itemId ? { ...i, is_active: newActive } : i));
+    // Save immediately (no debounce for toggle)
+    (async () => {
+      setSaveStatus("saving");
+      try {
+        const { error } = await supabase
+          .from("inventory_catalog")
+          .update({ is_active: newActive, updated_at: new Date().toISOString() })
+          .eq("id", itemId);
+        if (error) throw error;
+        setSaveStatus("saved");
+        setTimeout(() => setSaveStatus("idle"), 2200);
+        if (onCatalogChange) onCatalogChange();
+        if (addGlobalToast) addGlobalToast({ type: "success", message: newActive ? "Item activated." : "Item deactivated." });
+      } catch (err) {
+        console.error("Toggle active error:", err);
+        setSaveStatus("error");
+        setTimeout(() => setSaveStatus("idle"), 3000);
+      }
+    })();
+  }, [onCatalogChange, addGlobalToast]);
+
+  // Add new blank item
+  const handleAddNew = useCallback(async () => {
+    setSaveStatus("saving");
+    try {
+      const maxSort = items.reduce((max, i) => Math.max(max, i.sort_order || 0), 0);
+      const { data: newItem, error } = await supabase
+        .from("inventory_catalog")
+        .insert({
+          location_id: locationId,
+          item_name: "",
+          category: "",
+          subcategory: "",
+          vendor: "",
+          vendor_link: "",
+          gl_account: "",
+          size: "",
+          par_level: null,
+          min_reorder_qty: null,
+          unit_price: null,
+          sort_order: maxSort + 10,
+          is_active: true,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      setItems(prev => [newItem, ...prev]);
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus("idle"), 2200);
+      if (addGlobalToast) addGlobalToast({ type: "success", message: "New item added. Fill in the details." });
+    } catch (err) {
+      console.error("Add catalog item error:", err);
+      setSaveStatus("error");
+      setTimeout(() => setSaveStatus("idle"), 3000);
+      if (addGlobalToast) addGlobalToast({ type: "error", message: "Failed to add new item." });
+    }
+  }, [locationId, items, addGlobalToast]);
+
+  return (
+    <Modal title="Catalog Management" onClose={onClose} fullWidth>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, minHeight: 400 }}>
+        {/* Toolbar */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {/* Search */}
+          <div style={{ position: "relative", flex: "1 1 200px", minWidth: 180 }}>
+            <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.textMut, pointerEvents: "none" }}>
+              <I.Search />
+            </div>
+            <input
+              type="text"
+              placeholder="Search catalog..."
+              value={searchFilter}
+              onChange={e => setSearchFilter(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "8px 12px 8px 36px",
+                borderRadius: 9,
+                border: `1.5px solid ${C.border}`,
+                fontSize: 13,
+                fontFamily: "inherit",
+                color: C.text,
+                background: C.surface,
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+
+          {/* Category filter */}
+          <select
+            value={categoryFilter}
+            onChange={e => setCategoryFilter(e.target.value)}
+            style={{
+              padding: "8px 12px",
+              borderRadius: 9,
+              border: `1.5px solid ${C.border}`,
+              fontSize: 13,
+              fontFamily: "inherit",
+              color: categoryFilter ? C.text : C.textMut,
+              background: C.surface,
+              outline: "none",
+              minWidth: 140,
+            }}
+          >
+            <option value="">All Categories</option>
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+
+          {/* Add New */}
+          <Btn variant="accent" size="sm" icon={<I.Plus />} onClick={handleAddNew}>
+            Add New Item
+          </Btn>
+
+          {/* Save indicator */}
+          <span style={{
+            fontSize: 11,
+            fontWeight: 600,
+            color: saveStatus === "saving" ? C.info : saveStatus === "saved" ? C.suc : saveStatus === "error" ? C.dan : C.textMut,
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            transition: "color 0.3s",
+            marginLeft: "auto",
+          }}>
+            {saveStatus === "saving" && <><I.RefreshCw /> Saving...</>}
+            {saveStatus === "saved" && <><I.CheckCircle /> Saved</>}
+            {saveStatus === "error" && <><I.XCircle /> Save failed</>}
+          </span>
+        </div>
+
+        {/* Column headers */}
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "1.8fr 0.7fr 0.8fr 0.8fr 0.8fr 0.7fr 0.5fr 0.6fr 0.6fr 0.6fr 0.5fr 50px",
+          gap: 6,
+          padding: "6px 12px",
+          background: C.bg,
+          borderRadius: 8,
+          borderBottom: `1px solid ${C.borderLight}`,
+        }}>
+          {["Name", "Size", "Vendor", "Link", "Category", "Subcat", "GL", "Par", "Min Qty", "Price", "Sort", "Active"].map((h, i) => (
+            <div key={i} style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              {h}
+            </div>
+          ))}
+        </div>
+
+        {/* Items list */}
+        <div style={{ maxHeight: "calc(100vh - 320px)", overflowY: "auto", borderRadius: 8, border: `1px solid ${C.border}` }}>
+          {loading ? (
+            <div style={{ padding: 32, textAlign: "center", color: C.textMut }}>Loading catalog...</div>
+          ) : filteredItems.length === 0 ? (
+            <div style={{ padding: 32, textAlign: "center", color: C.textMut }}>
+              {searchFilter || categoryFilter ? "No items match your filter." : "No catalog items. Click 'Add New Item' to start."}
+            </div>
+          ) : (
+            filteredItems.map(item => (
+              <CatalogEditorRow
+                key={item.id}
+                item={item}
+                onChange={(field, value) => handleChange(item.id, field, value)}
+                onToggleActive={() => handleToggleActive(item.id, item.is_active)}
+              />
+            ))
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 8 }}>
+          <div style={{ fontSize: 12, color: C.textMut }}>
+            {filteredItems.length} item{filteredItems.length !== 1 ? "s" : ""} shown
+            {items.filter(i => !i.is_active).length > 0 && (
+              <span> ({items.filter(i => !i.is_active).length} inactive)</span>
+            )}
+          </div>
+          <Btn variant="secondary" onClick={onClose}>Done</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Depletion Rate Modal ─────────────────────────────────────────────────────
+
+function DepletionRateModal({ locationId, reservations, currentWeekStart, onClose }) {
+  const [depletionData, setDepletionData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [catalogMap, setCatalogMap] = useState({});
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        // Load depletion rates
+        const { data: rates, error: ratesErr } = await supabase
+          .from("inventory_depletion_rates")
+          .select("*")
+          .eq("location_id", locationId)
+          .order("week_start", { ascending: false });
+        if (ratesErr) throw ratesErr;
+
+        // Load catalog items for names
+        const { data: catalog, error: catErr } = await supabase
+          .from("inventory_catalog")
+          .select("id, item_name, unit_price, par_level, category")
+          .eq("location_id", locationId);
+        if (catErr) throw catErr;
+
+        const catMap = {};
+        (catalog || []).forEach(c => { catMap[c.id] = c; });
+        setCatalogMap(catMap);
+        setDepletionData(rates || []);
+      } catch (err) {
+        console.error("Depletion data load error:", err);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [locationId]);
+
+  // Compute aggregated per-item depletion stats
+  const itemStats = useMemo(() => {
+    if (!depletionData.length) return [];
+
+    // Group by catalog_item_id
+    const grouped = {};
+    depletionData.forEach(r => {
+      if (!grouped[r.catalog_item_id]) grouped[r.catalog_item_id] = [];
+      grouped[r.catalog_item_id].push(r);
+    });
+
+    const stats = [];
+    Object.entries(grouped).forEach(([itemId, records]) => {
+      if (records.length < 2) return; // Need 2+ weeks
+
+      const catItem = catalogMap[itemId];
+      if (!catItem) return;
+
+      // Sort by week_start descending
+      const sorted = [...records].sort((a, b) => b.week_start.localeCompare(a.week_start));
+
+      // Average weekly usage
+      const totalDepletion = sorted.reduce((s, r) => s + (r.depletion || 0), 0);
+      const avgWeeklyUsage = totalDepletion / sorted.length;
+
+      // Average rate per dog-day
+      const ratesWithDogDay = sorted.filter(r => r.rate_per_dog_day != null);
+      const avgRatePerDogDay = ratesWithDogDay.length > 0
+        ? ratesWithDogDay.reduce((s, r) => s + r.rate_per_dog_day, 0) / ratesWithDogDay.length
+        : null;
+
+      // Trend: compare recent half vs older half
+      const midpoint = Math.floor(sorted.length / 2);
+      const recentAvg = sorted.slice(0, Math.max(1, midpoint)).reduce((s, r) => s + (r.depletion || 0), 0) / Math.max(1, midpoint);
+      const olderAvg = sorted.slice(midpoint).reduce((s, r) => s + (r.depletion || 0), 0) / Math.max(1, sorted.length - midpoint);
+      const trend = recentAvg > olderAvg * 1.1 ? "up" : recentAvg < olderAvg * 0.9 ? "down" : "stable";
+
+      // Confidence
+      const weeksOfData = sorted.length;
+      const confidence = weeksOfData >= 9 ? "High" : weeksOfData >= 4 ? "Medium" : "Low";
+
+      // Current week dog-days for recommended par
+      const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart);
+      const avgDogDaysPerWeek = ratesWithDogDay.length > 0
+        ? ratesWithDogDay.reduce((s, r) => s + (r.dog_days || 0), 0) / ratesWithDogDay.length
+        : currentDogDays;
+
+      // Recommended par = coefficient x avg dog-days x 1.2 safety factor
+      const recommendedPar = avgRatePerDogDay != null
+        ? Math.ceil(avgRatePerDogDay * avgDogDaysPerWeek * 1.2)
+        : null;
+
+      stats.push({
+        itemId,
+        itemName: catItem.item_name,
+        category: catItem.category,
+        unitPrice: catItem.unit_price,
+        currentPar: catItem.par_level,
+        avgWeeklyUsage: +avgWeeklyUsage.toFixed(1),
+        avgRatePerDogDay: avgRatePerDogDay != null ? +avgRatePerDogDay.toFixed(4) : null,
+        trend,
+        confidence,
+        weeksOfData,
+        recommendedPar,
+      });
+    });
+
+    // Sort by highest usage
+    stats.sort((a, b) => b.avgWeeklyUsage - a.avgWeeklyUsage);
+    return stats;
+  }, [depletionData, catalogMap, reservations, currentWeekStart]);
+
+  // Header metrics
+  const headerMetrics = useMemo(() => {
+    // Unique weeks
+    const uniqueWeeks = new Set(depletionData.map(r => r.week_start));
+
+    // Total inventory value this week (from depletion records for current week)
+    const currentWeekRecords = depletionData.filter(r => r.week_start === currentWeekStart);
+    let totalValue = 0;
+    currentWeekRecords.forEach(r => {
+      const cat = catalogMap[r.catalog_item_id];
+      if (cat && cat.unit_price && r.closing_stock != null) {
+        totalValue += r.closing_stock * parseFloat(cat.unit_price || 0);
+      }
+    });
+
+    // Items below par
+    let belowPar = 0;
+    currentWeekRecords.forEach(r => {
+      const cat = catalogMap[r.catalog_item_id];
+      if (cat && cat.par_level != null && r.closing_stock != null && r.closing_stock < cat.par_level) {
+        belowPar++;
+      }
+    });
+
+    // Average cost per dog-day
+    const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart);
+    const avgCostPerDogDay = currentDogDays > 0 ? totalValue / currentDogDays : 0;
+
+    return {
+      totalValue,
+      belowPar,
+      avgCostPerDogDay,
+      weeksOfData: uniqueWeeks.size,
+    };
+  }, [depletionData, catalogMap, currentWeekStart, reservations]);
+
+  const trendIcon = (trend) => {
+    if (trend === "up") return <span style={{ color: C.dan }}>&#9650;</span>;
+    if (trend === "down") return <span style={{ color: C.suc }}>&#9660;</span>;
+    return <span style={{ color: C.textMut }}>&#8212;</span>;
+  };
+
+  const confidenceBadge = (confidence) => {
+    const colors = {
+      High: { bg: C.sucLt, color: C.suc },
+      Medium: { bg: C.warnLt, color: C.warn },
+      Low: { bg: C.bg, color: C.textMut },
+    };
+    const c = colors[confidence] || colors.Low;
+    return (
+      <span style={{
+        display: "inline-block",
+        padding: "2px 8px",
+        borderRadius: 6,
+        background: c.bg,
+        color: c.color,
+        fontSize: 10,
+        fontWeight: 700,
+      }}>
+        {confidence}
+      </span>
+    );
+  };
+
+  return (
+    <Modal title="Depletion Rate Analytics" onClose={onClose} wide>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: C.textMut }}>Loading depletion data...</div>
+        ) : (
+          <>
+            {/* Header Metrics */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+              <div style={{ padding: "14px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>
+                  Inventory Value
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: C.suc }}>{fmtCurrency(headerMetrics.totalValue)}</div>
+              </div>
+              <div style={{ padding: "14px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>
+                  Below Par
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: headerMetrics.belowPar > 0 ? C.warn : C.suc }}>
+                  {headerMetrics.belowPar} item{headerMetrics.belowPar !== 1 ? "s" : ""}
+                </div>
+              </div>
+              <div style={{ padding: "14px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>
+                  Avg Cost / Dog-Day
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>
+                  {fmtCurrency(headerMetrics.avgCostPerDogDay)}
+                </div>
+              </div>
+              <div style={{ padding: "14px 16px", borderRadius: 10, background: C.bg, border: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>
+                  Weeks of Data
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>{headerMetrics.weeksOfData}</div>
+              </div>
+            </div>
+
+            {/* Per-Item Table */}
+            {itemStats.length === 0 ? (
+              <div style={{ padding: 32, textAlign: "center", color: C.textMut, borderRadius: 10, background: C.bg, border: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Not enough data yet</div>
+                <div style={{ fontSize: 12 }}>Depletion rates require at least 2 completed weekly counts. Keep counting!</div>
+              </div>
+            ) : (
+              <div style={{ borderRadius: 10, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+                {/* Table header */}
+                <div style={{
+                  display: "grid",
+                  gridTemplateColumns: "2fr 1fr 1fr 50px 80px 1fr",
+                  gap: 8,
+                  padding: "8px 14px",
+                  background: C.bg,
+                  borderBottom: `1px solid ${C.borderLight}`,
+                }}>
+                  {["Item", "Avg/Week", "Per Dog-Day", "Trend", "Confidence", "Rec. Par"].map((h, i) => (
+                    <div key={i} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      {h}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Table rows */}
+                {itemStats.map(stat => (
+                  <div
+                    key={stat.itemId}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "2fr 1fr 1fr 50px 80px 1fr",
+                      gap: 8,
+                      padding: "10px 14px",
+                      borderBottom: `1px solid ${C.borderLight}`,
+                      alignItems: "center",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{stat.itemName}</div>
+                      {stat.category && <div style={{ fontSize: 10, color: C.textMut }}>{stat.category}</div>}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>
+                      {stat.avgWeeklyUsage} units
+                    </div>
+                    <div style={{ fontSize: 13, color: C.textSec }}>
+                      {stat.avgRatePerDogDay != null ? stat.avgRatePerDogDay.toFixed(3) : "—"}
+                    </div>
+                    <div style={{ textAlign: "center" }}>{trendIcon(stat.trend)}</div>
+                    <div>{confidenceBadge(stat.confidence)}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, color: C.pri }}>
+                        {stat.recommendedPar != null ? stat.recommendedPar : "—"}
+                      </span>
+                      {stat.currentPar != null && stat.recommendedPar != null && stat.recommendedPar > stat.currentPar && (
+                        <span style={{
+                          display: "inline-block",
+                          padding: "1px 6px",
+                          borderRadius: 5,
+                          background: C.warnLt,
+                          color: C.warn,
+                          fontSize: 9,
+                          fontWeight: 700,
+                        }}>
+                          +{stat.recommendedPar - stat.currentPar}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 4 }}>
+              <Btn variant="secondary" onClick={onClose}>Close</Btn>
+            </div>
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function InventoryPage({ data, save, nav, profile, addGlobalToast }) {
@@ -493,11 +1239,12 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
   const [search, setSearch] = useState("");
-  const [dogCount, setDogCount] = useState("");
   const [showAddAdhoc, setShowAddAdhoc] = useState(false);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [submitSaving, setSubmitSaving] = useState(false);
+  const [showCatalog, setShowCatalog] = useState(false);
+  const [showDepletionModal, setShowDepletionModal] = useState(false);
 
   // ── Refs ──
   const saveTimer = useRef(null);
@@ -507,6 +1254,11 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
   const locationId = profile?.location_id;
   const isReadOnly = snapshot?.status === "completed";
+
+  // ── Dog-Days computed values ──
+  const reservations = data?.reservations || [];
+  const dogDays = useMemo(() => getDogDaysForWeek(reservations, currentWeekStart), [reservations, currentWeekStart]);
+  const avgDogsPerDay = useMemo(() => getAvgDogsPerDay(reservations, currentWeekStart), [reservations, currentWeekStart]);
 
   // Sync snapshotRef
   useEffect(() => { snapshotRef.current = snapshot; }, [snapshot]);
@@ -594,9 +1346,6 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       }
       setSnapshot(snap);
       snapshotRef.current = snap;
-
-      if (snap?.dog_count != null) setDogCount(String(snap.dog_count));
-      else setDogCount("");
 
       // 3. Load counts for this snapshot
       const countMap = {};
@@ -727,25 +1476,6 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     scheduleAutoSave();
   }, [scheduleAutoSave]);
 
-  // ── Dog count save ──
-  const saveDogCount = useCallback(async (val) => {
-    const snap = snapshotRef.current;
-    if (!snap) return;
-    const n = val === "" ? null : parseInt(val, 10);
-    await supabase
-      .from("inventory_snapshots")
-      .update({ dog_count: n })
-      .eq("id", snap.id);
-  }, []);
-
-  const dogCountTimer = useRef(null);
-  const handleDogCount = (v) => {
-    const cleaned = v.replace(/\D/g, "");
-    setDogCount(cleaned);
-    if (dogCountTimer.current) clearTimeout(dogCountTimer.current);
-    dogCountTimer.current = setTimeout(() => saveDogCount(cleaned), 1000);
-  };
-
   // ── Keyboard navigation ──
   const handleKeyDown = useCallback((e, itemId) => {
     if (e.key !== "Tab") return;
@@ -783,6 +1513,67 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       setSnapshot(prev => ({ ...prev, status: "completed", completed_at: new Date().toISOString() }));
       setShowSubmitModal(false);
       if (addGlobalToast) addGlobalToast({ type: "success", message: "Inventory count completed and locked!" });
+
+      // ── Compute depletion rates ──
+      try {
+        // Get previous week's snapshot
+        const prevWeekStart = addDays(currentWeekStart, -7);
+        const { data: prevSnap } = await supabase
+          .from("inventory_snapshots")
+          .select("id")
+          .eq("location_id", locationId)
+          .eq("week_start", prevWeekStart)
+          .eq("status", "completed")
+          .maybeSingle();
+
+        if (prevSnap) {
+          // Get previous week's counts
+          const { data: prevCounts } = await supabase
+            .from("inventory_counts")
+            .select("catalog_item_id, stock_count, in_transit")
+            .eq("snapshot_id", prevSnap.id);
+
+          const prevCountMap = {};
+          (prevCounts || []).forEach(c => { prevCountMap[c.catalog_item_id] = c; });
+
+          // Get current week's counts (already in state as `counts`)
+          const currentDogDays = getDogDaysForWeek(reservations, currentWeekStart);
+
+          // Build depletion records
+          const depletionRecords = [];
+          catalogItems.forEach(item => {
+            const prev = prevCountMap[item.id];
+            const curr = counts[item.id];
+            if (!prev || !curr || curr.stock_count == null || curr.stock_count === "") return;
+
+            const openingStock = prev.stock_count || 0;
+            const closingStock = parseInt(curr.stock_count, 10) || 0;
+            const received = parseInt(curr.in_transit, 10) || 0;
+            const depletion = openingStock - closingStock + received;
+
+            depletionRecords.push({
+              location_id: locationId,
+              catalog_item_id: item.id,
+              week_start: currentWeekStart,
+              opening_stock: openingStock,
+              closing_stock: closingStock,
+              received,
+              depletion,
+              dog_days: currentDogDays,
+              rate_per_dog_day: currentDogDays > 0 ? +(depletion / currentDogDays).toFixed(4) : null,
+            });
+          });
+
+          if (depletionRecords.length > 0) {
+            await supabase
+              .from("inventory_depletion_rates")
+              .upsert(depletionRecords, { onConflict: "location_id,catalog_item_id,week_start" });
+          }
+        }
+      } catch (depErr) {
+        console.error("Depletion rate calculation error:", depErr);
+        // Non-fatal — don't block the submit
+      }
     } catch (err) {
       console.error("Submit error:", err);
       if (addGlobalToast) addGlobalToast({ type: "error", message: "Failed to submit inventory count." });
@@ -893,8 +1684,12 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             </div>
           </div>
 
-          {/* Status badge */}
+          {/* Status badge + Manage Catalog */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+            <Btn variant="secondary" size="sm" icon={<I.Edit />} onClick={() => setShowCatalog(true)}>
+              Manage Catalog
+            </Btn>
+
             {snapshot && (
               <span style={{
                 display: "inline-flex",
@@ -975,32 +1770,25 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             )}
           </div>
 
-          {/* Dog Count */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: C.textSec, whiteSpace: "nowrap" }}>Dog Count:</div>
-            <input
-              type="number"
-              min="0"
-              value={dogCount}
-              onChange={e => handleDogCount(e.target.value)}
-              disabled={isReadOnly}
-              placeholder="—"
-              style={{
-                width: 70,
-                padding: "7px 10px",
-                borderRadius: 9,
-                border: `1.5px solid ${C.border}`,
-                fontSize: 14,
-                fontWeight: 700,
-                color: C.text,
-                background: isReadOnly ? C.bg : C.surface,
-                textAlign: "center",
-                outline: "none",
-                cursor: isReadOnly ? "default" : "text",
-              }}
-              onFocus={e => { if (!isReadOnly) e.target.style.borderColor = C.pri; }}
-              onBlur={e => { if (!isReadOnly) e.target.style.borderColor = C.border; }}
-            />
+          {/* Dog Occupancy Badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "6px 14px", borderRadius: 10,
+              background: C.priLt, border: `1.5px solid ${C.pri}20`,
+            }}>
+              <I.TrendingUp />
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>
+                Avg {avgDogsPerDay} dogs/day
+              </span>
+              <span style={{ fontSize: 11, color: C.textSec }}>&middot;</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>
+                {dogDays} dog-days
+              </span>
+            </div>
+            <Btn variant="ghost" size="sm" icon={<I.BarChart />} onClick={() => setShowDepletionModal(true)}>
+              Depletion Rates
+            </Btn>
           </div>
         </div>
       </Card>
@@ -1213,12 +2001,12 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                         }).length}
                       </div>
                     </div>
-                    {dogCount && (
+                    {dogDays > 0 && (
                       <div>
                         <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 2 }}>
-                          Dog Count
+                          Dog-Days
                         </div>
-                        <div style={{ fontSize: 22, fontWeight: 800, color: C.pri }}>{dogCount}</div>
+                        <div style={{ fontSize: 22, fontWeight: 800, color: C.pri }}>{dogDays}</div>
                       </div>
                     )}
                   </div>
@@ -1267,6 +2055,24 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           onClose={() => setShowSubmitModal(false)}
           onConfirm={handleSubmit}
           saving={submitSaving}
+        />
+      )}
+
+      {showCatalog && (
+        <CatalogEditor
+          locationId={locationId}
+          onClose={() => setShowCatalog(false)}
+          addGlobalToast={addGlobalToast}
+          onCatalogChange={loadData}
+        />
+      )}
+
+      {showDepletionModal && (
+        <DepletionRateModal
+          locationId={locationId}
+          reservations={reservations}
+          currentWeekStart={currentWeekStart}
+          onClose={() => setShowDepletionModal(false)}
         />
       )}
     </div>
