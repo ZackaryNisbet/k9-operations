@@ -366,7 +366,7 @@ function FeatureGraphic({ type, color }) {
       { id: 'k9ops', label: 'K9 Ops', sub: 'Intelligence', x: 120, y: 95, color: navy, icon: 'hub', isHub: true },
       { id: 'conv', label: 'Leads', sub: 'New Leads', x: 210, y: 95, color: green, icon: 'funnel' },
       { id: 'active', label: 'Active', sub: 'Engaged', x: 300, y: 55, color: teal, icon: 'bolt' },
-      { id: 'retention', label: 'Lapsed', sub: 'Re-engage', x: 300, y: 135, color: gold, icon: 'refresh' },
+      { id: 'lapsed', label: 'Lapsed', sub: 'Re-engage', x: 300, y: 135, color: gold, icon: 'refresh' },
     ];
 
     return (

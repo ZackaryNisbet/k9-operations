@@ -932,13 +932,13 @@ export default function DashboardPage({
 
     const allLeads = clients.filter(c => {
       const stage = c.lifecycle?.stage || c._lifecycleStage || "";
-      return stage === "conversion" || stage === "lead";
+      return stage === "leads" || stage === "lead";
     });
     const remainingLeads = allLeads.length;
 
     const allAtRisk = clients.filter(c => {
       const stage = c.lifecycle?.stage || c._lifecycleStage || "";
-      return stage === "retention" || stage === "lapsed" || stage === "at-risk";
+      return stage === "lapsed" || stage === "at-risk";
     });
     const remainingAtRisk = allAtRisk.length;
 
