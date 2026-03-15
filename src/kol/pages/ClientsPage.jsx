@@ -199,12 +199,14 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       }
 
       const isConversion = !hasSpent && !hasRealBooking && !isCold;
-      // CLM-001: Gingr-sourced conversion clients created >14 days ago go to "Old From Gingr Sync"
+      // CLM-001: Gingr-sourced clients created >14 days ago go to "Old From Gingr Sync"
       const fourteenDaysAgo = addDays(td, -14);
       const isOldGingrSync = isConversion && !!c.gingrId && c.createdAt && c.createdAt.split("T")[0] < fourteenDaysAgo;
+      // Old Gingr lapsed: same threshold — old Gingr-synced lapsed clients are historical noise
+      const isOldGingrLapsed = isRetention && !isCold && !!c.gingrId && c.createdAt && c.createdAt.split("T")[0] < fourteenDaysAgo;
       const isActive = (hasSpent || hasRealBooking) && !isRetention && !isCold;
       if (isCold) isRetention = false;
-      map[c.id] = { isConversion: isConversion && !isOldGingrSync, isOldGingrSync, isActive, isRetention: isRetention && !isCold, isCold, isAll: true };
+      map[c.id] = { isConversion: isConversion && !isOldGingrSync, isOldGingrSync: isOldGingrSync || isOldGingrLapsed, isActive, isRetention: isRetention && !isCold && !isOldGingrLapsed, isCold, isAll: true };
     });
     return map;
   }, [data.clients, data.serverStats, clientStats, resByClient, data.resortPolicies?.retentionDaycareDays, data.resortPolicies?.retentionBoardingDays]);
@@ -239,6 +241,26 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     if (changed) save({ ...data, clients: updatedClients });
   }, [clientTabMap]);
 
+  // ── One-time retrospective fix: clear stale follow-up dates on old Gingr sync leads ──
+  const retroFixDoneRef = useRef(false);
+  useEffect(() => {
+    if (retroFixDoneRef.current || !save || !clientTabMap) return;
+    retroFixDoneRef.current = true;
+    const today = todayStr();
+    let changed = false;
+    const updatedClients = data.clients.map(c => {
+      const tm = clientTabMap[c.id];
+      if (!tm || !tm.isOldGingrSync) return c;
+      // Clear conversion follow-up for old Gingr leads with no outreach history
+      const convLc = c.lifecycle?.conversion;
+      if (convLc?.followUpDate && convLc.followUpDate < today && (!convLc.updates || convLc.updates.length === 0)) {
+        changed = true;
+        return { ...c, lifecycle: { ...c.lifecycle, conversion: { ...convLc, followUpDate: "" } } };
+      }
+      return c;
+    });
+    if (changed) save({ ...data, clients: updatedClients });
+  }, [clientTabMap]);
 
   // ── Source lookup helpers ──
   const getClientSource = useCallback((client) => {
@@ -409,11 +431,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   const tabDefs = [
     { id: "leads", label: "Leads", count: filteredTabCounts ? filteredTabCounts.leads : tabLists.leads.length, color: C.acc },
-    { id: "oldGingrSync", label: "Old", count: filteredTabCounts ? filteredTabCounts.oldGingrSync : tabLists.oldGingrSync.length, color: C.textMut, hidden: true },
     { id: "active", label: "Active Customers", count: filteredTabCounts ? filteredTabCounts.active : tabLists.active.length, color: C.pri },
     { id: "lapsed", label: "Lapsed", count: filteredTabCounts ? filteredTabCounts.lapsed : tabLists.lapsed.length, color: C.dan },
     { id: "cold", label: "Cold", count: filteredTabCounts ? filteredTabCounts.cold : tabLists.cold.length, color: C.textSec },
     { id: "all", label: "All", count: filteredTabCounts ? filteredTabCounts.all : tabLists.all.length, color: C.info },
+    // Old Gingr Data tab — far right, hidden by default behind toggle
+    { id: "oldGingrSync", label: "Old Gingr Data", count: filteredTabCounts ? filteredTabCounts.oldGingrSync : tabLists.oldGingrSync.length, color: C.textMut, hidden: true },
   ];
 
   // ── Toggleable columns for Active/All tabs ──
@@ -1144,7 +1167,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                 {sourceFilter.size > 0 && <button onClick={()=>setSourceFilter(new Set())} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:"0 2px",display:"flex",alignItems:"center"}} title="Clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
                 <div style={{width:1,height:20,background:C.border,margin:"0 4px",flexShrink:0}} />
               </>}
-              {(activeTab === "leads" || activeTab === "oldGingrSync" || activeTab === "lapsed") && (
+              {(activeTab === "leads" || activeTab === "lapsed") && (
                 <button onClick={()=>setShowOverdueOnly(v=>!v)}
                   style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${showOverdueOnly?C.dan:C.border}`,background:showOverdueOnly?`${C.dan}12`:"transparent",color:showOverdueOnly?C.dan:C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>
                   Overdue
