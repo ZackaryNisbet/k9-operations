@@ -348,6 +348,45 @@ async function syncReservations(
     total += checkedIn.length;
   }
 
+  // ── TV-007: Reconcile — mark checked-out dogs ──────────────────────────
+  // Dogs that Supabase thinks are checked in but Gingr no longer reports
+  // have been checked out. Stamp check_out_date so the TV picks it up.
+  try {
+    const { data: supaCheckedIn } = await supabase
+      .from("gingr_reservations")
+      .select("gingr_id")
+      .eq("location_id", locationId)
+      .not("check_in_date", "is", null)
+      .is("check_out_date", null)
+      .is("cancelled_date", null);
+
+    const gingrCheckedInIds = new Set(
+      checkedIn.map((r: any) => String(r.reservation_id))
+    );
+    const staleIds = (supaCheckedIn || [])
+      .filter((r: any) => !gingrCheckedInIds.has(r.gingr_id))
+      .map((r: any) => r.gingr_id);
+
+    // Safety: if Gingr returned 0 but Supabase has 20+, likely an API error
+    // — do not mass-checkout every dog
+    const isLikelyApiError =
+      checkedIn.length === 0 && (supaCheckedIn || []).length > 20;
+
+    if (staleIds.length > 0 && !isLikelyApiError) {
+      const nowIso = new Date().toISOString();
+      for (let i = 0; i < staleIds.length; i += 100) {
+        const chunk = staleIds.slice(i, i + 100);
+        await supabase
+          .from("gingr_reservations")
+          .update({ check_out_date: nowIso, synced_at: nowIso })
+          .eq("location_id", locationId)
+          .in("gingr_id", chunk);
+      }
+    }
+  } catch (_) {
+    // Non-fatal — reconciliation is best-effort
+  }
+
   return {
     synced: total,
     backfill_complete: isBackfillComplete,
@@ -530,6 +569,81 @@ Deno.serve(async (req: Request) => {
     }
 
     const { api_key, subdomain, gingr_location_id } = gingrConfig;
+
+    // ── TV-007: Lightweight tv-poll mode ────────────────────────────────────
+    // Only fetches checked_in: "true" from Gingr and reconciles checkouts.
+    // Called every 60s from the TV page for near-real-time checkout detection.
+    if (sync_type === "tv-poll") {
+      const startTime = Date.now();
+      let checkedOutCount = 0;
+
+      // 1. Fetch currently checked-in from Gingr (single API call)
+      const checkedInResult = await gingrFetch(subdomain, "reservations", api_key, "POST", {
+        checked_in: "true",
+      });
+      const checkedInMap = checkedInResult.data || {};
+      const checkedIn = Object.values(checkedInMap) as any[];
+
+      // 2. Upsert currently checked-in (updates any changed fields)
+      if (checkedIn.length > 0) {
+        const rows = checkedIn.map((r: any) => mapReservationRow(r, location_id));
+        for (let i = 0; i < rows.length; i += 500) {
+          const chunk = rows.slice(i, i + 500);
+          await supabase
+            .from("gingr_reservations")
+            .upsert(chunk, { onConflict: "location_id,gingr_id" });
+        }
+      }
+
+      // 3. Reconcile: mark dogs that Gingr no longer reports as checked out
+      try {
+        const { data: supaCheckedIn } = await supabase
+          .from("gingr_reservations")
+          .select("gingr_id")
+          .eq("location_id", location_id)
+          .not("check_in_date", "is", null)
+          .is("check_out_date", null)
+          .is("cancelled_date", null);
+
+        const gingrCheckedInIds = new Set(
+          checkedIn.map((r: any) => String(r.reservation_id))
+        );
+        const staleIds = (supaCheckedIn || [])
+          .filter((r: any) => !gingrCheckedInIds.has(r.gingr_id))
+          .map((r: any) => r.gingr_id);
+
+        // Safety: skip if Gingr returned 0 but Supabase has 20+
+        const isLikelyApiError =
+          checkedIn.length === 0 && (supaCheckedIn || []).length > 20;
+
+        if (staleIds.length > 0 && !isLikelyApiError) {
+          const nowIso = new Date().toISOString();
+          for (let i = 0; i < staleIds.length; i += 100) {
+            const chunk = staleIds.slice(i, i + 100);
+            await supabase
+              .from("gingr_reservations")
+              .update({ check_out_date: nowIso, synced_at: nowIso })
+              .eq("location_id", location_id)
+              .in("gingr_id", chunk);
+          }
+          checkedOutCount = staleIds.length;
+        }
+      } catch (_) {
+        // Non-fatal — reconciliation is best-effort
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          sync_type: "tv-poll",
+          checked_in_count: checkedIn.length,
+          checked_out_count: checkedOutCount,
+          duration_ms: Date.now() - startTime,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const results: Record<string, any> = {};
     const startTime = Date.now();
 
