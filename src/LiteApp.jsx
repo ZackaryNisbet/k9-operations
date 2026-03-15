@@ -11,6 +11,7 @@ import ReactDOM from "react-dom";
 import { useAuth } from "./AuthProvider";
 import { supabase } from "./supabaseClient";
 import RoadmapPage from "./RoadmapPage";
+import CheckoutNotesPage from "./kol/pages/CheckoutNotesPage";
 
 // ─── IndexedDB cache for instant page loads ─────────────────────────────────
 const IDB_NAME = "k9_cache";
@@ -11946,6 +11947,7 @@ function LeanAppInner() {
       case "ops-pamper": return "Pamper Package Plus";
       case "ops-svc": return params?.svcName || "Service Report";
       case "eod": return "End of Day";
+      case "checkout-notes": return "Checkout Notes";
       case "daily-ops": return "Daily Ops";
       case "attendance": case "mgmt-attendance": return "Attendance Tracker";
       case "mgmt-audit-log": return "Audit Log";
@@ -12115,6 +12117,8 @@ function LeanAppInner() {
         return <DogDetailPage data={data} clientId={params.clientId} dogId={params.dogId} nav={nav} />;
       case "checkout-tv":
         return <CheckoutTVPage data={data} nav={nav} />;
+      case "checkout-notes":
+        return <CheckoutNotesPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "client-detail":
         return <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "new-client":
