@@ -585,39 +585,50 @@ function useGingrData(locationId) {
     { id: `ops_pp_${td}`, type: "pp", typeSub: "pp", date: td, locked: false, items: {} },
   ], [td]);
 
-  return {
+  // ── Stable static arrays (created once, never change) ──
+  const EMPTY = useRef([]).current;
+  const EMPTY_OBJ = useRef({}).current;
+  const STATIC_POLICIES = useRef({ retentionDaycareDays: 90, retentionBoardingDays: 180 }).current;
+
+  // ── Memoized return value — only changes when actual data changes ──
+  const requiredVaccinesMemo = useMemo(
+    () => immunizationTypes.map(t => ({ id: t.gingr_id, name: t.name, required: t.required })),
+    [immunizationTypes]
+  );
+
+  return useMemo(() => ({
     clients,
     dogs,
     reservations,
     rooms,
     serverStats,
     dailyOps,
-    payments: [],
-    messages: [],
-    massTextHistory: [],
-    messageTemplates: [],
-    locationRoles: [],
-    resortPolicies: { retentionDaycareDays: 90, retentionBoardingDays: 180 },
-    lifecycleExplainers: {},
-    lifecycleViews: [],
+    payments: EMPTY,
+    messages: EMPTY,
+    massTextHistory: EMPTY,
+    messageTemplates: EMPTY,
+    locationRoles: EMPTY,
+    resortPolicies: STATIC_POLICIES,
+    lifecycleExplainers: EMPTY_OBJ,
+    lifecycleViews: EMPTY,
     closingTemplate: DEF_CLOSING_TEMPLATE,
-    evaluations: [],
+    evaluations: EMPTY,
     gingr_api_key: "",
     gingr_location_id: "",
     gingr_subdomain: "",
-    attendanceRoster: [],
-    attendanceEntries: [],
-    attendanceAuditLog: [],
+    attendanceRoster: EMPTY,
+    attendanceEntries: EMPTY,
+    attendanceAuditLog: EMPTY,
     roles: LEAN_ROLES,
-    clientFields: [],
-    agreements: [],
-    vets: [],
-    auditLog: [],
-    discounts: [],
-    packageSales: [],
-    eodEntries: [],
-    requiredVaccines: immunizationTypes.map(t => ({ id: t.gingr_id, name: t.name, required: t.required })),
-    dogTags: [],
+    clientFields: EMPTY,
+    agreements: EMPTY,
+    vets: EMPTY,
+    auditLog: EMPTY,
+    discounts: EMPTY,
+    packageSales: EMPTY,
+    eodEntries: EMPTY,
+    requiredVaccines: requiredVaccinesMemo,
+    dogTags: EMPTY,
     loading,
     error,
     syncing,
@@ -625,7 +636,12 @@ function useGingrData(locationId) {
     triggerSync,
     refresh,
     resTypes,
-  };
+  }), [
+    clients, dogs, reservations, rooms, serverStats, dailyOps,
+    requiredVaccinesMemo, loading, error, syncing, lastSyncAt,
+    triggerSync, refresh, resTypes,
+    EMPTY, EMPTY_OBJ, STATIC_POLICIES,
+  ]);
 }
 
 
