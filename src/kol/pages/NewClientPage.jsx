@@ -39,7 +39,7 @@ const Section = memo(({ title, subtitle, icon, number, children, isActive, isCom
       opacity: mounted ? 1 : 0,
       transform: mounted ? "translateY(0)" : "translateY(12px)",
       transition: `all ${ANIM_DURATION} ${ANIM_EASE}`,
-      boxShadow: isActive ? "0 4px 24px rgba(0,52,98,0.08)" : "0 1px 3px rgba(0,0,0,0.02)",
+      boxShadow: isActive ? "0 4px 24px rgba(20,83,45,0.08)" : "0 1px 3px rgba(0,0,0,0.02)",
       overflow: "hidden",
     }}>
       {/* Section Header */}
@@ -49,7 +49,7 @@ const Section = memo(({ title, subtitle, icon, number, children, isActive, isCom
         alignItems: "center",
         gap: 14,
         borderBottom: `1px solid ${C.borderLight}`,
-        background: isActive ? "rgba(0,52,98,0.015)" : "transparent",
+        background: isActive ? "rgba(20,83,45,0.015)" : "transparent",
       }}>
         <div style={{
           width: 36, height: 36, borderRadius: 10,
@@ -209,7 +209,7 @@ const DogCard = memo(({ index, dogFields, values, errors, onChange, onRemove, ca
           padding: "14px 20px",
           display: "flex", alignItems: "center", gap: 12,
           cursor: "pointer",
-          background: expanded ? "rgba(0,52,98,0.015)" : "transparent",
+          background: expanded ? "rgba(20,83,45,0.015)" : "transparent",
           transition: `background ${ANIM_DURATION} ${ANIM_EASE}`,
           userSelect: "none",
         }}
@@ -311,7 +311,7 @@ const ServiceChip = memo(({ service, selected, onToggle }) => (
     onMouseEnter={e => {
       if (!selected) {
         e.currentTarget.style.borderColor = C.priL;
-        e.currentTarget.style.background = "rgba(0,52,98,0.02)";
+        e.currentTarget.style.background = "rgba(20,83,45,0.02)";
       }
     }}
     onMouseLeave={e => {

@@ -20,13 +20,13 @@ function EnterpriseUserManagement({ profile }) {
   const [adminName, setAdminName] = useState("");
 
   const enterprises = [
-    { id: "ch", name: "Cherry Hill", adminName: "Alice Johnson", adminEmail: "alice@k9resorts.com" },
-    { id: "demo", name: "Demo Location", adminName: "Bob Smith", adminEmail: "bob@k9resorts.com" },
+    { id: "ch", name: "Cherry Hill", adminName: "Alice Johnson", adminEmail: "alice@k9operations.com" },
+    { id: "demo", name: "Demo Location", adminName: "Bob Smith", adminEmail: "bob@k9operations.com" },
   ];
 
   return (
     <div>
-      <h2 style={{ margin: "0 0 24px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>User Management</h2>
+      <h2 style={{ margin: "0 0 24px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>User Management</h2>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <div>

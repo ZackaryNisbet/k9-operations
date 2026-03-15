@@ -547,7 +547,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     const dogName = dog?.fields?.name || "your dog";
     const phone = client?.fields?.phone || "";
     const changeLines = diffs.map(d => `${d.field}: ${d.oldVal} → ${d.newVal}`).join("\n");
-    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Resorts! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
+    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Operations! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
     setTextNotify({ clientName, clientPhone: phone, dogName, diffs, message: msg, showPreview: false, sending: false });
   };
   const sendTextNotify = async () => {

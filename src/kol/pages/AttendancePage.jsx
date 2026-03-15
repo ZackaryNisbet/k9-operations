@@ -859,13 +859,13 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
                         {entry.previousValue && (
                           <div style={{ flex: 1, padding: 10, borderRadius: 8, background: "#FEE2E2", border: "1px solid #FECACA" }}>
                             <div style={{ fontWeight: 700, color: "#DC2626", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>Previous Value</div>
-                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'GT Eesti', monospace", fontSize: 11, color: "#7F1D1D" }}>{JSON.stringify(entry.previousValue, null, 2)}</pre>
+                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'Outfit', monospace", fontSize: 11, color: "#7F1D1D" }}>{JSON.stringify(entry.previousValue, null, 2)}</pre>
                           </div>
                         )}
                         {entry.newValue && (
                           <div style={{ flex: 1, padding: 10, borderRadius: 8, background: "#D1FAE5", border: "1px solid #A7F3D0" }}>
                             <div style={{ fontWeight: 700, color: "#059669", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>New Value</div>
-                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'GT Eesti', monospace", fontSize: 11, color: "#064E3B" }}>{JSON.stringify(entry.newValue, null, 2)}</pre>
+                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'Outfit', monospace", fontSize: 11, color: "#064E3B" }}>{JSON.stringify(entry.newValue, null, 2)}</pre>
                           </div>
                         )}
                       </div>

@@ -6,8 +6,8 @@ import ReactDOM from "react-dom";
 import { C, K9_LOGO_SRC, K9_LOGO_PNG, DEF_CLIENT_FIELDS, DEF_DOG_FIELDS, DEFAULT_LIFECYCLE_BANNERS, LITE_ACTION_LABELS, LITE_ACTION_LEVELS, fmtPhoneInput } from "./theme";
 import { I } from "./icons";
 
-const K9Logo = ({size=38}) => <img src={K9_LOGO_SRC || K9_LOGO_PNG} alt="K9 Resorts" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
-const K9LogoMini = ({size=28}) => <img src={K9_LOGO_SRC || K9_LOGO_PNG} alt="K9 Resorts" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
+const K9Logo = ({size=38}) => <img src={K9_LOGO_SRC || K9_LOGO_PNG} alt="K9 Operations" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
+const K9LogoMini = ({size=28}) => <img src={K9_LOGO_SRC || K9_LOGO_PNG} alt="K9 Operations" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
 
 function Tip({ text, children }) {
   const [show, setShow] = useState(false);

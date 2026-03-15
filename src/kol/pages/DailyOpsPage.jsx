@@ -268,7 +268,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
             const it = items[t.id] || {};
             const isWeekly = t.dayOfWeek != null;
             return (
-              <div key={t.id} style={{ display: "flex", alignItems: "center", padding: "8px 14px", borderBottom: i < todayItems.length - 1 ? `1px solid ${C.border}` : "none", background: isWeekly ? "rgba(175,141,84,0.04)" : it.checked ? "rgba(34,139,34,0.03)" : "transparent", opacity: isLocked ? 0.7 : 1 }}>
+              <div key={t.id} style={{ display: "flex", alignItems: "center", padding: "8px 14px", borderBottom: i < todayItems.length - 1 ? `1px solid ${C.border}` : "none", background: isWeekly ? "rgba(132,204,22,0.04)" : it.checked ? "rgba(34,139,34,0.03)" : "transparent", opacity: isLocked ? 0.7 : 1 }}>
                 <div style={{ width: 36 }}>
                   <input type="checkbox" checked={!!it.checked} disabled={isLocked} onChange={e => toggleItem(t.id, "checked", e.target.checked)} style={{ width: 18, height: 18, cursor: isLocked ? "default" : "pointer", accentColor: C.pri }} />
                 </div>

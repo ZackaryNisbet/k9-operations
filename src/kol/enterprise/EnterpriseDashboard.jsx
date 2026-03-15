@@ -35,8 +35,8 @@ const ENT_CSS = `
   to   { transform: scaleX(1); }
 }
 @keyframes entPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(0,52,98,0.12); }
-  50%      { box-shadow: 0 0 0 8px rgba(0,52,98,0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(20,83,45,0.12); }
+  50%      { box-shadow: 0 0 0 8px rgba(20,83,45,0); }
 }
 @keyframes entShimmer {
   0%   { background-position: -200% 0; }
@@ -55,7 +55,7 @@ const ENT_CSS = `
   transition: box-shadow 0.22s, transform 0.22s;
 }
 .ent-card:hover {
-  box-shadow: 0 8px 28px rgba(0,52,98,0.10);
+  box-shadow: 0 8px 28px rgba(20,83,45,0.10);
   transform: translateY(-2px);
 }
 .ent-hero-num {
@@ -76,7 +76,7 @@ const ENT_CSS = `
 }
 .ent-snapshot-stat:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(0,52,98,0.08);
+  box-shadow: 0 4px 16px rgba(20,83,45,0.08);
 }
 .ent-loc-row {
   transition: all 0.15s;
@@ -94,7 +94,7 @@ const ENT_CSS = `
 }
 .ent-alert-card:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 16px rgba(0,52,98,0.06);
+  box-shadow: 0 4px 16px rgba(20,83,45,0.06);
 }
 .ent-toggle-chip {
   display: inline-flex;
