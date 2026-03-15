@@ -583,6 +583,10 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           ...data,
           clients: data.clients.map(c => c.id === clientId ? { ...c, gingrId: newOwner.id } : c),
         });
+        // Link lite_client to the new Gingr record
+        if (isLite && client.liteClientId) {
+          await updateLiteClient(client.liteClientId, { gingr_owner_id: newOwner.id });
+        }
       }
 
       // Push each dog
@@ -844,8 +848,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4,fontSize:14,color:C.textSec}}><I.Phone/><span>{fmtPhone(client.fields.phone)}</span>{client.fields.email&&<span>&middot; {client.fields.email}</span>}</div>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            {!isLite && <>
-            {/* CLM-005: Push to Gingr Button */}
+            {/* CLM-005: Push to Gingr Button — shown for all clients */}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
               <button onClick={() => { setGingrResult(null); setGingrModal(true); }}
                 style={{ padding: "8px 16px", borderRadius: 8, border: `1.5px solid ${C.acc}`, background: C.accLt, color: C.accDk, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s" }}
@@ -854,15 +857,14 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M7 17l9.2-9.2M17 17V7H7"/></svg>
                 Push to Gingr
               </button>
-              {lastSyncedAt && (
+              {lastSyncedAt && !isLite && (
                 <span style={{ fontSize: 10, color: C.textMut, fontWeight: 600, display: "flex", alignItems: "center", gap: 3 }}>
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={C.suc} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                   Synced {new Date(lastSyncedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })} at {new Date(lastSyncedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
                 </span>
               )}
             </div>
-            <Btn variant="primary" onClick={()=>nav("new-reservation",{clientId})} icon={<I.Plus/>} size="sm">New</Btn>
-            </>}
+            {!isLite && <Btn variant="primary" onClick={()=>nav("new-reservation",{clientId})} icon={<I.Plus/>} size="sm">New</Btn>}
           </div>
         </div>
 
