@@ -7,7 +7,7 @@ const _chartFmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toLocaleString
 const _chartFmt$k = (v) => v >= 10000 ? `$${(v / 1000).toFixed(1)}k` : v >= 1000 ? `$${(v / 1000).toFixed(2)}k` : _chartFmt$(v);
 
 // ── Revenue Intelligence: Animated Line Chart (module-level for animation persistence) ──
-const InteractiveLineChart = React.memo(({ chartData, color = "#14532D", compareColor = "#84CC16", showCompare, height = 240, id = "chart", animationEpoch }) => {
+const InteractiveLineChart = React.memo(({ chartData, color = "#14532D", compareColor = "#84CC16", showCompare, height = 240, id = "chart", animationEpoch, dateLabels }) => {
   const svgRef = React.useRef(null);
   const [display, setDisplay] = React.useState(null);
   const [hover, setHover] = React.useState(null);
@@ -113,6 +113,20 @@ const InteractiveLineChart = React.memo(({ chartData, color = "#14532D", compare
             {showCompare && <circle cx={x(hoverIdx)} cy={y(cmpVals[hoverIdx])} r="3" fill="white" stroke={compareColor} strokeWidth="1.5" />}
           </g>
         )}
+        {dateLabels && dateLabels.length > 0 && (() => {
+          const total = dateLabels.length;
+          const step = total <= 7 ? 1 : total <= 14 ? 2 : total <= 30 ? 3 : total <= 60 ? 7 : total <= 180 ? 14 : 30;
+          const indices = [];
+          for (let i = 0; i < total; i += step) indices.push(i);
+          return indices.map(i => {
+            const xPos = pad.left + (i / (total - 1 || 1)) * plotW;
+            const dt = new Date(dateLabels[i] + "T00:00:00");
+            const lbl = `${dt.getMonth() + 1}/${dt.getDate()}`;
+            return (
+              <text key={i} x={xPos} y={h - pad.bottom + 14} textAnchor="middle" fill="#8B95A5" fontSize="8" fontFamily="'Outfit', sans-serif">{lbl}</text>
+            );
+          });
+        })()}
       </svg>
       {hoverData && hoverIdx !== null && (
         <div style={{

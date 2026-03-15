@@ -7,6 +7,7 @@ import {
   C, todayStr, addDays, fmtDate, fmtDateShort,
 } from "../../shared/theme";
 import { I } from "../../shared/icons";
+import { Tip } from "../../shared/ui";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import {
@@ -574,7 +575,7 @@ function DashGrid({ children }) {
 /* ═══════════════════════════════════════════════════════════════════════════
    Chart container — measures height, renders InteractiveLineChart
    ═══════════════════════════════════════════════════════════════════════════ */
-function ChartFill({ chartData, color, compareColor, animEpoch, id }) {
+function ChartFill({ chartData, color, compareColor, animEpoch, id, dateLabels }) {
   const containerRef = useRef(null);
   const [containerH, setContainerH] = useState(120);
   useEffect(() => {
@@ -600,6 +601,7 @@ function ChartFill({ chartData, color, compareColor, animEpoch, id }) {
         height={containerH}
         id={id}
         animationEpoch={animEpoch}
+        dateLabels={dateLabels}
       />
     </div>
   );
@@ -619,7 +621,7 @@ export default function DashboardPage({
   const [customTo, setCustomTo] = useState("");
   const [showCalendar, setShowCalendar] = useState(false);
   const [animEpoch, setAnimEpoch] = useState(0);
-  const [showPriorPeriod, setShowPriorPeriod] = useState(false);
+  const [showPriorPeriod, setShowPriorPeriod] = useState(true);
   const today = todayStr();
 
   useEffect(() => { setAnimEpoch(e => e + 1); }, [range]);
@@ -780,6 +782,24 @@ export default function DashboardPage({
     };
   }, [data, today]);
 
+  /* ─── Prior-period snapshot (yesterday) ─────────────────────────── */
+  const yesterday = addDays(today, -1);
+  const prevOccupancy = useMemo(() => computeOccupancyMetrics(data, yesterday), [data, yesterday]);
+  const prevService = useMemo(() => computeServiceMetrics(data, yesterday), [data, yesterday]);
+
+  /* ─── Prior-period refunds ─────────────────────────────────────── */
+  const prevRefundData = useMemo(() =>
+    computeRefundMetrics(data.reservations, prevFrom, prevTo),
+  [data.reservations, prevFrom, prevTo]);
+
+  /* ─── Prior-period funnel metrics ──────────────────────────────── */
+  const prevFunnelMetrics = useMemo(() =>
+    computeLifecycleMetrics(data, prevFrom, prevTo, yesterday),
+  [data.clients, data.serverStats, data.reservations, prevFrom, prevTo, yesterday]);
+
+  /* ─── Trend helper ─────────────────────────────────────────────── */
+  const pctChange = (cur, prev) => prev > 0 ? ((cur - prev) / prev) * 100 : 0;
+
   /* ─── Loading gate ────────────────────────────────────────────────── */
   if (!data || !data.reservations) {
     return (
@@ -858,12 +878,12 @@ export default function DashboardPage({
         </div>
 
         {/* ═══ ROW 1: Gingr Data ═══ */}
-        <MetricCell label="Expected" value={todaySnapshot.expected} hero onClick={() => nav && nav("checkout-tv")} />
-        <MetricCell label="In House" value={todaySnapshot.dogsInHouse} hero sub={`${todaySnapshot.boardingInHouse}B · ${todaySnapshot.daycareInHouse}D`} onClick={() => nav && nav("checkout-tv")} />
-        <MetricCell label="Going Home" value={todaySnapshot.goingHome} hero onClick={() => nav && nav("ops-bathing")} />
-        <MetricCell label="Occupancy" value={`${todaySnapshot.occupancyPct}%`} hero onClick={() => nav && nav("settings")} />
+        <MetricCell label="Expected" value={todaySnapshot.expected} hero onClick={() => nav && nav("checkout-tv")} trend={showPriorPeriod ? pctChange(todaySnapshot.expected, prevOccupancy.expected) : null} />
+        <MetricCell label="In House" value={todaySnapshot.dogsInHouse} hero sub={`${todaySnapshot.boardingInHouse}B · ${todaySnapshot.daycareInHouse}D`} onClick={() => nav && nav("checkout-tv")} trend={showPriorPeriod ? pctChange(todaySnapshot.dogsInHouse, prevOccupancy.dogsInHouse) : null} />
+        <MetricCell label="Going Home" value={todaySnapshot.goingHome} hero onClick={() => nav && nav("ops-bathing")} trend={showPriorPeriod ? pctChange(todaySnapshot.goingHome, prevOccupancy.goingHome) : null} />
+        <MetricCell label="Occupancy" value={`${todaySnapshot.occupancyPct}%`} hero onClick={() => nav && nav("settings")} trend={showPriorPeriod ? pctChange(todaySnapshot.occupancyPct, prevOccupancy.occupancyPct) : null} />
         <MetricCell label="Bookings" value={todaySnapshot.bookingsToday} hero />
-        <MetricCell label="Tours" value={todaySnapshot.tours} hero onClick={() => nav && nav("lifecycle")} />
+        <MetricCell label="Tours" value={todaySnapshot.tours} hero onClick={() => nav && nav("lifecycle")} trend={showPriorPeriod ? pctChange(todaySnapshot.tours, prevService.tours) : null} />
         <MetricCell label="Evals" value={todaySnapshot.evals} hero onClick={() => nav && nav("lifecycle")} />
         <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={() => nav && nav("ops-opening")} />
         <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={() => nav && nav("ops-bathing")} />
@@ -875,13 +895,13 @@ export default function DashboardPage({
         <div style={{ gridColumn: "8 / 10" }} />
 
         {/* ═══ ROW 2: Customer Lifecycle ═══ */}
-        <MetricCell label="Remaining Leads" value={funnelMetrics.remainingLeads} onClick={() => nav && nav("funnel")} />
+        <MetricCell label="Remaining Leads" value={funnelMetrics.remainingLeads} onClick={() => nav && nav("funnel")} trend={showPriorPeriod ? pctChange(funnelMetrics.remainingLeads, prevFunnelMetrics.remainingLeads) : null} />
         <MetricCell label="At-Risk" value={funnelMetrics.remainingAtRisk} onClick={() => nav && nav("lifecycle")} color={funnelMetrics.remainingAtRisk > 0 ? C.warn : undefined} />
-        <MetricCell label="Outreaches" value={funnelMetrics.todayOutreaches} onClick={() => nav && nav("lifecycle")} />
-        <MetricCell label="Conversions" value={funnelMetrics.todayConversions} color={funnelMetrics.todayConversions > 0 ? C.suc : undefined} onClick={() => nav && nav("lifecycle")} />
+        <MetricCell label="Outreaches" value={funnelMetrics.todayOutreaches} onClick={() => nav && nav("lifecycle")} trend={showPriorPeriod ? pctChange(funnelMetrics.todayOutreaches, prevFunnelMetrics.todayOutreaches) : null} />
+        <MetricCell label="Conversions" value={funnelMetrics.todayConversions} color={funnelMetrics.todayConversions > 0 ? C.suc : undefined} onClick={() => nav && nav("lifecycle")} trend={showPriorPeriod ? pctChange(funnelMetrics.todayConversions, prevFunnelMetrics.todayConversions) : null} />
         <MetricCell label="First-Timers" value={funnelMetrics.firstTimePayers} onClick={() => nav && nav("lifecycle")} />
-        <MetricCell label="Conv. Rate" value={`${funnelMetrics.conversionRate.toFixed(1)}%`} onClick={() => nav && nav("funnel")} />
-        <MetricCell label="New Leads" value={funnelMetrics.todayNewLeads} onClick={() => nav && nav("funnel")} />
+        <MetricCell label="Conv. Rate" value={`${funnelMetrics.conversionRate.toFixed(1)}%`} onClick={() => nav && nav("funnel")} trend={showPriorPeriod ? pctChange(funnelMetrics.conversionRate, prevFunnelMetrics.conversionRate) : null} />
+        <MetricCell label="New Leads" value={funnelMetrics.todayNewLeads} onClick={() => nav && nav("funnel")} trend={showPriorPeriod ? pctChange(funnelMetrics.todayNewLeads, prevFunnelMetrics.todayNewLeads) : null} />
         <ChecklistCell label="Front-End" progress={getChecklistProgress("ops-fe")} count={getChecklistCount("ops-fe")} onClick={() => nav && nav("ops-fe")} />
         <ServiceCell label="Pamper" done={svcData.pamperDone} total={svcData.pamperTotal} onClick={() => nav && nav("ops-pamper")} />
 
@@ -914,8 +934,8 @@ export default function DashboardPage({
         {/* ═══ ROW 4: Reporting/Financial ═══ */}
         <MetricCell label="Transactions" value={cashBasisData.current.count} trend={showPriorPeriod ? bookingsTrend : null} />
         <MetricCell label="Avg Ticket" value={`$${cashBasisData.current.avgTransaction.toFixed(0)}`} trend={showPriorPeriod ? cashBasisData.trendAvg : null} />
-        <MetricCell label="Rev/PAR" value={`$${accrualData.revPAR.toFixed(0)}`} />
-        <MetricCell label="Refunds" value={refundData.count} color={refundData.count > 0 ? C.dan : undefined} />
+        <MetricCell label="Rev/PAR" value={`$${accrualData.revPAR.toFixed(0)}`} trend={showPriorPeriod ? (() => { const prevRevPAR = accrualData.totalRoomCount > 0 && accrualData.previous.days.length > 0 ? accrualData.previous.totals.boardingRevenue / (accrualData.totalRoomCount * accrualData.previous.days.length) : 0; return pctChange(accrualData.revPAR, prevRevPAR); })() : null} />
+        <MetricCell label="Refunds" value={refundData.count} color={refundData.count > 0 ? C.dan : undefined} trend={showPriorPeriod ? pctChange(refundData.count, prevRefundData.count) : null} />
         <MetricCell label="$ Refunded" value={`$${fmt$k(refundData.total)}`} color={refundData.total > 0 ? C.dan : undefined} />
         <MetricCell label="Discounted" value={discountBreakdown.discounted} color={discountBreakdown.discounted > 0 ? C.warn : undefined} />
         <MetricCell label="$ Discounted" value={`$${fmt$k(discountBreakdown.totalDiscounts)}`} color={discountBreakdown.totalDiscounts > 0 ? C.warn : undefined} />
@@ -925,10 +945,13 @@ export default function DashboardPage({
         {/* ═══ ROWS 5-7: Charts ═══ */}
         <div className="dash-chart-cell" style={{ gridColumn: "1 / 4", gridRow: "span 3" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
-            <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cash Basis Revenue</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cash Basis Revenue</span>
+              <Tip text="Cash basis revenue from Gingr's GET /transactions endpoint. Shows actual money collected per day."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
+            </span>
             <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(cashBasisData.current.total)}</span>
           </div>
-          <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" />
+          <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" dateLabels={cashChartData.map(d => d.date)} />
         </div>
 
         {/* Col 4 Toggle area */}
@@ -959,10 +982,13 @@ export default function DashboardPage({
         {/* Accrual Revenue */}
         <div className="dash-chart-cell" style={{ gridColumn: "5 / 8", gridRow: "span 3" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
-            <span style={{ fontSize: 10, fontWeight: 800, color: C.accDk, textTransform: "uppercase", letterSpacing: "0.06em" }}>Accrual Revenue</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span style={{ fontSize: 10, fontWeight: 800, color: C.accDk, textTransform: "uppercase", letterSpacing: "0.06em" }}>Accrual Revenue</span>
+              <Tip text="Revenue recognized per night. Each reservation's per-night rate is spread across the nights stayed."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
+            </span>
             <span style={{ fontSize: 11, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</span>
           </div>
-          <ChartFill chartData={accrualChartData} color={C.acc} compareColor={C.pri} animEpoch={animEpoch} id="accrual-main" />
+          <ChartFill chartData={accrualChartData} color={C.acc} compareColor={C.pri} animEpoch={animEpoch} id="accrual-main" dateLabels={accrualChartData.map(d => d.date)} />
         </div>
 
         {/* Col 8: Private Play (row 5) */}
