@@ -167,7 +167,7 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
       {/* ── Header ── */}
       <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:24,animation:"funnelSlideIn 0.3s ease-out"}}>
         <div>
-          <h1 style={{margin:0,fontSize:26,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>Conversion Funnel</h1>
+          <h1 style={{margin:0,fontSize:26,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>Lead Funnel</h1>
           <p style={{margin:"4px 0 0",fontSize:13,color:C.textSec}}>{rangeLabel} — {new Date(startDate).toLocaleDateString("en-US",{month:"short",day:"numeric"})} to {new Date(endDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</p>
         </div>
       </div>

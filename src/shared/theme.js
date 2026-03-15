@@ -423,12 +423,17 @@ const LITE_ACTION_LEVELS = ["create"];
 const LITE_ACTION_LABELS = { create: "Create Record" };
 
 const DEFAULT_LIFECYCLE_BANNERS = {
-  conversion: "Leads auto-feed here after an Eval or Tour with no booking (+1 day follow-up). Log each outreach attempt, set the next follow-up date, and mark leads as Cold when they stop responding.",
+  leads: "Leads auto-feed here after an Eval or Tour with no booking (+1 day follow-up). Log each outreach attempt, set the next follow-up date, and mark leads as Cold when they stop responding.",
   active: "Active customers have a booking history and either have an upcoming reservation or visited recently. Clients move here automatically when they book or pay for the first time.",
-  retention: "Clients lapse here when they have no upcoming reservation and haven't visited within the configurable threshold (see Settings → Resort Policies). Booking a new appointment automatically moves them back to Active.",
-  cold: "Leads or lapsed clients you've manually marked as Cold. Click Revive to re-engage — you'll be prompted to log a note and set a new follow-up, and the client will return to Conversion or Retention based on their history.",
+  lapsed: "Clients lapse here when they have no upcoming reservation and haven't visited within the configurable threshold (see Settings → Resort Policies). Booking a new appointment automatically moves them back to Active.",
+  cold: "Leads or lapsed clients you've manually marked as Cold. Click Revive to re-engage — you'll be prompted to log a note and set a new follow-up, and the client will return to Leads or Lapsed based on their history.",
   all: "Aggregate view of every client record regardless of lifecycle stage. Use the search bar or column headers to sort and find any client quickly.",
 };
+
+// Maps old Firestore stage keys → new internal names (backward compat for persisted data)
+const LIFECYCLE_STAGE_MAP = { conversion: "leads", retention: "lapsed", leads: "leads", lapsed: "lapsed", active: "active", cold: "cold" };
+// Maps new internal stage names → old Firestore lifecycle data keys
+const LIFECYCLE_STORAGE_KEY = { leads: "conversion", lapsed: "retention" };
 
 // ═══════════════════════════════════════════════════════════════════════════
 const LC_FILTER_FIELDS = [
@@ -448,7 +453,7 @@ const LC_FILTER_FIELDS = [
   { section:"Services", key:"postEval", label:"Post-Eval Appts", type:"number", ops:["=",">=","<=",">","<"] },
   { section:"Services", key:"tours", label:"Tours", type:"number", ops:["=",">=","<=",">","<"] },
   { section:"Services", key:"postTour", label:"Post-Tour Appts", type:"number", ops:["=",">=","<=",">","<"] },
-  { section:"Lifecycle", key:"stage", label:"Stage", type:"select", ops:["is","isNot"], options:["conversion","active","retention","cold"] },
+  { section:"Lifecycle", key:"stage", label:"Stage", type:"select", ops:["is","isNot"], options:["leads","active","lapsed","cold"] },
   { section:"Lifecycle", key:"source", label:"Source", type:"select", ops:["is","isNot"], options:["eval","tour","manual","ignite",""] },
   { section:"Lifecycle", key:"followUp", label:"Follow-Up", type:"followUpStatus", ops:["overdue","today","thisWeek","hasDate","noDate"] },
 ];
@@ -456,4 +461,4 @@ const LC_OP_LABELS = {"contains":"contains","equals":"equals","starts":"starts w
 
 // ─── Operations Stats Helpers ──────────────────────────────────────────────
 
-export { C, LEAN_ROLES, LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX, IDB_VERSION, idbGet, idbSet, LITE_DEF_PRICING, CHART_PTS, OPERATIONS_CATALOG, OPS_TYPES, LITE_ACTION_LABELS, LITE_ACTION_LEVELS, DEF_CLIENT_FIELDS, DEF_DOG_FIELDS, DEFAULT_LIFECYCLE_BANNERS, LC_OP_LABELS, LC_FILTER_FIELDS, K9_LOGO_SRC, K9_LOGO_PNG, ROOM_TYPES, NAV_ITEMS, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, DEF_LITE_EOD_TEMPLATE, DAY_NAMES_SHORT, K9_LOCATIONS, POS_BASE, PAGE_SLUGS, SLUG_TO_PAGE, ENT_SLUG_TO_PAGE, buildUrl, parseUrl, gid, formatDogNames, fmtPhoneInput, titleCase, fmtPhone, fmtDate, fmtDateFull, fmtDateShort, fmtTime, fmtInstr, todayStr, addDays, formatTime12hr, countNights, countHours, IDB_NAME, IDB_STORE, idbOpen };
+export { C, LEAN_ROLES, LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX, IDB_VERSION, idbGet, idbSet, LITE_DEF_PRICING, CHART_PTS, OPERATIONS_CATALOG, OPS_TYPES, LITE_ACTION_LABELS, LITE_ACTION_LEVELS, DEF_CLIENT_FIELDS, DEF_DOG_FIELDS, DEFAULT_LIFECYCLE_BANNERS, LIFECYCLE_STAGE_MAP, LIFECYCLE_STORAGE_KEY, LC_OP_LABELS, LC_FILTER_FIELDS, K9_LOGO_SRC, K9_LOGO_PNG, ROOM_TYPES, NAV_ITEMS, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, DEF_LITE_EOD_TEMPLATE, DAY_NAMES_SHORT, K9_LOCATIONS, POS_BASE, PAGE_SLUGS, SLUG_TO_PAGE, ENT_SLUG_TO_PAGE, buildUrl, parseUrl, gid, formatDogNames, fmtPhoneInput, titleCase, fmtPhone, fmtDate, fmtDateFull, fmtDateShort, fmtTime, fmtInstr, todayStr, addDays, formatTime12hr, countNights, countHours, IDB_NAME, IDB_STORE, idbOpen };

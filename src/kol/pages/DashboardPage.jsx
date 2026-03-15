@@ -898,9 +898,9 @@ export default function DashboardPage({
         <MetricCell label="Remaining Leads" value={funnelMetrics.remainingLeads} onClick={() => nav && nav("funnel")} trend={showPriorPeriod ? pctChange(funnelMetrics.remainingLeads, prevFunnelMetrics.remainingLeads) : null} />
         <MetricCell label="At-Risk" value={funnelMetrics.remainingAtRisk} onClick={() => nav && nav("lifecycle")} color={funnelMetrics.remainingAtRisk > 0 ? C.warn : undefined} />
         <MetricCell label="Outreaches" value={funnelMetrics.todayOutreaches} onClick={() => nav && nav("lifecycle")} trend={showPriorPeriod ? pctChange(funnelMetrics.todayOutreaches, prevFunnelMetrics.todayOutreaches) : null} />
-        <MetricCell label="Conversions" value={funnelMetrics.todayConversions} color={funnelMetrics.todayConversions > 0 ? C.suc : undefined} onClick={() => nav && nav("lifecycle")} trend={showPriorPeriod ? pctChange(funnelMetrics.todayConversions, prevFunnelMetrics.todayConversions) : null} />
-        <MetricCell label="First-Timers" value={funnelMetrics.firstTimePayers} onClick={() => nav && nav("lifecycle")} />
-        <MetricCell label="Conv. Rate" value={`${funnelMetrics.conversionRate.toFixed(1)}%`} onClick={() => nav && nav("funnel")} trend={showPriorPeriod ? pctChange(funnelMetrics.conversionRate, prevFunnelMetrics.conversionRate) : null} />
+        <MetricCell label="Converted" value={funnelMetrics.todayConversions} color={funnelMetrics.todayConversions > 0 ? C.suc : undefined} onClick={() => nav && nav("lifecycle")} trend={showPriorPeriod ? pctChange(funnelMetrics.todayConversions, prevFunnelMetrics.todayConversions) : null} />
+        <MetricCell label="First-Time Spenders" value={funnelMetrics.firstTimePayers} onClick={() => nav && nav("lifecycle")} />
+        <MetricCell label="Conversion Rate" value={`${funnelMetrics.conversionRate.toFixed(1)}%`} onClick={() => nav && nav("funnel")} trend={showPriorPeriod ? pctChange(funnelMetrics.conversionRate, prevFunnelMetrics.conversionRate) : null} />
         <MetricCell label="New Leads" value={funnelMetrics.todayNewLeads} onClick={() => nav && nav("funnel")} trend={showPriorPeriod ? pctChange(funnelMetrics.todayNewLeads, prevFunnelMetrics.todayNewLeads) : null} />
         <ChecklistCell label="Front-End" progress={getChecklistProgress("ops-fe")} count={getChecklistCount("ops-fe")} onClick={() => nav && nav("ops-fe")} />
         <ServiceCell label="Pamper" done={svcData.pamperDone} total={svcData.pamperTotal} onClick={() => nav && nav("ops-pamper")} />

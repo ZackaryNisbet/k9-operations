@@ -778,10 +778,10 @@ function validateClientFields(fields, values) {
 }
 
 const DEFAULT_LIFECYCLE_BANNERS = {
-  conversion: "Leads auto-feed here after an Eval or Tour with no booking (+1 day follow-up). Log each outreach attempt, set the next follow-up date, and mark leads as Cold when they stop responding.",
+  leads: "Leads auto-feed here after an Eval or Tour with no booking (+1 day follow-up). Log each outreach attempt, set the next follow-up date, and mark leads as Cold when they stop responding.",
   active: "Active customers have a booking history and either have an upcoming reservation or visited recently. Clients move here automatically when they book or pay for the first time.",
-  retention: "Clients lapse here when they have no upcoming reservation and haven't visited within the configurable threshold (see Settings → Resort Policies). Booking a new appointment automatically moves them back to Active.",
-  cold: "Leads or lapsed clients you've manually marked as Cold. Click Revive to re-engage — you'll be prompted to log a note and set a new follow-up, and the client will return to Conversion or Retention based on their history.",
+  lapsed: "Clients lapse here when they have no upcoming reservation and haven't visited within the configurable threshold (see Settings → Resort Policies). Booking a new appointment automatically moves them back to Active.",
+  cold: "Leads or lapsed clients you've manually marked as Cold. Click Revive to re-engage — you'll be prompted to log a note and set a new follow-up, and the client will return to Leads or Lapsed based on their history.",
   all: "Aggregate view of every client record regardless of lifecycle stage. Use the search bar or column headers to sort and find any client quickly.",
 };
 
@@ -803,7 +803,7 @@ const LC_FILTER_FIELDS = [
   { section:"Services", key:"postEval", label:"Post-Eval Appts", type:"number", ops:["=",">=","<=",">","<"] },
   { section:"Services", key:"tours", label:"Tours", type:"number", ops:["=",">=","<=",">","<"] },
   { section:"Services", key:"postTour", label:"Post-Tour Appts", type:"number", ops:["=",">=","<=",">","<"] },
-  { section:"Lifecycle", key:"stage", label:"Stage", type:"select", ops:["is","isNot"], options:["conversion","active","retention","cold"] },
+  { section:"Lifecycle", key:"stage", label:"Stage", type:"select", ops:["is","isNot"], options:["leads","active","lapsed","cold"] },
   { section:"Lifecycle", key:"source", label:"Source", type:"select", ops:["is","isNot"], options:["eval","tour","manual","ignite",""] },
   { section:"Lifecycle", key:"followUp", label:"Follow-Up", type:"followUpStatus", ops:["overdue","today","thisWeek","hasDate","noDate"] },
 ];
@@ -1754,25 +1754,25 @@ function useGingrData(locationId) {
         });
       }
 
-      // Auto-set retention follow-up dates for clients missing one
+      // Auto-set lapsed follow-up dates for clients missing one
       // Lapse date = last_res_date + threshold (90 daycare / 180 boarding-heavy)
-      // Mirrors conversion follow-up logic: computed once, persisted to Postgres
-      const retentionNeedingFU = tClients.filter(c => {
+      // Mirrors leads follow-up logic: computed once, persisted to Postgres
+      const lapsedNeedingFU = tClients.filter(c => {
         if (c.lifecycle?.retention?.followUpDate) return false; // already set
         const gingrId = String(c.gingrId);
         const srv = sMap[gingrId];
         if (!srv?.last_res_date || !srv.has_real_booking) return false;
-        if (srv.has_upcoming) return false; // active, not retention
+        if (srv.has_upcoming) return false; // active, not lapsed
         const totalRes = Number(srv.total_res) || 0;
         if (totalRes === 0) return false;
         const daysSince = Math.floor((Date.now() - new Date(srv.last_res_date).getTime()) / 86400000);
         const bdPct = (Number(srv.boarding_count) || 0) / totalRes;
         const dcThresh = 90, bdThresh = 180;
         const thresh = bdPct > 0.5 ? bdThresh : dcThresh;
-        return daysSince >= thresh; // actually in retention
+        return daysSince >= thresh; // actually lapsed
       });
-      if (retentionNeedingFU.length > 0) {
-        const retRows = retentionNeedingFU.map(c => {
+      if (lapsedNeedingFU.length > 0) {
+        const retRows = lapsedNeedingFU.map(c => {
           const gingrId = String(c.gingrId);
           const srv = sMap[gingrId];
           const totalRes = Number(srv.total_res) || 1;
@@ -1787,8 +1787,8 @@ function useGingrData(locationId) {
           return { location_id: locationId, gingr_id: gingrId, lifecycle_data: updatedLC, updated_at: new Date().toISOString() };
         });
         supabase.from("lite_client_lifecycle").upsert(retRows, { onConflict: "location_id,gingr_id" }).then(({ error }) => {
-          if (error) console.log("[K9 Lite] Retention follow-up seed error:", error.message);
-          else console.log(`[K9 Lite] Seeded ${retRows.length} retention follow-up dates`);
+          if (error) console.log("[K9 Lite] Lapsed follow-up seed error:", error.message);
+          else console.log(`[K9 Lite] Seeded ${retRows.length} lapsed follow-up dates`);
         });
       }
 
@@ -2008,7 +2008,7 @@ function applyStructuredFilters(clients, stats, tabMap, filters) {
       }
       if (k === "nextRes") { if (op==="has") return !!s.nextRes; if (op==="missing") return !s.nextRes; }
       if (k === "stage") {
-        const stg = tm.isCold ? "cold" : tm.isRetention ? "retention" : tm.isActive ? "active" : tm.isConversion ? "conversion" : "unknown";
+        const stg = tm.isCold ? "cold" : tm.isRetention ? "lapsed" : tm.isActive ? "active" : tm.isConversion ? "leads" : "unknown";
         if (op==="is") return stg === val; if (op==="isNot") return stg !== val;
       }
       if (k === "source") {
@@ -2030,7 +2030,7 @@ function applyStructuredFilters(clients, stats, tabMap, filters) {
 
 // ─── CLIENTS PAGE (from POS App) ───────────────────────────────────────────
 function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setLcFilters, lcFilterOpen, setLcFilterOpen, locationSlug }) {
-  const [activeTab, setActiveTab] = useState("conversion");
+  const [activeTab, setActiveTab] = useState("leads");
   const [search, setSearch] = useState("");
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
@@ -2224,7 +2224,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     return map;
   }, [data.clients, data.serverStats, clientStats, resByClient, data.resortPolicies?.retentionDaycareDays, data.resortPolicies?.retentionBoardingDays]);
 
-  // ── TEMP DIAGNOSTIC: why are clients in conversion? ──
+  // ── TEMP DIAGNOSTIC: why are clients in leads? ──
   // ── Lifecycle event tracking ──
   const prevTabMapRef = useRef(null);
   useEffect(() => {
@@ -2241,7 +2241,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       if (event) {
         changed = true;
         let updated = { ...c, lifecycleEvents: [...(c.lifecycleEvents || []), event] };
-        // When moving to retention, set follow-up date to lapse date (today = day they crossed threshold)
+        // When moving to lapsed, set follow-up date to lapse date (today = day they crossed threshold)
         if (event.event === "moved_to_retention") {
           const lc = updated.lifecycle || { conversion: { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }, retention: { notes:"",followUpDate:"",updates:[] }, cold:false, coldDate:"", coldFrom:"" };
           updated = { ...updated, lifecycle: { ...lc, retention: { ...lc.retention, followUpDate: todayStr() } } };
@@ -2282,7 +2282,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     const active = all.filter(c => clientTabMap[c.id]?.isActive);
     const ret = all.filter(c => clientTabMap[c.id]?.isRetention);
     const cold = all.filter(c => clientTabMap[c.id]?.isCold);
-    return { conversion: conv, active, retention: ret, cold, all };
+    return { leads: conv, active, lapsed: ret, cold, all };
   }, [data.clients, search, clientTabMap, clientStats, activeTab]);
 
   // ── Apply sub-filters (structured filters, source filter, overdue toggle) ──
@@ -2293,8 +2293,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     if (activeFilterCount > 0) {
       list = applyStructuredFilters(list, clientStats, clientTabMap, lcFilters);
     }
-    // Source filter (Conversion tab only)
-    if (activeTab === "conversion" && sourceFilter.size > 0) {
+    // Source filter (Leads tab only)
+    if (activeTab === "leads" && sourceFilter.size > 0) {
       list = list.filter(c => {
         const src = getClientSource(c);
         if (sourceFilter.has("eval") && src.hasEval) return true;
@@ -2308,7 +2308,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     if (showOverdueOnly) {
       const today = todayStr();
       list = list.filter(c => {
-        const tab = activeTab === "conversion" ? "conversion" : activeTab === "retention" ? "retention" : null;
+        const tab = activeTab === "leads" ? "conversion" : activeTab === "lapsed" ? "retention" : null;
         if (!tab) return false;
         const fu = c.lifecycle?.[tab]?.followUpDate;
         return fu && fu < today;
@@ -2332,7 +2332,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           case "daysSince": va = sa.daysSinceLast??9999; vb = sb.daysSinceLast??9999; break;
           case "totalSpent": va = sa.totalSpent||0; vb = sb.totalSpent||0; break;
           case "nextRes": va = sa.nextRes?.checkIn||"zzz"; vb = sb.nextRes?.checkIn||"zzz"; break;
-          case "followUp": { const t = activeTab==="retention"?"retention":"conversion"; va = a.lifecycle?.[t]?.followUpDate||"zzz"; vb = b.lifecycle?.[t]?.followUpDate||"zzz"; break; }
+          case "followUp": { const t = activeTab==="lapsed"?"retention":"conversion"; va = a.lifecycle?.[t]?.followUpDate||"zzz"; vb = b.lifecycle?.[t]?.followUpDate||"zzz"; break; }
           case "coldDate": va = a.lifecycle?.coldDate||""; vb = b.lifecycle?.coldDate||""; break;
           case "totalPaid": va = sa.totalSpent||0; vb = sb.totalSpent||0; break;
           case "totalAppts": va = sa.totalRes||0; vb = sb.totalRes||0; break;
@@ -2368,7 +2368,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     const newClients = data.clients.map(c => {
       if (c.id !== clientId) return c;
       const lc = c.lifecycle || { conversion: { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }, retention: { notes:"",followUpDate:"",updates:[] }, cold:false, coldDate:"", coldFrom:"" };
-      const tabKey = isRevive ? (lc.coldFrom || "conversion") : lcTab;
+      const rawColdFrom = lc.coldFrom || "leads";
+      const coldStage = (rawColdFrom === "retention" || rawColdFrom === "lapsed") ? "lapsed" : "leads";
+      const tabKey = isRevive ? (coldStage === "lapsed" ? "retention" : "conversion") : lcTab;
       const oldDate = lc[tabKey]?.followUpDate || "";
       const entry = { id: gid(), notes: logNotes, previousFollowUp: oldDate, newFollowUp: logDate, loggedBy: profile?.full_name || profile?.email || "Staff", loggedAt: new Date().toISOString() };
       const updatedTab = { ...(lc[tabKey]||{}), notes: "", followUpDate: logDate, updates: [entry, ...(lc[tabKey]?.updates||[])] };
@@ -2392,7 +2394,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       if (c.id !== clientId) return c;
       return {
         ...c,
-        lifecycle: { ...(c.lifecycle||{}), cold: true, coldDate: today, coldFrom: activeTab === "retention" ? "retention" : "conversion" },
+        lifecycle: { ...(c.lifecycle||{}), cold: true, coldDate: today, coldFrom: activeTab === "lapsed" ? "lapsed" : "leads" },
         lifecycleEvents: [...(c.lifecycleEvents||[]), { event: "marked_cold", date: today, details: `Marked as cold from ${activeTab}` }]
       };
     });
@@ -2468,16 +2470,16 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const filteredTabCounts = useMemo(() => {
     if (activeFilterCount === 0) return null;
     const out = {};
-    for (const key of ["conversion","active","retention","cold","all"]) {
+    for (const key of ["leads","active","lapsed","cold","all"]) {
       out[key] = applyStructuredFilters(tabLists[key] || [], clientStats, clientTabMap, lcFilters).length;
     }
     return out;
   }, [activeFilterCount, tabLists, clientStats, clientTabMap, lcFilters]);
 
   const tabDefs = [
-    { id: "conversion", label: "Conversion", count: filteredTabCounts ? filteredTabCounts.conversion : tabLists.conversion.length, color: C.acc },
+    { id: "leads", label: "Leads", count: filteredTabCounts ? filteredTabCounts.leads : tabLists.leads.length, color: C.acc },
     { id: "active", label: "Active Customers", count: filteredTabCounts ? filteredTabCounts.active : tabLists.active.length, color: C.pri },
-    { id: "retention", label: "Retention", count: filteredTabCounts ? filteredTabCounts.retention : tabLists.retention.length, color: C.dan },
+    { id: "lapsed", label: "Lapsed", count: filteredTabCounts ? filteredTabCounts.lapsed : tabLists.lapsed.length, color: C.dan },
     { id: "cold", label: "Cold", count: filteredTabCounts ? filteredTabCounts.cold : tabLists.cold.length, color: C.textSec },
     { id: "all", label: "All", count: filteredTabCounts ? filteredTabCounts.all : tabLists.all.length, color: C.info },
   ];
@@ -2498,9 +2500,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [draftsLoaded, setDraftsLoaded] = useState(false);
   const [expandedDraft, setExpandedDraft] = useState(null);
 
-  // Load booking drafts when conversion tab is shown — refresh each time tab is opened
+  // Load booking drafts when leads tab is shown — refresh each time tab is opened
   useEffect(() => {
-    if (activeTab === "conversion" && locationSlug) {
+    if (activeTab === "leads" && locationSlug) {
       setDraftsLoaded(false);
       supabase.rpc("get_booking_drafts", { p_location_slug: locationSlug }).then(
         ({ data: d, error: e }) => {
@@ -2714,7 +2716,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Revive button cell ──
   const renderReviveBtn = (client) => (
-    <button onClick={(e) => { e.stopPropagation(); const rect=e.currentTarget.getBoundingClientRect(); setLogPopover({ clientId:client.id, tab:client.lifecycle?.coldFrom||"conversion", isRevive:true, x:rect.left, y:rect.bottom+4 }); setLogNotes(""); setLogDate(""); }}
+    <button onClick={(e) => { e.stopPropagation(); const rect=e.currentTarget.getBoundingClientRect(); const cf=client.lifecycle?.coldFrom||"leads"; setLogPopover({ clientId:client.id, tab:(cf==="retention"||cf==="lapsed")?"retention":"conversion", isRevive:true, x:rect.left, y:rect.bottom+4 }); setLogNotes(""); setLogDate(""); }}
       style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${C.suc}30`,background:`${C.suc}08`,color:C.suc,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
       Revive
     </button>
@@ -2736,8 +2738,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Grid templates per tab ──
   const getGrid = () => {
-    if (activeTab === "conversion") return "minmax(110px,1.3fr) minmax(75px,0.9fr) 50px 75px 55px 55px minmax(80px,1fr) minmax(80px,1fr) minmax(90px,1.3fr) 85px 55px";
-    if (activeTab === "retention") return "minmax(100px,1.2fr) minmax(75px,0.9fr) 45px 75px minmax(80px,0.9fr) minmax(80px,0.9fr) minmax(85px,1.2fr) 80px minmax(65px,0.7fr) minmax(60px,0.6fr) 50px 50px";
+    if (activeTab === "leads") return "minmax(110px,1.3fr) minmax(75px,0.9fr) 50px 75px 55px 55px minmax(80px,1fr) minmax(80px,1fr) minmax(90px,1.3fr) 85px 55px";
+    if (activeTab === "lapsed") return "minmax(100px,1.2fr) minmax(75px,0.9fr) 45px 75px minmax(80px,0.9fr) minmax(80px,0.9fr) minmax(85px,1.2fr) 80px minmax(65px,0.7fr) minmax(60px,0.6fr) 50px 50px";
     if (activeTab === "cold") return "minmax(110px,1.3fr) minmax(75px,0.9fr) 50px 75px minmax(90px,1fr) minmax(80px,1fr) minmax(110px,1.3fr) 65px";
     // Active / All — Client, Phone, Dogs, Created
     const base = "minmax(120px,1.3fr) minmax(80px,0.9fr) 50px 75px";
@@ -2784,7 +2786,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           </Btn>
           <Btn variant="ghost" onClick={() => {
             // Export current lifecycle tab to CSV
-            const headers = activeTab === "conversion"
+            const headers = activeTab === "leads"
               ? ["First Name","Last Name","Phone","Email","Dogs","Source","Follow-Up Date","Notes"]
               : activeTab === "active"
               ? ["First Name","Last Name","Phone","Email","Dogs","Reservations","Last Visit","Days Since","Total Spent"]
@@ -2795,7 +2797,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               const f = c.fields || {};
               const dogs = (data.dogs || []).filter(d => d.clientId === c.id).map(d => d.fields?.name).join(", ");
               const base = [f.first_name||"", f.last_name||"", f.phone||"", f.email||"", dogs];
-              if (activeTab === "conversion") {
+              if (activeTab === "leads") {
                 const lc = c.lifecycle?.conversion || {};
                 return [...base, c.referralSource || "", lc.followUpDate || "", lc.notes || ""];
               } else if (activeTab === "active") {
@@ -2841,7 +2843,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             if (!ids.includes(c.id)) return c;
             return {
               ...c,
-              lifecycle: { ...(c.lifecycle || {}), cold: true, coldDate: today, coldFrom: activeTab === "retention" ? "retention" : "conversion", coldReason: bulkReason.trim() },
+              lifecycle: { ...(c.lifecycle || {}), cold: true, coldDate: today, coldFrom: activeTab === "lapsed" ? "lapsed" : "leads", coldReason: bulkReason.trim() },
               lifecycleEvents: [...(c.lifecycleEvents || []), { event: "bulk_marked_cold", date: today, details: `Bulk marked as cold: ${bulkReason.trim()}` }],
             };
           });
@@ -3206,7 +3208,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             {search && <button onClick={()=>setSearch("")} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:2,display:"flex"}} title="Clear"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
             {/* Filter pills area */}
             <div style={{display:"flex",gap:4,marginLeft:8,flexShrink:0}}>
-              {activeTab === "conversion" && <>
+              {activeTab === "leads" && <>
                 {[{id:"eval",label:"Eval",color:C.acc},{id:"tour",label:"Tour",color:C.info},{id:"ignite",label:"Ignite",color:"#F97316"},{id:"online",label:"Online Booking",color:C.pri}].map(f => {
                   const on = sourceFilter.has(f.id);
                   return <button key={f.id} onClick={()=>toggleSourceFilter(f.id)} style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on?f.color:C.border}`,background:on?f.color:"transparent",color:on?"#fff":C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{f.label}</button>;
@@ -3214,7 +3216,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                 {sourceFilter.size > 0 && <button onClick={()=>setSourceFilter(new Set())} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:"0 2px",display:"flex",alignItems:"center"}} title="Clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
                 <div style={{width:1,height:20,background:C.border,margin:"0 4px",flexShrink:0}} />
               </>}
-              {(activeTab === "conversion" || activeTab === "retention") && (
+              {(activeTab === "leads" || activeTab === "lapsed") && (
                 <button onClick={()=>setShowOverdueOnly(v=>!v)}
                   style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${showOverdueOnly?C.dan:C.border}`,background:showOverdueOnly?`${C.dan}12`:"transparent",color:showOverdueOnly?C.dan:C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>
                   Overdue
@@ -3314,7 +3316,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         })()}
 
         {/* ═══ TABLE HEADER + ROWS ═══ */}
-        {activeTab === "conversion" && (() => {
+        {activeTab === "leads" && (() => {
           const grid = getGrid();
           return <>
             <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
@@ -3331,7 +3333,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               <div></div>
             </div>
             {displayedList.length === 0 ? (
-              <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No conversion leads{search?" matching search":""}</div></div>
+              <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No leads{search?" matching search":""}</div></div>
             ) : displayedList.map(c => {
               const isExp = expandedUpdates.has(c.id);
               const updates = c.lifecycle?.conversion?.updates || [];
@@ -3573,7 +3575,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           </>;
         })()}
 
-        {activeTab === "retention" && (() => {
+        {activeTab === "lapsed" && (() => {
           const grid = getGrid();
           return <>
             <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
@@ -3591,7 +3593,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               <div></div>
             </div>
             {displayedList.length === 0 ? (
-              <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No retention clients{search?" matching search":""}</div></div>
+              <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No lapsed clients{search?" matching search":""}</div></div>
             ) : displayedList.map(c => {
               const s = clientStats[c.id] || {};
               const isExp = expandedUpdates.has(c.id);
@@ -3647,7 +3649,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             {displayedList.length === 0 ? (
               <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No cold clients{search?" matching search":""}</div></div>
             ) : displayedList.map(c => {
-              const fromTab = c.lifecycle?.coldFrom || "conversion";
+              const rawFrom = c.lifecycle?.coldFrom || "leads";
+              const fromTab = (rawFrom === "retention" || rawFrom === "lapsed") ? "retention" : "conversion";
               const lastUpdate = c.lifecycle?.[fromTab]?.updates?.[0];
               return (
                 <div key={c.id}>
@@ -4085,7 +4088,7 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
       {/* ── Header ── */}
       <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:24,animation:"funnelSlideIn 0.3s ease-out"}}>
         <div>
-          <h1 style={{margin:0,fontSize:26,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>Conversion Funnel</h1>
+          <h1 style={{margin:0,fontSize:26,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>Lead Funnel</h1>
           <p style={{margin:"4px 0 0",fontSize:13,color:C.textSec}}>{rangeLabel} — {new Date(startDate).toLocaleDateString("en-US",{month:"short",day:"numeric"})} to {new Date(endDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</p>
         </div>
       </div>
@@ -8914,7 +8917,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       id: "lifecycle",
       label: "Customer Lifecycle",
       cards: [
-        { id: "retention-thresholds", label: "Retention Thresholds", desc: "Configure days of inactivity before a client moves from Active to Retention" },
+        { id: "lapsed-thresholds", label: "Lapsed Thresholds", desc: "Configure days of inactivity before a client moves from Active to Lapsed" },
       ],
     },
     {
@@ -8945,7 +8948,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
         return <TeamManagementTab profile={profile} data={data} save={save} />;
       case "permissions":
         return <PermissionsTab />;
-      case "retention-thresholds":
+      case "lapsed-thresholds":
         return <RetentionThresholdsTab />;
       case "required-fields":
         return <RequiredFieldsTab />;
@@ -11750,7 +11753,7 @@ function LeanAppInner() {
   const [liveEodEntries, setLiveEodEntries] = useState([]);
   const [liveResortPolicies, setLiveResortPolicies] = useState(null);
 
-  // Load persisted resort policies (retention thresholds) from lite_settings
+  // Load persisted resort policies (lapsed thresholds) from lite_settings
   useEffect(() => {
     supabase.from("lite_settings").select("setting_value").eq("location_id", currentLocation).eq("setting_key", "resort_policies").then(({ data: rows }) => {
       if (rows && rows.length > 0 && rows[0].setting_value) setLiveResortPolicies(rows[0].setting_value);
@@ -11930,7 +11933,7 @@ function LeanAppInner() {
   const breadcrumbLabel = useCallback((pg, prms) => {
     switch(pg) {
       case "lifecycle": return "Customer Lifecycle";
-      case "funnel": return "Conversion Funnel";
+      case "funnel": return "Lead Funnel";
       case "ops-hub": return "Operations";
       case "ops-opening": return "Opening Checklist";
       case "ops-fe": return "FE Checklist";

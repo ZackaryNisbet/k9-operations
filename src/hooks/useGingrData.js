@@ -335,23 +335,23 @@ function useGingrData(locationId) {
 
       // Auto-set retention follow-up dates for clients missing one
       // Lapse date = last_res_date + threshold (90 daycare / 180 boarding-heavy)
-      // Mirrors conversion follow-up logic: computed once, persisted to Postgres
-      const retentionNeedingFU = tClients.filter(c => {
+      // Mirrors leads follow-up logic: computed once, persisted to Postgres
+      const lapsedNeedingFU = tClients.filter(c => {
         if (c.lifecycle?.retention?.followUpDate) return false; // already set
         const gingrId = String(c.gingrId);
         const srv = sMap[gingrId];
         if (!srv?.last_res_date || !srv.has_real_booking) return false;
-        if (srv.has_upcoming) return false; // active, not retention
+        if (srv.has_upcoming) return false; // active, not lapsed
         const totalRes = Number(srv.total_res) || 0;
         if (totalRes === 0) return false;
         const daysSince = Math.floor((Date.now() - new Date(srv.last_res_date).getTime()) / 86400000);
         const bdPct = (Number(srv.boarding_count) || 0) / totalRes;
         const dcThresh = 90, bdThresh = 180;
         const thresh = bdPct > 0.5 ? bdThresh : dcThresh;
-        return daysSince >= thresh; // actually in retention
+        return daysSince >= thresh; // actually lapsed
       });
-      if (retentionNeedingFU.length > 0) {
-        const retRows = retentionNeedingFU.map(c => {
+      if (lapsedNeedingFU.length > 0) {
+        const retRows = lapsedNeedingFU.map(c => {
           const gingrId = String(c.gingrId);
           const srv = sMap[gingrId];
           const totalRes = Number(srv.total_res) || 1;
@@ -366,8 +366,8 @@ function useGingrData(locationId) {
           return { location_id: locationId, gingr_id: gingrId, lifecycle_data: updatedLC, updated_at: new Date().toISOString() };
         });
         supabase.from("lite_client_lifecycle").upsert(retRows, { onConflict: "location_id,gingr_id" }).then(({ error }) => {
-          if (error) console.log("[K9 Lite] Retention follow-up seed error:", error.message);
-          else console.log(`[K9 Lite] Seeded ${retRows.length} retention follow-up dates`);
+          if (error) console.log("[K9 Lite] Lapsed follow-up seed error:", error.message);
+          else console.log(`[K9 Lite] Seeded ${retRows.length} lapsed follow-up dates`);
         });
       }
 
