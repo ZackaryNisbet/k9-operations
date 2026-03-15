@@ -753,6 +753,27 @@ export default function LandingPage() {
         }} />
 
         <div style={{ position: 'relative', maxWidth: 800, margin: '0 auto', padding: '0 24px' }}>
+
+          {/* ─── Hero Brand Mark + Tagline ─── */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, marginBottom: 32 }}>
+            <img
+              src="/k9_mark.svg"
+              alt="K9 Operations"
+              style={{
+                height: 'clamp(80px, 14vw, 140px)',
+                width: 'auto',
+                filter: 'drop-shadow(0 4px 24px rgba(20,83,45,0.12))',
+              }}
+            />
+            <div style={{
+              fontSize: 'clamp(14px, 2vw, 18px)', fontWeight: 700, color: C.pri,
+              letterSpacing: '0.18em', textTransform: 'uppercase',
+              opacity: 0.65, lineHeight: 1.3,
+            }}>
+              The operating system for pet care facilities
+            </div>
+          </div>
+
           <h1 style={{
             fontSize: 'clamp(36px, 5.5vw, 64px)', fontWeight: 900, lineHeight: 1.08,
             color: C.pri, margin: '0 0 20px', letterSpacing: '-0.03em',
@@ -761,15 +782,6 @@ export default function LandingPage() {
             <span style={{ color: C.acc }}>transformed</span> into<br />
             operational intelligence
           </h1>
-
-          {/* Tagline — key brand statement */}
-          <div style={{
-            fontSize: 'clamp(18px, 2.5vw, 24px)', fontWeight: 700, color: C.pri,
-            letterSpacing: '0.12em', textTransform: 'uppercase',
-            margin: '0 0 24px', opacity: 0.7,
-          }}>
-            The operating system for pet care facilities
-          </div>
 
           <p style={{
             fontSize: 'clamp(16px, 2vw, 19px)', color: C.textSec, lineHeight: 1.6,
