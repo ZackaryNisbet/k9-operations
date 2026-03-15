@@ -4,6 +4,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback, Component } from 'react';
 import { supabase } from './supabaseClient';
+import { B } from './shared/bookingTheme';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ERROR BOUNDARY — catches render errors and shows useful info
@@ -32,28 +33,7 @@ class BookingErrorBoundary extends Component {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// BRAND CONSTANTS
-// ═══════════════════════════════════════════════════════════════════════════
-const B = {
-  navy: '#003462',
-  navyDark: '#00243F',
-  navyLight: '#0A4A82',
-  gold: '#AF8D54',
-  goldLight: '#C9AB74',
-  goldPale: '#F5EFE3',
-  bronze: '#59504B',
-  bg: '#F8F7F4',
-  surface: '#FFFFFF',
-  text: '#1A1D23',
-  textSec: '#6B7280',
-  textMut: '#9CA3AF',
-  suc: '#10B981',
-  warn: '#F59E0B',
-  err: '#EF4444',
-  border: '#E5E7EB',
-  borderLight: '#F3F4F6',
-};
+// Brand constants imported from shared/bookingTheme.js (K9 Resorts franchise theme)
 
 // High-quality Unsplash images for the booking experience
 const HERO_IMAGES = [

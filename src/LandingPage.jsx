@@ -5,25 +5,22 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 
 // ─── Light Theme Colors ────────────────────────────────────────────────────────
 const C = {
-  bg: '#FAFBFC',
-  bgAlt: '#F0F2F5',
+  bg: '#FFFFFF',
+  bgAlt: '#F7FEE7',
   surface: '#FFFFFF',
-  surfaceAlt: '#F7F8FA',
-  border: '#E2E6ED',
-  borderLight: '#EEF0F4',
-  text: '#1A1F2E',
-  textSec: '#5A6478',
-  textMut: '#8B95A8',
-  gold: '#AF8D54',
-  goldLight: '#C4A46A',
-  goldDark: '#8B6F3C',
-  navy: '#003462',
-  navyLight: '#0A4D8A',
-  navyDeep: '#001D3D',
-  accent: '#0EA5E9',
-  accentLight: '#E0F2FE',
-  success: '#10B981',
-  successLight: '#D1FAE5',
+  surfaceAlt: '#F8FAFC',
+  border: '#E2E8F0',
+  borderLight: '#F1F5F9',
+  text: '#0F172A',
+  textSec: '#475569',
+  textMut: '#64748B',
+  pri: '#14532D',
+  priL: '#166534',
+  acc: '#84CC16',
+  accLt: '#D9F99D',
+  accDk: '#4D7C0F',
+  success: '#16A34A',
+  successLight: '#ECFDF5',
 };
 
 // ─── Legal Data ───────────────────────────────────────────────────────────────
@@ -75,28 +72,9 @@ const Icon = ({ name, size = 24, color = 'currentColor' }) => {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none">{icons[name]}</svg>;
 };
 
-// ─── K9 Operations Node/Nexus Brand Mark (SVG) ──────────────────────────────
-// Central hub with connected nodes — represents the data nexus / intelligence layer
+// ─── K9 Operations Logo ──────────────────────────────────────────────────────
 const K9Logo = ({ size = 36 }) => (
-  <svg width={size} height={size} viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="K9 Operations">
-    {/* Connection lines */}
-    <line x1="24" y1="24" x2="12" y2="10" stroke="#AF8D54" strokeWidth="1.8" opacity="0.5" />
-    <line x1="24" y1="24" x2="38" y2="12" stroke="#AF8D54" strokeWidth="1.8" opacity="0.5" />
-    <line x1="24" y1="24" x2="10" y2="36" stroke="#AF8D54" strokeWidth="1.8" opacity="0.5" />
-    <line x1="24" y1="24" x2="38" y2="36" stroke="#AF8D54" strokeWidth="1.8" opacity="0.5" />
-    {/* Secondary connections between outer nodes */}
-    <line x1="12" y1="10" x2="38" y2="12" stroke="#003462" strokeWidth="1" opacity="0.2" />
-    <line x1="10" y1="36" x2="38" y2="36" stroke="#003462" strokeWidth="1" opacity="0.2" />
-    {/* Outer nodes */}
-    <circle cx="12" cy="10" r="4.5" fill="#003462" opacity="0.85" />
-    <circle cx="38" cy="12" r="3.5" fill="#003462" opacity="0.7" />
-    <circle cx="10" cy="36" r="3.5" fill="#003462" opacity="0.7" />
-    <circle cx="38" cy="36" r="4" fill="#003462" opacity="0.8" />
-    {/* Center hub — K9 Ops nexus */}
-    <circle cx="24" cy="24" r="9" fill="#003462" />
-    <circle cx="24" cy="24" r="6" fill="#AF8D54" opacity="0.9" />
-    <circle cx="24" cy="24" r="2.5" fill="#FFFFFF" />
-  </svg>
+  <img src="/k9-logo-full.svg" alt="K9 Operations" style={{ height: size }} />
 );
 
 
@@ -141,7 +119,7 @@ function DataFlowAnimation() {
       const cx = w / 2;
 
       const gingrNode = { x: cx, y: 60, label: 'Gingr', sub: 'PMS Data Source', color: '#6366F1', radius: 44 };
-      const k9Node = { x: cx, y: h * 0.42, label: 'K9 Ops', sub: 'Intelligence Layer', color: C.navy, radius: 50 };
+      const k9Node = { x: cx, y: h * 0.42, label: 'K9 Ops', sub: 'Intelligence Layer', color: C.pri, radius: 50 };
 
       const spacing = Math.min(w * 0.28, 180);
       const bottomY = h * 0.82;
@@ -182,7 +160,7 @@ function DataFlowAnimation() {
         const midY = (from.y + to.y) / 2;
         ctx.moveTo(from.x, from.y + from.radius);
         ctx.bezierCurveTo(from.x, midY, to.x, midY, to.x, to.y - to.radius);
-        ctx.strokeStyle = `rgba(0,52,98,${alpha})`;
+        ctx.strokeStyle = `rgba(20,83,45,${alpha})`;
         ctx.lineWidth = 2;
         ctx.setLineDash([6, 4]);
         ctx.stroke();
@@ -222,13 +200,13 @@ function DataFlowAnimation() {
 
         // Label
         ctx.fillStyle = node.color;
-        ctx.font = `700 ${node.radius > 40 ? 14 : 11}px 'GT Eesti', system-ui, sans-serif`;
+        ctx.font = `700 ${node.radius > 40 ? 14 : 11}px 'Outfit', system-ui, sans-serif`;
         ctx.textAlign = 'center';
         ctx.fillText(node.label, node.x, node.y + (node.radius > 40 ? 5 : 4));
 
         // Sub-label
         ctx.fillStyle = C.textMut;
-        ctx.font = `500 ${node.radius > 40 ? 11 : 9}px 'GT Eesti', system-ui, sans-serif`;
+        ctx.font = `500 ${node.radius > 40 ? 11 : 9}px 'Outfit', system-ui, sans-serif`;
         ctx.fillText(node.sub, node.x, node.y + node.radius + 16);
       };
 
@@ -377,8 +355,8 @@ function FeatureGraphic({ type, color }) {
   if (type === 'lifecycle') {
     // Premium horizontal pipeline: Gingr → K9 Ops → Conversion → Active ↔ Retention
     // Customer NEVER goes back to New/Conversion. Active ↔ Retention is the ONLY bidirectional flow.
-    const navy = '#003462';
-    const gold = '#AF8D54';
+    const navy = '#14532D';
+    const gold = '#84CC16';
     const teal = '#0EA5E9';
     const green = '#10B981';
 
@@ -606,13 +584,13 @@ function FeatureGraphic({ type, color }) {
     return (
       <svg width="300" height="260" viewBox="0 0 300 260" fill="none">
         {/* Monitor frame */}
-        <rect x="20" y="10" width="260" height="180" rx="12" fill="#001A33" stroke="#1E2A42" strokeWidth="2"/>
-        <rect x="120" y="195" width="60" height="12" rx="2" fill="#1E2A42"/>
-        <rect x="90" y="207" width="120" height="6" rx="3" fill="#1E2A42"/>
+        <rect x="20" y="10" width="260" height="180" rx="12" fill="#14532D" stroke="#166534" strokeWidth="2"/>
+        <rect x="120" y="195" width="60" height="12" rx="2" fill="#166534"/>
+        <rect x="90" y="207" width="120" height="6" rx="3" fill="#166534"/>
 
         {/* Header */}
         <text x="40" y="38" fontSize="11" fontWeight="800" fill="#fff">K9 Cherry Hill</text>
-        <text x="40" y="50" fontSize="7" fontWeight="600" fill="#AF8D54" letterSpacing="1">CHECKOUT BOARD</text>
+        <text x="40" y="50" fontSize="7" fontWeight="600" fill="#84CC16" letterSpacing="1">CHECKOUT BOARD</text>
         <text x="260" y="38" textAnchor="end" fontSize="14" fontWeight="900" fill="#fff">2:45 PM</text>
 
         {/* Dog cards */}
@@ -621,7 +599,7 @@ function FeatureGraphic({ type, color }) {
           const row = Math.floor(i / 4);
           const x = 35 + col * 58;
           const y = 65 + row * 62;
-          const colors = ['#0EA5E9', '#AF8D54', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
+          const colors = ['#0EA5E9', '#84CC16', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
           return (
             <g key={i}>
               <rect x={x} y={y} width="50" height="52" rx="8" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.08)" strokeWidth="1"/>
@@ -651,7 +629,7 @@ function FeatureGraphic({ type, color }) {
         {[
           { x: 50, h: 90, label: 'Standard', c: '#0EA5E9' },
           { x: 100, h: 110, label: 'Deluxe', c: color },
-          { x: 150, h: 70, label: 'Luxury', c: '#AF8D54' },
+          { x: 150, h: 70, label: 'Luxury', c: '#84CC16' },
           { x: 200, h: 50, label: 'VIP', c: '#8B5CF6' },
         ].map((bar, i) => (
           <g key={i}>
@@ -706,7 +684,7 @@ export default function LandingPage() {
   };
 
   return (
-    <div style={{ background: C.bg, color: C.text, fontFamily: "'GT Eesti', -apple-system, system-ui, sans-serif", minHeight: '100vh', overflowX: 'hidden' }}>
+    <div style={{ background: C.bg, color: C.text, fontFamily: "'Outfit', -apple-system, system-ui, sans-serif", minHeight: '100vh', overflowX: 'hidden' }}>
 
       {/* ─── NAVIGATION ─── */}
       <nav style={navStyle}>
@@ -714,21 +692,21 @@ export default function LandingPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <K9Logo size={32} />
             <div>
-              <div style={{ fontSize: 15, fontWeight: 800, color: C.navy, lineHeight: 1.1, letterSpacing: '-0.02em' }}>K9 Operations</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.pri, lineHeight: 1.1, letterSpacing: '-0.02em' }}>K9 Operations</div>
               <div style={{ fontSize: 9, fontWeight: 600, color: C.textMut, letterSpacing: '0.08em', textTransform: 'uppercase' }}>Lite · KOL</div>
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 32 }} className="nav-links">
-            {['Features', 'How It Works', 'Roadmap'].map(item => (
+            {['Features', 'How It Works'].map(item => (
               <button key={item} onClick={() => scrollTo(item.toLowerCase().replace(/ /g, '-'))} style={{
                 background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: C.textSec,
                 padding: '4px 0', transition: 'color 0.2s',
-              }} onMouseEnter={e => e.target.style.color = C.navy} onMouseLeave={e => e.target.style.color = C.textSec}>
+              }} onMouseEnter={e => e.target.style.color = C.pri} onMouseLeave={e => e.target.style.color = C.textSec}>
                 {item}
               </button>
             ))}
             <a href="/login" style={{
-              padding: '8px 20px', borderRadius: 8, background: C.navy, color: '#fff',
+              padding: '8px 20px', borderRadius: 8, background: C.pri, color: '#fff',
               fontSize: 13, fontWeight: 700, textDecoration: 'none', transition: 'all 0.2s',
               border: 'none', cursor: 'pointer',
             }}>Sign In</a>
@@ -743,7 +721,7 @@ export default function LandingPage() {
         {/* Mobile menu */}
         {mobileMenuOpen && (
           <div style={{ padding: '16px 24px', background: '#fff', borderTop: `1px solid ${C.border}` }} className="mobile-menu">
-            {['Features', 'How It Works', 'Roadmap'].map(item => (
+            {['Features', 'How It Works'].map(item => (
               <button key={item} onClick={() => scrollTo(item.toLowerCase().replace(/ /g, '-'))} style={{
                 display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none',
                 padding: '12px 0', fontSize: 15, fontWeight: 600, color: C.text, cursor: 'pointer',
@@ -752,7 +730,7 @@ export default function LandingPage() {
             ))}
             <a href="/login" style={{
               display: 'block', textAlign: 'center', marginTop: 12, padding: '12px', borderRadius: 8,
-              background: C.navy, color: '#fff', fontSize: 14, fontWeight: 700, textDecoration: 'none',
+              background: C.pri, color: '#fff', fontSize: 14, fontWeight: 700, textDecoration: 'none',
             }}>Sign In</a>
           </div>
         )}
@@ -762,13 +740,13 @@ export default function LandingPage() {
       <section style={{
         paddingTop: 140, paddingBottom: 80,
         textAlign: 'center',
-        background: `linear-gradient(180deg, #FAFBFC 0%, #F0F2F5 100%)`,
+        background: `linear-gradient(180deg, #FFFFFF 0%, #F7FEE7 100%)`,
         position: 'relative',
       }}>
         {/* Subtle background dots */}
         <div style={{
           position: 'absolute', inset: 0, opacity: 0.4,
-          backgroundImage: 'radial-gradient(circle, #003462 0.5px, transparent 0.5px)',
+          backgroundImage: 'radial-gradient(circle, #14532D 0.5px, transparent 0.5px)',
           backgroundSize: '32px 32px',
           maskImage: 'radial-gradient(ellipse at center, black 20%, transparent 70%)',
           WebkitMaskImage: 'radial-gradient(ellipse at center, black 20%, transparent 70%)',
@@ -777,16 +755,16 @@ export default function LandingPage() {
         <div style={{ position: 'relative', maxWidth: 800, margin: '0 auto', padding: '0 24px' }}>
           <h1 style={{
             fontSize: 'clamp(36px, 5.5vw, 64px)', fontWeight: 900, lineHeight: 1.08,
-            color: C.navy, margin: '0 0 20px', letterSpacing: '-0.03em',
+            color: C.pri, margin: '0 0 20px', letterSpacing: '-0.03em',
           }}>
             Gingr data,<br />
-            <span style={{ color: C.gold }}>transformed</span> into<br />
+            <span style={{ color: C.acc }}>transformed</span> into<br />
             operational intelligence
           </h1>
 
           {/* Tagline — key brand statement */}
           <div style={{
-            fontSize: 'clamp(18px, 2.5vw, 24px)', fontWeight: 700, color: C.navy,
+            fontSize: 'clamp(18px, 2.5vw, 24px)', fontWeight: 700, color: C.pri,
             letterSpacing: '0.12em', textTransform: 'uppercase',
             margin: '0 0 24px', opacity: 0.7,
           }}>
@@ -804,17 +782,17 @@ export default function LandingPage() {
 
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
             <a href="/login" style={{
-              padding: '14px 32px', borderRadius: 10, background: C.navy, color: '#fff',
+              padding: '14px 32px', borderRadius: 10, background: C.pri, color: '#fff',
               fontSize: 15, fontWeight: 700, textDecoration: 'none',
-              boxShadow: '0 4px 14px rgba(0,52,98,0.25)',
+              boxShadow: '0 4px 14px rgba(20,83,45,0.25)',
               transition: 'all 0.2s',
             }}>Get Started</a>
-            <a href="/public-roadmap" style={{
-              padding: '14px 32px', borderRadius: 10, background: '#fff', color: C.navy,
+            <a href="#features" style={{
+              padding: '14px 32px', borderRadius: 10, background: '#fff', color: C.pri,
               fontSize: 15, fontWeight: 700, textDecoration: 'none',
               border: `1.5px solid ${C.border}`,
               transition: 'all 0.2s',
-            }}>View Roadmap</a>
+            }}>See Features</a>
           </div>
         </div>
       </section>
@@ -843,9 +821,9 @@ export default function LandingPage() {
           <div style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
             padding: '6px 14px', borderRadius: 100,
-            background: C.navy + '08', marginBottom: 16,
+            background: C.pri + '08', marginBottom: 16,
           }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.navy, letterSpacing: '0.06em', textTransform: 'uppercase' }}>How It Works</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.pri, letterSpacing: '0.06em', textTransform: 'uppercase' }}>How It Works</span>
           </div>
           <h2 style={{ fontSize: 'clamp(28px, 4vw, 44px)', fontWeight: 800, color: C.text, margin: '0 0 12px', letterSpacing: '-0.02em' }}>
             Your data, intelligently distributed
@@ -888,7 +866,7 @@ export default function LandingPage() {
             icon="lifecycle"
             title="Customer Lifecycle CRM"
             subtitle="Relationship Management"
-            accentColor={C.navy}
+            accentColor={C.pri}
             description="Every client automatically flows through four stages — Conversion, Active, Retention, and Cold — based on their real booking behavior. No manual tagging required."
             bullets={[
               'Conversion stage auto-captures leads from tours & evaluations with follow-up tracking',
@@ -924,7 +902,7 @@ export default function LandingPage() {
             icon="tv"
             title="Checkout TV"
             subtitle="Real-Time Facility Display"
-            accentColor="#AF8D54"
+            accentColor="#84CC16"
             description="A dark, fullscreen display designed for lobby monitors. Shows every checked-in dog with their photo, breed, owner name, and room number — updating in real time."
             bullets={[
               'Auto-populates from checked-in daycare and boarding reservations',
@@ -1000,10 +978,10 @@ export default function LandingPage() {
                 textAlign: 'left', transition: 'all 0.2s',
               }}>
                 <div style={{
-                  width: 40, height: 40, borderRadius: 10, background: C.navy + '08',
+                  width: 40, height: 40, borderRadius: 10, background: C.pri + '08',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16,
                 }}>
-                  <Icon name={card.icon} size={20} color={C.navy} />
+                  <Icon name={card.icon} size={20} color={C.pri} />
                 </div>
                 <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 8 }}>{card.title}</div>
                 <div style={{ fontSize: 14, color: C.textSec, lineHeight: 1.6 }}>{card.desc}</div>
@@ -1027,15 +1005,15 @@ export default function LandingPage() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 24 }}>
             {/* KOL */}
             <div style={{
-              padding: 36, borderRadius: 20, background: '#fff', border: `2px solid ${C.navy}`,
+              padding: 36, borderRadius: 20, background: '#fff', border: `2px solid ${C.pri}`,
               textAlign: 'left', position: 'relative',
             }}>
               <div style={{
                 position: 'absolute', top: -12, left: 24, padding: '4px 14px', borderRadius: 100,
-                background: C.navy, color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em',
+                background: C.pri, color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em',
               }}>CURRENT</div>
               <div style={{ fontSize: 13, fontWeight: 700, color: C.textMut, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4, marginTop: 4 }}>K9 Operations Lite</div>
-              <div style={{ fontSize: 28, fontWeight: 900, color: C.navy, marginBottom: 4 }}>KOL</div>
+              <div style={{ fontSize: 28, fontWeight: 900, color: C.pri, marginBottom: 4 }}>KOL</div>
               <div style={{ fontSize: 14, color: C.textSec, marginBottom: 24, lineHeight: 1.5 }}>Full CRM, operations hub, reports, and facility management tools.</div>
               {['Customer Lifecycle CRM', 'Operations Hub (6 checklists)', 'Checkout TV', 'NLP Reports', 'Sales Funnel', 'Multi-location support'].map((f, i) => (
                 <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0' }}>
@@ -1069,29 +1047,6 @@ export default function LandingPage() {
       </section>
 
 
-      {/* ─── ROADMAP CTA ─── */}
-      <section id="roadmap" style={{ padding: '80px 24px', background: '#fff' }}>
-        <div style={{
-          maxWidth: 800, margin: '0 auto', textAlign: 'center',
-          padding: '60px 40px', borderRadius: 24,
-          background: `linear-gradient(135deg, ${C.navy}06 0%, ${C.gold}06 100%)`,
-          border: `1px solid ${C.border}`,
-        }}>
-          <h2 style={{ fontSize: 32, fontWeight: 800, color: C.text, margin: '0 0 12px' }}>See what's next</h2>
-          <p style={{ fontSize: 17, color: C.textSec, margin: '0 0 28px', lineHeight: 1.6 }}>
-            Our public roadmap tracks every feature in development — from planned to shipped.
-          </p>
-          <a href="/public-roadmap" style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            padding: '14px 32px', borderRadius: 10, background: C.navy, color: '#fff',
-            fontSize: 15, fontWeight: 700, textDecoration: 'none',
-            boxShadow: '0 4px 14px rgba(0,52,98,0.25)',
-          }}>
-            View Public Roadmap <Icon name="arrow" size={16} color="#fff" />
-          </a>
-        </div>
-      </section>
-
 
       {/* ─── FOOTER ─── */}
       <footer style={{ padding: '48px 24px 32px', background: C.bg, borderTop: `1px solid ${C.border}` }}>
@@ -1100,7 +1055,7 @@ export default function LandingPage() {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
                 <K9Logo size={28} />
-                <span style={{ fontSize: 15, fontWeight: 800, color: C.navy }}>K9 Operations</span>
+                <span style={{ fontSize: 15, fontWeight: 800, color: C.pri }}>K9 Operations</span>
               </div>
               <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
                 The operating system for<br />pet care facilities.
@@ -1109,9 +1064,9 @@ export default function LandingPage() {
             <div style={{ display: 'flex', gap: 48, flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 12 }}>Product</div>
-                {['Features', 'Roadmap', 'Sign In'].map((l, i) => (
+                {['Features', 'Sign In'].map((l, i) => (
                   <div key={i} style={{ marginBottom: 8 }}>
-                    <a href={l === 'Sign In' ? '/login' : l === 'Roadmap' ? '/public-roadmap' : '#features'} style={{
+                    <a href={l === 'Sign In' ? '/login' : '#features'} style={{
                       fontSize: 14, color: C.textSec, textDecoration: 'none',
                     }}>{l}</a>
                   </div>

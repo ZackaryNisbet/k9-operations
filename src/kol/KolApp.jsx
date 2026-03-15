@@ -14,8 +14,6 @@ import K9LoadingAnimation from "../shared/K9LoadingAnimation";
 import LocationSelector from "../shared/LocationSelector";
 import useGingrData from "../hooks/useGingrData";
 import { applyStructuredFilters } from "../hooks/useFilters";
-import RoadmapPage from "../RoadmapPage";
-
 // Page imports
 import ClientsPage from "./pages/ClientsPage";
 import FunnelPage from "./pages/FunnelPage";
@@ -62,7 +60,6 @@ const LEAN_NAV_ITEMS = [
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "TV", icon: "Monitor" },
-  { id: "roadmap", label: "Roadmap", icon: "Map" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -344,20 +341,12 @@ function LeanAppInner() {
       const style = document.createElement("style");
       style.id = "k9-lite-fonts";
       style.textContent = `
-        @font-face{font-family:'Canela';font-weight:700;font-style:normal;src:url('/fonts/Canela-Bold-Web.woff2') format('woff2'),url('/fonts/Canela-Bold-Web.woff') format('woff'),url('/fonts/Canela-Bold.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'Canela';font-weight:700;font-style:italic;src:url('/fonts/Canela-BoldItalic-Web.woff2') format('woff2'),url('/fonts/Canela-BoldItalic-Web.woff') format('woff'),url('/fonts/Canela-BoldItalic.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:300;font-style:normal;src:url('/fonts/GT-Eesti-Text-Light.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:300;font-style:italic;src:url('/fonts/GT-Eesti-Text-Light-Italic.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:500;font-style:normal;src:url('/fonts/GT-Eesti-Text-Medium.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:500;font-style:italic;src:url('/fonts/GT-Eesti-Text-Medium-Italic.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:700;font-style:normal;src:url('/fonts/GT-Eesti-Text-Bold.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:700;font-style:italic;src:url('/fonts/GT-Eesti-Text-Bold-Italic.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti Display';font-weight:500;font-style:normal;src:url('/fonts/GT-Eesti-Display-Medium.otf') format('opentype');font-display:swap;}
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
         *{box-sizing:border-box;margin:0;padding:0;}
         ::-webkit-scrollbar{width:6px;} ::-webkit-scrollbar-thumb{background:#C4C8D0;border-radius:3px;} ::-webkit-scrollbar-track{background:transparent;}
-        input:focus,select:focus,textarea:focus{border-color:${C.pri}!important;box-shadow:0 0 0 3px rgba(0,52,98,0.08);}
-        h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Canela', Georgia, serif !important;font-weight:700;}
-        body { margin: 0; padding: 0; font-family: 'GT Eesti', -apple-system, BlinkMacSystemFont, sans-serif; }
+        input:focus,select:focus,textarea:focus{border-color:${C.pri}!important;box-shadow:0 0 0 3px rgba(20,83,45,0.08);}
+        h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Outfit', sans-serif !important;font-weight:700;}
+        body { margin: 0; padding: 0; font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif; }
         @keyframes k9-toast-in { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
       `;
       document.head.appendChild(style);
@@ -535,8 +524,6 @@ function LeanAppInner() {
         return <InventoryPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "inventory-report":
         return <InventoryReportPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
-      case "roadmap":
-        return <RoadmapPage nav={nav} />;
       case "settings":
         return <SettingsPage profile={profile} addGlobalToast={addGlobalToast} />;
       default:
@@ -547,14 +534,14 @@ function LeanAppInner() {
   const isFullscreenPage = page === "checkout-tv";
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: C.bg, fontFamily: "'GT Eesti', -apple-system, BlinkMacSystemFont, sans-serif" }}>
+    <div style={{ display: "flex", height: "100vh", background: C.bg, fontFamily: "'Outfit', -apple-system, BlinkMacSystemFont, sans-serif" }}>
       {/* Sidebar — hidden on fullscreen pages like Checkout TV */}
       {!isFullscreenPage && <div
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
         style={{
           width: sbExpanded ? 240 : 68,
-          background: `linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,
+          background: `linear-gradient(180deg, ${C.pri} 0%, #0D3B1E 100%)`,
           display: "flex",
           flexDirection: "column",
           transition: "width 0.15s cubic-bezier(0.4,0,0.2,1)",
@@ -569,13 +556,13 @@ function LeanAppInner() {
             {sbExpanded ? <K9Logo size={38} /> : <K9LogoMini size={34} />}
           </div>
           <div style={{ overflow: "hidden", opacity: sbExpanded ? 1 : 0, transition: "opacity 0.1s", whiteSpace: "nowrap" }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: C.acc, fontFamily: "'Canela', Georgia, serif", letterSpacing: "0.02em" }}>K9 Resorts</div>
-            <div style={{ fontSize: 10, color: "rgba(175,141,84,0.6)", fontWeight: 500, letterSpacing: "0.08em", textTransform: "uppercase" }}>Luxury Pet Hotel</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.acc, fontFamily: "'Outfit', sans-serif", letterSpacing: "0.02em" }}>K9 Operations</div>
+            <div style={{ fontSize: 10, color: "rgba(132,204,22,0.6)", fontWeight: 500, letterSpacing: "0.08em", textTransform: "uppercase" }}>Lite · KOL</div>
           </div>
         </div>
 
         {/* Divider */}
-        <div style={{ margin: "0 14px 8px", height: 1, background: "rgba(175,141,84,0.12)" }} />
+        <div style={{ margin: "0 14px 8px", height: 1, background: "rgba(132,204,22,0.12)" }} />
 
         {/* Location Selector */}
         <div style={{ padding: "0 10px 8px", height: 44, boxSizing: "border-box" }}>
@@ -596,8 +583,8 @@ function LeanAppInner() {
             return (
               <button
                 key={item.id}
-                onMouseEnter={e => { if (!act) e.currentTarget.style.background = "rgba(175,141,84,0.08)"; }}
-                onMouseLeave={e => { if (!act) e.currentTarget.style.background = act ? "rgba(175,141,84,0.15)" : "transparent"; }}
+                onMouseEnter={e => { if (!act) e.currentTarget.style.background = "rgba(132,204,22,0.08)"; }}
+                onMouseLeave={e => { if (!act) e.currentTarget.style.background = act ? "rgba(132,204,22,0.15)" : "transparent"; }}
                 onClick={() => nav(item.id)}
                 style={{
                   display: "flex",
@@ -608,7 +595,7 @@ function LeanAppInner() {
                   justifyContent: "flex-start",
                   border: "none",
                   borderRadius: 10,
-                  background: act ? "rgba(175,141,84,0.15)" : "transparent",
+                  background: act ? "rgba(132,204,22,0.15)" : "transparent",
                   color: act ? C.acc : "rgba(255,255,255,0.85)",
                   fontSize: 13,
                   fontWeight: act ? 600 : 500,
@@ -634,35 +621,35 @@ function LeanAppInner() {
         <div style={{ padding: "14px 10px", display: "flex", flexDirection: "column", gap: 6, position: "relative" }}>
           {sbExpanded && (
             <div style={{ position: "relative" }}>
-              <button onClick={() => setAccountSwitchOpen(!accountSwitchOpen)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", border: "none", borderRadius: 8, background: accountSwitchOpen ? "rgba(175,141,84,0.15)" : "transparent", color: "rgba(175,141,84,0.6)", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, textAlign: "left", transition: "background 0.15s" }}>
-                <div style={{ width: 26, height: 26, borderRadius: 13, background: "rgba(175,141,84,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <button onClick={() => setAccountSwitchOpen(!accountSwitchOpen)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", border: "none", borderRadius: 8, background: accountSwitchOpen ? "rgba(132,204,22,0.15)" : "transparent", color: "rgba(132,204,22,0.6)", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, textAlign: "left", transition: "background 0.15s" }}>
+                <div style={{ width: 26, height: 26, borderRadius: 13, background: "rgba(132,204,22,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <span style={{ fontSize: 11, fontWeight: 800, color: C.acc }}>{(user?.email || "U")[0].toUpperCase()}</span>
                 </div>
-                <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(175,141,84,0.55)", fontSize: 11 }}>{user?.email || "User"}</div>
-                <span style={{ fontSize: 8, color: "rgba(175,141,84,0.3)", transform: accountSwitchOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>&#9650;</span>
+                <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(132,204,22,0.55)", fontSize: 11 }}>{user?.email || "User"}</div>
+                <span style={{ fontSize: 8, color: "rgba(132,204,22,0.3)", transform: accountSwitchOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>&#9650;</span>
               </button>
 
               {accountSwitchOpen && (
-                <div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, marginBottom: 6, background: "#0B2545", border: "1px solid rgba(175,141,84,0.2)", borderRadius: 10, boxShadow: "0 -8px 32px rgba(0,0,0,0.4)", overflow: "hidden", zIndex: 200, maxHeight: 280, overflowY: "auto" }}>
-                  <div style={{ padding: "10px 12px 6px", fontSize: 9, fontWeight: 700, color: "rgba(175,141,84,0.35)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Switch Account</div>
+                <div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, marginBottom: 6, background: "#0D3B1E", border: "1px solid rgba(132,204,22,0.2)", borderRadius: 10, boxShadow: "0 -8px 32px rgba(0,0,0,0.4)", overflow: "hidden", zIndex: 200, maxHeight: 280, overflowY: "auto" }}>
+                  <div style={{ padding: "10px 12px 6px", fontSize: 9, fontWeight: 700, color: "rgba(132,204,22,0.35)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Switch Account</div>
                   {teamAccounts.length === 0 ? (
                     <div style={{ padding: "12px", fontSize: 11, color: "rgba(255,255,255,0.3)", textAlign: "center", fontStyle: "italic" }}>No other accounts at this location</div>
                   ) : teamAccounts.map(acct => (
                     <button key={acct.id} onClick={() => { setSwitchTarget(acct); setSwitchPassword(""); setSwitchError(""); setAccountSwitchOpen(false); }}
                       style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "none", background: "transparent", color: "rgba(255,255,255,0.8)", cursor: "pointer", fontFamily: "inherit", fontSize: 12, textAlign: "left", transition: "background 0.1s" }}
-                      onMouseEnter={e => e.currentTarget.style.background = "rgba(175,141,84,0.1)"}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(132,204,22,0.1)"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                      <div style={{ width: 28, height: 28, borderRadius: 14, background: "rgba(175,141,84,0.15)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 14, background: "rgba(132,204,22,0.15)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                         <span style={{ fontSize: 12, fontWeight: 800, color: C.acc }}>{(acct.full_name || acct.email || "?")[0].toUpperCase()}</span>
                       </div>
                       <div style={{ flex: 1, overflow: "hidden" }}>
                         <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{acct.full_name || acct.email}</div>
                         <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{acct.email}</div>
                       </div>
-                      <div style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "rgba(175,141,84,0.1)", color: "rgba(175,141,84,0.5)", fontWeight: 600, textTransform: "uppercase" }}>{acct.role}</div>
+                      <div style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "rgba(132,204,22,0.1)", color: "rgba(132,204,22,0.5)", fontWeight: 600, textTransform: "uppercase" }}>{acct.role}</div>
                     </button>
                   ))}
-                  <div style={{ borderTop: "1px solid rgba(175,141,84,0.1)", padding: "6px 12px" }}>
+                  <div style={{ borderTop: "1px solid rgba(132,204,22,0.1)", padding: "6px 12px" }}>
                     <button onClick={() => supabase.auth.signOut()} style={{ width: "100%", padding: "8px", border: "none", borderRadius: 6, background: "rgba(239,68,68,0.12)", color: "rgba(255,150,150,0.8)", cursor: "pointer", fontSize: 11, fontFamily: "inherit", fontWeight: 600 }}>Sign Out</button>
                   </div>
                 </div>

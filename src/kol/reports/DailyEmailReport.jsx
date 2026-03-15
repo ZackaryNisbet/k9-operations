@@ -225,7 +225,7 @@ export default function DailyEmailReport({ data, save, nav, profile, addGlobalTo
               value={newEmail}
               onChange={(e) => { setNewEmail(e.target.value); setEmailError(""); }}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRecipient(); } }}
-              placeholder="team@k9resorts.com"
+              placeholder="team@k9operations.com"
               style={{
                 width: "100%", padding: "9px 14px",
                 border: `1.5px solid ${emailError ? C.dan : C.border}`,
