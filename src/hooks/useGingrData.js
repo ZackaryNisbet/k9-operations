@@ -42,6 +42,7 @@ function useGingrData(locationId) {
     return owners.map(o => ({
       id: `g${o.gingr_id}`,
       gingrId: o.gingr_id,
+      _rawGingrDbId: o.id, // gingr_owners.id (BIGSERIAL PK) — used for lite_client dedup linking
       createdAt: o.owner_created_at || "2019-10-14T00:00:00", // legacy clients pre-date Gingr tracking
       source: "online",
       sourceData: null,
@@ -281,7 +282,7 @@ function useGingrData(locationId) {
       setError(null);
 
       // Phase 1: Fast fetch — everything the lifecycle page needs
-      const [rawOwners, rawAnimals, statsRes, typesRes, immTypesRes, syncRes, roomCountRes, roomNamesRes, lcRes] = await Promise.all([
+      const [rawOwners, rawAnimals, statsRes, typesRes, immTypesRes, syncRes, roomCountRes, roomNamesRes, lcRes, liteClientsRes] = await Promise.all([
         fetchAll("gingr_owners", locationId, "last_name"),
         fetchAll("gingr_animals", locationId, "name"),
         supabase.rpc("get_client_stats", { p_location_id: locationId }),
@@ -291,6 +292,7 @@ function useGingrData(locationId) {
         supabase.from("lite_settings").select("setting_value").eq("location_id", locationId).eq("setting_key", "room_counts").maybeSingle(),
         supabase.from("lite_settings").select("setting_value").eq("location_id", locationId).eq("setting_key", "room_names").maybeSingle(),
         supabase.from("lite_client_lifecycle").select("gingr_id,lifecycle_data").eq("location_id", locationId),
+        supabase.from("lite_clients").select("*").eq("location_id", locationId),
       ]);
 
       const roomCounts = roomCountRes?.data?.setting_value || null;
@@ -313,6 +315,82 @@ function useGingrData(locationId) {
         const lc = lcMap[String(c.gingrId)];
         if (lc) c.lifecycle = lc;
       });
+
+      // ── Lite clients: transform, dedup, merge ──
+      const rawLiteClients = liteClientsRes?.data || [];
+      // Build phone lookup from Gingr clients for dedup
+      const gingrPhoneMap = {};
+      tClients.forEach(c => {
+        const ph = (c.fields.phone || "").replace(/\D/g, "");
+        if (ph) gingrPhoneMap[ph] = c;
+      });
+      // Phone-match: link unlinked lite clients to Gingr records
+      const toLink = [];
+      rawLiteClients.forEach(lc => {
+        if (lc.gingr_owner_id) return; // already linked
+        const ph = (lc.phone || "").replace(/\D/g, "");
+        if (ph && gingrPhoneMap[ph]) {
+          toLink.push({ id: lc.id, gingr_owner_id: gingrPhoneMap[ph]._rawGingrDbId || null, phone: ph });
+          lc._matched = true;
+          // Merge lifecycle_data from lite client onto Gingr client
+          const gClient = gingrPhoneMap[ph];
+          if (lc.lifecycle_data && Object.keys(lc.lifecycle_data).length > 0 && !gClient.lifecycle) {
+            gClient.lifecycle = lc.lifecycle_data;
+          }
+          // Carry over source info
+          if (lc.source && lc.source !== "manual") {
+            gClient._liteSource = lc.source;
+            gClient._liteSourceDate = lc.source_date;
+            gClient._liteClientId = lc.id;
+          }
+        }
+      });
+      // Persist phone-match links in background
+      if (toLink.length > 0) {
+        toLink.forEach(({ id, gingr_owner_id }) => {
+          if (gingr_owner_id) {
+            supabase.from("lite_clients").update({ gingr_owner_id }).eq("id", id).then(({ error }) => {
+              if (error) console.log("[K9 Lite] Lite client link error:", error.message);
+            });
+          }
+        });
+      }
+      // Transform remaining unlinked lite clients into client shape
+      const liteClientRecords = rawLiteClients
+        .filter(lc => !lc.gingr_owner_id && !lc._matched)
+        .map(lc => ({
+          id: `lc_${lc.id}`,
+          gingrId: null,
+          createdAt: lc.created_at || new Date().toISOString(),
+          source: lc.source || "manual",
+          sourceData: { sourceDate: lc.source_date, igniteLeadId: lc.ignite_lead_id },
+          isLiteClient: true,
+          liteClientId: lc.id,
+          fields: {
+            phone: (lc.phone || "").replace(/\D/g, ""),
+            first_name: (lc.first_name || "").trim(),
+            last_name: (lc.last_name || "").trim(),
+            email: lc.email || "",
+          },
+          lifecycle: lc.lifecycle_data && Object.keys(lc.lifecycle_data).length > 0 ? lc.lifecycle_data : null,
+          lifecycleLog: [],
+          bookingDrafts: [],
+          igniteData: lc.ignite_lead_id ? { leadId: lc.ignite_lead_id } : null,
+          coldMarkedAt: null,
+          revivedAt: null,
+          discountUsage: [],
+          _lastReservation: null,
+          _nextReservation: null,
+          _numReservations: 0,
+          _balance: 0,
+          _animalNames: null,
+          _emergencyContact: null,
+          _emergencyPhone: null,
+          _address: null,
+          _notes: lc.notes || "",
+        }));
+      // Append lite clients to Gingr clients
+      tClients.push(...liteClientRecords);
 
       // Auto-set follow-up for NEW clients that arrived after the initial DB seed
       const newClientsNeedingLC = tClients.filter(c => !c.lifecycle && c.createdAt);
@@ -550,6 +628,41 @@ function useGingrData(locationId) {
   };
 }
 
+
+// ─── Lite Client CRUD ────────────────────────────────────────────────────
+
+export async function insertLiteClient(locationId, fields) {
+  const row = {
+    location_id: locationId,
+    first_name: fields.first_name || null,
+    last_name: fields.last_name || null,
+    phone: fields.phone || null,
+    email: fields.email || null,
+    source: fields.source || "manual",
+    source_date: fields.source_date || new Date().toISOString(),
+    notes: fields.notes || null,
+    ignite_lead_id: fields.ignite_lead_id || null,
+    lifecycle_data: fields.lifecycle_data || {},
+  };
+  const { data, error } = await supabase.from("lite_clients").insert(row).select().single();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateLiteClient(liteClientId, fields) {
+  const updates = {};
+  if (fields.first_name !== undefined) updates.first_name = fields.first_name;
+  if (fields.last_name !== undefined) updates.last_name = fields.last_name;
+  if (fields.phone !== undefined) updates.phone = fields.phone;
+  if (fields.email !== undefined) updates.email = fields.email;
+  if (fields.notes !== undefined) updates.notes = fields.notes;
+  if (fields.source !== undefined) updates.source = fields.source;
+  if (fields.lifecycle_data !== undefined) updates.lifecycle_data = fields.lifecycle_data;
+  if (fields.gingr_owner_id !== undefined) updates.gingr_owner_id = fields.gingr_owner_id;
+  const { data, error } = await supabase.from("lite_clients").update(updates).eq("id", liteClientId).select().single();
+  if (error) throw error;
+  return data;
+}
 
 // ─── Structured Filters ──────────────────────────────────────────────────
 
