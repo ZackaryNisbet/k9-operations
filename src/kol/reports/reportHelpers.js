@@ -30,17 +30,17 @@ export function aggregateDailyReport(data, date) {
 
   const activeBoarding = reservations.filter(
     (r) =>
-      r.type === "boarding" &&
-      r.checkIn <= d &&
-      r.checkOut >= d &&
-      (r.status === "checked-in" || r.status === "upcoming")
+      r.type === "boarding" && (
+        (r.status === "checked-in") ||
+        (r.status === "upcoming" && (r.scheduledCheckIn || r.checkIn) <= d && (r.scheduledCheckOut || r.checkOut) >= d)
+      )
   );
   const activeDaycare = reservations.filter(
     (r) =>
-      r.type === "daycare" &&
-      r.checkIn <= d &&
-      r.checkOut >= d &&
-      (r.status === "checked-in" || r.status === "upcoming")
+      r.type === "daycare" && (
+        (r.status === "checked-in") ||
+        (r.status === "upcoming" && (r.scheduledCheckIn || r.checkIn) <= d && (r.scheduledCheckOut || r.checkOut) >= d)
+      )
   );
   const attendanceCount = activeBoarding.length + activeDaycare.length;
 

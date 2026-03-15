@@ -814,7 +814,10 @@ function getRoomCleaningStats(data, date) {
   const td = date || todayStr();
   const allRooms = data.rooms || {};
   const reservations = data.reservations || [];
-  const boardingToday = reservations.filter(r => r.type === "boarding" && r.checkIn <= td && r.checkOut >= td && (r.status === "checked-in" || r.status === "upcoming"));
+  const boardingToday = reservations.filter(r => r.type === "boarding" && (
+    (r.status === "checked-in") ||
+    (r.status === "upcoming" && (r.scheduledCheckIn || r.checkIn) <= td && (r.scheduledCheckOut || r.checkOut) >= td)
+  ));
   const boardingCheckedOut = reservations.filter(r => r.type === "boarding" && r.checkOut === td && r.status === "checked-out");
   let totalNeeded = 0, totalDone = 0;
   const entryId = `ops_room_cleaning_${td}`;
@@ -824,8 +827,10 @@ function getRoomCleaningStats(data, date) {
     (allRooms[rt] || []).forEach(rm => {
       const activeRes = boardingToday.find(r => r.room === rm);
       const coRes = boardingCheckedOut.find(r => r.room === rm);
-      const notFirst = activeRes && activeRes.checkIn < td;
-      const notLast = activeRes && activeRes.checkOut > td;
+      const sCheckIn = activeRes ? (activeRes.scheduledCheckIn || activeRes.checkIn) : null;
+      const sCheckOut = activeRes ? (activeRes.scheduledCheckOut || activeRes.checkOut) : null;
+      const notFirst = activeRes && sCheckIn < td;
+      const notLast = activeRes && sCheckOut > td;
       const needsRefresh = !!(activeRes && notFirst && notLast);
       const needsDisinfect = !!coRes;
       if (needsRefresh) { totalNeeded++; if (ei[rm] && ei[rm].refresh) totalDone++; }
@@ -857,7 +862,6 @@ function getPPStats(data, date) {
   const ppRes = reservations.filter(r =>
     (r.type === "boarding" || r.type === "daycare" || r.type === "dayboarding") &&
     r.status === "checked-in" &&
-    r.checkIn <= td && r.checkOut >= td &&
     (resSvcIncludes(r, "Private Play") || r.type === "dayboarding")
   );
   const totalDogs = ppRes.length;
@@ -1390,10 +1394,15 @@ function classifyReservationStatus(r) {
   if (r.cancelled_date) return "cancelled";
   if (r.check_in_date && r.check_out_date) return "checked-out";
   if (r.check_in_date && !r.check_out_date) return "checked-in";
+  // No check_in_date: dog has not physically arrived
   const now = new Date();
   const start = r.start_date ? new Date(r.start_date) : null;
+  const end = r.end_date ? new Date(r.end_date) : null;
   if (start && start > now) return "upcoming";
-  return "checked-out";
+  // Scheduled start has passed but dog never checked in — if end date has also passed, treat as no-show/completed
+  if (end && end < now) return "no-show";
+  // Scheduled start passed, end date still in future — dog hasn't arrived yet (late arrival)
+  return "upcoming";
 }
 
 function extractRoomFromType(typeName) {
@@ -1508,8 +1517,12 @@ function useGingrData(locationId) {
       .map(r => {
         const type = classifyReservationType(r.reservation_type_name);
         const status = classifyReservationStatus(r);
-        const startD = r.start_date ? r.start_date.split("T")[0] : todayStr();
-        const endD = r.end_date ? r.end_date.split("T")[0] : startD;
+        const scheduledStart = r.start_date ? r.start_date.split("T")[0] : todayStr();
+        const scheduledEnd = r.end_date ? r.end_date.split("T")[0] : scheduledStart;
+        // Use actual check-in date if available (dog physically arrived), else scheduled
+        const actualCheckIn = r.check_in_date ? r.check_in_date.split("T")[0] : scheduledStart;
+        // Use actual check-out date if available (early checkout), else scheduled
+        const actualCheckOut = r.check_out_date ? r.check_out_date.split("T")[0] : scheduledEnd;
         const roomType = extractRoomFromType(r.reservation_type_name);
         const price = r.transaction?.price || r.deposit?.amount || 0;
 
@@ -1520,8 +1533,10 @@ function useGingrData(locationId) {
           dogIds: r.animal_gingr_id ? [`g${r.animal_gingr_id}`] : [],
           dogId: r.animal_gingr_id ? `g${r.animal_gingr_id}` : null,
           type,
-          checkIn: startD,
-          checkOut: endD,
+          checkIn: actualCheckIn,
+          checkOut: actualCheckOut,
+          scheduledCheckIn: scheduledStart,
+          scheduledCheckOut: scheduledEnd,
           checkOutTime: r.check_out_date ? r.check_out_date.split("T")[1]?.slice(0, 5) : null,
           scheduledCheckOutTime: r.end_date ? r.end_date.split("T")[1]?.slice(0, 5) : null,
           status,
@@ -1555,19 +1570,21 @@ function useGingrData(locationId) {
     Object.entries(byType).forEach(([roomType, group]) => {
       const rooms = roomsMap[roomType] || [];
       if (rooms.length === 0) { group.forEach(r => assigned.push(r)); return; }
-      // Sort by check-in date, then ID for stability
-      group.sort((a, b) => (a.checkIn || "").localeCompare(b.checkIn || "") || (a.id || "").localeCompare(b.id || ""));
-      // Track occupancy per room: array of {checkIn, checkOut}
+      // Sort by scheduled check-in date, then ID for stability
+      group.sort((a, b) => (a.scheduledCheckIn || a.checkIn || "").localeCompare(b.scheduledCheckIn || b.checkIn || "") || (a.id || "").localeCompare(b.id || ""));
+      // Track occupancy per room using scheduled dates (rooms are reserved for the full scheduled period)
       const occ = {};
       rooms.forEach(rm => { occ[rm] = []; });
       group.forEach(r => {
         let picked = null;
+        const rStart = r.scheduledCheckIn || r.checkIn;
+        const rEnd = r.scheduledCheckOut || r.checkOut;
         for (const rm of rooms) {
-          const overlap = occ[rm].some(o => o.checkIn < r.checkOut && r.checkIn < o.checkOut);
+          const overlap = occ[rm].some(o => o.start < rEnd && rStart < o.end);
           if (!overlap) { picked = rm; break; }
         }
         if (!picked) picked = rooms[0]; // overflow fallback
-        occ[picked].push({ checkIn: r.checkIn, checkOut: r.checkOut });
+        occ[picked].push({ start: rStart, end: rEnd });
         assigned.push({ ...r, room: picked });
       });
     });
@@ -4287,15 +4304,24 @@ function OperationsHub({ data, save, nav, profile }) {
     const allOps = data.dailyOps || [];
     const dogs = data.dogs || [];
 
-    // Dogs in house: checked-in only (matches dashboard logic)
-    const inHouse = reservations.filter(r => r.status === "checked-in" && r.checkIn <= viewDate && r.checkOut >= viewDate);
+    // Dogs in house: physically checked in and not yet checked out
+    // Use status === "checked-in" (has check_in_date, no check_out_date) — no date-range guess needed
+    const inHouseRes = reservations.filter(r => r.status === "checked-in");
+    // Deduplicate by dogId to avoid counting the same dog twice for overlapping reservations
+    const seenDogIds = new Set();
+    const inHouse = inHouseRes.filter(r => {
+      if (!r.dogId) return true; // no dogId — count the reservation
+      if (seenDogIds.has(r.dogId)) return false;
+      seenDogIds.add(r.dogId);
+      return true;
+    });
     const inHouseBoarding = inHouse.filter(r => r.type === "boarding");
     const inHouseDaycare = inHouse.filter(r => r.type === "daycare" || r.type === "dayboarding");
     const dogsInHouse = inHouse.length;
 
-    // Going home today (checked-in, checkOut === viewDate) — matches dashboard "Going Home"
-    const goingHome = reservations.filter(r => r.status === "checked-in" && r.checkOut === viewDate);
-    // Already checked out today
+    // Going home today (checked-in, scheduled or actual checkOut === viewDate)
+    const goingHome = reservations.filter(r => r.status === "checked-in" && (r.checkOut === viewDate || r.scheduledCheckOut === viewDate));
+    // Already checked out today (actual checkout date is today)
     const checkedOut = reservations.filter(r => r.checkOut === viewDate && r.status === "checked-out");
 
     // Room cleaning stats + awaiting checkout count
@@ -4307,8 +4333,8 @@ function OperationsHub({ data, save, nav, profile }) {
       (allRooms[rt] || []).forEach(rm => {
         const activeRes = inHouseBoarding.find(r => r.room === rm);
         const coRes = boardingCheckedOut.find(r => r.room === rm);
-        // Needs disinfect (checkOut === viewDate) but dog hasn't checked out yet
-        if (activeRes && activeRes.checkOut === viewDate && !coRes) roomsAwaitingCheckout++;
+        // Needs disinfect (scheduled or actual checkOut === viewDate) but dog hasn't checked out yet
+        if (activeRes && (activeRes.checkOut === viewDate || activeRes.scheduledCheckOut === viewDate) && !coRes) roomsAwaitingCheckout++;
       });
     });
 
@@ -4812,8 +4838,8 @@ function OperationsHub({ data, save, nav, profile }) {
         const reservations = data.reservations || [];
         const dataLoaded = reservations.length > 0;
         const inHouseToday = reservations.filter(r =>
-          (r.status === "checked-in" || r.status === "upcoming") &&
-          r.checkIn <= viewDate && r.checkOut >= viewDate
+          (r.status === "checked-in") ||
+          (r.status === "upcoming" && (r.scheduledCheckIn || r.checkIn) <= viewDate && (r.scheduledCheckOut || r.checkOut) >= viewDate)
         );
         const svcSet = new Set();
         inHouseToday.forEach(res => {
@@ -6167,8 +6193,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     if (sub !== "bathing") return;
     const reservations = data.reservations || [];
     const inHouse = reservations.filter(r =>
-      (r.status === "checked-in" || r.status === "upcoming") &&
-      r.checkIn <= viewDate && r.checkOut >= viewDate
+      (r.status === "checked-in") ||
+      (r.status === "upcoming" && (r.scheduledCheckIn || r.checkIn) <= viewDate && (r.scheduledCheckOut || r.checkOut) >= viewDate)
     );
     const bathRes = inHouse.filter(r => hasSvc(r._services, "Bath"));
     if (bathRes.length === 0) return;
@@ -6243,8 +6269,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const dogs = data.dogs || [];
     // Any in-house reservation (boarding OR daycare) with Bath service
     const inHouse = reservations.filter(r =>
-      (r.status === "checked-in" || r.status === "upcoming") &&
-      r.checkIn <= viewDate && r.checkOut >= viewDate
+      (r.status === "checked-in") ||
+      (r.status === "upcoming" && (r.scheduledCheckIn || r.checkIn) <= viewDate && (r.scheduledCheckOut || r.checkOut) >= viewDate)
     );
     const bathRows = [];
     inHouse.forEach(res => {
@@ -6387,8 +6413,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const reservations = data.reservations || [];
     const dogs = data.dogs || [];
     const inHouse = reservations.filter(r =>
-      r.type === "boarding" && (r.status === "checked-in" || r.status === "upcoming") &&
-      r.checkIn <= viewDate && r.checkOut >= viewDate
+      r.type === "boarding" && (
+        (r.status === "checked-in") ||
+        (r.status === "upcoming" && (r.scheduledCheckIn || r.checkIn) <= viewDate && (r.scheduledCheckOut || r.checkOut) >= viewDate)
+      )
     );
 
     const pamperRows = [];
@@ -6550,8 +6578,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const reservations = data.reservations || [];
     const dogs = data.dogs || [];
     const inHouse = reservations.filter(r =>
-      (r.status === "checked-in" || r.status === "upcoming") &&
-      r.checkIn <= viewDate && r.checkOut >= viewDate
+      (r.status === "checked-in") ||
+      (r.status === "upcoming" && (r.scheduledCheckIn || r.checkIn) <= viewDate && (r.scheduledCheckOut || r.checkOut) >= viewDate)
     );
     const svcRows = [];
     inHouse.forEach(res => {

@@ -15138,15 +15138,23 @@ function OperationsHub({ data, save, nav, profile }) {
     const allOps = data.dailyOps || [];
     const dogs = data.dogs || [];
 
-    // Dogs in house: checked-in only (matches dashboard logic)
-    const inHouse = reservations.filter(r => r.status === "checked-in" && r.checkIn <= viewDate && r.checkOut >= viewDate);
+    // Dogs in house: physically checked in and not yet checked out
+    const inHouseRes = reservations.filter(r => r.status === "checked-in");
+    // Deduplicate by dogId to avoid counting the same dog twice for overlapping reservations
+    const seenDogIds = new Set();
+    const inHouse = inHouseRes.filter(r => {
+      if (!r.dogId) return true;
+      if (seenDogIds.has(r.dogId)) return false;
+      seenDogIds.add(r.dogId);
+      return true;
+    });
     const inHouseBoarding = inHouse.filter(r => r.type === "boarding");
     const inHouseDaycare = inHouse.filter(r => r.type === "daycare" || r.type === "dayboarding");
     const dogsInHouse = inHouse.length;
 
-    // Going home today (checked-in, checkOut === viewDate) — matches dashboard "Going Home"
-    const goingHome = reservations.filter(r => r.status === "checked-in" && r.checkOut === viewDate);
-    // Already checked out today
+    // Going home today (checked-in, scheduled or actual checkOut === viewDate)
+    const goingHome = reservations.filter(r => r.status === "checked-in" && (r.checkOut === viewDate || r.scheduledCheckOut === viewDate));
+    // Already checked out today (actual checkout date is today)
     const checkedOut = reservations.filter(r => r.checkOut === viewDate && r.status === "checked-out");
 
     // Room cleaning stats + awaiting checkout count
@@ -15158,8 +15166,8 @@ function OperationsHub({ data, save, nav, profile }) {
       (allRooms[rt] || []).forEach(rm => {
         const activeRes = inHouseBoarding.find(r => r.room === rm);
         const coRes = boardingCheckedOut.find(r => r.room === rm);
-        // Needs disinfect (checkOut === viewDate) but dog hasn't checked out yet
-        if (activeRes && activeRes.checkOut === viewDate && !coRes) roomsAwaitingCheckout++;
+        // Needs disinfect (scheduled or actual checkOut === viewDate) but dog hasn't checked out yet
+        if (activeRes && (activeRes.checkOut === viewDate || activeRes.scheduledCheckOut === viewDate) && !coRes) roomsAwaitingCheckout++;
       });
     });
 
