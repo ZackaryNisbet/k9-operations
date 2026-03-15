@@ -1,6 +1,6 @@
-// K9 Operations — Command Center Dashboard v3
-// 7×9 Grid, viewport-locked, world-class data density.
-// "The most impressive page in the entire app."
+// K9 Operations — Command Center Dashboard v4
+// 9×11 Grid, viewport-locked, world-class data density.
+// Forest green depth, link indicators, maximum visual sophistication.
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import {
@@ -34,38 +34,49 @@ const DASH_CSS = `
   to   { transform: scaleX(1); }
 }
 @keyframes dashPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(0,52,98,0.12); }
-  50%      { box-shadow: 0 0 0 4px rgba(0,52,98,0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(20,83,45,0.15); }
+  50%      { box-shadow: 0 0 0 4px rgba(20,83,45,0); }
 }
 @keyframes calFadeIn {
   from { opacity: 0; transform: translateY(4px) scale(0.98); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
+/* ── Cell styles ── */
 .dash-grid-cell {
-  background: ${C.surface};
-  border-radius: 6px;
-  border: 1px solid ${C.borderLight};
+  background: #FFFFFF;
+  border-radius: 8px;
+  border: 1px solid rgba(20,83,45,0.08);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 4px 6px;
+  padding: 6px 8px;
   overflow: hidden;
-  transition: border-color 0.12s, box-shadow 0.12s;
+  transition: all 0.15s ease;
   cursor: default;
   min-width: 0;
   min-height: 0;
+  box-shadow: 0 1px 3px rgba(20,83,45,0.06), 0 1px 2px rgba(20,83,45,0.04);
 }
 .dash-grid-cell:hover {
-  border-color: ${C.border};
-  box-shadow: 0 2px 8px rgba(0,52,98,0.06);
+  box-shadow: 0 3px 12px rgba(20,83,45,0.10), 0 1px 3px rgba(20,83,45,0.06);
+  transform: translateY(-1px);
 }
 .dash-grid-cell.clickable {
   cursor: pointer;
 }
 .dash-grid-cell.clickable:hover {
-  border-color: ${C.pri}40;
-  box-shadow: 0 2px 10px rgba(0,52,98,0.09);
+  border-color: rgba(20,83,45,0.2);
+  box-shadow: 0 4px 16px rgba(20,83,45,0.12), 0 1px 4px rgba(20,83,45,0.06);
+}
+.dash-grid-cell.hero-cell {
+  background: linear-gradient(135deg, #14532D 0%, #166534 100%);
+  border: 1px solid rgba(132,204,22,0.15);
+  box-shadow: 0 2px 8px rgba(20,83,45,0.20), 0 1px 3px rgba(20,83,45,0.10);
+}
+.dash-grid-cell.hero-cell:hover {
+  box-shadow: 0 4px 20px rgba(20,83,45,0.25), 0 2px 6px rgba(20,83,45,0.12);
+  transform: translateY(-1px);
 }
 .dash-grid-cell.empty-cell {
   background: transparent !important;
@@ -77,19 +88,21 @@ const DASH_CSS = `
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
+  transform: none !important;
 }
 .dash-section-label {
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 800;
-  color: ${C.textMut};
+  color: ${C.pri};
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   line-height: 1;
   white-space: nowrap;
   padding: 0 2px;
+  opacity: 0.6;
 }
 .dash-cell-value {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 800;
   color: ${C.text};
   line-height: 1;
@@ -97,7 +110,7 @@ const DASH_CSS = `
   white-space: nowrap;
 }
 .dash-cell-label {
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 600;
   color: ${C.textMut};
   line-height: 1.1;
@@ -106,7 +119,7 @@ const DASH_CSS = `
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 .dash-pill-track {
   position: relative;
@@ -115,7 +128,7 @@ const DASH_CSS = `
   background: ${C.bg};
   border-radius: 6px;
   padding: 2px;
-  border: 1px solid ${C.borderLight};
+  border: 1px solid rgba(20,83,45,0.1);
 }
 .dash-pill-btn {
   position: relative;
@@ -145,50 +158,66 @@ const DASH_CSS = `
   z-index: 0;
 }
 .dash-chart-cell {
-  background: ${C.surface};
-  border-radius: 6px;
-  border: 1px solid ${C.borderLight};
+  background: #FFFFFF;
+  border-radius: 8px;
+  border: 1px solid rgba(20,83,45,0.08);
   display: flex;
   flex-direction: column;
-  padding: 6px 8px;
+  padding: 8px 10px;
   overflow: hidden;
-  transition: border-color 0.12s, box-shadow 0.12s;
+  transition: all 0.15s ease;
   min-width: 0;
   min-height: 0;
+  box-shadow: 0 1px 3px rgba(20,83,45,0.06), 0 1px 2px rgba(20,83,45,0.04);
 }
 .dash-chart-cell:hover {
-  border-color: ${C.border};
-  box-shadow: 0 2px 8px rgba(0,52,98,0.06);
+  box-shadow: 0 3px 12px rgba(20,83,45,0.10), 0 1px 3px rgba(20,83,45,0.06);
 }
 .dash-checklist-cell {
-  background: ${C.surface};
-  border-radius: 6px;
-  border: 1px solid ${C.borderLight};
+  background: #FFFFFF;
+  border-radius: 8px;
+  border: 1px solid rgba(20,83,45,0.08);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 4px 6px;
+  padding: 6px 8px;
   overflow: hidden;
-  transition: border-color 0.12s, box-shadow 0.12s;
+  transition: all 0.15s ease;
   cursor: pointer;
   min-width: 0;
   min-height: 0;
+  box-shadow: 0 1px 3px rgba(20,83,45,0.06), 0 1px 2px rgba(20,83,45,0.04);
 }
 .dash-checklist-cell:hover {
-  border-color: ${C.pri}40;
-  box-shadow: 0 2px 10px rgba(0,52,98,0.09);
+  border-color: rgba(20,83,45,0.2);
+  box-shadow: 0 4px 16px rgba(20,83,45,0.12), 0 1px 4px rgba(20,83,45,0.06);
+  transform: translateY(-1px);
 }
 .manager-badge {
-  font-size: 7px;
+  font-size: 8px;
   font-weight: 700;
   color: ${C.acc};
-  background: ${C.accLt};
-  padding: 1px 4px;
-  border-radius: 3px;
+  background: rgba(132,204,22,0.12);
+  padding: 2px 6px;
+  border-radius: 4px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   line-height: 1.3;
+}
+.dash-link-icon {
+  width: 10px;
+  height: 10px;
+  color: ${C.textMut};
+  opacity: 0;
+  transition: opacity 0.15s;
+  position: absolute;
+  top: 5px;
+  right: 5px;
+}
+.dash-grid-cell:hover .dash-link-icon,
+.dash-checklist-cell:hover .dash-link-icon {
+  opacity: 0.6;
 }
 `;
 
@@ -251,6 +280,13 @@ const fmtDateLabel = (d) => {
   return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 };
 
+/* Link arrow icon — small SVG */
+const LinkIcon = () => (
+  <svg className="dash-link-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4.5 2.5h5v5" /><path d="M9.5 2.5L2.5 9.5" />
+  </svg>
+);
+
 /* ═══════════════════════════════════════════════════════════════════════════
    TrendBadge
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -260,16 +296,16 @@ function TrendBadge({ value, invert = false, size = "sm" }) {
   const color = positive ? C.suc : C.dan;
   const bg = positive ? C.sucLt : C.danLt;
   const arrow = value > 0 ? "↑" : "↓";
-  const fs = size === "xs" ? 7 : 8;
+  const fs = size === "xs" ? 8 : 9;
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 1, fontSize: fs, fontWeight: 700, color, background: bg, padding: "1px 4px", borderRadius: 3, lineHeight: 1.3 }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 1, fontSize: fs, fontWeight: 700, color, background: bg, padding: "1px 5px", borderRadius: 3, lineHeight: 1.3 }}>
       {arrow}{Math.abs(value).toFixed(1)}%
     </span>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   DateRangePicker (unchanged from v2)
+   DateRangePicker
    ═══════════════════════════════════════════════════════════════════════════ */
 const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DOW = ["Su","Mo","Tu","We","Th","Fr","Sa"];
@@ -279,7 +315,7 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
   const [viewYear, setViewYear] = useState(() => new Date().getFullYear());
   const [viewMonth, setViewMonth] = useState(() => new Date().getMonth());
   const [hovered, setHovered] = useState(null);
-  const labelStyle = { fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" };
+  const labelStyle = { fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" };
 
   const presets = [
     { label: "Last 7 days", fn: () => { setCustomFrom(addDays(today, -6)); setCustomTo(today); } },
@@ -346,12 +382,12 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
       boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
     }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 100, borderRight: `1px solid ${C.borderLight}`, paddingRight: 12 }}>
-        <div style={{ ...labelStyle, fontSize: 8, marginBottom: 2 }}>Quick Select</div>
+        <div style={{ ...labelStyle, fontSize: 9, marginBottom: 2 }}>Quick Select</div>
         {presets.map(p => (
           <button key={p.label} onClick={p.fn} style={{
             padding: "3px 6px", borderRadius: 4, border: "none",
             background: "transparent", color: C.textSec,
-            fontSize: 9, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+            fontSize: 10, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
             textAlign: "left", transition: "all 0.1s",
           }}
           onMouseEnter={e => { e.currentTarget.style.background = C.priLt; e.currentTarget.style.color = C.pri; }}
@@ -366,7 +402,7 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
           <button onClick={nextMonth} style={{ width: 22, height: 22, borderRadius: 5, border: `1px solid ${C.borderLight}`, background: C.surface, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: C.textSec, fontFamily: "inherit" }}>›</button>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 1, marginBottom: 2 }}>
-          {DOW.map(d => (<div key={d} style={{ textAlign: "center", fontSize: 8, fontWeight: 700, color: C.textMut, letterSpacing: "0.04em", padding: "1px 0" }}>{d}</div>))}
+          {DOW.map(d => (<div key={d} style={{ textAlign: "center", fontSize: 9, fontWeight: 700, color: C.textMut, letterSpacing: "0.04em", padding: "1px 0" }}>{d}</div>))}
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 1 }}>
           {calDays.map((iso, idx) => {
@@ -381,7 +417,7 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
                   border: td ? `1.5px solid ${C.pri}` : "1.5px solid transparent",
                   background: (st || en) ? C.pri : inR ? `${C.pri}15` : "transparent",
                   color: (st || en) ? "#fff" : fut ? `${C.textMut}60` : C.text,
-                  fontSize: 9, fontWeight: (st || en || td) ? 700 : 500,
+                  fontSize: 10, fontWeight: (st || en || td) ? 700 : 500,
                   cursor: fut ? "default" : "pointer", fontFamily: "inherit",
                   display: "flex", alignItems: "center", justifyContent: "center",
                   transition: "all 0.08s", opacity: fut ? 0.4 : 1,
@@ -391,11 +427,11 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
           })}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
-          <div style={{ flex: 1, padding: "3px 6px", borderRadius: 5, border: `1px solid ${customFrom ? C.pri : C.border}`, background: customFrom ? `${C.pri}08` : C.bg, fontSize: 9, fontWeight: 600, color: customFrom ? C.text : C.textMut, textAlign: "center" }}>
+          <div style={{ flex: 1, padding: "3px 6px", borderRadius: 5, border: `1px solid ${customFrom ? C.pri : C.border}`, background: customFrom ? `${C.pri}08` : C.bg, fontSize: 10, fontWeight: 600, color: customFrom ? C.text : C.textMut, textAlign: "center" }}>
             {customFrom ? fmtDateLabel(customFrom) : "Start"}
           </div>
-          <span style={{ fontSize: 8, color: C.textMut }}>→</span>
-          <div style={{ flex: 1, padding: "3px 6px", borderRadius: 5, border: `1px solid ${customTo ? C.pri : C.border}`, background: customTo ? `${C.pri}08` : C.bg, fontSize: 9, fontWeight: 600, color: customTo ? C.text : C.textMut, textAlign: "center" }}>
+          <span style={{ fontSize: 9, color: C.textMut }}>→</span>
+          <div style={{ flex: 1, padding: "3px 6px", borderRadius: 5, border: `1px solid ${customTo ? C.pri : C.border}`, background: customTo ? `${C.pri}08` : C.bg, fontSize: 10, fontWeight: 600, color: customTo ? C.text : C.textMut, textAlign: "center" }}>
             {customTo ? fmtDateLabel(customTo) : "End"}
           </div>
         </div>
@@ -428,11 +464,9 @@ function AnimatedPillSelector({ ranges, activeKey, onChange }) {
   }, [activeKey, ready]);
 
   useEffect(() => {
-    // Delay to ensure DOM is measured
     requestAnimationFrame(() => requestAnimationFrame(updateSlider));
   }, [activeKey, updateSlider]);
 
-  // Also measure on mount
   useEffect(() => {
     requestAnimationFrame(() => requestAnimationFrame(updateSlider));
   }, []);
@@ -484,44 +518,28 @@ function Sparkline({ data, width = 200, height = 32, color = C.pri }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   DashGrid — measures container width, enforces 2:1 cell aspect ratio
-   Row height = column width / 2 (matching Excel 128×64)
+   DashGrid — viewport-filling grid, 2:1 cell aspect ratio
+   Stretches to fill available height — no wasted whitespace
    ═══════════════════════════════════════════════════════════════════════════ */
 function DashGrid({ children }) {
-  const COL_GAP = 3;
-  const ROW_GAP = 2;
-  const LABEL_H = 12;
+  const COL_GAP = 4;
+  const ROW_GAP = 3;
+  const LABEL_H = 16;
   const COLS = 9;
-  const ref = useRef(null);
-  const [rowH, setRowH] = useState(64); // default fallback
 
-  useEffect(() => {
-    const measure = () => {
-      if (!ref.current) return;
-      const w = ref.current.clientWidth;
-      const colW = (w - (COLS - 1) * COL_GAP) / COLS;
-      setRowH(Math.floor(colW / 2));
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    if (ref.current) ro.observe(ref.current);
-    return () => ro.disconnect();
-  }, []);
-
-  // 11 rows: 4 label rows (LABEL_H each) + 7 data rows (rowH each)
-  const templateRows = `${LABEL_H}px ${rowH}px ${LABEL_H}px ${rowH}px ${LABEL_H}px ${rowH}px ${LABEL_H}px ${rowH}px ${rowH}px ${rowH}px ${rowH}px`;
+  // 11 rows: 4 label rows + 7 data rows
+  // Use 1fr for data rows so they stretch to fill viewport
+  const templateRows = `${LABEL_H}px 1fr ${LABEL_H}px 1fr ${LABEL_H}px 1fr ${LABEL_H}px 1fr 1fr 1fr 1fr`;
 
   return (
     <div
-      ref={ref}
       style={{
         flex: 1, minHeight: 0, overflow: "hidden",
         display: "grid",
         gridTemplateColumns: `repeat(${COLS}, 1fr)`,
         gridTemplateRows: templateRows,
         gap: `${ROW_GAP}px ${COL_GAP}px`,
-        padding: "0 6px 6px",
-        alignContent: "start",
+        padding: "0 8px 8px",
       }}
     >
       {children}
@@ -547,6 +565,7 @@ function ChartFill({ chartData, color, compareColor, animEpoch, id }) {
     if (containerRef.current) ro.observe(containerRef.current);
     return () => ro.disconnect();
   }, []);
+
   return (
     <div ref={containerRef} style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
       <InteractiveLineChart
@@ -581,7 +600,6 @@ export default function DashboardPage({
 
   useEffect(() => { setAnimEpoch(e => e + 1); }, [range]);
 
-  // Close calendar when clicking outside
   const calRef = useRef(null);
   useEffect(() => {
     if (!showCalendar) return;
@@ -646,17 +664,13 @@ export default function DashboardPage({
     const cleaningStats = getRoomCleaningStats(data, today);
     const ppStats = getPPStats(data, today);
 
-    // Occupancy
     const allRooms = data.rooms || {};
     const totalRoomCount = Object.values(allRooms).reduce((sum, arr) => sum + arr.length, 0);
     const boardingOccupied = reservations.filter(r => r.status === "checked-in" && r.type === "boarding" && r.checkIn <= today && r.checkOut > today).length;
     const occupancyPct = totalRoomCount > 0 ? Math.round((boardingOccupied / totalRoomCount) * 100) : 0;
 
-    // Tours & Evals today
     const tours = reservations.filter(r => r.checkIn === today && r._resTypeName && r._resTypeName.toLowerCase().includes("tour")).length;
     const evals = reservations.filter(r => r.checkIn === today && (r.type === "evaluation" || (r._resTypeName && r._resTypeName.toLowerCase().includes("eval")))).length;
-
-    // Bookings today
     const bookingsToday = reservations.filter(r => r.checkIn === today && r.status !== "cancelled").length;
 
     return {
@@ -750,7 +764,6 @@ export default function DashboardPage({
     return { current, previous, revenueTrend, occupancyRate, revPAR, totalRoomCount, days: current.days };
   }, [data.reservations, data.rooms, dateFrom, dateTo, prevFrom, prevTo]);
 
-  /* ─── Revenue consolidated ─────────────────────────────────────────── */
   const revenue = accrualData.current.totals.totalRevenue;
   const prevRevenue = accrualData.previous.totals.totalRevenue;
   const revenueTrend = prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue) * 100 : 0;
@@ -818,7 +831,6 @@ export default function DashboardPage({
     return Object.values(buckets);
   }, [bucketMode]);
 
-  // Cash basis chart data
   const cashChartData = useMemo(() => {
     const byDate = cashBasisData.current.byDate || {};
     const daysList = [];
@@ -827,7 +839,6 @@ export default function DashboardPage({
     return bucketDays(daysList, d => byDate[d] || 0);
   }, [cashBasisData, dateFrom, dateTo, bucketDays]);
 
-  // Accrual chart data
   const accrualChartData = useMemo(() => {
     const dayData = accrualData.current.dayData;
     return bucketDays(accrualData.days, d => dayData[d]?.totalRevenue || 0);
@@ -890,7 +901,6 @@ export default function DashboardPage({
     const avgLTV = spendingClients.length > 0 ? totalLTV / spendingClients.length : 0;
     const conversionRate = leadsInRange.length > 0 ? (newCustomers.length / leadsInRange.length * 100) : 0;
 
-    // Today-specific
     const todayOutreaches = clients.reduce((count, c) => {
       const convUpdates = c.lifecycle?.conversion?.updates || [];
       const retUpdates = c.lifecycle?.retention?.updates || [];
@@ -910,7 +920,6 @@ export default function DashboardPage({
     const firstTimePayers = clients.filter(c => {
       const s = statsMap[c.id];
       if (!s.hasSpent) return false;
-      // First reservation in range
       const firstRes = (data.reservations || []).find(r => r.status !== "cancelled" && (r.pricing?.total || 0) > 0 && String(r._clientId || r.clientId) === String(c.id));
       if (firstRes && firstRes.checkIn >= dateFrom && firstRes.checkIn <= dateTo) return true;
       return false;
@@ -921,20 +930,11 @@ export default function DashboardPage({
       return created === today;
     }).length;
 
-    // Remaining leads/at-risk
     const allLeads = clients.filter(c => {
       const stage = c.lifecycle?.stage || c._lifecycleStage || "";
       return stage === "conversion" || stage === "lead";
     });
-    const remainingLeads = allLeads.filter(c => {
-      const convUpdates = c.lifecycle?.conversion?.updates || [];
-      const overdue = !convUpdates.length || (convUpdates.length > 0 && (() => {
-        const last = convUpdates[convUpdates.length - 1];
-        const nextDate = last.nextFollowUp || "";
-        return nextDate && nextDate <= today;
-      })());
-      return true; // count all remaining leads
-    }).length;
+    const remainingLeads = allLeads.length;
 
     const allAtRisk = clients.filter(c => {
       const stage = c.lifecycle?.stage || c._lifecycleStage || "";
@@ -961,7 +961,6 @@ export default function DashboardPage({
     });
   }, [data, today]);
 
-  // Find specific checklist progress
   const getChecklistProgress = (id) => {
     const op = opsProgress.find(o => o.id === id);
     return op ? op.progress : 0;
@@ -984,14 +983,13 @@ export default function DashboardPage({
     return { total: totalRefunds, count: refundCount, avg: refundCount > 0 ? totalRefunds / refundCount : 0 };
   }, [data.reservations, dateFrom, dateTo]);
 
-  /* ─── Service data (bathing, pamper, gourmet ice cream, PP) ─────── */
+  /* ─── Service data ─────────────────────────────────────────────────── */
   const svcData = useMemo(() => {
     const reservations = data.reservations || [];
     const todayRes = reservations.filter(r => r.status === "checked-in" && r.checkIn <= today && r.checkOut >= today);
     const goingHomeRes = reservations.filter(r => r.status === "checked-in" && r.checkOut === today);
     const dogs = data.dogs || [];
 
-    // Baths (going-home dogs that need baths)
     let bathsTotal = 0, bathsDone = 0;
     goingHomeRes.forEach(res => {
       const dog = dogs.find(d => d.id === res.dogId);
@@ -1003,10 +1001,8 @@ export default function DashboardPage({
       }
     });
 
-    // Pamper Package
     const ppStats = getPPStats(data, today);
 
-    // Gourmet Ice Cream — check add-ons/services
     let iceCreamTotal = 0, iceCreamDone = 0;
     todayRes.forEach(res => {
       const addOns = res.addOns || res.services || [];
@@ -1021,7 +1017,7 @@ export default function DashboardPage({
     return {
       bathsTotal, bathsDone,
       ppTotal: ppStats.ppTotalDogs || 0, ppCompleted: ppStats.ppCompletedRequired || 0,
-      pamperTotal: 0, pamperDone: 0, // Will use actual data when available
+      pamperTotal: 0, pamperDone: 0,
       iceCreamTotal, iceCreamDone,
     };
   }, [data, today]);
@@ -1036,80 +1032,65 @@ export default function DashboardPage({
   }
 
   /* ═══════════════════════════════════════════════════════════════════════════
-     RENDER — 7×9 Grid Dashboard
+     RENDER
      ═══════════════════════════════════════════════════════════════════════════ */
   const bookingsTrend = cashBasisData.previous.count > 0 ? ((cashBasisData.current.count - cashBasisData.previous.count) / cashBasisData.previous.count) * 100 : 0;
-
-  // Grid layout constants
-  // Header: ~36px, section labels: ~14px each (4 labels), 7 data rows, gap between cells
-  // Total height = 100vh - 64px (nav)
-  // Rows 5-7 are chart rows (taller), rows 1-4 are metric rows
 
   return (
     <div style={{
       height: "calc(100vh - 64px)", overflow: "hidden",
       display: "flex", flexDirection: "column",
       fontFamily: "inherit", padding: "0",
-      background: C.bg,
+      background: "linear-gradient(180deg, #F7FEE7 0%, #ECFDF5 50%, #F0FDF4 100%)",
     }}>
       <style>{DASH_CSS}</style>
 
       {/* ═══ HEADER BAR ═══ */}
       <div style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "6px 12px 4px", flexShrink: 0,
+        padding: "8px 14px 6px", flexShrink: 0,
       }}>
         {/* Left: Title */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <h1 style={{ fontSize: 14, fontWeight: 800, color: C.text, margin: 0, lineHeight: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <img src="/k9_mark.svg" alt="K9 Operations" style={{ height: 28, width: "auto", opacity: 0.85 }} />
+          <h1 style={{ fontSize: 16, fontWeight: 800, color: C.pri, margin: 0, lineHeight: 1 }}>
             Command Center
           </h1>
-          <div style={{ width: 4, height: 4, borderRadius: "50%", background: C.suc, animation: "dashPulse 2s infinite" }} />
-          <span style={{ fontSize: 8, color: C.textMut, fontWeight: 500 }}>
+          <div style={{ width: 5, height: 5, borderRadius: "50%", background: C.suc, animation: "dashPulse 2s infinite" }} />
+          <span style={{ fontSize: 9, color: C.textMut, fontWeight: 500 }}>
             {fmtDateLabel(dateFrom)} – {fmtDateLabel(dateTo)} · {days}d
           </span>
         </div>
-
-        {/* Center: Logo */}
-        <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-          <circle cx="16" cy="16" r="14" stroke={C.pri} strokeWidth="2" fill="none" />
-          <text x="16" y="20.5" textAnchor="middle" fontSize="13" fontWeight="900" fill={C.pri} fontFamily="inherit">K9</text>
-        </svg>
 
         {/* Right: Timeframe pills + prior period toggle */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }} ref={calRef}>
           <AnimatedPillSelector ranges={RANGES} activeKey={range} onChange={handleRangeChange} />
 
-          {/* Prior period toggle */}
           <button
             onClick={() => setShowPriorPeriod(!showPriorPeriod)}
             style={{
-              padding: "3px 6px", borderRadius: 4,
-              border: `1px solid ${showPriorPeriod ? C.acc : C.borderLight}`,
-              background: showPriorPeriod ? C.accLt : "transparent",
+              padding: "3px 8px", borderRadius: 4,
+              border: `1px solid ${showPriorPeriod ? C.acc : "rgba(20,83,45,0.1)"}`,
+              background: showPriorPeriod ? C.accLt : "rgba(255,255,255,0.7)",
               color: showPriorPeriod ? C.accDk : C.textMut,
-              fontSize: 8, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+              fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
               transition: "all 0.12s", whiteSpace: "nowrap",
             }}
           >
             vs Prior
           </button>
 
-          {/* Calendar dropdown */}
           {showCalendar && range === "custom" && (
             <DateRangePicker customFrom={customFrom} customTo={customTo} setCustomFrom={setCustomFrom} setCustomTo={setCustomTo} />
           )}
         </div>
       </div>
 
-      {/* ═══ MAIN GRID ═══ 
-           7×9 grid. Each cell = 2:1 width:height (Excel 128×64).
-           Row height = colWidth / 2, computed from container width.
-      */}
+      {/* ═══ MAIN GRID ═══ */}
       <DashGrid>
-        {/* ─── Section Label: Gingr Data ─── (spans cols 1-7)  +  Daily Checklists (col 8) + Services (col 9) */}
+        {/* ─── Section Label: Gingr Data ─── */}
         <div style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
-          <span className="dash-section-label">Gingr Data</span>
+          <span className="dash-section-label">Today's Snapshot</span>
         </div>
         <div style={{ gridColumn: "8", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 2px" }}>
           <span className="dash-section-label">Checklists</span>
@@ -1119,13 +1100,13 @@ export default function DashboardPage({
         </div>
 
         {/* ═══ ROW 1: Gingr Data ═══ */}
-        <MetricCell label="# Expected" value={todaySnapshot.expected} />
-        <MetricCell label="# In House" value={todaySnapshot.dogsInHouse} sub={`${todaySnapshot.boardingInHouse}B · ${todaySnapshot.daycareInHouse}D`} />
-        <MetricCell label="# Going Home" value={todaySnapshot.goingHome} />
-        <MetricCell label="Occupancy" value={`${todaySnapshot.occupancyPct}%`} />
-        <MetricCell label="# of Bookings" value={todaySnapshot.bookingsToday} />
-        <MetricCell label="Tours" value={todaySnapshot.tours} />
-        <MetricCell label="Evals" value={todaySnapshot.evals} />
+        <MetricCell label="Expected" value={todaySnapshot.expected} hero onClick={() => nav && nav("checkout-tv")} />
+        <MetricCell label="In House" value={todaySnapshot.dogsInHouse} hero sub={`${todaySnapshot.boardingInHouse}B · ${todaySnapshot.daycareInHouse}D`} onClick={() => nav && nav("checkout-tv")} />
+        <MetricCell label="Going Home" value={todaySnapshot.goingHome} onClick={() => nav && nav("ops-bathing")} />
+        <MetricCell label="Occupancy" value={`${todaySnapshot.occupancyPct}%`} onClick={() => nav && nav("settings")} />
+        <MetricCell label="Bookings" value={todaySnapshot.bookingsToday} />
+        <MetricCell label="Tours" value={todaySnapshot.tours} onClick={() => nav && nav("lifecycle")} />
+        <MetricCell label="Evals" value={todaySnapshot.evals} onClick={() => nav && nav("lifecycle")} />
         <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={() => nav && nav("ops-opening")} />
         <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={() => nav && nav("ops-bathing")} />
 
@@ -1137,12 +1118,12 @@ export default function DashboardPage({
 
         {/* ═══ ROW 2: Customer Lifecycle ═══ */}
         <MetricCell label="Remaining Leads" value={funnelMetrics.remainingLeads} onClick={() => nav && nav("funnel")} />
-        <MetricCell label="Remaining At-Risk" value={funnelMetrics.remainingAtRisk} onClick={() => nav && nav("funnel")} />
-        <MetricCell label="Outreaches Today" value={funnelMetrics.todayOutreaches} />
-        <MetricCell label="Conversions Today" value={funnelMetrics.todayConversions} color={funnelMetrics.todayConversions > 0 ? C.suc : undefined} />
-        <MetricCell label="First-Time Payers" value={funnelMetrics.firstTimePayers} />
-        <MetricCell label="Conversion Rate" value={`${funnelMetrics.conversionRate.toFixed(1)}%`} />
-        <MetricCell label="New Leads Today" value={funnelMetrics.todayNewLeads} />
+        <MetricCell label="At-Risk" value={funnelMetrics.remainingAtRisk} onClick={() => nav && nav("lifecycle")} color={funnelMetrics.remainingAtRisk > 0 ? C.warn : undefined} />
+        <MetricCell label="Outreaches" value={funnelMetrics.todayOutreaches} onClick={() => nav && nav("lifecycle")} />
+        <MetricCell label="Conversions" value={funnelMetrics.todayConversions} color={funnelMetrics.todayConversions > 0 ? C.suc : undefined} onClick={() => nav && nav("lifecycle")} />
+        <MetricCell label="First-Timers" value={funnelMetrics.firstTimePayers} onClick={() => nav && nav("lifecycle")} />
+        <MetricCell label="Conv. Rate" value={`${funnelMetrics.conversionRate.toFixed(1)}%`} onClick={() => nav && nav("funnel")} />
+        <MetricCell label="New Leads" value={funnelMetrics.todayNewLeads} onClick={() => nav && nav("funnel")} />
         <ChecklistCell label="Front-End" progress={getChecklistProgress("ops-fe")} count={getChecklistCount("ops-fe")} onClick={() => nav && nav("ops-fe")} />
         <ServiceCell label="Pamper" done={svcData.pamperDone} total={svcData.pamperTotal} onClick={() => nav && nav("ops-pamper")} />
 
@@ -1153,19 +1134,19 @@ export default function DashboardPage({
         <div style={{ gridColumn: "8 / 10" }} />
 
         {/* ═══ ROW 3: Daily Tasks ═══ */}
-        <MetricCell label="EOD" value={(() => { const eodOp = opsProgress.find(o => o.id === "eod"); return eodOp ? `${eodOp.progress}%` : "—"; })()} onClick={() => nav && nav("eod")} />
-        <MetricCell label="TV" value="—" />
-        <MetricCell label="Photos" value="—" />
-        <MetricCell label="Cash Tips" value="—" />
-        <MetricCell label="Checkout Notes" value="—" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
+        <MetricCell label="EOD Report" value={(() => { const eodOp = opsProgress.find(o => o.id === "eod"); return eodOp ? `${eodOp.progress}%` : "—"; })()} onClick={() => nav && nav("eod")} />
+        <MetricCell label="Checkout TV" value={todaySnapshot.checkedOut > 0 ? `${todaySnapshot.checkedOut} out` : "—"} onClick={() => nav && nav("checkout-tv")} />
+        <MetricCell label="Photos" value="—" onClick={() => nav && nav("photos")} />
+        <MetricCell label="Cash Tips" value="—" onClick={() => nav && nav("cash-tips")} />
+        <MetricCell label="Checkout Notes" value="—" onClick={() => nav && nav("eod")} />
+        <MetricCell label="Avg LTV" value={`$${funnelMetrics.avgLTV.toFixed(0)}`} onClick={() => nav && nav("lifecycle")} />
+        <MetricCell label="Total Clients" value={funnelMetrics.spendingClientsCount} onClick={() => nav && nav("lifecycle")} />
         <ChecklistCell label="Back-End" progress={getChecklistProgress("ops-be")} count={getChecklistCount("ops-be")} onClick={() => nav && nav("ops-be")} />
         <ServiceCell label="Ice Cream" done={svcData.iceCreamDone} total={svcData.iceCreamTotal} onClick={() => nav && nav("ops-svc")} />
 
         {/* ─── Section Label: Reporting ─── */}
         <div style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
-          <span className="dash-section-label">Reporting</span>
+          <span className="dash-section-label">Financial Reporting</span>
         </div>
         <div style={{ gridColumn: "8" }} />
         <div style={{ gridColumn: "9", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 2px" }}>
@@ -1173,80 +1154,70 @@ export default function DashboardPage({
         </div>
 
         {/* ═══ ROW 4: Reporting/Financial ═══ */}
-        <MetricCell label="# Transactions" value={cashBasisData.current.count} trend={showPriorPeriod ? bookingsTrend : null} />
-        <MetricCell label="Avg Transaction" value={`$${cashBasisData.current.avgTransaction.toFixed(0)}`} trend={showPriorPeriod ? cashBasisData.trendAvg : null} />
-        <MetricCell label="Rev/Par" value={`$${accrualData.revPAR.toFixed(0)}`} />
-        <MetricCell label="# Refunds" value={refundData.count} color={refundData.count > 0 ? C.dan : undefined} />
+        <MetricCell label="Transactions" value={cashBasisData.current.count} trend={showPriorPeriod ? bookingsTrend : null} />
+        <MetricCell label="Avg Ticket" value={`$${cashBasisData.current.avgTransaction.toFixed(0)}`} trend={showPriorPeriod ? cashBasisData.trendAvg : null} />
+        <MetricCell label="Rev/PAR" value={`$${accrualData.revPAR.toFixed(0)}`} />
+        <MetricCell label="Refunds" value={refundData.count} color={refundData.count > 0 ? C.dan : undefined} />
         <MetricCell label="$ Refunded" value={`$${fmt$k(refundData.total)}`} color={refundData.total > 0 ? C.dan : undefined} />
-        <MetricCell label="# Discounted" value={discountBreakdown.discounted} color={discountBreakdown.discounted > 0 ? C.warn : undefined} />
+        <MetricCell label="Discounted" value={discountBreakdown.discounted} color={discountBreakdown.discounted > 0 ? C.warn : undefined} />
         <MetricCell label="$ Discounted" value={`$${fmt$k(discountBreakdown.totalDiscounts)}`} color={discountBreakdown.totalDiscounts > 0 ? C.warn : undefined} />
         <ChecklistCell label="Room Clean" progress={getChecklistProgress("ops-rooms")} count={getChecklistCount("ops-rooms")} onClick={() => nav && nav("ops-rooms")} />
-        <MetricCell label="Attendance" value="—" />
+        <MetricCell label="Attendance" value="—" onClick={() => nav && nav("enterprise-attendance")} />
 
-        {/* ═══ ROWS 5-7: Charts + Services ═══ */}
-        {/* This section spans 2 grid rows. Layout:
-            Cols 1-3: Cash Basis Revenue Graph (spans 2 rows)
-            Col 4: Toggle + Revenue breakdown
-            Cols 5-7: Accrual Revenue Graph (spans 2 rows)
-            Col 8: Row5=Private Play, Row6=Closing
-            Col 9: Row5=Inventory
-        */}
-
-        {/* Cash Basis Revenue - spans cols 1-3, rows 5-7 (3 equal rows) */}
+        {/* ═══ ROWS 5-7: Charts ═══ */}
         <div className="dash-chart-cell" style={{ gridColumn: "1 / 4", gridRow: "span 3" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2, flexShrink: 0 }}>
-            <span style={{ fontSize: 8, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cash Basis Revenue</span>
-            <span style={{ fontSize: 8, fontWeight: 700, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(cashBasisData.current.total)}</span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cash Basis Revenue</span>
+            <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(cashBasisData.current.total)}</span>
           </div>
           <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" />
-
         </div>
 
-        {/* Col 4 Toggle area - spans 3 rows */}
+        {/* Col 4 Toggle area */}
         <div style={{
           gridColumn: "4", gridRow: "span 3",
           display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          gap: 6, padding: "4px 2px",
+          gap: 8, padding: "6px 4px",
+          background: "#FFFFFF", borderRadius: 8, border: "1px solid rgba(20,83,45,0.08)",
+          boxShadow: "0 1px 3px rgba(20,83,45,0.06), 0 1px 2px rgba(20,83,45,0.04)",
         }}>
-          {/* Revenue composition mini-breakdown */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, width: "100%" }}>
-            <div style={{ fontSize: 7, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>Split</div>
-            <div style={{ width: "80%", height: 4, borderRadius: 2, overflow: "hidden", display: "flex" }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, width: "100%" }}>
+            <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em" }}>Revenue Split</div>
+            <div style={{ width: "80%", height: 5, borderRadius: 3, overflow: "hidden", display: "flex" }}>
               <div style={{ width: `${revenueComposition.boardingPct}%`, height: "100%", background: C.pri }} />
               <div style={{ width: `${revenueComposition.daycarePct}%`, height: "100%", background: C.acc }} />
             </div>
-            <div style={{ fontSize: 7, color: C.textMut, textAlign: "center", lineHeight: 1.3 }}>
+            <div style={{ fontSize: 8, color: C.textMut, textAlign: "center", lineHeight: 1.4 }}>
               <div><span style={{ color: C.pri, fontWeight: 700 }}>{revenueComposition.boardingPct.toFixed(0)}%</span> Board</div>
               <div><span style={{ color: C.acc, fontWeight: 700 }}>{revenueComposition.daycarePct.toFixed(0)}%</span> Day</div>
             </div>
           </div>
-          {/* Accrual total */}
-          <div style={{ fontSize: 7, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginTop: 4 }}>Accrual</div>
-          <div style={{ fontSize: 11, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</div>
+          <div style={{ width: "60%", height: 1, background: "rgba(20,83,45,0.08)" }} />
+          <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em" }}>Accrual Total</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</div>
           {showPriorPeriod && <TrendBadge value={revenueTrend} size="xs" />}
         </div>
 
-        {/* Accrual Revenue - spans cols 5-7, rows 5-7 (3 equal rows) */}
+        {/* Accrual Revenue */}
         <div className="dash-chart-cell" style={{ gridColumn: "5 / 8", gridRow: "span 3" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2, flexShrink: 0 }}>
-            <span style={{ fontSize: 8, fontWeight: 800, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>Accrual Revenue</span>
-            <span style={{ fontSize: 8, fontWeight: 700, color: C.acc, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</span>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
+            <span style={{ fontSize: 10, fontWeight: 800, color: C.accDk, textTransform: "uppercase", letterSpacing: "0.06em" }}>Accrual Revenue</span>
+            <span style={{ fontSize: 11, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</span>
           </div>
           <ChartFill chartData={accrualChartData} color={C.acc} compareColor={C.pri} animEpoch={animEpoch} id="accrual-main" />
-
         </div>
 
         {/* Col 8: Private Play (row 5) */}
         <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={() => nav && nav("ops-pp")} />
 
         {/* Col 9: Inventory (row 5) */}
-        <MetricCell label="Inventory" value="—" />
+        <MetricCell label="Inventory" value="—" onClick={() => nav && nav("inventory")} />
 
         {/* Col 8: Closing (row 6) */}
         <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={() => nav && nav("ops-closing")} />
 
-        {/* Col 9: empty (row 6) */}
-        <div className="dash-grid-cell empty-cell" />
+        {/* Col 9: Test Health (row 6) */}
+        <MetricCell label="Test Health" value="172" sub="100% pass" onClick={() => nav && nav("test-health")} color={C.suc} />
 
         {/* Row 7: Col 8 empty, Col 9 empty */}
         <div className="dash-grid-cell empty-cell" />
@@ -1260,70 +1231,75 @@ export default function DashboardPage({
    Grid Cell Components
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* MetricCell — standard data cell showing a value + label */
-function MetricCell({ label, value, sub, color, trend, onClick }) {
+/* MetricCell — standard data cell */
+function MetricCell({ label, value, sub, color, trend, onClick, hero }) {
   return (
     <div
-      className={`dash-grid-cell${onClick ? " clickable" : ""}`}
+      className={`dash-grid-cell${onClick ? " clickable" : ""}${hero ? " hero-cell" : ""}`}
       onClick={onClick}
-      style={{ animation: "dashSlideIn 0.2s cubic-bezier(0.22,1,0.36,1) both" }}
+      style={{ animation: "dashSlideIn 0.2s cubic-bezier(0.22,1,0.36,1) both", position: "relative" }}
     >
-      <div className="dash-cell-value" style={color ? { color } : undefined}>
+      {onClick && <LinkIcon />}
+      <div className="dash-cell-value" style={{
+        color: hero ? "#FFFFFF" : (color || C.text),
+        fontSize: hero ? 26 : 22,
+      }}>
         {typeof value === "number" ? <AnimatedNumber value={value} /> : value}
       </div>
       {trend != null && <TrendBadge value={trend} size="xs" />}
-      <div className="dash-cell-label">{label}</div>
-      {sub && <div style={{ fontSize: 7, color: C.textMut, lineHeight: 1, marginTop: 1 }}>{sub}</div>}
+      <div className="dash-cell-label" style={hero ? { color: "rgba(217,249,157,0.8)" } : undefined}>{label}</div>
+      {sub && <div style={{ fontSize: 8, color: hero ? "rgba(255,255,255,0.5)" : C.textMut, lineHeight: 1, marginTop: 1 }}>{sub}</div>}
     </div>
   );
 }
 
-/* ChecklistCell — shows progress bar + percentage, click-navigates */
+/* ChecklistCell — progress bar + percentage */
 function ChecklistCell({ label, progress, count, onClick }) {
   const pct = Math.round(progress);
   const done = pct === 100;
   const barColor = done ? C.suc : C.pri;
   return (
     <div className="dash-checklist-cell" onClick={onClick}
-      style={{ animation: "dashSlideIn 0.2s cubic-bezier(0.22,1,0.36,1) both" }}
+      style={{ animation: "dashSlideIn 0.2s cubic-bezier(0.22,1,0.36,1) both", position: "relative" }}
     >
-      <div style={{ fontSize: 8, fontWeight: 700, color: done ? C.suc : C.text, lineHeight: 1, marginBottom: 3, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
+      {onClick && <LinkIcon />}
+      <div style={{ fontSize: 9, fontWeight: 700, color: done ? C.suc : C.text, lineHeight: 1, marginBottom: 4, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
         {label}
       </div>
-      {/* Progress bar */}
-      <div style={{ width: "80%", height: 4, background: C.bg, borderRadius: 2, overflow: "hidden", marginBottom: 2 }}>
+      <div style={{ width: "80%", height: 5, background: "rgba(20,83,45,0.06)", borderRadius: 3, overflow: "hidden", marginBottom: 3 }}>
         <div style={{
-          width: `${pct}%`, height: "100%", background: barColor, borderRadius: 2,
+          width: `${pct}%`, height: "100%", background: barColor, borderRadius: 3,
           transformOrigin: "left", animation: "dashBarGrow 0.4s 0.1s cubic-bezier(0.22,1,0.36,1) both",
         }} />
       </div>
-      <div style={{ fontSize: 9, fontWeight: 800, color: barColor, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: barColor, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
         {pct}%
       </div>
-      {count && <div style={{ fontSize: 7, color: C.textMut, lineHeight: 1, marginTop: 1 }}>{count}</div>}
+      {count && <div style={{ fontSize: 8, color: C.textMut, lineHeight: 1, marginTop: 1 }}>{count}</div>}
     </div>
   );
 }
 
-/* ServiceCell — shows done/total count, click-navigates */
+/* ServiceCell — done/total count */
 function ServiceCell({ label, done, total, onClick }) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const allDone = total > 0 && done >= total;
   const barColor = allDone ? C.suc : C.acc;
   return (
     <div className="dash-checklist-cell" onClick={onClick}
-      style={{ animation: "dashSlideIn 0.2s cubic-bezier(0.22,1,0.36,1) both" }}
+      style={{ animation: "dashSlideIn 0.2s cubic-bezier(0.22,1,0.36,1) both", position: "relative" }}
     >
-      <div style={{ fontSize: 8, fontWeight: 700, color: allDone ? C.suc : C.text, lineHeight: 1, marginBottom: 3, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
+      {onClick && <LinkIcon />}
+      <div style={{ fontSize: 9, fontWeight: 700, color: allDone ? C.suc : C.text, lineHeight: 1, marginBottom: 4, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" }}>
         {label}
       </div>
-      <div style={{ width: "80%", height: 4, background: C.bg, borderRadius: 2, overflow: "hidden", marginBottom: 2 }}>
+      <div style={{ width: "80%", height: 5, background: "rgba(20,83,45,0.06)", borderRadius: 3, overflow: "hidden", marginBottom: 3 }}>
         <div style={{
-          width: `${pct}%`, height: "100%", background: barColor, borderRadius: 2,
+          width: `${pct}%`, height: "100%", background: barColor, borderRadius: 3,
           transformOrigin: "left", animation: "dashBarGrow 0.4s 0.1s cubic-bezier(0.22,1,0.36,1) both",
         }} />
       </div>
-      <div style={{ fontSize: 10, fontWeight: 800, color: barColor, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: barColor, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
         {done}/{total}
       </div>
     </div>
