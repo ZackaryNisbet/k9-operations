@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS ignite_leads (
   ignite_profile_id   text,
   raw_email_html      text,
   raw_email_subject   text,
-  matched_client_id   uuid,
+  matched_client_id   text,  -- g+gingr_id format (e.g. 'g2495'), NOT a uuid
   match_status        text NOT NULL DEFAULT 'new' CHECK (match_status IN ('new', 'matched', 'review', 'no_match')),
   match_confidence    real,
   match_type          text,                          -- IGN-002: email, phone, name, phone_name
