@@ -124,8 +124,8 @@ function DataFlowAnimation() {
       const spacing = Math.min(w * 0.28, 180);
       const bottomY = h * 0.82;
       const oldNode = { x: cx - spacing, y: bottomY, label: 'Cold', sub: 'Re-engagement', color: '#64748B', radius: 36 };
-      const convNode = { x: cx, y: bottomY, label: 'Conversion', sub: 'New Leads', color: '#10B981', radius: 36 };
-      const retNode = { x: cx + spacing, y: bottomY, label: 'Retention', sub: 'Lapsed Clients', color: '#F59E0B', radius: 36 };
+      const convNode = { x: cx, y: bottomY, label: 'Leads', sub: 'New Leads', color: '#10B981', radius: 36 };
+      const retNode = { x: cx + spacing, y: bottomY, label: 'Lapsed', sub: 'Lapsed Clients', color: '#F59E0B', radius: 36 };
 
       return { gingrNode, k9Node, oldNode, convNode, retNode, w, h };
     };
@@ -364,9 +364,9 @@ function FeatureGraphic({ type, color }) {
     const stages = [
       { id: 'gingr', label: 'Gingr', sub: 'Data Source', x: 30, y: 95, color: '#6366F1', icon: 'db' },
       { id: 'k9ops', label: 'K9 Ops', sub: 'Intelligence', x: 120, y: 95, color: navy, icon: 'hub', isHub: true },
-      { id: 'conv', label: 'Conversion', sub: 'New Leads', x: 210, y: 95, color: green, icon: 'funnel' },
+      { id: 'conv', label: 'Leads', sub: 'New Leads', x: 210, y: 95, color: green, icon: 'funnel' },
       { id: 'active', label: 'Active', sub: 'Engaged', x: 300, y: 55, color: teal, icon: 'bolt' },
-      { id: 'retention', label: 'Retention', sub: 'Re-engage', x: 300, y: 135, color: gold, icon: 'refresh' },
+      { id: 'lapsed', label: 'Lapsed', sub: 'Re-engage', x: 300, y: 135, color: gold, icon: 'refresh' },
     ];
 
     return (
@@ -849,8 +849,8 @@ export default function LandingPage() {
           <div style={{ display: 'flex', justifyContent: 'center', gap: 32, marginTop: 48, flexWrap: 'wrap' }}>
             {[
               { label: 'Cold', desc: 'Inactive 14+ days from sync — needs re-engagement', color: '#64748B' },
-              { label: 'Conversion', desc: 'New leads from tours & evals — no booking yet', color: '#10B981' },
-              { label: 'Retention', desc: 'Lapsed clients past configurable threshold', color: '#F59E0B' },
+              { label: 'Leads', desc: 'New leads from tours & evals — no booking yet', color: '#10B981' },
+              { label: 'Lapsed', desc: 'Lapsed clients past configurable threshold', color: '#F59E0B' },
             ].map((item, i) => (
               <div key={i} style={{ textAlign: 'center', maxWidth: 200 }}>
                 <div style={{
@@ -879,11 +879,11 @@ export default function LandingPage() {
             title="Customer Lifecycle CRM"
             subtitle="Relationship Management"
             accentColor={C.pri}
-            description="Every client automatically flows through four stages — Conversion, Active, Retention, and Cold — based on their real booking behavior. No manual tagging required."
+            description="Every client automatically flows through four stages — Leads, Active, Lapsed, and Cold — based on their real booking behavior. No manual tagging required."
             bullets={[
-              'Conversion stage auto-captures leads from tours & evaluations with follow-up tracking',
+              'Leads stage auto-captures leads from tours & evaluations with follow-up tracking',
               'Active stage includes all clients with recent bookings — daycare, boarding, or both',
-              'Retention triggers when configurable lapse thresholds are exceeded (90 days daycare, 180 days boarding)',
+              'Lapsed triggers when configurable lapse thresholds are exceeded (90 days daycare, 180 days boarding)',
               'Cold stage for manually flagged leads with one-click Revive to re-engage',
               'Advanced filtering: 17+ filter fields across client info, activity, services, and lifecycle stage',
               'Full contact management with outreach logging, follow-up dates, and custom notes',
@@ -966,7 +966,7 @@ export default function LandingPage() {
               },
               {
                 icon: 'lifecycle', title: 'Automatic Lifecycle Staging',
-                desc: 'Clients move between Conversion → Active → Retention → Cold based on real booking behavior, not manual tagging.',
+                desc: 'Clients move between Leads → Active → Lapsed → Cold based on real booking behavior, not manual tagging.',
               },
               {
                 icon: 'ops', title: 'Reservation-Driven Operations',

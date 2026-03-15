@@ -63,7 +63,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       id: "lifecycle",
       label: "Customer Lifecycle",
       cards: [
-        { id: "retention-thresholds", label: "Retention Thresholds", desc: "Configure days of inactivity before a client moves from Active to Retention" },
+        { id: "lapsed-thresholds", label: "Retention Thresholds", desc: "Configure days of inactivity before a client moves from Active to Lapsed" },
       ],
     },
     {
@@ -94,7 +94,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
         return <TeamManagementTab profile={profile} data={data} save={save} />;
       case "permissions":
         return <PermissionsTab />;
-      case "retention-thresholds":
+      case "lapsed-thresholds":
         return <RetentionThresholdsTab />;
       case "required-fields":
         return <RequiredFieldsTab />;

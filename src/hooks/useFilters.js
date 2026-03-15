@@ -37,7 +37,7 @@ function applyStructuredFilters(clients, stats, tabMap, filters) {
       }
       if (k === "nextRes") { if (op==="has") return !!s.nextRes; if (op==="missing") return !s.nextRes; }
       if (k === "stage") {
-        const stg = tm.isCold ? "cold" : tm.isRetention ? "retention" : tm.isActive ? "active" : tm.isConversion ? "conversion" : "unknown";
+        const stg = tm.isCold ? "cold" : tm.isRetention ? "lapsed" : tm.isActive ? "active" : tm.isConversion ? "leads" : "unknown";
         if (op==="is") return stg === val; if (op==="isNot") return stg !== val;
       }
       if (k === "source") {

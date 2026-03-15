@@ -58,19 +58,19 @@ function RetentionThresholdsTab() {
 
   return (
     <div>
-      <h3 style={{ margin: "0 0 4px", fontSize: 18, fontWeight: 700, color: C.text }}>Customer Lifecycle — Retention Thresholds</h3>
-      <p style={{ margin: "0 0 24px", fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>Configure how many days of inactivity trigger a client moving from Active to Retention. Separate thresholds for primarily-daycare vs primarily-boarding clients.</p>
+      <h3 style={{ margin: "0 0 4px", fontSize: 18, fontWeight: 700, color: C.text }}>Customer Lifecycle — Lapsed Thresholds</h3>
+      <p style={{ margin: "0 0 24px", fontSize: 13, color: C.textSec, lineHeight: 1.5 }}>Configure how many days of inactivity trigger a client moving from Active to Lapsed. Separate thresholds for primarily-daycare vs primarily-boarding clients.</p>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 24 }}>
-        {/* Daycare Retention */}
+        {/* Daycare Lapsed */}
         <Card style={{ padding: "20px 24px" }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Daycare Retention</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Daycare Lapsed</div>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
             <input type="number" value={dcDays} min={1} max={365} onChange={e => { setDcDays(parseInt(e.target.value) || 90); setDirty(true); }}
               style={{ width: 80, padding: "10px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 16, fontWeight: 700, fontFamily: "inherit", textAlign: "center" }} />
             <span style={{ fontSize: 14, color: C.text, fontWeight: 600 }}>days</span>
           </div>
-          <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5 }}>Clients whose reservations are primarily daycare will move to Retention after this many days of inactivity.</div>
+          <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5 }}>Clients whose reservations are primarily daycare will move to Lapsed after this many days of inactivity.</div>
           <div style={{ marginTop: 12, display: "flex", gap: 6 }}>
             {[30, 60, 90, 120].map(d => (
               <button key={d} onClick={() => { setDcDays(d); setDirty(true); }} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${dcDays === d ? C.pri : C.border}`, background: dcDays === d ? C.priLt : "transparent", color: dcDays === d ? C.pri : C.textSec, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{d}d</button>
@@ -78,15 +78,15 @@ function RetentionThresholdsTab() {
           </div>
         </Card>
 
-        {/* Boarding Retention */}
+        {/* Boarding Lapsed */}
         <Card style={{ padding: "20px 24px" }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Boarding Retention</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 12 }}>Boarding Lapsed</div>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
             <input type="number" value={bdDays} min={1} max={730} onChange={e => { setBdDays(parseInt(e.target.value) || 180); setDirty(true); }}
               style={{ width: 80, padding: "10px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.bg, color: C.text, fontSize: 16, fontWeight: 700, fontFamily: "inherit", textAlign: "center" }} />
             <span style={{ fontSize: 14, color: C.text, fontWeight: 600 }}>days</span>
           </div>
-          <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5 }}>Clients whose reservations are primarily boarding will move to Retention after this many days of inactivity.</div>
+          <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5 }}>Clients whose reservations are primarily boarding will move to Lapsed after this many days of inactivity.</div>
           <div style={{ marginTop: 12, display: "flex", gap: 6 }}>
             {[90, 120, 180, 365].map(d => (
               <button key={d} onClick={() => { setBdDays(d); setDirty(true); }} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${bdDays === d ? C.pri : C.border}`, background: bdDays === d ? C.priLt : "transparent", color: bdDays === d ? C.pri : C.textSec, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{d}d</button>
@@ -97,9 +97,9 @@ function RetentionThresholdsTab() {
 
       {/* How it works explainer */}
       <Card style={{ padding: "16px 20px", marginBottom: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>How Retention Classification Works</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 8 }}>How Lapsed Classification Works</div>
         <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.7 }}>
-          <div style={{ marginBottom: 6 }}>A client moves from <span style={{ fontWeight: 700, color: C.text }}>Active</span> to <span style={{ fontWeight: 700, color: "#D97706" }}>Retention</span> when:</div>
+          <div style={{ marginBottom: 6 }}>A client moves from <span style={{ fontWeight: 700, color: C.text }}>Active</span> to <span style={{ fontWeight: 700, color: "#D97706" }}>Lapsed</span> when:</div>
           <div style={{ paddingLeft: 14 }}>
             <div>1. They have a booking history and have spent money</div>
             <div>2. They have no upcoming reservations</div>
