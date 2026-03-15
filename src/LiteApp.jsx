@@ -12116,7 +12116,7 @@ function LeanAppInner() {
       case "dog-detail":
         return <DogDetailPage data={data} clientId={params.clientId} dogId={params.dogId} nav={nav} />;
       case "checkout-tv":
-        return <CheckoutTVPage data={data} nav={nav} />;
+        return <CheckoutTVPage data={data} nav={nav} profile={profile} />;
       case "checkout-notes":
         return <CheckoutNotesPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "client-detail":
