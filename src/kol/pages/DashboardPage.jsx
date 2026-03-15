@@ -944,7 +944,7 @@ export default function DashboardPage({
         <QuickLinkCell label="Checkout TV" icon={<I.Monitor />} onClick={() => nav && nav("checkout-tv")} />
         <QuickLinkCell label="Photos" icon={<I.Camera />} onClick={() => nav && nav("photos")} />
         <QuickLinkCell label="Cash Tips" icon={<I.DollarSign />} onClick={() => nav && nav("cash-tips")} />
-        <QuickLinkCell label="Notes" icon={<I.Clipboard />} onClick={() => nav && nav("eod")} />
+        <QuickLinkCell label="Checkout Notes" icon={<I.Clipboard />} onClick={() => nav && nav("checkout-notes")} />
         <MetricCell label="Avg LTV" value={`$${funnelMetrics.avgLTV.toFixed(0)}`} onClick={() => nav && nav("lifecycle")} />
         <MetricCell label="Total Clients" value={funnelMetrics.spendingClientsCount} onClick={() => nav && nav("lifecycle")} />
         <ChecklistCell label="Back-End" progress={getChecklistProgress("ops-be")} count={getChecklistCount("ops-be")} onClick={() => nav && nav("ops-be")} />
