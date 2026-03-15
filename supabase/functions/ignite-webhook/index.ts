@@ -1012,6 +1012,53 @@ Deno.serve(async (req: Request): Promise<Response> => {
       `[ignite-webhook] Lead stored: ${lead.id} (${matchStatus})`,
     );
 
+    // ── Auto-create lite_client for unmatched leads ──────────────────────
+    let liteClientId: string | null = null;
+    if (matchStatus === MATCH_STATUSES.NO_MATCH && lead.id) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const followUpDate = tomorrow.toISOString().split("T")[0];
+
+      const { data: liteClient, error: lcError } = await supabaseClient
+        .from("lite_clients")
+        .insert({
+          location_id: locationId,
+          first_name: parsed.firstName || null,
+          last_name: parsed.lastName || null,
+          phone: parsed.phone || null,
+          email: parsed.email || null,
+          source: "ignite",
+          source_date: new Date().toISOString(),
+          ignite_lead_id: lead.id,
+          notes: `Ignite ${parsed.leadType === "phone_call" ? "phone call" : "web form"} lead — ${new Date().toLocaleDateString()}`,
+          lifecycle_data: {
+            conversion: {
+              notes: "",
+              followUpDate,
+              updates: [],
+              source: "ignite",
+              sourceDate: new Date().toISOString(),
+              sourceReservationId: "",
+            },
+            retention: { notes: "", followUpDate: "", updates: [] },
+            cold: false,
+            coldDate: "",
+            coldFrom: "",
+          },
+        })
+        .select("id")
+        .single();
+
+      if (lcError) {
+        console.error("[ignite-webhook] Lite client create error:", lcError);
+      } else {
+        liteClientId = liteClient.id;
+        console.log(
+          `[ignite-webhook] Auto-created lite_client: ${liteClient.id} for lead ${lead.id}`,
+        );
+      }
+    }
+
     return jsonResponse({
       success: true,
       leadId: lead.id,
@@ -1019,6 +1066,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       matchConfidence: matchResult.confidence,
       matchType: matchResult.matchType,
       candidateCount: candidates.length,
+      liteClientId,
     });
   } catch (err) {
     console.error("[ignite-webhook] Unhandled error:", err);
