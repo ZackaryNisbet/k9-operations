@@ -240,6 +240,7 @@ const PAGE_SLUGS = {
   "ops-bathing":"ops/bathing", "ops-pamper":"ops/pamper", "ops-svc":"ops/service",
   management:"management", "mgmt-attendance":"management/attendance", "mgmt-audit-log":"management/audit-log",
   "checkout-tv":"checkout-tv",
+  "checkout-notes":"checkout-notes",
   eod:"eod", ai:"ai", settings:"settings", "evaluation-form":"evaluation", "online-bookings":"bookings",
   "settings-team":"settings/team-management", "settings-roles":"settings/roles",
   "settings-fields":"settings/fields", "settings-tags":"settings/tags", "settings-vaccines":"settings/vaccines",

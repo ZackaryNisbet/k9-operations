@@ -242,7 +242,41 @@ function LiteEODPage({ data, save, nav, profile, addGlobalToast }) {
       return { id: t.id, content, ...(editedBy ? { editedBy } : {}) };
     });
     newHistory.push({ ts: new Date().toISOString(), action: "saved" });
-    const newEntry = { ...entry, sections, mentions: entry.mentions || [], history: newHistory };
+    // Extract @mentions from section content and build structured mentions array
+    const extractedMentions = [];
+    const allDogs = data.dogs || [];
+    sections.forEach(sec => {
+      const content = sec.content || "";
+      // Match @DogName patterns (the MentionTextarea inserts @Name LastName)
+      const mentionPattern = /@([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)/g;
+      let match;
+      while ((match = mentionPattern.exec(content)) !== null) {
+        const mentionName = match[1];
+        // Try to find this dog in the facility dogs list
+        const dog = allDogs.find(d => {
+          const dName = d.fields?.name || "";
+          const clientId = d.clientId;
+          const client = (data.clients || []).find(c => c.id === clientId);
+          const fullName = client ? `${dName} ${client.fields?.last_name || ""}`.trim() : dName;
+          return fullName === mentionName || dName === mentionName;
+        });
+        if (dog) {
+          // Avoid duplicates
+          if (!extractedMentions.find(m => m.entityId === dog.id && m.sectionId === sec.id)) {
+            extractedMentions.push({
+              entityType: "dog",
+              entityId: dog.id,
+              entityName: dog.fields?.name || mentionName,
+              sectionId: sec.id,
+            });
+          }
+        }
+      }
+    });
+    // Merge: keep existing client-type mentions, replace dog mentions with fresh extraction
+    const existingClientMentions = (entry.mentions || []).filter(m => m.entityType === "client");
+    const mergedMentions = [...existingClientMentions, ...extractedMentions];
+    const newEntry = { ...entry, sections, mentions: mergedMentions, history: newHistory };
     const entries = [...(data.eodEntries || [])];
     const idx = entries.findIndex(e => e.date === viewDate);
     if (idx >= 0) entries[idx] = newEntry; else entries.push(newEntry);
