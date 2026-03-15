@@ -2,14 +2,14 @@
 // 9×11 Grid, viewport-locked, world-class data density.
 // Clean neutral background, uniform cards, premium typography.
 
-import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef, memo, useTransition, startTransition } from "react";
 import {
   C, todayStr, addDays, fmtDate, fmtDateShort,
 } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Tip } from "../../shared/ui";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
-import SkeletonShimmer from "../../shared/SkeletonShimmer";
+import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { getCachedData, setCachedData } from "../../shared/dashboardCache";
 import { useLazyCompute, useSectionVisibility } from "../../hooks/useLazyCompute";
 import {
@@ -610,9 +610,45 @@ function ChartFill({ chartData, color, compareColor, animEpoch, id, dateLabels }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Main component
+   WRAPPER — deferred mount so navigation stays snappy.
+   Shows the pulsing K9 logo immediately, then mounts the heavy
+   DashboardContent on the next animation frame via startTransition.
+   This keeps 136K-reservation metric computations off the critical path.
    ═══════════════════════════════════════════════════════════════════════════ */
-export default function DashboardPage({
+
+export default function DashboardPage(props) {
+  const { data } = props;
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    // Yield one frame so the loading animation paints first,
+    // then mount the heavy compute tree via a low-priority transition.
+    const raf = requestAnimationFrame(() => {
+      startTransition(() => setReady(true));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  if (!data || !data.reservations || !ready) {
+    return (
+      <div style={{
+        height: "calc(100vh - 64px)", display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        background: "#FAFAF9",
+      }}>
+        <K9LoadingAnimation size={64} message="Loading dashboard..." subMessage="Crunching the numbers" />
+      </div>
+    );
+  }
+
+  return <DashboardContent {...props} />;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CONTENT — all heavy metric computation lives here, only mounted when ready.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function DashboardContent({
   data, save, nav, profile, addGlobalToast,
   showSnapshot, showRevenue, showFunnel, showLTV,
   showRevenueComposition, showRevenueByCategory, showDiscountAnalysis,
@@ -833,10 +869,7 @@ export default function DashboardPage({
     if (cacheableMetrics) setCachedData(cacheableMetrics);
   }, [cacheableMetrics]);
 
-  /* ─── Loading gate — skeleton shimmer instead of K9 animation ───── */
-  if (!data || !data.reservations) {
-    return <SkeletonShimmer />;
-  }
+  /* Loading gate removed — handled by DashboardPage wrapper above. */
 
   /* ═══════════════════════════════════════════════════════════════════════════
      RENDER
