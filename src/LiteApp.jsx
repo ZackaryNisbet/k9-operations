@@ -46,8 +46,8 @@ const C = {
   bg: "#F5F6F8", surface: "#FFFFFF", surfaceHover: "#EEF0F4",
   border: "#DFE2E8", borderLight: "#ECEEF2",
   text: "#1A1D23", textSec: "#5A6170", textMut: "#959BA8",
-  pri: "#003462", priL: "#0A4D8A", priLt: "#E6EEF6",
-  acc: "#AF8D54", accLt: "#F5EDD8", accDk: "#8B6F3C",
+  pri: "#14532D", priL: "#166534", priLt: "#ECFDF5",
+  acc: "#84CC16", accLt: "#D9F99D", accDk: "#4D7C0F",
   suc: "#0D7A56", sucLt: "#ECFDF5", warn: "#C4720C", warnLt: "#FFFBEB",
   dan: "#C42B2B", danLt: "#FEF2F2", info: "#1A5EC4", infoLt: "#EFF6FF",
 };
@@ -272,13 +272,13 @@ const I = {
 };
 const Icons = I;
 
-// K9 Resorts Official Dog Logo (PNG from brand assets)
+// K9 Operations Official Dog Logo (PNG from brand assets)
 const K9_LOGO_PNG = "data:image/png;base64,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";
 
-const K9Logo = ({size=38}) => <img src={K9_LOGO_SRC || K9_LOGO_PNG} alt="K9 Resorts" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
-const K9LogoMini = ({size=28}) => <img src={K9_LOGO_SRC || K9_LOGO_PNG} alt="K9 Resorts" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
+const K9Logo = ({size=38}) => <img src={K9_LOGO_SRC || K9_LOGO_PNG} alt="K9 Operations" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
+const K9LogoMini = ({size=28}) => <img src={K9_LOGO_SRC || K9_LOGO_PNG} alt="K9 Operations" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
 
-// K9 Resorts Locations
+// K9 Operations Locations
 const K9_LOCATIONS = [
   { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
   { id: "demo", name: "Demo", slug: "demo" },
@@ -399,7 +399,7 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
     return (
       <div style={{ padding: "0 4px", width: "100%" }}>
         <button onClick={() => setOpen(!open)} title={current.name}
-          style={{ width: "100%", height: 40, display: "flex", alignItems: "center", justifyContent: "center", padding: "0", borderRadius: 10, border: "1.5px solid rgba(175,141,84,0.2)", background: isEnterprise ? "rgba(175,141,84,0.15)" : "rgba(255,255,255,0.06)", cursor: "pointer", color: C.acc, fontSize: 11, fontWeight: 700, fontFamily: "inherit", boxSizing: "border-box" }}>
+          style={{ width: "100%", height: 40, display: "flex", alignItems: "center", justifyContent: "center", padding: "0", borderRadius: 10, border: "1.5px solid rgba(132,204,22,0.2)", background: isEnterprise ? "rgba(132,204,22,0.15)" : "rgba(255,255,255,0.06)", cursor: "pointer", color: C.acc, fontSize: 11, fontWeight: 700, fontFamily: "inherit", boxSizing: "border-box" }}>
           {isEnterprise ? "\u2605" : current.name.slice(0, 2).toUpperCase()}
         </button>
       </div>
@@ -409,46 +409,46 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
   return (
     <div style={{ padding: "0 4px", position: "relative", width: "100%" }}>
       <button ref={btnRef} onClick={() => setOpen(!open)}
-        style={{ width: "100%", height: 40, display: "flex", alignItems: "center", gap: 8, padding: "0 10px", borderRadius: 10, border: "1.5px solid rgba(175,141,84,0.2)", background: isEnterprise ? "rgba(175,141,84,0.12)" : "rgba(255,255,255,0.06)", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", boxSizing: "border-box" }}>
-        <div style={{ width: 24, height: 24, borderRadius: 6, background: isEnterprise ? "rgba(175,141,84,0.25)" : "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: C.acc, flexShrink: 0 }}>
+        style={{ width: "100%", height: 40, display: "flex", alignItems: "center", gap: 8, padding: "0 10px", borderRadius: 10, border: "1.5px solid rgba(132,204,22,0.2)", background: isEnterprise ? "rgba(132,204,22,0.12)" : "rgba(255,255,255,0.06)", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", boxSizing: "border-box" }}>
+        <div style={{ width: 24, height: 24, borderRadius: 6, background: isEnterprise ? "rgba(132,204,22,0.25)" : "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: C.acc, flexShrink: 0 }}>
           {isEnterprise ? "\u2605" : current.name.slice(0, 1)}
         </div>
         <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{current.name}</div>
-          <div style={{ fontSize: 9, color: "rgba(175,141,84,0.6)", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>{isEnterprise ? "All Locations" : "Location"}</div>
+          <div style={{ fontSize: 9, color: "rgba(132,204,22,0.6)", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>{isEnterprise ? "All Locations" : "Location"}</div>
         </div>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(175,141,84,0.5)" strokeWidth="2.5" strokeLinecap="round"
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(132,204,22,0.5)" strokeWidth="2.5" strokeLinecap="round"
           style={{ transition: "transform 0.2s", transform: open ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0 }}>
           <polyline points="6 9 12 15 18 9"/>
         </svg>
       </button>
 
       {open && (
-        <div ref={dropRef} style={{ position: "fixed", top: dropPos.top, left: dropPos.left, width: dropPos.width || 212, zIndex: 9999, background: "#1a2940", border: "1.5px solid rgba(175,141,84,0.25)", borderRadius: 12, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <div ref={dropRef} style={{ position: "fixed", top: dropPos.top, left: dropPos.left, width: dropPos.width || 212, zIndex: 9999, background: "#1a2940", border: "1.5px solid rgba(132,204,22,0.25)", borderRadius: 12, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ padding: "6px 6px" }}>
             {/* Enterprise — only for owner/enterprise_admin */}
             {profile?.role && (profile.role === 'owner' || profile.role === 'enterprise_admin') && (<>
             <button onClick={() => { onLocationChange("enterprise"); setOpen(false); }}
-              style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: currentLocation === "enterprise" ? "rgba(175,141,84,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginBottom: 2 }}
+              style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: currentLocation === "enterprise" ? "rgba(132,204,22,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginBottom: 2 }}
               onMouseEnter={e => { if (currentLocation !== "enterprise") e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
               onMouseLeave={e => { if (currentLocation !== "enterprise") e.currentTarget.style.background = "transparent"; }}>
-              <div style={{ width: 26, height: 26, borderRadius: 6, background: "rgba(175,141,84,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <div style={{ width: 26, height: 26, borderRadius: 6, background: "rgba(132,204,22,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <span style={{ fontSize: 13, fontWeight: 800, color: C.acc }}>{"\u2605"}</span>
               </div>
               <div style={{ textAlign: "left", flex: 1 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: C.acc }}>Enterprise</div>
-                <div style={{ fontSize: 9, color: "rgba(175,141,84,0.5)", textTransform: "uppercase" }}>All Locations</div>
+                <div style={{ fontSize: 9, color: "rgba(132,204,22,0.5)", textTransform: "uppercase" }}>All Locations</div>
               </div>
               {currentLocation === "enterprise" && <span style={{ color: C.acc }}><I.Check/></span>}
             </button>
 
-            <div style={{ margin: "4px 10px", height: 1, background: "rgba(175,141,84,0.12)" }}/>
+            <div style={{ margin: "4px 10px", height: 1, background: "rgba(132,204,22,0.12)" }}/>
             </>)}
 
             {/* Location list */}
             {locations.map(loc => (
               <button key={loc.id} onClick={() => { onLocationChange(loc.id); setOpen(false); }}
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: currentLocation === loc.id ? "rgba(175,141,84,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginTop: 2 }}
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: currentLocation === loc.id ? "rgba(132,204,22,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginTop: 2 }}
                 onMouseEnter={e => { if (currentLocation !== loc.id) e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
                 onMouseLeave={e => { if (currentLocation !== loc.id) e.currentTarget.style.background = "transparent"; }}>
                 <div style={{ width: 26, height: 26, borderRadius: 6, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -463,7 +463,7 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
 
             {/* POS locations */}
             {posLocations.length > 0 && <>
-              <div style={{ margin: "4px 10px", height: 1, background: "rgba(175,141,84,0.12)" }}/>
+              <div style={{ margin: "4px 10px", height: 1, background: "rgba(132,204,22,0.12)" }}/>
               {posLocations.map(loc => (
                 <button key={loc.id} onClick={() => { onLocationChange(loc.id); setOpen(false); }}
                   style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginTop: 2 }}
@@ -541,28 +541,28 @@ function K9LoadingAnimation({ size = 56, message = "Loading...", subMessage }) {
         <defs>
           <linearGradient id="k9LoadGold" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor="#C4A46A"/>
-            <stop offset="100%" stopColor="#AF8D54"/>
+            <stop offset="100%" stopColor="#84CC16"/>
           </linearGradient>
         </defs>
         {/* Head hub */}
         <circle cx="50" cy="46" r="14" fill="url(#k9LoadGold)" style={{ animation: "k9pulse 2s ease-in-out infinite" }}/>
-        <circle cx="50" cy="46" r="5" fill="#003462" opacity="0.18"/>
+        <circle cx="50" cy="46" r="5" fill="#14532D" opacity="0.18"/>
         {/* Orbiting ears + collar tag */}
         <g style={{ transformOrigin: "50px 46px", animation: "k9orbit 3s linear infinite" }}>
-          <line x1="50" y1="46" x2="26" y2="22" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
-          <line x1="50" y1="46" x2="74" y2="22" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
-          <line x1="50" y1="46" x2="50" y2="74" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
+          <line x1="50" y1="46" x2="26" y2="22" stroke="#84CC16" strokeWidth="1.5" opacity="0.3"/>
+          <line x1="50" y1="46" x2="74" y2="22" stroke="#84CC16" strokeWidth="1.5" opacity="0.3"/>
+          <line x1="50" y1="46" x2="50" y2="74" stroke="#84CC16" strokeWidth="1.5" opacity="0.3"/>
           {/* Left ear — angled ellipse */}
-          <ellipse cx="26" cy="22" rx="6" ry="8.5" fill="#AF8D54" opacity="0.5" transform="rotate(-20 26 22)" style={{ animation: "k9fade 2s ease-in-out infinite" }}/>
+          <ellipse cx="26" cy="22" rx="6" ry="8.5" fill="#84CC16" opacity="0.5" transform="rotate(-20 26 22)" style={{ animation: "k9fade 2s ease-in-out infinite" }}/>
           {/* Right ear — angled ellipse */}
-          <ellipse cx="74" cy="22" rx="6" ry="8.5" fill="#AF8D54" opacity="0.5" transform="rotate(20 74 22)" style={{ animation: "k9fade 2s ease-in-out 0.7s infinite" }}/>
+          <ellipse cx="74" cy="22" rx="6" ry="8.5" fill="#84CC16" opacity="0.5" transform="rotate(20 74 22)" style={{ animation: "k9fade 2s ease-in-out 0.7s infinite" }}/>
           {/* Collar tag */}
-          <circle cx="50" cy="74" r="6" fill="#AF8D54" opacity="0.45" style={{ animation: "k9fade 2s ease-in-out 1.4s infinite" }}/>
+          <circle cx="50" cy="74" r="6" fill="#84CC16" opacity="0.45" style={{ animation: "k9fade 2s ease-in-out 1.4s infinite" }}/>
         </g>
       </svg>
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: C.textSec, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>{message}</div>
-        {subMessage && <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>{subMessage}</div>}
+        <div style={{ fontSize: 15, fontWeight: 600, color: C.textSec, fontFamily: "'Outfit', -apple-system, sans-serif" }}>{message}</div>
+        {subMessage && <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, fontFamily: "'Outfit', -apple-system, sans-serif" }}>{subMessage}</div>}
       </div>
     </div>
   );
@@ -571,7 +571,7 @@ const _chartFmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toLocaleString
 const _chartFmt$k = (v) => v >= 10000 ? `$${(v / 1000).toFixed(1)}k` : v >= 1000 ? `$${(v / 1000).toFixed(2)}k` : _chartFmt$(v);
 
 // ── Revenue Intelligence: Animated Line Chart (module-level for animation persistence) ──
-const InteractiveLineChart = React.memo(({ chartData, color = "#003462", compareColor = "#AF8D54", showCompare, height = 240, id = "chart", animationEpoch }) => {
+const InteractiveLineChart = React.memo(({ chartData, color = "#14532D", compareColor = "#84CC16", showCompare, height = 240, id = "chart", animationEpoch }) => {
   const svgRef = React.useRef(null);
   const [display, setDisplay] = React.useState(null);
   const [hover, setHover] = React.useState(null);
@@ -657,7 +657,7 @@ const InteractiveLineChart = React.memo(({ chartData, color = "#003462", compare
           return (
             <g key={i}>
               <line x1={pad.left} y1={yPos} x2={w - pad.right} y2={yPos} stroke="#E5E7EB" strokeWidth="0.5" />
-              <text x={pad.left - 6} y={yPos + 3} textAnchor="end" fill="#8B95A5" fontSize="9" fontFamily="'GT Eesti', sans-serif">{_chartFmt$k(val)}</text>
+              <text x={pad.left - 6} y={yPos + 3} textAnchor="end" fill="#8B95A5" fontSize="9" fontFamily="'Outfit', sans-serif">{_chartFmt$k(val)}</text>
             </g>
           );
         })}
@@ -2925,7 +2925,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               @keyframes filterSlideIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
               @keyframes filterFadeIn { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
               @keyframes filterChipIn { from { opacity:0; transform:translateX(-6px) scale(0.9); } to { opacity:1; transform:translateX(0) scale(1); } }
-              @keyframes filterPulse { 0%,100% { box-shadow:0 0 0 0 rgba(0,52,98,0.15); } 50% { box-shadow:0 0 0 4px rgba(0,52,98,0.08); } }
+              @keyframes filterPulse { 0%,100% { box-shadow:0 0 0 0 rgba(20,83,45,0.15); } 50% { box-shadow:0 0 0 4px rgba(20,83,45,0.08); } }
               @keyframes configSlide { from { opacity:0; max-height:0; transform:translateY(-4px); } to { opacity:1; max-height:200px; transform:translateY(0); } }
             `}</style>
 
@@ -2938,7 +2938,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                 {views.map((v,vi) => (
                   <div key={v.id} style={{display:"inline-flex",alignItems:"center",gap:2,animation:`filterChipIn 0.25s ease-out ${vi*0.05}s both`}}>
                     <button onClick={() => loadView(v)}
-                      style={{padding:"5px 12px",borderRadius:8,border:`1.5px solid ${activeViewId===v.id?C.pri:C.borderLight}`,background:activeViewId===v.id?C.pri:"#fff",color:activeViewId===v.id?"#fff":C.text,fontSize:11,fontWeight:activeViewId===v.id?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:activeViewId===v.id?"0 2px 8px rgba(0,52,98,0.2)":"0 1px 3px rgba(0,0,0,0.04)"}}
+                      style={{padding:"5px 12px",borderRadius:8,border:`1.5px solid ${activeViewId===v.id?C.pri:C.borderLight}`,background:activeViewId===v.id?C.pri:"#fff",color:activeViewId===v.id?"#fff":C.text,fontSize:11,fontWeight:activeViewId===v.id?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:activeViewId===v.id?"0 2px 8px rgba(20,83,45,0.2)":"0 1px 3px rgba(0,0,0,0.04)"}}
                       onMouseEnter={e=>{if(activeViewId!==v.id){e.currentTarget.style.borderColor=C.pri;e.currentTarget.style.color=C.pri;}}}
                       onMouseLeave={e=>{if(activeViewId!==v.id){e.currentTarget.style.borderColor=C.borderLight;e.currentTarget.style.color=C.text;}}}>
                       {v.name}
@@ -2973,7 +2973,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                     const isConfiguring = configuringKey === key;
                     return (
                       <div key={key} style={{animation:`filterChipIn 0.2s ease-out ${i*0.04}s both`}}>
-                        <div style={{display:"inline-flex",alignItems:"center",gap:0,borderRadius:10,border:`1.5px solid ${isConfiguring?C.pri:C.border}`,background:isConfiguring?`${C.pri}06`:"#fff",boxShadow:isConfiguring?"0 0 0 3px rgba(0,52,98,0.06)":"0 1px 3px rgba(0,0,0,0.04)",transition:"all 0.25s cubic-bezier(0.2,0.8,0.2,1)",overflow:"hidden"}}>
+                        <div style={{display:"inline-flex",alignItems:"center",gap:0,borderRadius:10,border:`1.5px solid ${isConfiguring?C.pri:C.border}`,background:isConfiguring?`${C.pri}06`:"#fff",boxShadow:isConfiguring?"0 0 0 3px rgba(20,83,45,0.06)":"0 1px 3px rgba(0,0,0,0.04)",transition:"all 0.25s cubic-bezier(0.2,0.8,0.2,1)",overflow:"hidden"}}>
                           {/* Field name */}
                           <button onClick={() => { setConfiguringKey(isConfiguring?null:key); setConfigStep(0); setShowFilterPicker(false); }}
                             style={{padding:"6px 10px",border:"none",background:"transparent",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,color:C.pri,whiteSpace:"nowrap",transition:"background 0.15s"}}
@@ -3001,14 +3001,14 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
                         {/* ── Inline Config Popover ── */}
                         {isConfiguring && (
-                          <div style={{marginTop:6,padding:"10px 14px",borderRadius:10,background:"#fff",border:`1.5px solid ${C.pri}30`,boxShadow:"0 6px 24px rgba(0,52,98,0.1)",animation:"configSlide 0.25s ease-out",overflow:"hidden"}}>
+                          <div style={{marginTop:6,padding:"10px 14px",borderRadius:10,background:"#fff",border:`1.5px solid ${C.pri}30`,boxShadow:"0 6px 24px rgba(20,83,45,0.1)",animation:"configSlide 0.25s ease-out",overflow:"hidden"}}>
                             {/* Operator pills */}
                             <div style={{marginBottom:needsValue(f.op)?10:0}}>
                               <div style={{fontSize:9,fontWeight:800,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>Condition</div>
                               <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
                                 {fd.ops.map((op,oi) => (
                                   <button key={op} onClick={() => { updateFilter(key,"op",op); if(!needsValue(op)) updateFilter(key,"val",""); }}
-                                    style={{padding:"5px 12px",borderRadius:8,border:`1.5px solid ${f.op===op?C.pri:C.borderLight}`,background:f.op===op?C.pri:"#fff",color:f.op===op?"#fff":C.text,fontSize:11,fontWeight:f.op===op?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:f.op===op?"0 2px 8px rgba(0,52,98,0.15)":"none",animation:`filterFadeIn 0.2s ease-out ${oi*0.03}s both`}}
+                                    style={{padding:"5px 12px",borderRadius:8,border:`1.5px solid ${f.op===op?C.pri:C.borderLight}`,background:f.op===op?C.pri:"#fff",color:f.op===op?"#fff":C.text,fontSize:11,fontWeight:f.op===op?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:f.op===op?"0 2px 8px rgba(20,83,45,0.15)":"none",animation:`filterFadeIn 0.2s ease-out ${oi*0.03}s both`}}
                                     onMouseEnter={e=>{if(f.op!==op){e.currentTarget.style.borderColor=C.pri;e.currentTarget.style.background=`${C.pri}06`;}}}
                                     onMouseLeave={e=>{if(f.op!==op){e.currentTarget.style.borderColor=C.borderLight;e.currentTarget.style.background="#fff";}}}>
                                     {LC_OP_LABELS[op]||op}
@@ -3046,7 +3046,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                                       onBlur={e=>e.currentTarget.style.borderColor=C.border}
                                     />
                                     <button onClick={confirmConfig}
-                                      style={{padding:"8px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",transition:"all 0.15s",boxShadow:"0 2px 8px rgba(0,52,98,0.15)"}}>
+                                      style={{padding:"8px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",transition:"all 0.15s",boxShadow:"0 2px 8px rgba(20,83,45,0.15)"}}>
                                       Done
                                     </button>
                                   </div>
@@ -3055,7 +3055,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                             )}
                             {!needsValue(f.op) && (
                               <button onClick={confirmConfig}
-                                style={{marginTop:8,padding:"6px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",animation:"filterFadeIn 0.2s ease-out",boxShadow:"0 2px 8px rgba(0,52,98,0.15)"}}>
+                                style={{marginTop:8,padding:"6px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",animation:"filterFadeIn 0.2s ease-out",boxShadow:"0 2px 8px rgba(20,83,45,0.15)"}}>
                                 Done
                               </button>
                             )}
@@ -3106,7 +3106,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                               return (
                                 <button key={f.key} onClick={() => { selectField(f.key); setShowFilterPicker(false); }}
                                   style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${C.borderLight}`,background:"#fff",color:C.text,fontSize:11,fontWeight:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:"0 1px 3px rgba(0,0,0,0.03)",animation:filterPickerReady?`filterChipIn 0.25s ease-out ${delay}s both`:"none"}}
-                                  onMouseEnter={e=>{e.currentTarget.style.borderColor=C.pri;e.currentTarget.style.background=`${C.pri}06`;e.currentTarget.style.color=C.pri;e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="0 3px 12px rgba(0,52,98,0.1)";}}
+                                  onMouseEnter={e=>{e.currentTarget.style.borderColor=C.pri;e.currentTarget.style.background=`${C.pri}06`;e.currentTarget.style.color=C.pri;e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="0 3px 12px rgba(20,83,45,0.1)";}}
                                   onMouseLeave={e=>{e.currentTarget.style.borderColor=C.borderLight;e.currentTarget.style.background="#fff";e.currentTarget.style.color=C.text;e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 1px 3px rgba(0,0,0,0.03)";}}>
                                   {f.label}
                                 </button>
@@ -3125,9 +3125,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"10px 18px",borderTop:`1px solid ${C.borderLight}`,background:C.surface}}>
               <div style={{display:"flex",gap:6}}>
                 <button onClick={applyFilters}
-                  style={{padding:"8px 20px",borderRadius:10,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:"0 2px 12px rgba(0,52,98,0.2)"}}
-                  onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="0 4px 16px rgba(0,52,98,0.25)";}}
-                  onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 2px 12px rgba(0,52,98,0.2)";}}>
+                  style={{padding:"8px 20px",borderRadius:10,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:"0 2px 12px rgba(20,83,45,0.2)"}}
+                  onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="0 4px 16px rgba(20,83,45,0.25)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 2px 12px rgba(20,83,45,0.2)";}}>
                   Apply{usedKeys.length>0?` (${usedKeys.length})`:""}
                 </button>
                 {usedKeys.length > 0 && (
@@ -4079,7 +4079,7 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
           const active = range === r.id;
           return (
             <button key={r.id} onClick={() => setRange(r.id)}
-              style={{padding:"8px 18px",borderRadius:10,border:"none",background:active?C.pri:"transparent",color:active?"#fff":C.textSec,fontSize:12,fontWeight:active?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.25s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:active?"0 2px 12px rgba(0,52,98,0.25)":"none",animation:`rangePill 0.2s ease-out ${i*0.03}s both`,position:"relative",overflow:"hidden"}}
+              style={{padding:"8px 18px",borderRadius:10,border:"none",background:active?C.pri:"transparent",color:active?"#fff":C.textSec,fontSize:12,fontWeight:active?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.25s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:active?"0 2px 12px rgba(20,83,45,0.25)":"none",animation:`rangePill 0.2s ease-out ${i*0.03}s both`,position:"relative",overflow:"hidden"}}
               onMouseEnter={e=>{if(!active){e.currentTarget.style.background=`${C.pri}08`;e.currentTarget.style.color=C.pri;}}}
               onMouseLeave={e=>{if(!active){e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.textSec;}}}>
               {r.label}
@@ -4092,8 +4092,8 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
       <div style={{background:"#fff",borderRadius:16,border:`1.5px solid ${C.borderLight}`,boxShadow:"0 4px 24px rgba(0,0,0,0.04)",padding:"32px 40px",marginBottom:24,animation:"funnelFade 0.35s ease-out 0.1s both"}}>
 
         {[
-          { label: "Total Leads", value: metrics.leads, color: "#003462", lightColor: "#003462", desc: "New clients entering the funnel" },
-          { label: "Leads Contacted", value: metrics.contacted, color: "#AF8D54", lightColor: "#AF8D54", desc: "Leads with logged outreach or converted" },
+          { label: "Total Leads", value: metrics.leads, color: "#14532D", lightColor: "#14532D", desc: "New clients entering the funnel" },
+          { label: "Leads Contacted", value: metrics.contacted, color: "#84CC16", lightColor: "#84CC16", desc: "Leads with logged outreach or converted" },
           { label: "New Customers", value: metrics.newCustomers, color: "#16A34A", lightColor: "#16A34A", desc: "Converted to active with spend/booking" },
         ].map((stage, i) => {
           const pct = maxFunnel > 0 ? stage.value / maxFunnel : 0;
@@ -4150,7 +4150,7 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
         {[
           { label: "Conversion Rate", value: `${metrics.conversionRate.toFixed(1)}%`, sub: `${metrics.newCustomers} of ${metrics.leads} leads`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>, color: C.pri },
           { label: "Lifetime Revenue (New)", value: fmtMoney(metrics.newCustomerRevenue), sub: `Total lifetime revenue from ${metrics.newCustomers} customers acquired in this period`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2" strokeLinecap="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>, color: "#16A34A" },
-          { label: "Avg Customer LTV", value: fmtMoney(metrics.avgLTV), sub: `Across ${metrics.spendingClientsCount.toLocaleString()} customers`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#AF8D54" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, color: "#AF8D54" },
+          { label: "Avg Customer LTV", value: fmtMoney(metrics.avgLTV), sub: `Across ${metrics.spendingClientsCount.toLocaleString()} customers`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#84CC16" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>, color: "#84CC16" },
           { label: "Forecasted Revenue Uplift", value: fmtMoney(metrics.forecastedUplift), sub: `${metrics.newCustomers} new × ${fmtMoney(metrics.avgLTV)} LTV`, icon: <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.dan} strokeWidth="2" strokeLinecap="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>, color: C.dan },
         ].map((m, i) => (
           <div key={m.label} style={{
@@ -4191,7 +4191,7 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
           </div>
           <div style={{padding:"14px 16px",borderRadius:10,background:C.surface,border:`1px solid ${C.borderLight}`}}>
             <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:6}}>Avg LTV per Customer</div>
-            <div style={{fontSize:20,fontWeight:800,color:"#AF8D54"}}>{fmtMoney(metrics.avgLTV)}</div>
+            <div style={{fontSize:20,fontWeight:800,color:"#84CC16"}}>{fmtMoney(metrics.avgLTV)}</div>
             <div style={{fontSize:10,color:C.textMut,marginTop:2}}>Total revenue / paying customers</div>
           </div>
         </div>
@@ -5776,7 +5776,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
             const it = items[t.id] || {};
             const isWeekly = t.dayOfWeek != null;
             return (
-              <div key={t.id} style={{ display: "flex", alignItems: "center", padding: "8px 14px", borderBottom: i < todayItems.length - 1 ? `1px solid ${C.border}` : "none", background: isWeekly ? "rgba(175,141,84,0.04)" : it.checked ? "rgba(34,139,34,0.03)" : "transparent", opacity: isLocked ? 0.7 : 1 }}>
+              <div key={t.id} style={{ display: "flex", alignItems: "center", padding: "8px 14px", borderBottom: i < todayItems.length - 1 ? `1px solid ${C.border}` : "none", background: isWeekly ? "rgba(132,204,22,0.04)" : it.checked ? "rgba(34,139,34,0.03)" : "transparent", opacity: isLocked ? 0.7 : 1 }}>
                 <div style={{ width: 36 }}>
                   <input type="checkbox" checked={!!it.checked} disabled={isLocked} onChange={e => toggleItem(t.id, "checked", e.target.checked)} style={{ width: 18, height: 18, cursor: isLocked ? "default" : "pointer", accentColor: C.pri }} />
                 </div>
@@ -6997,7 +6997,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     const dogName = dog?.fields?.name || "your dog";
     const phone = client?.fields?.phone || "";
     const changeLines = diffs.map(d => `${d.field}: ${d.oldVal} → ${d.newVal}`).join("\n");
-    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Resorts! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
+    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Operations! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
     setTextNotify({ clientName, clientPhone: phone, dogName, diffs, message: msg, showPreview: false, sending: false });
   };
   const sendTextNotify = async () => {
@@ -8933,7 +8933,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       {tab === null ? (
         // Grid view
         <div>
-          <h2 style={{ margin: "0 0 24px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>Settings</h2>
+          <h2 style={{ margin: "0 0 24px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>Settings</h2>
 
           {/* Search Bar */}
           <div style={{ marginBottom: 32 }}>
@@ -9040,7 +9040,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
 function PhotosPage() {
   return (
     <div>
-      <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>
+      <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>
         Photos
       </h2>
       <p style={{ margin: "0 0 24px", fontSize: 14, color: C.textSec, lineHeight: 1.6 }}>
@@ -9901,13 +9901,13 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
                         {entry.previousValue && (
                           <div style={{ flex: 1, padding: 10, borderRadius: 8, background: "#FEE2E2", border: "1px solid #FECACA" }}>
                             <div style={{ fontWeight: 700, color: "#DC2626", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>Previous Value</div>
-                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'GT Eesti', monospace", fontSize: 11, color: "#7F1D1D" }}>{JSON.stringify(entry.previousValue, null, 2)}</pre>
+                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'Outfit', monospace", fontSize: 11, color: "#7F1D1D" }}>{JSON.stringify(entry.previousValue, null, 2)}</pre>
                           </div>
                         )}
                         {entry.newValue && (
                           <div style={{ flex: 1, padding: 10, borderRadius: 8, background: "#D1FAE5", border: "1px solid #A7F3D0" }}>
                             <div style={{ fontWeight: 700, color: "#059669", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>New Value</div>
-                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'GT Eesti', monospace", fontSize: 11, color: "#064E3B" }}>{JSON.stringify(entry.newValue, null, 2)}</pre>
+                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'Outfit', monospace", fontSize: 11, color: "#064E3B" }}>{JSON.stringify(entry.newValue, null, 2)}</pre>
                           </div>
                         )}
                       </div>
@@ -10207,7 +10207,7 @@ function EnterpriseOpsMatrix() {
 
   return (
     <div>
-      <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>Enterprise Operations Overview</h2>
+      <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>Enterprise Operations Overview</h2>
       <p style={{ margin: "0 0 24px", fontSize: 14, color: C.textSec }}>Completion percentages across all locations.</p>
 
       <div style={{ overflowX: "auto" }}>
@@ -10251,7 +10251,7 @@ function EnterpriseAttendance() {
 
   return (
     <div>
-      <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>Enterprise Attendance</h2>
+      <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>Enterprise Attendance</h2>
       <p style={{ margin: "0 0 24px", fontSize: 14, color: C.textSec }}>Aggregated attendance data across all locations (30-day period).</p>
 
       <div style={{ overflowX: "auto" }}>
@@ -10291,13 +10291,13 @@ function EnterpriseUserManagement({ profile }) {
   const [adminName, setAdminName] = useState("");
 
   const enterprises = [
-    { id: "ch", name: "Adair Forsythe", adminName: "Alice Johnson", adminEmail: "alice@k9resorts.com" },
-    { id: "demo", name: "Demo Location", adminName: "Bob Vance", adminEmail: "bob@k9resorts.com" },
+    { id: "ch", name: "Adair Forsythe", adminName: "Alice Johnson", adminEmail: "alice@k9operations.com" },
+    { id: "demo", name: "Demo Location", adminName: "Bob Vance", adminEmail: "bob@k9operations.com" },
   ];
 
   return (
     <div>
-      <h2 style={{ margin: "0 0 24px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>User Management</h2>
+      <h2 style={{ margin: "0 0 24px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>User Management</h2>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <div>
@@ -10393,13 +10393,13 @@ function CheckoutTVPage({ data, nav }) {
         {dog?._image ? (
           <img src={dog._image} alt={name} style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover", border: "2px solid rgba(255,255,255,0.15)", marginBottom: 8 }} />
         ) : (
-          <div style={{ width: 64, height: 64, borderRadius: 14, background: "rgba(175,141,84,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 800, color: "#AF8D54", marginBottom: 8 }}>
+          <div style={{ width: 64, height: 64, borderRadius: 14, background: "rgba(132,204,22,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 800, color: "#84CC16", marginBottom: 8 }}>
             {name[0]}
           </div>
         )}
         <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", textAlign: "center", lineHeight: 1.2 }}>{name}</div>
         {breed && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2, textAlign: "center" }}>{breed}</div>}
-        <div style={{ fontSize: 11, color: "rgba(175,141,84,0.8)", marginTop: 4, fontWeight: 600 }}>{ownerLast}</div>
+        <div style={{ fontSize: 11, color: "rgba(132,204,22,0.8)", marginTop: 4, fontWeight: 600 }}>{ownerLast}</div>
         {roomNum && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>Room {roomNum}</div>}
       </div>
     );
@@ -10416,13 +10416,13 @@ function CheckoutTVPage({ data, nav }) {
   return (
     <div style={{
       minHeight: "100vh", background: "linear-gradient(180deg, #001A33 0%, #00112A 50%, #000A1A 100%)",
-      padding: "32px 40px", fontFamily: "'GT Eesti', -apple-system, sans-serif", overflow: "auto",
+      padding: "32px 40px", fontFamily: "'Outfit', -apple-system, sans-serif", overflow: "auto",
     }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <div>
           <div style={{ fontSize: 28, fontWeight: 900, color: "#fff", letterSpacing: "-0.02em" }}>K9 Adair Forsythe</div>
-          <div style={{ fontSize: 13, color: "rgba(175,141,84,0.7)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 2 }}>Checkout Board</div>
+          <div style={{ fontSize: 13, color: "rgba(132,204,22,0.7)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 2 }}>Checkout Board</div>
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 36, fontWeight: 900, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{timeStr}</div>
@@ -10434,7 +10434,7 @@ function CheckoutTVPage({ data, nav }) {
       <div style={{ display: "flex", gap: 24, padding: "14px 0", borderTop: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 8 }}>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Total: <span style={{ fontWeight: 800, color: "#fff" }}>{uniqueDogs.length}</span></div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Daycare: <span style={{ fontWeight: 800, color: "#0EA5E9" }}>{daycareDogs.length}</span></div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#AF8D54" }}>{boardingDogs.length}</span></div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#84CC16" }}>{boardingDogs.length}</span></div>
       </div>
 
       {/* Daycare section */}
@@ -10450,7 +10450,7 @@ function CheckoutTVPage({ data, nav }) {
       {/* Boarding section */}
       {boardingDogs.length > 0 && (
         <div>
-          <SectionLabel label="Boarding" count={boardingDogs.length} color="#AF8D54" />
+          <SectionLabel label="Boarding" count={boardingDogs.length} color="#84CC16" />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
             {boardingDogs.map(r => <DogCard key={r.id} res={r} />)}
           </div>
@@ -11261,7 +11261,7 @@ function LiteReportsPage({ data, nav }) {
   const categoryData = useMemo(() => {
     const cats = cashBasisData.current.byCategory;
     const total = cashBasisData.current.total;
-    const colors = ["#003462", "#AF8D54", "#0D7A56", "#1A5EC4", "#C4720C", "#6366F1", "#C42B2B", "#059669"];
+    const colors = ["#14532D", "#84CC16", "#0D7A56", "#1A5EC4", "#C4720C", "#6366F1", "#C42B2B", "#059669"];
     return Object.entries(cats).map(([label, value], idx) => ({ label, value, percent: total > 0 ? (value / total) * 100 : 0, color: colors[idx % colors.length] })).sort((a, b) => b.value - a.value);
   }, [cashBasisData.current]);
 
@@ -11470,7 +11470,7 @@ function LiteReportsPage({ data, nav }) {
       `}</style>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, fontFamily: "Canela, serif", color: C.text }}>Revenue Intelligence</h1>
+          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, fontFamily: "Outfit, sans-serif", color: C.text }}>Revenue Intelligence</h1>
           <p style={{ margin: "4px 0 0 0", fontSize: 11, color: C.textMut }}>{fmtDateLabel(dateFrom)} – {fmtDateLabel(dateTo)} {compareMode && `vs ${fmtDateLabel(prevFrom)} – ${fmtDateLabel(prevTo)}`}</p>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
@@ -11946,20 +11946,12 @@ function LeanAppInner() {
       const style = document.createElement("style");
       style.id = "k9-lite-fonts";
       style.textContent = `
-        @font-face{font-family:'Canela';font-weight:700;font-style:normal;src:url('/fonts/Canela-Bold-Web.woff2') format('woff2'),url('/fonts/Canela-Bold-Web.woff') format('woff'),url('/fonts/Canela-Bold.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'Canela';font-weight:700;font-style:italic;src:url('/fonts/Canela-BoldItalic-Web.woff2') format('woff2'),url('/fonts/Canela-BoldItalic-Web.woff') format('woff'),url('/fonts/Canela-BoldItalic.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:300;font-style:normal;src:url('/fonts/GT-Eesti-Text-Light.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:300;font-style:italic;src:url('/fonts/GT-Eesti-Text-Light-Italic.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:500;font-style:normal;src:url('/fonts/GT-Eesti-Text-Medium.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:500;font-style:italic;src:url('/fonts/GT-Eesti-Text-Medium-Italic.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:700;font-style:normal;src:url('/fonts/GT-Eesti-Text-Bold.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:700;font-style:italic;src:url('/fonts/GT-Eesti-Text-Bold-Italic.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti Display';font-weight:500;font-style:normal;src:url('/fonts/GT-Eesti-Display-Medium.otf') format('opentype');font-display:swap;}
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
         *{box-sizing:border-box;margin:0;padding:0;}
         ::-webkit-scrollbar{width:6px;} ::-webkit-scrollbar-thumb{background:#C4C8D0;border-radius:3px;} ::-webkit-scrollbar-track{background:transparent;}
-        input:focus,select:focus,textarea:focus{border-color:${C.pri}!important;box-shadow:0 0 0 3px rgba(0,52,98,0.08);}
-        h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Canela', Georgia, serif !important;font-weight:700;}
-        body { margin: 0; padding: 0; font-family: 'GT Eesti', -apple-system, BlinkMacSystemFont, sans-serif; }
+        input:focus,select:focus,textarea:focus{border-color:${C.pri}!important;box-shadow:0 0 0 3px rgba(20,83,45,0.08);}
+        h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Outfit', sans-serif !important;font-weight:700;}
+        body { margin: 0; padding: 0; font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif; }
         @keyframes k9-toast-in { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
       `;
       document.head.appendChild(style);
@@ -12120,14 +12112,14 @@ function LeanAppInner() {
   const isFullscreenPage = page === "checkout-tv";
 
   return (
-    <div style={{ display: "flex", height: "100vh", background: C.bg, fontFamily: "'GT Eesti', -apple-system, BlinkMacSystemFont, sans-serif" }}>
+    <div style={{ display: "flex", height: "100vh", background: C.bg, fontFamily: "'Outfit', -apple-system, BlinkMacSystemFont, sans-serif" }}>
       {/* Sidebar — hidden on fullscreen pages like Checkout TV */}
       {!isFullscreenPage && <div
         onMouseEnter={() => setSidebarOpen(true)}
         onMouseLeave={() => setSidebarOpen(false)}
         style={{
           width: sbExpanded ? 240 : 68,
-          background: `linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,
+          background: `linear-gradient(180deg, ${C.pri} 0%, #0D3B1E 100%)`,
           display: "flex",
           flexDirection: "column",
           transition: "width 0.15s cubic-bezier(0.4,0,0.2,1)",
@@ -12142,13 +12134,13 @@ function LeanAppInner() {
             {sbExpanded ? <K9Logo size={38} /> : <K9LogoMini size={34} />}
           </div>
           <div style={{ overflow: "hidden", opacity: sbExpanded ? 1 : 0, transition: "opacity 0.1s", whiteSpace: "nowrap" }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: C.acc, fontFamily: "'Canela', Georgia, serif", letterSpacing: "0.02em" }}>K9 Resorts</div>
-            <div style={{ fontSize: 10, color: "rgba(175,141,84,0.6)", fontWeight: 500, letterSpacing: "0.08em", textTransform: "uppercase" }}>Luxury Pet Hotel</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.acc, fontFamily: "'Outfit', sans-serif", letterSpacing: "0.02em" }}>K9 Operations</div>
+            <div style={{ fontSize: 10, color: "rgba(132,204,22,0.6)", fontWeight: 500, letterSpacing: "0.08em", textTransform: "uppercase" }}>Lite · KOL</div>
           </div>
         </div>
 
         {/* Divider */}
-        <div style={{ margin: "0 14px 8px", height: 1, background: "rgba(175,141,84,0.12)" }} />
+        <div style={{ margin: "0 14px 8px", height: 1, background: "rgba(132,204,22,0.12)" }} />
 
         {/* Location Selector */}
         <div style={{ padding: "0 10px 8px", height: 44, boxSizing: "border-box" }}>
@@ -12169,8 +12161,8 @@ function LeanAppInner() {
             return (
               <button
                 key={item.id}
-                onMouseEnter={e => { if (!act) e.currentTarget.style.background = "rgba(175,141,84,0.08)"; }}
-                onMouseLeave={e => { if (!act) e.currentTarget.style.background = act ? "rgba(175,141,84,0.15)" : "transparent"; }}
+                onMouseEnter={e => { if (!act) e.currentTarget.style.background = "rgba(132,204,22,0.08)"; }}
+                onMouseLeave={e => { if (!act) e.currentTarget.style.background = act ? "rgba(132,204,22,0.15)" : "transparent"; }}
                 onClick={() => nav(item.id)}
                 style={{
                   display: "flex",
@@ -12181,7 +12173,7 @@ function LeanAppInner() {
                   justifyContent: "flex-start",
                   border: "none",
                   borderRadius: 10,
-                  background: act ? "rgba(175,141,84,0.15)" : "transparent",
+                  background: act ? "rgba(132,204,22,0.15)" : "transparent",
                   color: act ? C.acc : "rgba(255,255,255,0.85)",
                   fontSize: 13,
                   fontWeight: act ? 600 : 500,
@@ -12207,35 +12199,35 @@ function LeanAppInner() {
         <div style={{ padding: "14px 10px", display: "flex", flexDirection: "column", gap: 6, position: "relative" }}>
           {sbExpanded && (
             <div style={{ position: "relative" }}>
-              <button onClick={() => setAccountSwitchOpen(!accountSwitchOpen)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", border: "none", borderRadius: 8, background: accountSwitchOpen ? "rgba(175,141,84,0.15)" : "transparent", color: "rgba(175,141,84,0.6)", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, textAlign: "left", transition: "background 0.15s" }}>
-                <div style={{ width: 26, height: 26, borderRadius: 13, background: "rgba(175,141,84,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <button onClick={() => setAccountSwitchOpen(!accountSwitchOpen)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", border: "none", borderRadius: 8, background: accountSwitchOpen ? "rgba(132,204,22,0.15)" : "transparent", color: "rgba(132,204,22,0.6)", cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 600, textAlign: "left", transition: "background 0.15s" }}>
+                <div style={{ width: 26, height: 26, borderRadius: 13, background: "rgba(132,204,22,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <span style={{ fontSize: 11, fontWeight: 800, color: C.acc }}>{(user?.email || "U")[0].toUpperCase()}</span>
                 </div>
-                <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(175,141,84,0.55)", fontSize: 11 }}>{user?.email || "User"}</div>
-                <span style={{ fontSize: 8, color: "rgba(175,141,84,0.3)", transform: accountSwitchOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>&#9650;</span>
+                <div style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "rgba(132,204,22,0.55)", fontSize: 11 }}>{user?.email || "User"}</div>
+                <span style={{ fontSize: 8, color: "rgba(132,204,22,0.3)", transform: accountSwitchOpen ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>&#9650;</span>
               </button>
 
               {accountSwitchOpen && (
-                <div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, marginBottom: 6, background: "#0B2545", border: "1px solid rgba(175,141,84,0.2)", borderRadius: 10, boxShadow: "0 -8px 32px rgba(0,0,0,0.4)", overflow: "hidden", zIndex: 200, maxHeight: 280, overflowY: "auto" }}>
-                  <div style={{ padding: "10px 12px 6px", fontSize: 9, fontWeight: 700, color: "rgba(175,141,84,0.35)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Switch Account</div>
+                <div style={{ position: "absolute", bottom: "100%", left: 0, right: 0, marginBottom: 6, background: "#0D3B1E", border: "1px solid rgba(132,204,22,0.2)", borderRadius: 10, boxShadow: "0 -8px 32px rgba(0,0,0,0.4)", overflow: "hidden", zIndex: 200, maxHeight: 280, overflowY: "auto" }}>
+                  <div style={{ padding: "10px 12px 6px", fontSize: 9, fontWeight: 700, color: "rgba(132,204,22,0.35)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Switch Account</div>
                   {teamAccounts.length === 0 ? (
                     <div style={{ padding: "12px", fontSize: 11, color: "rgba(255,255,255,0.3)", textAlign: "center", fontStyle: "italic" }}>No other accounts at this location</div>
                   ) : teamAccounts.map(acct => (
                     <button key={acct.id} onClick={() => { setSwitchTarget(acct); setSwitchPassword(""); setSwitchError(""); setAccountSwitchOpen(false); }}
                       style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", border: "none", background: "transparent", color: "rgba(255,255,255,0.8)", cursor: "pointer", fontFamily: "inherit", fontSize: 12, textAlign: "left", transition: "background 0.1s" }}
-                      onMouseEnter={e => e.currentTarget.style.background = "rgba(175,141,84,0.1)"}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(132,204,22,0.1)"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                      <div style={{ width: 28, height: 28, borderRadius: 14, background: "rgba(175,141,84,0.15)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 14, background: "rgba(132,204,22,0.15)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                         <span style={{ fontSize: 12, fontWeight: 800, color: C.acc }}>{(acct.full_name || acct.email || "?")[0].toUpperCase()}</span>
                       </div>
                       <div style={{ flex: 1, overflow: "hidden" }}>
                         <div style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{acct.full_name || acct.email}</div>
                         <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{acct.email}</div>
                       </div>
-                      <div style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "rgba(175,141,84,0.1)", color: "rgba(175,141,84,0.5)", fontWeight: 600, textTransform: "uppercase" }}>{acct.role}</div>
+                      <div style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "rgba(132,204,22,0.1)", color: "rgba(132,204,22,0.5)", fontWeight: 600, textTransform: "uppercase" }}>{acct.role}</div>
                     </button>
                   ))}
-                  <div style={{ borderTop: "1px solid rgba(175,141,84,0.1)", padding: "6px 12px" }}>
+                  <div style={{ borderTop: "1px solid rgba(132,204,22,0.1)", padding: "6px 12px" }}>
                     <button onClick={() => supabase.auth.signOut()} style={{ width: "100%", padding: "8px", border: "none", borderRadius: 6, background: "rgba(239,68,68,0.12)", color: "rgba(255,150,150,0.8)", cursor: "pointer", fontSize: 11, fontFamily: "inherit", fontWeight: 600 }}>Sign Out</button>
                   </div>
                 </div>

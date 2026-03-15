@@ -55,7 +55,7 @@ const TemplateItemRow = memo(function TemplateItemRow({ item, index, total, onUp
           border: `1.5px solid ${C.borderLight}`,
           borderRadius: 6,
           fontSize: 13,
-          fontFamily: "'GT Eesti', sans-serif",
+          fontFamily: "'Outfit', sans-serif",
           color: C.text,
           background: C.surface,
           outline: "none",
@@ -79,7 +79,7 @@ const TemplateItemRow = memo(function TemplateItemRow({ item, index, total, onUp
             border: `1.5px solid ${C.borderLight}`,
             borderRadius: 6,
             fontSize: 13,
-            fontFamily: "'GT Eesti', sans-serif",
+            fontFamily: "'Outfit', sans-serif",
             color: C.text,
             background: C.surface,
             outline: "none",
@@ -100,7 +100,7 @@ const TemplateItemRow = memo(function TemplateItemRow({ item, index, total, onUp
           border: `1.5px solid ${C.borderLight}`,
           borderRadius: 6,
           fontSize: 13,
-          fontFamily: "'GT Eesti', sans-serif",
+          fontFamily: "'Outfit', sans-serif",
           color: item.dayOfWeek ? C.text : C.textMut,
           background: C.surface,
           cursor: "pointer",
@@ -218,7 +218,7 @@ function PushModal({ open, onClose, templateType, locations, onPush }) {
       <div style={{ padding: "0 4px" }}>
         {!pushResults ? (
           <>
-            <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 16px", fontFamily: "'GT Eesti', sans-serif" }}>
+            <p style={{ fontSize: 13, color: C.textSec, margin: "0 0 16px", fontFamily: "'Outfit', sans-serif" }}>
               Select which locations should receive this template. Locations with existing overrides will be updated.
             </p>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -234,7 +234,7 @@ function PushModal({ open, onClose, templateType, locations, onPush }) {
                   fontSize: 12,
                   fontWeight: 600,
                   cursor: "pointer",
-                  fontFamily: "'GT Eesti', sans-serif",
+                  fontFamily: "'Outfit', sans-serif",
                   textDecoration: "underline",
                 }}
               >
@@ -264,7 +264,7 @@ function PushModal({ open, onClose, templateType, locations, onPush }) {
                     onChange={() => toggleLocation(loc.id)}
                     style={{ accentColor: C.pri, width: 16, height: 16 }}
                   />
-                  <span style={{ fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "'GT Eesti', sans-serif" }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "'Outfit', sans-serif" }}>
                     {loc.name}
                   </span>
                 </label>
@@ -346,7 +346,7 @@ function LocationOverrideList({ overrides, locations }) {
                 border: `1px solid ${hasOverride ? "#f0deb0" : "#c6f7e2"}`,
               }}
             >
-              <span style={{ fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "'GT Eesti', sans-serif" }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "'Outfit', sans-serif" }}>
                 {loc.name}
               </span>
               <Badge style={{ background: hasOverride ? C.warnLt : C.sucLt, color: hasOverride ? C.warn : C.suc, fontSize: 11 }}>
@@ -530,11 +530,11 @@ function EnterpriseChecklistTemplates({ data, save, nav, profile, addGlobalToast
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div style={{ fontFamily: "'GT Eesti', sans-serif" }}>
+    <div style={{ fontFamily: "'Outfit', sans-serif" }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
-          <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>
+          <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>
             Checklist Template Management
           </h2>
           <p style={{ margin: 0, fontSize: 14, color: C.textSec }}>
@@ -591,7 +591,7 @@ function EnterpriseChecklistTemplates({ data, save, nav, profile, addGlobalToast
                     fontWeight: isActive ? 700 : 500,
                     cursor: "pointer",
                     textAlign: "left",
-                    fontFamily: "'GT Eesti', sans-serif",
+                    fontFamily: "'Outfit', sans-serif",
                     transition: "all 0.15s ease",
                     marginBottom: 2,
                   }}
@@ -603,7 +603,7 @@ function EnterpriseChecklistTemplates({ data, save, nav, profile, addGlobalToast
                     fontSize: 11,
                     fontWeight: 600,
                     color: isActive ? C.pri : C.textMut,
-                    background: isActive ? "rgba(0,52,98,0.1)" : C.bg,
+                    background: isActive ? "rgba(20,83,45,0.1)" : C.bg,
                     padding: "2px 7px",
                     borderRadius: 10,
                   }}>
@@ -633,7 +633,7 @@ function EnterpriseChecklistTemplates({ data, save, nav, profile, addGlobalToast
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <span style={{ fontSize: 20 }}>{activeType?.icon}</span>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>
                     {activeType?.label} Template
                   </h3>
                   <span style={{ fontSize: 12, color: C.textSec }}>{currentItems.length} item{currentItems.length !== 1 ? "s" : ""}</span>
@@ -735,7 +735,7 @@ function EnterpriseChecklistTemplates({ data, save, nav, profile, addGlobalToast
                   fontSize: 13,
                   fontWeight: 600,
                   cursor: "pointer",
-                  fontFamily: "'GT Eesti', sans-serif",
+                  fontFamily: "'Outfit', sans-serif",
                   width: "100%",
                   justifyContent: "center",
                   transition: "all 0.15s ease",

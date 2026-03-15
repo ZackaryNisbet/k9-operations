@@ -18,8 +18,8 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
   style.id = STYLE_ID;
   style.textContent = `
     @keyframes checkoutPulse {
-      0%, 100% { box-shadow: 0 0 20px 4px rgba(175,141,84,0.4), 0 0 60px 8px rgba(175,141,84,0.15); }
-      50% { box-shadow: 0 0 30px 8px rgba(175,141,84,0.7), 0 0 80px 16px rgba(175,141,84,0.3); }
+      0%, 100% { box-shadow: 0 0 20px 4px rgba(132,204,22,0.4), 0 0 60px 8px rgba(132,204,22,0.15); }
+      50% { box-shadow: 0 0 30px 8px rgba(132,204,22,0.7), 0 0 80px 16px rgba(132,204,22,0.3); }
     }
     @keyframes checkoutSlideIn {
       from { opacity: 0; transform: translateY(-30px) scale(0.92); }
@@ -39,8 +39,8 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
       to { opacity: 0; transform: scale(0.85) translateY(-20px); }
     }
     @keyframes heroPulse {
-      0%, 100% { box-shadow: 0 0 40px 10px rgba(175,141,84,0.35), 0 0 120px 30px rgba(175,141,84,0.1), inset 0 1px 0 rgba(255,255,255,0.08); }
-      50% { box-shadow: 0 0 60px 20px rgba(175,141,84,0.55), 0 0 160px 50px rgba(175,141,84,0.2), inset 0 1px 0 rgba(255,255,255,0.08); }
+      0%, 100% { box-shadow: 0 0 40px 10px rgba(132,204,22,0.35), 0 0 120px 30px rgba(132,204,22,0.1), inset 0 1px 0 rgba(255,255,255,0.08); }
+      50% { box-shadow: 0 0 60px 20px rgba(132,204,22,0.55), 0 0 160px 50px rgba(132,204,22,0.2), inset 0 1px 0 rgba(255,255,255,0.08); }
     }
     @keyframes heroCountdownPulse {
       0%, 100% { transform: scale(1); }
@@ -114,7 +114,7 @@ const NAV_VIEWS = [
   { id: "small-daycare", label: "Small Daycare",  color: "#8B5CF6",  colorRgb: "139,92,246" },
   { id: "large-daycare", label: "Large Daycare",  color: "#0EA5E9",  colorRgb: "14,165,233" },
   { id: "private-play",  label: "Private Play",   color: "#F59E0B",  colorRgb: "245,158,11" },
-  { id: "boarding",      label: "Boarding",        color: "#AF8D54",  colorRgb: "175,141,84" },
+  { id: "boarding",      label: "Boarding",        color: "#84CC16",  colorRgb: "175,141,84" },
 ];
 
 const AUTO_CYCLE_INTERVAL = 30000; // 30 seconds
@@ -141,7 +141,7 @@ function CountdownCircle({ remaining, total = 60, size = 56, strokeWidth = 4 }) 
   const progress = remaining / total;
   const offset = circumference * (1 - progress);
   const isUrgent = remaining <= 10;
-  const color = isUrgent ? "#EF4444" : "#AF8D54";
+  const color = isUrgent ? "#EF4444" : "#84CC16";
 
   return (
     <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
@@ -200,9 +200,9 @@ function HeroCheckoutCard({ entry, dogs, clients, fading, animalIcons }) {
     <div style={{
       display: "flex", alignItems: "center", gap: 36,
       padding: "32px 40px",
-      background: "linear-gradient(135deg, rgba(175,141,84,0.22) 0%, rgba(175,141,84,0.08) 50%, rgba(0,26,51,0.95) 100%)",
+      background: "linear-gradient(135deg, rgba(132,204,22,0.22) 0%, rgba(132,204,22,0.08) 50%, rgba(0,26,51,0.95) 100%)",
       borderRadius: 28,
-      border: `3px solid ${isUrgent ? "rgba(239,68,68,0.6)" : "rgba(175,141,84,0.6)"}`,
+      border: `3px solid ${isUrgent ? "rgba(239,68,68,0.6)" : "rgba(132,204,22,0.6)"}`,
       animation: fading
         ? "heroFadeOut 1s ease-out forwards"
         : `heroEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), heroPulse 2.5s ease-in-out infinite 0.6s`,
@@ -215,7 +215,7 @@ function HeroCheckoutCard({ entry, dogs, clients, fading, animalIcons }) {
       <div style={{
         position: "absolute", top: "-50%", left: "-20%",
         width: "60%", height: "200%",
-        background: `radial-gradient(ellipse, ${isUrgent ? "rgba(239,68,68,0.08)" : "rgba(175,141,84,0.08)"} 0%, transparent 70%)`,
+        background: `radial-gradient(ellipse, ${isUrgent ? "rgba(239,68,68,0.08)" : "rgba(132,204,22,0.08)"} 0%, transparent 70%)`,
         pointerEvents: "none",
         transition: "background 0.3s",
       }} />
@@ -224,19 +224,19 @@ function HeroCheckoutCard({ entry, dogs, clients, fading, animalIcons }) {
       {image ? (
         <img src={image} alt={name} style={{
           width: 120, height: 120, borderRadius: 24, objectFit: "cover",
-          border: `4px solid ${isUrgent ? "rgba(239,68,68,0.5)" : "rgba(175,141,84,0.6)"}`,
+          border: `4px solid ${isUrgent ? "rgba(239,68,68,0.5)" : "rgba(132,204,22,0.6)"}`,
           flexShrink: 0, position: "relative", zIndex: 1,
           transition: "border-color 0.3s",
         }} />
       ) : (
         <div style={{
           width: 120, height: 120, borderRadius: 24, flexShrink: 0,
-          background: isUrgent ? "rgba(239,68,68,0.2)" : "rgba(175,141,84,0.25)",
+          background: isUrgent ? "rgba(239,68,68,0.2)" : "rgba(132,204,22,0.25)",
           display: "flex", alignItems: "center", justifyContent: "center",
           fontSize: 48, fontWeight: 900,
-          color: isUrgent ? "#EF4444" : "#AF8D54",
+          color: isUrgent ? "#EF4444" : "#84CC16",
           position: "relative", zIndex: 1,
-          border: `4px solid ${isUrgent ? "rgba(239,68,68,0.4)" : "rgba(175,141,84,0.4)"}`,
+          border: `4px solid ${isUrgent ? "rgba(239,68,68,0.4)" : "rgba(132,204,22,0.4)"}`,
           transition: "background 0.3s, color 0.3s, border-color 0.3s",
         }}>
           {name[0]}
@@ -248,8 +248,8 @@ function HeroCheckoutCard({ entry, dogs, clients, fading, animalIcons }) {
         <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8 }}>
           <span style={{
             fontSize: 14, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase",
-            color: isUrgent ? "#EF4444" : "#AF8D54",
-            background: isUrgent ? "rgba(239,68,68,0.15)" : "rgba(175,141,84,0.15)",
+            color: isUrgent ? "#EF4444" : "#84CC16",
+            background: isUrgent ? "rgba(239,68,68,0.15)" : "rgba(132,204,22,0.15)",
             padding: "5px 14px", borderRadius: 8,
             animation: isUrgent ? "urgentShake 0.5s ease-in-out infinite" : "none",
             transition: "color 0.3s, background 0.3s",
@@ -285,7 +285,7 @@ function HeroCheckoutCard({ entry, dogs, clients, fading, animalIcons }) {
         <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
           {breed && <span style={{ fontSize: 17, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>{breed}</span>}
           {ownerLast && (
-            <span style={{ fontSize: 17, color: "rgba(175,141,84,0.8)", fontWeight: 700 }}>
+            <span style={{ fontSize: 17, color: "rgba(132,204,22,0.8)", fontWeight: 700 }}>
               Owner: {ownerLast}
             </span>
           )}
@@ -327,11 +327,11 @@ function QueueCard({ entry, dogs, index }) {
       padding: "12px 18px",
       background: "rgba(255,255,255,0.04)",
       borderRadius: 14,
-      border: "1px solid rgba(175,141,84,0.2)",
+      border: "1px solid rgba(132,204,22,0.2)",
       animation: `queueSlideIn 0.3s ease-out ${index * 0.1}s both`,
     }}>
       <div style={{
-        fontSize: 12, fontWeight: 800, color: "rgba(175,141,84,0.5)",
+        fontSize: 12, fontWeight: 800, color: "rgba(132,204,22,0.5)",
         width: 22, textAlign: "center",
       }}>
         {index + 2}
@@ -339,21 +339,21 @@ function QueueCard({ entry, dogs, index }) {
       {image ? (
         <img src={image} alt={name} style={{
           width: 40, height: 40, borderRadius: 10, objectFit: "cover",
-          border: "2px solid rgba(175,141,84,0.3)",
+          border: "2px solid rgba(132,204,22,0.3)",
         }} />
       ) : (
         <div style={{
           width: 40, height: 40, borderRadius: 10,
-          background: "rgba(175,141,84,0.15)", display: "flex",
+          background: "rgba(132,204,22,0.15)", display: "flex",
           alignItems: "center", justifyContent: "center",
-          fontSize: 16, fontWeight: 800, color: "#AF8D54",
+          fontSize: 16, fontWeight: 800, color: "#84CC16",
         }}>
           {name[0]}
         </div>
       )}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>{name}</div>
-        <div style={{ fontSize: 11, color: "rgba(175,141,84,0.6)", fontWeight: 600 }}>Up next</div>
+        <div style={{ fontSize: 11, color: "rgba(132,204,22,0.6)", fontWeight: 600 }}>Up next</div>
       </div>
       <CountdownCircle remaining={entry.remaining} total={60} size={36} strokeWidth={3} />
     </div>
@@ -712,10 +712,10 @@ function CheckoutTVPage({ data, nav, profile }) {
     return (
       <div style={{
         display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 12px",
-        background: isCheckingOut ? "rgba(175,141,84,0.08)" : "rgba(255,255,255,0.06)",
+        background: isCheckingOut ? "rgba(132,204,22,0.08)" : "rgba(255,255,255,0.06)",
         borderRadius: 16,
         border: isCheckingOut
-          ? "1px solid rgba(175,141,84,0.2)"
+          ? "1px solid rgba(132,204,22,0.2)"
           : `2px solid rgba(${theme.accentRgb},0.25)`,
         minWidth: 140, transition: "transform 0.2s, opacity 0.5s, background 0.3s",
         opacity: isCheckingOut ? 0.35 : 1,
@@ -821,13 +821,13 @@ function CheckoutTVPage({ data, nav, profile }) {
   return (
     <div style={{
       minHeight: "100vh", background: "linear-gradient(180deg, #001A33 0%, #00112A 50%, #000A1A 100%)",
-      padding: "32px 40px", fontFamily: "'GT Eesti', -apple-system, sans-serif", overflow: "auto",
+      padding: "32px 40px", fontFamily: "'Outfit', -apple-system, sans-serif", overflow: "auto",
     }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <div>
           <div style={{ fontSize: 28, fontWeight: 900, color: "#fff", letterSpacing: "-0.02em" }}>K9 Adair Forsythe</div>
-          <div style={{ fontSize: 13, color: "rgba(175,141,84,0.7)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 2 }}>Checkout Board</div>
+          <div style={{ fontSize: 13, color: "rgba(132,204,22,0.7)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 2 }}>Checkout Board</div>
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 36, fontWeight: 900, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{timeStr}</div>
@@ -859,13 +859,13 @@ function CheckoutTVPage({ data, nav, profile }) {
           <button
             onClick={() => setAutoCycle(prev => !prev)}
             onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
-            onMouseLeave={e => { e.currentTarget.style.background = autoCycle ? "rgba(175,141,84,0.12)" : "rgba(255,255,255,0.03)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = autoCycle ? "rgba(132,204,22,0.12)" : "rgba(255,255,255,0.03)"; }}
             style={{
               display: "flex", alignItems: "center", gap: 8,
               height: 48, padding: "0 20px",
               borderRadius: 12,
-              border: autoCycle ? "2px solid rgba(175,141,84,0.4)" : "2px solid rgba(255,255,255,0.08)",
-              background: autoCycle ? "rgba(175,141,84,0.12)" : "rgba(255,255,255,0.03)",
+              border: autoCycle ? "2px solid rgba(132,204,22,0.4)" : "2px solid rgba(255,255,255,0.08)",
+              background: autoCycle ? "rgba(132,204,22,0.12)" : "rgba(255,255,255,0.03)",
               cursor: "pointer",
               transition: "all 0.25s ease",
             }}
@@ -878,15 +878,15 @@ function CheckoutTVPage({ data, nav, profile }) {
               }}
             >
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10"
-                stroke={autoCycle ? "#AF8D54" : "rgba(255,255,255,0.35)"}
+                stroke={autoCycle ? "#84CC16" : "rgba(255,255,255,0.35)"}
                 strokeWidth="2.5" strokeLinecap="round" />
               <path d="M22 4l-2 6-6-2"
-                stroke={autoCycle ? "#AF8D54" : "rgba(255,255,255,0.35)"}
+                stroke={autoCycle ? "#84CC16" : "rgba(255,255,255,0.35)"}
                 strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             <span style={{
               fontSize: 14, fontWeight: 700,
-              color: autoCycle ? "#AF8D54" : "rgba(255,255,255,0.35)",
+              color: autoCycle ? "#84CC16" : "rgba(255,255,255,0.35)",
               transition: "color 0.25s",
               whiteSpace: "nowrap",
             }}>
@@ -906,7 +906,7 @@ function CheckoutTVPage({ data, nav, profile }) {
           Small Daycare: <span style={{ fontWeight: 800, color: SIZE_THEME.small.accent }}>{smallDaycare.length}</span>
         </div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Private Play: <span style={{ fontWeight: 800, color: "#F59E0B" }}>{privatePlayDogs.length}</span></div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#AF8D54" }}>{boardingDogs.length}</span></div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#84CC16" }}>{boardingDogs.length}</span></div>
         {hasCheckouts && (
           <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: "auto" }}>
             Checking out: <span style={{ fontWeight: 800, color: "#EF4444" }}>{checkingOut.filter(e => !e.fading).length}</span>
@@ -1059,7 +1059,7 @@ function CheckoutTVPage({ data, nav, profile }) {
             {/* Boarding section */}
             {boardingDogs.length > 0 && (
               <div>
-                <SectionLabel label="Boarding" count={boardingDogs.length} color="#AF8D54" subtitle="Overnight boarding dogs" />
+                <SectionLabel label="Boarding" count={boardingDogs.length} color="#84CC16" subtitle="Overnight boarding dogs" />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
                   {boardingDogs.map(r => <DogCard key={r.id} res={r} />)}
                 </div>

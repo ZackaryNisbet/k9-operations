@@ -55,13 +55,13 @@ const I = {
   GraduationCap: () => <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 0 3 3 6 3s6-3 6-3v-5"/></svg>,
 };
 
-// K9 Resorts Official Dog Logo (PNG from brand assets)
+// K9 Operations Official Dog Logo (PNG from brand assets)
 const K9_LOGO_PNG = "data:image/png;base64,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";
 
-const K9Logo = ({size=38}) => <img src={K9_LOGO_PNG} alt="K9 Resorts" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
-const K9LogoMini = ({size=28}) => <img src={K9_LOGO_PNG} alt="K9 Resorts" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
+const K9Logo = ({size=38}) => <img src={K9_LOGO_PNG} alt="K9 Operations" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
+const K9LogoMini = ({size=28}) => <img src={K9_LOGO_PNG} alt="K9 Operations" style={{width:size,height:"auto",objectFit:"contain",filter:"drop-shadow(0 1px 2px rgba(0,0,0,0.3))"}}/>;
 
-// K9 Resorts Locations
+// K9 Operations Locations
 const K9_LOCATIONS = [
   { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
   { id: "demo", name: "Demo", slug: "demo" },
@@ -181,7 +181,7 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
     return (
       <div style={{ padding: "0 4px", width: "100%" }}>
         <button onClick={() => setOpen(!open)} title={current.name}
-          style={{ width: "100%", height: 40, display: "flex", alignItems: "center", justifyContent: "center", padding: "0", borderRadius: 10, border: "1.5px solid rgba(175,141,84,0.2)", background: isEnterprise ? "rgba(175,141,84,0.15)" : "rgba(255,255,255,0.06)", cursor: "pointer", color: C.acc, fontSize: 11, fontWeight: 700, fontFamily: "inherit", boxSizing: "border-box" }}>
+          style={{ width: "100%", height: 40, display: "flex", alignItems: "center", justifyContent: "center", padding: "0", borderRadius: 10, border: "1.5px solid rgba(132,204,22,0.2)", background: isEnterprise ? "rgba(132,204,22,0.15)" : "rgba(255,255,255,0.06)", cursor: "pointer", color: C.acc, fontSize: 11, fontWeight: 700, fontFamily: "inherit", boxSizing: "border-box" }}>
           {isEnterprise ? "\u2605" : current.name.slice(0, 2).toUpperCase()}
         </button>
       </div>
@@ -191,46 +191,46 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
   return (
     <div style={{ padding: "0 4px", position: "relative", width: "100%" }}>
       <button ref={btnRef} onClick={() => setOpen(!open)}
-        style={{ width: "100%", height: 40, display: "flex", alignItems: "center", gap: 8, padding: "0 10px", borderRadius: 10, border: "1.5px solid rgba(175,141,84,0.2)", background: isEnterprise ? "rgba(175,141,84,0.12)" : "rgba(255,255,255,0.06)", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", boxSizing: "border-box" }}>
-        <div style={{ width: 24, height: 24, borderRadius: 6, background: isEnterprise ? "rgba(175,141,84,0.25)" : "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: C.acc, flexShrink: 0 }}>
+        style={{ width: "100%", height: 40, display: "flex", alignItems: "center", gap: 8, padding: "0 10px", borderRadius: 10, border: "1.5px solid rgba(132,204,22,0.2)", background: isEnterprise ? "rgba(132,204,22,0.12)" : "rgba(255,255,255,0.06)", cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s", boxSizing: "border-box" }}>
+        <div style={{ width: 24, height: 24, borderRadius: 6, background: isEnterprise ? "rgba(132,204,22,0.25)" : "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: C.acc, flexShrink: 0 }}>
           {isEnterprise ? "\u2605" : current.name.slice(0, 1)}
         </div>
         <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{current.name}</div>
-          <div style={{ fontSize: 9, color: "rgba(175,141,84,0.6)", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>{isEnterprise ? "All Locations" : "Location"}</div>
+          <div style={{ fontSize: 9, color: "rgba(132,204,22,0.6)", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase" }}>{isEnterprise ? "All Locations" : "Location"}</div>
         </div>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(175,141,84,0.5)" strokeWidth="2.5" strokeLinecap="round"
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="rgba(132,204,22,0.5)" strokeWidth="2.5" strokeLinecap="round"
           style={{ transition: "transform 0.2s", transform: open ? "rotate(180deg)" : "rotate(0deg)", flexShrink: 0 }}>
           <polyline points="6 9 12 15 18 9"/>
         </svg>
       </button>
 
       {open && (
-        <div ref={dropRef} style={{ position: "fixed", top: dropPos.top, left: dropPos.left, width: dropPos.width || 212, zIndex: 9999, background: "#1a2940", border: "1.5px solid rgba(175,141,84,0.25)", borderRadius: 12, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <div ref={dropRef} style={{ position: "fixed", top: dropPos.top, left: dropPos.left, width: dropPos.width || 212, zIndex: 9999, background: "#1a2940", border: "1.5px solid rgba(132,204,22,0.25)", borderRadius: 12, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ padding: "6px 6px" }}>
             {/* Enterprise — only for owner/enterprise_admin */}
             {profile?.role && (profile.role === 'owner' || profile.role === 'enterprise_admin') && (<>
             <button onClick={() => { onLocationChange("enterprise"); setOpen(false); }}
-              style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: currentLocation === "enterprise" ? "rgba(175,141,84,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginBottom: 2 }}
+              style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: currentLocation === "enterprise" ? "rgba(132,204,22,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginBottom: 2 }}
               onMouseEnter={e => { if (currentLocation !== "enterprise") e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
               onMouseLeave={e => { if (currentLocation !== "enterprise") e.currentTarget.style.background = "transparent"; }}>
-              <div style={{ width: 26, height: 26, borderRadius: 6, background: "rgba(175,141,84,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <div style={{ width: 26, height: 26, borderRadius: 6, background: "rgba(132,204,22,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <span style={{ fontSize: 13, fontWeight: 800, color: C.acc }}>{"\u2605"}</span>
               </div>
               <div style={{ textAlign: "left", flex: 1 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: C.acc }}>Enterprise</div>
-                <div style={{ fontSize: 9, color: "rgba(175,141,84,0.5)", textTransform: "uppercase" }}>All Locations</div>
+                <div style={{ fontSize: 9, color: "rgba(132,204,22,0.5)", textTransform: "uppercase" }}>All Locations</div>
               </div>
               {currentLocation === "enterprise" && <span style={{ color: C.acc }}><I.Check/></span>}
             </button>
 
-            <div style={{ margin: "4px 10px", height: 1, background: "rgba(175,141,84,0.12)" }}/>
+            <div style={{ margin: "4px 10px", height: 1, background: "rgba(132,204,22,0.12)" }}/>
             </>)}
 
             {/* Location list */}
             {locations.map(loc => (
               <button key={loc.id} onClick={() => { onLocationChange(loc.id); setOpen(false); }}
-                style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: currentLocation === loc.id ? "rgba(175,141,84,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginTop: 2 }}
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: currentLocation === loc.id ? "rgba(132,204,22,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginTop: 2 }}
                 onMouseEnter={e => { if (currentLocation !== loc.id) e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
                 onMouseLeave={e => { if (currentLocation !== loc.id) e.currentTarget.style.background = "transparent"; }}>
                 <div style={{ width: 26, height: 26, borderRadius: 6, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -245,7 +245,7 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
 
             {/* Lite App link */}
             {liteLocations.length > 0 && (<>
-              <div style={{ margin: "4px 10px", height: 1, background: "rgba(175,141,84,0.12)" }}/>
+              <div style={{ margin: "4px 10px", height: 1, background: "rgba(132,204,22,0.12)" }}/>
               {liteLocations.map(loc => (
                 <button key={loc.id} onClick={() => { onLocationChange(loc.id); setOpen(false); }}
                   style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginTop: 2 }}
@@ -414,7 +414,7 @@ const buildVaccineReminders = (data) => {
 
     // Build message — if multiple vaccines, list them all
     let message = highestItem.tier.template;
-    const locationName = data.facilityName || data.name || "K9 Resorts";
+    const locationName = data.facilityName || data.name || "K9 Operations";
     const dogNames = [...new Set(items.map(i => i.dogName))];
     const vaccineNamesList = [...new Set(items.map(i => i.vaccineName))];
     const daysStr = highestItem.daysUntil > 0 ? `in ${highestItem.daysUntil} days` : highestItem.daysUntil === 0 ? "today" : `${Math.abs(highestItem.daysUntil)} days ago`;
@@ -929,12 +929,12 @@ function calcReservationPricing({ type, roomType, checkIn, checkOut, checkInTime
   };
 }
 
-// ─── K9 Resorts Brand Colors ─────────────────────────────────────────────────
+// ─── K9 Operations Brand Colors ─────────────────────────────────────────────────
 const C = {
   bg:"#F5F6F8", surface:"#FFFFFF", surfaceHover:"#EEF0F4", border:"#DFE2E8", borderLight:"#ECEEF2",
   text:"#1A1D23", textSec:"#5A6170", textMut:"#959BA8",
-  pri:"#003462", priL:"#0A4D8A", priLt:"#E6EEF6",
-  acc:"#AF8D54", accLt:"#F5EDD8", accDk:"#8B6F3C",
+  pri:"#14532D", priL:"#166534", priLt:"#ECFDF5",
+  acc:"#84CC16", accLt:"#D9F99D", accDk:"#4D7C0F",
   bronze:"#59504B", bronzeLt:"#F0EDEB",
   suc:"#0D7A56", sucLt:"#ECFDF5", warn:"#C4720C", warnLt:"#FFFBEB",
   dan:"#C42B2B", danLt:"#FEF2F2", info:"#1A5EC4", infoLt:"#EFF6FF",
@@ -1518,7 +1518,7 @@ function migrateFieldsToMatrix(fields, defaults) {
 
 // Default agreements
 const DEF_AGREEMENTS = [
-  { id: "agr1", name: "Customer Agreement", required: true, order: 0, body: "CUSTOMER AGREEMENT — K9 RESORTS\n\nBy signing this agreement, the pet owner (\"Owner\") acknowledges and agrees to the following terms and conditions for all services provided by K9 Resorts (\"Facility\"):\n\n1. SERVICES\nThe Facility agrees to provide boarding, daycare, and/or ancillary services for the pet(s) identified in the Owner's registration. Services include supervised group or individual play, feeding per Owner instructions, overnight accommodations (boarding only), and basic daily care.\n\n2. HEALTH & VACCINATION REQUIREMENTS\nOwner certifies that pet(s) are current on all required vaccinations including Rabies, DHPP, Bordetella, and Canine Influenza. Owner agrees to provide proof of vaccination prior to the first visit. Pets not current on vaccinations will not be admitted.\n\n3. TEMPERAMENT & BEHAVIOR\nOwner certifies that pet(s) have not harmed or shown aggressive behavior toward any person or other animal. The Facility reserves the right to refuse service or terminate care at any time if a pet exhibits aggressive or dangerous behavior.\n\n4. ASSUMPTION OF RISK\nOwner understands that during group play and socialization, minor scrapes, nicks, or injuries may occur. Owner accepts these inherent risks associated with group play environments.\n\n5. EMERGENCY CARE\nIn the event of illness or injury, the Facility will attempt to contact the Owner immediately. If the Owner cannot be reached, the Facility is authorized to seek veterinary care at the Owner's expense.\n\n6. RELEASE OF LIABILITY\nOwner releases K9 Resorts, its owners, employees, and agents from any and all liability, claims, demands, or causes of action arising from or related to any injury, illness, or death of pet(s) while in the care of the Facility, except in cases of gross negligence. Owner agrees to indemnify and hold harmless the Facility from any claims, damages, or expenses arising from pet's behavior.\n\n7. PERSONAL PROPERTY\nThe Facility is not responsible for loss or damage to any personal items (collars, leashes, toys, bedding) left with pet(s).\n\n8. PHOTO/VIDEO CONSENT\nOwner grants the Facility permission to photograph or video pet(s) for use on social media, marketing materials, or internal records.\n\n9. PAYMENT\nOwner agrees to pay all fees for services rendered. Payment is due at the time of checkout. A deposit may be required for boarding reservations.\n\n10. ACKNOWLEDGMENT\nI have read this agreement in its entirety, understand its terms, and agree to be bound by it.\n\nOwner Signature: ___________________________  Date: __________\nPrinted Name: ___________________________", updatedAt: null },
+  { id: "agr1", name: "Customer Agreement", required: true, order: 0, body: "CUSTOMER AGREEMENT — K9 OPERATIONS\n\nBy signing this agreement, the pet owner (\"Owner\") acknowledges and agrees to the following terms and conditions for all services provided by K9 Operations (\"Facility\"):\n\n1. SERVICES\nThe Facility agrees to provide boarding, daycare, and/or ancillary services for the pet(s) identified in the Owner's registration. Services include supervised group or individual play, feeding per Owner instructions, overnight accommodations (boarding only), and basic daily care.\n\n2. HEALTH & VACCINATION REQUIREMENTS\nOwner certifies that pet(s) are current on all required vaccinations including Rabies, DHPP, Bordetella, and Canine Influenza. Owner agrees to provide proof of vaccination prior to the first visit. Pets not current on vaccinations will not be admitted.\n\n3. TEMPERAMENT & BEHAVIOR\nOwner certifies that pet(s) have not harmed or shown aggressive behavior toward any person or other animal. The Facility reserves the right to refuse service or terminate care at any time if a pet exhibits aggressive or dangerous behavior.\n\n4. ASSUMPTION OF RISK\nOwner understands that during group play and socialization, minor scrapes, nicks, or injuries may occur. Owner accepts these inherent risks associated with group play environments.\n\n5. EMERGENCY CARE\nIn the event of illness or injury, the Facility will attempt to contact the Owner immediately. If the Owner cannot be reached, the Facility is authorized to seek veterinary care at the Owner's expense.\n\n6. RELEASE OF LIABILITY\nOwner releases K9 Operations, its owners, employees, and agents from any and all liability, claims, demands, or causes of action arising from or related to any injury, illness, or death of pet(s) while in the care of the Facility, except in cases of gross negligence. Owner agrees to indemnify and hold harmless the Facility from any claims, damages, or expenses arising from pet's behavior.\n\n7. PERSONAL PROPERTY\nThe Facility is not responsible for loss or damage to any personal items (collars, leashes, toys, bedding) left with pet(s).\n\n8. PHOTO/VIDEO CONSENT\nOwner grants the Facility permission to photograph or video pet(s) for use on social media, marketing materials, or internal records.\n\n9. PAYMENT\nOwner agrees to pay all fees for services rendered. Payment is due at the time of checkout. A deposit may be required for boarding reservations.\n\n10. ACKNOWLEDGMENT\nI have read this agreement in its entirety, understand its terms, and agree to be bound by it.\n\nOwner Signature: ___________________________  Date: __________\nPrinted Name: ___________________________", updatedAt: null },
 ];
 
 // Default questionnaire template — "Getting to Know Your Dog"
@@ -2258,7 +2258,7 @@ function generateDemoData() {
       { id: gid(), name: "Booking Confirmation", body: "Hi {clientName}! Your reservation for {dogName} has been confirmed. Check-in: {checkInDate}, Check-out: {checkOutDate}. Room: {roomType}. Total: ${totalPrice}. See you soon!", active: true },
       { id: gid(), name: "Check-in Reminder", body: "Hi {clientName}! Just a reminder that {dogName} is scheduled for check-in tomorrow ({checkInDate}). Please arrive between 7-10 AM. Don't forget vaccination records!", active: true },
       { id: gid(), name: "Ready for Pickup", body: "Hi {clientName}! {dogName} is all ready for pickup! We had a great time with them. You can pick up anytime before 6 PM today.", active: true },
-      { id: gid(), name: "Thank You", body: "Thank you for choosing K9 Resorts, {clientName}! We loved having {dogName} stay with us. We'd appreciate a review if you have a moment. See you next time!", active: true },
+      { id: gid(), name: "Thank You", body: "Thank you for choosing K9 Operations, {clientName}! We loved having {dogName} stay with us. We'd appreciate a review if you have a moment. See you next time!", active: true },
     ],
     packages: [
       { id: "pkg_1", name: "10-Night Luxury Suite", description: "Save on boarding stays", serviceCategory: "Boarding", serviceName: "Luxury Suite", quantity: 10, pricingMode: "discount-pct", discountPct: 15, packagePrice: 807.50, retailValue: 950.00, unitPrice: 95, savings: 142.50, savingsPerUnit: 14.25, expirationType: "relative", expirationDays: 365, availableOnline: true },
@@ -2346,7 +2346,7 @@ const NEW_LOCATION_DEFAULTS = {
     { id: "mt1", name: "Booking Confirmation", body: "Hi {clientName}! Your reservation for {dogName} has been confirmed. Check-in: {checkInDate}, Check-out: {checkOutDate}. Room: {roomType}. Total: ${totalPrice}. See you soon!", active: true },
     { id: "mt2", name: "Check-in Reminder", body: "Hi {clientName}! Just a reminder that {dogName} is scheduled for check-in tomorrow ({checkInDate}). Please arrive between 7-10 AM. Don't forget vaccination records!", active: true },
     { id: "mt3", name: "Ready for Pickup", body: "Hi {clientName}! {dogName} is all ready for pickup! We had a great time with them. You can pick up anytime before 6 PM today.", active: true },
-    { id: "mt4", name: "Thank You", body: "Thank you for choosing K9 Resorts, {clientName}! We loved having {dogName} stay with us. We'd appreciate a review if you have a moment. See you next time!", active: true },
+    { id: "mt4", name: "Thank You", body: "Thank you for choosing K9 Operations, {clientName}! We loved having {dogName} stay with us. We'd appreciate a review if you have a moment. See you next time!", active: true },
   ],
   roles: DEFAULT_ROLES,
   openingTemplate: DEF_OPENING_TEMPLATE,
@@ -2367,7 +2367,7 @@ class ErrorBoundary extends React.Component {
   componentDidCatch(error, errorInfo) { this.setState({ errorInfo }); console.error("ErrorBoundary caught:", error, errorInfo); }
   render() {
     if (this.state.hasError) {
-      return React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 40px", textAlign: "center", fontFamily: "'GT Eesti', -apple-system, sans-serif" } },
+      return React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "60px 40px", textAlign: "center", fontFamily: "'Outfit', -apple-system, sans-serif" } },
         React.createElement("div", { style: { fontSize: 48, marginBottom: 16 } }, "\u26A0\uFE0F"),
         React.createElement("h2", { style: { fontSize: 20, fontWeight: 700, color: "#1B3A5C", marginBottom: 8 } }, "Something went wrong"),
         React.createElement("p", { style: { fontSize: 14, color: "#6B7280", maxWidth: 400, lineHeight: 1.5, marginBottom: 20 } }, "This page encountered an unexpected error. Try refreshing the page or navigating to a different section."),
@@ -3267,7 +3267,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
     const allAgrSigned = reqAgrs.every(a => agrSigned(client, a.id));
     if (!vaxStatus.ok) failures.push("Vaccines");
     if (!ageStatus.ok) failures.push("Dog Age");
-    // Spay/Neuter is visual-only — does NOT block check-in/out per K9 Resorts policy
+    // Spay/Neuter is visual-only — does NOT block check-in/out per K9 Operations policy
     // (Intact dogs can enter the building; they just can't participate in group play if over 10 months)
     if (!allAgrSigned) failures.push("Agreements");
     if (!ecName?.trim() || !ecPhone?.trim() || (ecPhone||"").replace(/\D/g,"").length < 10) failures.push("Emergency Contact");
@@ -3397,7 +3397,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
       }
       const ageStatus = getDogAgeCompliance(dog, data.resortPolicies, data.reservations);
       if (!ageStatus.ok) errs.compliance_age = ageStatus.reason || "Dog does not meet age requirements";
-      // Spay/Neuter is visual-only — does NOT block check-in per K9 Resorts policy
+      // Spay/Neuter is visual-only — does NOT block check-in per K9 Operations policy
       // (Intact dogs can enter the building; they just can't participate in group play if over 10 months)
       if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     }
@@ -4510,7 +4510,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
             </div>
             {countNights(checkIn,checkOut)>=2&&<div>
               <div style={{padding:"10px 14px",borderRadius:10,border:`1.5px dashed ${C.acc}`,background:C.acc+"08",marginBottom:10,fontSize:12,lineHeight:1.5,color:C.textSec}}>
-                <strong style={{color:C.text}}>Bathing Policy:</strong> K9 Resorts requires all dogs boarding 2 or more nights receive a bath to ensure every pup goes home smelling and feeling great.
+                <strong style={{color:C.text}}>Bathing Policy:</strong> K9 Operations requires all dogs boarding 2 or more nights receive a bath to ensure every pup goes home smelling and feeling great.
               </div>
               <div style={{fontSize:11,fontWeight:600,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:6}}>Bathing Type <span style={{color:C.dan}}>*</span></div>
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -5202,7 +5202,7 @@ function BoardingPreviewModal({ reservation, dog, client, isCheckInMode, isCheck
           <Modal title="Cancel Reservation" onClose={()=>setShowCancelConfirm(false)} wide>
             {/* Policy header */}
             <div style={{padding:"12px 16px",borderRadius:10,background:C.danLt,border:`1px solid ${C.dan}30`,marginBottom:16}}>
-              <div style={{fontSize:13,fontWeight:700,color:C.dan,marginBottom:4}}>K9 Resorts Cancellation Policy</div>
+              <div style={{fontSize:13,fontWeight:700,color:C.dan,marginBottom:4}}>K9 Operations Cancellation Policy</div>
               <div style={{fontSize:12,color:C.text,lineHeight:1.5}}>Deposits are non-refundable. Exceptions may be made at management discretion. Team members must notify management when issuing refunds.</div>
             </div>
 
@@ -5704,7 +5704,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
     const dogName = dog?.fields?.name || "your dog";
     const phone = client?.fields?.phone || "";
     const changeLines = diffs.map(d => `${d.field}: ${d.oldVal} → ${d.newVal}`).join("\n");
-    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Resorts! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
+    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Operations! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
     setTextNotify({ clientName, clientPhone: phone, dogName, diffs, message: msg, showPreview: false, sending: false });
   };
   const sendTextNotify = async () => {
@@ -6135,9 +6135,9 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
           </div>
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
-          <span data-shortcut-quickdc="1" onClick={()=>setShowQuickDC(true)} style={{display:"inline-flex"}}><Btn variant="success" onClick={()=>setShowQuickDC(true)} icon={<I.Plus/>}>Quick Check-In{(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.6)",background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>Q</kbd>}</Btn></span>
+          <span data-shortcut-quickdc="1" onClick={()=>setShowQuickDC(true)} style={{display:"inline-flex"}}><Btn variant="success" onClick={()=>setShowQuickDC(true)} icon={<I.Plus/>}>Quick Check-In{(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:"rgba(255,255,255,0.6)",background:"rgba(255,255,255,0.15)",border:"1px solid rgba(255,255,255,0.2)",borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'Outfit',monospace",lineHeight:1.4}}>Q</kbd>}</Btn></span>
           <Btn onClick={() => setShowSellPkg(true)} icon={<I.ShoppingCart/>} style={{background:C.acc,color:"#fff",border:"none"}}>Sell Package</Btn>
-          <Btn onClick={onNew} icon={<I.Plus/>}>New {(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
+          <Btn onClick={onNew} icon={<I.Plus/>}>New {(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'Outfit',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
         </div>
       </div>
 
@@ -6305,7 +6305,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
               onBlur={e => e.currentTarget.style.borderBottomColor = C.borderLight}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={hasQ ? C.pri : C.textMut} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
               <input data-shortcut-search className="no-focus-ring" value={curQ} onChange={e => setCurQ(e.target.value)} placeholder={isAct ? "Search by dog name, client name, or room…" : "Search by client name, dog name, phone, or email…"} style={{ border: "none", outline: "none", background: "transparent", fontSize: 13, fontWeight: 500, color: C.text, padding: "12px 10px", width: "100%", fontFamily: "inherit" }} />
-              {!hasQ && !isAct && (data.hotkeySettings||{}).showHints===true && <kbd style={{fontSize:11,fontWeight:600,color:C.textMut,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:5,padding:"2px 7px",fontFamily:"'GT Eesti',monospace",flexShrink:0,lineHeight:1.4}}>/</kbd>}
+              {!hasQ && !isAct && (data.hotkeySettings||{}).showHints===true && <kbd style={{fontSize:11,fontWeight:600,color:C.textMut,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:5,padding:"2px 7px",fontFamily:"'Outfit',monospace",flexShrink:0,lineHeight:1.4}}>/</kbd>}
               {hasQ && <button onClick={() => setCurQ("")} style={{ border: "none", background: "none", cursor: "pointer", color: C.textMut, padding: 2, display: "flex", fontFamily: "inherit" }} title="Clear search"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
               {/* Filter pills — swap for Activities tab */}
               <div style={{ display: "flex", gap: 4, marginLeft: 8, flexShrink: 0 }}>
@@ -6481,14 +6481,14 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                   <style>
                     @page { size: landscape; margin: 0.5in; }
                     body { font-family: Arial, sans-serif; color: #222; padding: 0; margin: 0; }
-                    h1 { font-size: 22px; margin: 0 0 4px; color: #003462; }
+                    h1 { font-size: 22px; margin: 0 0 4px; color: #14532D; }
                     h2 { font-size: 14px; font-weight: 400; color: #666; margin: 0 0 16px; }
                     table { width: 100%; border-collapse: collapse; font-size: 13px; }
-                    th { background: #003462; color: #fff; padding: 10px 12px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+                    th { background: #14532D; color: #fff; padding: 10px 12px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
                     .summary { margin-top: 20px; font-size: 12px; color: #666; display: flex; gap: 24px; }
                     .summary span { font-weight: 700; color: #222; }
                   </style></head><body>
-                  <h1>K9 Resorts — Bath Schedule</h1>
+                  <h1>K9 Operations — Bath Schedule</h1>
                   <h2>${today} · ${bathRows.length} bath${bathRows.length !== 1 ? "s" : ""} scheduled</h2>
                   <table>
                     <thead><tr><th>Dog</th><th>Owner</th><th>Breed</th><th>Weight</th><th>Room</th><th>Bath Type</th><th>After Bath</th><th>Departs</th><th style="text-align:center">Done</th></tr></thead>
@@ -6844,7 +6844,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
         const addonRulesMap = Object.fromEntries((data.addOnRules || []).map(r => [r.name, r.price]));
         const addonPrices = (data.addOnRules || []).length > 0 ? addonRulesMap : { ...DEF_PRICING.addOns, ...((data.pricing || {}).addOns || {}) };
         return ReactDOM.createPortal(
-          <div ref={addOnPopupRef} style={{ position: "fixed", left: Math.min(addOnPopup.x, window.innerWidth - 260), top: Math.min(addOnPopup.y, window.innerHeight - 400), zIndex: 9999, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.18)", padding: "8px 0", minWidth: 240, maxHeight: 400, overflowY: "auto", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>
+          <div ref={addOnPopupRef} style={{ position: "fixed", left: Math.min(addOnPopup.x, window.innerWidth - 260), top: Math.min(addOnPopup.y, window.innerHeight - 400), zIndex: 9999, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, boxShadow: "0 8px 32px rgba(0,0,0,0.18)", padding: "8px 0", minWidth: 240, maxHeight: 400, overflowY: "auto", fontFamily: "'Outfit', -apple-system, sans-serif" }}>
             <div style={{ padding: "6px 14px 8px", fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: `1px solid ${C.borderLight}` }}>Add-Ons</div>
             {availableAddOns.map(addon => {
               const active = resAddOns.includes(addon);
@@ -7027,7 +7027,7 @@ function DashboardPage({ data, save, nav, onNew, profile }) {
                       if (rule.appliesTo === "custom") return (rule.apptTypes || []).includes(apptType);
                       return true;
                     };
-                    // Spay/neuter is visual-only — does NOT block check-in per K9 Resorts policy
+                    // Spay/neuter is visual-only — does NOT block check-in per K9 Operations policy
                     const dcGreen = [
                       {id:"vaccines",ok:vaxStatus.ok},{id:"emergency_contact",ok:ecOk},{id:"agreements",ok:agrOk},{id:"dog_age",ok:ageStatus.ok}
                     ].every(c => !isCheckRequired(c.id, "group_daycare") || c.ok);
@@ -9209,7 +9209,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     const dogName = dog?.fields?.name || "your dog";
     const phone = client?.fields?.phone || "";
     const changeLines = diffs.map(d => `${d.field}: ${d.oldVal} → ${d.newVal}`).join("\n");
-    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Resorts! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
+    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Operations! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
     setTextNotify({ clientName, clientPhone: phone, dogName, diffs, message: msg, showPreview: false, sending: false });
   };
   const sendTextNotify = async () => {
@@ -9253,7 +9253,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
 
     const newMsg = {
       id: msgId, clientId: clientId, direction: 'outbound', channel: 'sms',
-      body: `Hi ${clientName}, please review and sign the ${agrName} agreement for K9 Resorts: k9operations.com/sign/${linkId}`,
+      body: `Hi ${clientName}, please review and sign the ${agrName} agreement for K9 Operations: k9operations.com/sign/${linkId}`,
       sentAt: now, sentBy: senderName, status: 'sent', _simulated: true,
     };
 
@@ -13575,7 +13575,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                       </div>
                       {type==="boarding"&&countNights(checkIn,checkOut)>=2&&<div>
                         <div style={{fontSize:11,color:C.textMut,background:C.bg,padding:"6px 10px",borderRadius:6,border:`1px dashed ${C.border}`,marginBottom:8}}>
-                          <strong style={{color:C.text}}>Bathing Policy:</strong> K9 Resorts requires all dogs boarding 2 or more nights receive a bath to ensure every pup goes home smelling and feeling great.
+                          <strong style={{color:C.text}}>Bathing Policy:</strong> K9 Operations requires all dogs boarding 2 or more nights receive a bath to ensure every pup goes home smelling and feeling great.
                         </div>
                         <div style={{fontSize:11,fontWeight:600,color:C.textSec,textTransform:"uppercase",letterSpacing:"0.03em",marginBottom:6}}>Bathing Type <span style={{color:C.dan}}>*</span></div>
                         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -13673,7 +13673,7 @@ function NewReservationPage({ data, save, preClientId, nav, profile, addGlobalTo
                 <span style={{fontSize:14,fontWeight:700,color:C.acc}}>Late Checkout Fee Applied</span>
               </div>
               <div style={{fontSize:12,color:C.textSec,lineHeight:1.6}}>
-                K9 Resorts' standard check-out time is <strong style={{color:C.text}}>12:30 PM</strong>. Your selected check-out time of <strong style={{color:C.text}}>{(() => { const [h,m] = checkOutTime.split(":"); const hr = parseInt(h); const ampm = hr >= 12 ? "PM" : "AM"; const hr12 = hr === 0 ? 12 : hr > 12 ? hr - 12 : hr; return `${hr12}:${m} ${ampm}`; })()}</strong> qualifies as a late checkout, which incurs a half-day daycare fee of <strong style={{color:C.text}}>${halfDayRate.toFixed(2)}</strong> per dog.
+                K9 Operations' standard check-out time is <strong style={{color:C.text}}>12:30 PM</strong>. Your selected check-out time of <strong style={{color:C.text}}>{(() => { const [h,m] = checkOutTime.split(":"); const hr = parseInt(h); const ampm = hr >= 12 ? "PM" : "AM"; const hr12 = hr === 0 ? 12 : hr > 12 ? hr - 12 : hr; return `${hr12}:${m} ${ampm}`; })()}</strong> qualifies as a late checkout, which incurs a half-day daycare fee of <strong style={{color:C.text}}>${halfDayRate.toFixed(2)}</strong> per dog.
               </div>
               <div style={{fontSize:13,fontWeight:700,color:C.acc,marginTop:6}}>
                 Total late checkout fee: ${totalFee.toFixed(2)} ({selectedDogs.length} dog{selectedDogs.length > 1 ? "s" : ""} × ${halfDayRate.toFixed(2)})
@@ -14155,7 +14155,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
     const dogName = dog?.fields?.name || "your dog";
     const phone = client?.fields?.phone || "";
     const changeLines = diffs.map(d => `${d.field}: ${d.oldVal} → ${d.newVal}`).join("\n");
-    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Resorts! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
+    const msg = `Hi ${clientName.split(" ")[0]}, this is K9 Operations! We've updated ${dogName}'s reservation:\n${changeLines}\nPlease let us know if you have any questions!`;
     setTextNotify({ clientName, clientPhone: phone, dogName, diffs, message: msg, showPreview: false, sending: false });
   };
   const sendTextNotify = async () => {
@@ -14382,7 +14382,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
             style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${nightSelectMode ? C.acc : C.border}`, background: nightSelectMode ? `${C.acc}15` : "transparent", color: nightSelectMode ? C.acc : C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg> Night Select
           </button>
-          <Btn onClick={onNew} icon={<I.Plus />}>New {(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'GT Eesti',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
+          <Btn onClick={onNew} icon={<I.Plus />}>New {(data.hotkeySettings||{}).showHints===true&&<kbd style={{fontSize:10,fontWeight:600,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 5px",marginLeft:4,fontFamily:"'Outfit',monospace",lineHeight:1.4}}>N</kbd>}</Btn>
         </div>
       </div>
       {/* Night selection instructions */}
@@ -14809,7 +14809,7 @@ function LodgingCalendarPage({ data, save, nav, onNew, profile }) {
                                   onMouseEnter={nightSelectMode ? (e => { if (!isSel) e.currentTarget.style.background = `${C.acc}20`; }) : undefined}
                                   onMouseLeave={nightSelectMode ? (e => { if (!isSel) e.currentTarget.style.background = "transparent"; }) : undefined}>
                                   {nightSelectMode && (
-                                    <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${isSel ? C.suc : "rgba(175,141,84,0.5)"}`, background: isSel ? C.suc : "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}>
+                                    <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${isSel ? C.suc : "rgba(132,204,22,0.5)"}`, background: isSel ? C.suc : "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s" }}>
                                       {isSel && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>}
                                     </div>
                                   )}
@@ -16706,13 +16706,13 @@ function AttendanceTrackerPage({ data, save, nav, profile }) {
                         {entry.previousValue && (
                           <div style={{ flex: 1, padding: 10, borderRadius: 8, background: "#FEE2E2", border: "1px solid #FECACA" }}>
                             <div style={{ fontWeight: 700, color: "#DC2626", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>Previous Value</div>
-                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'GT Eesti', monospace", fontSize: 11, color: "#7F1D1D" }}>{JSON.stringify(entry.previousValue, null, 2)}</pre>
+                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'Outfit', monospace", fontSize: 11, color: "#7F1D1D" }}>{JSON.stringify(entry.previousValue, null, 2)}</pre>
                           </div>
                         )}
                         {entry.newValue && (
                           <div style={{ flex: 1, padding: 10, borderRadius: 8, background: "#D1FAE5", border: "1px solid #A7F3D0" }}>
                             <div style={{ fontWeight: 700, color: "#059669", marginBottom: 4, fontSize: 10, textTransform: "uppercase" }}>New Value</div>
-                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'GT Eesti', monospace", fontSize: 11, color: "#064E3B" }}>{JSON.stringify(entry.newValue, null, 2)}</pre>
+                            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "'Outfit', monospace", fontSize: 11, color: "#064E3B" }}>{JSON.stringify(entry.newValue, null, 2)}</pre>
                           </div>
                         )}
                       </div>
@@ -16925,7 +16925,7 @@ function DailyOpsPage({ data, save, sub, nav, profile }) {
             const it = items[t.id] || {};
             const isWeekly = t.dayOfWeek != null;
             return (
-              <div key={t.id} style={{ display: "flex", alignItems: "center", padding: "8px 14px", borderBottom: i < todayItems.length - 1 ? `1px solid ${C.border}` : "none", background: isWeekly ? "rgba(175,141,84,0.04)" : it.checked ? "rgba(34,139,34,0.03)" : "transparent", opacity: isLocked ? 0.7 : 1 }}>
+              <div key={t.id} style={{ display: "flex", alignItems: "center", padding: "8px 14px", borderBottom: i < todayItems.length - 1 ? `1px solid ${C.border}` : "none", background: isWeekly ? "rgba(132,204,22,0.04)" : it.checked ? "rgba(34,139,34,0.03)" : "transparent", opacity: isLocked ? 0.7 : 1 }}>
                 <div style={{ width: 36 }}>
                   <input type="checkbox" checked={!!it.checked} disabled={isLocked} onChange={e => toggleItem(t.id, "checked", e.target.checked)} style={{ width: 18, height: 18, cursor: isLocked ? "default" : "pointer", accentColor: C.pri }} />
                 </div>
@@ -17371,12 +17371,12 @@ function AgreementsPage({ data, save }) {
                   <span style={{ fontSize: 12, color: C.textSec }}>Required for all clients</span>
                 </label>
               </div>
-              <textarea value={editBody} onChange={e => setEditBody(e.target.value)} placeholder="Paste or type the full agreement text here..." rows={20} style={{ width: "100%", padding: "16px 18px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 13, fontFamily: "'GT Eesti', -apple-system, sans-serif", color: C.text, background: C.surface, outline: "none", resize: "vertical", minHeight: 300, lineHeight: 1.7, boxSizing: "border-box", whiteSpace: "pre-wrap" }} onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
+              <textarea value={editBody} onChange={e => setEditBody(e.target.value)} placeholder="Paste or type the full agreement text here..." rows={20} style={{ width: "100%", padding: "16px 18px", border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 13, fontFamily: "'Outfit', -apple-system, sans-serif", color: C.text, background: C.surface, outline: "none", resize: "vertical", minHeight: 300, lineHeight: 1.7, boxSizing: "border-box", whiteSpace: "pre-wrap" }} onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
             </div>
           ) : (
             <div style={{ background: C.bg, borderRadius: 12, border: `1px solid ${C.borderLight}`, padding: "24px 28px", maxHeight: 600, overflow: "auto" }}>
               {(viewAgr.body || "").trim() ? (
-                <div style={{ fontSize: 13, color: C.text, lineHeight: 1.8, whiteSpace: "pre-wrap", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>{viewAgr.body}</div>
+                <div style={{ fontSize: 13, color: C.text, lineHeight: 1.8, whiteSpace: "pre-wrap", fontFamily: "'Outfit', -apple-system, sans-serif" }}>{viewAgr.body}</div>
               ) : (
                 <div style={{ textAlign: "center", padding: "40px 20px" }}>
                   <div style={{ fontSize: 14, color: C.textMut, marginBottom: 12 }}>No agreement text yet</div>
@@ -17493,7 +17493,7 @@ function AgreementsPage({ data, save }) {
             <Inp label="Agreement Name" value={newName} onChange={setNewName} placeholder="e.g. Boarding & Daycare Agreement" required autoFocus />
             <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4 }}>Agreement Text</div>
-              <textarea value={newBody} onChange={e => setNewBody(e.target.value)} placeholder="Paste or type the full agreement text here...&#10;&#10;You can include sections, numbered clauses, signature lines — anything you need customers to agree to." rows={14} style={{ width: "100%", padding: "14px 16px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "'GT Eesti', -apple-system, sans-serif", color: C.text, background: C.surface, outline: "none", resize: "vertical", minHeight: 200, lineHeight: 1.7, boxSizing: "border-box", whiteSpace: "pre-wrap" }} onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
+              <textarea value={newBody} onChange={e => setNewBody(e.target.value)} placeholder="Paste or type the full agreement text here...&#10;&#10;You can include sections, numbered clauses, signature lines — anything you need customers to agree to." rows={14} style={{ width: "100%", padding: "14px 16px", border: `1.5px solid ${C.border}`, borderRadius: 10, fontSize: 13, fontFamily: "'Outfit', -apple-system, sans-serif", color: C.text, background: C.surface, outline: "none", resize: "vertical", minHeight: 200, lineHeight: 1.7, boxSizing: "border-box", whiteSpace: "pre-wrap" }} onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
               <div style={{ fontSize: 11, color: C.textMut, marginTop: 4 }}>Tip: You can always edit this later. Paste an existing agreement or start from scratch.</div>
             </div>
             <Inp type="checkbox" label="Required for all clients" value={newReq} onChange={setNewReq} />
@@ -17606,14 +17606,14 @@ function EODSearchOverlay({ data, onClose, onSelectDate }) {
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 2000, display: "flex", alignItems: "flex-start", justifyContent: "center", paddingTop: "12vh" }}>
       <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,20,40,0.55)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }} />
-      <div style={{ position: "relative", width: "100%", maxWidth: 620, borderRadius: 20, background: C.surface, boxShadow: "0 32px 80px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,52,98,0.08)", overflow: "hidden", animation: "k9overlay 0.2s ease-out" }}>
+      <div style={{ position: "relative", width: "100%", maxWidth: 620, borderRadius: 20, background: C.surface, boxShadow: "0 32px 80px rgba(0,0,0,0.25), 0 0 0 1px rgba(20,83,45,0.08)", overflow: "hidden", animation: "k9overlay 0.2s ease-out" }}>
         {/* Search bar */}
         <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "20px 24px", borderBottom: `1.5px solid ${C.borderLight}` }}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input ref={inputRef} value={q} onChange={e => setQ(e.target.value)} onKeyDown={handleKeyDown}
             placeholder="Search all EOD reports…"
-            style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 17, fontWeight: 500, color: C.text, fontFamily: "'GT Eesti', sans-serif", letterSpacing: "-0.01em" }} />
-          <kbd style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', monospace", whiteSpace: "nowrap" }}>Esc</kbd>
+            style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 17, fontWeight: 500, color: C.text, fontFamily: "'Outfit', sans-serif", letterSpacing: "-0.01em" }} />
+          <kbd style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'Outfit', monospace", whiteSpace: "nowrap" }}>Esc</kbd>
         </div>
         {/* Results */}
         <div style={{ maxHeight: 440, overflow: "auto", padding: "8px 0" }}>
@@ -19799,8 +19799,8 @@ function PricingTab({ data, save }) {
               {/* Header */}
               <div style={{ padding: "24px 28px 0", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
-                  <div style={{ fontSize: 20, fontWeight: 800, color: C.text, letterSpacing: "-0.02em", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>{editingAddOn.id ? "Edit Add-On" : "New Add-On"}</div>
-                  <div style={{ fontSize: 12, color: C.textMut, marginTop: 2, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>Configure pricing, service types, and auto-apply rules</div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: C.text, letterSpacing: "-0.02em", fontFamily: "'Outfit', -apple-system, sans-serif" }}>{editingAddOn.id ? "Edit Add-On" : "New Add-On"}</div>
+                  <div style={{ fontSize: 12, color: C.textMut, marginTop: 2, fontFamily: "'Outfit', -apple-system, sans-serif" }}>Configure pricing, service types, and auto-apply rules</div>
                 </div>
                 <button onClick={() => setEditingAddOn(null)} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: C.surfaceHover, color: C.textMut, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontFamily: "inherit" }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -19811,22 +19811,22 @@ function PricingTab({ data, save }) {
                 {/* Name + Price row */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 140px", gap: 12, marginBottom: 20 }}>
                   <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, display: "block", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>Name</label>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, display: "block", fontFamily: "'Outfit', -apple-system, sans-serif" }}>Name</label>
                     <input value={editingAddOn.name} onChange={e => setEditingAddOn(prev => ({ ...prev, name: e.target.value }))}
                       autoFocus placeholder="Pamper Package"
-                      style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: `1.5px solid ${editingAddOn.name.trim() ? C.border : C.dan + "60"}`, background: C.bg, fontSize: 14, fontWeight: 600, color: C.text, fontFamily: "'GT Eesti', -apple-system, sans-serif", boxSizing: "border-box", outline: "none", transition: "border-color 0.15s" }}
+                      style={{ width: "100%", padding: "11px 14px", borderRadius: 10, border: `1.5px solid ${editingAddOn.name.trim() ? C.border : C.dan + "60"}`, background: C.bg, fontSize: 14, fontWeight: 600, color: C.text, fontFamily: "'Outfit', -apple-system, sans-serif", boxSizing: "border-box", outline: "none", transition: "border-color 0.15s" }}
                       onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = editingAddOn.name.trim() ? C.border : C.dan + "60"} />
                   </div>
                   <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, display: "block", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>Price</label>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, display: "block", fontFamily: "'Outfit', -apple-system, sans-serif" }}>Price</label>
                     <div style={{ position: "relative" }}>
-                      <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>$</span>
+                      <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, fontWeight: 700, color: C.textMut, fontFamily: "'Outfit', -apple-system, sans-serif" }}>$</span>
                       <input type="number" min="0" step="0.01" value={editingAddOn.price || ""} onChange={e => {
                         const val = e.target.value === "" ? 0 : Math.max(0, Number(e.target.value));
                         setEditingAddOn(prev => ({ ...prev, price: val }));
                       }}
                         placeholder="0.00"
-                        style={{ width: "100%", padding: "11px 14px 11px 28px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 14, fontWeight: 700, color: C.text, fontFamily: "'GT Eesti', -apple-system, sans-serif", boxSizing: "border-box", outline: "none", transition: "border-color 0.15s" }}
+                        style={{ width: "100%", padding: "11px 14px 11px 28px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 14, fontWeight: 700, color: C.text, fontFamily: "'Outfit', -apple-system, sans-serif", boxSizing: "border-box", outline: "none", transition: "border-color 0.15s" }}
                         onFocus={e => e.target.style.borderColor = C.pri} onBlur={e => e.target.style.borderColor = C.border} />
                     </div>
                   </div>
@@ -19838,8 +19838,8 @@ function PricingTab({ data, save }) {
                 {/* Service Types */}
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 8 }}>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>Applies to Services</label>
-                    {(editingAddOn.serviceTypes || []).length === 0 && <span style={{ fontSize: 10, color: C.suc, fontWeight: 600, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>All types</span>}
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'Outfit', -apple-system, sans-serif" }}>Applies to Services</label>
+                    {(editingAddOn.serviceTypes || []).length === 0 && <span style={{ fontSize: 10, color: C.suc, fontWeight: 600, fontFamily: "'Outfit', -apple-system, sans-serif" }}>All types</span>}
                   </div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {SERVICE_TYPE_OPTIONS.map(opt => {
@@ -19849,7 +19849,7 @@ function PricingTab({ data, save }) {
                           const curr = prev.serviceTypes || [];
                           return { ...prev, serviceTypes: sel ? curr.filter(s => s !== opt.id) : [...curr, opt.id] };
                         })}
-                          style={{ padding: "8px 16px", borderRadius: 20, border: `1.5px solid ${sel ? C.pri : C.border}`, background: sel ? C.pri : C.bg, color: sel ? "#fff" : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'GT Eesti', -apple-system, sans-serif", transition: "all 0.15s", letterSpacing: "0.01em" }}>
+                          style={{ padding: "8px 16px", borderRadius: 20, border: `1.5px solid ${sel ? C.pri : C.border}`, background: sel ? C.pri : C.bg, color: sel ? "#fff" : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit', -apple-system, sans-serif", transition: "all 0.15s", letterSpacing: "0.01em" }}>
                           {sel && <span style={{ marginRight: 4 }}>&#10003;</span>}{opt.label}
                         </button>
                       );
@@ -19860,8 +19860,8 @@ function PricingTab({ data, save }) {
                 {/* Dog Tags */}
                 <div style={{ marginBottom: 20 }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 8 }}>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>Applies to Dog Tags</label>
-                    {(editingAddOn.tagIds || []).length === 0 && <span style={{ fontSize: 10, color: C.suc, fontWeight: 600, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>All dogs</span>}
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.05em", fontFamily: "'Outfit', -apple-system, sans-serif" }}>Applies to Dog Tags</label>
+                    {(editingAddOn.tagIds || []).length === 0 && <span style={{ fontSize: 10, color: C.suc, fontWeight: 600, fontFamily: "'Outfit', -apple-system, sans-serif" }}>All dogs</span>}
                   </div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {dogTags.map(tag => {
@@ -19872,7 +19872,7 @@ function PricingTab({ data, save }) {
                           const curr = prev.tagIds || [];
                           return { ...prev, tagIds: sel ? curr.filter(t => t !== tag.id) : [...curr, tag.id] };
                         })}
-                          style={{ padding: "8px 16px", borderRadius: 20, border: `1.5px solid ${sel ? tc.text : C.border}`, background: sel ? tc.bg : C.bg, color: sel ? tc.text : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'GT Eesti', -apple-system, sans-serif", transition: "all 0.15s" }}>
+                          style={{ padding: "8px 16px", borderRadius: 20, border: `1.5px solid ${sel ? tc.text : C.border}`, background: sel ? tc.bg : C.bg, color: sel ? tc.text : C.textSec, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit', -apple-system, sans-serif", transition: "all 0.15s" }}>
                           {sel && <span style={{ marginRight: 4 }}>&#10003;</span>}{tag.name}
                         </button>
                       );
@@ -19890,8 +19890,8 @@ function PricingTab({ data, save }) {
                     <div style={{ width: 18, height: 18, borderRadius: 9, background: "#fff", position: "absolute", top: 3, left: editingAddOn.autoApply ? 23 : 3, transition: "left 0.2s cubic-bezier(0.4,0,0.2,1)", boxShadow: "0 1px 4px rgba(0,0,0,0.15)" }} />
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>Auto-Apply to Matching Reservations</div>
-                    <div style={{ fontSize: 11, color: C.textMut, marginTop: 1, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: C.text, fontFamily: "'Outfit', -apple-system, sans-serif" }}>Auto-Apply to Matching Reservations</div>
+                    <div style={{ fontSize: 11, color: C.textMut, marginTop: 1, fontFamily: "'Outfit', -apple-system, sans-serif" }}>
                       {editingAddOn.autoApply
                         ? `Will auto-add to ${(editingAddOn.serviceTypes || []).length > 0 ? (editingAddOn.serviceTypes || []).map(s => SERVICE_TYPE_OPTIONS.find(o => o.id === s)?.label || s).join(", ") : "all"} reservations` + ((editingAddOn.tagIds || []).length > 0 ? ` for ${(editingAddOn.tagIds || []).map(t => dogTags.find(d => d.id === t)?.name || t).join(", ")} dogs` : "")
                         : "When enabled, this add-on attaches automatically when service type and tags match"}
@@ -19902,7 +19902,7 @@ function PricingTab({ data, save }) {
                 {/* Actions */}
                 <div style={{ display: "flex", gap: 10 }}>
                   <button onClick={() => setEditingAddOn(null)}
-                    style={{ flex: 1, padding: "12px 20px", borderRadius: 12, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'GT Eesti', -apple-system, sans-serif", transition: "all 0.15s" }}
+                    style={{ flex: 1, padding: "12px 20px", borderRadius: 12, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Outfit', -apple-system, sans-serif", transition: "all 0.15s" }}
                     onMouseEnter={e => e.target.style.background = C.surfaceHover} onMouseLeave={e => e.target.style.background = "transparent"}>
                     Cancel
                   </button>
@@ -19910,7 +19910,7 @@ function PricingTab({ data, save }) {
                     if (!editingAddOn.name.trim()) return;
                     saveAddOnRule({ ...editingAddOn, id: editingAddOn.id || gid(), price: Math.max(0, Number(editingAddOn.price) || 0) });
                   }} disabled={!editingAddOn.name.trim()}
-                    style={{ flex: 2, padding: "12px 24px", borderRadius: 12, border: "none", background: editingAddOn.name.trim() ? C.pri : C.border, color: "#fff", fontSize: 13, fontWeight: 700, cursor: editingAddOn.name.trim() ? "pointer" : "default", fontFamily: "'GT Eesti', -apple-system, sans-serif", transition: "all 0.15s", boxShadow: editingAddOn.name.trim() ? "0 4px 12px rgba(0,40,100,0.2)" : "none" }}>
+                    style={{ flex: 2, padding: "12px 24px", borderRadius: 12, border: "none", background: editingAddOn.name.trim() ? C.pri : C.border, color: "#fff", fontSize: 13, fontWeight: 700, cursor: editingAddOn.name.trim() ? "pointer" : "default", fontFamily: "'Outfit', -apple-system, sans-serif", transition: "all 0.15s", boxShadow: editingAddOn.name.trim() ? "0 4px 12px rgba(0,40,100,0.2)" : "none" }}>
                     {editingAddOn.id ? "Save Changes" : "Create Add-On"}
                   </button>
                 </div>
@@ -20919,7 +20919,7 @@ function SellPackageModal({ data, save, onClose, nav, profile }) {
               onBlur={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}
             />
             {searchQ && filteredClients.length > 0 && (
-              <div style={{position:"absolute",top:"100%",left:0,right:0,border:`2px solid ${C.pri}`,borderRadius:8,borderTopLeftRadius:0,borderTopRightRadius:0,maxHeight:240,overflow:"auto",background:C.surface,zIndex:10,marginTop:-10,boxShadow:"0 8px 24px rgba(0,52,98,0.15)"}}>
+              <div style={{position:"absolute",top:"100%",left:0,right:0,border:`2px solid ${C.pri}`,borderRadius:8,borderTopLeftRadius:0,borderTopRightRadius:0,maxHeight:240,overflow:"auto",background:C.surface,zIndex:10,marginTop:-10,boxShadow:"0 8px 24px rgba(20,83,45,0.15)"}}>
                 {filteredClients.map(cl => (
                   <div
                     key={cl.id}
@@ -20949,7 +20949,7 @@ function SellPackageModal({ data, save, onClose, nav, profile }) {
                 newItems[idx].packageId = e.target.value || null;
                 setCartItems(newItems);
               }}
-              style={{flex:1,padding:"10px 14px",border:`2px solid ${C.border}`,borderRadius:8,fontSize:13,background:C.surface,color:C.text,fontFamily:"inherit",boxSizing:"border-box",transition:"all 0.15s",fontWeight:500,appearance:"none",backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23003462' stroke-width='3' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center",paddingRight:40}}
+              style={{flex:1,padding:"10px 14px",border:`2px solid ${C.border}`,borderRadius:8,fontSize:13,background:C.surface,color:C.text,fontFamily:"inherit",boxSizing:"border-box",transition:"all 0.15s",fontWeight:500,appearance:"none",backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2314532D' stroke-width='3' stroke-linecap='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,backgroundRepeat:"no-repeat",backgroundPosition:"right 12px center",paddingRight:40}}
               className="no-focus-ring"
               onFocus={(e) => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.boxShadow = `0 0 0 3px ${C.priLt}`; }}
               onBlur={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.boxShadow = "none"; }}
@@ -21875,7 +21875,7 @@ function TeamTab({ profile, data, save }) {
             Enter their details and click Invite. They'll get a temporary password to sign in with.
           </p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 130px auto", gap: 12, alignItems: "flex-end" }}>
-            <Inp label="Email" type="email" value={inviteEmail} onChange={v => setInviteEmail(v)} placeholder="staff@k9resorts.com" />
+            <Inp label="Email" type="email" value={inviteEmail} onChange={v => setInviteEmail(v)} placeholder="staff@k9operations.com" />
             <Inp label="Full Name" value={inviteName} onChange={v => setInviteName(v)} placeholder="Jane Vance" />
             <Inp label="Role" type="select" value={inviteRole} onChange={v => setInviteRole(v)} options={(data.roles || DEFAULT_ROLES).map(r => ({ value: r.id, label: r.name }))} />
             <Btn onClick={addInvite} disabled={inviteSending}>{inviteSending ? "Sending..." : "Invite"}</Btn>
@@ -22055,7 +22055,7 @@ function EnterpriseLocationsPage({ data, save, nav, profile, handleLocationChang
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:28}}>
         <div>
           <h2 style={{fontSize:24,fontWeight:700,color:C.text,margin:0}}>Location Management</h2>
-          <div style={{fontSize:13,color:C.textSec,marginTop:4}}>Manage your K9 Resorts locations</div>
+          <div style={{fontSize:13,color:C.textSec,marginTop:4}}>Manage your K9 Operations locations</div>
         </div>
         <Btn onClick={()=>setShowAdd(!showAdd)} icon={<I.Plus/>}>Add Location</Btn>
       </div>
@@ -23417,7 +23417,7 @@ function OnlineBookingsPage({ data, save, nav, profile, addGlobalToast, allLocat
 const DEFAULT_LMS_CURRICULUM = [
   { id:"welcome", title:"Welcome", required:true, courses:[
     {id:"incite-overview",title:"INCITE Overview",duration:"12 min"},
-    {id:"welcome-k9",title:"Welcome to K9 Resorts Luxury Pet Hotel",duration:"18 min"},
+    {id:"welcome-k9",title:"Welcome to K9 Operations Lite · KOL",duration:"18 min"},
     {id:"roles-resp",title:"Roles and Responsibilities",duration:"15 min"},
     {id:"servicing-guest",title:"Servicing Our 4-Legged Guest",duration:"20 min"},
     {id:"resort-basics",title:"Resort Basics",duration:"14 min"},
@@ -23470,7 +23470,7 @@ const DEFAULT_LMS_CURRICULUM = [
     {id:"appendix",title:"Appendix",duration:"20 min"},
     {id:"sops",title:"SOPs",duration:"30 min"},
   ]},
-  { id:"conference-2025", title:"K9 Resorts Annual Conference 2025", required:false, courses:[
+  { id:"conference-2025", title:"K9 Operations Annual Conference 2025", required:false, courses:[
     {id:"conference-recordings",title:"Conference Recordings",duration:"60 min"},
   ]},
 ];
@@ -23532,7 +23532,7 @@ function LMSPage({ data, save, nav, profile }) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
           <h1 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, letterSpacing: "-0.02em" }}>Learning Management</h1>
-          <p style={{ margin: "4px 0 0", fontSize: 13, color: C.textSec }}>K9 Resorts Training Platform</p>
+          <p style={{ margin: "4px 0 0", fontSize: 13, color: C.textSec }}>K9 Operations Training Platform</p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <Btn variant="secondary" onClick={() => setShowMgmtReview(true)} icon={<I.Users />}>Management Review</Btn>
@@ -23542,9 +23542,9 @@ function LMSPage({ data, save, nav, profile }) {
       {/* Coming Soon Hero */}
       <Card style={{ padding: 0, marginBottom: 24, overflow: "hidden" }}>
         <div style={{ background: `linear-gradient(135deg, ${C.pri} 0%, #001a3a 100%)`, padding: "32px 36px", position: "relative" }}>
-          <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: "40%", background: "linear-gradient(135deg, transparent 0%, rgba(175,141,84,0.08) 100%)" }} />
+          <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, width: "40%", background: "linear-gradient(135deg, transparent 0%, rgba(132,204,22,0.08) 100%)" }} />
           <div style={{ position: "relative", zIndex: 1 }}>
-            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(175,141,84,0.2)", borderRadius: 20, padding: "4px 14px", marginBottom: 14 }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(132,204,22,0.2)", borderRadius: 20, padding: "4px 14px", marginBottom: 14 }}>
               <span style={{ width: 8, height: 8, borderRadius: 4, background: C.acc, animation: "pulse 2s infinite" }} />
               <span style={{ fontSize: 11, fontWeight: 700, color: C.acc, textTransform: "uppercase", letterSpacing: "0.08em" }}>Coming Soon</span>
             </div>
@@ -25055,7 +25055,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
                     return (
                       <div key={action} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, background: isDupe ? C.danLt : C.bg, border: `1px solid ${isDupe ? C.dan + "40" : C.border}` }}>
                         <input
-                          style={{ width: 32, textAlign: "center", padding: "3px 0", borderRadius: 5, border: `1.5px solid ${isDupe ? C.dan : C.border}`, background: C.surface, fontSize: 12, fontWeight: 700, color: C.text, fontFamily: "'GT Eesti', monospace", cursor: "pointer" }}
+                          style={{ width: 32, textAlign: "center", padding: "3px 0", borderRadius: 5, border: `1.5px solid ${isDupe ? C.dan : C.border}`, background: C.surface, fontSize: 12, fontWeight: 700, color: C.text, fontFamily: "'Outfit', monospace", cursor: "pointer" }}
                           value={currentKey === "/" ? "/" : currentKey.toUpperCase()}
                           onFocus={e => { e.target.value = ""; e.target.style.borderColor = C.pri; }}
                           onBlur={e => { e.target.value = currentKey === "/" ? "/" : currentKey.toUpperCase(); e.target.style.borderColor = isDupe ? C.dan : C.border; }}
@@ -25824,7 +25824,7 @@ function SettingsPage({ data, save, profile, nav, settingsTab, locationSlug, add
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
         </div>
         <input value={settingsSearch} onChange={e => setSettingsSearch(e.target.value)} placeholder="Search settings…"
-          style={{ width: "100%", padding: "14px 16px 14px 46px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 15, fontWeight: 500, color: C.text, fontFamily: "'GT Eesti', sans-serif", outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" }}
+          style={{ width: "100%", padding: "14px 16px 14px 46px", borderRadius: 14, border: `1.5px solid ${C.border}`, background: C.surface, fontSize: 15, fontWeight: 500, color: C.text, fontFamily: "'Outfit', sans-serif", outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" }}
           onFocus={e => { e.target.style.borderColor = C.pri; }} onBlur={e => { e.target.style.borderColor = C.border; }} />
         {settingsSearch && <button onClick={() => setSettingsSearch("")} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", color: C.textMut, display: "flex", padding: 4 }}><I.X /></button>}
       </div>
@@ -25924,14 +25924,14 @@ function NewOverlay({ data, nav, onClose }) {
       {/* Backdrop */}
       <div onClick={onClose} style={{ position: "absolute", inset: 0, background: "rgba(0,20,40,0.55)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }} />
       {/* Panel */}
-      <div style={{ position: "relative", width: "100%", maxWidth: 560, borderRadius: 20, background: C.surface, boxShadow: "0 32px 80px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,52,98,0.08)", overflow: "hidden", animation: "k9overlay 0.2s ease-out" }}>
+      <div style={{ position: "relative", width: "100%", maxWidth: 560, borderRadius: 20, background: C.surface, boxShadow: "0 32px 80px rgba(0,0,0,0.25), 0 0 0 1px rgba(20,83,45,0.08)", overflow: "hidden", animation: "k9overlay 0.2s ease-out" }}>
         {/* Search bar */}
         <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "20px 24px", borderBottom: `1.5px solid ${C.borderLight}` }}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2.5" strokeLinecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           <input ref={inputRef} className="no-focus-ring" value={q} onChange={e => setQ(e.target.value)} onKeyDown={handleKeyDown}
             placeholder="Search clients by name, phone, email, or dog…"
-            style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 17, fontWeight: 500, color: C.text, fontFamily: "'GT Eesti', sans-serif", letterSpacing: "-0.01em" }} />
-          <kbd onClick={onClose} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', monospace", whiteSpace: "nowrap", cursor: "pointer" }}>Esc</kbd>
+            style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontSize: 17, fontWeight: 500, color: C.text, fontFamily: "'Outfit', sans-serif", letterSpacing: "-0.01em" }} />
+          <kbd onClick={onClose} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 11, fontWeight: 700, color: C.textMut, fontFamily: "'Outfit', monospace", whiteSpace: "nowrap", cursor: "pointer" }}>Esc</kbd>
         </div>
         {/* Results */}
         <div style={{ maxHeight: 380, overflow: "auto", padding: "8px 0" }}>
@@ -25949,7 +25949,7 @@ function NewOverlay({ data, nav, onClose }) {
                   <div style={{ fontSize: 15, fontWeight: 700, color: active ? C.suc : C.pri }}>Create New Client</div>
                   <div style={{ fontSize: 12, color: C.textMut }}>{q.trim() ? `Set up "${q.trim()}" with their dogs & first reservation` : "Set up a new client with their dogs & first reservation"}</div>
                 </div>
-                <kbd style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 10, fontWeight: 700, color: C.textMut, fontFamily: "'GT Eesti', monospace" }}>↵</kbd>
+                <kbd style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.bg, fontSize: 10, fontWeight: 700, color: C.textMut, fontFamily: "'Outfit', monospace" }}>↵</kbd>
               </button>
             );
           })()}
@@ -26515,7 +26515,7 @@ function UnifiedNewPage({ data, save, nav, prefill, profile, addGlobalToast }) {
                             </div>
                             {type === "boarding" && countNights(checkIn, checkOut) >= 2 && <div>
                               <div style={{ padding: "10px 14px", borderRadius: 10, border: `1.5px dashed ${C.acc}`, background: C.acc + "08", marginBottom: 10, fontSize: 12, lineHeight: 1.5, color: C.textSec }}>
-                                <strong style={{ color: C.text }}>Bathing Policy:</strong> K9 Resorts requires all dogs boarding 2 or more nights receive a bath to ensure every pup goes home smelling and feeling great.
+                                <strong style={{ color: C.text }}>Bathing Policy:</strong> K9 Operations requires all dogs boarding 2 or more nights receive a bath to ensure every pup goes home smelling and feeling great.
                               </div>
                               <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 6 }}>Bathing Type <span style={{ color: C.dan }}>*</span></div>
                               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -26812,7 +26812,7 @@ const OPS_MANUAL_KB = [
     answer:"1. Grace period: 15 minutes past scheduled pickup.\n2. Contact owner immediately about late fees.\n3. Contact chain: Primary \u2192 Emergency contact \u2192 Secondary contact.\n4. If no response by closing: Dog boards overnight, converted to boarding reservation at daycare-to-boarding rate.\n5. Ensure dog is comfortable: bedding, water, last feeding.\n6. Leave a note for morning staff with details.\n7. Bill late fees plus overnight boarding at checkout.\n8. Dogs on medication: Guest assumes risk of missing medication.\nStrongly recommended NOT to grant special after-hours requests." },
   { keywords:["dress","uniform","appearance","clothing","dress code","name badge","shoes"],
     title:"Dress Code Requirements",
-    answer:"Front End: K9 Resorts button-down or polo + navy zip-up jacket. Men's shirts tucked in. Non-K9 branded outerwear prohibited. K9 uniform shall not be worn on personal time.\nBack End: Same shirt + navy fleece. K9 hat/beanie in outdoor areas only.\nBathers: K9 performance tee for baths only.\nPants: Black 5-pocket, cargo, or chino with belt. No denim, leggings, sweatpants, or yoga pants.\nShoes: Solid black, closed-toe, rubber soles. No visible logos.\nName Badge: Required for front-end and management. Gold = management, Silver = staff.\nNo strong perfume. All employees must wear charged radio and headset." },
+    answer:"Front End: K9 Operations button-down or polo + navy zip-up jacket. Men's shirts tucked in. Non-K9 branded outerwear prohibited. K9 uniform shall not be worn on personal time.\nBack End: Same shirt + navy fleece. K9 hat/beanie in outdoor areas only.\nBathers: K9 performance tee for baths only.\nPants: Black 5-pocket, cargo, or chino with belt. No denim, leggings, sweatpants, or yoga pants.\nShoes: Solid black, closed-toe, rubber soles. No visible logos.\nName Badge: Required for front-end and management. Gold = management, Silver = staff.\nNo strong perfume. All employees must wear charged radio and headset." },
   { keywords:["greet","greeting","hello","welcome","guest service","language","professional","communication","beat the greet"],
     title:"Professional Language & Beat the Greet",
     answer:"Beat the Greet: Be first to start conversation. Always greet with \"Good morning/afternoon\" \u2014 never \"hey\" or \"what's up.\"\nPersonalize: \"Good morning Mrs. Jones, how are you and Coco today?\"\nWhen guest says \"thank you,\" always respond \"You're welcome\" (never \"no problem\").\nUse upscale words: \"My pleasure\" should be standard.\nEvery employee: smile, make eye contact with every guest.\nEarn Your Stars Every Day: Begin each day at zero stars. Ask yourself what you did today to provide Five-Star service." },
@@ -26931,7 +26931,7 @@ const OPS_MANUAL_KB = [
   // ── Section 10: Red Binder / Emergencies ──────────────────────────
   { keywords:["emergency","vet","veterinary","urgent","emergency protocol","communication"],
     title:"Emergency Communication Protocol",
-    answer:"1. Alert Manager on Duty IMMEDIATELY (seconds count!).\n2. MOD calls Emergency Vet with condition details.\n3. GM/Owner calls pet owner with situation and vet info.\n4. MOD transports dog to vet (assistance for large dogs).\n5. Contact K9 Resorts Operations Manager.\n6. Fill out Accident/Incident Report and Vet Visit Form within 24 hours.\n\nEmergencies requiring this protocol: Scuffle needing immediate care, dog escape, evacuation, power loss, HVAC loss, fire, human medical emergency, workplace violence, eye trauma, dog poisoning, heat stroke, unresponsive dog." },
+    answer:"1. Alert Manager on Duty IMMEDIATELY (seconds count!).\n2. MOD calls Emergency Vet with condition details.\n3. GM/Owner calls pet owner with situation and vet info.\n4. MOD transports dog to vet (assistance for large dogs).\n5. Contact K9 Operations Operations Manager.\n6. Fill out Accident/Incident Report and Vet Visit Form within 24 hours.\n\nEmergencies requiring this protocol: Scuffle needing immediate care, dog escape, evacuation, power loss, HVAC loss, fire, human medical emergency, workplace violence, eye trauma, dog poisoning, heat stroke, unresponsive dog." },
   { keywords:["fight","dog fight","altercation","scuffle","break up","separate","attack"],
     title:"Breaking Up a Dog Fight",
     answer:"No-Contact Method (preferred):\n1. REMAIN CALM.\n2. Call for assistance via radio.\n3. Use air horn (repeated short/long blasts).\n4. Spray water on dogs' heads.\n5. Dump bucket of water on heads.\n6. Use Pet Shield as barrier to block vision/redirect.\nDO NOT grab collars. DO NOT get between dogs. NEVER hit a dog.\n\nContact Method (last resort):\n1. Approach aggressor from behind.\n2. Grab top of hind legs.\n3. Lift back paws (wheelbarrow position).\n4. Walk backwards in circle so dog can't turn to bite.\n5. Keep separated dogs out of each other's sight." },
@@ -26961,7 +26961,7 @@ const OPS_MANUAL_KB = [
     answer:"Tornado: Seek interior rooms on lowest floor, no windows. Use arms to protect head/neck.\nEarthquake: Stay clear of windows and tall furniture. If outside, move from buildings/power lines. After shaking: evacuate/call 911.\nHurricane: Secure building, move loose items inside, board windows, stay indoors.\nFlood: Be ready to evacuate. Move to high ground. Don't walk/drive through floodwater.\nBlizzard: Stay indoors. Close off unneeded rooms. Stuff towels in door cracks.\nInclement Weather: GM communicates with staff in advance. Management may stay overnight to care for boarding dogs." },
   // ── Section 4: HR / Company ───────────────────────────────────────
   { keywords:["value","mission","core value","company value","five star","5 star","wow"],
-    title:"K9 Resorts Core Values & Mission",
+    title:"K9 Operations Core Values & Mission",
     answer:"Mission: Provide a home away from home where dogs love to stay and play, and guests know their dogs are cared for at a 5-star level.\nCore Values:\n1. Committed to health, happiness, and comfort of our guests.\n2. Make every experience a WOW experience.\n3. Transparent \u2014 communicate honestly, directly, respectfully.\n4. Work as a team to grow together.\n5. Accountable, teachable, and excuse-free.\nGuest Promises: Daycare drop-offs < 30 sec, pickups < 1 min. Boarding drop-offs < 5 min, pickups < 2:30. Facility so clean you'd kiss any paw that touched down." },
   { keywords:["position","role","hierarchy","chain of command","organizational","reporting","staff structure"],
     title:"Organizational Structure",
@@ -27472,7 +27472,7 @@ function PaymentsPage({ data, save, nav, profile }) {
 
   const statusBg = { completed: "rgba(16,185,129,0.12)", pending: "rgba(245,158,11,0.12)", refunded: "rgba(239,68,68,0.12)", failed: "rgba(239,68,68,0.12)" };
   const statusClr = { completed: "#10b981", pending: "#f59e0b", refunded: "#ef4444", failed: "#ef4444" };
-  const typeBg = { payment: `rgba(0,52,98,0.1)`, deposit: "rgba(14,165,233,0.1)", tip: "rgba(236,72,153,0.1)", refund: "rgba(239,68,68,0.1)" };
+  const typeBg = { payment: `rgba(20,83,45,0.1)`, deposit: "rgba(14,165,233,0.1)", tip: "rgba(236,72,153,0.1)", refund: "rgba(239,68,68,0.1)" };
   const typeClr = { payment: C.pri, deposit: "#0ea5e9", tip: "#ec4899", refund: "#ef4444" };
   const thS = { padding: "10px 12px", textAlign: "left", fontSize: 12, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.03em" };
   const tdS = { padding: "10px 12px", fontSize: 14, color: C.text };
@@ -27671,7 +27671,7 @@ function DataTable({ columns, rows, pageSize = 50, onRowClick }) {
   };
 
   return (
-    <div style={{ fontFamily: "'GT Eesti', sans-serif", padding: '20px 0' }}>
+    <div style={{ fontFamily: "'Outfit', sans-serif", padding: '20px 0' }}>
       {/* Search Bar */}
       <div style={{ marginBottom: '16px', display: 'flex', gap: '12px' }}>
         <input
@@ -27685,7 +27685,7 @@ function DataTable({ columns, rows, pageSize = 50, onRowClick }) {
             borderRadius: '8px',
             border: `1.5px solid #ccc`,
             fontSize: '13px',
-            fontFamily: "'GT Eesti', sans-serif"
+            fontFamily: "'Outfit', sans-serif"
           }}
         />
       </div>
@@ -27702,7 +27702,7 @@ function DataTable({ columns, rows, pageSize = 50, onRowClick }) {
               borderRadius: '6px',
               border: `1px solid #ddd`,
               fontSize: '12px',
-              fontFamily: "'GT Eesti', sans-serif",
+              fontFamily: "'Outfit', sans-serif",
               cursor: 'pointer'
             }}
           >
@@ -27744,7 +27744,7 @@ function DataTable({ columns, rows, pageSize = 50, onRowClick }) {
               borderCollapse: 'collapse',
               backgroundColor: C.surface,
               fontSize: '12px',
-              fontFamily: "'GT Eesti', sans-serif"
+              fontFamily: "'Outfit', sans-serif"
             }}>
               <thead>
                 <tr style={{
@@ -27843,7 +27843,7 @@ function DataTable({ columns, rows, pageSize = 50, onRowClick }) {
                   backgroundColor: C.surface,
                   cursor: currentPage === 0 ? 'not-allowed' : 'pointer',
                   opacity: currentPage === 0 ? 0.5 : 1,
-                  fontFamily: "'GT Eesti', sans-serif",
+                  fontFamily: "'Outfit', sans-serif",
                   fontSize: '12px'
                 }}
               >
@@ -27862,7 +27862,7 @@ function DataTable({ columns, rows, pageSize = 50, onRowClick }) {
                   backgroundColor: C.surface,
                   cursor: currentPage >= totalPages - 1 ? 'not-allowed' : 'pointer',
                   opacity: currentPage >= totalPages - 1 ? 0.5 : 1,
-                  fontFamily: "'GT Eesti', sans-serif",
+                  fontFamily: "'Outfit', sans-serif",
                   fontSize: '12px'
                 }}
               >
@@ -27890,7 +27890,7 @@ function KPICard({ label, value, prefix, suffix, trend, trendLabel, color }) {
       borderRadius: '16px',
       border: `1.5px solid ${C.border}`,
       backgroundColor: C.surface,
-      fontFamily: "'GT Eesti', sans-serif"
+      fontFamily: "'Outfit', sans-serif"
     }}>
       <div style={{
         fontSize: '12px',
@@ -28009,7 +28009,7 @@ function SVGLineChart({ data, width = 600, height = 200, color = C.pri, yPrefix 
   }
 
   return (
-    <svg width={width} height={height} style={{ fontFamily: "'GT Eesti', sans-serif" }}>
+    <svg width={width} height={height} style={{ fontFamily: "'Outfit', sans-serif" }}>
       {/* Y-axis grid lines */}
       {gridLines.map((line, i) => (
         <g key={`grid-${i}`}>
@@ -28134,7 +28134,7 @@ function SVGBarChart({ data, width = 600, height = 220, color = C.pri }) {
   const shouldRotateLabels = data.length > 10;
 
   return (
-    <svg width={width} height={height} style={{ fontFamily: "'GT Eesti', sans-serif" }}>
+    <svg width={width} height={height} style={{ fontFamily: "'Outfit', sans-serif" }}>
       {/* Y-axis grid lines */}
       {gridLines.map((line, i) => (
         <g key={`grid-${i}`}>
@@ -28281,7 +28281,7 @@ function SVGDonutChart({ segments, size = 200, innerRadius = 60 }) {
       display: 'flex',
       gap: '40px',
       alignItems: 'center',
-      fontFamily: "'GT Eesti', sans-serif"
+      fontFamily: "'Outfit', sans-serif"
     }}>
       {/* Donut SVG */}
       <svg width={size} height={size} style={{ flexShrink: 0 }}>
@@ -28369,7 +28369,7 @@ function SVGHeatmap({ data, rowLabels, colLabels, width = 600, height = 300 }) {
   };
 
   return (
-    <svg width={width} height={height} style={{ fontFamily: "'GT Eesti', sans-serif" }}>
+    <svg width={width} height={height} style={{ fontFamily: "'Outfit', sans-serif" }}>
       {/* Cells */}
       {data.map((row, rowIdx) => (
         row.map((val, colIdx) => {
@@ -28454,7 +28454,7 @@ function SVGFunnel({ stages, width = 400, height = 280 }) {
   const maxValue = Math.max(...stages.map(s => s.value));
 
   return (
-    <svg width={width} height={height} style={{ fontFamily: "'GT Eesti', sans-serif" }}>
+    <svg width={width} height={height} style={{ fontFamily: "'Outfit', sans-serif" }}>
       {stages.map((stage, idx) => {
         const topWidth = (chartWidth * stage.value) / maxValue;
         const nextValue = stages[idx + 1] ? stages[idx + 1].value : 0;
@@ -28633,7 +28633,7 @@ const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, 
 
   return (
     React.createElement("div", { style: { position: "relative", width: "100%" } },
-      React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", height: H, preserveAspectRatio: "xMidYMid meet", style: { display: "block", fontFamily: "'GT Eesti', sans-serif" } },
+      React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", height: H, preserveAspectRatio: "xMidYMid meet", style: { display: "block", fontFamily: "'Outfit', sans-serif" } },
         React.createElement("defs", null,
           React.createElement("linearGradient", { id: `${id}-grad`, x1: "0", x2: "0", y1: "0", y2: "1" },
             React.createElement("stop", { offset: "0%", stopColor: color, stopOpacity: "0.15" }),
@@ -29633,7 +29633,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
   const categoryData = useMemo(() => {
     const cats = cashBasisData.current.byCategory;
     const total = cashBasisData.current.total;
-    const colors = ["#003462", "#AF8D54", "#0D7A56", "#1A5EC4", "#C4720C", "#6366F1", "#C42B2B", "#059669"];
+    const colors = ["#14532D", "#84CC16", "#0D7A56", "#1A5EC4", "#C4720C", "#6366F1", "#C42B2B", "#059669"];
     return Object.entries(cats).map(([label, value], idx) => ({ label, value, percent: total > 0 ? (value / total) * 100 : 0, color: colors[idx % colors.length] })).sort((a, b) => b.value - a.value);
   }, [cashBasisData.current]);
 
@@ -29694,7 +29694,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
     const [hoverIdx, setHoverIdx] = useState(null);
     if (!items || items.length === 0) return null;
     const total = items.reduce((s, i) => s + i.value, 0);
-    const colors = ["#003462", "#AF8D54", "#0D7A56", "#1A5EC4", "#C4720C"];
+    const colors = ["#14532D", "#84CC16", "#0D7A56", "#1A5EC4", "#C4720C"];
     const r = size / 2 - 8, ir = r * 0.6;
     let angle = -Math.PI / 2;
 
@@ -29775,7 +29775,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
           <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.8, color: C.textMut, marginBottom: 8 }}>{label}</div>
           {null /* icon removed — clean aesthetic */}
         </div>
-        <div style={{ fontSize: 24, fontWeight: 800, color: C.text, fontFamily: "'GT Eesti', sans-serif", lineHeight: 1.1 }}>
+        <div style={{ fontSize: 24, fontWeight: 800, color: C.text, fontFamily: "'Outfit', sans-serif", lineHeight: 1.1 }}>
           {displayValue || (isNumeric ? fmt$(animVal) : value)}
         </div>
         {trend !== undefined && trend !== 0 && (
@@ -30024,7 +30024,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
         {/* ─── HEADER ROW ─── */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
           <div>
-            <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, fontFamily: "'Canela', Georgia, serif", color: C.text, lineHeight: 1.2 }}>Revenue Intelligence</h1>
+            <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, fontFamily: "'Outfit', sans-serif", color: C.text, lineHeight: 1.2 }}>Revenue Intelligence</h1>
             <p style={{ fontSize: 11, color: C.textMut, margin: "3px 0 0 0" }}>{fmtDateLabel(dateFrom)} – {fmtDateLabel(dateTo)}{compareMode ? ` vs ${fmtDateLabel(prevFrom)} – ${fmtDateLabel(prevTo)}` : ""}</p>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -30213,8 +30213,8 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
               <h3 style={sectionTitle}>Revenue Composition</h3>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {[
-                  { label: "Boarding", value: accrualData.current.totals.boardingRevenue, color: "#003462" },
-                  { label: "Daycare", value: accrualData.current.totals.daycareRevenue, color: "#AF8D54" },
+                  { label: "Boarding", value: accrualData.current.totals.boardingRevenue, color: "#14532D" },
+                  { label: "Daycare", value: accrualData.current.totals.daycareRevenue, color: "#84CC16" },
                   { label: "Add-Ons & Feeding", value: accrualData.current.totals.addOnRevenue + accrualData.current.totals.feedingRevenue + accrualData.current.totals.medicationRevenue, color: "#0D7A56" },
                   { label: "Discounts", value: -accrualData.current.totals.discounts, color: C.dan },
                 ].filter(i => i.value !== 0).map((item, idx) => {
@@ -30369,23 +30369,23 @@ function K9LoadingAnimation({ size = 56 }) {
         <defs>
           <linearGradient id="k9LoadGold" x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor="#C4A46A"/>
-            <stop offset="100%" stopColor="#AF8D54"/>
+            <stop offset="100%" stopColor="#84CC16"/>
           </linearGradient>
         </defs>
         {/* Center hub with pulse */}
         <circle cx="50" cy="50" r="14" fill="url(#k9LoadGold)" style={{ animation: "k9pulse 2s ease-in-out infinite" }}/>
-        <circle cx="50" cy="50" r="5" fill="#003462" opacity="0.25"/>
+        <circle cx="50" cy="50" r="5" fill="#14532D" opacity="0.25"/>
         {/* Orbiting group */}
         <g style={{ transformOrigin: "50px 50px", animation: "k9orbit 3s linear infinite" }}>
-          <line x1="50" y1="50" x2="28" y2="26" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
-          <line x1="50" y1="50" x2="76" y2="34" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
-          <line x1="50" y1="50" x2="52" y2="78" stroke="#AF8D54" strokeWidth="1.5" opacity="0.3"/>
-          <circle cx="28" cy="26" r="7" fill="#AF8D54" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out infinite" }}/>
-          <circle cx="76" cy="34" r="7" fill="#AF8D54" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out 0.7s infinite" }}/>
-          <circle cx="52" cy="78" r="7" fill="#AF8D54" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out 1.4s infinite" }}/>
+          <line x1="50" y1="50" x2="28" y2="26" stroke="#84CC16" strokeWidth="1.5" opacity="0.3"/>
+          <line x1="50" y1="50" x2="76" y2="34" stroke="#84CC16" strokeWidth="1.5" opacity="0.3"/>
+          <line x1="50" y1="50" x2="52" y2="78" stroke="#84CC16" strokeWidth="1.5" opacity="0.3"/>
+          <circle cx="28" cy="26" r="7" fill="#84CC16" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out infinite" }}/>
+          <circle cx="76" cy="34" r="7" fill="#84CC16" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out 0.7s infinite" }}/>
+          <circle cx="52" cy="78" r="7" fill="#84CC16" opacity="0.5" style={{ animation: "k9fade 2s ease-in-out 1.4s infinite" }}/>
         </g>
       </svg>
-      <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 500, fontFamily: "'GT Eesti', -apple-system, sans-serif", letterSpacing: "0.03em" }}>Analyzing your data...</span>
+      <span style={{ fontSize: 12, color: "#6b7280", fontWeight: 500, fontFamily: "'Outfit', -apple-system, sans-serif", letterSpacing: "0.03em" }}>Analyzing your data...</span>
     </div>
   );
 }
@@ -30607,7 +30607,7 @@ function AIAssistantPage({ data, save, nav, profile }) {
                 color: C.text,
                 cursor: "pointer",
                 transition: "all 0.15s",
-                fontFamily: "'GT Eesti', -apple-system, sans-serif",
+                fontFamily: "'Outfit', -apple-system, sans-serif",
                 fontWeight: 500
               }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = C.priLt; }}
@@ -30625,7 +30625,7 @@ function AIAssistantPage({ data, save, nav, profile }) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg, fontFamily: "'GT Eesti', -apple-system, sans-serif" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", background: C.bg, fontFamily: "'Outfit', -apple-system, sans-serif" }}>
       <style>{`
   @keyframes k9orbit { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   @keyframes k9pulse { 0%, 100% { transform: scale(1); opacity: 0.8; } 50% { transform: scale(1.15); opacity: 1; } }
@@ -30652,7 +30652,7 @@ function AIAssistantPage({ data, save, nav, profile }) {
                     fontSize: 13,
                     color: C.text,
                     transition: "all 0.15s",
-                    fontFamily: "'GT Eesti', -apple-system, sans-serif",
+                    fontFamily: "'Outfit', -apple-system, sans-serif",
                     fontWeight: 500
                   }}
                   onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = C.priLt; }}
@@ -30711,7 +30711,7 @@ function AIAssistantPage({ data, save, nav, profile }) {
               padding: "8px 0",
               border: "none",
               fontSize: 13,
-              fontFamily: "'GT Eesti', -apple-system, sans-serif",
+              fontFamily: "'Outfit', -apple-system, sans-serif",
               color: C.text,
               background: "transparent",
               outline: "none",
@@ -31043,7 +31043,7 @@ function CommandBar({ data, profile, isOpen, onClose, nav, allLocations, onLocat
       zIndex: 10000,
       backdropFilter: "blur(2px)",
       paddingTop: "15vh",
-      fontFamily: "'GT Eesti', -apple-system, sans-serif"
+      fontFamily: "'Outfit', -apple-system, sans-serif"
     }} onClick={onClose}>
       <div style={{
         width: "90%",
@@ -31053,7 +31053,7 @@ function CommandBar({ data, profile, isOpen, onClose, nav, allLocations, onLocat
         border: `1px solid ${C.border}`,
         boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
         animation: "k9overlay 0.2s ease",
-        fontFamily: "'GT Eesti', -apple-system, sans-serif",
+        fontFamily: "'Outfit', -apple-system, sans-serif",
         display: "flex",
         flexDirection: "column",
         maxHeight: "70vh"
@@ -31799,7 +31799,7 @@ export default function App() {
     }
   }, [data]);
 
-  if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,fontFamily:"'GT Eesti', sans-serif"}}><div style={{textAlign:"center"}}><K9Logo size={48}/><div style={{fontSize:14,fontWeight:600,color:C.pri,marginTop:12,letterSpacing:"0.05em",textTransform:"uppercase"}}>Loading...</div></div></div>;
+  if (loading) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,fontFamily:"'Outfit', sans-serif"}}><div style={{textAlign:"center"}}><K9Logo size={48}/><div style={{fontSize:14,fontWeight:600,color:C.pri,marginTop:12,letterSpacing:"0.05em",textTransform:"uppercase"}}>Loading...</div></div></div>;
 
   const opsChildren = [
     {id:"ops-opening",label:"Opening",sub:"opening"},
@@ -31899,24 +31899,16 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-    <div style={{display:"flex",height: isDevUser && timeTravelDate ? "calc(100vh - 32px)" : "100vh",marginTop: isDevUser && timeTravelDate ? 32 : 0,fontFamily:"'GT Eesti', -apple-system, sans-serif",background:C.bg,overflow:"hidden"}}>
+    <div style={{display:"flex",height: isDevUser && timeTravelDate ? "calc(100vh - 32px)" : "100vh",marginTop: isDevUser && timeTravelDate ? 32 : 0,fontFamily:"'Outfit', -apple-system, sans-serif",background:C.bg,overflow:"hidden"}}>
       <style>{`
-        @font-face{font-family:'Canela';font-weight:700;font-style:normal;src:url('/fonts/Canela-Bold-Web.woff2') format('woff2'),url('/fonts/Canela-Bold-Web.woff') format('woff'),url('/fonts/Canela-Bold.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'Canela';font-weight:700;font-style:italic;src:url('/fonts/Canela-BoldItalic-Web.woff2') format('woff2'),url('/fonts/Canela-BoldItalic-Web.woff') format('woff'),url('/fonts/Canela-BoldItalic.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:300;font-style:normal;src:url('/fonts/GT-Eesti-Text-Light.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:300;font-style:italic;src:url('/fonts/GT-Eesti-Text-Light-Italic.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:500;font-style:normal;src:url('/fonts/GT-Eesti-Text-Medium.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:500;font-style:italic;src:url('/fonts/GT-Eesti-Text-Medium-Italic.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:700;font-style:normal;src:url('/fonts/GT-Eesti-Text-Bold.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti';font-weight:700;font-style:italic;src:url('/fonts/GT-Eesti-Text-Bold-Italic.otf') format('opentype');font-display:swap;}
-        @font-face{font-family:'GT Eesti Display';font-weight:500;font-style:normal;src:url('/fonts/GT-Eesti-Display-Medium.otf') format('opentype');font-display:swap;}
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
         *{box-sizing:border-box;margin:0;padding:0;}
         ::-webkit-scrollbar{width:6px;} ::-webkit-scrollbar-thumb{background:#C4C8D0;border-radius:3px;} ::-webkit-scrollbar-track{background:transparent;}
-        input:focus,select:focus,textarea:focus{border-color:${C.pri}!important;box-shadow:0 0 0 3px rgba(0,52,98,0.08);}
+        input:focus,select:focus,textarea:focus{border-color:${C.pri}!important;box-shadow:0 0 0 3px rgba(20,83,45,0.08);}
         input.no-focus-ring:focus{border-color:transparent!important;box-shadow:none!important;outline:none!important;}
         @media(max-width:900px){.sidebar-d{display:none!important;}.mob-h{display:flex!important;}.main-content{padding:20px 16px!important;padding-top:72px!important;}}
         @media(min-width:901px){.mob-h{display:none!important;}.mob-ov{display:none!important;}}
-        h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Canela', Georgia, serif !important;font-weight:700;}
+        h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Outfit', sans-serif !important;font-weight:700;}
         @keyframes k9toast{from{opacity:0;transform:translateX(40px);}to{opacity:1;transform:translateX(0);}}
         @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
         @keyframes k9overlay{from{opacity:0;transform:translateY(-16px) scale(0.97);}to{opacity:1;transform:translateY(0) scale(1);}}
@@ -31931,27 +31923,27 @@ export default function App() {
       <div className="sidebar-d"
         onMouseEnter={()=>{if(!filterMode)setSidebarOpen(true);}}
         onMouseLeave={()=>{if(!filterMode)setSidebarOpen(false);}}
-        style={{width:filterMode?240:(sbExpanded?240:68),background:filterMode?C.surface:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,display:"flex",flexDirection:"column",transition:"width 0.15s cubic-bezier(0.4,0,0.2,1), background 0.15s ease",overflow:"hidden",flexShrink:0,borderRight:filterMode?`1px solid ${C.border}`:"none",zIndex:50}}>
+        style={{width:filterMode?240:(sbExpanded?240:68),background:filterMode?C.surface:`linear-gradient(180deg, ${C.pri} 0%, #0D3B1E 100%)`,display:"flex",flexDirection:"column",transition:"width 0.15s cubic-bezier(0.4,0,0.2,1), background 0.15s ease",overflow:"hidden",flexShrink:0,borderRight:filterMode?`1px solid ${C.border}`:"none",zIndex:50}}>
         {filterMode ? (
           page === "clients" ? <LifecycleFilterPanel filters={lcFilters} onChange={setLcFilters} onClose={() => setLcFilterOpen(false)} /> : <GenericFilterPanel fields={getFilterFieldsForReport(rptActiveReport)} filters={rptFilters} onChange={setRptFilters} onClose={() => setRptFilterOpen(false)} presets={getPresetsForReport(rptActiveReport)} />
         ) : (<>
         <div style={{padding:"22px 15px 18px",display:"flex",alignItems:"center",justifyContent:"flex-start",gap:12,height:40,boxSizing:"content-box"}}>
           <div style={{flexShrink:0,width:34,display:"flex",alignItems:"center",justifyContent:"center"}}>{sbExpanded ? <K9Logo size={38}/> : <K9LogoMini size={34}/>}</div>
-          <div style={{overflow:"hidden",opacity:sbExpanded?1:0,transition:"opacity 0.1s",whiteSpace:"nowrap"}}><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif",letterSpacing:"0.02em"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div>
+          <div style={{overflow:"hidden",opacity:sbExpanded?1:0,transition:"opacity 0.1s",whiteSpace:"nowrap"}}><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Outfit', sans-serif",letterSpacing:"0.02em"}}>K9 Operations</div><div style={{fontSize:10,color:"rgba(132,204,22,0.6)",fontWeight:500,letterSpacing:"0.08em",textTransform:"uppercase"}}>Lite · KOL</div></div>
         </div>
-        <div style={{margin:"0 16px 10px",height:1,background:"rgba(175,141,84,0.15)"}}/>
+        <div style={{margin:"0 16px 10px",height:1,background:"rgba(132,204,22,0.15)"}}/>
         <div style={{height:44,flexShrink:0,padding:"0 10px",marginBottom:10,display:"flex",alignItems:"center"}}>
           <LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={!sbExpanded} allLocations={allLocations} profile={profile} />
         </div>
         <nav style={{flex:1,padding:"0 10px",overflowY:"auto"}}>
           {navSections.map((sec, si) => (
             <div key={si}>
-              {sec.label && sbExpanded && <div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}
-              {!sec.label && si > 0 && <div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}
+              {sec.label && sbExpanded && <div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(132,204,22,0.45)",userSelect:"none"}}>{sec.label}</div>}
+              {!sec.label && si > 0 && <div style={{margin:"10px 14px",height:1,background:"rgba(132,204,22,0.12)"}}/>}
               {sec.items.filter(item => { const perm = NAV_PERM_MAP[item.id]; return !perm || hasPermission(profile, data, perm); }).map(item=>{const act=activeNav===item.id;
                 return(<div key={item.id}>
-                  <button onMouseEnter={e=>{if(!act)e.currentTarget.style.background="rgba(175,141,84,0.08)";}} onMouseLeave={e=>{if(!act)e.currentTarget.style.background="transparent";}} onClick={()=>nav(item.id)} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"8px 14px 8px 28px":"10px 14px",justifyContent:"flex-start",border:"none",borderRadius:10,background:act?"rgba(175,141,84,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"background 0.12s, color 0.12s",whiteSpace:"nowrap",position:"relative",boxSizing:"border-box"}}>
-                    <span style={{flexShrink:0,width:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{item.icon}</span>{sbExpanded&&<><span style={{flex:1,textAlign:"left",overflow:"hidden"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(175,141,84,0.35)",background:"rgba(175,141,84,0.08)",border:"1px solid rgba(175,141,84,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'GT Eesti',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}</>}
+                  <button onMouseEnter={e=>{if(!act)e.currentTarget.style.background="rgba(132,204,22,0.08)";}} onMouseLeave={e=>{if(!act)e.currentTarget.style.background="transparent";}} onClick={()=>nav(item.id)} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"8px 14px 8px 28px":"10px 14px",justifyContent:"flex-start",border:"none",borderRadius:10,background:act?"rgba(132,204,22,0.15)":"transparent",color:act?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?12:13,fontWeight:act?600:500,cursor:"pointer",marginBottom:3,fontFamily:"inherit",transition:"background 0.12s, color 0.12s",whiteSpace:"nowrap",position:"relative",boxSizing:"border-box"}}>
+                    <span style={{flexShrink:0,width:20,display:"flex",alignItems:"center",justifyContent:"center"}}>{item.icon}</span>{sbExpanded&&<><span style={{flex:1,textAlign:"left",overflow:"hidden"}}>{item.label}{item.id==="messages"&&(()=>{const uc=(data?.messages||[]).filter(m=>m.direction==="inbound"&&!m.readAt).length;return uc>0?<span style={{marginLeft:6,background:C.acc,color:"#fff",borderRadius:10,fontSize:10,fontWeight:700,padding:"1px 6px",minWidth:18,display:"inline-flex",alignItems:"center",justifyContent:"center"}}>{uc}</span>:null;})()}</span>{item.hotkey&&hkHints&&<kbd style={{fontSize:9,fontWeight:600,color:"rgba(132,204,22,0.35)",background:"rgba(132,204,22,0.08)",border:"1px solid rgba(132,204,22,0.12)",borderRadius:4,padding:"1px 5px",fontFamily:"'Outfit',monospace",lineHeight:1.4,flexShrink:0}}>{item.hotkey}</kbd>}</>}
                   </button>
                 </div>);
               })}
@@ -31961,37 +31953,37 @@ export default function App() {
         <div style={{padding:"14px 10px",display:"flex",flexDirection:"column",gap:6,position:"relative"}}>
           {sbExpanded && (
             <div style={{position:"relative"}}>
-              <button onClick={() => setAccountSwitchOpen(!accountSwitchOpen)} style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"6px 8px",border:"none",borderRadius:8,background:accountSwitchOpen ? "rgba(175,141,84,0.15)" : "transparent",color:"rgba(175,141,84,0.6)",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,textAlign:"left",transition:"background 0.15s"}}>
-                <div style={{width:26,height:26,borderRadius:13,background:"rgba(175,141,84,0.2)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+              <button onClick={() => setAccountSwitchOpen(!accountSwitchOpen)} style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"6px 8px",border:"none",borderRadius:8,background:accountSwitchOpen ? "rgba(132,204,22,0.15)" : "transparent",color:"rgba(132,204,22,0.6)",cursor:"pointer",fontFamily:"inherit",fontSize:12,fontWeight:600,textAlign:"left",transition:"background 0.15s"}}>
+                <div style={{width:26,height:26,borderRadius:13,background:"rgba(132,204,22,0.2)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                   <span style={{fontSize:11,fontWeight:800,color:C.acc}}>{(profile?.full_name || profile?.email || "?")[0].toUpperCase()}</span>
                 </div>
-                <div style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"rgba(175,141,84,0.55)",fontSize:11}}>{profile?.full_name || profile?.email}</div>
-                <span style={{fontSize:8,color:"rgba(175,141,84,0.3)",transform:accountSwitchOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.15s"}}>&#9650;</span>
+                <div style={{flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:"rgba(132,204,22,0.55)",fontSize:11}}>{profile?.full_name || profile?.email}</div>
+                <span style={{fontSize:8,color:"rgba(132,204,22,0.3)",transform:accountSwitchOpen?"rotate(180deg)":"rotate(0deg)",transition:"transform 0.15s"}}>&#9650;</span>
               </button>
 
               {/* Quick-switch dropdown */}
               {accountSwitchOpen && (
-                <div style={{position:"absolute",bottom:"100%",left:0,right:0,marginBottom:6,background:"#0B2545",border:"1px solid rgba(175,141,84,0.2)",borderRadius:10,boxShadow:"0 -8px 32px rgba(0,0,0,0.4)",overflow:"hidden",zIndex:200,maxHeight:280,overflowY:"auto"}}>
-                  <div style={{padding:"10px 12px 6px",fontSize:9,fontWeight:700,color:"rgba(175,141,84,0.35)",textTransform:"uppercase",letterSpacing:"0.08em"}}>Switch Account</div>
+                <div style={{position:"absolute",bottom:"100%",left:0,right:0,marginBottom:6,background:"#0D3B1E",border:"1px solid rgba(132,204,22,0.2)",borderRadius:10,boxShadow:"0 -8px 32px rgba(0,0,0,0.4)",overflow:"hidden",zIndex:200,maxHeight:280,overflowY:"auto"}}>
+                  <div style={{padding:"10px 12px 6px",fontSize:9,fontWeight:700,color:"rgba(132,204,22,0.35)",textTransform:"uppercase",letterSpacing:"0.08em"}}>Switch Account</div>
                   {teamAccounts.length === 0 ? (
                     <div style={{padding:"12px",fontSize:11,color:"rgba(255,255,255,0.3)",textAlign:"center",fontStyle:"italic"}}>No other accounts at this location</div>
                   ) : teamAccounts.map(acct => (
                     <button key={acct.id} onClick={() => { setSwitchTarget(acct); setSwitchPassword(""); setSwitchError(""); setAccountSwitchOpen(false); }}
                       style={{width:"100%",display:"flex",alignItems:"center",gap:10,padding:"10px 12px",border:"none",background:"transparent",color:"rgba(255,255,255,0.8)",cursor:"pointer",fontFamily:"inherit",fontSize:12,textAlign:"left",transition:"background 0.1s"}}
-                      onMouseEnter={e => e.currentTarget.style.background = "rgba(175,141,84,0.1)"}
+                      onMouseEnter={e => e.currentTarget.style.background = "rgba(132,204,22,0.1)"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                     >
-                      <div style={{width:28,height:28,borderRadius:14,background:"rgba(175,141,84,0.15)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      <div style={{width:28,height:28,borderRadius:14,background:"rgba(132,204,22,0.15)",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
                         <span style={{fontSize:12,fontWeight:800,color:C.acc}}>{(acct.full_name || acct.email || "?")[0].toUpperCase()}</span>
                       </div>
                       <div style={{flex:1,overflow:"hidden"}}>
                         <div style={{fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{acct.full_name || acct.email}</div>
                         <div style={{fontSize:10,color:"rgba(255,255,255,0.35)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{acct.email}</div>
                       </div>
-                      <div style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:"rgba(175,141,84,0.1)",color:"rgba(175,141,84,0.5)",fontWeight:600,textTransform:"uppercase"}}>{acct.role}</div>
+                      <div style={{fontSize:9,padding:"2px 6px",borderRadius:4,background:"rgba(132,204,22,0.1)",color:"rgba(132,204,22,0.5)",fontWeight:600,textTransform:"uppercase"}}>{acct.role}</div>
                     </button>
                   ))}
-                  <div style={{borderTop:"1px solid rgba(175,141,84,0.1)",padding:"6px 12px"}}>
+                  <div style={{borderTop:"1px solid rgba(132,204,22,0.1)",padding:"6px 12px"}}>
                     <button onClick={signOut} style={{width:"100%",padding:"8px",border:"none",borderRadius:6,background:"rgba(239,68,68,0.12)",color:"rgba(255,150,150,0.8)",cursor:"pointer",fontSize:11,fontFamily:"inherit",fontWeight:600}}>Sign Out</button>
                   </div>
                 </div>
@@ -32034,11 +32026,11 @@ export default function App() {
 
       {/* Mobile Header */}
       <div className="mob-h" style={{display:"none",position:"fixed",top:0,left:0,right:0,height:56,background:C.pri,alignItems:"center",justifyContent:"space-between",padding:"0 16px",zIndex:100}}>
-        <div style={{display:"flex",alignItems:"center",gap:10}}><button onClick={()=>setMobileMenuOpen(!mobileMenuOpen)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",padding:4}}><I.Menu/></button><div><span style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</span><div style={{fontSize:9,color:"rgba(175,141,84,0.6)",letterSpacing:"0.05em",textTransform:"uppercase"}}>{(allLocations.find(l=>l.id===currentLocation)||allLocations[1]||allLocations[0]).name}</div></div></div>
+        <div style={{display:"flex",alignItems:"center",gap:10}}><button onClick={()=>setMobileMenuOpen(!mobileMenuOpen)} style={{background:"none",border:"none",color:C.acc,cursor:"pointer",padding:4}}><I.Menu/></button><div><span style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Outfit', sans-serif"}}>K9 Operations</span><div style={{fontSize:9,color:"rgba(132,204,22,0.6)",letterSpacing:"0.05em",textTransform:"uppercase"}}>{(allLocations.find(l=>l.id===currentLocation)||allLocations[1]||allLocations[0]).name}</div></div></div>
         <K9LogoMini size={28}/>
       </div>
 
-      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #002347 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Canela', Georgia, serif"}}>K9 Resorts</div><div style={{fontSize:10,color:"rgba(175,141,84,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Luxury Pet Hotel</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} allLocations={allLocations} profile={profile} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(175,141,84,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(175,141,84,0.12)"}}/>}{sec.items.map(item=>(<div key={item.id}><button onClick={()=>{nav(item.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(175,141,84,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span></button></div>))}</div>))}</div></div>}
+      {mobileMenuOpen&&<div className="mob-ov" style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",zIndex:200}} onClick={()=>setMobileMenuOpen(false)}><div onClick={e=>e.stopPropagation()} style={{width:260,height:"100%",background:`linear-gradient(180deg, ${C.pri} 0%, #0D3B1E 100%)`,padding:"24px 16px",overflowY:"auto"}}><div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><K9Logo size={38}/><div><div style={{fontSize:16,fontWeight:700,color:C.acc,fontFamily:"'Outfit', sans-serif"}}>K9 Operations</div><div style={{fontSize:10,color:"rgba(132,204,22,0.6)",letterSpacing:"0.08em",textTransform:"uppercase"}}>Lite · KOL</div></div></div><div style={{marginBottom:16}}><LocationSelector currentLocation={currentLocation} onLocationChange={handleLocationChange} collapsed={false} allLocations={allLocations} profile={profile} /></div>{navSections.map((sec,si)=>(<div key={si}>{sec.label&&<div style={{padding:"14px 14px 6px",fontSize:10,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase",color:"rgba(132,204,22,0.45)",userSelect:"none"}}>{sec.label}</div>}{!sec.label&&si>0&&<div style={{margin:"10px 14px",height:1,background:"rgba(132,204,22,0.12)"}}/>}{sec.items.map(item=>(<div key={item.id}><button onClick={()=>{nav(item.id);setMobileMenuOpen(false);}} style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:item.indent?"10px 14px 10px 28px":"12px 14px",border:"none",borderRadius:10,background:activeNav===item.id?"rgba(132,204,22,0.15)":"transparent",color:activeNav===item.id?C.acc:"rgba(255,255,255,0.85)",fontSize:item.indent?13:14,fontWeight:activeNav===item.id?600:500,cursor:"pointer",marginBottom:4,fontFamily:"inherit"}}>{item.icon}<span style={{flex:1,textAlign:"left"}}>{item.label}</span></button></div>))}</div>))}</div></div>}
 
       {/* Main */}
       <div className="main-content" style={{flex:1,overflow:"auto",padding:"28px 32px",scrollbarGutter:"stable"}}>

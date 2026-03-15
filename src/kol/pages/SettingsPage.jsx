@@ -110,7 +110,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       {tab === null ? (
         // Grid view
         <div>
-          <h2 style={{ margin: "0 0 24px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>Settings</h2>
+          <h2 style={{ margin: "0 0 24px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>Settings</h2>
 
           {/* Search Bar */}
           <div style={{ marginBottom: 32 }}>

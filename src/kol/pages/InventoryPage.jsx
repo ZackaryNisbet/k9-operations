@@ -328,7 +328,7 @@ function CategorySection({ category, subcategories, counts, isReadOnly, onCountC
           <div style={{ transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)", transition: "transform 0.2s", color: C.pri }}>
             <I.ChevronDown />
           </div>
-          <span style={{ fontSize: 14, fontWeight: 700, color: C.pri, fontFamily: "'GT Eesti', sans-serif" }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.pri, fontFamily: "'Outfit', sans-serif" }}>
             {category}
           </span>
           <span style={{ fontSize: 11, color: C.textMut, fontWeight: 500 }}>
@@ -1665,7 +1665,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
   // ── Render ──
   return (
-    <div style={{ fontFamily: "'GT Eesti', -apple-system, BlinkMacSystemFont, sans-serif", background: C.bg, minHeight: "100vh", padding: "24px 20px" }}>
+    <div style={{ fontFamily: "'Outfit', -apple-system, BlinkMacSystemFont, sans-serif", background: C.bg, minHeight: "100vh", padding: "24px 20px" }}>
       <style>{`
         input[type=number]::-webkit-inner-spin-button,
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -1676,7 +1676,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       <div className="inv-fade-in" style={{ marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif", lineHeight: 1.2 }}>
+            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif", lineHeight: 1.2 }}>
               Weekly Inventory Count
             </h1>
             <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>
@@ -1845,7 +1845,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       ) : catalogItems.length === 0 && !loading ? (
         <Card style={{ padding: 48, textAlign: "center" }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>📦</div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8, fontFamily: "'Canela', Georgia, serif" }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8, fontFamily: "'Outfit', sans-serif" }}>
             No inventory items yet
           </div>
           <div style={{ fontSize: 14, color: C.textSec }}>
@@ -1873,7 +1873,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           {!snapshot && currentWeekStart !== thisWeekStart && !loading && (
             <Card style={{ padding: 32, textAlign: "center", marginBottom: 16 }}>
               <div style={{ fontSize: 36, marginBottom: 10 }}>🗓</div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6, fontFamily: "'Canela', Georgia, serif" }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6, fontFamily: "'Outfit', sans-serif" }}>
                 No count for this week
               </div>
               <div style={{ fontSize: 13, color: C.textSec }}>
@@ -1911,7 +1911,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             <div style={{ marginTop: 24 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>
                     Ad-hoc Items
                   </h3>
                   <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>
@@ -2016,7 +2016,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                     <div style={{ fontSize: 11, fontWeight: 600, color: C.textSec, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 2 }}>
                       Total Inventory Value
                     </div>
-                    <div style={{ fontSize: 32, fontWeight: 800, color: C.suc, fontFamily: "'Canela', Georgia, serif" }}>
+                    <div style={{ fontSize: 32, fontWeight: 800, color: C.suc, fontFamily: "'Outfit', sans-serif" }}>
                       {fmtCurrency(totalValue)}
                     </div>
                   </div>

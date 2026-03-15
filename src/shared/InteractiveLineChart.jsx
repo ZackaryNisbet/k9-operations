@@ -7,7 +7,7 @@ const _chartFmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toLocaleString
 const _chartFmt$k = (v) => v >= 10000 ? `$${(v / 1000).toFixed(1)}k` : v >= 1000 ? `$${(v / 1000).toFixed(2)}k` : _chartFmt$(v);
 
 // ── Revenue Intelligence: Animated Line Chart (module-level for animation persistence) ──
-const InteractiveLineChart = React.memo(({ chartData, color = "#003462", compareColor = "#AF8D54", showCompare, height = 240, id = "chart", animationEpoch }) => {
+const InteractiveLineChart = React.memo(({ chartData, color = "#14532D", compareColor = "#84CC16", showCompare, height = 240, id = "chart", animationEpoch }) => {
   const svgRef = React.useRef(null);
   const [display, setDisplay] = React.useState(null);
   const [hover, setHover] = React.useState(null);
@@ -93,7 +93,7 @@ const InteractiveLineChart = React.memo(({ chartData, color = "#003462", compare
           return (
             <g key={i}>
               <line x1={pad.left} y1={yPos} x2={w - pad.right} y2={yPos} stroke="#E5E7EB" strokeWidth="0.5" />
-              <text x={pad.left - 6} y={yPos + 3} textAnchor="end" fill="#8B95A5" fontSize="9" fontFamily="'GT Eesti', sans-serif">{_chartFmt$k(val)}</text>
+              <text x={pad.left - 6} y={yPos + 3} textAnchor="end" fill="#8B95A5" fontSize="9" fontFamily="'Outfit', sans-serif">{_chartFmt$k(val)}</text>
             </g>
           );
         })}

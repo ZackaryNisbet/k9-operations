@@ -785,7 +785,7 @@ function LiteReportsPage({ data, nav }) {
   const categoryData = useMemo(() => {
     const cats = cashBasisData.current.byCategory;
     const total = cashBasisData.current.total;
-    const colors = ["#003462", "#AF8D54", "#0D7A56", "#1A5EC4", "#C4720C", "#6366F1", "#C42B2B", "#059669"];
+    const colors = ["#14532D", "#84CC16", "#0D7A56", "#1A5EC4", "#C4720C", "#6366F1", "#C42B2B", "#059669"];
     return Object.entries(cats).map(([label, value], idx) => ({ label, value, percent: total > 0 ? (value / total) * 100 : 0, color: colors[idx % colors.length] })).sort((a, b) => b.value - a.value);
   }, [cashBasisData.current]);
 
@@ -994,7 +994,7 @@ function LiteReportsPage({ data, nav }) {
       `}</style>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
         <div>
-          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, fontFamily: "Canela, serif", color: C.text }}>Revenue Intelligence</h1>
+          <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, fontFamily: "Outfit, sans-serif", color: C.text }}>Revenue Intelligence</h1>
           <p style={{ margin: "4px 0 0 0", fontSize: 11, color: C.textMut }}>{fmtDateLabel(dateFrom)} – {fmtDateLabel(dateTo)} {compareMode && `vs ${fmtDateLabel(prevFrom)} – ${fmtDateLabel(prevTo)}`}</p>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>

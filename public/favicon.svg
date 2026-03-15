@@ -1,21 +1,9 @@
-// K9 Operations — Loading Animation (Pit Bull Mark Pulse)
-
-import React from "react";
-import { C } from "./theme";
-
-function K9LoadingAnimation({ size = 56, message = "Loading...", subMessage }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, padding: "16px 0" }}>
-      <style>{`
-        @keyframes k9pulse {
-          0%, 100% { transform: scale(0.95); opacity: 0.6; }
-          50% { transform: scale(1.05); opacity: 1; }
-        }
-      `}</style>
-      <div style={{ animation: "k9pulse 2s ease-in-out infinite" }}>
-        <svg width={size} height={size} viewBox="163.70 160.20 678.60 678.60" fill={C.pri} xmlns="http://www.w3.org/2000/svg">
-          <g transform="translate(0,1024) scale(0.1,-0.1)" stroke="none">
-            <path d="M5710 7969 c-414 -27 -846 -110 -1098 -210 -265 -105 -456 -268 -513
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="64" ry="64" fill="#14532D"/>
+  <g transform="translate(-33.08,-31.07) scale(0.574713)">
+    <g transform="translate(0,1024) scale(0.1,-0.1)" fill="#FFFFFF" stroke="none">
+      <path d="M5710 7969 c-414 -27 -846 -110 -1098 -210 -265 -105 -456 -268 -513
 -438 -29 -86 -19 -111 46 -111 51 0 141 29 230 73 l60 29 -25 -27 c-79 -86
 -250 -164 -455 -208 -158 -35 -260 -40 -545 -31 -490 15 -595 10 -800 -38
 -107 -25 -251 -93 -312 -147 -127 -113 -173 -275 -133 -463 7 -37 21 -79 29
@@ -49,15 +37,6 @@ M2633 5000 c-106 -64 -125 -336 -39 -563 86 -229 310 -432 583 -531 140 -50
 274 -145 54 -254 70 -538 81 -129 5 -270 16 -313 24 -291 57 -503 208 -617
 439 -27 56 -57 129 -65 162 -28 109 -15 217 27 231 61 19 191 -39 428 -189 74
 -47 136 -84 138 -82 9 9 -272 264 -428 390 -129 104 -192 125 -257 85z"/>
-          </g>
-        </svg>
-      </div>
-      <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: C.textSec, fontFamily: "'Outfit', sans-serif" }}>{message}</div>
-        {subMessage && <div style={{ fontSize: 12, color: C.textMut, marginTop: 4, fontFamily: "'Outfit', sans-serif" }}>{subMessage}</div>}
-      </div>
-    </div>
-  );
-}
-
-export default K9LoadingAnimation;
+    </g>
+  </g>
+</svg>
