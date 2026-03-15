@@ -36,6 +36,8 @@ import RefundsPage from "./pages/RefundsPage";
 import EnterpriseOpsMatrix from "./enterprise/OpsMatrix";
 import EnterpriseAttendance from "./enterprise/Attendance";
 import EnterpriseUserManagement from "./enterprise/UserManagement";
+import InventoryPage from "./pages/InventoryPage";
+import InventoryReportPage from "./pages/InventoryReportPage";
 
 class LeanAppErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null, info: null }; }
@@ -57,6 +59,7 @@ const LEAN_NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
   { id: "ops-hub", label: "Operations", icon: "Clipboard" },
+  { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "TV", icon: "Monitor" },
   { id: "roadmap", label: "Roadmap", icon: "Map" },
@@ -278,7 +281,7 @@ function LeanAppInner() {
   }, [currentLocation, user?.id, liveAuditLog.length, mockData?.clients]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard", "lifecycle", "funnel", "ops-hub", "reports", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -321,6 +324,8 @@ function LeanAppInner() {
       case "enterprise-ops": return "Operations Matrix";
       case "enterprise-attendance": return "Attendance";
       case "enterprise-users": return "User Management";
+      case "inventory": return "Inventory";
+      case "inventory-report": return "Inventory Reports";
       default: return pg;
     }
   }, [mockData]);
@@ -404,6 +409,8 @@ function LeanAppInner() {
       "reports": null,
       "photos": "Photos Module",
       "settings": null, // settings handles its own per-tab permissions
+      "inventory": "Inventory Management",
+      "inventory-report": "Inventory Management",
       "enterprise-ops": "Enterprise View",
       "enterprise-attendance": "Enterprise View",
       "enterprise-users": "Enterprise View",
@@ -524,6 +531,10 @@ function LeanAppInner() {
         return <EnterpriseAttendance />;
       case "enterprise-users":
         return <EnterpriseUserManagement profile={profile} />;
+      case "inventory":
+        return <InventoryPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "inventory-report":
+        return <InventoryReportPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "roadmap":
         return <RoadmapPage nav={nav} />;
       case "settings":
