@@ -2475,9 +2475,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   }, [activeFilterCount, tabLists, clientStats, clientTabMap, lcFilters]);
 
   const tabDefs = [
-    { id: "conversion", label: "Conversion", count: filteredTabCounts ? filteredTabCounts.conversion : tabLists.conversion.length, color: C.acc },
+    { id: "conversion", label: "Leads", count: filteredTabCounts ? filteredTabCounts.conversion : tabLists.conversion.length, color: C.acc },
     { id: "active", label: "Active Customers", count: filteredTabCounts ? filteredTabCounts.active : tabLists.active.length, color: C.pri },
-    { id: "retention", label: "Retention", count: filteredTabCounts ? filteredTabCounts.retention : tabLists.retention.length, color: C.dan },
+    { id: "retention", label: "Lapsed", count: filteredTabCounts ? filteredTabCounts.retention : tabLists.retention.length, color: C.dan },
     { id: "cold", label: "Cold", count: filteredTabCounts ? filteredTabCounts.cold : tabLists.cold.length, color: C.textSec },
     { id: "all", label: "All", count: filteredTabCounts ? filteredTabCounts.all : tabLists.all.length, color: C.info },
   ];
@@ -4085,7 +4085,7 @@ function FunnelPage({ data, save, nav, profile, addGlobalToast }) {
       {/* ── Header ── */}
       <div style={{display:"flex",alignItems:"flex-end",justifyContent:"space-between",marginBottom:24,animation:"funnelSlideIn 0.3s ease-out"}}>
         <div>
-          <h1 style={{margin:0,fontSize:26,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>Conversion Funnel</h1>
+          <h1 style={{margin:0,fontSize:26,fontWeight:800,color:C.text,letterSpacing:"-0.03em"}}>Lead Funnel</h1>
           <p style={{margin:"4px 0 0",fontSize:13,color:C.textSec}}>{rangeLabel} — {new Date(startDate).toLocaleDateString("en-US",{month:"short",day:"numeric"})} to {new Date(endDate).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}</p>
         </div>
       </div>
@@ -11930,7 +11930,7 @@ function LeanAppInner() {
   const breadcrumbLabel = useCallback((pg, prms) => {
     switch(pg) {
       case "lifecycle": return "Customer Lifecycle";
-      case "funnel": return "Conversion Funnel";
+      case "funnel": return "Lead Funnel";
       case "ops-hub": return "Operations";
       case "ops-opening": return "Opening Checklist";
       case "ops-fe": return "FE Checklist";
