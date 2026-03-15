@@ -34,8 +34,8 @@ const DASH_CSS = `
   to   { transform: scaleX(1); }
 }
 @keyframes dashPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(0,52,98,0.12); }
-  50%      { box-shadow: 0 0 0 5px rgba(0,52,98,0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(20,83,45,0.12); }
+  50%      { box-shadow: 0 0 0 5px rgba(20,83,45,0); }
 }
 @keyframes calFadeIn {
   from { opacity: 0; transform: translateY(4px) scale(0.98); }
@@ -117,7 +117,7 @@ const card = (delay = 0) => ({
 });
 
 const cardHover = {
-  onMouseEnter: (e) => { e.currentTarget.style.boxShadow = "0 3px 10px rgba(0,52,98,0.07)"; e.currentTarget.style.borderColor = C.border; },
+  onMouseEnter: (e) => { e.currentTarget.style.boxShadow = "0 3px 10px rgba(20,83,45,0.07)"; e.currentTarget.style.borderColor = C.border; },
   onMouseLeave: (e) => { e.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,0.04)"; e.currentTarget.style.borderColor = C.borderLight; },
 };
 
@@ -923,7 +923,7 @@ function SnapPill({ label, value, color, sub }) {
 function KPICard({ label, value, prefix = "", suffix = "", decimals = 0, trend, color, sparkData, delay = 0 }) {
   return (
     <div style={{ ...card(delay), padding: "8px 12px" }}
-      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 3px 10px rgba(0,52,98,0.07)"; e.currentTarget.style.borderColor = C.border; }}
+      onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 3px 10px rgba(20,83,45,0.07)"; e.currentTarget.style.borderColor = C.border; }}
       onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,0.04)"; e.currentTarget.style.borderColor = C.borderLight; }}
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 2 }}>

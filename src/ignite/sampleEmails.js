@@ -4,7 +4,7 @@
  */
 
 export const SAMPLE_WEB_FORM_EMAIL = {
-  subject: 'New Web Form Submission - K9 Resorts Adair Forsythe',
+  subject: 'New Web Form Submission - K9 Operations Adair Forsythe',
   from: 'noreply@leads.idigitalstrategies.com',
   html: `<!DOCTYPE html>
 <html>
@@ -65,7 +65,7 @@ export const SAMPLE_WEB_FORM_EMAIL = {
 };
 
 export const SAMPLE_PHONE_CALL_EMAIL = {
-  subject: 'New Phone Call Lead - K9 Resorts Adair Forsythe',
+  subject: 'New Phone Call Lead - K9 Operations Adair Forsythe',
   from: 'noreply@leads.idigitalstrategies.com',
   html: `<!DOCTYPE html>
 <html>
@@ -118,7 +118,7 @@ export const SAMPLE_PHONE_CALL_EMAIL = {
 };
 
 export const SAMPLE_AD_CLICK_EMAIL = {
-  subject: 'New Ad Click Lead - K9 Resorts Adair Forsythe',
+  subject: 'New Ad Click Lead - K9 Operations Adair Forsythe',
   from: 'noreply@leads.idigitalstrategies.com',
   html: `<!DOCTYPE html>
 <html>
@@ -157,7 +157,7 @@ export const SAMPLE_AD_CLICK_EMAIL = {
         </tr>
         <tr>
           <td style="padding: 8px 0; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">Landing Page</td>
-          <td style="padding: 8px 0; border-bottom: 1px solid #eee;" data-field="landing_page">k9resorts.com/cherry-hill/boarding</td>
+          <td style="padding: 8px 0; border-bottom: 1px solid #eee;" data-field="landing_page">k9operations.com/cherry-hill/boarding</td>
         </tr>
         <tr>
           <td style="padding: 8px 0; border-bottom: 1px solid #eee; font-weight: bold; color: #555;">Service Interest</td>
