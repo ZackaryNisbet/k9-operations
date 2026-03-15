@@ -139,13 +139,13 @@ export async function handleWebhook(req, supabaseClient) {
     // Match to existing clients via gingr_owners (IGN-002 enhanced matching)
     const { data: owners } = await supabaseClient
       .from('gingr_owners')
-      .select('id, email, phone, first_name, last_name')
+      .select('id, gingr_id, email, cell_phone, home_phone, first_name, last_name')
       .eq('location_id', locationId);
 
     const clientList = (owners || []).map((c) => ({
-      id: c.id,
+      id: 'g' + c.gingr_id,
       email: c.email,
-      phone: c.phone,
+      phone: c.cell_phone || c.home_phone || null,
       firstName: c.first_name,
       lastName: c.last_name,
     }));
