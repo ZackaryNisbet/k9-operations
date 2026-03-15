@@ -3,10 +3,21 @@
 import { readFileSync } from "fs";
 
 const SUPABASE_URL = "https://xuzvqcpthqikyroqhypw.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_1oUZaWKWDGpgAH3tGEOWOw__LG84Jep";
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "sb_secret_4TuMsmxryVzBR0ojYhF7Tg_uUb5v_eN";
 const LOCATION_ID = "cherry-hill";
 
-const raw = JSON.parse(readFileSync("/home/user/workspace/inventory_items.json", "utf-8"));
+import { dirname, resolve } from "path";
+import { fileURLToPath } from "url";
+const __dirname = dirname(fileURLToPath(import.meta.url));
+// Try local workspace path first, then repo-relative path
+let jsonPath;
+try {
+  jsonPath = resolve(__dirname, "../inventory_items.json");
+  readFileSync(jsonPath);
+} catch {
+  jsonPath = "/home/user/workspace/inventory_items.json";
+}
+const raw = JSON.parse(readFileSync(jsonPath, "utf-8"));
 
 const rows = raw.map((item, i) => ({
   location_id: LOCATION_ID,
@@ -31,8 +42,8 @@ const res = await fetch(`${SUPABASE_URL}/rest/v1/inventory_catalog`, {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
-    "apikey": SUPABASE_ANON_KEY,
-    "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+    "apikey": SUPABASE_KEY,
+    "Authorization": `Bearer ${SUPABASE_KEY}`,
     "Prefer": "return=minimal",
   },
   body: JSON.stringify(rows),
