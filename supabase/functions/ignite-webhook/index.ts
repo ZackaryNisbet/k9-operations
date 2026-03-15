@@ -56,7 +56,7 @@ const MATCH_CONFIDENCE = {
   NAME_LOW: 0.5,
 };
 
-// ─── Inlined Parser ─────────────────────────────────────────────────────────
+// ─── Inlined Parser (v2 — rewritten for real Ignite emails) ────────────────
 
 function normalizePhone(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -66,74 +66,215 @@ function normalizePhone(raw: string | null | undefined): string | null {
   return digits || null;
 }
 
-function detectLeadType(
-  subject: string,
-  bodyText: string,
-): string {
-  const s = (subject || "").toLowerCase();
-  const b = (bodyText || "").toLowerCase();
-  if (s.includes("phone call") || b.includes("phone call"))
-    return LEAD_TYPES.PHONE_CALL;
-  if (s.includes("ad click") || b.includes("ad click"))
-    return LEAD_TYPES.AD_CLICK;
-  return LEAD_TYPES.WEB_FORM;
+// ─── Label-to-key mapping for table row extraction ─────────────────────────
+const LABEL_MAP: Record<string, string> = {
+  // Common fields
+  "Time": "time",
+  "Profile": "profile",
+  "City": "city",
+  "State": "state",
+  "Zip": "zip",
+  "Country": "country",
+  "Multi Unit Name": "multi_unit_name",
+  "Lead ID": "lead_id",
+  // Phone call specific
+  "Phone Name": "phone_name",
+  "Tracking Number": "tracking_number",
+  "Destination Number": "destination_number",
+  "Caller Number": "caller_number",
+  "Caller Name": "caller_name",
+  "Answer Status": "answer_status",
+  "Line Type": "line_type",
+  "Call Duration": "call_duration",
+  "Recording": "recording",
+  "Call Transcription": "call_transcription",
+  // Appointment specific
+  "Lead Page": "lead_page",
+  "Landing Page": "landing_page",
+  "Browser": "browser",
+  "Device": "device",
+  "Sales Value": "sales_value",
+  "BookingTitle": "booking_title",
+  "Services": "services",
+  "Dates": "dates",
+  "EstimatedSubtotal": "estimated_subtotal",
+  "EstimatedTax": "estimated_tax",
+  "EstimatedTotal": "estimated_total",
+  "AgreedToTerms": "agreed_to_terms",
+};
+
+// Keys promoted to top-level parsed fields (excluded from form_data)
+const PROMOTED_KEYS = new Set([
+  "caller_name", "caller_number", "tracking_number",
+  "recording", "call_transcription", "lead_id",
+  "lead_page", "landing_page", "booking_title",
+  "services", "sales_value", "profile",
+  "estimated_subtotal", "estimated_tax", "estimated_total",
+]);
+
+// ─── Table Row Extraction ──────────────────────────────────────────────────
+
+interface RowData {
+  text: string;
+  html: string;
 }
 
-function extractName(fields: Record<string, string>): {
-  firstName: string;
-  lastName: string;
-} {
-  let firstName = fields.first_name || "";
-  let lastName = fields.last_name || "";
-  if (!firstName && !lastName && fields.caller_name) {
-    const parts = fields.caller_name.trim().split(/\s+/);
-    firstName = parts[0] || "";
-    lastName = parts.slice(1).join(" ") || "";
-  }
-  return { firstName: firstName.trim(), lastName: lastName.trim() };
-}
-
-function parseRegex(rawHtml: string): Record<string, string> {
-  const fields: Record<string, string> = {};
-
-  // Extract data-field values
-  const dataFieldRe =
-    /<(?:span|td|div)[^>]*data-field="([^"]+)"[^>]*>([^<]*)/g;
+function extractTableRows(rawHtml: string): Map<string, RowData> {
+  const rows = new Map<string, RowData>();
+  const rowRe =
+    /<tr[^>]*>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi;
   let m: RegExpExecArray | null;
-  while ((m = dataFieldRe.exec(rawHtml)) !== null) {
-    fields[m[1]] = m[2].trim();
-  }
 
-  // Extract recording URLs from <a> tags with data-field
-  const linkFieldRe =
-    /<a[^>]*data-field="call_recording_url"[^>]*href="([^"]+)"[^>]*>/g;
-  while ((m = linkFieldRe.exec(rawHtml)) !== null) {
-    fields.call_recording_url = m[1];
-  }
+  while ((m = rowRe.exec(rawHtml)) !== null) {
+    const label = m[1].replace(/<[^>]+>/g, "").trim();
+    const valueHtml = m[2].trim();
+    const text = valueHtml
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .trim();
 
-  // Fallback: extract table rows
-  if (Object.keys(fields).length === 0) {
-    const rowRe =
-      /<tr[^>]*>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi;
-    while ((m = rowRe.exec(rawHtml)) !== null) {
-      const label = m[1].replace(/<[^>]+>/g, "").trim();
-      const value = m[2].replace(/<[^>]+>/g, "").trim();
-      if (label && value) {
-        const key = label
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, "_")
-          .replace(/_+$/, "");
-        fields[key] = value;
-      }
-      if (label.toLowerCase().includes("recording")) {
-        const hrefMatch = m[2].match(/href="([^"]+)"/);
-        if (hrefMatch) fields.call_recording_url = hrefMatch[1];
-      }
+    if (label) {
+      rows.set(label, { text, html: valueHtml });
     }
   }
 
-  return fields;
+  return rows;
 }
+
+// ─── Profile ID Extraction from embedded URLs ──────────────────────────────
+
+function extractProfileIdFromUrls(html: string): string | null {
+  const match = html.match(/\/profile\/(\d+)\//);
+  return match?.[1] || null;
+}
+
+// ─── Lead ID Extraction (from text field or URLs) ──────────────────────────
+
+function extractLeadIdFromUrls(html: string): string | null {
+  const match = html.match(/[?&]lid=(\d+)/);
+  return match?.[1] || null;
+}
+
+// ─── Recording URL Extraction ──────────────────────────────────────────────
+
+interface RecordingInfo {
+  playUrl: string | null;
+  downloadUrl: string | null;
+  hash: string | null;
+}
+
+function extractRecordingFromHtml(cellHtml: string): RecordingInfo {
+  const playMatch = cellHtml.match(
+    /href="(https:\/\/leads\.idigitalstrategies\.com\/recording\/RE[0-9a-f]{32}\/play[^"]*)"/,
+  );
+  const downloadMatch = cellHtml.match(
+    /href="(https:\/\/leads\.idigitalstrategies\.com\/recording\/RE[0-9a-f]{32}\/download[^"]*)"/,
+  );
+  const hashMatch = cellHtml.match(/recording\/(RE[0-9a-f]{32})\//);
+
+  return {
+    playUrl: playMatch?.[1] || null,
+    downloadUrl: downloadMatch?.[1] || null,
+    hash: hashMatch?.[1] || null,
+  };
+}
+
+// ─── Lead Source Extraction ────────────────────────────────────────────────
+
+function extractLeadSource(html: string): string | null {
+  // "This lead came from <strong ...>{source}</strong>."
+  const match = html.match(
+    /This lead came from\s*<strong[^>]*>([^<]+)<\/strong>/i,
+  );
+  return match?.[1]?.trim() || null;
+}
+
+// ─── Lead Type Detection ───────────────────────────────────────────────────
+
+function detectLeadType(subject: string, html: string): string {
+  const s = (subject || "").toLowerCase();
+  // Also check the <h2> heading in the email body
+  const h2Match = html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/i);
+  const heading = h2Match
+    ? h2Match[1].replace(/<[^>]+>/g, "").trim().toLowerCase()
+    : "";
+
+  if (s.includes("phone call") || heading.includes("phone call"))
+    return LEAD_TYPES.PHONE_CALL;
+  if (s.includes("appointment") || heading.includes("appointment"))
+    return LEAD_TYPES.WEB_FORM;
+  if (s.includes("ad click") || heading.includes("ad click"))
+    return LEAD_TYPES.AD_CLICK;
+
+  // Fallback: if recording links exist, it's a phone call
+  if (/\/recording\/RE[0-9a-f]{32}\//.test(html)) return LEAD_TYPES.PHONE_CALL;
+
+  return LEAD_TYPES.WEB_FORM;
+}
+
+// ─── Location Name from Subject ────────────────────────────────────────────
+
+function extractLocationFromSubject(subject: string): string | null {
+  const match = subject.match(/\|\s*(.+)$/);
+  return match?.[1]?.trim() || null;
+}
+
+// ─── Name Extraction (handles reversed Ignite format) ──────────────────────
+
+function extractCallerName(callerNameText: string | undefined): {
+  firstName: string;
+  lastName: string;
+} {
+  if (!callerNameText) return { firstName: "", lastName: "" };
+  const trimmed = callerNameText.trim();
+  if (!trimmed) return { firstName: "", lastName: "" };
+
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 1) return { firstName: parts[0], lastName: "" };
+
+  // Ignite format: {Last} {First} — reverse it
+  const lastName = parts[0];
+  const firstName = parts.slice(1).join(" ");
+  return { firstName, lastName };
+}
+
+// ─── Pet Name from Booking Title ───────────────────────────────────────────
+
+function extractPetName(bookingTitle: string | undefined): string | null {
+  if (!bookingTitle) return null;
+  const match = bookingTitle.match(/Request for (.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+// ─── Link href Extraction from a cell ──────────────────────────────────────
+
+function extractLinkHref(cellHtml: string): string | null {
+  const match = cellHtml.match(/href="([^"]+)"/);
+  return match?.[1] || null;
+}
+
+// ─── Sales Value Parsing ───────────────────────────────────────────────────
+
+function parseSalesValue(text: string | undefined): number | null {
+  if (!text) return null;
+  const match = text.match(/\$?([\d,]+\.?\d*)/);
+  return match ? parseFloat(match[1].replace(/,/g, "")) : null;
+}
+
+// ─── Services JSON Parsing ─────────────────────────────────────────────────
+
+function parseServicesJson(
+  text: string | undefined,
+): Array<{ Name: string; Quantity: string; Rate: string }> | null {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// ─── Main Parse Interface ──────────────────────────────────────────────────
 
 interface ParsedLead {
   leadType: string;
@@ -145,7 +286,7 @@ interface ParsedLead {
   phoneRaw: string | null;
   callRecordingUrl: string | null;
   sourceDetail: string | null;
-  formData: Record<string, string>;
+  formData: Record<string, unknown>;
   igniteProfileId: string | null;
   igniteLocationId: string | null;
   rawSubject: string;
@@ -166,41 +307,161 @@ function parseIgniteEmail(
     return { error: `Unexpected sender: ${from}` } as ParsedLead;
   }
 
-  const fields = parseRegex(rawHtml);
   const subject = headers.subject || "";
-  const leadType = detectLeadType(subject, fields.lead_type || "");
-  const { firstName, lastName } = extractName(fields);
 
-  const promotedKeys = new Set([
-    "lead_type",
-    "first_name",
-    "last_name",
-    "caller_name",
-    "email",
-    "phone",
-    "call_recording_url",
-    "ignite_profile_id",
-    "ignite_location_id",
-  ]);
-  const formData: Record<string, string> = {};
-  for (const [k, v] of Object.entries(fields)) {
-    if (!promotedKeys.has(k)) formData[k] = v;
+  // Skip non-lead emails (OTP codes, etc.)
+  if (
+    subject.toLowerCase().includes("verification code") ||
+    subject.toLowerCase().includes("password reset")
+  ) {
+    return { error: "Not a lead email (verification/password)" } as ParsedLead;
   }
+
+  // ── Step 1: Extract all table rows ──────────────────────────────────
+  const rawRows = extractTableRows(rawHtml);
+
+  // Map labels to normalized keys
+  const fields: Record<string, RowData> = {};
+  for (const [label, data] of rawRows) {
+    const key = LABEL_MAP[label];
+    if (key) {
+      fields[key] = data;
+    } else {
+      // Unknown label — store under snake_case version
+      const fallbackKey = label
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "");
+      if (fallbackKey) fields[fallbackKey] = data;
+    }
+  }
+
+  // ── Step 2: Detect lead type ────────────────────────────────────────
+  const leadType = detectLeadType(subject, rawHtml);
+
+  // ── Step 3: Extract profile ID from embedded URLs ──────────────────
+  const igniteProfileId = extractProfileIdFromUrls(rawHtml);
+
+  // ── Step 4: Extract lead source ────────────────────────────────────
+  const sourceDetail = extractLeadSource(rawHtml);
+
+  // ── Step 5: Extract ignite lead ID ─────────────────────────────────
+  const igniteLeadId =
+    fields.lead_id?.text || extractLeadIdFromUrls(rawHtml) || null;
+
+  // ── Step 6: Type-specific extraction ───────────────────────────────
+  let firstName = "";
+  let lastName = "";
+  let phone: string | null = null;
+  let phoneRaw: string | null = null;
+  let callRecordingUrl: string | null = null;
+
+  if (leadType === LEAD_TYPES.PHONE_CALL) {
+    // Caller name is REVERSED in Ignite: "{Last} {First}"
+    const nameResult = extractCallerName(fields.caller_name?.text);
+    firstName = nameResult.firstName;
+    lastName = nameResult.lastName;
+
+    // Phone from caller number
+    phoneRaw = fields.caller_number?.text || null;
+    phone = normalizePhone(phoneRaw);
+
+    // Recording URL from the Recording cell HTML
+    if (fields.recording?.html) {
+      const rec = extractRecordingFromHtml(fields.recording.html);
+      callRecordingUrl = rec.downloadUrl || rec.playUrl || null;
+    }
+    // Fallback: scan full HTML for recording URLs
+    if (!callRecordingUrl) {
+      const rec = extractRecordingFromHtml(rawHtml);
+      callRecordingUrl = rec.downloadUrl || rec.playUrl || null;
+    }
+  }
+
+  // Appointment-specific: extract lead page and landing page hrefs
+  let leadPageUrl: string | null = null;
+  let landingPageUrl: string | null = null;
+  let bookingTitle: string | null = null;
+  let petName: string | null = null;
+  let salesValue: number | null = null;
+  let services: unknown = null;
+
+  if (leadType === LEAD_TYPES.WEB_FORM) {
+    leadPageUrl = fields.lead_page?.html
+      ? extractLinkHref(fields.lead_page.html)
+      : null;
+    landingPageUrl = fields.landing_page?.html
+      ? extractLinkHref(fields.landing_page.html)
+      : null;
+    bookingTitle = fields.booking_title?.text || null;
+    petName = extractPetName(bookingTitle || undefined);
+    salesValue = parseSalesValue(fields.sales_value?.text);
+    services = parseServicesJson(fields.services?.text);
+  }
+
+  // ── Step 7: Build form_data with all remaining fields ──────────────
+  const formData: Record<string, unknown> = {};
+
+  for (const [key, data] of Object.entries(fields)) {
+    if (!PROMOTED_KEYS.has(key)) {
+      formData[key] = data.text;
+    }
+  }
+
+  // Add enrichment fields to form_data for UI display
+  if (leadType === LEAD_TYPES.PHONE_CALL) {
+    if (fields.answer_status?.text)
+      formData.answer_status = fields.answer_status.text;
+    if (fields.call_duration?.text)
+      formData.call_duration = fields.call_duration.text;
+    if (fields.line_type?.text) formData.line_type = fields.line_type.text;
+    if (fields.tracking_number?.text)
+      formData.tracking_number = fields.tracking_number.text;
+    if (fields.destination_number?.text)
+      formData.destination_number = fields.destination_number.text;
+    if (fields.call_transcription?.text)
+      formData.call_transcription = fields.call_transcription.text;
+    if (fields.phone_name?.text)
+      formData.phone_name = fields.phone_name.text;
+  }
+
+  if (leadType === LEAD_TYPES.WEB_FORM) {
+    if (leadPageUrl) formData.lead_page_url = leadPageUrl;
+    if (landingPageUrl) formData.landing_page_url = landingPageUrl;
+    if (bookingTitle) formData.booking_title = bookingTitle;
+    if (petName) formData.pet_name = petName;
+    if (salesValue !== null) formData.sales_value = salesValue;
+    if (services) formData.services = services;
+    if (fields.estimated_subtotal?.text)
+      formData.estimated_subtotal = fields.estimated_subtotal.text;
+    if (fields.estimated_tax?.text)
+      formData.estimated_tax = fields.estimated_tax.text;
+    if (fields.browser?.text) formData.browser = fields.browser.text;
+    if (fields.device?.text) formData.device = fields.device.text;
+    if (fields.agreed_to_terms?.text)
+      formData.agreed_to_terms = fields.agreed_to_terms.text;
+    if (fields.dates?.text) formData.dates = fields.dates.text;
+  }
+
+  // Always include the Ignite lead ID in form_data for linking
+  if (igniteLeadId) formData.ignite_lead_id = igniteLeadId;
+
+  const clientName =
+    [firstName, lastName].filter(Boolean).join(" ") || null;
 
   return {
     leadType,
     firstName,
     lastName,
-    clientName: [firstName, lastName].filter(Boolean).join(" ") || null,
-    email: (fields.email || "").toLowerCase() || null,
-    phone: normalizePhone(fields.phone),
-    phoneRaw: fields.phone || null,
-    callRecordingUrl: fields.call_recording_url || null,
-    sourceDetail:
-      fields.source || fields.ad_campaign || fields.tracking_number || null,
+    clientName,
+    email: null, // Ignite emails don't include lead email addresses
+    phone,
+    phoneRaw,
+    callRecordingUrl,
+    sourceDetail,
     formData,
-    igniteProfileId: fields.ignite_profile_id || null,
-    igniteLocationId: fields.ignite_location_id || null,
+    igniteProfileId,
+    igniteLocationId: null,
     rawSubject: subject,
     parsedAt: new Date().toISOString(),
   };
@@ -584,16 +845,26 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return jsonResponse({ error: "No HTML body provided" }, 400);
     }
 
-    // Idempotency check
-    const _idempotencyKey = simpleHash((subject || "") + html.slice(0, 500));
-    const { data: existing } = await supabaseClient
-      .from("ignite_leads")
-      .select("id")
-      .eq("raw_email_subject", subject || "")
-      .limit(1);
+    // Idempotency check — use ignite lead ID from URLs if available
+    const quickLeadId = html.match(/[?&]lid=(\d+)/)?.[1] || null;
+    if (quickLeadId) {
+      const { data: existing } = await supabaseClient
+        .from("ignite_leads")
+        .select("id")
+        .eq("form_data->>ignite_lead_id", quickLeadId)
+        .limit(1);
 
-    if (existing && existing.length > 0) {
-      console.log(`[ignite-webhook] Possible duplicate: ${_idempotencyKey}`);
+      if (existing && existing.length > 0) {
+        console.log(
+          `[ignite-webhook] Duplicate lead (ignite_lead_id=${quickLeadId}), skipping`,
+        );
+        return jsonResponse({
+          success: true,
+          duplicate: true,
+          existingId: existing[0].id,
+          igniteLeadId: quickLeadId,
+        });
+      }
     }
 
     // Parse the email
@@ -605,6 +876,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     // Look up location from ignite_config
     let locationId: string | null = null;
+
+    // Primary: match by profile ID extracted from URLs
     if (parsed.igniteProfileId) {
       const { data: config } = await supabaseClient
         .from("ignite_config")
@@ -616,6 +889,43 @@ Deno.serve(async (req: Request): Promise<Response> => {
       if (config) locationId = config.location_id;
     }
 
+    // Fallback: match by location name from subject line
+    if (!locationId) {
+      const locationName = subject.match(/\|\s*(.+)$/)?.[1]?.trim();
+      if (locationName) {
+        console.log(
+          `[ignite-webhook] No profile ID match, trying location name: ${locationName}`,
+        );
+        const { data: configs } = await supabaseClient
+          .from("ignite_config")
+          .select("location_id, ignite_profile_id")
+          .eq("is_active", true);
+
+        if (configs) {
+          // Check ignite_config for a row where location matches
+          // Also try matching against locations table
+          const { data: locations } = await supabaseClient
+            .from("locations")
+            .select("id, name")
+            .ilike("name", `%${locationName}%`)
+            .limit(1);
+
+          if (locations && locations.length > 0) {
+            const matchedConfig = configs.find(
+              (c: { location_id: string }) =>
+                c.location_id === locations[0].id,
+            );
+            if (matchedConfig) {
+              locationId = matchedConfig.location_id;
+              console.log(
+                `[ignite-webhook] Matched via location name: ${locationName} -> ${locationId}`,
+              );
+            }
+          }
+        }
+      }
+    }
+
     if (!locationId) {
       console.warn(
         "[ignite-webhook] No location found for profile:",
@@ -625,6 +935,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
         {
           error: "No active location configured for this Ignite profile",
           igniteProfileId: parsed.igniteProfileId,
+          parsedFields: Object.keys(parsed.formData),
+          leadType: parsed.leadType,
+          source: parsed.sourceDetail,
         },
         422,
       );
