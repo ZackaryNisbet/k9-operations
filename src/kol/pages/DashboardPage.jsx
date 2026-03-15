@@ -1,6 +1,6 @@
-// K9 Operations — Command Center Dashboard v4
+// K9 Operations — Dashboard v5
 // 9×11 Grid, viewport-locked, world-class data density.
-// Forest green depth, link indicators, maximum visual sophistication.
+// Clean neutral background, uniform cards, premium typography.
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import {
@@ -49,38 +49,38 @@ const DASH_CSS = `
 /* ── Cell styles ── */
 .dash-grid-cell {
   background: #FFFFFF;
-  border-radius: 8px;
-  border: 1px solid rgba(20,83,45,0.08);
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.06);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 6px 8px;
+  padding: 10px 12px;
   overflow: hidden;
-  transition: all 0.15s ease;
+  transition: all 0.18s ease;
   cursor: default;
   min-width: 0;
   min-height: 0;
-  box-shadow: 0 1px 3px rgba(20,83,45,0.06), 0 1px 2px rgba(20,83,45,0.04);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.03);
 }
 .dash-grid-cell:hover {
-  box-shadow: 0 3px 12px rgba(20,83,45,0.10), 0 1px 3px rgba(20,83,45,0.06);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04);
   transform: translateY(-1px);
 }
 .dash-grid-cell.clickable {
   cursor: pointer;
 }
 .dash-grid-cell.clickable:hover {
-  border-color: rgba(20,83,45,0.2);
-  box-shadow: 0 4px 16px rgba(20,83,45,0.12), 0 1px 4px rgba(20,83,45,0.06);
+  border-color: rgba(0,0,0,0.10);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
 }
 .dash-grid-cell.hero-cell {
-  background: linear-gradient(135deg, #14532D 0%, #166534 100%);
-  border: 1px solid rgba(132,204,22,0.15);
-  box-shadow: 0 2px 8px rgba(20,83,45,0.20), 0 1px 3px rgba(20,83,45,0.10);
+  background: #FFFFFF;
+  border: 1px solid rgba(0,0,0,0.06);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.03);
 }
 .dash-grid-cell.hero-cell:hover {
-  box-shadow: 0 4px 20px rgba(20,83,45,0.25), 0 2px 6px rgba(20,83,45,0.12);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04);
   transform: translateY(-1px);
 }
 .dash-grid-cell.empty-cell {
@@ -97,14 +97,13 @@ const DASH_CSS = `
 }
 .dash-section-label {
   font-size: 9px;
-  font-weight: 800;
-  color: ${C.pri};
+  font-weight: 600;
+  color: #9CA3AF;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
   line-height: 1;
   white-space: nowrap;
   padding: 0 2px;
-  opacity: 0.6;
 }
 .dash-cell-value {
   font-size: 22px;
@@ -164,50 +163,50 @@ const DASH_CSS = `
 }
 .dash-chart-cell {
   background: #FFFFFF;
-  border-radius: 8px;
-  border: 1px solid rgba(20,83,45,0.08);
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.06);
   display: flex;
   flex-direction: column;
-  padding: 8px 10px;
+  padding: 10px 12px;
   overflow: hidden;
-  transition: all 0.15s ease;
+  transition: all 0.18s ease;
   min-width: 0;
   min-height: 0;
-  box-shadow: 0 1px 3px rgba(20,83,45,0.06), 0 1px 2px rgba(20,83,45,0.04);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.03);
 }
 .dash-chart-cell:hover {
-  box-shadow: 0 3px 12px rgba(20,83,45,0.10), 0 1px 3px rgba(20,83,45,0.06);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04);
 }
 .dash-checklist-cell {
   background: #FFFFFF;
-  border-radius: 8px;
-  border: 1px solid rgba(20,83,45,0.08);
+  border-radius: 10px;
+  border: 1px solid rgba(0,0,0,0.06);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 6px 8px;
+  padding: 10px 12px;
   overflow: hidden;
-  transition: all 0.15s ease;
+  transition: all 0.18s ease;
   cursor: pointer;
   min-width: 0;
   min-height: 0;
-  box-shadow: 0 1px 3px rgba(20,83,45,0.06), 0 1px 2px rgba(20,83,45,0.04);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.03);
 }
 .dash-checklist-cell:hover {
-  border-color: rgba(20,83,45,0.2);
-  box-shadow: 0 4px 16px rgba(20,83,45,0.12), 0 1px 4px rgba(20,83,45,0.06);
+  border-color: rgba(0,0,0,0.10);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
   transform: translateY(-1px);
 }
 .manager-badge {
   font-size: 8px;
-  font-weight: 700;
-  color: ${C.acc};
-  background: rgba(132,204,22,0.12);
+  font-weight: 600;
+  color: #9CA3AF;
+  background: rgba(0,0,0,0.04);
   padding: 2px 6px;
   border-radius: 4px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   line-height: 1.3;
 }
 .dash-link-icon {
@@ -225,25 +224,25 @@ const DASH_CSS = `
   opacity: 0.6;
 }
 .dash-quick-link {
-  background: rgba(255,255,255,0.55);
-  border-radius: 8px;
-  border: 1.5px dashed rgba(20,83,45,0.18);
+  background: rgba(255,255,255,0.65);
+  border-radius: 10px;
+  border: 1.5px dashed rgba(0,0,0,0.10);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 4px 6px;
+  padding: 6px 8px;
   gap: 3px;
   overflow: hidden;
-  transition: all 0.15s ease;
+  transition: all 0.18s ease;
   cursor: pointer;
   min-width: 0;
   min-height: 0;
 }
 .dash-quick-link:hover {
-  background: rgba(247,254,231,0.85);
-  border-color: rgba(20,83,45,0.3);
-  box-shadow: 0 2px 8px rgba(20,83,45,0.10);
+  background: rgba(255,255,255,0.95);
+  border-color: rgba(0,0,0,0.18);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
   transform: translateY(-1px);
 }
 `;
@@ -252,6 +251,7 @@ const DASH_CSS = `
    Timeframe config
    ═══════════════════════════════════════════════════════════════════════════ */
 const RANGES = [
+  { key: "today",     label: "Today" },
   { key: "wtd",      label: "WTD" },
   { key: "past-week", label: "Past Week" },
   { key: "mtd",      label: "MTD" },
@@ -549,8 +549,8 @@ function Sparkline({ data, width = 200, height = 32, color = C.pri }) {
    Stretches to fill available height — no wasted whitespace
    ═══════════════════════════════════════════════════════════════════════════ */
 function DashGrid({ children }) {
-  const COL_GAP = 4;
-  const ROW_GAP = 3;
+  const COL_GAP = 6;
+  const ROW_GAP = 5;
   const LABEL_H = 16;
   const COLS = 9;
 
@@ -618,7 +618,7 @@ export default function DashboardPage({
   showRevenueComposition, showRevenueByCategory, showDiscountAnalysis,
   showTopClients, showOps, showFunnelMetrics, showHeroKPIs,
 }) {
-  const [range, setRange] = useState("mtd");
+  const [range, setRange] = useState("today");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [showCalendar, setShowCalendar] = useState(false);
@@ -654,6 +654,7 @@ export default function DashboardPage({
     const end = today;
     let start;
     switch (range) {
+      case "today": start = today; break;
       case "wtd": { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); start = d.toISOString().split("T")[0]; break; }
       case "past-week": start = addDays(today, -7); break;
       case "mtd": start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`; break;
@@ -847,7 +848,7 @@ export default function DashboardPage({
       height: "calc(100vh - 64px)", overflow: "hidden",
       display: "flex", flexDirection: "column",
       fontFamily: "inherit", padding: "0",
-      background: "linear-gradient(180deg, #F7FEE7 0%, #ECFDF5 50%, #F0FDF4 100%)",
+      background: "#FAFAF9",
     }}>
       <style>{DASH_CSS}</style>
 
@@ -860,11 +861,11 @@ export default function DashboardPage({
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <img src="/k9_mark.svg" alt="K9 Operations" style={{ height: 28, width: "auto", opacity: 0.85 }} />
           <h1 style={{ fontSize: 16, fontWeight: 800, color: C.pri, margin: 0, lineHeight: 1 }}>
-            Command Center
+            Dashboard
           </h1>
           <div style={{ width: 5, height: 5, borderRadius: "50%", background: C.suc, animation: "dashPulse 2s infinite" }} />
           <span style={{ fontSize: 9, color: C.textMut, fontWeight: 500 }}>
-            {fmtDateLabel(dateFrom)} – {fmtDateLabel(dateTo)} · {days}d
+            {dateFrom === dateTo ? fmtDateLabel(dateFrom) : `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)} · ${days}d`}
           </span>
         </div>
 
@@ -1053,14 +1054,14 @@ function MetricCell({ label, value, sub, color, trend, onClick, hero }) {
     >
       {onClick && <LinkIcon />}
       <div className="dash-cell-value" style={{
-        color: hero ? "#FFFFFF" : (color || C.text),
+        color: hero ? C.pri : (color || C.text),
         fontSize: hero ? 26 : 22,
       }}>
         {typeof value === "number" ? <AnimatedNumber value={value} /> : value}
       </div>
       {trend != null && <TrendBadge value={trend} size="xs" />}
-      <div className="dash-cell-label" style={hero ? { color: "rgba(217,249,157,0.8)" } : undefined}>{label}</div>
-      {sub && <div style={{ fontSize: 8, color: hero ? "rgba(255,255,255,0.5)" : C.textMut, lineHeight: 1, marginTop: 1 }}>{sub}</div>}
+      <div className="dash-cell-label" style={hero ? { color: C.textMut } : undefined}>{label}</div>
+      {sub && <div style={{ fontSize: 8, color: hero ? C.textMut : C.textMut, lineHeight: 1, marginTop: 1 }}>{sub}</div>}
     </div>
   );
 }
