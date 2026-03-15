@@ -1,7 +1,8 @@
 // K9 Operations — CheckoutTVPage
 // Isolated page component. See AGENTS.md for development contract.
 // Fixes: TV-001 (daycare count), TV-002 (checkout detection), TV-003 (large/small dog differentiation),
-//        TV-004 (room numbers), TV-005 (TV navigation with filtered views), TV-006 (checkout highlight animation)
+//        TV-004 (room numbers), TV-005 (TV navigation with filtered views), TV-006 (checkout highlight animation),
+//        TV-007 (real-time checkout sync via edge function polling)
 //
 // TV-005 NOTE: In KolApp.jsx, the nav item for this page should be renamed from "Checkout TV" to "TV".
 // We cannot edit KolApp.jsx per AGENTS.md rules — only page files. This rename should be done separately.
@@ -638,6 +639,33 @@ function CheckoutTVPage({ data, nav, profile }) {
     const interval = setInterval(poll, 3000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [locationId, reservations]);
+
+  // ── TV-007: Lightweight Gingr poll for checkout detection ──────────────
+  // Calls the tv-poll edge function every 60 seconds. This syncs Gingr's
+  // checked_in status into Supabase so the TV-002 poller above can detect
+  // checkouts within ~63 seconds of the front desk clicking "check out".
+  useEffect(() => {
+    if (!locationId) return;
+    let cancelled = false;
+
+    const tvPoll = async () => {
+      if (cancelled) return;
+      try {
+        await supabase.functions.invoke("gingr-sync", {
+          body: { location_id: locationId, sync_type: "tv-poll" },
+        });
+      } catch (e) {
+        // Silently ignore — the full 15-min sync will catch up
+      }
+    };
+
+    // Initial poll on mount
+    tvPoll();
+
+    // Then every 60 seconds
+    const interval = setInterval(tvPoll, 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [locationId]);
 
   // Countdown timer — tick every second
   useEffect(() => {
