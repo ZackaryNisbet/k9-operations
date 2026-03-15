@@ -52,6 +52,7 @@ function Root() {
   const isBookingPage = path.startsWith('/book/') || path === '/book';
   const isPublicLink = path.startsWith('/sign/') || path.startsWith('/form/');
   const isPublicRoadmap = path === '/public-roadmap';
+  const isWelcomePage = path === '/welcome';
   const isLoginPage = path === '/login';
   const isLandingPage = path === '/' || path === '';
   const isPOS = path.startsWith('/pos');
@@ -60,6 +61,7 @@ function Root() {
   // Public pages — no auth required
   if (isBookingPage) return <BookingPage />;
   if (isPublicLink) return <PublicPage />;
+  if (isWelcomePage) return <LandingPage />;
 
   const { user, profile, loading, signOut, needsPasswordSet, updatePassword } = useAuth();
 
