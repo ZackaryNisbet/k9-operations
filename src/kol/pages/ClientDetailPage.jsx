@@ -377,7 +377,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
         date: evt.date ? new Date(evt.date + "T12:00:00").toISOString() : new Date().toISOString(),
         eventType: evt.event === "moved_to_active" || evt.event === "moved_to_retention" || evt.event === "marked_cold" ? "stage_change" : "note",
         fromStage: null,
-        toStage: evt.event === "moved_to_active" ? "active" : evt.event === "moved_to_retention" ? "retention" : evt.event === "marked_cold" ? "cold" : null,
+        toStage: evt.event === "moved_to_active" ? "active" : evt.event === "moved_to_retention" ? "lapsed" : evt.event === "marked_cold" ? "cold" : null,
         description: evt.details || titleCase(evt.event || "Event"),
         followUpDate: null,
         triggeredBy: "System",
