@@ -35,6 +35,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [showExtraCols, setShowExtraCols] = useState(false);
   const [editingBanner, setEditingBanner] = useState(null); // which tab's banner is being edited
   const [bannerDraft, setBannerDraft] = useState("");
+  const [defaultBanners, setDefaultBanners] = useState(null); // custom defaults from lite_settings (overrides hardcoded)
   const [displayLimit, setDisplayLimit] = useState(100);
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
   const [bulkReason, setBulkReason] = useState("");
@@ -57,6 +58,14 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     setSavedViews(views);
     await supabase.from("lite_settings").upsert({ location_id: locationSlug, setting_key: "lifecycle_views", setting_value: views }, { onConflict: "location_id,setting_key" });
   };
+
+  // Load custom default banners from lite_settings
+  useEffect(() => {
+    if (!locationSlug) return;
+    supabase.from("lite_settings").select("setting_value").eq("location_id", locationSlug).eq("setting_key", "default_lifecycle_banners").maybeSingle().then(({ data: row }) => {
+      if (row?.setting_value) setDefaultBanners(row.setting_value);
+    });
+  }, [locationSlug]);
   const [draftFilters, setDraftFilters] = useState({});
   const [showFilterPicker, setShowFilterPicker] = useState(false);
   const [filterPickerReady, setFilterPickerReady] = useState(false);
@@ -1224,12 +1233,14 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           </button>
         </div>
 
-        {/* Explainer Banner — per-tab, editable */}
+        {/* Explainer Banner — per-tab, editable, with Save as Default */}
         {(() => {
           const banners = data.lifecycleExplainers || {};
-          const txt = banners[activeTab] || DEFAULT_LIFECYCLE_BANNERS[activeTab] || "";
+          const effectiveDefault = (defaultBanners && defaultBanners[activeTab]) || DEFAULT_LIFECYCLE_BANNERS[activeTab] || "";
+          const txt = banners[activeTab] || effectiveDefault;
           const canEdit = hasPermission(profile, data, "edit_lifecycle_banners");
           const isEditing = editingBanner === activeTab;
+          const isUsingCustomDefault = !!(defaultBanners && defaultBanners[activeTab]);
           return (
             <div style={{padding:"10px 18px",borderBottom:`1px solid ${C.borderLight}`,background:`linear-gradient(135deg, ${C.priLt||C.pri+"08"}40, ${C.surface})`,fontSize:12,lineHeight:1.6,color:C.textSec,position:"relative"}}>
               {isEditing ? (
@@ -1237,14 +1248,32 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                   <textarea value={bannerDraft} onChange={e => setBannerDraft(e.target.value)} autoFocus
                     style={{width:"100%",minHeight:72,padding:"8px 10px",border:`1.5px solid ${C.pri}`,borderRadius:6,fontSize:12,lineHeight:1.6,fontFamily:"inherit",color:C.text,background:"#fff",resize:"vertical",outline:"none",boxSizing:"border-box"}}
                     placeholder="Enter banner text for this tab…" />
-                  <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+                  <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexWrap:"wrap"}}>
                     <button onClick={() => setEditingBanner(null)} style={{padding:"5px 14px",border:`1px solid ${C.border}`,borderRadius:6,background:C.surface,fontSize:11,fontWeight:600,color:C.textSec,cursor:"pointer",fontFamily:"inherit"}}>Cancel</button>
                     <button onClick={async () => {
-                      const updated = { ...(data.lifecycleExplainers || {}), [activeTab]: bannerDraft.trim() || DEFAULT_LIFECYCLE_BANNERS[activeTab] };
+                      const updated = { ...(data.lifecycleExplainers || {}), [activeTab]: bannerDraft.trim() || effectiveDefault };
                       await save({ ...data, lifecycleExplainers: updated });
                       setEditingBanner(null);
                       addGlobalToast?.({ message: "Banner updated" });
                     }} style={{padding:"5px 14px",border:"none",borderRadius:6,background:C.pri,fontSize:11,fontWeight:600,color:"#fff",cursor:"pointer",fontFamily:"inherit"}}>Save</button>
+                    {canEdit && (
+                      <button
+                        title="Save this text as the default template for all locations"
+                        onClick={async () => {
+                          const val = bannerDraft.trim();
+                          if (!val) return;
+                          const merged = { ...(defaultBanners || {}), [activeTab]: val };
+                          await supabase.from("lite_settings").upsert({ location_id: locationSlug, setting_key: "default_lifecycle_banners", setting_value: merged }, { onConflict: "location_id,setting_key" });
+                          setDefaultBanners(merged);
+                          // Also save as the location's current banner
+                          const updated = { ...(data.lifecycleExplainers || {}), [activeTab]: val };
+                          await save({ ...data, lifecycleExplainers: updated });
+                          setEditingBanner(null);
+                          addGlobalToast?.({ message: "Saved as default template" });
+                        }}
+                        style={{padding:"5px 14px",border:`1px solid ${C.acc}50`,borderRadius:6,background:`${C.acc}10`,fontSize:11,fontWeight:600,color:C.accDk||C.pri,cursor:"pointer",fontFamily:"inherit"}}
+                      >Save as Default</button>
+                    )}
                     {banners[activeTab] && (
                       <button onClick={async () => {
                         const updated = { ...(data.lifecycleExplainers || {}) };
@@ -1252,7 +1281,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                         await save({ ...data, lifecycleExplainers: updated });
                         setEditingBanner(null);
                         setBannerDraft("");
-                        addGlobalToast?.({ message: "Banner reset to default" });
+                        addGlobalToast?.({ message: `Banner reset to ${isUsingCustomDefault ? "custom" : "system"} default` });
                       }} style={{padding:"5px 14px",border:`1px solid ${C.dan}30`,borderRadius:6,background:`${C.dan}08`,fontSize:11,fontWeight:600,color:C.dan,cursor:"pointer",fontFamily:"inherit"}}>Reset Default</button>
                     )}
                   </div>
