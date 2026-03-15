@@ -66,6 +66,10 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
       from { opacity: 0; }
       to { opacity: 1; }
     }
+    @keyframes checkinPulse {
+      0%, 100% { box-shadow: 0 0 40px 10px rgba(56,189,248,0.35), 0 0 120px 30px rgba(56,189,248,0.1), inset 0 1px 0 rgba(255,255,255,0.08); }
+      50% { box-shadow: 0 0 60px 20px rgba(56,189,248,0.55), 0 0 160px 50px rgba(56,189,248,0.2), inset 0 1px 0 rgba(255,255,255,0.08); }
+    }
   `;
   document.head.appendChild(style);
 }
@@ -136,13 +140,13 @@ function parseRoom(room) {
 }
 
 /* ── Large Countdown Timer (SVG circle) — for hero card ──────────────── */
-function CountdownCircle({ remaining, total = 60, size = 56, strokeWidth = 4 }) {
+function CountdownCircle({ remaining, total = 60, size = 56, strokeWidth = 4, accentColor }) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const progress = remaining / total;
   const offset = circumference * (1 - progress);
   const isUrgent = remaining <= 10;
-  const color = isUrgent ? "#EF4444" : "#84CC16";
+  const color = accentColor ? (isUrgent ? "#EF4444" : accentColor) : (isUrgent ? "#EF4444" : "#84CC16");
 
   return (
     <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
@@ -184,18 +188,27 @@ function SizeBadge({ size }) {
   );
 }
 
-/* ── TV-006: Hero Checkout Card — enlarged, prominent, center-stage ──── */
-function HeroCheckoutCard({ entry, dogs, clients, fading, animalIcons }) {
-  const dog = dogs.find(d => d.gingrId === Number(entry.animalGingrId) || d.id === `g${entry.animalGingrId}`);
-  const name = dog?.fields?.name || entry.animalName || "Unknown";
-  const breed = dog?.fields?.breed || "";
+/* ── TV-006 + TV-008b: Hero Checkout Card — supports grouped multi-dog entries ── */
+function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons }) {
+  // TV-008b: entry.dogs is an array of individual dog entries
+  const entryDogs = entry.dogs || [entry];
+  const resolvedDogs = entryDogs.map(d => {
+    const dog = allDogs.find(dd => dd.gingrId === Number(d.animalGingrId) || dd.id === `g${d.animalGingrId}`);
+    const iconData = animalIcons[dog?.gingrId];
+    return {
+      ...d,
+      dog,
+      name: dog?.fields?.name || d.animalName || "Unknown",
+      breed: dog?.fields?.breed || "",
+      image: iconData?.icon_url || dog?._image,
+      size: getDogSize(dog),
+    };
+  });
   const ownerLast = entry.ownerLastName || "";
-  const roomInfo = parseRoom(entry.room);
-  const iconData = animalIcons[dog?.gingrId];
-  const image = iconData?.icon_url || dog?._image;
   const isUrgent = entry.remaining <= 10;
-  const size = getDogSize(dog);
-  const theme = SIZE_THEME[size];
+  const allNames = resolvedDogs.map(d => d.name).join(" & ");
+  const firstDog = resolvedDogs[0];
+  const theme = SIZE_THEME[firstDog.size];
 
   return (
     <div style={{
@@ -221,32 +234,36 @@ function HeroCheckoutCard({ entry, dogs, clients, fading, animalIcons }) {
         transition: "background 0.3s",
       }} />
 
-      {/* Dog image / avatar — large */}
-      {image ? (
-        <img src={image} alt={name} style={{
-          width: 120, height: 120, borderRadius: 24, objectFit: "cover",
-          border: `4px solid ${isUrgent ? "rgba(239,68,68,0.5)" : "rgba(132,204,22,0.6)"}`,
-          flexShrink: 0, position: "relative", zIndex: 1,
-          transition: "border-color 0.3s",
-        }} />
-      ) : (
-        <div style={{
-          width: 120, height: 120, borderRadius: 24, flexShrink: 0,
-          background: isUrgent ? "rgba(239,68,68,0.2)" : "rgba(132,204,22,0.25)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 48, fontWeight: 900,
-          color: isUrgent ? "#EF4444" : "#84CC16",
-          position: "relative", zIndex: 1,
-          border: `4px solid ${isUrgent ? "rgba(239,68,68,0.4)" : "rgba(132,204,22,0.4)"}`,
-          transition: "background 0.3s, color 0.3s, border-color 0.3s",
-        }}>
-          {name[0]}
-        </div>
-      )}
+      {/* TV-008b: Dog photos — side by side for multi-dog */}
+      <div style={{ display: "flex", gap: 12, flexShrink: 0, position: "relative", zIndex: 1 }}>
+        {resolvedDogs.map((rd, i) => (
+          rd.image ? (
+            <img key={rd.id || i} src={rd.image} alt={rd.name} style={{
+              width: resolvedDogs.length > 1 ? 96 : 120, height: resolvedDogs.length > 1 ? 96 : 120,
+              borderRadius: 24, objectFit: "cover",
+              border: `4px solid ${isUrgent ? "rgba(239,68,68,0.5)" : "rgba(132,204,22,0.6)"}`,
+              transition: "border-color 0.3s",
+            }} />
+          ) : (
+            <div key={rd.id || i} style={{
+              width: resolvedDogs.length > 1 ? 96 : 120, height: resolvedDogs.length > 1 ? 96 : 120,
+              borderRadius: 24,
+              background: isUrgent ? "rgba(239,68,68,0.2)" : "rgba(132,204,22,0.25)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: resolvedDogs.length > 1 ? 36 : 48, fontWeight: 900,
+              color: isUrgent ? "#EF4444" : "#84CC16",
+              border: `4px solid ${isUrgent ? "rgba(239,68,68,0.4)" : "rgba(132,204,22,0.4)"}`,
+              transition: "background 0.3s, color 0.3s, border-color 0.3s",
+            }}>
+              {rd.name[0]}
+            </div>
+          )
+        ))}
+      </div>
 
       {/* Info — large text for TV visibility */}
       <div style={{ flex: 1, minWidth: 0, position: "relative", zIndex: 1 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8, flexWrap: "wrap" }}>
           <span style={{
             fontSize: 14, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase",
             color: isUrgent ? "#EF4444" : "#84CC16",
@@ -257,7 +274,6 @@ function HeroCheckoutCard({ entry, dogs, clients, fading, animalIcons }) {
           }}>
             {isUrgent ? "Leaving Now" : "Checking Out"}
           </span>
-          {/* TV-003: Size badge on hero card */}
           <span style={{
             fontSize: 13, fontWeight: 800, letterSpacing: "0.08em",
             color: theme.accent,
@@ -266,33 +282,27 @@ function HeroCheckoutCard({ entry, dogs, clients, fading, animalIcons }) {
           }}>
             {theme.badge === "LG" ? "LARGE" : "SMALL"}
           </span>
-          {roomInfo.number && (
-            <span style={{
-              fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)",
-              background: "rgba(255,255,255,0.06)", padding: "5px 14px", borderRadius: 8,
-            }}>
-              {roomInfo.label} {roomInfo.number}
-            </span>
-          )}
         </div>
         <div style={{
-          fontSize: 42, fontWeight: 900, color: "#fff",
+          fontSize: resolvedDogs.length > 1 ? 34 : 42, fontWeight: 900, color: "#fff",
           lineHeight: 1.1, marginBottom: 6,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           letterSpacing: "-0.01em",
         }}>
-          {name}
+          {allNames}
         </div>
         <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-          {breed && <span style={{ fontSize: 17, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>{breed}</span>}
+          {resolvedDogs.length === 1 && firstDog.breed && (
+            <span style={{ fontSize: 17, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>{firstDog.breed}</span>
+          )}
+          {resolvedDogs.length > 1 && (
+            <span style={{ fontSize: 15, color: "rgba(255,255,255,0.45)", fontWeight: 500 }}>
+              {resolvedDogs.map(d => d.breed).filter(Boolean).join(" · ")}
+            </span>
+          )}
           {ownerLast && (
             <span style={{ fontSize: 17, color: "rgba(132,204,22,0.8)", fontWeight: 700 }}>
               Owner: {ownerLast}
-            </span>
-          )}
-          {dog?.fields?.weight && (
-            <span style={{ fontSize: 15, color: "rgba(255,255,255,0.35)", fontWeight: 600 }}>
-              {dog.fields.weight} lbs
             </span>
           )}
         </div>
@@ -305,6 +315,126 @@ function HeroCheckoutCard({ entry, dogs, clients, fading, animalIcons }) {
         animation: isUrgent ? "heroCountdownPulse 1s ease-in-out infinite" : "none",
       }}>
         <CountdownCircle remaining={entry.remaining} total={60} size={100} strokeWidth={6} />
+        <span style={{
+          fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.35)",
+          textTransform: "uppercase", letterSpacing: "0.08em",
+        }}>
+          seconds
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ── TV-008d: Hero Check-In Card — blue themed, same layout as checkout ── */
+function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading }) {
+  const entryDogs = entry.dogs || [entry];
+  const resolvedDogs = entryDogs.map(d => {
+    const dog = allDogs.find(dd => dd.gingrId === Number(d.animalGingrId) || dd.id === `g${d.animalGingrId}`);
+    const iconData = animalIcons[dog?.gingrId];
+    return {
+      ...d,
+      dog,
+      name: dog?.fields?.name || d.animalName || "Unknown",
+      breed: dog?.fields?.breed || "",
+      image: iconData?.icon_url || dog?._image,
+      size: getDogSize(dog),
+    };
+  });
+  const ownerLast = entry.ownerLastName || "";
+  const allNames = resolvedDogs.map(d => d.name).join(" & ");
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 36,
+      padding: "32px 40px",
+      background: "linear-gradient(135deg, rgba(56,189,248,0.22) 0%, rgba(56,189,248,0.08) 50%, rgba(0,26,51,0.95) 100%)",
+      borderRadius: 28,
+      border: "3px solid rgba(56,189,248,0.6)",
+      animation: fading
+        ? "heroFadeOut 1s ease-out forwards"
+        : `heroEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), checkinPulse 2.5s ease-in-out infinite 0.6s`,
+      minHeight: 140,
+      position: "relative",
+      overflow: "hidden",
+      marginBottom: 12,
+    }}>
+      {/* Background glow */}
+      <div style={{
+        position: "absolute", top: "-50%", left: "-20%",
+        width: "60%", height: "200%",
+        background: "radial-gradient(ellipse, rgba(56,189,248,0.08) 0%, transparent 70%)",
+        pointerEvents: "none",
+      }} />
+
+      {/* Dog photos */}
+      <div style={{ display: "flex", gap: 12, flexShrink: 0, position: "relative", zIndex: 1 }}>
+        {resolvedDogs.map((rd, i) => (
+          rd.image ? (
+            <img key={rd.id || i} src={rd.image} alt={rd.name} style={{
+              width: resolvedDogs.length > 1 ? 96 : 120, height: resolvedDogs.length > 1 ? 96 : 120,
+              borderRadius: 24, objectFit: "cover",
+              border: "4px solid rgba(56,189,248,0.6)",
+            }} />
+          ) : (
+            <div key={rd.id || i} style={{
+              width: resolvedDogs.length > 1 ? 96 : 120, height: resolvedDogs.length > 1 ? 96 : 120,
+              borderRadius: 24,
+              background: "rgba(56,189,248,0.25)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: resolvedDogs.length > 1 ? 36 : 48, fontWeight: 900,
+              color: "#38BDF8",
+              border: "4px solid rgba(56,189,248,0.4)",
+            }}>
+              {rd.name[0]}
+            </div>
+          )
+        ))}
+      </div>
+
+      {/* Info */}
+      <div style={{ flex: 1, minWidth: 0, position: "relative", zIndex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8 }}>
+          <span style={{
+            fontSize: 14, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase",
+            color: "#38BDF8",
+            background: "rgba(56,189,248,0.15)",
+            padding: "5px 14px", borderRadius: 8,
+          }}>
+            Checking In
+          </span>
+        </div>
+        <div style={{
+          fontSize: resolvedDogs.length > 1 ? 34 : 42, fontWeight: 900, color: "#fff",
+          lineHeight: 1.1, marginBottom: 6,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          letterSpacing: "-0.01em",
+        }}>
+          {allNames}
+        </div>
+        <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+          {resolvedDogs.length === 1 && resolvedDogs[0].breed && (
+            <span style={{ fontSize: 17, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>{resolvedDogs[0].breed}</span>
+          )}
+          {resolvedDogs.length > 1 && (
+            <span style={{ fontSize: 15, color: "rgba(255,255,255,0.45)", fontWeight: 500 }}>
+              {resolvedDogs.map(d => d.breed).filter(Boolean).join(" · ")}
+            </span>
+          )}
+          {ownerLast && (
+            <span style={{ fontSize: 17, color: "rgba(56,189,248,0.8)", fontWeight: 700 }}>
+              Owner: {ownerLast}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Countdown */}
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+        position: "relative", zIndex: 1,
+      }}>
+        <CountdownCircle remaining={entry.remaining} total={30} size={100} strokeWidth={6} accentColor="#38BDF8" />
         <span style={{
           fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.35)",
           textTransform: "uppercase", letterSpacing: "0.08em",
@@ -570,9 +700,12 @@ function CheckoutTVPage({ data, nav, profile }) {
 
   /* ── TV-002: Checkout detection polling ─────────────────────────────── */
   const prevCheckedInRef = useRef(null);     // Set of gingr_ids from last poll
-  const [checkingOut, setCheckingOut] = useState([]); // { id, animalGingrId, animalName, ownerLastName, room, remaining, fading }
+  const [checkingOut, setCheckingOut] = useState([]); // TV-008b: { id, dogs: [...], ownerLastName, remaining, fading }
   const checkingOutRef = useRef(checkingOut);
   checkingOutRef.current = checkingOut;
+
+  /* ── TV-008d: Check-in detection state ──────────────────────────────── */
+  const [checkingIn, setCheckingIn] = useState([]);
 
   // Poll Supabase every 3 seconds for currently checked-in reservations
   useEffect(() => {
@@ -605,7 +738,6 @@ function CheckoutTVPage({ data, nav, profile }) {
           const departed = [];
           for (const id of prev) {
             if (!currentIds.has(id)) {
-              // Find info about this dog from the previous data or current reservations
               const resInfo = reservations.find(r => r.gingrId === id)
                 || (rows || []).find(r => r.gingr_id === id);
               departed.push({
@@ -614,16 +746,67 @@ function CheckoutTVPage({ data, nav, profile }) {
                 animalName: resInfo?.animal_name || resInfo?._animalName || "Unknown",
                 ownerLastName: resInfo?.owner_last_name || resInfo?._ownerName?.split(" ").pop() || "",
                 room: resInfo?.room || "",
-                remaining: 60,
-                fading: false,
               });
             }
           }
 
+          // TV-008b: Group departed dogs by owner for multi-dog hero cards
           if (departed.length > 0) {
+            const departedByOwner = {};
+            for (const d of departed) {
+              const key = d.ownerLastName || d.id;
+              if (!departedByOwner[key]) departedByOwner[key] = [];
+              departedByOwner[key].push(d);
+            }
+            const groupedDepartures = Object.values(departedByOwner).map(group => ({
+              id: group.map(d => d.id).join('+'),
+              dogs: group,
+              ownerLastName: group[0].ownerLastName,
+              remaining: 60,
+              fading: false,
+            }));
+
             setCheckingOut(prev => {
               const existingIds = new Set(prev.map(e => e.id));
-              const newEntries = departed.filter(d => !existingIds.has(d.id));
+              const newEntries = groupedDepartures.filter(d => !existingIds.has(d.id));
+              return [...prev, ...newEntries];
+            });
+          }
+
+          // TV-008d: Find IDs in current but not in prev = newly checked in
+          const arrivals = [];
+          for (const id of currentIds) {
+            if (!prev.has(id)) {
+              const resInfo = relevant.find(r => r.gingr_id === id);
+              arrivals.push({
+                id,
+                animalGingrId: resInfo?.animal_gingr_id || "",
+                animalName: resInfo?.animal_name || "Unknown",
+                ownerLastName: resInfo?.owner_last_name || "",
+                room: "",
+              });
+            }
+          }
+
+          // TV-008d: Group arrivals by owner (same as checkouts)
+          if (arrivals.length > 0) {
+            const arrivalsByOwner = {};
+            for (const a of arrivals) {
+              const key = a.ownerLastName || a.id;
+              if (!arrivalsByOwner[key]) arrivalsByOwner[key] = [];
+              arrivalsByOwner[key].push(a);
+            }
+            const groupedArrivals = Object.values(arrivalsByOwner).map(group => ({
+              id: group.map(a => a.id).join('+'),
+              dogs: group,
+              ownerLastName: group[0].ownerLastName,
+              remaining: 30,
+              fading: false,
+            }));
+
+            setCheckingIn(prev => {
+              const existingIds = new Set(prev.map(e => e.id));
+              const newEntries = groupedArrivals.filter(a => !existingIds.has(a.id));
               return [...prev, ...newEntries];
             });
           }
@@ -662,8 +845,8 @@ function CheckoutTVPage({ data, nav, profile }) {
     // Initial poll on mount
     tvPoll();
 
-    // Then every 60 seconds
-    const interval = setInterval(tvPoll, 60 * 1000);
+    // Then every 15 seconds (TV-008a: faster detection)
+    const interval = setInterval(tvPoll, 15 * 1000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [locationId]);
 
@@ -694,6 +877,38 @@ function CheckoutTVPage({ data, nav, profile }) {
     return () => clearTimeout(timeout);
   }, [checkingOut]);
 
+  /* ── TV-008d: Check-in countdown timer ─────────────────────────────── */
+  useEffect(() => {
+    if (checkingIn.length === 0) return;
+    const id = setInterval(() => {
+      setCheckingIn(prev => {
+        const updated = prev.map(e => {
+          if (e.fading) return e;
+          const next = e.remaining - 1;
+          if (next <= 0) return { ...e, remaining: 0, fading: true };
+          return { ...e, remaining: next };
+        });
+        return updated;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [checkingIn.length > 0]);
+
+  // Clean up faded check-in entries
+  useEffect(() => {
+    const fading = checkingIn.filter(e => e.fading);
+    if (fading.length === 0) return;
+    const timeout = setTimeout(() => {
+      setCheckingIn(prev => prev.filter(e => !e.fading));
+    }, 1200);
+    return () => clearTimeout(timeout);
+  }, [checkingIn]);
+
+  /* ── TV-008d: Compute active and queued check-ins ──────────────────── */
+  const activeCheckIn = checkingIn.find(e => !e.fading) || checkingIn.find(e => e.fading) || null;
+  const fadingCheckIns = activeCheckIn ? checkingIn.filter(e => e.fading && e !== activeCheckIn) : [];
+  const queuedCheckIns = checkingIn.filter(e => !e.fading && e !== activeCheckIn);
+
   /* ── TV-006: Compute active (hero) and queued checkouts ────────────── */
   const activeCheckout = checkingOut.find(e => !e.fading) || checkingOut.find(e => e.fading) || null;
   const fadingCheckouts = activeCheckout ? checkingOut.filter(e => e.fading && e !== activeCheckout) : [];
@@ -703,7 +918,12 @@ function CheckoutTVPage({ data, nav, profile }) {
   const checkingOutDogIds = useMemo(() => {
     const ids = new Set();
     for (const e of checkingOut) {
-      if (e.animalGingrId) {
+      // TV-008b: entries now have a dogs array
+      if (e.dogs) {
+        for (const d of e.dogs) {
+          if (d.animalGingrId) ids.add(`g${d.animalGingrId}`);
+        }
+      } else if (e.animalGingrId) {
         ids.add(`g${e.animalGingrId}`);
       }
     }
@@ -822,6 +1042,7 @@ function CheckoutTVPage({ data, nav, profile }) {
   );
 
   const hasCheckouts = checkingOut.length > 0;
+  const hasCheckIns = checkingIn.length > 0;
 
   /* ── TV-005: Determine which sections to render based on active view ── */
   const showLargeDaycare = activeView === "all" || activeView === "large-daycare";
@@ -935,68 +1156,114 @@ function CheckoutTVPage({ data, nav, profile }) {
         </div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Private Play: <span style={{ fontWeight: 800, color: "#F59E0B" }}>{privatePlayDogs.length}</span></div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#84CC16" }}>{boardingDogs.length}</span></div>
+        {hasCheckIns && (
+          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: hasCheckouts ? 0 : "auto" }}>
+            Checking in: <span style={{ fontWeight: 800, color: "#38BDF8" }}>{checkingIn.filter(e => !e.fading).length}</span>
+          </div>
+        )}
         {hasCheckouts && (
-          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: "auto" }}>
+          <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: hasCheckIns ? 0 : "auto" }}>
             Checking out: <span style={{ fontWeight: 800, color: "#EF4444" }}>{checkingOut.filter(e => !e.fading).length}</span>
           </div>
         )}
       </div>
 
-      {/* TV-006: Hero checkout card — enlarged, prominent, above the grid */}
-      {hasCheckouts && (
-        <div style={{ marginBottom: 20 }}>
-          {/* Active hero card */}
-          {activeCheckout && (
+      {/* TV-008d: Check-in hero cards — ABOVE checkout cards */}
+      <div style={{
+        maxHeight: hasCheckIns ? 500 : 0,
+        overflow: "hidden",
+        transition: "max-height 0.5s ease, opacity 0.3s ease",
+        opacity: hasCheckIns ? 1 : 0,
+      }}>
+        {activeCheckIn && (
+          <HeroCheckInCard
+            key={activeCheckIn.id}
+            entry={activeCheckIn}
+            dogs={dogs}
+            animalIcons={animalIcons}
+            fading={activeCheckIn.fading}
+          />
+        )}
+        {fadingCheckIns.map(entry => (
+          <HeroCheckInCard
+            key={entry.id}
+            entry={entry}
+            dogs={dogs}
+            animalIcons={animalIcons}
+            fading={true}
+          />
+        ))}
+        {queuedCheckIns.length > 0 && (
+          <div style={{ marginTop: 8, marginBottom: 12 }}>
+            <div style={{
+              fontSize: 11, fontWeight: 700, color: "rgba(56,189,248,0.5)",
+              textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6, paddingLeft: 4,
+            }}>
+              Also arriving ({queuedCheckIns.length})
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* TV-006 + TV-008c: Hero checkout card section with reflow transition */}
+      <div style={{
+        maxHeight: hasCheckouts ? 500 : 0,
+        overflow: "hidden",
+        transition: "max-height 0.5s ease, opacity 0.3s ease, margin 0.5s ease",
+        opacity: hasCheckouts ? 1 : 0,
+        marginBottom: hasCheckouts ? 20 : 0,
+      }}>
+        {/* Active hero card */}
+        {activeCheckout && (
+          <HeroCheckoutCard
+            key={activeCheckout.id}
+            entry={activeCheckout}
+            dogs={dogs}
+            clients={clients}
+            fading={activeCheckout.fading}
+            animalIcons={animalIcons}
+          />
+        )}
+
+        {/* Fading out cards */}
+        {fadingCheckouts.map(entry => (
+          <div key={entry.id} style={{ marginTop: 8 }}>
             <HeroCheckoutCard
-              key={activeCheckout.id}
-              entry={activeCheckout}
+              entry={entry}
               dogs={dogs}
               clients={clients}
-              fading={activeCheckout.fading}
+              fading={true}
               animalIcons={animalIcons}
             />
-          )}
+          </div>
+        ))}
 
-          {/* Fading out cards (previous heroes completing their fade animation) */}
-          {fadingCheckouts.map(entry => (
-            <div key={entry.id} style={{ marginTop: 8 }}>
-              <HeroCheckoutCard
-                entry={entry}
-                dogs={dogs}
-                clients={clients}
-                fading={true}
-                animalIcons={animalIcons}
-              />
+        {/* Queued checkouts — compact cards showing who's next */}
+        {queuedCheckouts.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{
+              fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.3)",
+              textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8,
+              paddingLeft: 4,
+            }}>
+              Up Next ({queuedCheckouts.length} waiting)
             </div>
-          ))}
-
-          {/* Queued checkouts — compact cards showing who's next */}
-          {queuedCheckouts.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <div style={{
-                fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.3)",
-                textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8,
-                paddingLeft: 4,
-              }}>
-                Up Next ({queuedCheckouts.length} waiting)
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {queuedCheckouts.map((entry, i) => (
-                  <QueueCard
-                    key={entry.id}
-                    entry={entry}
-                    dogs={dogs}
-                    index={i}
-                  />
-                ))}
-              </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {queuedCheckouts.map((entry, i) => (
+                <QueueCard
+                  key={entry.id}
+                  entry={entry}
+                  dogs={dogs}
+                  index={i}
+                />
+              ))}
             </div>
-          )}
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
-      {/* TV-005: Grid content — switches between "all" sectioned view and filtered single-category view */}
-      <div key={gridKey} style={{ animation: "tvGridFadeIn 0.35s ease-out" }}>
+      {/* TV-005 + TV-008c: Grid content with smooth reflow transition */}
+      <div key={gridKey} style={{ animation: "tvGridFadeIn 0.35s ease-out", transition: "all 0.4s ease" }}>
         {isFilteredView && filteredDogList ? (
           /* ── Filtered single-category view ────────────────────────────── */
           <>
@@ -1094,7 +1361,7 @@ function CheckoutTVPage({ data, nav, profile }) {
               </div>
             )}
 
-            {uniqueDogs.length === 0 && checkingOut.length === 0 && (
+            {uniqueDogs.length === 0 && checkingOut.length === 0 && checkingIn.length === 0 && (
               <div style={{ textAlign: "center", padding: "80px 0" }}>
                 <div style={{ fontSize: 20, fontWeight: 700, color: "rgba(255,255,255,0.3)" }}>No dogs checked in today</div>
               </div>
