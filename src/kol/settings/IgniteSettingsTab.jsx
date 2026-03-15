@@ -93,13 +93,18 @@ function IgniteSettingsTab() {
     const sample = samples[testSample] || samples.web_form;
 
     try {
+      // Replace hardcoded sample profile ID with the user's actual configured profile number
+      const patchedHtml = profileNum
+        ? sample.html.replace(/IGN-7842/g, profileNum)
+        : sample.html;
+
       const resp = await fetch(WEBHOOK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           from: sample.from,
           subject: sample.subject,
-          html: sample.html,
+          html: patchedHtml,
           headers: { from: sample.from, subject: sample.subject },
         }),
       });
@@ -145,7 +150,7 @@ function IgniteSettingsTab() {
           {lastLeadAt && (
             <div style={{ fontSize: 11, color: C.textMut, textAlign: "right" }}>
               <div>Last lead received</div>
-              <div style={{ fontWeight: 600, color: C.textSec }}>{fmtDateFull(lastLeadAt)}</div>
+              <div style={{ fontWeight: 600, color: C.textSec }}>{(() => { try { const dt = new Date(lastLeadAt); return `${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')}/${dt.getFullYear()}`; } catch { return '—'; } })()}</div>
             </div>
           )}
           <button
