@@ -6,20 +6,19 @@ import { useAuth } from './AuthProvider';
 
 // ─── Light Theme Colors ──────────────────────────────────────────────────────
 const C = {
-  bg: '#F5F6F8',
+  bg: '#FFFFFF',
   bgAlt: '#FAFBFC',
   surface: '#FFFFFF',
-  surfaceHover: '#F0F2F5',
-  border: '#E2E6ED',
-  borderLight: '#EEF0F4',
-  text: '#1A1F2E',
-  textSec: '#5A6478',
-  textMut: '#8B95A8',
-  gold: '#AF8D54',
-  goldLight: '#C4A46A',
-  goldDark: '#8B6F3C',
-  navy: '#003462',
-  navyLight: '#0A4D8A',
+  surfaceHover: '#F8FAFC',
+  border: '#E2E8F0',
+  borderLight: '#F1F5F9',
+  text: '#0F172A',
+  textSec: '#1E293B',
+  textMut: '#475569',
+  pri: '#14532D',
+  priL: '#166534',
+  acc: '#84CC16',
+  accLt: '#D9F99D',
   danger: '#EF4444',
 };
 
@@ -82,7 +81,7 @@ function LegalModal({ type, onClose }) {
           flexShrink: 0, background: C.bgAlt,
         }}>
           <div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: C.navy }}>{title}</div>
+            <div style={{ fontSize: 18, fontWeight: 800, color: C.pri }}>{title}</div>
             <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>Effective February 10, 2026</div>
           </div>
           <button onClick={onClose} style={{
@@ -160,22 +159,22 @@ export default function Login() {
         body { margin: 0; }
         input::placeholder { color: ${C.textMut}; }
         input:focus {
-          border-color: ${C.navy} !important;
-          box-shadow: 0 0 0 3px rgba(0,52,98,0.1) !important;
+          border-color: ${C.pri} !important;
+          box-shadow: 0 0 0 3px rgba(20,83,45,0.1) !important;
         }
       `}</style>
 
       <div style={{
         minHeight: '100vh', background: C.bg,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: "'GT Eesti', system-ui, -apple-system, sans-serif",
+        fontFamily: "'Outfit', system-ui, -apple-system, sans-serif",
         padding: 20, position: 'relative', overflow: 'hidden',
       }}>
         {/* Subtle radial glow */}
         <div style={{
           position: 'absolute', top: '30%', left: '50%', transform: 'translate(-50%, -50%)',
           width: 600, height: 600, borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(0,52,98,0.04) 0%, transparent 70%)',
+          background: 'radial-gradient(circle, rgba(20,83,45,0.04) 0%, transparent 70%)',
           pointerEvents: 'none',
         }} />
 
@@ -199,33 +198,19 @@ export default function Login() {
           boxShadow: '0 20px 60px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)',
           position: 'relative', zIndex: 1,
         }}>
-          {/* Logo — Node/Nexus Brand Mark */}
+          {/* Logo — K9 Operations Pit Bull Mark */}
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
             <div style={{ margin: '0 auto 14px', display: 'flex', justifyContent: 'center' }}>
-              <svg width="56" height="56" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="K9 Operations">
-                <line x1="24" y1="24" x2="12" y2="10" stroke="#AF8D54" strokeWidth="1.8" opacity="0.5" />
-                <line x1="24" y1="24" x2="38" y2="12" stroke="#AF8D54" strokeWidth="1.8" opacity="0.5" />
-                <line x1="24" y1="24" x2="10" y2="36" stroke="#AF8D54" strokeWidth="1.8" opacity="0.5" />
-                <line x1="24" y1="24" x2="38" y2="36" stroke="#AF8D54" strokeWidth="1.8" opacity="0.5" />
-                <line x1="12" y1="10" x2="38" y2="12" stroke="#003462" strokeWidth="1" opacity="0.2" />
-                <line x1="10" y1="36" x2="38" y2="36" stroke="#003462" strokeWidth="1" opacity="0.2" />
-                <circle cx="12" cy="10" r="4.5" fill="#003462" opacity="0.85" />
-                <circle cx="38" cy="12" r="3.5" fill="#003462" opacity="0.7" />
-                <circle cx="10" cy="36" r="3.5" fill="#003462" opacity="0.7" />
-                <circle cx="38" cy="36" r="4" fill="#003462" opacity="0.8" />
-                <circle cx="24" cy="24" r="9" fill="#003462" />
-                <circle cx="24" cy="24" r="6" fill="#AF8D54" opacity="0.9" />
-                <circle cx="24" cy="24" r="2.5" fill="#FFFFFF" />
-              </svg>
+              <img src="/k9-logo-full.svg" alt="K9 Operations" style={{ height: 56 }} />
             </div>
-            <div style={{ fontSize: 28, fontWeight: 800, color: C.navy, letterSpacing: '-0.02em' }}>
+            <div style={{ fontSize: 28, fontWeight: 800, color: C.pri, letterSpacing: '-0.02em' }}>
               K9 Operations
             </div>
             <div style={{
-              fontSize: 11, color: C.gold, fontWeight: 700,
+              fontSize: 11, color: C.acc, fontWeight: 700,
               letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 5,
             }}>
-              Pet Care Facility Management
+              The Operating System for Pet Care
             </div>
           </div>
 
@@ -241,7 +226,7 @@ export default function Login() {
               <button
                 onClick={() => { setMode('login'); setResetSent(false); setError(''); }}
                 style={{
-                  marginTop: 20, padding: '10px 24px', background: C.navy, color: '#fff',
+                  marginTop: 20, padding: '10px 24px', background: C.pri, color: '#fff',
                   border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700,
                   cursor: 'pointer', fontFamily: 'inherit',
                 }}
@@ -279,11 +264,11 @@ export default function Login() {
                   }}>{error}</div>
                 )}
                 <button type="submit" disabled={loading} style={{
-                  width: '100%', padding: '13px', background: loading ? C.textMut : C.navy,
+                  width: '100%', padding: '13px', background: loading ? C.textMut : C.pri,
                   color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700,
                   cursor: loading ? 'default' : 'pointer', fontFamily: 'inherit', marginTop: 4,
                   transition: 'background 0.2s', letterSpacing: '0.02em',
-                  boxShadow: loading ? 'none' : '0 4px 14px rgba(0,52,98,0.2)',
+                  boxShadow: loading ? 'none' : '0 4px 14px rgba(20,83,45,0.2)',
                 }}>
                   {loading ? 'Please wait...' : mode === 'forgot' ? 'Send Reset Link' : 'Sign In'}
                 </button>

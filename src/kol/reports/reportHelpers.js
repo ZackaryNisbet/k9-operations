@@ -153,8 +153,8 @@ export function generateEmailHTML(reportData, config) {
   });
 
   const P = {
-    pri: "#003462",
-    acc: "#AF8D54",
+    pri: "#14532D",
+    acc: "#84CC16",
     bg: "#F5F6F8",
     surface: "#FFFFFF",
     text: "#1A1D23",
@@ -456,7 +456,7 @@ export function generateEmailHTML(reportData, config) {
                 </tr>
                 <tr>
                   <td style="font-family:Arial,Helvetica,sans-serif;font-size:28px;font-weight:800;color:#FFFFFF;line-height:1.2;padding-bottom:6px;">
-                    K9 Resorts
+                    K9 Operations
                   </td>
                 </tr>
                 <tr>
@@ -505,7 +505,7 @@ export function generateEmailHTML(reportData, config) {
                 </tr>
                 <tr>
                   <td style="font-family:Arial,Helvetica,sans-serif;font-size:11px;color:rgba(255,255,255,0.3);padding-top:12px;">
-                    K9 Resorts Luxury Pet Hotel &middot; Powered by K9 Operations
+                    &copy; 2026 K9 Operations LLC. All Rights Reserved.
                   </td>
                 </tr>
               </table>
@@ -684,8 +684,8 @@ export function generateWeeklyEmailHTML(reportData, config) {
   const sections = cfg.sections || getDefaultWeeklyReportConfig().sections;
 
   const P = {
-    pri: "#003462",
-    acc: "#AF8D54",
+    pri: "#14532D",
+    acc: "#84CC16",
     bg: "#F5F6F8",
     surface: "#FFFFFF",
     text: "#1A1D23",
@@ -1080,7 +1080,7 @@ export function generateWeeklyEmailHTML(reportData, config) {
                 </tr>
                 <tr>
                   <td style="font-family:Arial,Helvetica,sans-serif;font-size:28px;font-weight:800;color:#FFFFFF;line-height:1.2;padding-bottom:6px;">
-                    K9 Resorts
+                    K9 Operations
                   </td>
                 </tr>
                 <tr>
@@ -1129,7 +1129,7 @@ export function generateWeeklyEmailHTML(reportData, config) {
                 </tr>
                 <tr>
                   <td style="font-family:Arial,Helvetica,sans-serif;font-size:11px;color:rgba(255,255,255,0.3);padding-top:12px;">
-                    K9 Resorts Luxury Pet Hotel &middot; Powered by K9 Operations
+                    &copy; 2026 K9 Operations LLC. All Rights Reserved.
                   </td>
                 </tr>
               </table>

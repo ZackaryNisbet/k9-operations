@@ -66,7 +66,7 @@ const LocationCard = memo(function LocationCard({ location, index, total, onUpda
     border: `1.5px solid ${C.borderLight}`,
     borderRadius: 8,
     fontSize: 13,
-    fontFamily: "'GT Eesti', sans-serif",
+    fontFamily: "'Outfit', sans-serif",
     color: C.text,
     background: C.surface,
     outline: "none",
@@ -80,7 +80,7 @@ const LocationCard = memo(function LocationCard({ location, index, total, onUpda
     color: C.textSec,
     marginBottom: 4,
     display: "block",
-    fontFamily: "'GT Eesti', sans-serif",
+    fontFamily: "'Outfit', sans-serif",
   };
 
   return (
@@ -109,10 +109,10 @@ const LocationCard = memo(function LocationCard({ location, index, total, onUpda
         onMouseLeave={e => (e.currentTarget.style.background = C.bg)}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ fontSize: 12, color: C.textMut, fontWeight: 600, fontFamily: "'GT Eesti', sans-serif" }}>
+          <span style={{ fontSize: 12, color: C.textMut, fontWeight: 600, fontFamily: "'Outfit', sans-serif" }}>
             {location.expanded ? "▼" : "▶"}
           </span>
-          <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>
             {location.name || `Location ${index + 1}`}
           </span>
           <Badge style={{
@@ -316,7 +316,7 @@ function ProgressBar({ locations }) {
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "'GT Eesti', sans-serif" }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: C.text, fontFamily: "'Outfit', sans-serif" }}>
           Progress: {completed}/{total} complete
           {errors > 0 && <span style={{ color: C.dan }}> ({errors} error{errors !== 1 ? "s" : ""})</span>}
         </span>
@@ -487,11 +487,11 @@ function EnterpriseMultiResortSetup({ data, save, nav, profile, addGlobalToast }
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div style={{ fontFamily: "'GT Eesti', sans-serif" }}>
+    <div style={{ fontFamily: "'Outfit', sans-serif" }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
-          <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>
+          <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>
             Multi-Resort Quick Setup
           </h2>
           <p style={{ margin: 0, fontSize: 14, color: C.textSec }}>
@@ -541,7 +541,7 @@ function EnterpriseMultiResortSetup({ data, save, nav, profile, addGlobalToast }
             fontSize: 14,
             fontWeight: 600,
             cursor: "pointer",
-            fontFamily: "'GT Eesti', sans-serif",
+            fontFamily: "'Outfit', sans-serif",
             marginBottom: 24,
             transition: "all 0.15s ease",
           }}
@@ -555,7 +555,7 @@ function EnterpriseMultiResortSetup({ data, save, nav, profile, addGlobalToast }
       {/* Sync Toggle Panel (for manual sync mode) */}
       {showSyncToggles && (
         <Card style={{ padding: 20, marginBottom: 24, border: `1.5px solid ${C.acc}`, background: C.accLt }}>
-          <h4 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>
+          <h4 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>
             Select Locations to Sync
           </h4>
           <p style={{ margin: "0 0 16px", fontSize: 13, color: C.textSec }}>
@@ -667,7 +667,7 @@ function EnterpriseMultiResortSetup({ data, save, nav, profile, addGlobalToast }
                 fontWeight: 700,
                 padding: "10px 22px",
                 fontSize: 13,
-                boxShadow: "0 2px 8px rgba(0,52,98,0.2)",
+                boxShadow: "0 2px 8px rgba(20,83,45,0.2)",
               }}
             >
               Create & Sync All
@@ -710,7 +710,7 @@ function EnterpriseMultiResortSetup({ data, save, nav, profile, addGlobalToast }
           marginTop: 16,
         }}>
           <div style={{ fontSize: 28, marginBottom: 8 }}>✓</div>
-          <h3 style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 700, color: C.suc, fontFamily: "'Canela', Georgia, serif" }}>
+          <h3 style={{ margin: "0 0 8px", fontSize: 18, fontWeight: 700, color: C.suc, fontFamily: "'Outfit', sans-serif" }}>
             Setup Complete
           </h3>
           <p style={{ margin: "0 0 16px", fontSize: 13, color: C.textSec }}>

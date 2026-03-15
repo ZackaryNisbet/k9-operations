@@ -212,7 +212,7 @@ function DogDetailPage({ data, clientId, dogId, nav, profile }) {
           )}
           <div style={{ flex: 1 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <h2 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, fontFamily: "'Canela', serif" }}>{dog.fields.name}</h2>
+              <h2 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, fontFamily: "'Outfit', sans-serif" }}>{dog.fields.name}</h2>
               {dog._vip && <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 6, background: "#FEF3C7", color: "#92400E", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em" }}>VIP</span>}
               {dog._banned && <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 6, background: C.danLt, color: C.dan, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em" }}>BANNED</span>}
             </div>

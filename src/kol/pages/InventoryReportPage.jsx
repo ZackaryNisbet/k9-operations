@@ -132,7 +132,7 @@ function LineChart({ data, color = C.pri, height = 180, label = "Value", formatY
           return (
             <g key={i}>
               <line x1={padL} y1={y} x2={padL + plotW} y2={y} stroke={C.borderLight} strokeWidth="1" />
-              <text x={padL - 6} y={y + 4} textAnchor="end" fontSize="10" fill={C.textMut} fontFamily="GT Eesti, sans-serif">
+              <text x={padL - 6} y={y + 4} textAnchor="end" fontSize="10" fill={C.textMut} fontFamily="Outfit, sans-serif">
                 {formatY(v)}
               </text>
             </g>
@@ -150,7 +150,7 @@ function LineChart({ data, color = C.pri, height = 180, label = "Value", formatY
                 textAnchor="middle"
                 fontSize="9"
                 fill={C.textMut}
-                fontFamily="GT Eesti, sans-serif"
+                fontFamily="Outfit, sans-serif"
               >
                 {d.label || d.date || ""}
               </text>
@@ -195,7 +195,7 @@ function LineChart({ data, color = C.pri, height = 180, label = "Value", formatY
             borderRadius: 8,
             padding: "7px 12px",
             fontSize: 12,
-            fontFamily: "GT Eesti, sans-serif",
+            fontFamily: "Outfit, sans-serif",
             fontWeight: 600,
             pointerEvents: "none",
             zIndex: 10,
@@ -255,7 +255,7 @@ function HBarChart({ data, color = C.pri, height = 300, formatX = (v) => v.toFix
                 width: labelW,
                 fontSize: 12,
                 color: C.text,
-                fontFamily: "GT Eesti, sans-serif",
+                fontFamily: "Outfit, sans-serif",
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
@@ -277,7 +277,7 @@ function HBarChart({ data, color = C.pri, height = 300, formatX = (v) => v.toFix
                   minWidth: 2,
                 }}
               />
-              <span style={{ fontSize: 11, color: C.textSec, fontFamily: "GT Eesti, sans-serif", whiteSpace: "nowrap" }}>
+              <span style={{ fontSize: 11, color: C.textSec, fontFamily: "Outfit, sans-serif", whiteSpace: "nowrap" }}>
                 {formatX(d.value)}{unit}
               </span>
             </div>
@@ -343,18 +343,18 @@ function DonutChart({ data, height = 200 }) {
         <circle cx={cx} cy={cy} r={r - 1} fill={C.surface} />
         {hov ? (
           <>
-            <text x={cx} y={cy - 8} textAnchor="middle" fontSize="9" fill={C.textSec} fontFamily="GT Eesti, sans-serif">
+            <text x={cx} y={cy - 8} textAnchor="middle" fontSize="9" fill={C.textSec} fontFamily="Outfit, sans-serif">
               {hov.label.length > 14 ? hov.label.substring(0, 13) + "…" : hov.label}
             </text>
-            <text x={cx} y={cy + 8} textAnchor="middle" fontSize="12" fontWeight="700" fill={C.text} fontFamily="GT Eesti, sans-serif">
+            <text x={cx} y={cy + 8} textAnchor="middle" fontSize="12" fontWeight="700" fill={C.text} fontFamily="Outfit, sans-serif">
               {(hov.frac * 100).toFixed(1)}%
             </text>
-            <text x={cx} y={cy + 22} textAnchor="middle" fontSize="9" fill={C.textSec} fontFamily="GT Eesti, sans-serif">
+            <text x={cx} y={cy + 22} textAnchor="middle" fontSize="9" fill={C.textSec} fontFamily="Outfit, sans-serif">
               {fmtCurrencyShort(hov.value)}
             </text>
           </>
         ) : (
-          <text x={cx} y={cy + 5} textAnchor="middle" fontSize="11" fill={C.textSec} fontFamily="GT Eesti, sans-serif">
+          <text x={cx} y={cy + 5} textAnchor="middle" fontSize="11" fill={C.textSec} fontFamily="Outfit, sans-serif">
             Total
           </text>
         )}
@@ -377,10 +377,10 @@ function DonutChart({ data, height = 200 }) {
             onMouseLeave={() => setHovIdx(null)}
           >
             <div style={{ width: 10, height: 10, borderRadius: 3, background: s.color, flexShrink: 0 }} />
-            <span style={{ fontSize: 12, color: C.text, fontFamily: "GT Eesti, sans-serif", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <span style={{ fontSize: 12, color: C.text, fontFamily: "Outfit, sans-serif", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {s.label}
             </span>
-            <span style={{ fontSize: 11, color: C.textSec, fontFamily: "GT Eesti, sans-serif", whiteSpace: "nowrap" }}>
+            <span style={{ fontSize: 11, color: C.textSec, fontFamily: "Outfit, sans-serif", whiteSpace: "nowrap" }}>
               {(s.frac * 100).toFixed(1)}%
             </span>
           </div>
@@ -407,18 +407,18 @@ function MetricCard({ label, value, sub, icon, color = C.pri, bgColor, animDelay
       }}
     >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-        <div style={{ fontSize: 12, color: C.textSec, fontFamily: "GT Eesti, sans-serif", fontWeight: 500, letterSpacing: "0.03em", textTransform: "uppercase" }}>
+        <div style={{ fontSize: 12, color: C.textSec, fontFamily: "Outfit, sans-serif", fontWeight: 500, letterSpacing: "0.03em", textTransform: "uppercase" }}>
           {label}
         </div>
         {icon && (
           <div style={{ color, opacity: 0.75 }}>{icon}</div>
         )}
       </div>
-      <div style={{ fontSize: 26, fontWeight: 700, color: C.text, fontFamily: "Canela, serif", lineHeight: 1.1 }}>
+      <div style={{ fontSize: 26, fontWeight: 700, color: C.text, fontFamily: "Outfit, sans-serif", lineHeight: 1.1 }}>
         {value}
       </div>
       {sub && (
-        <div style={{ fontSize: 12, color: C.textSec, fontFamily: "GT Eesti, sans-serif" }}>{sub}</div>
+        <div style={{ fontSize: 12, color: C.textSec, fontFamily: "Outfit, sans-serif" }}>{sub}</div>
       )}
     </div>
   );
@@ -428,8 +428,8 @@ function MetricCard({ label, value, sub, icon, color = C.pri, bgColor, animDelay
 function SectionHeader({ title, sub }) {
   return (
     <div style={{ marginBottom: 14 }}>
-      <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "Canela, serif" }}>{title}</div>
-      {sub && <div style={{ fontSize: 12, color: C.textSec, fontFamily: "GT Eesti, sans-serif", marginTop: 3 }}>{sub}</div>}
+      <div style={{ fontSize: 16, fontWeight: 700, color: C.text, fontFamily: "Outfit, sans-serif" }}>{title}</div>
+      {sub && <div style={{ fontSize: 12, color: C.textSec, fontFamily: "Outfit, sans-serif", marginTop: 3 }}>{sub}</div>}
     </div>
   );
 }
@@ -453,7 +453,7 @@ function Skeleton({ h = 20, w = "100%", radius = 6 }) {
 /* ─── Empty State ──────────────────────────────────────────────────────────── */
 function EmptyState({ message = "No data available for this timeframe" }) {
   return (
-    <div style={{ textAlign: "center", padding: "48px 24px", color: C.textMut, fontFamily: "GT Eesti, sans-serif" }}>
+    <div style={{ textAlign: "center", padding: "48px 24px", color: C.textMut, fontFamily: "Outfit, sans-serif" }}>
       <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.4 }}>
         <I.BarChart />
       </div>
@@ -482,7 +482,7 @@ const REPORT_CSS = `
   transition: box-shadow 0.22s, transform 0.22s;
 }
 .dash-card:hover {
-  box-shadow: 0 8px 28px rgba(0,52,98,0.10);
+  box-shadow: 0 8px 28px rgba(20,83,45,0.10);
   transform: translateY(-2px);
 }
 .inv-pill {
@@ -493,7 +493,7 @@ const REPORT_CSS = `
   cursor: pointer;
   border: 1.5px solid transparent;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
-  font-family: 'GT Eesti', sans-serif;
+  font-family: 'Outfit', sans-serif;
 }
 .inv-pill-active {
   background: ${C.pri};
@@ -864,7 +864,7 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "GT Eesti, sans-serif" }}>
+    <div style={{ background: C.bg, minHeight: "100vh", fontFamily: "Outfit, sans-serif" }}>
 
       {/* ── Page Header ── */}
       <div style={{
@@ -878,7 +878,7 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
         flexWrap: "wrap",
       }}>
         <div>
-          <div style={{ fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "Canela, serif" }}>
+          <div style={{ fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "Outfit, sans-serif" }}>
             Inventory Analytics
           </div>
           <div style={{ fontSize: 13, color: C.textSec, marginTop: 2 }}>
@@ -892,7 +892,7 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
               display: "flex", alignItems: "center", gap: 6,
               padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`,
               background: C.surface, color: C.textSec, fontSize: 13, fontWeight: 500,
-              cursor: "pointer", fontFamily: "GT Eesti, sans-serif",
+              cursor: "pointer", fontFamily: "Outfit, sans-serif",
               transition: "border-color 0.15s, color 0.15s",
             }}
             onClick={loadData}
@@ -929,7 +929,7 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
                 onChange={(e) => setCustomFrom(e.target.value)}
                 style={{
                   padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`,
-                  fontSize: 13, fontFamily: "GT Eesti, sans-serif", color: C.text,
+                  fontSize: 13, fontFamily: "Outfit, sans-serif", color: C.text,
                   background: C.surface, outline: "none",
                 }}
               />
@@ -940,7 +940,7 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
                 onChange={(e) => setCustomTo(e.target.value)}
                 style={{
                   padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`,
-                  fontSize: 13, fontFamily: "GT Eesti, sans-serif", color: C.text,
+                  fontSize: 13, fontFamily: "Outfit, sans-serif", color: C.text,
                   background: C.surface, outline: "none",
                 }}
               />
@@ -957,7 +957,7 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
           <div style={{
             background: C.danLt, border: `1.5px solid ${C.dan}`, borderRadius: 10,
             padding: "12px 16px", marginBottom: 20, color: C.dan,
-            fontSize: 13, fontFamily: "GT Eesti, sans-serif",
+            fontSize: 13, fontFamily: "Outfit, sans-serif",
             display: "flex", alignItems: "center", gap: 8,
           }}>
             <I.AlertTriangle />
@@ -990,7 +990,7 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
             <div style={{ fontSize: 48, marginBottom: 16, opacity: 0.3, display: "flex", justifyContent: "center" }}>
               <I.ShoppingCart />
             </div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: C.text, fontFamily: "Canela, serif", marginBottom: 8 }}>
+            <div style={{ fontSize: 18, fontWeight: 700, color: C.text, fontFamily: "Outfit, sans-serif", marginBottom: 8 }}>
               No Inventory Data Yet
             </div>
             <div style={{ fontSize: 13, color: C.textSec, maxWidth: 380, margin: "0 auto" }}>
@@ -1380,7 +1380,7 @@ export default function InventoryReportPage({ data, save, nav, profile, addGloba
                           color: C.text,
                         }}
                       >
-                        <div style={{ fontWeight: 600, fontFamily: "GT Eesti, sans-serif" }}>
+                        <div style={{ fontWeight: 600, fontFamily: "Outfit, sans-serif" }}>
                           {fmtDate(snap.week_start)}
                         </div>
                         <div style={{ color: C.textSec, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

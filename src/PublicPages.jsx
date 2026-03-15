@@ -25,12 +25,12 @@ class PublicErrorBoundary extends Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8F7F4', fontFamily: "'GT Eesti', sans-serif", padding: 24 }}>
+        <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8F7F4', fontFamily: "'Outfit', sans-serif", padding: 24 }}>
           <div style={{ textAlign: 'center', maxWidth: 500 }}>
             <div style={{ fontSize: 48, marginBottom: 16 }}>🐾</div>
-            <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 28, color: '#003462', marginBottom: 12 }}>Something went wrong</h2>
+            <h2 style={{ fontFamily: "'Outfit', sans-serif", fontSize: 28, color: B.navy, marginBottom: 12 }}>Something went wrong</h2>
             <p style={{ color: '#6B7280', fontSize: 15, lineHeight: 1.6, marginBottom: 16 }}>We encountered an unexpected error. Please try refreshing the page.</p>
-            <button onClick={() => window.location.reload()} style={{ padding: '12px 28px', background: '#003462', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>Refresh Page</button>
+            <button onClick={() => window.location.reload()} style={{ padding: '12px 28px', background: B.navy, color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>Refresh Page</button>
           </div>
         </div>
       );
@@ -43,10 +43,10 @@ class PublicErrorBoundary extends Component {
 // BRAND COLORS
 // ═══════════════════════════════════════════════════════════════════════════
 const B = {
-  navy: '#003462',
+  navy: '#14532D',
   navyDark: '#00243F',
   navyLight: '#0A4A82',
-  gold: '#AF8D54',
+  gold: '#84CC16',
   goldLight: '#C9AB74',
   goldPale: '#F5EFE3',
   bronze: '#59504B',
@@ -121,7 +121,7 @@ function AgreementSigningPage({ linkId, data }) {
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: B.bg, padding: 20 }}>
         <div style={{ textAlign: 'center', maxWidth: 500 }}>
           <div style={{ fontSize: 64, marginBottom: 24 }}>✓</div>
-          <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 32, color: B.navy, marginBottom: 12, fontWeight: 400 }}>Agreement Signed</h2>
+          <h2 style={{ fontFamily: "'Outfit', sans-serif", fontSize: 32, color: B.navy, marginBottom: 12, fontWeight: 400 }}>Agreement Signed</h2>
           <p style={{ color: B.textSec, fontSize: 16, lineHeight: 1.6, marginBottom: 24 }}>Thank you! Your agreement has been successfully signed and recorded.</p>
           <p style={{ color: B.textMut, fontSize: 14 }}>You can close this window or visit the K9 Resorts website.</p>
         </div>
@@ -135,7 +135,7 @@ function AgreementSigningPage({ linkId, data }) {
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: B.bg, padding: 20 }}>
         <div style={{ textAlign: 'center', maxWidth: 500 }}>
           <div style={{ fontSize: 64, marginBottom: 24 }}>✓</div>
-          <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 32, color: B.navy, marginBottom: 12, fontWeight: 400 }}>Already Signed</h2>
+          <h2 style={{ fontFamily: "'Outfit', sans-serif", fontSize: 32, color: B.navy, marginBottom: 12, fontWeight: 400 }}>Already Signed</h2>
           <p style={{ color: B.textSec, fontSize: 16, lineHeight: 1.6 }}>This agreement has already been signed. Thank you!</p>
         </div>
       </div>
@@ -152,19 +152,19 @@ function AgreementSigningPage({ linkId, data }) {
         {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: 32, paddingTop: 20 }}>
           <K9Logo size={48} />
-          <h1 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 28, color: B.navy, marginBottom: 8, marginTop: 16, fontWeight: 400 }}>
+          <h1 style={{ fontFamily: "'Outfit', sans-serif", fontSize: 28, color: B.navy, marginBottom: 8, marginTop: 16, fontWeight: 400 }}>
             {data?.locationName}
           </h1>
         </div>
 
         {/* Greeting */}
-        <p style={{ fontSize: 18, color: B.text, marginBottom: 28, textAlign: 'center', fontFamily: "'Canela', Georgia, serif" }}>
+        <p style={{ fontSize: 18, color: B.text, marginBottom: 28, textAlign: 'center', fontFamily: "'Outfit', sans-serif" }}>
           Hi {data?.clientFirstName},
         </p>
 
         {/* Card with Agreement */}
         <div style={{ background: B.surface, borderRadius: 12, padding: 28, marginBottom: 28, boxShadow: '0 1px 3px rgba(0,0,0,0.08)' }}>
-          <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 20, color: B.navy, marginBottom: 20, fontWeight: 400 }}>
+          <h2 style={{ fontFamily: "'Outfit', sans-serif", fontSize: 20, color: B.navy, marginBottom: 20, fontWeight: 400 }}>
             {agreementName}
           </h2>
 
@@ -182,7 +182,7 @@ function AgreementSigningPage({ linkId, data }) {
             color: B.text,
             whiteSpace: 'pre-wrap',
             wordWrap: 'break-word',
-            fontFamily: "'GT Eesti', sans-serif",
+            fontFamily: "'Outfit', sans-serif",
           }}>
             {agreementBody || 'No agreement content available'}
           </div>
@@ -222,7 +222,7 @@ function AgreementSigningPage({ linkId, data }) {
                 fontSize: 14,
                 border: `1px solid ${B.border}`,
                 borderRadius: 8,
-                fontFamily: "'GT Eesti', sans-serif",
+                fontFamily: "'Outfit', sans-serif",
                 boxSizing: 'border-box',
               }}
             />
@@ -244,7 +244,7 @@ function AgreementSigningPage({ linkId, data }) {
                 border: `1px solid ${B.border}`,
                 borderRadius: 8,
                 background: B.bg,
-                fontFamily: "'GT Eesti', sans-serif",
+                fontFamily: "'Outfit', sans-serif",
                 boxSizing: 'border-box',
                 cursor: 'not-allowed',
                 color: B.textMut,
@@ -282,7 +282,7 @@ function AgreementSigningPage({ linkId, data }) {
               fontWeight: 600,
               cursor: loading ? 'not-allowed' : 'pointer',
               opacity: loading ? 0.7 : 1,
-              fontFamily: "'GT Eesti', sans-serif",
+              fontFamily: "'Outfit', sans-serif",
               transition: 'all 0.2s',
             }}
             onMouseOver={(e) => !loading && (e.target.style.background = B.navyDark)}
@@ -347,7 +347,7 @@ function QuestionnairePage({ linkId, data }) {
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: B.bg, padding: 20 }}>
         <div style={{ textAlign: 'center', maxWidth: 500 }}>
           <div style={{ fontSize: 64, marginBottom: 24 }}>✓</div>
-          <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 32, color: B.navy, marginBottom: 12, fontWeight: 400 }}>Thank You!</h2>
+          <h2 style={{ fontFamily: "'Outfit', sans-serif", fontSize: 32, color: B.navy, marginBottom: 12, fontWeight: 400 }}>Thank You!</h2>
           <p style={{ color: B.textSec, fontSize: 16, lineHeight: 1.6, marginBottom: 24 }}>Your questionnaire has been successfully submitted. We appreciate the information!</p>
           <p style={{ color: B.textMut, fontSize: 14 }}>You can close this window or visit the K9 Resorts website.</p>
         </div>
@@ -361,7 +361,7 @@ function QuestionnairePage({ linkId, data }) {
       <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: B.bg, padding: 20 }}>
         <div style={{ textAlign: 'center', maxWidth: 500 }}>
           <div style={{ fontSize: 64, marginBottom: 24 }}>✓</div>
-          <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 32, color: B.navy, marginBottom: 12, fontWeight: 400 }}>Already Submitted</h2>
+          <h2 style={{ fontFamily: "'Outfit', sans-serif", fontSize: 32, color: B.navy, marginBottom: 12, fontWeight: 400 }}>Already Submitted</h2>
           <p style={{ color: B.textSec, fontSize: 16, lineHeight: 1.6 }}>This questionnaire has already been submitted. Thank you!</p>
         </div>
       </div>
@@ -379,13 +379,13 @@ function QuestionnairePage({ linkId, data }) {
         {/* Header */}
         <div style={{ textAlign: 'center', marginBottom: 32, paddingTop: 20 }}>
           <K9Logo size={48} />
-          <h1 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 28, color: B.navy, marginBottom: 8, marginTop: 16, fontWeight: 400 }}>
+          <h1 style={{ fontFamily: "'Outfit', sans-serif", fontSize: 28, color: B.navy, marginBottom: 8, marginTop: 16, fontWeight: 400 }}>
             {data?.locationName}
           </h1>
         </div>
 
         {/* Greeting */}
-        <p style={{ fontSize: 18, color: B.text, marginBottom: 28, textAlign: 'center', fontFamily: "'Canela', Georgia, serif" }}>
+        <p style={{ fontSize: 18, color: B.text, marginBottom: 28, textAlign: 'center', fontFamily: "'Outfit', sans-serif" }}>
           Hi {data?.clientFirstName}, tell us about {data?.dogNames}!
         </p>
 
@@ -396,7 +396,7 @@ function QuestionnairePage({ linkId, data }) {
               sections.map((section, sIdx) => (
                 <div key={sIdx} style={{ marginBottom: 32 }}>
                   {section.title && (
-                    <h3 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 18, color: B.navy, marginBottom: 16, fontWeight: 400 }}>
+                    <h3 style={{ fontFamily: "'Outfit', sans-serif", fontSize: 18, color: B.navy, marginBottom: 16, fontWeight: 400 }}>
                       {section.title}
                     </h3>
                   )}
@@ -436,7 +436,7 @@ function QuestionnairePage({ linkId, data }) {
                               fontSize: 13,
                               border: `1px solid ${B.border}`,
                               borderRadius: 6,
-                              fontFamily: "'GT Eesti', sans-serif",
+                              fontFamily: "'Outfit', sans-serif",
                               boxSizing: 'border-box',
                             }}
                           />
@@ -455,7 +455,7 @@ function QuestionnairePage({ linkId, data }) {
                               fontSize: 13,
                               border: `1px solid ${B.border}`,
                               borderRadius: 6,
-                              fontFamily: "'GT Eesti', sans-serif",
+                              fontFamily: "'Outfit', sans-serif",
                               boxSizing: 'border-box',
                             }}
                           />
@@ -474,7 +474,7 @@ function QuestionnairePage({ linkId, data }) {
                               fontSize: 13,
                               border: `1px solid ${B.border}`,
                               borderRadius: 6,
-                              fontFamily: "'GT Eesti', sans-serif",
+                              fontFamily: "'Outfit', sans-serif",
                               boxSizing: 'border-box',
                               resize: 'vertical',
                             }}
@@ -492,7 +492,7 @@ function QuestionnairePage({ linkId, data }) {
                               fontSize: 13,
                               border: `1px solid ${B.border}`,
                               borderRadius: 6,
-                              fontFamily: "'GT Eesti', sans-serif",
+                              fontFamily: "'Outfit', sans-serif",
                               boxSizing: 'border-box',
                               background: B.surface,
                               cursor: 'pointer',
@@ -606,7 +606,7 @@ function QuestionnairePage({ linkId, data }) {
                 fontWeight: 600,
                 cursor: loading ? 'not-allowed' : 'pointer',
                 opacity: loading ? 0.7 : 1,
-                fontFamily: "'GT Eesti', sans-serif",
+                fontFamily: "'Outfit', sans-serif",
                 transition: 'all 0.2s',
                 marginTop: 20,
               }}
@@ -630,12 +630,12 @@ function InvalidLinkPage({ message }) {
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: B.bg, padding: 20 }}>
       <div style={{ textAlign: 'center', maxWidth: 500 }}>
         <div style={{ fontSize: 48, marginBottom: 20 }}>⚠️</div>
-        <h2 style={{ fontFamily: "'Canela', Georgia, serif", fontSize: 28, color: B.navy, marginBottom: 12, fontWeight: 400 }}>Link Invalid</h2>
+        <h2 style={{ fontFamily: "'Outfit', sans-serif", fontSize: 28, color: B.navy, marginBottom: 12, fontWeight: 400 }}>Link Invalid</h2>
         <p style={{ color: B.textSec, fontSize: 15, lineHeight: 1.6, marginBottom: 24 }}>
           {message}
         </p>
         <a
-          href="https://k9resorts.com"
+          href="/"
           style={{
             display: 'inline-block',
             padding: '12px 28px',
@@ -645,10 +645,10 @@ function InvalidLinkPage({ message }) {
             borderRadius: 8,
             fontSize: 15,
             fontWeight: 600,
-            fontFamily: "'GT Eesti', sans-serif",
+            fontFamily: "'Outfit', sans-serif",
           }}
         >
-          Back to K9 Resorts
+          Back to K9 Operations
         </a>
       </div>
     </div>
@@ -663,7 +663,7 @@ function LoadingPage() {
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: B.bg }}>
       <div style={{ textAlign: 'center' }}>
         <K9Logo size={64} />
-        <p style={{ marginTop: 20, color: B.textMut, fontSize: 14, fontFamily: "'GT Eesti', sans-serif" }}>Loading...</p>
+        <p style={{ marginTop: 20, color: B.textMut, fontSize: 14, fontFamily: "'Outfit', sans-serif" }}>Loading...</p>
       </div>
     </div>
   );

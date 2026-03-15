@@ -30,7 +30,7 @@ function EnterpriseOpsMatrix() {
 
   return (
     <div>
-      <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Canela', Georgia, serif" }}>Enterprise Operations Overview</h2>
+      <h2 style={{ margin: "0 0 6px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>Enterprise Operations Overview</h2>
       <p style={{ margin: "0 0 24px", fontSize: 14, color: C.textSec }}>Completion percentages across all locations.</p>
 
       <div style={{ overflowX: "auto" }}>
