@@ -386,6 +386,10 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     return dbCount + inMemory + convUpdates + retUpdates + milestones;
   }, [lifecycleEvents, client.lifecycleEvents, client.lifecycle, reservations]);
 
+  const dn=(did)=>{const d=data.dogs.find(x=>x.id===did);return d?d.fields.name:"Unknown";};
+  const tl=(t)=>t==="boarding"?"Boarding":t==="dayboarding"?"Day Board":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
+  const sc=(s)=>s==="checked-in"?"success":s==="upcoming"?"info":"default";
+
   // ─── CLM-008: Merge all events for timeline display ────────────────────────
   const allTimelineEvents = useMemo(() => {
     const events = [];
@@ -658,9 +662,6 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     console.log("reactivateReservation (no-op):", rid);
   };
 
-  const dn=(did)=>{const d=data.dogs.find(x=>x.id===did);return d?d.fields.name:"Unknown";};
-  const tl=(t)=>t==="boarding"?"Boarding":t==="dayboarding"?"Day Board":t==="daycare"?"Daycare":t==="evaluation"?"Evaluation":"Tour";
-  const sc=(s)=>s==="checked-in"?"success":s==="upcoming"?"info":"default";
   const isFieldReq = () => false;
 
   // Stats calculations — use serverStats (same source as ClientsPage/Lifecycle module)

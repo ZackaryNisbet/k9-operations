@@ -946,14 +946,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // Match to existing clients via gingr_owners
     const { data: owners } = await supabaseClient
       .from("gingr_owners")
-      .select("id, email, phone, first_name, last_name")
+      .select("id, gingr_id, email, cell_phone, home_phone, first_name, last_name")
       .eq("location_id", locationId);
 
     const clientList: ClientRecord[] = (owners || []).map(
-      (c: { id: string; email: string; phone: string; first_name: string; last_name: string }) => ({
-        id: c.id,
+      (c: { id: string; gingr_id: string; email: string; cell_phone: string; home_phone: string; first_name: string; last_name: string }) => ({
+        id: "g" + c.gingr_id,
         email: c.email,
-        phone: c.phone,
+        phone: c.cell_phone || c.home_phone || null,
         firstName: c.first_name,
         lastName: c.last_name,
       }),
