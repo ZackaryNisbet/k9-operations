@@ -4,7 +4,7 @@ import { readFileSync } from "fs";
 
 const SUPABASE_URL = "https://xuzvqcpthqikyroqhypw.supabase.co";
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "sb_secret_4TuMsmxryVzBR0ojYhF7Tg_uUb5v_eN";
-const LOCATION_ID = "cherry-hill";
+const LOCATION_ID = "8ea382b0-63f7-44ac-b6f8-83243c03d946";
 
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
