@@ -303,34 +303,54 @@ export function computeRefundMetrics(reservations, dateFrom, dateTo) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    computeRevenueMetrics (cash-basis)
-   Same logic as DashboardPage cashBasisData
+   Pre-indexed: groups reservations by checkIn date once,
+   then range queries filter by date O(range_days).
    ═══════════════════════════════════════════════════════════════════════════ */
+let _cashCache = { reservations: null, byDate: null };
+
+function getCashIndex(reservations) {
+  if (_cashCache.reservations === reservations) return _cashCache.byDate;
+  // Group valid reservations by checkIn date
+  const byDate = {};
+  (reservations || []).forEach(r => {
+    if (r.status === "cancelled" || !(r.pricing?.total > 0)) return;
+    const d = r.checkIn;
+    if (!d) return;
+    if (!byDate[d]) byDate[d] = [];
+    byDate[d].push(r);
+  });
+  _cashCache = { reservations, byDate };
+  return byDate;
+}
+
 export function computeCashRevenueMetrics(reservations, dateFrom, dateTo, prevFrom, prevTo, today) {
-  const allRes = (reservations || []).filter(r => r.status !== "cancelled" && r.pricing?.total > 0);
-  const calcMetrics = (resInRange) => {
-    const total = resInRange.reduce((sum, r) => sum + (r.pricing?.total || 0), 0);
+  const cashIndex = getCashIndex(reservations);
+  const calcMetrics = (from, to) => {
+    let total = 0, count = 0;
     const byCategory = {};
     const byDate = {};
-    resInRange.forEach(r => {
-      const cat = r.type === "boarding" ? "Boarding" : r.type === "daycare" ? "Daycare" : r.type === "evaluation" ? "Evaluation" : "Other";
-      byCategory[cat] = (byCategory[cat] || 0) + (r.pricing?.total || 0);
-      const dt = r.checkIn || today;
-      byDate[dt] = (byDate[dt] || 0) + (r.pricing?.total || 0);
-    });
+    let cur = from;
+    while (cur <= to) {
+      const dayRes = cashIndex[cur];
+      if (dayRes) {
+        dayRes.forEach(r => {
+          const amt = r.pricing?.total || 0;
+          total += amt;
+          count++;
+          const cat = r.type === "boarding" ? "Boarding" : r.type === "daycare" ? "Daycare" : r.type === "evaluation" ? "Evaluation" : "Other";
+          byCategory[cat] = (byCategory[cat] || 0) + amt;
+          byDate[cur] = (byDate[cur] || 0) + amt;
+        });
+      }
+      cur = addDays(cur, 1);
+    }
     return {
-      total, count: resInRange.length, byCategory, byDate,
-      avgTransaction: resInRange.length > 0 ? total / resInRange.length : 0,
-      payments: resInRange.map(r => ({
-        id: r.id, amount: r.pricing?.total || 0, timestamp: r.checkIn + "T12:00:00",
-        category: r.type === "boarding" ? "Boarding" : r.type === "daycare" ? "Daycare" : "Other",
-        reservationId: r.id,
-      })),
+      total, count, byCategory, byDate,
+      avgTransaction: count > 0 ? total / count : 0,
     };
   };
-  const currentRes = allRes.filter(r => r.checkIn >= dateFrom && r.checkIn <= dateTo);
-  const previousRes = allRes.filter(r => r.checkIn >= prevFrom && r.checkIn <= prevTo);
-  const current = calcMetrics(currentRes);
-  const previous = calcMetrics(previousRes);
+  const current = calcMetrics(dateFrom, dateTo);
+  const previous = calcMetrics(prevFrom, prevTo);
   return {
     current, previous,
     trend: previous.total > 0 ? ((current.total - previous.total) / previous.total) * 100 : 0,
@@ -339,43 +359,61 @@ export function computeCashRevenueMetrics(reservations, dateFrom, dateTo, prevFr
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   computeAccrualRevenueMetrics
-   Same logic as DashboardPage accrualData
+   Pre-indexed accrual data — built once per reservations array,
+   then range queries are O(days_in_range) instead of O(136K).
    ═══════════════════════════════════════════════════════════════════════════ */
+let _accrualCache = { reservations: null, index: null };
+
+function getAccrualIndex(reservations) {
+  if (_accrualCache.reservations === reservations) return _accrualCache.index;
+  // Build a date → { boardingRevenue, daycareRevenue, roomsOccupied } index
+  const index = {};
+  (reservations || []).forEach(res => {
+    if (res.status === "cancelled") return;
+    if (res.type === "boarding" && res.checkIn && res.checkOut) {
+      const totalNights = countNights(res.checkIn, res.checkOut);
+      if (totalNights <= 0) return;
+      const perNightRate = (res.pricing?.total || 0) / totalNights;
+      let night = res.checkIn;
+      while (night < res.checkOut) {
+        if (!index[night]) index[night] = { boardingRevenue: 0, daycareRevenue: 0, roomsOccupied: 0 };
+        index[night].boardingRevenue += perNightRate;
+        index[night].roomsOccupied += 1;
+        night = addDays(night, 1);
+      }
+    } else if (res.type === "daycare" && res.checkIn) {
+      const d = res.checkIn;
+      if (!index[d]) index[d] = { boardingRevenue: 0, daycareRevenue: 0, roomsOccupied: 0 };
+      index[d].daycareRevenue += (res.pricing?.total || 0);
+    }
+  });
+  _accrualCache = { reservations, index };
+  return index;
+}
+
 export function computeAccrualRevenueMetrics(data, dateFrom, dateTo, prevFrom, prevTo) {
   const reservations = data.reservations || [];
+  const accrualIndex = getAccrualIndex(reservations);
+
   const processDateRange = (from, to) => {
     const daysList = [];
     let cur = from;
     while (cur <= to) { daysList.push(cur); cur = addDays(cur, 1); }
     const dayData = {};
-    daysList.forEach(d => {
-      dayData[d] = { boardingRevenue: 0, daycareRevenue: 0, totalRevenue: 0, discounts: 0, netRevenue: 0, roomsOccupied: 0 };
-    });
-    reservations.forEach(res => {
-      if (res.status === "cancelled") return;
-      if (res.type === "boarding" && res.checkIn && res.checkOut) {
-        const totalNights = countNights(res.checkIn, res.checkOut);
-        if (totalNights <= 0) return;
-        const perNightRate = (res.pricing?.total || 0) / totalNights;
-        let night = res.checkIn;
-        while (night < res.checkOut) {
-          if (night >= from && night <= to && dayData[night]) {
-            dayData[night].boardingRevenue += perNightRate;
-            dayData[night].roomsOccupied += 1;
-          }
-          night = addDays(night, 1);
-        }
-      } else if (res.type === "daycare" && res.checkIn && res.checkIn >= from && res.checkIn <= to) {
-        if (dayData[res.checkIn]) dayData[res.checkIn].daycareRevenue += (res.pricing?.total || 0);
-      }
-    });
-    daysList.forEach(d => {
-      dayData[d].totalRevenue = dayData[d].boardingRevenue + dayData[d].daycareRevenue;
-      dayData[d].netRevenue = dayData[d].totalRevenue - dayData[d].discounts;
-    });
     const totals = { boardingRevenue: 0, daycareRevenue: 0, totalRevenue: 0, discounts: 0, netRevenue: 0, roomsOccupied: 0 };
-    daysList.forEach(d => { Object.keys(totals).forEach(k => { totals[k] += dayData[d][k]; }); });
+    daysList.forEach(d => {
+      const entry = accrualIndex[d];
+      const br = entry ? entry.boardingRevenue : 0;
+      const dr = entry ? entry.daycareRevenue : 0;
+      const ro = entry ? entry.roomsOccupied : 0;
+      const tr = br + dr;
+      dayData[d] = { boardingRevenue: br, daycareRevenue: dr, totalRevenue: tr, discounts: 0, netRevenue: tr, roomsOccupied: ro };
+      totals.boardingRevenue += br;
+      totals.daycareRevenue += dr;
+      totals.totalRevenue += tr;
+      totals.netRevenue += tr;
+      totals.roomsOccupied += ro;
+    });
     return { dayData, totals, days: daysList };
   };
   const current = processDateRange(dateFrom, dateTo);
