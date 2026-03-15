@@ -16,8 +16,11 @@ export function AuthProvider({ children }) {
   const [needsPasswordSet, setNeedsPasswordSet] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (cancelled) return;
       const u = session?.user ?? null;
       setUser(u);
       // Check if user needs to set a permanent password (invited with temp password)
@@ -30,6 +33,7 @@ export function AuthProvider({ children }) {
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (cancelled) return;
       if (event === 'PASSWORD_RECOVERY') {
         setNeedsPasswordSet(true);
       }
@@ -43,7 +47,10 @@ export function AuthProvider({ children }) {
       else { setProfile(null); setLoading(false); }
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const fetchProfile = async (userId) => {
