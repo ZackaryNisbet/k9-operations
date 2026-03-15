@@ -4,14 +4,16 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import {
-  C, LITE_DEF_PRICING, CHART_PTS, OPS_TYPES, OPERATIONS_CATALOG,
-  todayStr, addDays, countNights, countHours, fmtDate, fmtDateFull, fmtDateShort,
-  formatTime12hr, DAY_NAMES_SHORT, ROOM_TYPES,
+  C, todayStr, addDays, fmtDate, fmtDateShort,
 } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
-import { getRoomCleaningStats, getPPStats, getOpsProgress, getOpsCountLabel } from "../../shared/opsHelpers";
+import {
+  computeOccupancyMetrics, computeServiceMetrics, computeLifecycleMetrics,
+  computeRefundMetrics, computeCashRevenueMetrics, computeAccrualRevenueMetrics,
+  computeDiscountBreakdown, computeOpsProgress,
+} from "../../shared/metricsHelpers";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CSS — injected once
@@ -639,130 +641,26 @@ export default function DashboardPage({
     return { dateFrom: start, dateTo: to, days: dayCount, prevFrom: pFrom, prevTo: pTo };
   }, [range, today, customFrom, customTo]);
 
-  /* ─── Today's Snapshot ────────────────────────────────────────────── */
-  const todaySnapshot = useMemo(() => {
-    const reservations = data.reservations || [];
-    const dogs = data.dogs || [];
-    const inHouse = reservations.filter(r => r.status === "checked-in" && r.checkIn <= today && r.checkOut >= today);
-    const boardingInHouse = inHouse.filter(r => r.type === "boarding").length;
-    const daycareInHouse = inHouse.filter(r => r.type === "daycare" || r.type === "dayboarding").length;
-    const goingHome = reservations.filter(r => r.status === "checked-in" && r.checkOut === today).length;
-    const checkedOut = reservations.filter(r => r.checkOut === today && r.status === "checked-out").length;
-    const arriving = reservations.filter(r => r.checkIn === today && (r.status === "upcoming" || r.status === "checked-in")).length;
-    const expected = arriving + inHouse.length;
-    const goingHomeRes = reservations.filter(r => r.status === "checked-in" && r.checkOut === today);
-    let bathsTotal = 0, bathsDone = 0;
-    goingHomeRes.forEach(res => {
-      const dog = dogs.find(d => d.id === res.dogId);
-      const bathType = res.careOverrides?.bath_type || (dog && dog.fields?.bath_type);
-      if (bathType) {
-        bathsTotal++;
-        const log = res.activityLog?.[`${today}|bathing`];
-        if (log && log.administered) bathsDone++;
-      }
-    });
-    const cleaningStats = getRoomCleaningStats(data, today);
-    const ppStats = getPPStats(data, today);
+  /* ─── Today's Snapshot (shared helpers) ──────────────────────────── */
+  const occupancyMetrics = useMemo(() => computeOccupancyMetrics(data, today), [data, today]);
+  const serviceMetrics = useMemo(() => computeServiceMetrics(data, today), [data, today]);
+  const todaySnapshot = useMemo(() => ({
+    ...occupancyMetrics,
+    tours: serviceMetrics.tours, evals: serviceMetrics.evals, bookingsToday: serviceMetrics.bookingsToday,
+    bathsTotal: serviceMetrics.bathsTotal, bathsDone: serviceMetrics.bathsDone,
+    roomsToClean: serviceMetrics.roomsToClean, roomsCleaned: serviceMetrics.roomsCleaned,
+    ppTotal: serviceMetrics.ppTotal, ppCompleted: serviceMetrics.ppCompleted,
+  }), [occupancyMetrics, serviceMetrics]);
 
-    const allRooms = data.rooms || {};
-    const totalRoomCount = Object.values(allRooms).reduce((sum, arr) => sum + arr.length, 0);
-    const boardingOccupied = reservations.filter(r => r.status === "checked-in" && r.type === "boarding" && r.checkIn <= today && r.checkOut > today).length;
-    const occupancyPct = totalRoomCount > 0 ? Math.round((boardingOccupied / totalRoomCount) * 100) : 0;
+  /* ─── Cash-basis revenue (shared helper) ─────────────────────────── */
+  const cashBasisData = useMemo(() =>
+    computeCashRevenueMetrics(data.reservations, dateFrom, dateTo, prevFrom, prevTo, today),
+  [data.reservations, dateFrom, dateTo, prevFrom, prevTo, today]);
 
-    const tours = reservations.filter(r => r.checkIn === today && r._resTypeName && r._resTypeName.toLowerCase().includes("tour")).length;
-    const evals = reservations.filter(r => r.checkIn === today && (r.type === "evaluation" || (r._resTypeName && r._resTypeName.toLowerCase().includes("eval")))).length;
-    const bookingsToday = reservations.filter(r => r.checkIn === today && r.status !== "cancelled").length;
-
-    return {
-      expected, dogsInHouse: boardingInHouse + daycareInHouse,
-      boardingInHouse, daycareInHouse, goingHome, checkedOut, arriving,
-      bathsTotal, bathsDone, occupancyPct, tours, evals, bookingsToday,
-      roomsToClean: cleaningStats.totalNeeded || 0, roomsCleaned: cleaningStats.totalDone || 0,
-      ppTotal: ppStats.ppTotalDogs || 0, ppCompleted: ppStats.ppCompletedRequired || 0,
-      totalRoomCount,
-    };
-  }, [data, today]);
-
-  /* ─── Cash-basis revenue ──────────────────────────────────────────── */
-  const cashBasisData = useMemo(() => {
-    const allRes = (data.reservations || []).filter(r => r.status !== "cancelled" && r.pricing?.total > 0);
-    const calcMetrics = (resInRange) => {
-      const total = resInRange.reduce((sum, r) => sum + (r.pricing?.total || 0), 0);
-      const byCategory = {};
-      const byDate = {};
-      resInRange.forEach(r => {
-        const cat = r.type === "boarding" ? "Boarding" : r.type === "daycare" ? "Daycare" : r.type === "evaluation" ? "Evaluation" : "Other";
-        byCategory[cat] = (byCategory[cat] || 0) + (r.pricing?.total || 0);
-        const dt = r.checkIn || today;
-        byDate[dt] = (byDate[dt] || 0) + (r.pricing?.total || 0);
-      });
-      return {
-        total, count: resInRange.length, byCategory, byDate,
-        avgTransaction: resInRange.length > 0 ? total / resInRange.length : 0,
-        payments: resInRange.map(r => ({
-          id: r.id, amount: r.pricing?.total || 0, timestamp: r.checkIn + "T12:00:00",
-          category: r.type === "boarding" ? "Boarding" : r.type === "daycare" ? "Daycare" : "Other",
-          reservationId: r.id,
-        })),
-      };
-    };
-    const currentRes = allRes.filter(r => r.checkIn >= dateFrom && r.checkIn <= dateTo);
-    const previousRes = allRes.filter(r => r.checkIn >= prevFrom && r.checkIn <= prevTo);
-    const current = calcMetrics(currentRes);
-    const previous = calcMetrics(previousRes);
-    return {
-      current, previous,
-      trend: previous.total > 0 ? ((current.total - previous.total) / previous.total) * 100 : 0,
-      trendAvg: previous.count > 0 ? ((current.avgTransaction - previous.avgTransaction) / previous.avgTransaction) * 100 : 0,
-    };
-  }, [data.reservations, dateFrom, dateTo, prevFrom, prevTo, today]);
-
-  /* ─── Accrual revenue ─────────────────────────────────────────────── */
-  const accrualData = useMemo(() => {
-    const reservations = data.reservations || [];
-    const processDateRange = (from, to) => {
-      const daysList = [];
-      let cur = from;
-      while (cur <= to) { daysList.push(cur); cur = addDays(cur, 1); }
-      const dayData = {};
-      daysList.forEach(d => {
-        dayData[d] = { boardingRevenue: 0, daycareRevenue: 0, totalRevenue: 0, discounts: 0, netRevenue: 0, roomsOccupied: 0 };
-      });
-      reservations.forEach(res => {
-        if (res.status === "cancelled") return;
-        if (res.type === "boarding" && res.checkIn && res.checkOut) {
-          const totalNights = countNights(res.checkIn, res.checkOut);
-          if (totalNights <= 0) return;
-          const perNightRate = (res.pricing?.total || 0) / totalNights;
-          let night = res.checkIn;
-          while (night < res.checkOut) {
-            if (night >= from && night <= to && dayData[night]) {
-              dayData[night].boardingRevenue += perNightRate;
-              dayData[night].roomsOccupied += 1;
-            }
-            night = addDays(night, 1);
-          }
-        } else if (res.type === "daycare" && res.checkIn && res.checkIn >= from && res.checkIn <= to) {
-          if (dayData[res.checkIn]) dayData[res.checkIn].daycareRevenue += (res.pricing?.total || 0);
-        }
-      });
-      daysList.forEach(d => {
-        dayData[d].totalRevenue = dayData[d].boardingRevenue + dayData[d].daycareRevenue;
-        dayData[d].netRevenue = dayData[d].totalRevenue - dayData[d].discounts;
-      });
-      const totals = { boardingRevenue: 0, daycareRevenue: 0, totalRevenue: 0, discounts: 0, netRevenue: 0, roomsOccupied: 0 };
-      daysList.forEach(d => { Object.keys(totals).forEach(k => { totals[k] += dayData[d][k]; }); });
-      return { dayData, totals, days: daysList };
-    };
-    const current = processDateRange(dateFrom, dateTo);
-    const previous = processDateRange(prevFrom, prevTo);
-    const allRooms = data.rooms || {};
-    const totalRoomCount = Object.values(allRooms).reduce((sum, arr) => sum + arr.length, 0);
-    const revenueTrend = previous.totals.totalRevenue > 0 ? ((current.totals.totalRevenue - previous.totals.totalRevenue) / previous.totals.totalRevenue) * 100 : 0;
-    const occupancyRate = totalRoomCount > 0 && current.days.length > 0 ? (current.totals.roomsOccupied / (totalRoomCount * current.days.length)) * 100 : 0;
-    const revPAR = totalRoomCount > 0 && current.days.length > 0 ? current.totals.boardingRevenue / (totalRoomCount * current.days.length) : 0;
-    return { current, previous, revenueTrend, occupancyRate, revPAR, totalRoomCount, days: current.days };
-  }, [data.reservations, data.rooms, dateFrom, dateTo, prevFrom, prevTo]);
+  /* ─── Accrual revenue (shared helper) ────────────────────────────── */
+  const accrualData = useMemo(() =>
+    computeAccrualRevenueMetrics(data, dateFrom, dateTo, prevFrom, prevTo),
+  [data.reservations, data.rooms, dateFrom, dateTo, prevFrom, prevTo]);
 
   const revenue = accrualData.current.totals.totalRevenue;
   const prevRevenue = accrualData.previous.totals.totalRevenue;
@@ -777,27 +675,10 @@ export default function DashboardPage({
     return { boarding: totals.boardingRevenue, daycare: totals.daycareRevenue, total, boardingPct, daycarePct };
   }, [accrualData.current.totals]);
 
-  /* ─── Discount breakdown ──────────────────────────────────────────── */
-  const discountBreakdown = useMemo(() => {
-    const rackRates = LITE_DEF_PRICING.boardingRates;
-    const reservations = (data.reservations || []).filter(r =>
-      r.status !== "cancelled" && r.type === "boarding" && r.checkIn >= dateFrom && r.checkIn <= dateTo
-    );
-    let discounted = 0, atRack = 0, totalRackRevenue = 0, totalActualRevenue = 0;
-    reservations.forEach(res => {
-      const nights = countNights(res.checkIn, res.checkOut);
-      if (nights <= 0) return;
-      const actual = res.pricing?.total || 0;
-      const typeName = res._resTypeName || "";
-      const rackRate = Object.entries(rackRates).find(([k]) => typeName.toLowerCase().includes(k.toLowerCase()))?.[1] || 0;
-      const expectedRack = rackRate * nights;
-      totalRackRevenue += expectedRack;
-      totalActualRevenue += actual;
-      if (expectedRack > 0 && actual < expectedRack * 0.98) { discounted++; } else { atRack++; }
-    });
-    const totalDiscounts = Math.max(0, totalRackRevenue - totalActualRevenue);
-    return { discounted, atRack, totalRackRevenue, totalActualRevenue, totalDiscounts };
-  }, [data.reservations, dateFrom, dateTo]);
+  /* ─── Discount breakdown (shared helper) ─────────────────────────── */
+  const discountBreakdown = useMemo(() =>
+    computeDiscountBreakdown(data.reservations, dateFrom, dateTo),
+  [data.reservations, dateFrom, dateTo]);
 
   /* ─── Chart data bucketing ────────────────────────────────────────── */
   const bucketMode = useMemo(() => {
@@ -844,122 +725,13 @@ export default function DashboardPage({
     return bucketDays(accrualData.days, d => dayData[d]?.totalRevenue || 0);
   }, [accrualData, bucketDays]);
 
-  /* ─── Funnel metrics ──────────────────────────────────────────────── */
-  const funnelMetrics = useMemo(() => {
-    const clients = data.clients || [];
-    const ss = data.serverStats || {};
-    const statsMap = {};
-    clients.forEach(c => {
-      const gid = String(c.gingrId);
-      const srv = ss[gid];
-      if (srv) {
-        statsMap[c.id] = {
-          totalSpent: Number(srv.total_spent) || 0,
-          totalRes: Number(srv.total_res) || 0,
-          hasRealBooking: srv.has_real_booking || false,
-          hasSpent: (Number(srv.total_spent) || 0) > 0,
-          lastResDate: srv.last_res_date || "",
-        };
-      } else {
-        statsMap[c.id] = {
-          totalSpent: 0,
-          totalRes: c._numReservations || 0,
-          hasRealBooking: (c._numReservations || 0) > 0,
-          hasSpent: false,
-          lastResDate: c._lastReservation ? c._lastReservation.split("T")[0] : "",
-        };
-      }
-    });
-    const inRange = (dateStr) => { if (!dateStr) return false; const d = dateStr.split("T")[0]; return d >= dateFrom && d <= dateTo; };
-    const createdInRange = clients.filter(c => inRange(c.createdAt));
-    const leadsInRange = createdInRange.filter(c => {
-      const s = statsMap[c.id];
-      if (s.lastResDate && s.lastResDate < dateFrom && s.hasRealBooking) return false;
-      return true;
-    });
-    const contactedLeads = leadsInRange.filter(c => {
-      const convUpdates = c.lifecycle?.conversion?.updates || [];
-      const retUpdates = c.lifecycle?.retention?.updates || [];
-      const allUpdates = [...convUpdates, ...retUpdates];
-      const hasLog = allUpdates.some(u => {
-        const logDate = u.loggedAt ? u.loggedAt.split("T")[0] : "";
-        return logDate >= dateFrom && logDate <= dateTo;
-      });
-      const lcUpdates = c.lifecycleUpdates || [];
-      const hasLcLog = lcUpdates.some(u => u.type === "outreach" || u.type === "follow_up" || u.type === "note");
-      const s = statsMap[c.id];
-      const becameCustomer = s.hasSpent || s.hasRealBooking;
-      return hasLog || hasLcLog || becameCustomer;
-    });
-    const newCustomers = leadsInRange.filter(c => {
-      const s = statsMap[c.id];
-      return s.hasSpent || s.hasRealBooking;
-    });
-    const newCustomerRevenue = newCustomers.reduce((sum, c) => sum + (statsMap[c.id]?.totalSpent || 0), 0);
-    const spendingClients = clients.filter(c => statsMap[c.id]?.hasSpent || statsMap[c.id]?.hasRealBooking);
-    const totalLTV = spendingClients.reduce((sum, c) => sum + (statsMap[c.id]?.totalSpent || 0), 0);
-    const avgLTV = spendingClients.length > 0 ? totalLTV / spendingClients.length : 0;
-    const conversionRate = leadsInRange.length > 0 ? (newCustomers.length / leadsInRange.length * 100) : 0;
+  /* ─── Funnel metrics (shared helper) ─────────────────────────────── */
+  const funnelMetrics = useMemo(() =>
+    computeLifecycleMetrics(data, dateFrom, dateTo, today),
+  [data.clients, data.serverStats, data.reservations, dateFrom, dateTo, today]);
 
-    const todayOutreaches = clients.reduce((count, c) => {
-      const convUpdates = c.lifecycle?.conversion?.updates || [];
-      const retUpdates = c.lifecycle?.retention?.updates || [];
-      const allUp = [...convUpdates, ...retUpdates];
-      const todayLogs = allUp.filter(u => {
-        const d = u.loggedAt ? u.loggedAt.split("T")[0] : "";
-        return d === today;
-      });
-      return count + todayLogs.length;
-    }, 0);
-
-    const todayConversions = clients.filter(c => {
-      const s = statsMap[c.id];
-      return s.lastResDate === today && s.hasRealBooking;
-    }).length;
-
-    const firstTimePayers = clients.filter(c => {
-      const s = statsMap[c.id];
-      if (!s.hasSpent) return false;
-      const firstRes = (data.reservations || []).find(r => r.status !== "cancelled" && (r.pricing?.total || 0) > 0 && String(r._clientId || r.clientId) === String(c.id));
-      if (firstRes && firstRes.checkIn >= dateFrom && firstRes.checkIn <= dateTo) return true;
-      return false;
-    }).length;
-
-    const todayNewLeads = createdInRange.filter(c => {
-      const created = c.createdAt ? c.createdAt.split("T")[0] : "";
-      return created === today;
-    }).length;
-
-    const allLeads = clients.filter(c => {
-      const stage = c.lifecycle?.stage || c._lifecycleStage || "";
-      return stage === "conversion" || stage === "lead";
-    });
-    const remainingLeads = allLeads.length;
-
-    const allAtRisk = clients.filter(c => {
-      const stage = c.lifecycle?.stage || c._lifecycleStage || "";
-      return stage === "retention" || stage === "lapsed" || stage === "at-risk";
-    });
-    const remainingAtRisk = allAtRisk.length;
-
-    return {
-      leads: leadsInRange.length, contacted: contactedLeads.length, newCustomers: newCustomers.length,
-      conversionRate, newCustomerRevenue, avgLTV, totalLTV,
-      spendingClientsCount: spendingClients.length,
-      remainingLeads, remainingAtRisk, todayOutreaches, todayConversions,
-      firstTimePayers, todayNewLeads,
-    };
-  }, [data.clients, data.serverStats, data.reservations, dateFrom, dateTo, today]);
-
-  /* ─── Ops progress (today only) ───────────────────────────────────── */
-  const opsProgress = useMemo(() => {
-    const cats = OPERATIONS_CATALOG.filter(c => c.frequency === "daily" && !c.comingSoon);
-    return cats.map(cat => {
-      const progress = getOpsProgress(data, cat, today);
-      const countLabel = getOpsCountLabel(data, cat, today);
-      return { id: cat.id, label: cat.label, progress, countLabel, routeTo: cat.routeTo };
-    });
-  }, [data, today]);
+  /* ─── Ops progress (shared helper) ───────────────────────────────── */
+  const opsProgress = useMemo(() => computeOpsProgress(data, today), [data, today]);
 
   const getChecklistProgress = (id) => {
     const op = opsProgress.find(o => o.id === id);
@@ -970,55 +742,19 @@ export default function DashboardPage({
     return op ? op.countLabel : "";
   };
 
-  /* ─── Refund tracker ──────────────────────────────────────────────── */
-  const refundData = useMemo(() => {
-    const reservations = (data.reservations || []).filter(r =>
-      r.checkIn >= dateFrom && r.checkIn <= dateTo
-    );
-    let totalRefunds = 0, refundCount = 0;
-    reservations.forEach(res => {
-      const refund = res.pricing?.refund || res.pricing?.refundAmount || 0;
-      if (refund > 0) { totalRefunds += refund; refundCount++; }
-    });
-    return { total: totalRefunds, count: refundCount, avg: refundCount > 0 ? totalRefunds / refundCount : 0 };
-  }, [data.reservations, dateFrom, dateTo]);
+  /* ─── Refund tracker (shared helper) ─────────────────────────────── */
+  const refundData = useMemo(() =>
+    computeRefundMetrics(data.reservations, dateFrom, dateTo),
+  [data.reservations, dateFrom, dateTo]);
 
-  /* ─── Service data ─────────────────────────────────────────────────── */
+  /* ─── Service data (shared helper) ───────────────────────────────── */
   const svcData = useMemo(() => {
-    const reservations = data.reservations || [];
-    const todayRes = reservations.filter(r => r.status === "checked-in" && r.checkIn <= today && r.checkOut >= today);
-    const goingHomeRes = reservations.filter(r => r.status === "checked-in" && r.checkOut === today);
-    const dogs = data.dogs || [];
-
-    let bathsTotal = 0, bathsDone = 0;
-    goingHomeRes.forEach(res => {
-      const dog = dogs.find(d => d.id === res.dogId);
-      const bathType = res.careOverrides?.bath_type || (dog && dog.fields?.bath_type);
-      if (bathType) {
-        bathsTotal++;
-        const log = res.activityLog?.[`${today}|bathing`];
-        if (log && log.administered) bathsDone++;
-      }
-    });
-
-    const ppStats = getPPStats(data, today);
-
-    let iceCreamTotal = 0, iceCreamDone = 0;
-    todayRes.forEach(res => {
-      const addOns = res.addOns || res.services || [];
-      const hasIceCream = addOns.some(a => (a.name || a.label || "").toLowerCase().includes("ice cream"));
-      if (hasIceCream) {
-        iceCreamTotal++;
-        const log = res.activityLog?.[`${today}|svc`];
-        if (log && log.administered) iceCreamDone++;
-      }
-    });
-
+    const sm = computeServiceMetrics(data, today);
     return {
-      bathsTotal, bathsDone,
-      ppTotal: ppStats.ppTotalDogs || 0, ppCompleted: ppStats.ppCompletedRequired || 0,
+      bathsTotal: sm.bathsTotal, bathsDone: sm.bathsDone,
+      ppTotal: sm.ppTotal, ppCompleted: sm.ppCompleted,
       pamperTotal: 0, pamperDone: 0,
-      iceCreamTotal, iceCreamDone,
+      iceCreamTotal: sm.iceCreamTotal, iceCreamDone: sm.iceCreamDone,
     };
   }, [data, today]);
 
