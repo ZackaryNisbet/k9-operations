@@ -4,3 +4,4 @@ dist
 .env.*.local
 .github-token
 .github-push.sh
+inventory_items.json
