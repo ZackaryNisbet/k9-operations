@@ -870,7 +870,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               @keyframes filterSlideIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
               @keyframes filterFadeIn { from { opacity:0; transform:scale(0.95); } to { opacity:1; transform:scale(1); } }
               @keyframes filterChipIn { from { opacity:0; transform:translateX(-6px) scale(0.9); } to { opacity:1; transform:translateX(0) scale(1); } }
-              @keyframes filterPulse { 0%,100% { box-shadow:0 0 0 0 rgba(0,52,98,0.15); } 50% { box-shadow:0 0 0 4px rgba(0,52,98,0.08); } }
+              @keyframes filterPulse { 0%,100% { box-shadow:0 0 0 0 rgba(20,83,45,0.15); } 50% { box-shadow:0 0 0 4px rgba(20,83,45,0.08); } }
               @keyframes configSlide { from { opacity:0; max-height:0; transform:translateY(-4px); } to { opacity:1; max-height:200px; transform:translateY(0); } }
             `}</style>
 
@@ -883,7 +883,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                 {views.map((v,vi) => (
                   <div key={v.id} style={{display:"inline-flex",alignItems:"center",gap:2,animation:`filterChipIn 0.25s ease-out ${vi*0.05}s both`}}>
                     <button onClick={() => loadView(v)}
-                      style={{padding:"5px 12px",borderRadius:8,border:`1.5px solid ${activeViewId===v.id?C.pri:C.borderLight}`,background:activeViewId===v.id?C.pri:"#fff",color:activeViewId===v.id?"#fff":C.text,fontSize:11,fontWeight:activeViewId===v.id?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:activeViewId===v.id?"0 2px 8px rgba(0,52,98,0.2)":"0 1px 3px rgba(0,0,0,0.04)"}}
+                      style={{padding:"5px 12px",borderRadius:8,border:`1.5px solid ${activeViewId===v.id?C.pri:C.borderLight}`,background:activeViewId===v.id?C.pri:"#fff",color:activeViewId===v.id?"#fff":C.text,fontSize:11,fontWeight:activeViewId===v.id?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:activeViewId===v.id?"0 2px 8px rgba(20,83,45,0.2)":"0 1px 3px rgba(0,0,0,0.04)"}}
                       onMouseEnter={e=>{if(activeViewId!==v.id){e.currentTarget.style.borderColor=C.pri;e.currentTarget.style.color=C.pri;}}}
                       onMouseLeave={e=>{if(activeViewId!==v.id){e.currentTarget.style.borderColor=C.borderLight;e.currentTarget.style.color=C.text;}}}>
                       {v.name}
@@ -918,7 +918,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                     const isConfiguring = configuringKey === key;
                     return (
                       <div key={key} style={{animation:`filterChipIn 0.2s ease-out ${i*0.04}s both`}}>
-                        <div style={{display:"inline-flex",alignItems:"center",gap:0,borderRadius:10,border:`1.5px solid ${isConfiguring?C.pri:C.border}`,background:isConfiguring?`${C.pri}06`:"#fff",boxShadow:isConfiguring?"0 0 0 3px rgba(0,52,98,0.06)":"0 1px 3px rgba(0,0,0,0.04)",transition:"all 0.25s cubic-bezier(0.2,0.8,0.2,1)",overflow:"hidden"}}>
+                        <div style={{display:"inline-flex",alignItems:"center",gap:0,borderRadius:10,border:`1.5px solid ${isConfiguring?C.pri:C.border}`,background:isConfiguring?`${C.pri}06`:"#fff",boxShadow:isConfiguring?"0 0 0 3px rgba(20,83,45,0.06)":"0 1px 3px rgba(0,0,0,0.04)",transition:"all 0.25s cubic-bezier(0.2,0.8,0.2,1)",overflow:"hidden"}}>
                           {/* Field name */}
                           <button onClick={() => { setConfiguringKey(isConfiguring?null:key); setConfigStep(0); setShowFilterPicker(false); }}
                             style={{padding:"6px 10px",border:"none",background:"transparent",cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:700,color:C.pri,whiteSpace:"nowrap",transition:"background 0.15s"}}
@@ -946,14 +946,14 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
                         {/* ── Inline Config Popover ── */}
                         {isConfiguring && (
-                          <div style={{marginTop:6,padding:"10px 14px",borderRadius:10,background:"#fff",border:`1.5px solid ${C.pri}30`,boxShadow:"0 6px 24px rgba(0,52,98,0.1)",animation:"configSlide 0.25s ease-out",overflow:"hidden"}}>
+                          <div style={{marginTop:6,padding:"10px 14px",borderRadius:10,background:"#fff",border:`1.5px solid ${C.pri}30`,boxShadow:"0 6px 24px rgba(20,83,45,0.1)",animation:"configSlide 0.25s ease-out",overflow:"hidden"}}>
                             {/* Operator pills */}
                             <div style={{marginBottom:needsValue(f.op)?10:0}}>
                               <div style={{fontSize:9,fontWeight:800,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:6}}>Condition</div>
                               <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
                                 {fd.ops.map((op,oi) => (
                                   <button key={op} onClick={() => { updateFilter(key,"op",op); if(!needsValue(op)) updateFilter(key,"val",""); }}
-                                    style={{padding:"5px 12px",borderRadius:8,border:`1.5px solid ${f.op===op?C.pri:C.borderLight}`,background:f.op===op?C.pri:"#fff",color:f.op===op?"#fff":C.text,fontSize:11,fontWeight:f.op===op?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:f.op===op?"0 2px 8px rgba(0,52,98,0.15)":"none",animation:`filterFadeIn 0.2s ease-out ${oi*0.03}s both`}}
+                                    style={{padding:"5px 12px",borderRadius:8,border:`1.5px solid ${f.op===op?C.pri:C.borderLight}`,background:f.op===op?C.pri:"#fff",color:f.op===op?"#fff":C.text,fontSize:11,fontWeight:f.op===op?700:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:f.op===op?"0 2px 8px rgba(20,83,45,0.15)":"none",animation:`filterFadeIn 0.2s ease-out ${oi*0.03}s both`}}
                                     onMouseEnter={e=>{if(f.op!==op){e.currentTarget.style.borderColor=C.pri;e.currentTarget.style.background=`${C.pri}06`;}}}
                                     onMouseLeave={e=>{if(f.op!==op){e.currentTarget.style.borderColor=C.borderLight;e.currentTarget.style.background="#fff";}}}>
                                     {LC_OP_LABELS[op]||op}
@@ -991,7 +991,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                                       onBlur={e=>e.currentTarget.style.borderColor=C.border}
                                     />
                                     <button onClick={confirmConfig}
-                                      style={{padding:"8px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",transition:"all 0.15s",boxShadow:"0 2px 8px rgba(0,52,98,0.15)"}}>
+                                      style={{padding:"8px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap",transition:"all 0.15s",boxShadow:"0 2px 8px rgba(20,83,45,0.15)"}}>
                                       Done
                                     </button>
                                   </div>
@@ -1000,7 +1000,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                             )}
                             {!needsValue(f.op) && (
                               <button onClick={confirmConfig}
-                                style={{marginTop:8,padding:"6px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",animation:"filterFadeIn 0.2s ease-out",boxShadow:"0 2px 8px rgba(0,52,98,0.15)"}}>
+                                style={{marginTop:8,padding:"6px 14px",borderRadius:8,border:"none",background:C.pri,color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",animation:"filterFadeIn 0.2s ease-out",boxShadow:"0 2px 8px rgba(20,83,45,0.15)"}}>
                                 Done
                               </button>
                             )}
@@ -1051,7 +1051,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                               return (
                                 <button key={f.key} onClick={() => { selectField(f.key); setShowFilterPicker(false); }}
                                   style={{padding:"6px 14px",borderRadius:8,border:`1.5px solid ${C.borderLight}`,background:"#fff",color:C.text,fontSize:11,fontWeight:500,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:"0 1px 3px rgba(0,0,0,0.03)",animation:filterPickerReady?`filterChipIn 0.25s ease-out ${delay}s both`:"none"}}
-                                  onMouseEnter={e=>{e.currentTarget.style.borderColor=C.pri;e.currentTarget.style.background=`${C.pri}06`;e.currentTarget.style.color=C.pri;e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="0 3px 12px rgba(0,52,98,0.1)";}}
+                                  onMouseEnter={e=>{e.currentTarget.style.borderColor=C.pri;e.currentTarget.style.background=`${C.pri}06`;e.currentTarget.style.color=C.pri;e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="0 3px 12px rgba(20,83,45,0.1)";}}
                                   onMouseLeave={e=>{e.currentTarget.style.borderColor=C.borderLight;e.currentTarget.style.background="#fff";e.currentTarget.style.color=C.text;e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 1px 3px rgba(0,0,0,0.03)";}}>
                                   {f.label}
                                 </button>
@@ -1070,9 +1070,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:8,padding:"10px 18px",borderTop:`1px solid ${C.borderLight}`,background:C.surface}}>
               <div style={{display:"flex",gap:6}}>
                 <button onClick={applyFilters}
-                  style={{padding:"8px 20px",borderRadius:10,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:"0 2px 12px rgba(0,52,98,0.2)"}}
-                  onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="0 4px 16px rgba(0,52,98,0.25)";}}
-                  onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 2px 12px rgba(0,52,98,0.2)";}}>
+                  style={{padding:"8px 20px",borderRadius:10,border:"none",background:C.pri,color:"#fff",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.2s cubic-bezier(0.2,0.8,0.2,1)",boxShadow:"0 2px 12px rgba(20,83,45,0.2)"}}
+                  onMouseEnter={e=>{e.currentTarget.style.transform="translateY(-1px)";e.currentTarget.style.boxShadow="0 4px 16px rgba(20,83,45,0.25)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.transform="translateY(0)";e.currentTarget.style.boxShadow="0 2px 12px rgba(20,83,45,0.2)";}}>
                   Apply{usedKeys.length>0?` (${usedKeys.length})`:""}
                 </button>
                 {usedKeys.length > 0 && (
