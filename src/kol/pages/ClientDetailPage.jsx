@@ -97,7 +97,7 @@ function TimelineIcon({ type, color }) {
 function detectClientStage(client, serverStats) {
   const gingrId = String(client.gingrId);
   const srv = serverStats && serverStats[gingrId];
-  if (!srv) return "Conversion";
+  if (!srv) return "Leads";
 
   const isCold = client.lifecycle?.cold === true;
   if (isCold) return "Cold";
@@ -106,7 +106,7 @@ function detectClientStage(client, serverStats) {
   const hasRealBooking = !!srv.has_real_booking;
   const totalRes = Number(srv.total_res) || 0;
 
-  if (!hasSpent && !hasRealBooking) return "Conversion";
+  if (!hasSpent && !hasRealBooking) return "Leads";
 
   const hasUpcoming = !!srv.has_upcoming;
   const daysSince = srv.last_res_date ? Math.floor((Date.now() - new Date(srv.last_res_date).getTime()) / 86400000) : 999;
@@ -119,9 +119,9 @@ function detectClientStage(client, serverStats) {
     else if (daysSince >= dcThresh) isRetention = true;
   }
 
-  if (isRetention) return "Retention";
+  if (isRetention) return "Lapsed";
   if (hasSpent || hasRealBooking) return "Active";
-  return "Conversion";
+  return "Leads";
 }
 
 
@@ -1204,8 +1204,8 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             {/* Current stage badge */}
             {(() => {
               const stage = detectClientStage(client, data.serverStats);
-              const stageColors = { Active: C.suc, Conversion: C.acc, Retention: C.dan, Cold: C.textMut };
-              const stageBgs = { Active: C.sucLt, Conversion: C.accLt, Retention: C.danLt, Cold: C.bg };
+              const stageColors = { Active: C.suc, Leads: C.acc, Lapsed: C.dan, Cold: C.textMut };
+              const stageBgs = { Active: C.sucLt, Leads: C.accLt, Lapsed: C.danLt, Cold: C.bg };
               return (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, background: stageBgs[stage] || C.bg, border: `1.5px solid ${(stageColors[stage] || C.textMut)}25` }}>
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: stageColors[stage] || C.textMut }} />

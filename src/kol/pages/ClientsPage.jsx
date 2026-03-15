@@ -20,6 +20,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState("asc");
   const [showOverdueOnly, setShowOverdueOnly] = useState(false);
+  const [showOldGingrData, setShowOldGingrData] = useState(false);
   const [sourceFilter, setSourceFilter] = useState(new Set());
   const [logPopover, setLogPopover] = useState(null);
   const [logNotes, setLogNotes] = useState("");
@@ -406,10 +407,10 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   }, [activeFilterCount, tabLists, clientStats, clientTabMap, lcFilters]);
 
   const tabDefs = [
-    { id: "conversion", label: "Conversion", count: filteredTabCounts ? filteredTabCounts.conversion : tabLists.conversion.length, color: C.acc },
-    { id: "oldGingrSync", label: "Old From Gingr Sync", count: filteredTabCounts ? filteredTabCounts.oldGingrSync : tabLists.oldGingrSync.length, color: C.textMut },
+    { id: "conversion", label: "Leads", count: filteredTabCounts ? filteredTabCounts.conversion : tabLists.conversion.length, color: C.acc },
+    { id: "oldGingrSync", label: "Old", count: filteredTabCounts ? filteredTabCounts.oldGingrSync : tabLists.oldGingrSync.length, color: C.textMut, hidden: true },
     { id: "active", label: "Active Customers", count: filteredTabCounts ? filteredTabCounts.active : tabLists.active.length, color: C.pri },
-    { id: "retention", label: "Retention", count: filteredTabCounts ? filteredTabCounts.retention : tabLists.retention.length, color: C.dan },
+    { id: "retention", label: "Lapsed", count: filteredTabCounts ? filteredTabCounts.retention : tabLists.retention.length, color: C.dan },
     { id: "cold", label: "Cold", count: filteredTabCounts ? filteredTabCounts.cold : tabLists.cold.length, color: C.textSec },
     { id: "all", label: "All", count: filteredTabCounts ? filteredTabCounts.all : tabLists.all.length, color: C.info },
   ];
@@ -1178,7 +1179,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
         {/* Tab Pills */}
         <div style={{display:"flex",borderBottom:`2px solid ${C.borderLight}`,background:C.bg}}>
-          {tabDefs.map(tab => {
+          {tabDefs.filter(tab => !tab.hidden || showOldGingrData).map(tab => {
             const active = activeTab === tab.id;
             return (
               <button key={tab.id} onClick={() => { setActiveTab(tab.id); setSortCol(null); setShowOverdueOnly(false); setSourceFilter(new Set()); setExpandedUpdates(new Set()); }}
@@ -1188,6 +1189,15 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               </button>
             );
           })}
+          <button
+            onClick={() => { setShowOldGingrData(v => { if (v && activeTab === "oldGingrSync") setActiveTab("conversion"); return !v; }); }}
+            style={{padding:"10px 14px",border:"none",borderBottom:`3px solid transparent`,background:"transparent",cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:6,marginLeft:"auto",flexShrink:0}}
+            title={showOldGingrData ? "Hide Old Gingr Data" : "View Old Gingr Data"}>
+            <span style={{fontSize:12,fontWeight:600,color:showOldGingrData?C.text:C.textMut,whiteSpace:"nowrap"}}>View Old Gingr Data</span>
+            <div style={{width:32,height:18,borderRadius:9,background:showOldGingrData?C.pri:C.border,position:"relative",transition:"background 0.2s",flexShrink:0}}>
+              <div style={{width:14,height:14,borderRadius:7,background:"#fff",position:"absolute",top:2,left:showOldGingrData?16:2,transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.15)"}} />
+            </div>
+          </button>
         </div>
 
         {/* Explainer Banner — per-tab, editable */}
