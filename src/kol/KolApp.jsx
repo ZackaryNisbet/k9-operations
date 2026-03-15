@@ -52,6 +52,99 @@ class LeanAppErrorBoundary extends React.Component {
   }
 }
 
+// ─── Lite URL Routing ────────────────────────────────────────────────────
+// Maps page IDs to URL slugs for the Lite app (lives under /lite/)
+const LITE_BASE = "/lite";
+const LITE_PAGE_SLUGS = {
+  "dashboard": "dashboard",
+  "lifecycle": "lifecycle",
+  "client-detail": "client",
+  "dog-detail": "dog",
+  "new-client": "new-client",
+  "funnel": "funnel",
+  "ops-hub": "operations",
+  "daily-ops": "daily-ops",
+  "ops-opening": "ops/opening",
+  "ops-fe": "ops/front-end",
+  "ops-be": "ops/back-end",
+  "ops-rooms": "ops/rooms",
+  "ops-pictures": "ops/pictures",
+  "ops-pp": "ops/private-play",
+  "ops-closing": "ops/closing",
+  "ops-bathing": "ops/bathing",
+  "ops-pamper": "ops/pamper",
+  "ops-svc": "ops/service",
+  "eod": "eod",
+  "attendance": "attendance",
+  "mgmt-attendance": "attendance",
+  "mgmt-audit-log": "audit-log",
+  "reports": "reports",
+  "refunds": "refunds",
+  "photos": "photos",
+  "checkout-tv": "checkout-tv",
+  "roadmap": "roadmap",
+  "settings": "settings",
+  "inventory": "inventory",
+  "inventory-report": "inventory/report",
+  "enterprise-ops": "enterprise/operations",
+  "enterprise-attendance": "enterprise/attendance",
+  "enterprise-users": "enterprise/users",
+};
+const LITE_SLUG_TO_PAGE = {};
+Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v]) LITE_SLUG_TO_PAGE[v] = k; });
+
+function buildLiteUrl(locSlug, pg, prms, dataRef) {
+  const slug = LITE_PAGE_SLUGS[pg] || pg;
+  if (locSlug === "enterprise") return `${LITE_BASE}/enterprise/${slug.replace("enterprise/", "")}`;
+  if (pg === "client-detail" && prms?.clientId && dataRef) {
+    const c = (dataRef.clients || []).find(cl => cl.id === prms.clientId);
+    const phone = c?.fields?.phone?.replace(/\D/g, "");
+    if (phone) return `${LITE_BASE}/${locSlug}/client/${phone}`;
+  }
+  if (pg === "dog-detail" && prms?.clientId && prms?.dogId && dataRef) {
+    const c = (dataRef.clients || []).find(cl => cl.id === prms.clientId);
+    const d = (dataRef.dogs || []).find(dg => dg.id === prms.dogId);
+    const phone = c?.fields?.phone?.replace(/\D/g, "");
+    if (phone && d) return `${LITE_BASE}/${locSlug}/client/${phone}/${encodeURIComponent((d.fields?.name || "dog").toLowerCase())}`;
+  }
+  return `${LITE_BASE}/${locSlug}/${slug}`;
+}
+
+function parseLiteUrl(pathname, dataRef) {
+  let cleanPath = pathname;
+  if (cleanPath.startsWith(LITE_BASE)) cleanPath = cleanPath.slice(LITE_BASE.length) || "/";
+  const parts = cleanPath.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
+  if (parts.length === 0) return { locSlug: "cherry-hill", page: "dashboard", params: {} };
+  const locSlug = parts[0];
+  if (locSlug === "enterprise") {
+    const epSlug = parts.slice(1).join("/") || "operations";
+    const pg = LITE_SLUG_TO_PAGE["enterprise/" + epSlug] || LITE_SLUG_TO_PAGE[epSlug] || "enterprise-ops";
+    return { locSlug: "enterprise", page: pg, params: {} };
+  }
+  if (parts.length === 1) return { locSlug, page: "dashboard", params: {} };
+  // Client detail: /{loc}/client/{phone}
+  if (parts[1] === "client" && parts[2]) {
+    const phone = parts[2];
+    if (parts[3] && dataRef) {
+      const c = (dataRef.clients || []).find(cl => (cl.fields?.phone || "").replace(/\D/g, "") === phone);
+      if (c) {
+        const dogName = decodeURIComponent(parts[3]).toLowerCase();
+        const dogs = (dataRef.dogs || []).filter(d => d.fields?.owner_id === c.id || (dataRef.reservations || []).some(r => r.clientId === c.id && r.dogId === d.id));
+        const dog = dogs.find(d => (d.fields?.name || "").toLowerCase() === dogName) || dogs[0];
+        if (dog) return { locSlug, page: "dog-detail", params: { clientId: c.id, dogId: dog.id } };
+      }
+    }
+    if (dataRef) {
+      const c = (dataRef.clients || []).find(cl => (cl.fields?.phone || "").replace(/\D/g, "") === phone);
+      if (c) return { locSlug, page: "client-detail", params: { clientId: c.id } };
+    }
+    return { locSlug, page: "lifecycle", params: {} };
+  }
+  const pgSlug = parts.slice(1).join("/");
+  const pg = LITE_SLUG_TO_PAGE[pgSlug] || "dashboard";
+  return { locSlug, page: pg, params: {} };
+}
+
 // ─── Navigation Config ───────────────────────────────────────────────────
 const LEAN_NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
@@ -80,16 +173,33 @@ const K9_LEAN_LOCATIONS = [
 // ─── Main App Component ───────────────────────────────────────────────────
 function LeanAppInner() {
   const { user, profile: authProfile } = useAuth();
-  const [page, setPage] = useState("dashboard");
-  const [params, setParams] = useState({});
-  const [navStack, setNavStack] = useState([{ page: "dashboard", params: {} }]);
+
+  // Parse URL on initial load to determine starting page and location
+  const initialParsed = useMemo(() => {
+    const path = window.location.pathname;
+    if (path.startsWith(LITE_BASE)) return parseLiteUrl(path, null);
+    return { locSlug: null, page: "dashboard", params: {} };
+  }, []);
+
+  // Resolve initial location from URL slug or auth profile
+  const initialLocation = useMemo(() => {
+    if (initialParsed.locSlug) {
+      const match = K9_LEAN_LOCATIONS.find(l => l.slug === initialParsed.locSlug);
+      if (match) return match.id;
+    }
+    return authProfile?.location_id || "11111111-1111-1111-1111-111111111111";
+  }, [initialParsed.locSlug, authProfile?.location_id]);
+
+  const [page, setPage] = useState(initialParsed.page);
+  const [params, setParams] = useState(initialParsed.params);
+  const [navStack, setNavStack] = useState([{ page: initialParsed.page, params: initialParsed.params }]);
   const [lcFilters, setLcFilters] = useState({});
   const [lcFilterOpen, setLcFilterOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sbExpanded = sidebarOpen;
 
   // Use the auth profile's location_id (UUID) so it matches Supabase data
-  const [currentLocation, setCurrentLocation] = useState(() => authProfile?.location_id || "11111111-1111-1111-1111-111111111111");
+  const [currentLocation, setCurrentLocation] = useState(initialLocation);
   const [accountSwitchOpen, setAccountSwitchOpen] = useState(false);
   const [switchTarget, setSwitchTarget] = useState(null);
   const [switchPassword, setSwitchPassword] = useState("");
@@ -276,6 +386,78 @@ function LeanAppInner() {
     }
     return true;
   }, [currentLocation, user?.id, liveAuditLog.length, mockData?.clients]);
+
+  // ─── URL Routing ──────────────────────────────────────────────────────
+  const skipUrlPush = useRef(false);
+  const locSlug = useMemo(() => {
+    const loc = K9_LEAN_LOCATIONS.find(l => l.id === currentLocation);
+    return loc?.slug || "cherry-hill";
+  }, [currentLocation]);
+
+  // Sync URL when page/params change
+  const initialUrlSet = useRef(false);
+  useEffect(() => {
+    if (skipUrlPush.current) { skipUrlPush.current = false; return; }
+    const url = buildLiteUrl(locSlug, page, params, data);
+    if (window.location.pathname !== url) {
+      // Use replaceState for the initial redirect (e.g., / → /lite/cherry-hill/dashboard)
+      // to avoid creating a back-button entry to the bare root URL
+      if (!initialUrlSet.current) {
+        initialUrlSet.current = true;
+        window.history.replaceState({ page, params, loc: currentLocation }, "", url);
+      } else {
+        window.history.pushState({ page, params, loc: currentLocation }, "", url);
+      }
+    } else if (!initialUrlSet.current) {
+      // Even if URL matches, replace state with routing data for popstate
+      initialUrlSet.current = true;
+      window.history.replaceState({ page, params, loc: currentLocation }, "", url);
+    }
+  }, [page, params, locSlug, data]);
+
+  // Re-parse URL when data loads (resolves client/dog details from phone numbers)
+  const dataLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!data?.clients?.length || dataLoadedRef.current) return;
+    dataLoadedRef.current = true;
+    const path = window.location.pathname;
+    if (path.startsWith(LITE_BASE)) {
+      const parsed = parseLiteUrl(path, data);
+      if (parsed.page !== page || JSON.stringify(parsed.params) !== JSON.stringify(params)) {
+        skipUrlPush.current = true;
+        setPage(parsed.page);
+        setParams(parsed.params);
+        setNavStack([{ page: parsed.page, params: parsed.params }]);
+      }
+    }
+  }, [data]);
+
+  // Handle browser back/forward buttons
+  useEffect(() => {
+    const handler = (e) => {
+      skipUrlPush.current = true;
+      let newPage, newParams;
+      if (e.state?.page) {
+        newPage = e.state.page;
+        newParams = e.state.params || {};
+        if (e.state.loc) {
+          const locMatch = K9_LEAN_LOCATIONS.find(l => l.id === e.state.loc);
+          if (locMatch) setCurrentLocation(locMatch.id);
+        }
+      } else {
+        const parsed = parseLiteUrl(window.location.pathname, data);
+        newPage = parsed.page;
+        newParams = parsed.params;
+        const locMatch = K9_LEAN_LOCATIONS.find(l => l.slug === parsed.locSlug);
+        if (locMatch) setCurrentLocation(locMatch.id);
+      }
+      setPage(newPage);
+      setParams(newParams);
+      setNavStack([{ page: newPage, params: newParams }]);
+    };
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, [data]);
 
   // Navigation function with breadcrumb stack
   const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
