@@ -176,6 +176,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     const td = todayStr();
     const ss = data.serverStats;
     data.clients.forEach(c => {
+      // Lite clients: place in leads tab (they have no Gingr bookings/spend)
+      if (c.isLiteClient) {
+        const isCold = c.lifecycle?.cold === true;
+        map[c.id] = { isConversion: !isCold, isOldGingrSync: false, isActive: false, isRetention: false, isCold, isAll: true };
+        return;
+      }
       const s = clientStats[c.id] || {};
       const hasSpent = (s.totalSpent || 0) > 0;
       const gingrId = String(c.gingrId);
@@ -481,8 +487,26 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   }, [activeTab, locationSlug]);
 
   const renderSource = (client) => {
+    // Lite client source badges
+    if (client.isLiteClient) {
+      const src = client.source || "manual";
+      const srcLabel = src === "ignite" ? "Ignite" : src === "eval" ? "Eval" : src === "tour" ? "Tour" : titleCase(src);
+      const srcColor = src === "ignite" ? "#F97316" : src === "eval" ? C.acc : src === "tour" ? C.info : C.pri;
+      return (
+        <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11}}>
+          <span style={{display:"inline-flex",alignItems:"center",gap:3,background:`${srcColor}14`,border:`1px solid ${srcColor}30`,borderRadius:6,padding:"2px 7px",fontWeight:700,color:srcColor,fontSize:10}}>{srcLabel}</span>
+        </div>
+      );
+    }
+    // Gingr clients that were matched from a lite client — show original source
+    if (client._liteSource) {
+      const src = client._liteSource;
+      const srcLabel = src === "ignite" ? "Ignite" : titleCase(src);
+      const srcColor = src === "ignite" ? "#F97316" : C.pri;
+      // Fall through to normal source rendering but prepend lite source
+    }
     const src = getClientSource(client);
-    const isIgnite = client.lifecycle?.conversion?.source === "ignite";
+    const isIgnite = client.lifecycle?.conversion?.source === "ignite" || client._liteSource === "ignite";
     const isOnline = client.fields?.referral_source === "Online Booking" || client.lifecycle?.conversion?.source === "online_booking";
     const parts = [];
     if (isIgnite) parts.push({ label: "Ignite", type: "ignite" });
@@ -692,11 +716,14 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     const fn = client.fields.first_name || "";
     const ln = client.fields.last_name || "";
     return (
-      <span onClick={(e) => { e.stopPropagation(); nav("client-detail",{clientId:client.id}); }}
-        style={{fontWeight:700,color:C.pri,cursor:"pointer",fontSize:12}}
-        onMouseEnter={e=>e.currentTarget.style.textDecoration="underline"}
-        onMouseLeave={e=>e.currentTarget.style.textDecoration="none"}>
-        {fn} {ln}
+      <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
+        <span onClick={(e) => { e.stopPropagation(); nav("client-detail",{clientId:client.id}); }}
+          style={{fontWeight:700,color:C.pri,cursor:"pointer",fontSize:12}}
+          onMouseEnter={e=>e.currentTarget.style.textDecoration="underline"}
+          onMouseLeave={e=>e.currentTarget.style.textDecoration="none"}>
+          {fn} {ln}
+        </span>
+        {client.isLiteClient && <span style={{fontSize:8,fontWeight:700,color:C.textMut,background:C.bg,border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 4px",letterSpacing:"0.04em",textTransform:"uppercase",lineHeight:1}}>NEW</span>}
       </span>
     );
   };
