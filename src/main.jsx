@@ -46,16 +46,17 @@ import PublicPage from './PublicPages';
 import LandingPage from './LandingPage';
 import PublicRoadmap from './PublicRoadmap';
 
-// Route detection — determine which app to render
-const path = window.location.pathname;
-const isBookingPage = path.startsWith('/book/') || path === '/book';
-const isPublicLink = path.startsWith('/sign/') || path.startsWith('/form/');
-const isPublicRoadmap = path === '/public-roadmap';
-const isLoginPage = path === '/login';
-const isLandingPage = path === '/' || path === '';
-const isPOS = path.startsWith('/pos');
-
 function Root() {
+  // Route detection — evaluated on each render so refreshes work correctly
+  const path = window.location.pathname;
+  const isBookingPage = path.startsWith('/book/') || path === '/book';
+  const isPublicLink = path.startsWith('/sign/') || path.startsWith('/form/');
+  const isPublicRoadmap = path === '/public-roadmap';
+  const isLoginPage = path === '/login';
+  const isLandingPage = path === '/' || path === '';
+  const isPOS = path.startsWith('/pos');
+  const isLite = path.startsWith('/lite');
+
   // Public pages — no auth required
   if (isBookingPage) return <BookingPage />;
   if (isPublicLink) return <PublicPage />;
@@ -116,9 +117,8 @@ function Root() {
     return <LandingPage />;
   }
 
-  // Logged-in user hitting landing page or login → redirect to app
+  // Logged-in user hitting landing page or login → redirect to Lite app
   if (isLandingPage || isLoginPage) {
-    if (isPOS) return <App />;
     return <LiteApp />;
   }
 
@@ -177,6 +177,7 @@ function Root() {
 
   // All good → route to POS or Lite app based on URL
   if (isPOS) return <App />;
+  // Lite app handles /lite/* routes and any other authenticated path
   return <LiteApp />;
 }
 
