@@ -5,3 +5,5 @@ dist
 .github-token
 .github-push.sh
 inventory_items.json
+public/test-results.json
+public/test-results.json.raw

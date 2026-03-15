@@ -37,6 +37,7 @@ import EnterpriseUserManagement from "./enterprise/UserManagement";
 import InventoryPage from "./pages/InventoryPage";
 import InventoryReportPage from "./pages/InventoryReportPage";
 import CashTipsPage from "./pages/CashTipsPage";
+import TestHealthPage from "./pages/TestHealthPage";
 
 class LeanAppErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null, info: null }; }
@@ -90,6 +91,7 @@ const LITE_PAGE_SLUGS = {
   "enterprise-ops": "enterprise/operations",
   "enterprise-attendance": "enterprise/attendance",
   "enterprise-users": "enterprise/users",
+  "test-health": "test-health",
 };
 const LITE_SLUG_TO_PAGE = {};
 Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v]) LITE_SLUG_TO_PAGE[v] = k; });
@@ -155,6 +157,7 @@ const LEAN_NAV_ITEMS = [
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "TV", icon: "Monitor" },
+  { id: "test-health", label: "Test Health", icon: "CheckCircle" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -462,7 +465,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "test-health", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -508,6 +511,7 @@ function LeanAppInner() {
       case "inventory": return "Inventory";
       case "inventory-report": return "Inventory Reports";
       case "cash-tips": return "Cash Tips";
+      case "test-health": return "Test Health";
       default: return pg;
     }
   }, [mockData]);
@@ -586,6 +590,7 @@ function LeanAppInner() {
       "inventory": "Inventory Management",
       "inventory-report": "Inventory Management",
       "cash-tips": null,
+      "test-health": null,
       "enterprise-ops": "Enterprise View",
       "enterprise-attendance": "Enterprise View",
       "enterprise-users": "Enterprise View",
@@ -712,6 +717,8 @@ function LeanAppInner() {
         return <InventoryReportPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "cash-tips":
         return <CashTipsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "test-health":
+        return <TestHealthPage />;
       case "roadmap":
         return <RoadmapPage nav={nav} />;
       case "settings":
