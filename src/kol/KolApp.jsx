@@ -729,6 +729,7 @@ function LeanAppInner() {
   };
 
   const isFullscreenPage = page === "checkout-tv";
+  const isEdgeToEdgePage = page === "dashboard" || isFullscreenPage;
 
   return (
     <div style={{ display: "flex", height: "100vh", background: C.bg, fontFamily: "'Outfit', -apple-system, BlinkMacSystemFont, sans-serif" }}>
@@ -903,8 +904,8 @@ function LeanAppInner() {
       )}
 
       {/* Main Content */}
-      <div style={{ flex: 1, overflow: "auto", background: isFullscreenPage ? "transparent" : C.bg, padding: isFullscreenPage ? 0 : "32px 40px" }}>
-        <div style={{ maxWidth: isFullscreenPage ? "none" : 1440, margin: "0 auto" }}>
+      <div style={{ flex: 1, overflow: "auto", background: isFullscreenPage ? "transparent" : C.bg, padding: isEdgeToEdgePage ? 0 : "32px 40px" }}>
+        <div style={{ maxWidth: isEdgeToEdgePage ? "none" : 1440, margin: "0 auto" }}>
           {navStack.length > 1 && !isFullscreenPage && (
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:16,fontSize:13,flexWrap:"wrap"}}>
               {navStack.map((entry, i) => (
