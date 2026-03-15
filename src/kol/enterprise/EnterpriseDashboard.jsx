@@ -837,7 +837,7 @@ export default function EnterpriseDashboard({ data, save, nav, profile, addGloba
                 <Th>Occupancy</Th>
                 <Th>Bookings</Th>
                 <Th>Leads</Th>
-                <Th>Conv. Rate</Th>
+                <Th>Conversion Rate</Th>
                 <Th>Churn</Th>
                 <Th>Ops %</Th>
                 <Th>Avg LTV</Th>
@@ -1153,7 +1153,7 @@ function DrillDownView({ location: loc, allLocations }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
         <DrillKPI label="Revenue" value={`$${fmt$k(loc.revenueTotal)}`} color={color} compare={compareVal(loc.revenueTotal, allAvg.revenueTotal, "", true)} />
         <DrillKPI label="Occupancy" value={`${loc.occupancyRate.toFixed(1)}%`} color={loc.occupancyRate >= 80 ? C.suc : C.acc} compare={compareVal(loc.occupancyRate, allAvg.occupancyRate, "%", true)} />
-        <DrillKPI label="Conversion" value={`${loc.conversionRate.toFixed(1)}%`} color={loc.conversionRate >= 40 ? C.suc : C.acc} compare={compareVal(loc.conversionRate, allAvg.conversionRate, "%", true)} />
+        <DrillKPI label="Conversion Rate" value={`${loc.conversionRate.toFixed(1)}%`} color={loc.conversionRate >= 40 ? C.suc : C.acc} compare={compareVal(loc.conversionRate, allAvg.conversionRate, "%", true)} />
         <DrillKPI label="Ops Completion" value={`${loc.opsCompletion}%`} color={loc.opsCompletion >= 90 ? C.suc : C.warn} compare={compareVal(loc.opsCompletion, allAvg.opsCompletion, "%", true)} />
       </div>
 
