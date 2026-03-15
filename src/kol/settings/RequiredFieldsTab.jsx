@@ -138,7 +138,7 @@ const FieldCard = memo(({ field, side, isConnected, isHovered, isDragging, onDra
         background: isDragging ? `${C.acc}08` : isHovered ? `${C.pri}06` : C.surface,
         border: `1.5px solid ${isDragging ? C.acc : isConnected ? `${C.pri}40` : isHovered ? `${C.pri}25` : C.borderLight}`,
         transition: "all 0.2s", cursor: "default",
-        flexDirection: isLeft ? "row" : "row-reverse",
+        flexDirection: isLeft ? "row-reverse" : "row",
         boxShadow: isConnected ? `0 2px 8px ${C.pri}10` : "none",
       }}
     >
