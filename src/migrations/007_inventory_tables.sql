@@ -106,7 +106,8 @@ CREATE TABLE IF NOT EXISTS inventory_adhoc_items (
   stock_count     integer DEFAULT 0,
   unit_price      numeric(10,2) DEFAULT 0,
   notes           text,
-  add_to_catalog  boolean DEFAULT false
+  add_to_catalog  boolean DEFAULT false,
+  created_at      timestamptz DEFAULT now()
 );
 
 ALTER TABLE inventory_adhoc_items ENABLE ROW LEVEL SECURITY;
@@ -126,6 +127,8 @@ CREATE POLICY "Authenticated users can delete inventory_adhoc_items"
 -- ═══════════════════════════════════════════════════════════════════════
 -- Indexes for performance
 -- ═══════════════════════════════════════════════════════════════════════
+ALTER TABLE inventory_snapshots ADD CONSTRAINT uq_snapshots_location_week UNIQUE (location_id, week_start);
+
 CREATE INDEX IF NOT EXISTS idx_inventory_catalog_location ON inventory_catalog(location_id);
 CREATE INDEX IF NOT EXISTS idx_inventory_snapshots_location_week ON inventory_snapshots(location_id, week_start);
 CREATE INDEX IF NOT EXISTS idx_inventory_counts_snapshot ON inventory_counts(snapshot_id);
