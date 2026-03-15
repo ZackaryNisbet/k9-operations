@@ -221,6 +221,28 @@ const DASH_CSS = `
 .dash-checklist-cell:hover .dash-link-icon {
   opacity: 0.6;
 }
+.dash-quick-link {
+  background: rgba(255,255,255,0.55);
+  border-radius: 8px;
+  border: 1.5px dashed rgba(20,83,45,0.18);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  gap: 3px;
+  overflow: hidden;
+  transition: all 0.15s ease;
+  cursor: pointer;
+  min-width: 0;
+  min-height: 0;
+}
+.dash-quick-link:hover {
+  background: rgba(247,254,231,0.85);
+  border-color: rgba(20,83,45,0.3);
+  box-shadow: 0 2px 8px rgba(20,83,45,0.10);
+  transform: translateY(-1px);
+}
 `;
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -838,11 +860,11 @@ export default function DashboardPage({
         {/* ═══ ROW 1: Gingr Data ═══ */}
         <MetricCell label="Expected" value={todaySnapshot.expected} hero onClick={() => nav && nav("checkout-tv")} />
         <MetricCell label="In House" value={todaySnapshot.dogsInHouse} hero sub={`${todaySnapshot.boardingInHouse}B · ${todaySnapshot.daycareInHouse}D`} onClick={() => nav && nav("checkout-tv")} />
-        <MetricCell label="Going Home" value={todaySnapshot.goingHome} onClick={() => nav && nav("ops-bathing")} />
-        <MetricCell label="Occupancy" value={`${todaySnapshot.occupancyPct}%`} onClick={() => nav && nav("settings")} />
-        <MetricCell label="Bookings" value={todaySnapshot.bookingsToday} />
-        <MetricCell label="Tours" value={todaySnapshot.tours} onClick={() => nav && nav("lifecycle")} />
-        <MetricCell label="Evals" value={todaySnapshot.evals} onClick={() => nav && nav("lifecycle")} />
+        <MetricCell label="Going Home" value={todaySnapshot.goingHome} hero onClick={() => nav && nav("ops-bathing")} />
+        <MetricCell label="Occupancy" value={`${todaySnapshot.occupancyPct}%`} hero onClick={() => nav && nav("settings")} />
+        <MetricCell label="Bookings" value={todaySnapshot.bookingsToday} hero />
+        <MetricCell label="Tours" value={todaySnapshot.tours} hero onClick={() => nav && nav("lifecycle")} />
+        <MetricCell label="Evals" value={todaySnapshot.evals} hero onClick={() => nav && nav("lifecycle")} />
         <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={() => nav && nav("ops-opening")} />
         <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={() => nav && nav("ops-bathing")} />
 
@@ -869,12 +891,12 @@ export default function DashboardPage({
         </div>
         <div style={{ gridColumn: "8 / 10" }} />
 
-        {/* ═══ ROW 3: Daily Tasks ═══ */}
-        <MetricCell label="EOD Report" value={(() => { const eodOp = opsProgress.find(o => o.id === "eod"); return eodOp ? `${eodOp.progress}%` : "—"; })()} onClick={() => nav && nav("eod")} />
-        <MetricCell label="Checkout TV" value={todaySnapshot.checkedOut > 0 ? `${todaySnapshot.checkedOut} out` : "—"} onClick={() => nav && nav("checkout-tv")} />
-        <MetricCell label="Photos" value="—" onClick={() => nav && nav("photos")} />
-        <MetricCell label="Cash Tips" value="—" onClick={() => nav && nav("cash-tips")} />
-        <MetricCell label="Checkout Notes" value="—" onClick={() => nav && nav("eod")} />
+        {/* ═══ ROW 3: Daily Tasks (quick-link nav shortcuts) ═══ */}
+        <QuickLinkCell label="EOD Report" icon={<I.FileText />} onClick={() => nav && nav("eod")} />
+        <QuickLinkCell label="Checkout TV" icon={<I.Monitor />} onClick={() => nav && nav("checkout-tv")} />
+        <QuickLinkCell label="Photos" icon={<I.Camera />} onClick={() => nav && nav("photos")} />
+        <QuickLinkCell label="Cash Tips" icon={<I.DollarSign />} onClick={() => nav && nav("cash-tips")} />
+        <QuickLinkCell label="Notes" icon={<I.Clipboard />} onClick={() => nav && nav("eod")} />
         <MetricCell label="Avg LTV" value={`$${funnelMetrics.avgLTV.toFixed(0)}`} onClick={() => nav && nav("lifecycle")} />
         <MetricCell label="Total Clients" value={funnelMetrics.spendingClientsCount} onClick={() => nav && nav("lifecycle")} />
         <ChecklistCell label="Back-End" progress={getChecklistProgress("ops-be")} count={getChecklistCount("ops-be")} onClick={() => nav && nav("ops-be")} />
@@ -1037,6 +1059,24 @@ function ServiceCell({ label, done, total, onClick }) {
       </div>
       <div style={{ fontSize: 12, fontWeight: 800, color: barColor, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>
         {done}/{total}
+      </div>
+    </div>
+  );
+}
+
+/* QuickLinkCell — compact navigation shortcut (no data value) */
+function QuickLinkCell({ label, icon, onClick }) {
+  return (
+    <div
+      className="dash-quick-link"
+      onClick={onClick}
+      style={{ animation: "dashSlideIn 0.2s cubic-bezier(0.22,1,0.36,1) both" }}
+    >
+      <div style={{ color: C.pri, opacity: 0.55, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {icon}
+      </div>
+      <div style={{ fontSize: 9, fontWeight: 700, color: C.pri, lineHeight: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", opacity: 0.7 }}>
+        {label}
       </div>
     </div>
   );
