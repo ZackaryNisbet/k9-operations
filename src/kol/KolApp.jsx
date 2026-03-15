@@ -481,7 +481,7 @@ function LeanAppInner() {
     switch(pg) {
       case "dashboard": return "Dashboard";
       case "lifecycle": return "Customer Lifecycle";
-      case "funnel": return "Conversion Funnel";
+      case "funnel": return "Lead Funnel";
       case "ops-hub": return "Operations";
       case "ops-opening": return "Opening Checklist";
       case "ops-fe": return "FE Checklist";

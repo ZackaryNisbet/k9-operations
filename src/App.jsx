@@ -8086,9 +8086,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Tab config ──
   const tabDefs = [
-    { id: "conversion", label: "Conversion", count: tabLists.conversion.length, color: C.acc },
+    { id: "conversion", label: "Leads", count: tabLists.conversion.length, color: C.acc },
     { id: "active", label: "Active Customers", count: tabLists.active.length, color: C.pri },
-    { id: "retention", label: "Retention", count: tabLists.retention.length, color: C.dan },
+    { id: "retention", label: "Lapsed", count: tabLists.retention.length, color: C.dan },
     { id: "cold", label: "Cold", count: tabLists.cold.length, color: C.textSec },
     { id: "all", label: "All", count: tabLists.all.length, color: C.info },
   ];
@@ -9913,7 +9913,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                             <div style={{flex:1,minWidth:0}}>
                               <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4,flexWrap:"wrap"}}>
                                 <span style={{fontSize:13,fontWeight:700,color:C.text}}>{item.loggedBy || "Staff"}</span>
-                                <Badge color="default" size="sm">{item.tab === "conversion" ? "Conversion" : "Retention"}</Badge>
+                                <Badge color="default" size="sm">{item.tab === "conversion" ? "Leads" : "Lapsed"}</Badge>
                                 {dt && <span style={{fontSize:11,color:C.textMut}}>{dt.toLocaleDateString()} {dt.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</span>}
                               </div>
                               <div style={{fontSize:13,color:C.text,lineHeight:1.5,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{item.notes}</div>
