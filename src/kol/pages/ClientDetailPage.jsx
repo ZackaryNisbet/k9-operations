@@ -70,6 +70,7 @@ const EVENT_TYPE_STYLES = {
   note:         { color: "#6B7280", bg: "#F3F4F6", icon: "note", label: "Note" },
   follow_up:    { color: C.acc, bg: C.accLt, icon: "followup", label: "Follow-up" },
   initial_sync: { color: C.pri, bg: C.priLt, icon: "sync", label: "Initial Sync" },
+  milestone:    { color: "#8B5CF6", bg: "#EDE9FE", icon: "milestone", label: "Milestone" },
 };
 
 function getEventStyle(eventType) {
@@ -283,12 +284,38 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     const stage = detectClientStage(client, data.serverStats);
     const syncDate = client.createdAt ? new Date(client.createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
+    // Build a more descriptive seed event based on stage
+    const gingrId = String(client.gingrId);
+    const srv = data.serverStats && data.serverStats[gingrId];
+    let description = `Identified as ${stage} client during initial sync on ${syncDate}`;
+    const seedDetails = { description };
+
+    if (stage === "Lapsed" && srv) {
+      const daysSince = srv.last_res_date ? Math.floor((Date.now() - new Date(srv.last_res_date).getTime()) / 86400000) : null;
+      const totalRes = Number(srv.total_res) || 0;
+      const bdCount = Number(srv.boarding_count) || 0;
+      const bdPct = totalRes > 0 ? bdCount / totalRes : 0;
+      const threshUsed = bdPct > 0.5 ? "180 days (boarding)" : "90 days (daycare)";
+      description = `System classified as Lapsed \u2014 no upcoming reservations and last visit was ${daysSince || "N/A"} days ago (threshold: ${threshUsed})`;
+      seedDetails.description = description;
+      seedDetails.threshold_used = bdPct > 0.5 ? "boarding_180" : "daycare_90";
+      seedDetails.days_since_last = daysSince;
+      seedDetails.total_reservations = totalRes;
+      seedDetails.total_spent = srv.total_spent;
+    } else if (stage === "Active" && srv) {
+      description = `Active client \u2014 ${Number(srv.total_res) || 0} reservations, $${Number(srv.total_spent || 0).toFixed(2)} total spent`;
+      seedDetails.description = description;
+    } else if (stage === "Leads") {
+      description = `New lead identified during initial sync on ${syncDate}`;
+      seedDetails.description = description;
+    }
+
     const seedEvent = {
       client_id: clientId,
-      event_type: "initial_sync",
-      from_stage: null,
+      event_type: stage === "Lapsed" ? "stage_change" : "initial_sync",
+      from_stage: stage === "Lapsed" ? "active" : null,
       to_stage: stage.toLowerCase(),
-      details: { description: `Identified as ${stage} client during initial sync on ${syncDate}` },
+      details: seedDetails,
       created_by: null,
     };
 
@@ -342,14 +369,22 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     setLcSubmitting(false);
   };
 
-  // ─── CLM-008: Combined lifecycle event count (DB + in-memory) ──────────────
+  // ─── CLM-008: Combined lifecycle event count (DB + in-memory + milestones) ──
   const lifecycleEventCount = useMemo(() => {
     const dbCount = lifecycleEvents.length;
     const inMemory = (client.lifecycleEvents || []).length;
     const convUpdates = (client.lifecycle?.conversion?.updates || []).length;
     const retUpdates = (client.lifecycle?.retention?.updates || []).length;
-    return dbCount + inMemory + convUpdates + retUpdates;
-  }, [lifecycleEvents, client.lifecycleEvents, client.lifecycle]);
+    // Count computed milestones (first visit, last visit, first boarding)
+    let milestones = 0;
+    if (reservations.length > 0) {
+      milestones += 1; // first visit
+      const sorted = [...reservations].sort((a, b) => a.checkIn.localeCompare(b.checkIn));
+      if (sorted.length > 1) milestones += 1; // last visit
+      if (sorted.some(r => r.type === "boarding" && r.id !== sorted[0].id)) milestones += 1; // first boarding
+    }
+    return dbCount + inMemory + convUpdates + retUpdates + milestones;
+  }, [lifecycleEvents, client.lifecycleEvents, client.lifecycle, reservations]);
 
   // ─── CLM-008: Merge all events for timeline display ────────────────────────
   const allTimelineEvents = useMemo(() => {
@@ -415,10 +450,51 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
       });
     });
 
+    // Computed reservation milestones (ensures timeline is never empty for real clients)
+    if (reservations.length > 0) {
+      const sorted = [...reservations].sort((a, b) => a.checkIn.localeCompare(b.checkIn));
+      // First visit
+      const first = sorted[0];
+      if (first) {
+        events.push({
+          id: "milestone-first-visit",
+          date: new Date(first.checkIn + "T12:00:00").toISOString(),
+          eventType: "milestone",
+          fromStage: null, toStage: "active",
+          description: `First visit \u2014 ${tl(first.type)}${first.dogId ? ` with ${dn(first.dogId)}` : ""}`,
+          triggeredBy: "System", source: "computed",
+        });
+      }
+      // Last visit (if different from first)
+      const last = sorted[sorted.length - 1];
+      if (last && last.id !== first.id) {
+        events.push({
+          id: "milestone-last-visit",
+          date: new Date(last.checkIn + "T12:00:00").toISOString(),
+          eventType: "milestone",
+          fromStage: null, toStage: null,
+          description: `Most recent visit \u2014 ${tl(last.type)}${last.dogId ? ` with ${dn(last.dogId)}` : ""}`,
+          triggeredBy: "System", source: "computed",
+        });
+      }
+      // Milestone: first boarding
+      const firstBoarding = sorted.find(r => r.type === "boarding");
+      if (firstBoarding && firstBoarding.id !== first.id) {
+        events.push({
+          id: "milestone-first-boarding",
+          date: new Date(firstBoarding.checkIn + "T12:00:00").toISOString(),
+          eventType: "milestone",
+          fromStage: null, toStage: null,
+          description: `First boarding stay${firstBoarding.dogId ? ` with ${dn(firstBoarding.dogId)}` : ""}`,
+          triggeredBy: "System", source: "computed",
+        });
+      }
+    }
+
     // Sort newest first
     events.sort((a, b) => new Date(b.date) - new Date(a.date));
     return events;
-  }, [lifecycleEvents, client.lifecycleEvents, client.lifecycle]);
+  }, [lifecycleEvents, client.lifecycleEvents, client.lifecycle, reservations]);
 
   // ─── CLM-005: Build Gingr payload from field mappings ──────────────────────
   const gingrPayload = useMemo(() => {
@@ -622,10 +698,25 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const dogIds = dogs.map(d => d.id);
   const eodMentions = useMemo(() => (data.eodEntries || []).flatMap(e => (e.mentions || []).filter(m => (m.entityType === "client" && m.entityId === clientId) || (m.entityType === "dog" && dogIds.includes(m.entityId))).map(m => ({ ...m, date: e.date, eodId: e.id, sections: e.sections }))).sort((a, b) => b.date.localeCompare(a.date)), [data.eodEntries, clientId, dogIds.join(",")]);
 
-  // Payments
-  const pmts = useMemo(() => (data.payments || []).filter(p => p.clientId === clientId).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)), [data.payments, clientId]);
+  // Payments — merge actual data.payments with reservation-derived entries
+  const pmts = useMemo(() => {
+    const directPmts = (data.payments || []).filter(p => p.clientId === clientId);
+    // Build payment-like entries from checked-out reservations when no direct payments exist
+    const resDerived = directPmts.length === 0 ? reservations.filter(r => r.status === "checked-out" && r.checkIn).map(r => ({
+      id: `res-pmt-${r.id}`,
+      clientId,
+      amount: r.cost || r.totalCost || r.price || 0,
+      type: "reservation",
+      method: "Gingr",
+      status: "completed",
+      timestamp: r.checkOut || r.checkIn,
+      description: `${tl(r.type)} · ${dn(r.dogId)} · ${fmtDate(r.checkIn)}${r.checkIn !== r.checkOut ? ` → ${fmtDate(r.checkOut)}` : ""}`,
+      reservationId: r.id,
+    })).filter(p => p.amount > 0) : [];
+    return [...directPmts, ...resDerived].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  }, [data.payments, clientId, reservations]);
   const statusClr = { completed: C.suc, pending: "#f59e0b", refunded: C.dan, failed: C.dan };
-  const typeClr = { payment: C.pri, deposit: "#0ea5e9", tip: "#ec4899", refund: C.dan };
+  const typeClr = { payment: C.pri, deposit: "#0ea5e9", tip: "#ec4899", refund: C.dan, reservation: "#0ea5e9" };
 
   // Reservation subtabs
   const upcomingRes = reservations.filter(r => r.status === "upcoming");
@@ -990,19 +1081,26 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text }}>Payment History</h3>
             <span style={{ fontSize: 14, fontWeight: 700, color: C.pri }}>Total: ${stats.totalSpent.toFixed(2)}</span>
           </div>
+          {pmts.some(p => p.type === "reservation") && (
+            <div style={{ padding: "8px 14px", marginBottom: 12, borderRadius: 8, background: `${C.info}08`, border: `1px solid ${C.info}20`, fontSize: 12, color: C.textSec }}>
+              Payment history derived from Gingr reservation records. Individual transaction details are not available through the Gingr API.
+            </div>
+          )}
           {pmts.length === 0 ? (
             <Card style={{ textAlign: "center", padding: 32 }}>
-              <div style={{ fontSize: 14, color: C.textSec }}>No payments yet</div>
+              <div style={{ fontSize: 14, color: C.textSec }}>No payment records found</div>
+              {stats.totalSpent > 0 && <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>Total spent (${stats.totalSpent.toFixed(2)}) is calculated from Gingr reservation data</div>}
             </Card>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {pmts.map(p => (
                 <Card key={p.id} style={{ padding: "10px 16px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                    <span style={{ padding: "2px 7px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: C.info + "18", color: C.info }}>{p.type}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                    <span style={{ padding: "2px 7px", borderRadius: 4, fontSize: 11, fontWeight: 600, background: (typeClr[p.type] || C.info) + "18", color: typeClr[p.type] || C.info, textTransform: "capitalize" }}>{p.type}</span>
                     <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>${p.amount?.toFixed(2) || "0.00"}</span>
-                    <span style={{ fontSize: 12, color: C.textMut }}>{p.method || "Unknown"}</span>
-                    <span style={{ fontSize: 12, color: C.textMut, marginLeft: "auto" }}>{fmtDate(p.timestamp)}</span>
+                    {p.description && <span style={{ fontSize: 12, color: C.textSec, flex: 1, minWidth: 120 }}>{p.description}</span>}
+                    {!p.description && p.method && <span style={{ fontSize: 12, color: C.textMut }}>{p.method}</span>}
+                    <span style={{ fontSize: 12, color: C.textMut, marginLeft: "auto", flexShrink: 0 }}>{fmtDate(p.timestamp)}</span>
                   </div>
                 </Card>
               ))}
@@ -1012,11 +1110,56 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
       )}
 
       {/* Packages Tab */}
-      {activeTab === "packages" && (
-        <Card style={{ textAlign: "center", padding: 32 }}>
-          <div style={{ fontSize: 14, color: C.textSec }}>Package management coming soon</div>
-        </Card>
-      )}
+      {activeTab === "packages" && (() => {
+        const clientPkgSales = (data.packageSales || []).filter(s => s.clientId === clientId);
+        const pkgDefs = data.packages || [];
+        return (
+          <div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, fontSize: 17, fontWeight: 700, color: C.text }}>Packages</h3>
+              <span style={{ fontSize: 12, color: C.textMut }}>{clientPkgSales.length} package{clientPkgSales.length !== 1 ? "s" : ""}</span>
+            </div>
+            {clientPkgSales.length === 0 ? (
+              <Card style={{ textAlign: "center", padding: 32 }}>
+                <div style={{ fontSize: 14, color: C.textSec }}>No packages purchased</div>
+                <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>Daycare and boarding packages will appear here when purchased</div>
+              </Card>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {clientPkgSales.map(sale => {
+                  const pkg = pkgDefs.find(p => p.id === sale.packageId);
+                  const total = sale.quantity || 0;
+                  const used = sale.used || 0;
+                  const remaining = Math.max(0, total - used);
+                  const pctUsed = total > 0 ? (used / total) * 100 : 0;
+                  const isActive = remaining > 0;
+                  const isExpired = sale.expiresAt && new Date(sale.expiresAt) < new Date();
+                  return (
+                    <Card key={sale.id} style={{ padding: "14px 18px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{pkg?.name || sale.packageName || "Package"}</span>
+                        <Badge color={isExpired ? "danger" : isActive ? "success" : "default"} size="sm">
+                          {isExpired ? "Expired" : isActive ? "Active" : "Used"}
+                        </Badge>
+                        {sale.purchaseDate && <span style={{ fontSize: 12, color: C.textMut, marginLeft: "auto" }}>Purchased {fmtDate(sale.purchaseDate)}</span>}
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 16, fontSize: 13 }}>
+                        <span style={{ color: C.textSec }}>{used} of {total} sessions used</span>
+                        <span style={{ fontWeight: 700, color: isActive ? C.suc : C.textMut }}>{remaining} remaining</span>
+                        {sale.expiresAt && <span style={{ fontSize: 11, color: isExpired ? C.dan : C.textMut }}>Expires {fmtDate(sale.expiresAt)}</span>}
+                      </div>
+                      {/* Progress bar */}
+                      <div style={{ marginTop: 8, height: 6, borderRadius: 3, background: C.bg, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${Math.min(100, pctUsed)}%`, borderRadius: 3, background: isActive ? C.suc : C.textMut, transition: "width 0.3s" }} />
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ──── IGNITE TAB (IGN-003) ──── */}
       {activeTab === "ignite" && (
