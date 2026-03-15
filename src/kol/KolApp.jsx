@@ -100,6 +100,8 @@ function buildLiteUrl(locSlug, pg, prms, dataRef) {
   const slug = LITE_PAGE_SLUGS[pg] || pg;
   if (locSlug === "enterprise") return `${LITE_BASE}/enterprise/${slug.replace("enterprise/", "")}`;
   if (pg === "client-detail" && prms?.clientId && dataRef) {
+    // Lite clients: use lc_ ID directly in URL
+    if (prms.clientId.startsWith("lc_")) return `${LITE_BASE}/${locSlug}/client/${prms.clientId}`;
     const c = (dataRef.clients || []).find(cl => cl.id === prms.clientId);
     const phone = c?.fields?.phone?.replace(/\D/g, "");
     if (phone) return `${LITE_BASE}/${locSlug}/client/${phone}`;
@@ -125,8 +127,17 @@ function parseLiteUrl(pathname, dataRef) {
     return { locSlug: "enterprise", page: pg, params: {} };
   }
   if (parts.length === 1) return { locSlug, page: "dashboard", params: {} };
-  // Client detail: /{loc}/client/{phone}
+  // Client detail: /{loc}/client/{phone_or_lc_id}
   if (parts[1] === "client" && parts[2]) {
+    // Lite client by ID: /client/lc_{uuid}
+    if (parts[2].startsWith("lc_")) {
+      const lcId = parts[2];
+      if (dataRef) {
+        const c = (dataRef.clients || []).find(cl => cl.id === lcId);
+        if (c) return { locSlug, page: "client-detail", params: { clientId: c.id } };
+      }
+      return { locSlug, page: "client-detail", params: { clientId: lcId } };
+    }
     const phone = parts[2];
     if (parts[3] && dataRef) {
       const c = (dataRef.clients || []).find(cl => (cl.fields?.phone || "").replace(/\D/g, "") === phone);
@@ -374,16 +385,25 @@ function LeanAppInner() {
       // Save client lifecycle changes (followUp, notes, cold, etc.)
       if (newData.clients && mockData?.clients) {
         const changed = [];
+        const liteChanged = [];
         newData.clients.forEach(c => {
-          if (!c.gingrId) return;
           const old = mockData.clients.find(o => o.id === c.id);
           if (c.lifecycle && JSON.stringify(c.lifecycle) !== JSON.stringify(old?.lifecycle)) {
-            changed.push({ location_id: currentLocation, gingr_id: String(c.gingrId), lifecycle_data: c.lifecycle, updated_at: new Date().toISOString() });
+            if (c.isLiteClient && c.liteClientId) {
+              liteChanged.push({ id: c.liteClientId, lifecycle_data: c.lifecycle });
+            } else if (c.gingrId) {
+              changed.push({ location_id: currentLocation, gingr_id: String(c.gingrId), lifecycle_data: c.lifecycle, updated_at: new Date().toISOString() });
+            }
           }
         });
         if (changed.length > 0) {
           const { error } = await supabase.from("lite_client_lifecycle").upsert(changed, { onConflict: "location_id,gingr_id" });
           if (error) console.log("[K9 Lite] Lifecycle save error:", error.message);
+        }
+        // Persist lite client lifecycle changes to lite_clients table
+        for (const lc of liteChanged) {
+          const { error } = await supabase.from("lite_clients").update({ lifecycle_data: lc.lifecycle_data }).eq("id", lc.id);
+          if (error) console.log("[K9 Lite] Lite client lifecycle save error:", error.message);
         }
       }
     } catch (err) {

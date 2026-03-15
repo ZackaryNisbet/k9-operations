@@ -14,6 +14,7 @@ import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
+import { updateLiteClient } from "../../hooks/useGingrData";
 
 // ─── CLM-004 Gingr field definitions (used by Push to Gingr) ──────────────
 const GINGR_CLIENT_FIELDS = [
@@ -96,6 +97,9 @@ function TimelineIcon({ type, color }) {
 
 // ─── CLM-008: Lifecycle stage detection helper ─────────────────────────────
 function detectClientStage(client, serverStats) {
+  if (client.isLiteClient) {
+    return client.lifecycle?.cold === true ? "Cold" : "Leads";
+  }
   const gingrId = String(client.gingrId);
   const srv = serverStats && serverStats[gingrId];
   if (!srv) return "Leads";
@@ -128,24 +132,47 @@ function detectClientStage(client, serverStats) {
 
 function ClientDetailPage({ data, save, clientId, nav, profile, openReservationId, addGlobalToast }) {
   const client = data.clients.find(c=>c.id===clientId);
-  const dogs = data.dogs.filter(d=>d.clientId===clientId);
-  const reservations = (data.reservations || []).filter(r=>r.clientId===clientId).sort((a,b)=>b.checkIn.localeCompare(a.checkIn));
+  const isLite = !!(client && client.isLiteClient);
+  const dogs = isLite ? [] : data.dogs.filter(d=>d.clientId===clientId);
+  const reservations = isLite ? [] : (data.reservations || []).filter(r=>r.clientId===clientId).sort((a,b)=>b.checkIn.localeCompare(a.checkIn));
   const [editing, setEditing] = useState(false);
   const [editFields, setEditFields] = useState({});
   const [editRecurringDiscountId, setEditRecurringDiscountId] = useState(null);
-  const [inlineFields, setInlineFields] = useState(() => ({...client.fields}));
-  const [inlineRecurringDiscountId, setInlineRecurringDiscountId] = useState(client.recurringDiscountId || null);
+  const [inlineFields, setInlineFields] = useState(() => ({...(client ? client.fields : {})}));
+  const [inlineRecurringDiscountId, setInlineRecurringDiscountId] = useState(client ? (client.recurringDiscountId || null) : null);
   const [inlineDirty, setInlineDirty] = useState(false);
   const [inlineSaving, setInlineSaving] = useState(false);
   useEffect(() => {
-    if (!inlineDirty) {
+    if (!inlineDirty && client) {
       setInlineFields({...client.fields});
       setInlineRecurringDiscountId(client.recurringDiscountId || null);
     }
-  }, [client.fields, client.recurringDiscountId]);
+  }, [client && client.fields, client && client.recurringDiscountId]);
   const updateInlineField = (fid, val) => { setInlineFields(prev => ({...prev, [fid]: val})); setInlineDirty(true); };
   const saveInlineEdit = async () => {
     setInlineSaving(true);
+    if (isLite && client.liteClientId) {
+      // Persist directly to lite_clients table
+      try {
+        await updateLiteClient(client.liteClientId, {
+          first_name: inlineFields.first_name || null,
+          last_name: inlineFields.last_name || null,
+          phone: inlineFields.phone || null,
+          email: inlineFields.email || null,
+          notes: inlineFields.notes || null,
+        });
+        await save({
+          ...data,
+          clients: data.clients.map(c => c.id === clientId ? { ...c, fields: { ...c.fields, ...inlineFields } } : c),
+        });
+        if (addGlobalToast) addGlobalToast({ message: "Client updated", type: "success" });
+      } catch (e) {
+        if (addGlobalToast) addGlobalToast({ message: `Save failed: ${e.message}`, type: "error" });
+      }
+      setInlineDirty(false);
+      setInlineSaving(false);
+      return;
+    }
     const diffs = [];
     (data.clientFields||[]).forEach(f => {
       const oldVal = client.fields[f.id] || "";
@@ -730,7 +757,11 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const notesCount = clientNotes.length + eodMentions.length;
   const clientSalesForCount = (data.packageSales || []).filter(s => s.clientId === clientId);
   const activePkgCount = clientSalesForCount.filter(s => (s.quantity || 0) - (s.used || 0) > 0).length;
-  const tabs = [
+  const tabs = isLite ? [
+    ...(igniteLeads.length > 0 ? [{ id: "ignite", label: "Ignite", count: igniteLeads.length, color: "#F97316" }] : []),
+    { id: "lifecycle", label: "Lifecycle", count: lifecycleEventCount, color: "#8B5CF6" },
+    { id: "notes", label: "Notes", count: notesCount, color: "#F59E0B" },
+  ] : [
     { id: "dogs", label: "Dogs", count: dogs.length, color: C.pri },
     { id: "reservations", label: "Reservations", count: reservations.length, color: C.acc },
     { id: "payments", label: "Payments", count: pmts.length, color: C.info },
@@ -740,6 +771,13 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     { id: "notes", label: "Notes", count: notesCount, color: "#F59E0B" },
     { id: "history", label: "History", count: ((data.auditLog || []).filter(e => e.tableName === 'k9_clients' && e.recordId === clientId)).length, color: "#6B7280" },
   ];
+
+  // Reset tab for lite clients if current tab doesn't exist
+  useEffect(() => {
+    if (isLite && tabs.length > 0 && !tabs.find(t => t.id === activeTab)) {
+      setActiveTab(tabs[0].id);
+    }
+  }, [isLite, clientId]);
 
   // Reservation card renderer
   const renderResCard = (res) => (
@@ -778,7 +816,9 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   );
 
   // Detect if client was created from an Ignite lead
-  const isIgniteSource = client.source === 'ignite' || igniteLeads.length > 0;
+  const isIgniteSource = client.source === 'ignite' || client._liteSource === 'ignite' || igniteLeads.length > 0;
+  const liteSourceLabel = isLite ? (client.source === "ignite" ? "Ignite" : client.source === "eval" ? "Eval" : client.source === "tour" ? "Tour" : titleCase(client.source || "Manual")) : null;
+  const liteSourceColor = isLite ? (client.source === "ignite" ? "#F97316" : client.source === "eval" ? C.acc : client.source === "tour" ? C.info : C.pri) : null;
 
   return (
     <div>
@@ -788,7 +828,13 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <h2 style={{margin:0,fontSize:22,fontWeight:800,color:C.text}}>{client.fields.first_name} {client.fields.last_name}</h2>
-              {isIgniteSource && (
+              {isLite && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 6, background: `${liteSourceColor}14`, border: `1.5px solid ${liteSourceColor}30`, fontSize: 11, fontWeight: 700, color: liteSourceColor, letterSpacing: "0.02em" }}>
+                  {client.source === "ignite" && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>}
+                  Source: {liteSourceLabel}
+                </span>
+              )}
+              {!isLite && isIgniteSource && (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 6, background: "#FFF7ED", border: "1.5px solid #FDBA7440", fontSize: 11, fontWeight: 700, color: "#C2410C", letterSpacing: "0.02em" }}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
                   Source: Ignite
@@ -798,6 +844,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4,fontSize:14,color:C.textSec}}><I.Phone/><span>{fmtPhone(client.fields.phone)}</span>{client.fields.email&&<span>&middot; {client.fields.email}</span>}</div>
           </div>
           <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            {!isLite && <>
             {/* CLM-005: Push to Gingr Button */}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
               <button onClick={() => { setGingrResult(null); setGingrModal(true); }}
@@ -815,6 +862,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               )}
             </div>
             <Btn variant="primary" onClick={()=>nav("new-reservation",{clientId})} icon={<I.Plus/>} size="sm">New</Btn>
+            </>}
           </div>
         </div>
 
@@ -829,6 +877,30 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               </div>
             )}
           </div>
+          {isLite ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <Inp label="First Name" value={inlineFields.first_name || ""} onChange={v => updateInlineField("first_name", v)} />
+              <Inp label="Last Name" value={inlineFields.last_name || ""} onChange={v => updateInlineField("last_name", v)} />
+              <Inp label="Phone" value={inlineFields.phone || ""} onChange={v => updateInlineField("phone", v)} />
+              <Inp label="Email" value={inlineFields.email || ""} onChange={v => updateInlineField("email", v)} />
+              <div style={{ gridColumn: "1 / -1" }}>
+                <Inp label="Notes" type="textarea" value={inlineFields.notes || ""} onChange={v => updateInlineField("notes", v)} />
+              </div>
+              {client.sourceDate && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Source Date</div>
+                  <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{fmtDate(client.sourceDate)}</div>
+                </div>
+              )}
+              {client.createdAt && (
+                <div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Created</div>
+                  <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{fmtDate(client.createdAt)}</div>
+                </div>
+              )}
+            </div>
+          ) : (
+          <>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             {(data.clientFields||[]).filter(f => f.type !== "textarea").map(f => (
               <div key={f.id} style={f.type === "checkbox" ? { display: "flex", alignItems: "end" } : {}}>
@@ -853,10 +925,12 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               <Inp label={f.name} type="textarea" value={inlineFields[f.id] || ""} onChange={v => updateInlineField(f.id, v)} />
             </div>
           ))}
+          </>
+          )}
         </div>
 
-        {/* Agreement Status Section */}
-        <div style={{ marginBottom: 16, padding: "14px 18px", background: C.bg, borderRadius: 12 }}>
+        {/* Agreement Status Section — hidden for lite clients */}
+        {!isLite && <div style={{ marginBottom: 16, padding: "14px 18px", background: C.bg, borderRadius: 12 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Agreement Status</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {(data.agreements || []).map(agr => {
@@ -904,10 +978,10 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               }
             })}
           </div>
-        </div>
+        </div>}
 
-        {/* Preferred Veterinarian Section */}
-        <div style={{ marginBottom: 16, padding: "14px 18px", background: C.bg, borderRadius: 12, position: "relative" }}>
+        {/* Preferred Veterinarian Section — hidden for lite clients */}
+        {!isLite && <div style={{ marginBottom: 16, padding: "14px 18px", background: C.bg, borderRadius: 12, position: "relative" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Preferred Veterinarian</div>
           <div ref={vetDropRef} style={{ position: "relative" }}>
             <input
@@ -973,10 +1047,26 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               </div>
             ) : null;
           })()}
-        </div>
+        </div>}
       </Card>
 
-      {/* Stats Bar */}
+      {/* Stats Bar — lite clients show simplified stats */}
+      {isLite ? (
+        <Card style={{marginBottom:16,padding:"16px 24px"}}>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {[
+              { label: "Source", value: liteSourceLabel, color: liteSourceColor },
+              { label: "Created", value: client.createdAt ? fmtDate(client.createdAt) : "N/A", color: C.text },
+              { label: "Stage", value: detectClientStage(client, data.serverStats), color: C.pri },
+            ].map(st => (
+              <div key={st.label} style={{flex:"1 1 140px",padding:"10px 14px",background:C.bg,borderRadius:10,textAlign:"center",minWidth:120}}>
+                <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>{st.label}</div>
+                <div style={{fontSize:16,fontWeight:800,color:st.color}}>{st.value}</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : (
       <Card style={{marginBottom:16,padding:"16px 24px"}}>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {[
@@ -993,6 +1083,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           ))}
         </div>
       </Card>
+      )}
 
       {/* Tab Bar */}
       <div style={{ display: "flex", borderBottom: `2px solid ${C.borderLight}`, background: C.bg, borderRadius: "12px 12px 0 0", marginBottom: 0, overflowX: "auto" }}>
