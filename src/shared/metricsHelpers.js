@@ -174,32 +174,43 @@ export function computeLifecycleMetrics(data, dateFrom, dateTo, today) {
   const spendingClients = clients.filter(c => statsMap[c.id]?.hasSpent || statsMap[c.id]?.hasRealBooking);
   const totalLTV = spendingClients.reduce((sum, c) => sum + (statsMap[c.id]?.totalSpent || 0), 0);
   const avgLTV = spendingClients.length > 0 ? totalLTV / spendingClients.length : 0;
+  // Conversion Rate = (leads who became customers / total leads in range) × 100
+  // "Became customer" = hasSpent or hasRealBooking (boarding/daycare/grooming, not tour/eval)
   const conversionRate = leadsInRange.length > 0 ? (newCustomers.length / leadsInRange.length * 100) : 0;
 
   // Today-specific metrics
+  // Only count manual outreaches (exclude system-logged entries like auto-seeded follow-ups)
   const todayOutreaches = clients.reduce((count, c) => {
     const convUpdates = c.lifecycle?.conversion?.updates || [];
     const retUpdates = c.lifecycle?.retention?.updates || [];
     const allUp = [...convUpdates, ...retUpdates];
     const todayLogs = allUp.filter(u => {
+      if (u.loggedBy === "System") return false;
       const d = u.loggedAt ? u.loggedAt.split("T")[0] : "";
       return d === today;
     });
     return count + todayLogs.length;
   }, 0);
 
+  // Converted: clients whose most recent reservation is today and have a real booking
+  // (boarding, daycare, grooming — not tours/evals)
   const todayConversions = clients.filter(c => {
     const s = statsMap[c.id];
     return s.lastResDate === today && s.hasRealBooking;
   }).length;
 
+  // First-Time Spenders: clients whose chronologically first paid reservation is in the date range
+  // Sort client reservations by checkIn to find the true first paid visit
   const firstTimePayers = clients.filter(c => {
     const s = statsMap[c.id];
     if (!s.hasSpent) return false;
-    const firstRes = reservations.find(r =>
-      r.status !== "cancelled" && (r.pricing?.total || 0) > 0 &&
-      String(r._clientId || r.clientId) === String(c.id)
-    );
+    const clientRes = reservations
+      .filter(r =>
+        r.status !== "cancelled" && (r.pricing?.total || 0) > 0 &&
+        String(r._clientId || r.clientId) === String(c.id)
+      )
+      .sort((a, b) => (a.checkIn || "").localeCompare(b.checkIn || ""));
+    const firstRes = clientRes[0];
     if (firstRes && firstRes.checkIn >= dateFrom && firstRes.checkIn <= dateTo) return true;
     return false;
   }).length;
@@ -217,14 +228,23 @@ export function computeLifecycleMetrics(data, dateFrom, dateTo, today) {
   const td = today;
   let remainingLeads = 0;
   let remainingAtRisk = 0;
-  const dcThresh = data.resortPolicies?.retentionDaycareDays ?? 90;
-  const bdThresh = data.resortPolicies?.retentionBoardingDays ?? 180;
+  // Lapsed window: only count customers whose last visit was within the last 90 days.
+  // Anyone with last visit > 90 days ago is classified as "old Gingr data" and excluded.
+  const LAPSED_WINDOW_DAYS = 90;
+  const ninetyDaysAgo = addDays(td, -LAPSED_WINDOW_DAYS);
 
   clients.forEach(c => {
     const s = statsMap[c.id];
     const hasSpent = (s?.totalSpent || 0) > 0;
     const gingrId = String(c.gingrId);
     const srv = ss[gingrId];
+
+    // Lite clients (manually added, no Gingr data) count as leads unless cold
+    if (c.isLiteClient) {
+      const isCold = c.lifecycle?.cold === true;
+      if (!isCold) remainingLeads++;
+      return;
+    }
 
     const hasRealBookingSynced = srv
       ? (srv.has_real_booking || false)
@@ -247,33 +267,17 @@ export function computeLifecycleMetrics(data, dateFrom, dateTo, today) {
 
     if (isConversion && !isOldGingrSync) remainingLeads++;
 
-    // Retention (at-risk) calculation — same as ClientsPage
-    let isRetention = false;
-    if (hasRealBooking && !hasUpcoming && totalRes > 0) {
-      // Compute daysSince
+    // Lapsed calculation: customer has a real booking, no upcoming reservation,
+    // and their last visit was within the 90-day window (not older).
+    // Customers with last visit > 90 days ago are "old Gingr data" — excluded from lapsed.
+    let isLapsed = false;
+    if (hasRealBooking && !hasUpcoming && totalRes > 0 && !isCold) {
       const lastResDate = s?.lastResDate || "";
-      let daysSince = null;
-      if (lastResDate) {
-        const tdNoon = new Date(td + "T12:00:00");
-        daysSince = Math.round((tdNoon - new Date(lastResDate + "T12:00:00")) / 86400000);
-      }
-      if (daysSince != null) {
-        const cRes = resByClient[c.id] || [];
-        const resCount = srv ? Number(srv.total_res) : cRes.length;
-        if (resCount > 0) {
-          const daycareCount = srv ? (Number(srv.daycare_count) || 0) : cRes.filter(r => r.type === "daycare").length;
-          const boardingCount = srv ? (Number(srv.boarding_count) || 0) : cRes.filter(r => r.type === "boarding").length;
-          const dcPct = daycareCount / resCount;
-          const bdPct = boardingCount / resCount;
-          if (bdPct > 0.5 && daysSince >= bdThresh) isRetention = true;
-          else if (dcPct >= 0.5 && daysSince >= dcThresh) isRetention = true;
-          else if (dcPct < 0.5 && bdPct < 0.5 && daysSince >= dcThresh) isRetention = true;
-        } else {
-          if (daysSince >= dcThresh) isRetention = true;
-        }
+      if (lastResDate && lastResDate >= ninetyDaysAgo && lastResDate < td) {
+        isLapsed = true;
       }
     }
-    if (isRetention && !isCold) remainingAtRisk++;
+    if (isLapsed) remainingAtRisk++;
   });
 
   return {
