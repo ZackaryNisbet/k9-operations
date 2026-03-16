@@ -849,12 +849,16 @@ function CheckoutTVContent({ data, nav, profile }) {
             if (!currentIds.has(id)) {
               const resInfo = reservations.find(r => r.gingrId === id)
                 || (rows || []).find(r => r.gingr_id === id);
+              const depResType = resInfo?.reservation_type_name
+                ? classifyReservationType(resInfo.reservation_type_name)
+                : (resInfo?.type || "boarding");
               departed.push({
                 id,
                 animalGingrId: resInfo?.animal_gingr_id || resInfo?.dogId?.replace("g", "") || "",
                 animalName: resInfo?.animal_name || resInfo?._animalName || "Unknown",
                 ownerLastName: resInfo?.owner_last_name || resInfo?._ownerName?.split(" ").pop() || "",
                 room: resInfo?.room || "",
+                resType: depResType,
               });
             }
           }
@@ -887,12 +891,16 @@ function CheckoutTVContent({ data, nav, profile }) {
           for (const id of currentIds) {
             if (!prev.has(id)) {
               const resInfo = relevant.find(r => r.gingr_id === id);
+              const arrResType = resInfo?.reservation_type_name
+                ? classifyReservationType(resInfo.reservation_type_name)
+                : "boarding";
               arrivals.push({
                 id,
                 animalGingrId: resInfo?.animal_gingr_id || "",
                 animalName: resInfo?.animal_name || "Unknown",
                 ownerLastName: resInfo?.owner_last_name || "",
                 room: "",
+                resType: arrResType,
               });
             }
           }
@@ -1013,15 +1021,44 @@ function CheckoutTVContent({ data, nav, profile }) {
     return () => clearTimeout(timeout);
   }, [checkingIn]);
 
-  /* ── TV-008d: Compute active and queued check-ins ──────────────────── */
-  const activeCheckIn = checkingIn.find(e => !e.fading) || checkingIn.find(e => e.fading) || null;
-  const fadingCheckIns = activeCheckIn ? checkingIn.filter(e => e.fading && e !== activeCheckIn) : [];
-  const queuedCheckIns = checkingIn.filter(e => !e.fading && e !== activeCheckIn);
+  /* ── TV-011: View-dependent hero card filter ────────────────────────── *
+   * When a filtered view is active (e.g. Small Daycare), only show
+   * check-in/check-out hero cards for dogs that belong to that view.
+   * "All" view shows everything.
+   * ──────────────────────────────────────────────────────────────────── */
+  const entryMatchesView = useCallback((entry) => {
+    if (activeView === "all") return true;
+    const entryDogs = entry.dogs || [entry];
+    return entryDogs.some(d => {
+      const rType = d.resType || "boarding";
+      const isDaycare = DAYCARE_TYPES.has(rType);
+      const isBoarding = BOARDING_TYPES.has(rType);
+      const isPP = rType === "dayboarding";
+      // Look up dog for size classification
+      const dog = dogs.find(dd => dd.gingrId === Number(d.animalGingrId) || dd.id === `g${d.animalGingrId}`);
+      const size = getDogSize(dog);
 
-  /* ── TV-006: Compute active (hero) and queued checkouts ────────────── */
-  const activeCheckout = checkingOut.find(e => !e.fading) || checkingOut.find(e => e.fading) || null;
-  const fadingCheckouts = activeCheckout ? checkingOut.filter(e => e.fading && e !== activeCheckout) : [];
-  const queuedCheckouts = checkingOut.filter(e => !e.fading && e !== activeCheckout);
+      switch (activeView) {
+        case "large-daycare":  return isDaycare && size === "large";
+        case "small-daycare":  return isDaycare && size === "small";
+        case "private-play":   return isPP;
+        case "boarding":       return isBoarding;
+        default:               return true;
+      }
+    });
+  }, [activeView, dogs]);
+
+  /* ── TV-008d: Compute active and queued check-ins (view-filtered) ──── */
+  const viewCheckingIn = checkingIn.filter(entryMatchesView);
+  const activeCheckIn = viewCheckingIn.find(e => !e.fading) || viewCheckingIn.find(e => e.fading) || null;
+  const fadingCheckIns = activeCheckIn ? viewCheckingIn.filter(e => e.fading && e !== activeCheckIn) : [];
+  const queuedCheckIns = viewCheckingIn.filter(e => !e.fading && e !== activeCheckIn);
+
+  /* ── TV-006: Compute active (hero) and queued checkouts (view-filtered) */
+  const viewCheckingOut = checkingOut.filter(entryMatchesView);
+  const activeCheckout = viewCheckingOut.find(e => !e.fading) || viewCheckingOut.find(e => e.fading) || null;
+  const fadingCheckouts = activeCheckout ? viewCheckingOut.filter(e => e.fading && e !== activeCheckout) : [];
+  const queuedCheckouts = viewCheckingOut.filter(e => !e.fading && e !== activeCheckout);
 
   // Set of dogIds currently checking out — used to keep them in the grid visually
   const checkingOutDogIds = useMemo(() => {
@@ -1150,8 +1187,8 @@ function CheckoutTVContent({ data, nav, profile }) {
     </div>
   );
 
-  const hasCheckouts = checkingOut.length > 0;
-  const hasCheckIns = checkingIn.length > 0;
+  const hasCheckouts = viewCheckingOut.length > 0;
+  const hasCheckIns = viewCheckingIn.length > 0;
 
   /* ── TV-005: Determine which sections to render based on active view ── */
   const showLargeDaycare = activeView === "all" || activeView === "large-daycare";
@@ -1267,12 +1304,12 @@ function CheckoutTVContent({ data, nav, profile }) {
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#84CC16" }}>{boardingDogs.length}</span></div>
         {hasCheckIns && (
           <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: hasCheckouts ? 0 : "auto" }}>
-            Checking in: <span style={{ fontWeight: 800, color: "#38BDF8" }}>{checkingIn.filter(e => !e.fading).length}</span>
+            Checking in: <span style={{ fontWeight: 800, color: "#38BDF8" }}>{viewCheckingIn.filter(e => !e.fading).length}</span>
           </div>
         )}
         {hasCheckouts && (
           <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: hasCheckIns ? 0 : "auto" }}>
-            Checking out: <span style={{ fontWeight: 800, color: "#EF4444" }}>{checkingOut.filter(e => !e.fading).length}</span>
+            Checking out: <span style={{ fontWeight: 800, color: "#EF4444" }}>{viewCheckingOut.filter(e => !e.fading).length}</span>
           </div>
         )}
       </div>
