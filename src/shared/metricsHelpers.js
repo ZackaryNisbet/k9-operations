@@ -37,13 +37,14 @@ export function computeOccupancyMetrics(data, today) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    computeServiceMetrics
-   Tours: uses r.type === "tour" (same as ClientsPage, reportHelpers)
-   Baths: uses same logic as OperationsHub (going-home res with bath_type)
-   PP: uses getPPStats with CORRECT property names
+   Matches OperationsHub Services section exactly:
+   - inHouseToday = checked-in OR (upcoming with check-in/out spanning today)
+   - Baths: inHouseToday with "bath" in _services
+   - Pamper: unique dogs in Luxury Suite (resTypeId 5) OR with "pamper" in _services
+   - Ice Cream + others: inHouseToday with matching _services entry
    ═══════════════════════════════════════════════════════════════════════════ */
 export function computeServiceMetrics(data, today) {
   const reservations = data.reservations || [];
-  const dogs = data.dogs || [];
 
   // Tours: match by r.type === "tour" (how ClientsPage and reportHelpers count them)
   const tours = reservations.filter(r => r.checkIn === today && r.type === "tour").length;
@@ -56,18 +57,42 @@ export function computeServiceMetrics(data, today) {
   // Bookings today
   const bookingsToday = reservations.filter(r => r.checkIn === today && r.status !== "cancelled").length;
 
-  // Baths: going-home dogs that have a bath type (same as OperationsHub)
-  const goingHomeRes = reservations.filter(r => r.status === "checked-in" && r.checkOut === today);
-  let bathsTotal = 0, bathsDone = 0;
-  goingHomeRes.forEach(res => {
-    const dog = dogs.find(d => d.id === res.dogId);
-    const bathType = res.careOverrides?.bath_type || (dog && dog.fields?.bath_type);
-    if (bathType) {
-      bathsTotal++;
-      const log = res.activityLog?.[`${today}|bathing`];
-      if (log && log.administered) bathsDone++;
-    }
+  // ─── In-house today: same filter as OperationsHub Services section ───
+  const inHouseToday = reservations.filter(r =>
+    (r.status === "checked-in") ||
+    (r.status === "upcoming" && (r.scheduledCheckIn || r.checkIn) <= today && (r.scheduledCheckOut || r.checkOut) >= today)
+  );
+
+  // Baths: inHouseToday reservations with "bath" in _services (matches OperationsHub line 876-881)
+  const bathsTotal = inHouseToday.filter(r => {
+    const svcs = r._services;
+    if (!svcs) return false;
+    const arr = Array.isArray(svcs) ? svcs : [];
+    return arr.some(s => (typeof s === "string" ? s : s?.name || "").toLowerCase() === "bath");
+  }).length;
+  const bathsDone = 0; // OperationsHub Services section only shows total count, no done tracking
+
+  // Pamper: unique dogs in Luxury Suite (resTypeId 5) or with "pamper" in _services (matches OperationsHub line 882-891)
+  let pamperTotal = 0;
+  const pamperSeen = new Set();
+  inHouseToday.forEach(r => {
+    if (pamperSeen.has(r.dogId)) return;
+    const isLS = r._resTypeId == 5 || (r._resTypeName || "").toLowerCase().includes("luxury suite");
+    const svcs = r._services;
+    const arr = Array.isArray(svcs) ? svcs : [];
+    const hasPP = arr.some(s => (typeof s === "string" ? s : s?.name || "").toLowerCase().includes("pamper"));
+    if (isLS || hasPP) { pamperSeen.add(r.dogId); pamperTotal++; }
   });
+  const pamperDone = 0; // OperationsHub Services section only shows total count, no done tracking
+
+  // Ice Cream: inHouseToday with "Ice Cream" in _services (matches OperationsHub line 893-898)
+  const iceCreamTotal = inHouseToday.filter(r => {
+    const svcs = r._services;
+    if (!svcs) return false;
+    const arr = Array.isArray(svcs) ? svcs : [];
+    return arr.some(s => (typeof s === "string" ? s : s?.name || "") === "Ice Cream");
+  }).length;
+  const iceCreamDone = 0; // OperationsHub Services section only shows total count, no done tracking
 
   // Room cleaning stats
   const cleaningStats = getRoomCleaningStats(data, today);
@@ -75,25 +100,12 @@ export function computeServiceMetrics(data, today) {
   // PP stats — use CORRECT property names from getPPStats
   const ppStats = getPPStats(data, today);
 
-  // Ice cream add-on tracking
-  const todayRes = reservations.filter(r => r.status === "checked-in" && r.checkIn <= today && r.checkOut >= today);
-  let iceCreamTotal = 0, iceCreamDone = 0;
-  todayRes.forEach(res => {
-    const addOns = res.addOns || res.services || [];
-    const hasIceCream = addOns.some(a => (a.name || a.label || "").toLowerCase().includes("ice cream"));
-    if (hasIceCream) {
-      iceCreamTotal++;
-      const log = res.activityLog?.[`${today}|svc`];
-      if (log && log.administered) iceCreamDone++;
-    }
-  });
-
   return {
     tours, evals, bookingsToday,
     bathsTotal, bathsDone,
+    pamperTotal, pamperDone,
     roomsToClean: cleaningStats.totalNeeded || 0,
     roomsCleaned: cleaningStats.totalDone || 0,
-    // PP: map getPPStats return values to the names the dashboard expects
     ppTotal: ppStats.totalDogs || 0,
     ppCompleted: ppStats.completedSessions || 0,
     iceCreamTotal, iceCreamDone,
