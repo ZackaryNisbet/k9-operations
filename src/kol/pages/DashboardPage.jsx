@@ -1354,14 +1354,26 @@ function DashboardContent({
             </div>
           </div>
           <div style={{ width: "60%", height: 1, background: "rgba(20,83,45,0.08)" }} />
-          <div
-            ref={receiptTriggerRef}
-            className="receipt-trigger"
-            onClick={() => setShowReceipt(true)}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "4px 8px" }}
-          >
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
             <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em" }}>Accrual Total</div>
-            <div style={{ fontSize: 14, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</div>
+              <div
+                ref={receiptTriggerRef}
+                onClick={() => setShowReceipt(true)}
+                style={{
+                  cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  width: 18, height: 18, borderRadius: 4,
+                  background: "rgba(132,204,22,0.12)", color: C.acc,
+                  transition: "all 0.2s cubic-bezier(0.22,1,0.36,1)",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(132,204,22,0.25)"; e.currentTarget.style.transform = "scale(1.15)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(132,204,22,0.12)"; e.currentTarget.style.transform = "scale(1)"; }}
+                title="View accrual breakdown"
+              >
+                <I.FileText style={{ width: 11, height: 11 }} />
+              </div>
+            </div>
             {showPriorPeriod && <TrendBadge value={revenueTrend} size="xs" />}
           </div>
         </div>
