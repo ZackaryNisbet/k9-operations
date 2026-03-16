@@ -16,6 +16,7 @@ const InteractiveLineChart = React.memo(({
   useRawPoints = false,   // true = use actual data points (no interpolation to CHART_PTS)
   lineType = "spline",    // "linear" | "spline"
   solidFill = false,      // true = opaque solid fill, false = gradient (legacy)
+  noFill = false,         // true = no fill area at all (line only)
   fillColor,              // override fill color (defaults to `color`)
   fillOpacity = 0.18,     // opacity for solid fill
   showGuideLines = false, // subtle vertical lines from x-axis to data points
@@ -27,6 +28,7 @@ const InteractiveLineChart = React.memo(({
   // L4: Prior period data and display
   priorData,              // array of { date, label, value } for prior period
   showPriorLine = false,  // whether to render the prior period line
+  priorLineColor,         // color for prior period line (defaults to color at 40% opacity)
 }) => {
   const svgRef = React.useRef(null);
   const [display, setDisplay] = React.useState(null);
@@ -187,7 +189,7 @@ const InteractiveLineChart = React.memo(({
           <line key={`guide-${i}`} x1={x(i)} y1={h - pad.bottom} x2={x(i)} y2={y(v)} stroke={guideLineColor} strokeWidth="0.7" strokeDasharray="3 2" opacity="0.5" />
         ))}
         {/* Fill area */}
-        {solidFill ? (
+        {noFill ? null : solidFill ? (
           <path d={fillPath} fill={actualFill} opacity={fillOpacity} />
         ) : (
           <>
@@ -206,9 +208,9 @@ const InteractiveLineChart = React.memo(({
         {todayHighlight && mainDottedPath && (
           <path d={mainDottedPath} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeDasharray="4 3" />
         )}
-        {/* L4: Prior period comparison line — dashed, 40% opacity */}
+        {/* L4: Prior period comparison line */}
         {showPriorLine && priorVals.length > 0 && (
-          <path d={buildFullPath(priorVals)} fill="none" stroke={color} strokeWidth="1.5" strokeDasharray="6 4" strokeLinecap="round" opacity="0.4" />
+          <path d={buildFullPath(priorVals)} fill="none" stroke={priorLineColor || color} strokeWidth="1.5" strokeDasharray={priorLineColor ? undefined : "6 4"} strokeLinecap="round" opacity={priorLineColor ? 0.7 : 0.4} />
         )}
         {/* Compare line (legacy) */}
         {showCompare && <path d={buildFullPath(cmpVals)} fill="none" stroke={compareColor} strokeWidth="1.5" strokeDasharray="4 3" strokeLinecap="round" opacity="0.6" />}
@@ -248,7 +250,7 @@ const InteractiveLineChart = React.memo(({
             {/* L3: Hover dot on main line */}
             <circle cx={x(hoverIdx)} cy={y(mainVals[hoverIdx])} r={4} fill="white" stroke={color} strokeWidth="2.5" />
             {/* Hover dot on prior line */}
-            {showPriorLine && <circle cx={x(hoverIdx)} cy={y(priorVals[hoverIdx])} r="3" fill="white" stroke={color} strokeWidth="1.5" opacity="0.6" />}
+            {showPriorLine && <circle cx={x(hoverIdx)} cy={y(priorVals[hoverIdx])} r="3" fill="white" stroke={priorLineColor || color} strokeWidth="1.5" opacity={priorLineColor ? 0.8 : 0.6} />}
             {showCompare && <circle cx={x(hoverIdx)} cy={y(cmpVals[hoverIdx])} r="3" fill="white" stroke={compareColor} strokeWidth="1.5" />}
           </g>
         )}
@@ -280,7 +282,7 @@ const InteractiveLineChart = React.memo(({
           <g>
             <line x1={w - pad.right - 100} y1={pad.top - 6} x2={w - pad.right - 82} y2={pad.top - 6} stroke={color} strokeWidth="2" />
             <text x={w - pad.right - 78} y={pad.top - 3} fill="#8B95A5" fontSize="8" fontFamily="'Outfit', sans-serif">Current</text>
-            <line x1={w - pad.right - 48} y1={pad.top - 6} x2={w - pad.right - 30} y2={pad.top - 6} stroke={color} strokeWidth="1.5" strokeDasharray="4 3" opacity="0.4" />
+            <line x1={w - pad.right - 48} y1={pad.top - 6} x2={w - pad.right - 30} y2={pad.top - 6} stroke={priorLineColor || color} strokeWidth="1.5" strokeDasharray={priorLineColor ? undefined : "4 3"} opacity={priorLineColor ? 0.7 : 0.4} />
             <text x={w - pad.right - 26} y={pad.top - 3} fill="#8B95A5" fontSize="8" fontFamily="'Outfit', sans-serif">Prior</text>
           </g>
         )}
@@ -292,7 +294,7 @@ const InteractiveLineChart = React.memo(({
         }}>
           <div style={{ fontWeight: 700, color: "#1A2233", marginBottom: 2 }}>{hoverData.label}</div>
           <div style={{ color, fontWeight: 600 }}>{_chartFmt$(hoverData.value)}</div>
-          {showPriorLine && hoverPriorValue !== null && <div style={{ color, fontSize: 10, opacity: 0.5 }}>Prior: {_chartFmt$(hoverPriorValue)}</div>}
+          {showPriorLine && hoverPriorValue !== null && <div style={{ color: priorLineColor || color, fontSize: 10, opacity: priorLineColor ? 0.9 : 0.5 }}>Prior: {_chartFmt$(hoverPriorValue)}</div>}
           {showCompare && hoverData.prevValue !== undefined && <div style={{ color: compareColor, fontSize: 10 }}>Prev: {_chartFmt$(hoverData.prevValue)}</div>}
         </div>
       )}
