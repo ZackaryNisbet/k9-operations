@@ -86,15 +86,28 @@ function getDogSize(dog) {
   return w < SIZE_THRESHOLD ? "small" : "large";
 }
 
-/* ── Private Play detection helper ─────────────────────────────────────── */
+/* ── Private Play detection helper ─────────────────────────────────────── *
+ * TV-018: Enhanced to also check room/reservation type for private play rooms.
+ * Boarding dogs in private play rooms are classified as private play.
+ * ──────────────────────────────────────────────────────────────────────── */
 function hasPrivatePlay(res) {
+  // Check services for "private play"
   const svcs = res._services;
-  if (!svcs) return false;
-  const arr = Array.isArray(svcs) ? svcs : [];
-  return arr.some(s => {
-    const name = typeof s === "string" ? s : (s && s.name ? s.name : "");
-    return name.toLowerCase().includes("private play");
-  });
+  if (svcs) {
+    const arr = Array.isArray(svcs) ? svcs : [];
+    const hasPPService = arr.some(s => {
+      const name = typeof s === "string" ? s : (s && s.name ? s.name : "");
+      return name.toLowerCase().includes("private play");
+    });
+    if (hasPPService) return true;
+  }
+  // Check room name for private play room
+  const room = (res.room || "").toLowerCase();
+  if (room.includes("private play")) return true;
+  // Check reservation type name
+  const typeName = (res._resTypeName || "").toLowerCase();
+  if (typeName.includes("private play")) return true;
+  return false;
 }
 
 /* ── TV-003: Size theme colors ────────────────────────────────────────── */
@@ -115,13 +128,17 @@ const SIZE_THEME = {
   },
 };
 
-/* ── TV-005: Navigation view definitions ──────────────────────────────── */
+/* ── TV-005: Navigation view definitions ──────────────────────────────── *
+ * TV-018: Removed Boarding tab — boarding dogs are reclassified into
+ * Large/Small Daycare (by size) or Private Play (if they have PP services).
+ * Dogs in BOTH group daycare AND private play appear in both sections,
+ * counted as 0.5 in each for accurate capacity tracking.
+ * ──────────────────────────────────────────────────────────────────────── */
 const NAV_VIEWS = [
   { id: "all",           label: "All",            color: "#fff",     colorRgb: "255,255,255" },
   { id: "small-daycare", label: "Small Daycare",  color: "#0EA5E9",  colorRgb: "14,165,233" },
   { id: "large-daycare", label: "Large Daycare",  color: "#84CC16",  colorRgb: "132,204,22" },
   { id: "private-play",  label: "Private Play",   color: "#EF4444",  colorRgb: "239,68,68" },
-  { id: "boarding",      label: "Boarding",        color: "#A78BFA",  colorRgb: "167,139,250" },
 ];
 
 const AUTO_CYCLE_INTERVAL = 30000; // 30 seconds
@@ -355,12 +372,15 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading, compact })
   const firstDog = resolvedDogs[0];
   const theme = SIZE_THEME[firstDog.size];
 
+  // TV-018: Boarding dogs now labeled by their play category, not "BOARDING"
   const resType = (entry.dogs?.[0]?.resType || entry.resType || "");
-  const groupLabel = resType === "dayboarding" ? "PRIVATE PLAY"
-    : resType === "boarding" ? "BOARDING"
+  const entryHasPP = (entry.dogs || [entry]).some(d => {
+    const tempRes = { _services: d._services || [], room: d.room || "", _resTypeName: "", type: d.resType || "" };
+    return hasPrivatePlay(tempRes) || d.resType === "dayboarding";
+  });
+  const groupLabel = (resType === "dayboarding" || (resType === "boarding" && entryHasPP)) ? "PRIVATE PLAY"
     : firstDog.size === "small" ? "SMALL DAYCARE" : "LARGE DAYCARE";
-  const groupColor = resType === "dayboarding" ? "#EF4444"
-    : resType === "boarding" ? "#A78BFA"
+  const groupColor = (resType === "dayboarding" || (resType === "boarding" && entryHasPP)) ? "#EF4444"
     : theme?.accent || "#84CC16";
 
   // TV-015: Compact sizing
@@ -747,12 +767,55 @@ function CheckoutTVContent({ data, nav, profile }) {
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
-  // Merge Gingr daycare dogs into reservations + dogs arrays
+  /* ── Merge BOH live data with Supabase boarding ─────────────────────── *
+   * This is the SINGLE source-of-truth computation for all checked-in dogs.
+   * It combines:
+   *   1. Supabase boarding reservations (multi-night boarders)
+   *   2. BOH daycare/eval/dayboarding dogs (live from Gingr API)
+   *   3. BOH boarding dogs not yet in Supabase (new check-ins)
+   *
+   * Critical fix: Filters out stale Supabase records where the dog has
+   * already been checked out in Gingr but the Supabase sync hasn't
+   * updated check_out_date yet. Detection: if a boarding reservation
+   * ends today or earlier and BOH (the live source) doesn't list that
+   * dog in checking_out, the dog has already left.
+   * ──────────────────────────────────────────────────────────────────── */
   const { reservations, dogs } = useMemo(() => {
-    if (gingrDaycareDogs.length === 0) return { reservations: baseReservations, dogs: baseDogs };
+    const today = todayStr();
 
-    // Build synthetic reservation objects from Gingr API data
-    const syntheticRes = gingrDaycareDogs.map(gd => {
+    // Build set of animal IDs confirmed active by BOH (real-time Gingr)
+    const bohActiveAnimalIds = new Set(
+      gingrActiveDogs.map(d => String(d.animal_id))
+    );
+
+    // ── Step 1: Filter stale Supabase boarding reservations ───────────
+    // A Supabase boarding record is stale if:
+    //   - It's checked-in (status === "checked-in")
+    //   - Its scheduled end date (checkOut) is today or earlier
+    //   - The dog is NOT in the live BOH checking_out list
+    // This means the dog was checked out in Gingr but Supabase hasn't synced yet.
+    const filteredBaseRes = baseReservations.filter(r => {
+      if (r.status !== "checked-in") return true; // keep non-checked-in as-is
+      const rType = (r.type || "").toLowerCase();
+      if (!rType.includes("boarding")) return true; // only filter boarding
+      if (r._fromGingrApi) return true; // don't filter BOH-sourced records
+
+      // Extract the animal_gingr_id from dogId (format: "g{animal_id}")
+      const animalId = r.dogId?.startsWith("g") ? r.dogId.slice(1) : null;
+      if (!animalId) return true; // can't verify, keep it
+
+      // If the reservation ends today or earlier, verify against BOH
+      if (r.checkOut && r.checkOut <= today) {
+        if (bohActiveAnimalIds.size > 0 && !bohActiveAnimalIds.has(animalId)) {
+          // Dog's reservation ends today/earlier but BOH doesn't show it → stale
+          return false;
+        }
+      }
+      return true;
+    });
+
+    // ── Step 2: Build synthetic reservations from BOH daycare dogs ────
+    const syntheticRes = (gingrDaycareDogs || []).map(gd => {
       const t = (gd.type || "").toLowerCase();
       let resType = "daycare";
       if (t.includes("evaluation")) resType = "evaluation";
@@ -769,15 +832,47 @@ function CheckoutTVContent({ data, nav, profile }) {
         _ownerName: (gd.o_last || "").trim(),
         _services: [],
         room: gd.run_name || "",
-        checkIn: gd.start_date ? new Date(Number(gd.start_date) * 1000).toISOString().slice(0, 10) : todayStr(),
-        checkOut: gd.end_date ? new Date(Number(gd.end_date) * 1000).toISOString().slice(0, 10) : todayStr(),
+        checkIn: gd.start_date ? new Date(Number(gd.start_date) * 1000).toISOString().slice(0, 10) : today,
+        checkOut: gd.end_date ? new Date(Number(gd.end_date) * 1000).toISOString().slice(0, 10) : today,
         _fromGingrApi: true,
       };
     });
 
-    // Build synthetic dog objects so DogCard can find them
-    const syntheticDogs = gingrDaycareDogs.map(gd => {
-      // Don't duplicate if dog already exists in baseDogs
+    // ── Step 3: Add BOH boarding dogs not in Supabase (new check-ins) ─
+    const existingAnimalIds = new Set(
+      filteredBaseRes
+        .filter(r => r.status === "checked-in")
+        .map(r => r.dogId?.startsWith("g") ? r.dogId.slice(1) : null)
+        .filter(Boolean)
+    );
+    const bohBoardingRes = gingrActiveDogs
+      .filter(gd => {
+        const t = (gd.type || "").toLowerCase();
+        const isBoarding = t.includes("boarding") && !t.includes("day boarding") && !t.includes("daycare");
+        return isBoarding && !existingAnimalIds.has(String(gd.animal_id));
+      })
+      .map(gd => ({
+        id: `gingr-boh-${gd.id}`,
+        gingrId: Number(gd.id),
+        dogId: `g${gd.animal_id}`,
+        clientId: `g${gd.owner_id}`,
+        type: "boarding",
+        status: "checked-in",
+        _animalName: (gd.a_first || "Unknown").trim(),
+        _ownerName: (gd.o_last || "").trim(),
+        _services: [],
+        room: gd.run_name || "",
+        checkIn: gd.start_date ? new Date(Number(gd.start_date) * 1000).toISOString().slice(0, 10) : today,
+        checkOut: gd.end_date ? new Date(Number(gd.end_date) * 1000).toISOString().slice(0, 10) : today,
+        _fromGingrApi: true,
+      }));
+
+    // ── Step 4: Build synthetic dog objects for display ───────────────
+    const allBohDogs = [...(gingrDaycareDogs || []), ...gingrActiveDogs.filter(gd => {
+      const t = (gd.type || "").toLowerCase();
+      return t.includes("boarding") && !t.includes("day boarding") && !t.includes("daycare");
+    })];
+    const syntheticDogs = allBohDogs.map(gd => {
       const existing = baseDogs.find(d => d.gingrId === Number(gd.animal_id) || d.id === `g${gd.animal_id}`);
       if (existing) return null;
       return {
@@ -786,21 +881,22 @@ function CheckoutTVContent({ data, nav, profile }) {
         fields: {
           name: (gd.a_first || "Unknown").trim(),
           breed: gd.breed_name || "",
-          weight: null, // Unknown from this API
+          weight: null,
         },
         _image: null,
       };
     }).filter(Boolean);
 
-    // Merge — avoid duplicating reservations that might already exist
-    const existingGingrIds = new Set(baseReservations.map(r => r.gingrId).filter(Boolean));
-    const newRes = syntheticRes.filter(r => !existingGingrIds.has(r.gingrId));
+    // ── Step 5: Merge — avoid duplicating reservations ────────────────
+    const existingGingrIds = new Set(filteredBaseRes.map(r => r.gingrId).filter(Boolean));
+    const newDaycareRes = syntheticRes.filter(r => !existingGingrIds.has(r.gingrId));
+    const newBoardingRes = bohBoardingRes.filter(r => !existingGingrIds.has(r.gingrId));
 
     return {
-      reservations: [...baseReservations, ...newRes],
+      reservations: [...filteredBaseRes, ...newDaycareRes, ...newBoardingRes],
       dogs: [...baseDogs, ...syntheticDogs],
     };
-  }, [baseReservations, baseDogs, gingrDaycareDogs]);
+  }, [baseReservations, baseDogs, gingrDaycareDogs, gingrActiveDogs]);
 
   /* ── TV-003: Fetch animal icons from Supabase ─────────────────────── */
   const locationId = profile?.location_id;
@@ -871,38 +967,88 @@ function CheckoutTVContent({ data, nav, profile }) {
     return (aD?.fields?.name || "").localeCompare(bD?.fields?.name || "");
   });
 
-  const daycareDogs = uniqueDogs.filter(r => DAYCARE_TYPES.has(r.type));
-  const boardingDogs = uniqueDogs.filter(r => BOARDING_TYPES.has(r.type));
-
-  /* ── TV-003: Split daycare dogs into large and small groups ─────────── */
-  const { largeDaycare, smallDaycare } = useMemo(() => {
+  /* ── TV-018: Unified classification — no more Boarding section ────────
+   * ALL dogs (daycare, boarding, evaluation, dayboarding) are classified into:
+   *   - Large Daycare: dogs >= SIZE_THRESHOLD lbs (includes boarding without PP)
+   *   - Small Daycare: dogs < SIZE_THRESHOLD lbs (includes boarding without PP)
+   *   - Private Play: dogs with PP services, PP rooms, or dayboarding type
+   *
+   * Dual-tagged dogs: A dog that belongs to a group (large/small) AND has
+   * private play appears in BOTH sections. Counted as 0.5 in each for
+   * accurate capacity tracking.
+   *
+   * Display: Each dog card still appears in full in both sections — the 0.5
+   * only affects the count badges.
+   * ──────────────────────────────────────────────────────────────────────── */
+  const { largeDaycare, smallDaycare, privatePlayDogs, dualTaggedIds } = useMemo(() => {
     const large = [];
     const small = [];
-    for (const res of daycareDogs) {
+    const pp = [];
+    const dualIds = new Set();
+
+    for (const res of uniqueDogs) {
       const dog = dogs.find(d => d.id === res.dogId);
       const size = getDogSize(dog);
-      if (size === "small") {
-        small.push(res);
+      const isPP = hasPrivatePlay(res) || res.type === "dayboarding";
+
+      if (isPP) {
+        pp.push(res);
+
+        // Dayboarding-only dogs go ONLY in PP (they're not in group play)
+        if (res.type === "dayboarding" && !DAYCARE_TYPES.has(res.type)) {
+          // dayboarding IS in DAYCARE_TYPES, so this is actually dual-tagged
+        }
+
+        // If the dog is also in group play (daycare or boarding entering group),
+        // it's dual-tagged — appears in both daycare by size AND private play
+        if (res.type !== "dayboarding") {
+          // Boarding dog with PP or daycare dog with PP → dual-tagged
+          dualIds.add(res.dogId);
+          if (size === "small") {
+            small.push(res);
+          } else {
+            large.push(res);
+          }
+        }
       } else {
-        large.push(res);
+        // No private play — goes into daycare by size (whether daycare or boarding type)
+        if (size === "small") {
+          small.push(res);
+        } else {
+          large.push(res);
+        }
       }
     }
-    return { largeDaycare: large, smallDaycare: small };
-  }, [daycareDogs, dogs]);
 
-  /* ── TV-005: Private play dogs ─────────────────────────────────────── */
-  const privatePlayDogs = useMemo(() => {
-    return uniqueDogs.filter(r => hasPrivatePlay(r) || r.type === "dayboarding");
-  }, [uniqueDogs]);
+    return { largeDaycare: large, smallDaycare: small, privatePlayDogs: pp, dualTaggedIds: dualIds };
+  }, [uniqueDogs, dogs]);
 
-  /* ── TV-005: Counts for navigation badges ──────────────────────────── */
-  const viewCounts = useMemo(() => ({
-    "all": uniqueDogs.length,
-    "small-daycare": smallDaycare.length,
-    "large-daycare": largeDaycare.length,
-    "private-play": privatePlayDogs.length,
-    "boarding": boardingDogs.length,
-  }), [uniqueDogs, smallDaycare, largeDaycare, privatePlayDogs, boardingDogs]);
+  /* ── TV-018: Counts with 0.5 logic for dual-tagged dogs ────────────── *
+   * Dual-tagged dogs are counted as 0.5 in their daycare group and 0.5
+   * in private play. The "all" count stays as the true unique dog count.
+   * ──────────────────────────────────────────────────────────────────── */
+  const viewCounts = useMemo(() => {
+    // Count with 0.5 adjustment for dual-tagged dogs
+    let largeCount = 0;
+    for (const r of largeDaycare) {
+      largeCount += dualTaggedIds.has(r.dogId) ? 0.5 : 1;
+    }
+    let smallCount = 0;
+    for (const r of smallDaycare) {
+      smallCount += dualTaggedIds.has(r.dogId) ? 0.5 : 1;
+    }
+    let ppCount = 0;
+    for (const r of privatePlayDogs) {
+      ppCount += dualTaggedIds.has(r.dogId) ? 0.5 : 1;
+    }
+
+    return {
+      "all": uniqueDogs.length,
+      "small-daycare": smallCount,
+      "large-daycare": largeCount,
+      "private-play": ppCount,
+    };
+  }, [uniqueDogs, smallDaycare, largeDaycare, privatePlayDogs, dualTaggedIds]);
 
   /* ── TV-012/TV-013: Persistent TV notice system ────────────────────── *
    * Notices (check-in / check-out hero cards) are stored with a timestamp
@@ -965,28 +1111,24 @@ function CheckoutTVContent({ data, nav, profile }) {
     return () => clearInterval(id);
   }, [checkingOutRaw, checkingInRaw]);
 
-  /* ── TV-011: View-dependent hero card filter ────────────────────────── *
-   * When a filtered view is active (e.g. Small Daycare), only show
-   * check-in/check-out hero cards for dogs that belong to that view.
-   * "All" view shows everything.
+  /* ── TV-011 + TV-018: View-dependent hero card filter ────────────────── *
+   * When a filtered view is active, only show hero cards for matching dogs.
+   * TV-018: All dogs (including boarding) route to daycare by size.
+   * Dogs with PP match the private-play view. Dual-tagged match both.
    * ──────────────────────────────────────────────────────────────────── */
   const entryMatchesView = useCallback((entry) => {
     if (activeView === "all") return true;
     const entryDogs = entry.dogs || [entry];
     return entryDogs.some(d => {
       const rType = d.resType || "boarding";
-      const isDaycare = DAYCARE_TYPES.has(rType);
-      const isBoarding = BOARDING_TYPES.has(rType);
-      const isPP = rType === "dayboarding";
-      // Look up dog for size classification
+      const isPP = hasPrivatePlay({ _services: [], room: d.room || "", _resTypeName: "", type: rType }) || rType === "dayboarding";
       const dog = dogs.find(dd => dd.gingrId === Number(d.animalGingrId) || dd.id === `g${d.animalGingrId}`);
       const size = getDogSize(dog);
 
       switch (activeView) {
-        case "large-daycare":  return isDaycare && size === "large";
-        case "small-daycare":  return isDaycare && size === "small";
+        case "large-daycare":  return size === "large" && rType !== "dayboarding";
+        case "small-daycare":  return size === "small" && rType !== "dayboarding";
         case "private-play":   return isPP;
-        case "boarding":       return isBoarding;
         default:               return true;
       }
     });
@@ -1132,10 +1274,9 @@ function CheckoutTVContent({ data, nav, profile }) {
   const hasCheckouts = viewCheckingOut.length > 0;
   const hasCheckIns = viewCheckingIn.length > 0;
 
-  /* ── TV-005: Determine which sections to render based on active view ── */
+  /* ── TV-005 + TV-018: Determine which sections to render ────────────── */
   const showLargeDaycare = activeView === "all" || activeView === "large-daycare";
   const showSmallDaycare = activeView === "all" || activeView === "small-daycare";
-  const showBoarding = activeView === "all" || activeView === "boarding";
   const showPrivatePlay = activeView === "all" || activeView === "private-play";
 
   // For filtered views (not "all"), skip the section header and show a flat grid
@@ -1147,10 +1288,9 @@ function CheckoutTVContent({ data, nav, profile }) {
       case "small-daycare": return smallDaycare;
       case "large-daycare": return largeDaycare;
       case "private-play": return privatePlayDogs;
-      case "boarding": return boardingDogs;
       default: return null; // "all" uses the sectioned layout
     }
-  }, [activeView, smallDaycare, largeDaycare, privatePlayDogs, boardingDogs]);
+  }, [activeView, smallDaycare, largeDaycare, privatePlayDogs]);
 
   // Get accent color & label for filtered view
   const filteredViewMeta = NAV_VIEWS.find(v => v.id === activeView);
@@ -1241,17 +1381,16 @@ function CheckoutTVContent({ data, nav, profile }) {
         </div>
       </div>
 
-      {/* Stats bar — TV-003: Updated with large/small daycare counts */}
+      {/* Stats bar — TV-003 + TV-018: Updated with 0.5 counting */}
       <div style={{ display: "flex", gap: 24, padding: "10px 0", marginBottom: 8, flexWrap: "wrap" }}>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Total: <span style={{ fontWeight: 800, color: "#fff" }}>{uniqueDogs.length}</span></div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>
-          Large Daycare: <span style={{ fontWeight: 800, color: SIZE_THEME.large.accent }}>{largeDaycare.length}</span>
+          Large Daycare: <span style={{ fontWeight: 800, color: SIZE_THEME.large.accent }}>{viewCounts["large-daycare"] % 1 === 0 ? viewCounts["large-daycare"] : viewCounts["large-daycare"].toFixed(1)}</span>
         </div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>
-          Small Daycare: <span style={{ fontWeight: 800, color: SIZE_THEME.small.accent }}>{smallDaycare.length}</span>
+          Small Daycare: <span style={{ fontWeight: 800, color: SIZE_THEME.small.accent }}>{viewCounts["small-daycare"] % 1 === 0 ? viewCounts["small-daycare"] : viewCounts["small-daycare"].toFixed(1)}</span>
         </div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Private Play: <span style={{ fontWeight: 800, color: "#EF4444" }}>{privatePlayDogs.length}</span></div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#A78BFA" }}>{boardingDogs.length}</span></div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Private Play: <span style={{ fontWeight: 800, color: "#EF4444" }}>{viewCounts["private-play"] % 1 === 0 ? viewCounts["private-play"] : viewCounts["private-play"].toFixed(1)}</span></div>
         {hasCheckIns && (
           <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: hasCheckouts ? 0 : "auto" }}>
             Checking in: <span style={{ fontWeight: 800, color: "#38BDF8" }}>{viewCheckingIn.filter(e => !e.fading).length}</span>
@@ -1306,13 +1445,12 @@ function CheckoutTVContent({ data, nav, profile }) {
               <div>
                 <SectionLabel
                   label={filteredViewMeta?.label || ""}
-                  count={filteredDogList.length}
+                  count={viewCounts[activeView] != null ? (viewCounts[activeView] % 1 === 0 ? viewCounts[activeView] : viewCounts[activeView].toFixed(1)) : filteredDogList.length}
                   color={filteredViewMeta?.color || "#fff"}
                   subtitle={
                     activeView === "large-daycare" ? `Dogs ${SIZE_THRESHOLD}+ lbs` :
                     activeView === "small-daycare" ? `Dogs under ${SIZE_THRESHOLD} lbs` :
-                    activeView === "private-play" ? "Dogs with private play or day boarding" :
-                    activeView === "boarding" ? "Overnight boarding dogs" :
+                    activeView === "private-play" ? "Dogs with private play services" :
                     undefined
                   }
                 />
@@ -1341,12 +1479,12 @@ function CheckoutTVContent({ data, nav, profile }) {
         ) : (
           /* ── "All" view — sectioned layout (original) ─────────────────── */
           <>
-            {/* TV-003: Large Dog Daycare section */}
+            {/* TV-003 + TV-018: Large Dog Daycare section — includes boarding dogs by size */}
             {largeDaycare.length > 0 && (
               <div>
                 <SectionLabel
                   label="Large Dog Daycare"
-                  count={largeDaycare.length}
+                  count={viewCounts["large-daycare"] % 1 === 0 ? viewCounts["large-daycare"] : viewCounts["large-daycare"].toFixed(1)}
                   color={SIZE_THEME.large.accent}
                   subtitle={`Dogs ${SIZE_THRESHOLD}+ lbs`}
                 />
@@ -1356,12 +1494,12 @@ function CheckoutTVContent({ data, nav, profile }) {
               </div>
             )}
 
-            {/* TV-003: Small Dog Daycare section */}
+            {/* TV-003 + TV-018: Small Dog Daycare section — includes boarding dogs by size */}
             {smallDaycare.length > 0 && (
               <div>
                 <SectionLabel
                   label="Small Dog Daycare"
-                  count={smallDaycare.length}
+                  count={viewCounts["small-daycare"] % 1 === 0 ? viewCounts["small-daycare"] : viewCounts["small-daycare"].toFixed(1)}
                   color={SIZE_THEME.small.accent}
                   subtitle={`Dogs under ${SIZE_THRESHOLD} lbs`}
                 />
@@ -1371,27 +1509,17 @@ function CheckoutTVContent({ data, nav, profile }) {
               </div>
             )}
 
-            {/* Private Play section */}
+            {/* Private Play section — TV-018: Now includes boarding dogs with PP services */}
             {privatePlayDogs.length > 0 && (
               <div>
                 <SectionLabel
                   label="Private Play"
-                  count={privatePlayDogs.length}
+                  count={viewCounts["private-play"] % 1 === 0 ? viewCounts["private-play"] : viewCounts["private-play"].toFixed(1)}
                   color="#EF4444"
-                  subtitle="Dogs with private play or day boarding"
+                  subtitle="Dogs with private play services"
                 />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
                   {privatePlayDogs.map(r => <DogCard key={r.id} res={r} />)}
-                </div>
-              </div>
-            )}
-
-            {/* Boarding section */}
-            {boardingDogs.length > 0 && (
-              <div>
-                <SectionLabel label="Boarding" count={boardingDogs.length} color="#A78BFA" subtitle="Overnight boarding dogs" />
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
-                  {boardingDogs.map(r => <DogCard key={r.id} res={r} />)}
                 </div>
               </div>
             )}
