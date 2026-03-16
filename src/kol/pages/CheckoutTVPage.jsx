@@ -609,9 +609,101 @@ function CheckoutTVContent({ data, nav, profile }) {
     }
   }, [autoCycle]);
 
-  const reservations = data.reservations || [];
-  const dogs = data.dogs || [];
+  const baseReservations = data.reservations || [];
+  const baseDogs = data.dogs || [];
   const clients = data.clients || [];
+
+  /* ── TV-010: Direct Gingr API poll for daycare dogs ─────────────────
+   * The Supabase sync does NOT include daycare reservations, so the
+   * Checkout TV was showing 0 daycare dogs. This polls the Gingr
+   * back_of_house API directly (with include_daycare=true) every 10s
+   * and merges checked-in daycare dogs into the display data.
+   * ──────────────────────────────────────────────────────────────────── */
+  const [gingrDaycareDogs, setGingrDaycareDogs] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const GINGR_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
+    const BOH_URL = `https://your-gingr-subdomain.gingrapp.com/api/v1/back_of_house?key=${GINGR_KEY}&location_id=1&full_day=true&include_daycare=true`;
+
+    const fetchDaycare = async () => {
+      try {
+        const resp = await fetch(BOH_URL);
+        if (!resp.ok || cancelled) return;
+        const json = await resp.json();
+        const d = json.data || {};
+        // checking_out = dogs that ARE checked in (here now)
+        const active = d.checking_out || [];
+        // Filter to daycare/evaluation/day-boarding types only
+        const daycareActive = active.filter(dog => {
+          const t = (dog.type || "").toLowerCase();
+          return t.includes("daycare") || t.includes("day boarding") || t.includes("evaluation");
+        });
+        if (!cancelled) setGingrDaycareDogs(daycareActive);
+      } catch (e) {
+        // Silently ignore — boarding data from Supabase still works
+      }
+    };
+
+    fetchDaycare();
+    const interval = setInterval(fetchDaycare, 10000); // 10s poll
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  // Merge Gingr daycare dogs into reservations + dogs arrays
+  const { reservations, dogs } = useMemo(() => {
+    if (gingrDaycareDogs.length === 0) return { reservations: baseReservations, dogs: baseDogs };
+
+    // Build synthetic reservation objects from Gingr API data
+    const syntheticRes = gingrDaycareDogs.map(gd => {
+      const t = (gd.type || "").toLowerCase();
+      let resType = "daycare";
+      if (t.includes("evaluation")) resType = "evaluation";
+      else if (t.includes("day boarding") && !t.includes("daycare")) resType = "dayboarding";
+
+      return {
+        id: `gingr-boh-${gd.id}`,
+        gingrId: Number(gd.id),
+        dogId: `g${gd.animal_id}`,
+        clientId: `g${gd.owner_id}`,
+        type: resType,
+        status: "checked-in",
+        _animalName: (gd.a_first || "Unknown").trim(),
+        _ownerName: (gd.o_last || "").trim(),
+        _services: [],
+        room: gd.run_name || "",
+        checkIn: gd.start_date ? new Date(Number(gd.start_date) * 1000).toISOString().slice(0, 10) : todayStr(),
+        checkOut: gd.end_date ? new Date(Number(gd.end_date) * 1000).toISOString().slice(0, 10) : todayStr(),
+        _fromGingrApi: true,
+      };
+    });
+
+    // Build synthetic dog objects so DogCard can find them
+    const syntheticDogs = gingrDaycareDogs.map(gd => {
+      // Don't duplicate if dog already exists in baseDogs
+      const existing = baseDogs.find(d => d.gingrId === Number(gd.animal_id) || d.id === `g${gd.animal_id}`);
+      if (existing) return null;
+      return {
+        id: `g${gd.animal_id}`,
+        gingrId: Number(gd.animal_id),
+        fields: {
+          name: (gd.a_first || "Unknown").trim(),
+          breed: gd.breed_name || "",
+          weight: null, // Unknown from this API
+        },
+        _image: null,
+      };
+    }).filter(Boolean);
+
+    // Merge — avoid duplicating reservations that might already exist
+    const existingGingrIds = new Set(baseReservations.map(r => r.gingrId).filter(Boolean));
+    const newRes = syntheticRes.filter(r => !existingGingrIds.has(r.gingrId));
+
+    return {
+      reservations: [...baseReservations, ...newRes],
+      dogs: [...baseDogs, ...syntheticDogs],
+    };
+  }, [baseReservations, baseDogs, gingrDaycareDogs]);
 
   /* ── TV-003: Fetch animal icons from Supabase ─────────────────────── */
   const locationId = profile?.location_id;
