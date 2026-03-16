@@ -836,9 +836,11 @@ function CheckoutTVContent({ data, nav, profile }) {
       // If BOH knows about this dog, keep the reservation
       const animalId = r.dogId?.startsWith("g") ? r.dogId.slice(1) : null;
       if (animalId && bohActiveAnimalIds.has(animalId)) return true;
-      // Boarding dogs not in BOH: keep only if checkOut >= today
-      // (multi-night boarders not leaving today won't be in BOH checking_out)
-      if (BOARDING_TYPE_SET.has(r.type) && r.checkOut && r.checkOut >= today) return true;
+      // Boarding dogs not in BOH: keep only if checkOut > today
+      // (multi-night boarders not leaving today won't be in BOH checking_out).
+      // If checkOut === today, the dog SHOULD be in BOH checking_out — if it
+      // isn't, it already left and Supabase is stale.
+      if (BOARDING_TYPE_SET.has(r.type) && r.checkOut && r.checkOut > today) return true;
       // Everything else is stale — dog isn't in BOH and isn't a future-checkout boarder
       return false;
     });
