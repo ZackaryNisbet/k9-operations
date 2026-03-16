@@ -171,11 +171,15 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   // ── Tab membership (uses server stats or Gingr owner-level data for classification) ──
   const clientTabMap = useMemo(() => {
     const map = {};
-    // Lapsed window: only count customers whose last visit was within 90 days.
-    // Anyone with last visit > 90 days ago is classified as "old Gingr data" and excluded.
-    const LAPSED_WINDOW_DAYS = 90;
+    // Lapsed thresholds from settings: boarding-heavy customers get a longer window.
+    // Classification: if >50% of bookings are boarding → boarding threshold, else daycare threshold.
+    // Display filter: only show customers who lapsed within the last 30 days (recently crossed threshold).
+    // Anyone who lapsed longer ago is "old Gingr data" and excluded.
+    const dcThreshVal = data.resortPolicies?.retentionDaycareDays ?? 90;
+    const bdThreshVal = data.resortPolicies?.retentionBoardingDays ?? 180;
+    const LAPSED_RECENCY_DAYS = 30; // only show lapsed customers from the last 30 days
     const td = todayStr();
-    const ninetyDaysAgo = addDays(td, -LAPSED_WINDOW_DAYS);
+    const tdNoon = new Date(td + "T12:00:00");
     const ss = data.serverStats;
     data.clients.forEach(c => {
       // Lite clients: place in leads tab (they have no Gingr bookings/spend)
@@ -200,16 +204,28 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       const totalRes = s.totalRes || 0;
       const isCold = c.lifecycle?.cold === true;
 
-      // Lapsed: has real booking, no upcoming, last visit within 90-day window.
-      // Anyone with last visit > 90 days ago is "old Gingr data" — routed to oldGingrSync.
+      // Lapsed classification:
+      // 1. Determine if boarding-heavy (>50% boarding) → use bdThreshVal, else dcThreshVal
+      // 2. daysSince >= threshold → lapsed
+      // 3. daysSince < threshold + 30 → recently lapsed (show on dashboard/lifecycle)
+      // 4. daysSince >= threshold + 30 → old lapsed (route to Old Gingr Sync)
       let isRetention = false;
       let isOldGingrLapsed = false;
       if (hasRealBooking && !hasUpcoming && totalRes > 0 && !isCold) {
-        const lastResDate = s.lastResDate || (srv && srv.last_res_date) || "";
-        if (lastResDate && lastResDate >= ninetyDaysAgo && lastResDate < td) {
-          isRetention = true;
-        } else if (lastResDate && lastResDate < ninetyDaysAgo) {
-          isOldGingrLapsed = true;
+        const daysSince = s.daysSinceLast;
+        if (daysSince != null) {
+          const resCount = srv ? Number(srv.total_res) : (resByClient[c.id] || []).length;
+          const boardingCount = srv ? (Number(srv.boarding_count) || 0) : (s.boardingCount || 0);
+          const bdPct = resCount > 0 ? boardingCount / resCount : 0;
+          const thresh = bdPct > 0.5 ? bdThreshVal : dcThreshVal;
+          if (daysSince >= thresh) {
+            // Lapsed — but only show if they lapsed within last 30 days
+            if (daysSince < thresh + LAPSED_RECENCY_DAYS) {
+              isRetention = true;
+            } else {
+              isOldGingrLapsed = true;
+            }
+          }
         }
       }
 
@@ -222,7 +238,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       map[c.id] = { isConversion: isConversion && !isOldGingrSync, isOldGingrSync: isOldGingrSync || isOldGingrLapsed, isActive, isRetention: isRetention && !isCold, isCold, isAll: true };
     });
     return map;
-  }, [data.clients, data.serverStats, clientStats, resByClient]);
+  }, [data.clients, data.serverStats, clientStats, resByClient, data.resortPolicies?.retentionDaycareDays, data.resortPolicies?.retentionBoardingDays]);
 
   // ── TEMP DIAGNOSTIC: why are clients in conversion? ──
   // ── Lifecycle event tracking ──

@@ -496,9 +496,11 @@ function useGingrData(locationId) {
       // Auto-set retention follow-up dates for clients missing one
       // Lapse date = last_res_date + threshold (90 daycare / 180 boarding-heavy)
       // Mirrors leads follow-up logic: computed once, persisted to Postgres
-      // Lapsed = last visit within 90 days but no upcoming appointment.
-      // Clients with last visit > 90 days ago are "old Gingr data" — not lapsed.
-      const LAPSED_WINDOW_DAYS = 90;
+      // Classification: >50% boarding bookings → boarding threshold, else daycare threshold
+      // Only seed follow-ups for customers who recently lapsed (within 30 days of crossing threshold)
+      const dcThresh = STATIC_POLICIES.retentionDaycareDays || 90;
+      const bdThresh = STATIC_POLICIES.retentionBoardingDays || 180;
+      const LAPSED_RECENCY_DAYS = 30;
       const nowMs = Date.now();
       const lapsedNeedingFU = tClients.filter(c => {
         if (c.lifecycle?.retention?.followUpDate) return false; // already set
@@ -509,15 +511,20 @@ function useGingrData(locationId) {
         const totalRes = Number(srv.total_res) || 0;
         if (totalRes === 0) return false;
         const daysSince = Math.floor((nowMs - new Date(srv.last_res_date).getTime()) / 86400000);
-        return daysSince > 0 && daysSince <= LAPSED_WINDOW_DAYS;
+        const bdPct = (Number(srv.boarding_count) || 0) / totalRes;
+        const thresh = bdPct > 0.5 ? bdThresh : dcThresh;
+        return daysSince >= thresh && daysSince < thresh + LAPSED_RECENCY_DAYS;
       });
       if (lapsedNeedingFU.length > 0) {
         const retRows = lapsedNeedingFU.map(c => {
           const gingrId = String(c.gingrId);
           const srv = sMap[gingrId];
-          // Follow-up date = last visit + 90 days (unified lapsed window)
+          const totalRes = Number(srv.total_res) || 1;
+          const bdPct = (Number(srv.boarding_count) || 0) / totalRes;
+          const thresh = bdPct > 0.5 ? bdThresh : dcThresh;
+          // Follow-up date = last visit + service-specific threshold
           const lapseDate = new Date(srv.last_res_date + "T12:00:00");
-          lapseDate.setDate(lapseDate.getDate() + LAPSED_WINDOW_DAYS);
+          lapseDate.setDate(lapseDate.getDate() + thresh);
           const lapseDateStr = lapseDate.toISOString().split("T")[0];
           const lc = c.lifecycle || { conversion: { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }, retention: { notes:"",followUpDate:"",updates:[] }, cold:false, coldDate:"", coldFrom:"" };
           const updatedLC = { ...lc, retention: { ...lc.retention, followUpDate: lapseDateStr } };
