@@ -12,6 +12,7 @@ import { Tip } from "../../shared/ui";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { useDashboardMetrics } from "../../hooks/useDashboardMetrics";
+import { supabase } from "../../supabaseClient";
 import { useLazyCompute, useSectionVisibility } from "../../hooks/useLazyCompute";
 import { computeOpsProgress, computeServiceMetrics, computeLifecycleMetrics } from "../../shared/metricsHelpers";
 
@@ -1046,66 +1047,87 @@ function DashboardContent({
   const boardingPct = m.boardingPct || 0;
   const daycarePct = m.daycarePct || 0;
 
-  /* ─── Receipt data: per-reservation accrual breakdown ─── */
-  const receiptData = useMemo(() => {
-    const reservations = data?.reservations || [];
-    const boarding = [];
-    const daycare = [];
-    let boardingTotal = 0;
-    let daycareTotal = 0;
+  /* ─── Receipt data: fetched directly from Supabase on demand ─── */
+  const [receiptData, setReceiptData] = useState(null);
+  const [receiptLoading, setReceiptLoading] = useState(false);
 
-    reservations.forEach(res => {
-      if (res.status === "cancelled") return;
-      const total = res.pricing?.total || 0;
-      if (total <= 0) return;
+  const fetchReceiptData = useCallback(async () => {
+    setReceiptLoading(true);
+    try {
+      // Fetch reservations that overlap the selected date range
+      const { data: rawRes, error } = await supabase
+        .from("gingr_reservations")
+        .select("gingr_id,animal_name,owner_first_name,owner_last_name,reservation_type_name,start_date,end_date,deposit,transaction,cancelled_date")
+        .eq("location_id", locationId)
+        .lte("start_date", dateTo + "T23:59:59")
+        .gte("end_date", dateFrom + "T00:00:00")
+        .is("cancelled_date", null);
 
-      if (res.type === "boarding" && res.checkIn && res.checkOut) {
-        const nights = countNights(res.checkIn, res.checkOut);
-        if (nights <= 0) return;
-        const perNight = total / nights;
-        // Count how many nights fall within the selected date range
-        let accrualNights = 0;
-        let night = res.checkIn;
-        while (night < res.checkOut) {
-          if (night >= dateFrom && night <= dateTo) accrualNights++;
-          night = addDays(night, 1);
-        }
-        if (accrualNights <= 0) return;
-        const accrualAmount = perNight * accrualNights;
-        boarding.push({
-          id: res.id,
-          dogName: res._animalName || "Unknown",
-          ownerName: res._ownerName || "",
-          roomType: res.roomType || res._resTypeName || "Room",
-          perNight,
-          nights: accrualNights,
-          totalNights: nights,
-          accrualAmount,
-          checkIn: res.checkIn,
-          checkOut: res.checkOut,
-        });
-        boardingTotal += accrualAmount;
-      } else if (res.type === "daycare" && res.checkIn) {
-        if (res.checkIn >= dateFrom && res.checkIn <= dateTo) {
+      if (error) { console.error("Receipt fetch error:", error); setReceiptLoading(false); return; }
+
+      const boarding = [];
+      const daycare = [];
+      let boardingTotal = 0;
+      let daycareTotal = 0;
+
+      (rawRes || []).forEach(r => {
+        const typeName = (r.reservation_type_name || "").toLowerCase();
+        const isBoarding = typeName.includes("boarding");
+        const isDaycare = typeName.includes("daycare") || typeName.includes("day care") || typeName.includes("day boarding");
+        const dep = r.deposit && !Array.isArray(r.deposit) ? r.deposit : {};
+        const txn = r.transaction && !Array.isArray(r.transaction) ? r.transaction : {};
+        const total = Number(txn.price) || Number(dep.amount) || 0;
+        if (total <= 0) return;
+
+        const startD = r.start_date ? r.start_date.split("T")[0] : dateFrom;
+        const endD = r.end_date ? r.end_date.split("T")[0] : startD;
+        const ownerName = [r.owner_first_name, r.owner_last_name].filter(Boolean).join(" ");
+        // Extract room type from reservation_type_name (e.g. "Boarding | Executive Room (All Inclusive)" → "Executive Room")
+        const roomMatch = (r.reservation_type_name || "").match(/\|\s*([^(]+)/);
+        const roomType = roomMatch ? roomMatch[1].trim() : "Room";
+
+        if (isBoarding && startD && endD) {
+          const nights = countNights(startD, endD);
+          if (nights <= 0) return;
+          const perNight = total / nights;
+          let accrualNights = 0;
+          let night = startD;
+          while (night < endD) {
+            if (night >= dateFrom && night <= dateTo) accrualNights++;
+            night = addDays(night, 1);
+          }
+          if (accrualNights <= 0) return;
+          const accrualAmount = perNight * accrualNights;
+          boarding.push({
+            id: r.gingr_id, dogName: r.animal_name || "Unknown", ownerName,
+            roomType, perNight, nights: accrualNights, totalNights: nights,
+            accrualAmount, checkIn: startD, checkOut: endD,
+          });
+          boardingTotal += accrualAmount;
+        } else if (isDaycare && startD >= dateFrom && startD <= dateTo) {
           daycare.push({
-            id: res.id,
-            dogName: res._animalName || "Unknown",
-            ownerName: res._ownerName || "",
-            resTypeName: res._resTypeName || "Daycare",
-            accrualAmount: total,
-            checkIn: res.checkIn,
+            id: r.gingr_id, dogName: r.animal_name || "Unknown", ownerName,
+            resTypeName: r.reservation_type_name || "Daycare",
+            accrualAmount: total, checkIn: startD,
           });
           daycareTotal += total;
         }
-      }
-    });
+      });
 
-    // Sort by accrual amount descending within each section
-    boarding.sort((a, b) => b.accrualAmount - a.accrualAmount);
-    daycare.sort((a, b) => b.accrualAmount - a.accrualAmount);
+      boarding.sort((a, b) => b.accrualAmount - a.accrualAmount);
+      daycare.sort((a, b) => b.accrualAmount - a.accrualAmount);
+      setReceiptData({ boarding, daycare, boardingTotal, daycareTotal, grandTotal: boardingTotal + daycareTotal });
+    } catch (err) {
+      console.error("Receipt fetch error:", err);
+    } finally {
+      setReceiptLoading(false);
+    }
+  }, [locationId, dateFrom, dateTo]);
 
-    return { boarding, daycare, boardingTotal, daycareTotal, grandTotal: boardingTotal + daycareTotal };
-  }, [data?.reservations, dateFrom, dateTo]);
+  // Fetch receipt data when modal opens
+  useEffect(() => {
+    if (showReceipt) fetchReceiptData();
+  }, [showReceipt, fetchReceiptData]);
 
   const receiptDateLabel = dateFrom === dateTo
     ? fmtDateLabel(dateFrom)
@@ -1354,28 +1376,9 @@ function DashboardContent({
             </div>
           </div>
           <div style={{ width: "60%", height: 1, background: "rgba(20,83,45,0.08)" }} />
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-            <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em" }}>Accrual Total</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</div>
-              <div
-                ref={receiptTriggerRef}
-                onClick={() => setShowReceipt(true)}
-                style={{
-                  cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 18, height: 18, borderRadius: 4,
-                  background: "rgba(132,204,22,0.12)", color: C.acc,
-                  transition: "all 0.2s cubic-bezier(0.22,1,0.36,1)",
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(132,204,22,0.25)"; e.currentTarget.style.transform = "scale(1.15)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(132,204,22,0.12)"; e.currentTarget.style.transform = "scale(1)"; }}
-                title="View accrual breakdown"
-              >
-                <I.FileText style={{ width: 11, height: 11 }} />
-              </div>
-            </div>
-            {showPriorPeriod && <TrendBadge value={revenueTrend} size="xs" />}
-          </div>
+          <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em" }}>Accrual Total</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</div>
+          {showPriorPeriod && <TrendBadge value={revenueTrend} size="xs" />}
         </div>
 
         {/* Accrual Revenue */}
@@ -1385,7 +1388,25 @@ function DashboardContent({
               <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em" }}>Accrual Revenue</span>
               <Tip text="Accrual revenue recognizes the full reservation cost divided evenly by the number of nights in the stay."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
             </span>
-            <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</span>
+              <span
+                ref={receiptTriggerRef}
+                onClick={() => setShowReceipt(true)}
+                style={{
+                  cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 18, height: 18, borderRadius: 4,
+                  background: "rgba(132,204,22,0.12)", color: C.acc,
+                  transition: "all 0.2s cubic-bezier(0.22,1,0.36,1)",
+                  flexShrink: 0,
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(132,204,22,0.25)"; e.currentTarget.style.transform = "scale(1.15)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(132,204,22,0.12)"; e.currentTarget.style.transform = "scale(1)"; }}
+                title="View accrual breakdown"
+              >
+                <I.FileText style={{ width: 11, height: 11 }} />
+              </span>
+            </span>
           </div>
           <ChartFill chartData={accrualChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="accrual-main" dateLabels={accrualChartData.map(d => d.date)}
             useRawPoints lineType="linear" solidFill fillOpacity={0.18} showGuideLines
@@ -1414,6 +1435,7 @@ function DashboardContent({
         open={showReceipt}
         onClose={() => setShowReceipt(false)}
         receiptData={receiptData}
+        loading={receiptLoading}
         dateLabel={receiptDateLabel}
         originRef={receiptTriggerRef}
       />
@@ -1424,7 +1446,7 @@ function DashboardContent({
 /* ═══════════════════════════════════════════════════════════════════════════
    Accrual Receipt Modal
    ═══════════════════════════════════════════════════════════════════════════ */
-const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, receiptData, dateLabel, originRef }) {
+const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, receiptData, loading, dateLabel, originRef }) {
   const [closing, setClosing] = useState(false);
   const [originRect, setOriginRect] = useState(null);
 
@@ -1489,8 +1511,15 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
 
         <hr className="receipt-dashed" />
 
+        {/* Loading state */}
+        {loading && (
+          <div style={{ textAlign: "center", padding: "20px 0" }}>
+            <div style={{ fontSize: 11, color: "rgba(20,83,45,0.4)", letterSpacing: "0.06em" }}>LOADING RESERVATIONS...</div>
+          </div>
+        )}
+
         {/* Boarding section */}
-        {boarding.length > 0 && (
+        {!loading && boarding.length > 0 && (
           <>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.pri, letterSpacing: "0.08em", marginBottom: 6, textTransform: "uppercase" }}>
               ■ Boarding
@@ -1517,10 +1546,10 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
           </>
         )}
 
-        {boarding.length > 0 && daycare.length > 0 && <hr className="receipt-dashed" />}
+        {!loading && boarding.length > 0 && daycare.length > 0 && <hr className="receipt-dashed" />}
 
         {/* Daycare section */}
-        {daycare.length > 0 && (
+        {!loading && daycare.length > 0 && (
           <>
             <div style={{ fontSize: 12, fontWeight: 700, color: C.acc, letterSpacing: "0.08em", marginBottom: 6, textTransform: "uppercase" }}>
               ■ Daycare
@@ -1547,35 +1576,39 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
           </>
         )}
 
-        <hr className="receipt-dashed" style={{ marginTop: 12 }} />
+        {!loading && (
+          <>
+            <hr className="receipt-dashed" style={{ marginTop: 12 }} />
 
-        {/* Grand total */}
-        <div className="receipt-line-item" style={{ paddingTop: 4 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: C.pri, letterSpacing: "0.08em" }}>TOTAL</div>
-          <div style={{ fontSize: 16, fontWeight: 900, color: C.pri, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grandTotal)}</div>
-        </div>
+            {/* Grand total */}
+            <div className="receipt-line-item" style={{ paddingTop: 4 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.pri, letterSpacing: "0.08em" }}>TOTAL</div>
+              <div style={{ fontSize: 16, fontWeight: 900, color: C.pri, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grandTotal)}</div>
+            </div>
 
-        {/* Revenue split bar */}
-        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-          <div style={{ width: "80%", height: 6, borderRadius: 3, overflow: "hidden", display: "flex" }}>
-            {grandTotal > 0 && <div style={{ width: `${(boardingTotal / grandTotal) * 100}%`, height: "100%", background: C.pri, transition: "width 0.4s" }} />}
-            {grandTotal > 0 && <div style={{ width: `${(daycareTotal / grandTotal) * 100}%`, height: "100%", background: C.acc, transition: "width 0.4s" }} />}
-          </div>
-          <div style={{ display: "flex", gap: 12, fontSize: 9, color: "rgba(20,83,45,0.45)" }}>
-            <span><span style={{ color: C.pri, fontWeight: 700 }}>{grandTotal > 0 ? ((boardingTotal / grandTotal) * 100).toFixed(0) : 0}%</span> Boarding</span>
-            <span><span style={{ color: C.acc, fontWeight: 700 }}>{grandTotal > 0 ? ((daycareTotal / grandTotal) * 100).toFixed(0) : 0}%</span> Daycare</span>
-          </div>
-        </div>
+            {/* Revenue split bar */}
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+              <div style={{ width: "80%", height: 6, borderRadius: 3, overflow: "hidden", display: "flex" }}>
+                {grandTotal > 0 && <div style={{ width: `${(boardingTotal / grandTotal) * 100}%`, height: "100%", background: C.pri, transition: "width 0.4s" }} />}
+                {grandTotal > 0 && <div style={{ width: `${(daycareTotal / grandTotal) * 100}%`, height: "100%", background: C.acc, transition: "width 0.4s" }} />}
+              </div>
+              <div style={{ display: "flex", gap: 12, fontSize: 9, color: "rgba(20,83,45,0.45)" }}>
+                <span><span style={{ color: C.pri, fontWeight: 700 }}>{grandTotal > 0 ? ((boardingTotal / grandTotal) * 100).toFixed(0) : 0}%</span> Boarding</span>
+                <span><span style={{ color: C.acc, fontWeight: 700 }}>{grandTotal > 0 ? ((daycareTotal / grandTotal) * 100).toFixed(0) : 0}%</span> Daycare</span>
+              </div>
+            </div>
 
-        {/* Footer */}
-        <div style={{ textAlign: "center", marginTop: 16, paddingTop: 8, borderTop: "1px solid rgba(20,83,45,0.06)" }}>
-          <div style={{ fontSize: 9, color: "rgba(20,83,45,0.3)", letterSpacing: "0.06em" }}>
-            {boarding.length + daycare.length} RESERVATION{(boarding.length + daycare.length) !== 1 ? "S" : ""}
-          </div>
-          <div style={{ fontSize: 8, color: "rgba(20,83,45,0.2)", marginTop: 4, letterSpacing: "0.04em" }}>
-            THANK YOU FOR CHOOSING K9
-          </div>
-        </div>
+            {/* Footer */}
+            <div style={{ textAlign: "center", marginTop: 16, paddingTop: 8, borderTop: "1px solid rgba(20,83,45,0.06)" }}>
+              <div style={{ fontSize: 9, color: "rgba(20,83,45,0.3)", letterSpacing: "0.06em" }}>
+                {boarding.length + daycare.length} RESERVATION{(boarding.length + daycare.length) !== 1 ? "S" : ""}
+              </div>
+              <div style={{ fontSize: 8, color: "rgba(20,83,45,0.2)", marginTop: 4, letterSpacing: "0.04em" }}>
+                THANK YOU FOR CHOOSING K9
+              </div>
+            </div>
+          </>        
+        )}
       </div>
     </div>
   );
