@@ -639,7 +639,7 @@ function LeanAppInner() {
           showFunnelMetrics: isOwnerOrManager,
           showHeroKPIs: isOwnerOrManager,
         };
-        return <DashboardPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} {...dashboardPermissions} />;
+        return <DashboardPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} {...dashboardPermissions} />;
       }
       case "lifecycle":
         return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Customer Lifecycle not available on Enterprise view</div> : (
