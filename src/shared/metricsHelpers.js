@@ -63,8 +63,10 @@ export function computeServiceMetrics(data, today) {
     (r.status === "upcoming" && (r.scheduledCheckIn || r.checkIn) <= today && (r.scheduledCheckOut || r.checkOut) >= today)
   );
 
-  // Baths: inHouseToday reservations with "bath" in _services (matches OperationsHub line 876-881)
+  // Baths: only count reservations checking out today with "bath" in _services
+  // (matches Bathing Report in DailyOpsPage which filters by r.checkOut === viewDate)
   const bathsTotal = inHouseToday.filter(r => {
+    if (r.checkOut !== today) return false;
     const svcs = r._services;
     if (!svcs) return false;
     const arr = Array.isArray(svcs) ? svcs : [];
