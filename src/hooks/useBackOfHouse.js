@@ -131,6 +131,11 @@ export function useBackOfHouse(locationId, enabled = true) {
   const fetchSupaboarders = useCallback(async () => {
     if (!locationId || cancelledSupaRef.current) return;
     try {
+      // Only count boarding reservations whose scheduled end_date is AFTER today.
+      // BOH checking_out already includes boarders going home today.
+      // Without this filter, stale records (check_out_date never set by Gingr)
+      // inflate the count with phantom dogs that left days/weeks ago.
+      const todayDate = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
       const { data: rows } = await supabase
         .from("gingr_reservations")
         .select("animal_gingr_id")
@@ -139,7 +144,8 @@ export function useBackOfHouse(locationId, enabled = true) {
         .is("check_out_date", null)
         .is("cancelled_date", null)
         .ilike("reservation_type_name", "%boarding%")
-        .not("reservation_type_name", "ilike", "%day boarding%");
+        .not("reservation_type_name", "ilike", "%day boarding%")
+        .gt("end_date", todayDate + "T23:59:59");
 
       if (!cancelledSupaRef.current && rows) {
         const currentBohIds = bohAnimalIdsRef.current;
