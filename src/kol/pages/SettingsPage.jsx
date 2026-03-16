@@ -28,6 +28,7 @@ import IgniteSettingsTab from "../settings/IgniteSettingsTab";
 import IgniteParserConfigTab from "../settings/IgniteParserConfigTab";
 import DashboardRefreshTab from "../settings/DashboardRefreshTab";
 import ApiOverviewTab from "../settings/ApiOverviewTab";
+import ApiDashboardTab from "../settings/ApiDashboardTab";
 
 function SettingsPage({ profile: parentProfile, addGlobalToast }) {
   const [tab, setTab] = useState(null); // null = show grid, set = show detail
@@ -51,6 +52,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       cards: [
         { id: "gingr", label: "Gingr Integration", desc: "Connect and configure Gingr POS" },
         { id: "api-overview", label: "API Overview", desc: "View all Gingr API call types, frequencies, projected daily usage, and sync state" },
+        { id: "api-dashboard", label: "API Dashboard", desc: "All Gingr API endpoints, frequencies, configurable polling, and daily call projections" },
       ],
     },
     {
@@ -118,6 +120,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
         return <IgniteParserConfigTab />;
       case "api-overview":
         return <ApiOverviewTab />;
+      case "api-dashboard":
+        return <ApiDashboardTab />;
       default:
         return null;
     }

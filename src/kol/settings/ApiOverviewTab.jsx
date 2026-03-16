@@ -8,6 +8,7 @@ import { Card } from "../../shared/ui";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { useAuth } from "../../AuthProvider";
 import { REFRESH_DEFAULTS, REFRESH_SETTING_KEY } from "../../hooks/useRefreshSettings";
+import { TV_POLL_DEFAULTS, TV_POLL_SETTING_KEY } from "../../hooks/useBackOfHouse";
 
 // ── Gingr entity definitions ──
 const ENTITY_TYPES = [
@@ -36,10 +37,10 @@ const SYNC_TYPES = [
   },
   {
     key: "tv-poll",
-    label: "TV Checkout Poll",
-    entities: ["reservations"],
-    desc: "Lightweight poll for checked-in animals only. Used by the TV/lobby display.",
-    frequency: "every 15 seconds",
+    label: "TV Live Poll (back_of_house)",
+    entities: ["back_of_house"],
+    desc: "Client-side direct poll to Gingr's Digital Whiteboard API. Returns checking_in/checking_out with real room assignments. Used by the Checkout TV.",
+    frequency: "configurable",
   },
   {
     key: "test",
@@ -93,8 +94,19 @@ function ApiOverviewTab() {
   const totalGingrCallsPerDay = pollsPerDay * apiCallsPerSync;
   const totalRpcsPerDay = pollsPerDay * rpcsPerSync;
 
-  // TV poll: 15s interval, assume runs during business hours only
-  const tvPollsPerDay = Math.floor(bhMinutes * 60 / 15);
+  // TV poll: configurable interval (default 10s), during business hours
+  const [tvConfig, setTvConfig] = useState(TV_POLL_DEFAULTS);
+  useEffect(() => {
+    const locationId = profile?.location_id || "cherry-hill";
+    supabase.from("lite_settings").select("setting_value").eq("location_id", locationId).eq("setting_key", TV_POLL_SETTING_KEY).maybeSingle()
+      .then(({ data: row }) => { if (row?.setting_value) setTvConfig(prev => ({ ...prev, ...row.setting_value })); });
+  }, [profile?.location_id]);
+  const tvInterval = tvConfig.pollIntervalSeconds || 10;
+  const tvBhEnabled = tvConfig.businessHoursEnabled;
+  const [tvStartH, tvStartM] = (tvConfig.businessHoursStart || "06:30").split(":").map(Number);
+  const [tvEndH, tvEndM] = (tvConfig.businessHoursEnd || "19:30").split(":").map(Number);
+  const tvBhMinutes = tvBhEnabled ? (tvEndH * 60 + tvEndM) - (tvStartH * 60 + tvStartM) : 24 * 60;
+  const tvPollsPerDay = Math.floor(tvBhMinutes * 60 / tvInterval);
 
   if (!loaded) {
     return (
@@ -175,7 +187,7 @@ function ApiOverviewTab() {
                   color: st.key === "incremental" ? C.pri : st.key === "tv-poll" ? C.info : C.textSec,
                   border: `1px solid ${st.key === "incremental" ? C.pri + "30" : st.key === "tv-poll" ? C.info + "30" : C.borderLight}`,
                 }}>
-                  {st.key === "incremental" ? `Every ${interval} min` : st.frequency}
+                  {st.key === "incremental" ? `Every ${interval} min` : st.key === "tv-poll" ? `Every ${tvInterval}s` : st.frequency}
                 </div>
               </div>
               <div style={{ fontSize: 12, color: C.textSec, marginBottom: 8, lineHeight: 1.5 }}>{st.desc}</div>
@@ -287,7 +299,7 @@ function ApiOverviewTab() {
             <div>1. <span style={{ fontWeight: 600 }}>Incremental sync</span> runs every <span style={{ fontWeight: 700, color: C.pri }}>{interval} minutes</span> during {bhEnabled ? `business hours (${bhStart} – ${bhEnd})` : "all hours (24/7)"}</div>
             <div>2. Pulls owners (500/batch), animals (500/batch), and reservations (last 90 days)</div>
             <div>3. Full sync pulls all historical data using resumable 30-day reservation chunks</div>
-            <div>4. TV checkout display polls checked-in animals every 15 seconds (separate from dashboard sync)</div>
+            <div>4. Checkout TV polls Gingr's <code style={{ fontSize: 11, color: C.pri }}>back_of_house</code> API directly from the browser every <span style={{ fontWeight: 700, color: C.pri }}>{tvInterval}s</span> — configurable in API Dashboard settings</div>
             <div>5. Post-sync RPCs recompute client stats and dashboard metrics</div>
             <div>6. Ignite email webhooks process leads independently — not affected by business hours</div>
           </div>
