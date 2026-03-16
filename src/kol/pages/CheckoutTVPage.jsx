@@ -1695,7 +1695,7 @@ function CheckoutTVContent({ data, nav, profile }) {
 
       {/* Footer */}
       <div style={{ textAlign: "center", marginTop: 40, padding: "16px 0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time · TV-014: {gingrBoardingDogs.length} boarding from Gingr API</div>
       </div>
 
       {/* Floating Exit Button — subtle, top-left corner */}
