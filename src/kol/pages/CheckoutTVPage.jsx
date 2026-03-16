@@ -820,11 +820,21 @@ function CheckoutTVContent({ data, nav, profile }) {
       gingrActiveDogs.map(d => String(d.animal_id))
     );
 
-    // ── Step 1: Use Supabase reservations as-is (no stale filter) ────
-    // classifyReservationStatus() already handles checked-out status
-    // via check_out_date. The downstream "checked-in" filter on the
-    // uniqueDogs computation handles the rest.
-    const filteredBaseRes = baseReservations;
+    // ── Step 1: Filter stale checked-in reservations from Supabase ────
+    // Old reservations may have check_in_date set but check_out_date never
+    // recorded (Gingr data quality issue). Exclude checked-in records whose
+    // scheduled checkOut is more than 1 day in the past.
+    const yesterday = (() => {
+      const d = new Date(today + "T00:00:00");
+      d.setDate(d.getDate() - 1);
+      return d.toISOString().slice(0, 10);
+    })();
+    const filteredBaseRes = baseReservations.filter(r => {
+      if (r.status !== "checked-in") return true;
+      if (r._fromGingrApi) return true;
+      if (r.checkOut && r.checkOut < yesterday) return false;
+      return true;
+    });
 
     // ── Step 2: Build synthetic reservations from BOH daycare dogs ────
     const syntheticRes = (gingrDaycareDogs || []).map(gd => {
@@ -1237,10 +1247,10 @@ function CheckoutTVContent({ data, nav, profile }) {
           </div>
         )}
 
-        {/* TV-018: Boarding label — top-left (shifts down if PP badge is present) */}
+        {/* TV-018: Boarding label — bottom-center of card */}
         {isBoarding && (
           <div style={{
-            position: "absolute", top: isPP ? 30 : 8, left: 8,
+            position: "absolute", bottom: 8, left: "50%", transform: "translateX(-50%)",
             display: "inline-flex", alignItems: "center", justifyContent: "center",
             fontSize: 9, fontWeight: 900, letterSpacing: "0.08em",
             color: "#60A5FA",
