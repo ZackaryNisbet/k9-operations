@@ -12,6 +12,8 @@ import { useAuth } from "./AuthProvider";
 import { supabase } from "./supabaseClient";
 import RoadmapPage from "./RoadmapPage";
 import CheckoutNotesPage from "./kol/pages/CheckoutNotesPage";
+import { useBackOfHouse } from "./hooks/useBackOfHouse";
+import ApiDashboardTab from "./kol/settings/ApiDashboardTab";
 
 // ─── IndexedDB cache for instant page loads ─────────────────────────────────
 const IDB_NAME = "k9_cache";
@@ -8999,6 +9001,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       label: "Integrations",
       cards: [
         { id: "gingr", label: "Gingr Integration", desc: "Connect and configure Gingr POS" },
+        { id: "api-dashboard", label: "API Dashboard", desc: "All Gingr API endpoints, frequencies, and daily call projections" },
       ],
     },
     {
@@ -9040,6 +9043,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
     switch (tab) {
       case "gingr":
         return <GingrIntegrationTab />;
+      case "api-dashboard":
+        return <ApiDashboardTab />;
       case "team":
         return <TeamManagementTab profile={profile} data={data} save={save} />;
       case "permissions":
@@ -10466,110 +10471,215 @@ function EnterpriseUserManagement({ profile }) {
 // ════════════════════════════════════════════════════════════════════════════
 // CHECKOUT TV PAGE
 // ════════════════════════════════════════════════════════════════════════════
-function CheckoutTVPage({ data, nav }) {
+function CheckoutTVPage({ data, nav, profile }) {
+  const locationId = profile?.location_id || "cherry-hill";
+  const { checkingIn, checkingOut, stats, lastFetch, error, loading, config } = useBackOfHouse(locationId, true);
+
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  const today = todayStr();
-  const reservations = data.reservations || [];
-  const dogs = data.dogs || [];
-  const clients = data.clients || [];
+  // ── Classify dogs ──────────────────────────────────────────────────────
+  const allDogs = useMemo(() => {
+    const combined = [...checkingIn, ...checkingOut];
+    // Deduplicate by id (same reservation can appear in both lists during transition)
+    const seen = new Set();
+    return combined.filter(d => {
+      if (seen.has(d.id)) return false;
+      seen.add(d.id);
+      return true;
+    }).sort((a, b) => (a.a_first || "").localeCompare(b.a_first || ""));
+  }, [checkingIn, checkingOut]);
 
-  // All checked-in daycare + boarding dogs
-  const checkedIn = reservations.filter(r =>
-    (r.type === "boarding" || r.type === "daycare") &&
-    r.status === "checked-in" &&
-    r.checkIn <= today && r.checkOut >= today
-  );
+  const classify = (d) => {
+    const t = (d.type || "").toLowerCase();
+    if (t.includes("daycare") || t.includes("day boarding") || t.includes("evaluation")) return "daycare";
+    return "boarding";
+  };
 
-  // Deduplicate by dogId (one dog could have overlapping reservations)
-  const seen = new Set();
-  const uniqueDogs = checkedIn.filter(r => {
-    if (seen.has(r.dogId)) return false;
-    seen.add(r.dogId);
-    return true;
-  }).sort((a, b) => {
-    const aD = dogs.find(d => d.id === a.dogId);
-    const bD = dogs.find(d => d.id === b.dogId);
-    return ((aD?.fields?.name || "").localeCompare(bD?.fields?.name || ""));
-  });
+  const daycareDogs = allDogs.filter(d => classify(d) === "daycare");
+  const boardingDogs = allDogs.filter(d => classify(d) === "boarding");
 
-  const daycareDogs = uniqueDogs.filter(r => r.type === "daycare");
-  const boardingDogs = uniqueDogs.filter(r => r.type === "boarding");
+  const isCheckedIn = (d) => !!d.check_in_stamp;
+  const checkedInDaycare = daycareDogs.filter(isCheckedIn);
+  const pendingDaycare = daycareDogs.filter(d => !isCheckedIn(d));
+  const checkedInBoarding = boardingDogs.filter(isCheckedIn);
+  const pendingBoarding = boardingDogs.filter(d => !isCheckedIn(d));
 
   const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
   const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
-  const DogCard = ({ res }) => {
-    const dog = dogs.find(d => d.id === res.dogId);
-    const client = clients.find(c => c.id === res.clientId);
-    const name = dog?.fields?.name || res._animalName || "Unknown";
-    const breed = dog?.fields?.breed || "";
-    const ownerLast = client?.fields?.last_name || res._ownerName?.split(" ").pop() || "";
-    const roomNum = res.room ? (res.room.match(/(\d+)/) || [])[1] || "" : "";
+  // ── Dog Card ────────────────────────────────────────────────────────────
+  const DogCard = ({ dog }) => {
+    const name = dog.a_first || "Unknown";
+    const breed = dog.breed_name || "";
+    const ownerLast = dog.o_last || "";
+    const room = dog.run_name || "";
+    const area = dog.area_name || "";
+    const isIn = isCheckedIn(dog);
+    const isPending = !isIn;
+    const statusLabel = dog.status_string || "";
+    const isDaycare = classify(dog) === "daycare";
+    const accentColor = isDaycare ? "#0EA5E9" : "#84CC16";
+
+    // Extract room number from run_name (e.g., "Luxury - 103" → "103")
+    const roomNum = room ? (room.match(/(\d+[A-Z]?)/) || [])[1] || "" : "";
+    // Short room type (e.g., "Luxury - 103" → "Luxury")
+    const roomType = room ? room.split(" - ")[0].replace(" Suites", "").trim() : "";
 
     return (
       <div style={{
-        display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 12px",
-        background: "rgba(255,255,255,0.06)", borderRadius: 16, border: "1px solid rgba(255,255,255,0.08)",
-        minWidth: 140, transition: "transform 0.2s",
+        display: "flex", flexDirection: "column", alignItems: "center", padding: "14px 10px",
+        background: isPending ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.06)",
+        borderRadius: 16, border: `1px solid ${isPending ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.08)"}`,
+        minWidth: 130, transition: "all 0.3s",
+        opacity: isPending ? 0.6 : 1,
+        position: "relative",
       }}>
-        {dog?._image ? (
-          <img src={dog._image} alt={name} style={{ width: 64, height: 64, borderRadius: 14, objectFit: "cover", border: "2px solid rgba(255,255,255,0.15)", marginBottom: 8 }} />
-        ) : (
-          <div style={{ width: 64, height: 64, borderRadius: 14, background: "rgba(132,204,22,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 800, color: "#84CC16", marginBottom: 8 }}>
-            {name[0]}
+        {/* Status dot */}
+        <div style={{
+          position: "absolute", top: 8, right: 8,
+          width: 8, height: 8, borderRadius: "50%",
+          background: isIn ? "#22C55E" : "#F59E0B",
+          boxShadow: isIn ? "0 0 8px rgba(34,197,94,0.5)" : "0 0 8px rgba(245,158,11,0.4)",
+        }} />
+
+        {/* Avatar */}
+        <div style={{
+          width: 56, height: 56, borderRadius: 14,
+          background: `${accentColor}25`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 22, fontWeight: 800, color: accentColor, marginBottom: 8,
+          border: `2px solid ${accentColor}40`,
+        }}>
+          {name[0]}
+        </div>
+
+        {/* Name */}
+        <div style={{ fontSize: 15, fontWeight: 800, color: "#fff", textAlign: "center", lineHeight: 1.2 }}>{name}</div>
+
+        {/* Breed */}
+        {breed && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", marginTop: 2, textAlign: "center", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{breed}</div>}
+
+        {/* Owner */}
+        <div style={{ fontSize: 11, color: `${accentColor}CC`, marginTop: 3, fontWeight: 600 }}>{ownerLast}</div>
+
+        {/* Room assignment */}
+        {room && (
+          <div style={{
+            marginTop: 4, padding: "2px 8px", borderRadius: 6,
+            background: "rgba(255,255,255,0.08)", fontSize: 10, color: "rgba(255,255,255,0.6)",
+            fontWeight: 600, display: "flex", alignItems: "center", gap: 3,
+          }}>
+            {roomType && <span style={{ color: "rgba(255,255,255,0.4)" }}>{roomType}</span>}
+            {roomNum && <span style={{ color: "#fff", fontWeight: 700 }}>{roomNum}</span>}
           </div>
         )}
-        <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", textAlign: "center", lineHeight: 1.2 }}>{name}</div>
-        {breed && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2, textAlign: "center" }}>{breed}</div>}
-        <div style={{ fontSize: 11, color: "rgba(132,204,22,0.8)", marginTop: 4, fontWeight: 600 }}>{ownerLast}</div>
-        {roomNum && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.35)", marginTop: 2 }}>Room {roomNum}</div>}
+
+        {/* Pending badge */}
+        {isPending && (
+          <div style={{
+            marginTop: 4, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.05em", color: "#F59E0B", opacity: 0.8,
+          }}>
+            Arriving
+          </div>
+        )}
       </div>
     );
   };
 
-  const SectionLabel = ({ label, count, color }) => (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, marginTop: 24 }}>
-      <div style={{ width: 6, height: 28, borderRadius: 3, background: color }} />
-      <div style={{ fontSize: 20, fontWeight: 800, color: "#fff", letterSpacing: "0.02em" }}>{label}</div>
-      <div style={{ fontSize: 16, fontWeight: 700, color: "rgba(255,255,255,0.4)" }}>({count})</div>
+  // ── Section Label ───────────────────────────────────────────────────────
+  const SectionLabel = ({ label, checkedCount, pendingCount, color }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, marginTop: 28 }}>
+      <div style={{ width: 5, height: 26, borderRadius: 3, background: color }} />
+      <div style={{ fontSize: 18, fontWeight: 800, color: "#fff", letterSpacing: "0.02em" }}>{label}</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>{checkedCount}</div>
+      {pendingCount > 0 && (
+        <div style={{
+          fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 6,
+          background: "rgba(245,158,11,0.15)", color: "#F59E0B",
+          border: "1px solid rgba(245,158,11,0.2)",
+        }}>
+          +{pendingCount} arriving
+        </div>
+      )}
     </div>
   );
+
+  // ── Loading state ──────────────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div style={{
+        minHeight: "100vh", background: "linear-gradient(180deg, #001A33 0%, #00112A 50%, #000A1A 100%)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontFamily: "'Outfit', -apple-system, sans-serif",
+      }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ width: 48, height: 48, border: "3px solid rgba(132,204,22,0.3)", borderTopColor: "#84CC16", borderRadius: "50%", animation: "spin 1s linear infinite", margin: "0 auto 16px" }} />
+          <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 14, fontWeight: 500 }}>Connecting to Gingr...</div>
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
+  const totalCheckedIn = allDogs.filter(isCheckedIn).length;
+  const totalPending = allDogs.filter(d => !isCheckedIn(d)).length;
 
   return (
     <div style={{
       minHeight: "100vh", background: "linear-gradient(180deg, #001A33 0%, #00112A 50%, #000A1A 100%)",
-      padding: "32px 40px", fontFamily: "'Outfit', -apple-system, sans-serif", overflow: "auto",
+      padding: "28px 36px", fontFamily: "'Outfit', -apple-system, sans-serif", overflow: "auto",
     }}>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
         <div>
-          <div style={{ fontSize: 28, fontWeight: 900, color: "#fff", letterSpacing: "-0.02em" }}>K9 Adair Forsythe</div>
-          <div style={{ fontSize: 13, color: "rgba(132,204,22,0.7)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 2 }}>Checkout Board</div>
+          <div style={{ fontSize: 26, fontWeight: 900, color: "#fff", letterSpacing: "-0.02em" }}>K9 Adair Forsythe</div>
+          <div style={{ fontSize: 12, color: "rgba(132,204,22,0.7)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 2 }}>Live Checkout Board</div>
         </div>
         <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 36, fontWeight: 900, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{timeStr}</div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>{dateStr}</div>
+          <div style={{ fontSize: 34, fontWeight: 900, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{timeStr}</div>
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", fontWeight: 500 }}>{dateStr}</div>
         </div>
       </div>
 
       {/* Stats bar */}
-      <div style={{ display: "flex", gap: 24, padding: "14px 0", borderTop: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)", marginBottom: 8 }}>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Total: <span style={{ fontWeight: 800, color: "#fff" }}>{uniqueDogs.length}</span></div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Daycare: <span style={{ fontWeight: 800, color: "#0EA5E9" }}>{daycareDogs.length}</span></div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#84CC16" }}>{boardingDogs.length}</span></div>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 20, padding: "12px 0",
+        borderTop: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)",
+        marginBottom: 4,
+      }}>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Here: <span style={{ fontWeight: 800, color: "#fff", fontSize: 16 }}>{totalCheckedIn}</span></div>
+        {totalPending > 0 && <div style={{ fontSize: 13, color: "rgba(245,158,11,0.7)" }}>Arriving: <span style={{ fontWeight: 800, color: "#F59E0B" }}>{totalPending}</span></div>}
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Daycare: <span style={{ fontWeight: 800, color: "#0EA5E9" }}>{daycareDogs.length}</span></div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#84CC16" }}>{boardingDogs.length}</span></div>
+        <div style={{ flex: 1 }} />
+        {/* Live indicator */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{
+            width: 7, height: 7, borderRadius: "50%",
+            background: error ? "#EF4444" : "#22C55E",
+            boxShadow: error ? "0 0 8px rgba(239,68,68,0.5)" : "0 0 8px rgba(34,197,94,0.5)",
+            animation: error ? "none" : "pulse 2s ease-in-out infinite",
+          }} />
+          <span style={{ fontSize: 11, color: error ? "rgba(239,68,68,0.7)" : "rgba(34,197,94,0.6)", fontWeight: 600 }}>
+            {error ? "Connection error" : `Live · ${config.pollIntervalSeconds}s`}
+          </span>
+        </div>
       </div>
+
+      <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }`}</style>
 
       {/* Daycare section */}
       {daycareDogs.length > 0 && (
         <div>
-          <SectionLabel label="Daycare" count={daycareDogs.length} color="#0EA5E9" />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
-            {daycareDogs.map(r => <DogCard key={r.id} res={r} />)}
+          <SectionLabel label="Daycare" checkedCount={checkedInDaycare.length} pendingCount={pendingDaycare.length} color="#0EA5E9" />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
+            {/* Checked-in first, then pending */}
+            {[...checkedInDaycare, ...pendingDaycare].map(d => <DogCard key={d.id} dog={d} />)}
           </div>
         </div>
       )}
@@ -10577,25 +10687,29 @@ function CheckoutTVPage({ data, nav }) {
       {/* Boarding section */}
       {boardingDogs.length > 0 && (
         <div>
-          <SectionLabel label="Boarding" count={boardingDogs.length} color="#84CC16" />
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
-            {boardingDogs.map(r => <DogCard key={r.id} res={r} />)}
+          <SectionLabel label="Boarding" checkedCount={checkedInBoarding.length} pendingCount={pendingBoarding.length} color="#84CC16" />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
+            {[...checkedInBoarding, ...pendingBoarding].map(d => <DogCard key={d.id} dog={d} />)}
           </div>
         </div>
       )}
 
-      {uniqueDogs.length === 0 && (
+      {allDogs.length === 0 && !loading && (
         <div style={{ textAlign: "center", padding: "80px 0" }}>
-          <div style={{ fontSize: 20, fontWeight: 700, color: "rgba(255,255,255,0.3)" }}>No dogs checked in today</div>
+          <div style={{ fontSize: 20, fontWeight: 700, color: "rgba(255,255,255,0.3)" }}>No dogs scheduled today</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.15)", marginTop: 8 }}>Dogs will appear here as they're checked in or scheduled</div>
         </div>
       )}
 
       {/* Footer */}
-      <div style={{ textAlign: "center", marginTop: 40, padding: "16px 0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations Lite · Auto-refreshes in real-time</div>
+      <div style={{ textAlign: "center", marginTop: 36, padding: "14px 0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.12)" }}>
+          K9 Operations · Polling Gingr every {config.pollIntervalSeconds}s
+          {lastFetch && ` · Last update ${lastFetch.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" })}`}
+        </div>
       </div>
 
-      {/* Floating Exit Button — subtle, top-left corner */}
+      {/* Floating Exit Button */}
       <button
         onClick={() => nav("operations")}
         onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.background = "rgba(255,255,255,0.15)"; }}
