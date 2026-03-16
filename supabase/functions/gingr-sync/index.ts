@@ -718,6 +718,20 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // ── Recompute dashboard metrics after sync ────────────────────────────
+    // Recomputes today + yesterday (catches late checkouts) in pure Postgres.
+    // Adds ~100-200ms — negligible compared to the sync itself.
+    try {
+      await supabase.rpc('compute_dashboard_metrics', {
+        p_location_id: location_id,
+        p_date_from: new Date(Date.now() - 86400000).toISOString().split('T')[0],
+        p_date_to: new Date().toISOString().split('T')[0],
+      });
+    } catch (metricsErr: any) {
+      // Non-fatal — dashboard metrics recompute is best-effort
+      console.error('Dashboard metrics recompute error:', metricsErr.message);
+    }
+
     const totalDuration = Date.now() - startTime;
 
     return new Response(

@@ -1,8 +1,9 @@
-// K9 Operations — Dashboard v5
+// K9 Operations — Dashboard v6
+// Server-side pre-computed metrics. Zero client-side 136K iteration.
+// Timeframe changes = Supabase query returning ~1-365 pre-computed rows.
 // 9×11 Grid, viewport-locked, world-class data density.
-// Clean neutral background, uniform cards, premium typography.
 
-import React, { useState, useEffect, useMemo, useCallback, useRef, memo, useTransition, startTransition } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import {
   C, todayStr, addDays, fmtDate, fmtDateShort,
 } from "../../shared/theme";
@@ -10,13 +11,9 @@ import { I } from "../../shared/icons";
 import { Tip } from "../../shared/ui";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
-import { getCachedData, setCachedData } from "../../shared/dashboardCache";
+import { useDashboardMetrics } from "../../hooks/useDashboardMetrics";
 import { useLazyCompute, useSectionVisibility } from "../../hooks/useLazyCompute";
-import {
-  computeOccupancyMetrics, computeServiceMetrics, computeLifecycleMetrics,
-  computeRefundMetrics, computeCashRevenueMetrics, computeAccrualRevenueMetrics,
-  computeDiscountBreakdown, computeOpsProgress,
-} from "../../shared/metricsHelpers";
+import { computeOpsProgress, computeServiceMetrics, computeLifecycleMetrics } from "../../shared/metricsHelpers";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CSS — injected once
@@ -546,16 +543,12 @@ function Sparkline({ data, width = 200, height = 32, color = C.pri }) {
 
 /* ═══════════════════════════════════════════════════════════════════════════
    DashGrid — viewport-filling grid, 2:1 cell aspect ratio
-   Stretches to fill available height — no wasted whitespace
    ═══════════════════════════════════════════════════════════════════════════ */
 function DashGrid({ children }) {
   const COL_GAP = 6;
   const ROW_GAP = 5;
   const LABEL_H = 16;
   const COLS = 9;
-
-  // 11 rows: 4 label rows + 7 data rows
-  // Use 1fr for data rows so they stretch to fill viewport
   const templateRows = `${LABEL_H}px 1fr ${LABEL_H}px 1fr ${LABEL_H}px 1fr ${LABEL_H}px 1fr 1fr 1fr 1fr`;
 
   return (
@@ -610,46 +603,35 @@ function ChartFill({ chartData, color, compareColor, animEpoch, id, dateLabels }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   WRAPPER — deferred mount so navigation stays snappy.
-   Shows the pulsing K9 logo immediately, then mounts the heavy
-   DashboardContent on the next animation frame via startTransition.
-   This keeps 136K-reservation metric computations off the critical path.
+   WRAPPER — shows loading while metrics fetch (instant from Supabase)
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export default function DashboardPage(props) {
-  const { data } = props;
-  const [ready, setReady] = useState(false);
+  const { data, locationId } = props;
 
-  useEffect(() => {
-    // Yield one frame so the loading animation paints first,
-    // then mount the heavy compute tree via a low-priority transition.
-    const raf = requestAnimationFrame(() => {
-      startTransition(() => setReady(true));
-    });
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
-  if (!data || !data.reservations || !ready) {
+  // Show loader only if we have no data context at all
+  if (!data) {
     return (
       <div style={{
         height: "calc(100vh - 64px)", display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center",
         background: "#FAFAF9",
       }}>
-        <K9LoadingAnimation size={64} message="Loading dashboard..." subMessage="Crunching the numbers" />
+        <K9LoadingAnimation size={64} message="Loading dashboard..." subMessage="Connecting to server" />
       </div>
     );
   }
 
-  return <DashboardContent {...props} />;
+  return <DashboardContent {...props} locationId={locationId} />;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   CONTENT — all heavy metric computation lives here, only mounted when ready.
+   CONTENT — reads from pre-computed dashboard_metrics_daily.
+   No 136K iteration. No useMemo compute chains. Pure view layer.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 function DashboardContent({
-  data, save, nav, profile, addGlobalToast,
+  data, save, nav, profile, addGlobalToast, locationId,
   showSnapshot, showRevenue, showFunnel, showLTV,
   showRevenueComposition, showRevenueByCategory, showDiscountAnalysis,
   showTopClients, showOps, showFunnelMetrics, showHeroKPIs,
@@ -662,7 +644,7 @@ function DashboardContent({
   const [showPriorPeriod, setShowPriorPeriod] = useState(true);
   const today = todayStr();
 
-  /* ─── Stable nav callbacks (prevent re-renders in memo'd children) ─── */
+  /* ─── Stable nav callbacks ─── */
   const navTo = useMemo(() => {
     if (!nav) return {};
     const pages = ["checkout-tv", "ops-bathing", "settings", "lifecycle", "funnel",
@@ -674,9 +656,6 @@ function DashboardContent({
     pages.forEach(p => { map[p] = () => nav(p); });
     return map;
   }, [nav]);
-
-  /* ─── localStorage cache: show stale data instantly, update when fresh ── */
-  const hasFreshData = !!(data && data.reservations);
 
   /* ─── Lazy-compute refs for below-fold sections ───────────────────── */
   const { ref: financialRef } = useSectionVisibility();
@@ -723,117 +702,41 @@ function DashboardContent({
     return { dateFrom: start, dateTo: to, days: dayCount, prevFrom: pFrom, prevTo: pTo };
   }, [range, today, customFrom, customTo]);
 
-  /* ─── Stable sub-property refs (prevent full-data dep) ─────────── */
-  const reservationsRef = data.reservations;
-  const clientsRef = data.clients;
-  const serverStatsRef = data.serverStats;
-  const resortPoliciesRef = data.resortPolicies;
-  const roomsRef = data.rooms;
-  const dogsRef = data.dogs;
-  const dailyOpsRef = data.dailyOps;
+  /* ─── SERVER-SIDE METRICS (the magic — no client-side iteration) ─── */
+  const { metrics, prevMetrics, dailyRows, prevDailyRows, loading: metricsLoading, lastUpdated, refresh } = useDashboardMetrics(
+    locationId, dateFrom, dateTo, prevFrom, prevTo
+  );
 
-  /* ─── Lightweight proxy for compute functions (stable ref) ──────── */
-  const dataProxy = useMemo(() => ({
-    reservations: reservationsRef,
-    clients: clientsRef,
-    serverStats: serverStatsRef,
-    resortPolicies: resortPoliciesRef,
-    rooms: roomsRef,
-    dogs: dogsRef,
-    dailyOps: dailyOpsRef,
-  }), [reservationsRef, clientsRef, serverStatsRef, resortPoliciesRef, roomsRef, dogsRef, dailyOpsRef]);
+  const m = metrics || {};
+  const pm = prevMetrics || {};
 
-  /* ─── Today's Snapshot (shared helpers) ──────────────────────────── */
-  const occupancyMetrics = useMemo(() => computeOccupancyMetrics(dataProxy, today), [dataProxy, today]);
-  const serviceMetrics = useMemo(() => computeServiceMetrics(dataProxy, today), [dataProxy, today]);
-  const todaySnapshot = useMemo(() => ({
-    ...occupancyMetrics,
-    tours: serviceMetrics.tours, evals: serviceMetrics.evals, bookingsToday: serviceMetrics.bookingsToday,
-    bathsTotal: serviceMetrics.bathsTotal, bathsDone: serviceMetrics.bathsDone,
-    roomsToClean: serviceMetrics.roomsToClean, roomsCleaned: serviceMetrics.roomsCleaned,
-    ppTotal: serviceMetrics.ppTotal, ppCompleted: serviceMetrics.ppCompleted,
-  }), [occupancyMetrics, serviceMetrics]);
+  /* ─── Lifecycle metrics — still from client data (these need client state) ─── */
+  // Lifecycle/funnel metrics require client lifecycle state which isn't in the daily table.
+  // These are lightweight — only counting client records, not iterating 136K reservations.
+  const emptyFunnel = { remainingLeads: 0, remainingAtRisk: 0, todayOutreaches: 0, todayConversions: 0, firstTimePayers: 0, todayNewLeads: 0, conversionRate: 0, avgLTV: 0, totalLTV: 0, spendingClientsCount: 0 };
 
-  /* ─── Cash-basis revenue (shared helper) ─────────────────────────── */
-  const cashBasisData = useMemo(() =>
-    computeCashRevenueMetrics(reservationsRef, dateFrom, dateTo, prevFrom, prevTo, today),
-  [reservationsRef, dateFrom, dateTo, prevFrom, prevTo, today]);
+  const funnelMetrics = useMemo(() => {
+    if (!data?.clients) return emptyFunnel;
+    return computeLifecycleMetrics(data, dateFrom, dateTo, today);
+  }, [data?.clients, data?.serverStats, data?.reservations, data?.resortPolicies, dateFrom, dateTo, today]);
 
-  /* ─── Accrual revenue (shared helper) ────────────────────────────── */
-  const accrualData = useMemo(() =>
-    computeAccrualRevenueMetrics({ reservations: reservationsRef, rooms: roomsRef }, dateFrom, dateTo, prevFrom, prevTo),
-  [reservationsRef, roomsRef, dateFrom, dateTo, prevFrom, prevTo]);
-
-  const revenue = accrualData.current.totals.totalRevenue;
-  const prevRevenue = accrualData.previous.totals.totalRevenue;
-  const revenueTrend = prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue) * 100 : 0;
-
-  /* ─── Revenue Composition ──────────────────────────────────────────── */
-  const accrualTotalRevenue = accrualData.current.totals.totalRevenue;
-  const accrualBoardingRevenue = accrualData.current.totals.boardingRevenue;
-  const accrualDaycareRevenue = accrualData.current.totals.daycareRevenue;
-  const revenueComposition = useMemo(() => {
-    const boardingPct = accrualTotalRevenue > 0 ? (accrualBoardingRevenue / accrualTotalRevenue) * 100 : 0;
-    const daycarePct = accrualTotalRevenue > 0 ? (accrualDaycareRevenue / accrualTotalRevenue) * 100 : 0;
-    return { boarding: accrualBoardingRevenue, daycare: accrualDaycareRevenue, total: accrualTotalRevenue, boardingPct, daycarePct };
-  }, [accrualTotalRevenue, accrualBoardingRevenue, accrualDaycareRevenue]);
-
-  /* ─── Discount breakdown (shared helper) ─────────────────────────── */
-  const discountBreakdown = useMemo(() =>
-    computeDiscountBreakdown(reservationsRef, dateFrom, dateTo),
-  [reservationsRef, dateFrom, dateTo]);
-
-  /* ─── Chart data bucketing ────────────────────────────────────────── */
-  const bucketMode = useMemo(() => {
-    if (range === "ytd" || range === "lifetime" || days > 180) return "monthly";
-    if (range === "qtd" || days > 60) return "weekly";
-    return "daily";
-  }, [range, days]);
-
-  const bucketDays = useCallback((daysList, getValueForDay) => {
-    if (bucketMode === "daily") {
-      return daysList.map(d => ({ date: d, label: fmtDateLabel(d), value: getValueForDay(d), prevValue: 0 }));
-    }
-    if (bucketMode === "monthly") {
-      const buckets = {};
-      daysList.forEach(d => {
-        const key = d.slice(0, 7);
-        if (!buckets[key]) buckets[key] = { date: key, label: new Date(d + "T00:00:00").toLocaleDateString("en-US", { month: "short" }), value: 0, prevValue: 0 };
-        buckets[key].value += getValueForDay(d);
-      });
-      return Object.values(buckets);
-    }
-    const buckets = {};
-    daysList.forEach(d => {
-      const dt = new Date(d + "T00:00:00");
-      const weekStart = new Date(dt);
-      weekStart.setDate(dt.getDate() - dt.getDay());
-      const key = weekStart.toISOString().split("T")[0];
-      if (!buckets[key]) buckets[key] = { date: key, label: fmtDateLabel(key), value: 0, prevValue: 0 };
-      buckets[key].value += getValueForDay(d);
-    });
-    return Object.values(buckets);
-  }, [bucketMode]);
-
-  const cashChartData = useMemo(() => {
-    const byDate = cashBasisData.current.byDate || {};
-    const daysList = [];
-    let cur = dateFrom;
-    while (cur <= dateTo) { daysList.push(cur); cur = addDays(cur, 1); }
-    return bucketDays(daysList, d => byDate[d] || 0);
-  }, [cashBasisData, dateFrom, dateTo, bucketDays]);
-
-  const accrualChartData = useMemo(() => {
-    const dayData = accrualData.current.dayData;
-    return bucketDays(accrualData.days, d => dayData[d]?.totalRevenue || 0);
-  }, [accrualData, bucketDays]);
-
-  /* ─── Funnel metrics (shared helper) ─────────────────────────────── */
-  const funnelMetrics = useMemo(() =>
-    computeLifecycleMetrics(dataProxy, dateFrom, dateTo, today),
-  [clientsRef, serverStatsRef, reservationsRef, resortPoliciesRef, dateFrom, dateTo, today]);
+  const prevFunnelMetrics = useMemo(() => {
+    if (!data?.clients) return emptyFunnel;
+    const yesterday = addDays(today, -1);
+    return computeLifecycleMetrics(data, prevFrom, prevTo, yesterday);
+  }, [data?.clients, data?.serverStats, data?.reservations, data?.resortPolicies, prevFrom, prevTo, today]);
 
   /* ─── Ops progress (lazy — deferred until checklist section is visible) ── */
+  const dataProxy = useMemo(() => ({
+    reservations: data?.reservations,
+    clients: data?.clients,
+    serverStats: data?.serverStats,
+    resortPolicies: data?.resortPolicies,
+    rooms: data?.rooms,
+    dogs: data?.dogs,
+    dailyOps: data?.dailyOps,
+  }), [data?.reservations, data?.clients, data?.serverStats, data?.resortPolicies, data?.rooms, data?.dogs, data?.dailyOps]);
+
   const { ref: opsVisRef, value: lazyOpsProgress, isVisible: opsVisible } = useLazyCompute(
     () => computeOpsProgress(dataProxy, today),
     [dataProxy, today]
@@ -849,13 +752,9 @@ function DashboardContent({
     return op ? op.countLabel : "";
   };
 
-  /* ─── Refund tracker (shared helper) ─────────────────────────────── */
-  const refundData = useMemo(() =>
-    computeRefundMetrics(reservationsRef, dateFrom, dateTo),
-  [reservationsRef, dateFrom, dateTo]);
-
-  /* ─── Service data (shared helper) ───────────────────────────────── */
+  /* ─── Service data (today only — lightweight) ─── */
   const svcData = useMemo(() => {
+    if (!data?.reservations) return { bathsTotal: 0, bathsDone: 0, ppTotal: 0, ppCompleted: 0, pamperTotal: 0, pamperDone: 0, iceCreamTotal: 0, iceCreamDone: 0 };
     const sm = computeServiceMetrics(dataProxy, today);
     return {
       bathsTotal: sm.bathsTotal, bathsDone: sm.bathsDone,
@@ -865,44 +764,71 @@ function DashboardContent({
     };
   }, [dataProxy, today]);
 
-  /* ─── Prior-period snapshot (yesterday) ─────────────────────────── */
-  const yesterday = addDays(today, -1);
-  const prevOccupancy = useMemo(() => computeOccupancyMetrics(dataProxy, yesterday), [dataProxy, yesterday]);
-  const prevService = useMemo(() => computeServiceMetrics(dataProxy, yesterday), [dataProxy, yesterday]);
+  /* ─── Chart data from pre-computed daily rows ─── */
+  const bucketMode = useMemo(() => {
+    if (range === "ytd" || range === "lifetime" || days > 180) return "monthly";
+    if (range === "qtd" || days > 60) return "weekly";
+    return "daily";
+  }, [range, days]);
 
-  /* ─── Prior-period refunds ─────────────────────────────────────── */
-  const prevRefundData = useMemo(() =>
-    computeRefundMetrics(reservationsRef, prevFrom, prevTo),
-  [reservationsRef, prevFrom, prevTo]);
+  const bucketRows = useCallback((rows, valueField) => {
+    if (!rows || rows.length === 0) return [];
+    if (bucketMode === "daily") {
+      return rows.map(r => ({
+        date: r.metric_date,
+        label: fmtDateLabel(r.metric_date),
+        value: Number(r[valueField]) || 0,
+        prevValue: 0,
+      }));
+    }
+    if (bucketMode === "monthly") {
+      const buckets = {};
+      rows.forEach(r => {
+        const key = r.metric_date.slice(0, 7);
+        if (!buckets[key]) buckets[key] = { date: key, label: new Date(r.metric_date + "T00:00:00").toLocaleDateString("en-US", { month: "short" }), value: 0, prevValue: 0 };
+        buckets[key].value += Number(r[valueField]) || 0;
+      });
+      return Object.values(buckets);
+    }
+    // weekly
+    const buckets = {};
+    rows.forEach(r => {
+      const dt = new Date(r.metric_date + "T00:00:00");
+      const weekStart = new Date(dt);
+      weekStart.setDate(dt.getDate() - dt.getDay());
+      const key = weekStart.toISOString().split("T")[0];
+      if (!buckets[key]) buckets[key] = { date: key, label: fmtDateLabel(key), value: 0, prevValue: 0 };
+      buckets[key].value += Number(r[valueField]) || 0;
+    });
+    return Object.values(buckets);
+  }, [bucketMode]);
 
-  /* ─── Prior-period funnel metrics ──────────────────────────────── */
-  const prevFunnelMetrics = useMemo(() =>
-    computeLifecycleMetrics(dataProxy, prevFrom, prevTo, yesterday),
-  [clientsRef, serverStatsRef, reservationsRef, resortPoliciesRef, prevFrom, prevTo, yesterday]);
+  const cashChartData = useMemo(() => bucketRows(dailyRows, "cash_total_revenue"), [dailyRows, bucketRows]);
+  const accrualChartData = useMemo(() => bucketRows(dailyRows, "accrual_total_revenue"), [dailyRows, bucketRows]);
 
-  /* ─── Trend helper ─────────────────────────────────────────────── */
+  /* ─── Trend helper ─── */
   const pctChange = (cur, prev) => prev > 0 ? ((cur - prev) / prev) * 100 : 0;
 
-  /* ─── Cache fresh metrics when available ──────────────────────────── */
-  const cacheableMetrics = useMemo(() => {
-    if (!hasFreshData) return null;
-    return {
-      occupancyMetrics, serviceMetrics, todaySnapshot,
-      cashTotal: cashBasisData.current.total,
-      cashCount: cashBasisData.current.count,
-    };
-  }, [hasFreshData, occupancyMetrics, serviceMetrics, todaySnapshot, cashBasisData]);
-
-  useEffect(() => {
-    if (cacheableMetrics) setCachedData(cacheableMetrics);
-  }, [cacheableMetrics]);
-
-  /* Loading gate removed — handled by DashboardPage wrapper above. */
+  /* ─── "Updated X min ago" ─── */
+  const updatedAgo = useMemo(() => {
+    if (!lastUpdated) return "";
+    const diff = Math.round((Date.now() - new Date(lastUpdated).getTime()) / 60000);
+    if (diff < 1) return "just now";
+    if (diff < 60) return `${diff}m ago`;
+    return `${Math.round(diff / 60)}h ago`;
+  }, [lastUpdated]);
 
   /* ═══════════════════════════════════════════════════════════════════════════
      RENDER
      ═══════════════════════════════════════════════════════════════════════════ */
-  const bookingsTrend = cashBasisData.previous.count > 0 ? ((cashBasisData.current.count - cashBasisData.previous.count) / cashBasisData.previous.count) * 100 : 0;
+  const bookingsTrend = pctChange(m.cashTransactionCount, pm.cashTransactionCount);
+
+  // Revenue values from server metrics
+  const revenue = m.accrualTotalRevenue || 0;
+  const prevRevenue = pm.accrualTotalRevenue || 0;
+  const revenueTrend = prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue) * 100 : 0;
+  const boardingPct = m.boardingPct || 0;
+  const daycarePct = m.daycarePct || 0;
 
   return (
     <div style={{
@@ -924,10 +850,31 @@ function DashboardContent({
           <h1 style={{ fontSize: 16, fontWeight: 800, color: C.pri, margin: 0, lineHeight: 1 }}>
             Dashboard
           </h1>
-          <div style={{ width: 5, height: 5, borderRadius: "50%", background: C.suc, animation: "dashPulse 2s infinite" }} />
+          <div style={{ width: 5, height: 5, borderRadius: "50%", background: metricsLoading ? C.warn : C.suc, animation: metricsLoading ? "dashPulse 1s infinite" : "dashPulse 2s infinite" }} />
           <span style={{ fontSize: 9, color: C.textMut, fontWeight: 500 }}>
             {dateFrom === dateTo ? fmtDateLabel(dateFrom) : `${fmtDateLabel(dateFrom)} – ${fmtDateLabel(dateTo)} · ${days}d`}
           </span>
+          {updatedAgo && (
+            <span style={{ fontSize: 8, color: C.textMut, fontWeight: 500, opacity: 0.7 }}>
+              Updated {updatedAgo}
+            </span>
+          )}
+          <button
+            onClick={refresh}
+            disabled={metricsLoading}
+            style={{
+              padding: "2px 6px", borderRadius: 4,
+              border: `1px solid rgba(20,83,45,0.12)`,
+              background: "rgba(255,255,255,0.8)",
+              color: C.textMut, fontSize: 8, fontWeight: 600,
+              cursor: metricsLoading ? "default" : "pointer",
+              fontFamily: "inherit", opacity: metricsLoading ? 0.5 : 1,
+              transition: "all 0.12s",
+            }}
+            title="Refresh data from Gingr"
+          >
+            ↻ Refresh
+          </button>
         </div>
 
         {/* Right: Timeframe pills + prior period toggle */}
@@ -968,13 +915,13 @@ function DashboardContent({
         </div>
 
         {/* ═══ ROW 1: Gingr Data ═══ */}
-        <MetricCell label="Expected" value={todaySnapshot.expected} hero onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(todaySnapshot.expected, prevOccupancy.expected) : null} />
-        <MetricCell label="In House" value={todaySnapshot.dogsInHouse} hero sub={`${todaySnapshot.boardingInHouse}B · ${todaySnapshot.daycareInHouse}D`} onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(todaySnapshot.dogsInHouse, prevOccupancy.dogsInHouse) : null} />
-        <MetricCell label="Going Home" value={todaySnapshot.goingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(todaySnapshot.goingHome, prevOccupancy.goingHome) : null} />
-        <MetricCell label="Occupancy" value={`${todaySnapshot.occupancyPct}%`} hero onClick={navTo["settings"]} trend={showPriorPeriod ? pctChange(todaySnapshot.occupancyPct, prevOccupancy.occupancyPct) : null} />
-        <MetricCell label="Bookings" value={todaySnapshot.bookingsToday} hero />
-        <MetricCell label="Tours" value={todaySnapshot.tours} hero onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(todaySnapshot.tours, prevService.tours) : null} />
-        <MetricCell label="Evals" value={todaySnapshot.evals} hero onClick={navTo["lifecycle"]} />
+        <MetricCell label="Expected" value={m.dogsExpected} hero onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(m.dogsExpected, pm.dogsExpected) : null} />
+        <MetricCell label="In House" value={m.dogsInHouse} hero sub={`${m.boardingInHouse}B · ${m.daycareInHouse}D`} onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(m.dogsInHouse, pm.dogsInHouse) : null} />
+        <MetricCell label="Going Home" value={m.dogsGoingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(m.dogsGoingHome, pm.dogsGoingHome) : null} />
+        <MetricCell label="Occupancy" value={`${m.occupancyPct}%`} hero onClick={navTo["settings"]} trend={showPriorPeriod ? pctChange(m.occupancyPct, pm.occupancyPct) : null} />
+        <MetricCell label="Bookings" value={m.bookingsToday} hero />
+        <MetricCell label="Tours" value={m.toursToday} hero onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(m.toursToday, pm.toursToday) : null} />
+        <MetricCell label="Evals" value={m.evalsToday} hero onClick={navTo["lifecycle"]} />
         <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={navTo["ops-opening"]} />
         <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={navTo["ops-bathing"]} />
 
@@ -1022,13 +969,13 @@ function DashboardContent({
         </div>
 
         {/* ═══ ROW 4: Reporting/Financial ═══ */}
-        <MetricCell label="Transactions" value={cashBasisData.current.count} trend={showPriorPeriod ? bookingsTrend : null} />
-        <MetricCell label="Avg Ticket" value={`$${cashBasisData.current.avgTransaction.toFixed(0)}`} trend={showPriorPeriod ? cashBasisData.trendAvg : null} />
-        <MetricCell label="Rev/PAR" value={`$${accrualData.revPAR.toFixed(0)}`} trend={showPriorPeriod ? (() => { const prevRevPAR = accrualData.totalRoomCount > 0 && accrualData.previous.days.length > 0 ? accrualData.previous.totals.boardingRevenue / (accrualData.totalRoomCount * accrualData.previous.days.length) : 0; return pctChange(accrualData.revPAR, prevRevPAR); })() : null} />
-        <MetricCell label="Refunds" value={refundData.count} color={refundData.count > 0 ? C.dan : undefined} trend={showPriorPeriod ? pctChange(refundData.count, prevRefundData.count) : null} />
-        <MetricCell label="$ Refunded" value={`$${fmt$k(refundData.total)}`} color={refundData.total > 0 ? C.dan : undefined} />
-        <MetricCell label="Discounted" value={discountBreakdown.discounted} color={discountBreakdown.discounted > 0 ? C.warn : undefined} />
-        <MetricCell label="$ Discounted" value={`$${fmt$k(discountBreakdown.totalDiscounts)}`} color={discountBreakdown.totalDiscounts > 0 ? C.warn : undefined} />
+        <MetricCell label="Transactions" value={m.cashTransactionCount} trend={showPriorPeriod ? bookingsTrend : null} />
+        <MetricCell label="Avg Ticket" value={`$${(m.cashAvgTransaction || 0).toFixed(0)}`} trend={showPriorPeriod ? pctChange(m.cashAvgTransaction, pm.cashAvgTransaction) : null} />
+        <MetricCell label="Rev/PAR" value={`$${(m.revPAR || 0).toFixed(0)}`} trend={showPriorPeriod ? pctChange(m.revPAR, pm.revPAR) : null} />
+        <MetricCell label="Refunds" value={m.refundCount} color={m.refundCount > 0 ? C.dan : undefined} trend={showPriorPeriod ? pctChange(m.refundCount, pm.refundCount) : null} />
+        <MetricCell label="$ Refunded" value={`$${fmt$k(m.refundTotal)}`} color={m.refundTotal > 0 ? C.dan : undefined} />
+        <MetricCell label="Discounted" value={m.discountedCount} color={m.discountedCount > 0 ? C.warn : undefined} />
+        <MetricCell label="$ Discounted" value={`$${fmt$k(m.discountTotal)}`} color={m.discountTotal > 0 ? C.warn : undefined} />
         <ChecklistCell label="Room Clean" progress={getChecklistProgress("ops-rooms")} count={getChecklistCount("ops-rooms")} onClick={navTo["ops-rooms"]} />
         <MetricCell label="Attendance" value="—" onClick={navTo["enterprise-attendance"]} />
 
@@ -1039,7 +986,7 @@ function DashboardContent({
               <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cash Basis Revenue</span>
               <Tip text="Cash basis revenue from Gingr's GET /transactions endpoint. Shows actual money collected per day."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
             </span>
-            <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(cashBasisData.current.total)}</span>
+            <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(m.cashTotalRevenue)}</span>
           </div>
           <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" dateLabels={cashChartData.map(d => d.date)} />
         </div>
@@ -1055,12 +1002,12 @@ function DashboardContent({
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, width: "100%" }}>
             <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em" }}>Revenue Split</div>
             <div style={{ width: "80%", height: 5, borderRadius: 3, overflow: "hidden", display: "flex" }}>
-              <div style={{ width: `${revenueComposition.boardingPct}%`, height: "100%", background: C.pri }} />
-              <div style={{ width: `${revenueComposition.daycarePct}%`, height: "100%", background: C.acc }} />
+              <div style={{ width: `${boardingPct}%`, height: "100%", background: C.pri }} />
+              <div style={{ width: `${daycarePct}%`, height: "100%", background: C.acc }} />
             </div>
             <div style={{ fontSize: 8, color: C.textMut, textAlign: "center", lineHeight: 1.4 }}>
-              <div><span style={{ color: C.pri, fontWeight: 700 }}>{revenueComposition.boardingPct.toFixed(0)}%</span> Board</div>
-              <div><span style={{ color: C.acc, fontWeight: 700 }}>{revenueComposition.daycarePct.toFixed(0)}%</span> Day</div>
+              <div><span style={{ color: C.pri, fontWeight: 700 }}>{boardingPct.toFixed(0)}%</span> Board</div>
+              <div><span style={{ color: C.acc, fontWeight: 700 }}>{daycarePct.toFixed(0)}%</span> Day</div>
             </div>
           </div>
           <div style={{ width: "60%", height: 1, background: "rgba(20,83,45,0.08)" }} />
