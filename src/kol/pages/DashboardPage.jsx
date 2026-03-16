@@ -582,7 +582,9 @@ function DashGrid({ children }) {
 /* ═══════════════════════════════════════════════════════════════════════════
    Chart container — measures height, renders InteractiveLineChart
    ═══════════════════════════════════════════════════════════════════════════ */
-function ChartFill({ chartData, color, compareColor, animEpoch, id, dateLabels }) {
+function ChartFill({ chartData, color, compareColor, animEpoch, id, dateLabels,
+  useRawPoints, lineType, solidFill, fillColor, fillOpacity, showGuideLines, showDots, dotRadius,
+}) {
   const containerRef = useRef(null);
   const [containerH, setContainerH] = useState(120);
   useEffect(() => {
@@ -609,6 +611,14 @@ function ChartFill({ chartData, color, compareColor, animEpoch, id, dateLabels }
         id={id}
         animationEpoch={animEpoch}
         dateLabels={dateLabels}
+        useRawPoints={useRawPoints}
+        lineType={lineType}
+        solidFill={solidFill}
+        fillColor={fillColor}
+        fillOpacity={fillOpacity}
+        showGuideLines={showGuideLines}
+        showDots={showDots}
+        dotRadius={dotRadius}
       />
     </div>
   );
@@ -696,7 +706,7 @@ function DashboardContent({
     switch (range) {
       case "today": start = today; break;
       case "wtd": { const d = new Date(now); d.setDate(d.getDate() - d.getDay()); start = d.toISOString().split("T")[0]; break; }
-      case "past-week": start = addDays(today, -7); break;
+      case "past-week": start = addDays(today, -6); break;
       case "mtd": start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`; break;
       case "past-30": start = addDays(today, -30); break;
       case "qtd": { const qm = Math.floor(now.getMonth() / 3) * 3; start = `${now.getFullYear()}-${String(qm + 1).padStart(2, "0")}-01`; break; }
@@ -1003,7 +1013,8 @@ function DashboardContent({
             </span>
             <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(m.cashTotalRevenue)}</span>
           </div>
-          <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" dateLabels={cashChartData.map(d => d.date)} />
+          <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" dateLabels={cashChartData.map(d => d.date)}
+            useRawPoints lineType="linear" solidFill fillOpacity={0.18} showGuideLines showDots dotRadius={5} />
         </div>
 
         {/* Col 4 Toggle area */}
@@ -1040,7 +1051,8 @@ function DashboardContent({
             </span>
             <span style={{ fontSize: 11, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</span>
           </div>
-          <ChartFill chartData={accrualChartData} color={C.acc} compareColor={C.pri} animEpoch={animEpoch} id="accrual-main" dateLabels={accrualChartData.map(d => d.date)} />
+          <ChartFill chartData={accrualChartData} color={C.acc} compareColor={C.pri} animEpoch={animEpoch} id="accrual-main" dateLabels={accrualChartData.map(d => d.date)}
+            useRawPoints lineType="linear" solidFill fillOpacity={0.18} showGuideLines showDots dotRadius={5} />
         </div>
 
         {/* Col 8: Private Play (row 5) */}
