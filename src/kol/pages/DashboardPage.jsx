@@ -954,7 +954,7 @@ function DashboardContent({
         <QuickLinkCell label="Photos" icon={<I.Camera />} onClick={navTo["photos"]} />
         <QuickLinkCell label="Cash Tips" icon={<I.DollarSign />} onClick={navTo["cash-tips"]} />
         <QuickLinkCell label="Checkout Notes" icon={<I.Clipboard />} onClick={navTo["checkout-notes"]} />
-        <MetricCell label="Avg LTV" value={`$${funnelMetrics.avgLTV.toFixed(0)}`} onClick={navTo["lifecycle"]} />
+        <MetricCell label="LTV" value={`$${Math.round(funnelMetrics.avgLTV).toLocaleString("en-US")}`} onClick={navTo["lifecycle"]} />
         <MetricCell label="Total Clients" value={funnelMetrics.spendingClientsCount} onClick={navTo["lifecycle"]} />
         <ChecklistCell label="Back-End" progress={getChecklistProgress("ops-be")} count={getChecklistCount("ops-be")} onClick={navTo["ops-be"]} />
         <ServiceCell label="Ice Cream" done={svcData.iceCreamDone} total={svcData.iceCreamTotal} onClick={navTo["ops-svc"]} />
@@ -970,8 +970,8 @@ function DashboardContent({
 
         {/* ═══ ROW 4: Reporting/Financial ═══ */}
         <MetricCell label="Transactions" value={m.cashTransactionCount} trend={showPriorPeriod ? bookingsTrend : null} />
-        <MetricCell label="Avg Ticket" value={`$${(m.cashAvgTransaction || 0).toFixed(0)}`} trend={showPriorPeriod ? pctChange(m.cashAvgTransaction, pm.cashAvgTransaction) : null} />
-        <MetricCell label="Rev/PAR" value={`$${(m.revPAR || 0).toFixed(0)}`} trend={showPriorPeriod ? pctChange(m.revPAR, pm.revPAR) : null} />
+        <MetricCell label="Avg Ticket" value={`$${Math.round(m.cashAvgTransaction || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(m.cashAvgTransaction, pm.cashAvgTransaction) : null} />
+        <MetricCell label="Rev/PAR" value={`$${Math.round(m.revPAR || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(m.revPAR, pm.revPAR) : null} />
         <MetricCell label="Refunds" value={m.refundCount} color={m.refundCount > 0 ? C.dan : undefined} trend={showPriorPeriod ? pctChange(m.refundCount, pm.refundCount) : null} />
         <MetricCell label="$ Refunded" value={`$${fmt$k(m.refundTotal)}`} color={m.refundTotal > 0 ? C.dan : undefined} />
         <MetricCell label="Discounted" value={m.discountedCount} color={m.discountedCount > 0 ? C.warn : undefined} />
