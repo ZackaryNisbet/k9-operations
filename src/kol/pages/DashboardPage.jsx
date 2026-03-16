@@ -1141,14 +1141,25 @@ function DashboardContent({
         }
       });
 
-      // Sibling grouping: count dogs per reservation, compute per-night-per-dog rate
-      const resKeyCount = {};
-      boarding.forEach(b => { resKeyCount[b._resKey] = (resKeyCount[b._resKey] || 0) + 1; });
+      // Sibling grouping: match $0 dogs to their sibling's reservation cost
+      // Group by owner + check-in + check-out to find siblings
+      const siblingGroups = {};
       boarding.forEach(b => {
-        const dogsInRes = resKeyCount[b._resKey] || 1;
-        b.perNight = b.totalCost > 0 ? b.totalCost / b.totalNights / dogsInRes : 0;
-        b.accrualAmount = b.perNight * b.nights;
-        boardingTotal += b.accrualAmount;
+        const gKey = `${b.ownerName}|${b.checkIn}|${b.checkOut}`;
+        if (!siblingGroups[gKey]) siblingGroups[gKey] = [];
+        siblingGroups[gKey].push(b);
+      });
+      // For each group, find the reservation total and split across all dogs
+      Object.values(siblingGroups).forEach(group => {
+        const resTotalFromGroup = Math.max(...group.map(b => b.totalCost));
+        const dogCount = group.length;
+        group.forEach(b => {
+          b.resTotalDisplay = resTotalFromGroup;
+          b.dogsInRes = dogCount;
+          b.perNight = resTotalFromGroup > 0 ? resTotalFromGroup / b.totalNights / dogCount : 0;
+          b.accrualAmount = b.perNight * b.nights;
+          boardingTotal += b.accrualAmount;
+        });
       });
 
       // Build enrichment list sorted by total cost descending
@@ -1606,7 +1617,9 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
                     {item.dogName}{item.lastInit ? ` ${item.lastInit}` : ""}
                   </span>
                   <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0 }}>
-                    {item.totalCost > 0 ? `${fmtMoney(item.totalCost)} res / ${item.totalNights}nt = ${fmtMoney(item.perNight)} nightly` : `${item.totalNights}nt`}
+                    {item.resTotalDisplay > 0
+                      ? `${fmtMoney(item.resTotalDisplay)} Total Reservation Cost / ${item.totalNights} Night${item.totalNights !== 1 ? "s" : ""}`
+                      : `${item.totalNights} Night${item.totalNights !== 1 ? "s" : ""}`}
                   </span>
                 </div>
                 <div style={{ fontSize: 11, fontWeight: item.accrualAmount > 0 ? 700 : 500, color: item.accrualAmount > 0 ? C.text : "rgba(20,83,45,0.35)", fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap", fontStyle: item.accrualAmount > 0 ? "normal" : "italic" }}>
