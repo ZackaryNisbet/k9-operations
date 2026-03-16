@@ -562,8 +562,30 @@ Related to P5. Ensure that:
 - Check the Ignite webhook handler — does it store the submission timestamp?
 - Fix both to use the source system's creation date
 
+### P8: CRITICAL — No duplicate clients by phone number
+- Priority: CRITICAL
+- Type: DATA_BUG
+- What's Wrong: Ignite webhook creates a new lite_client every time it fires, even if a client with that phone number already exists. Example: "Nj Haddonfield" (18565609393) appears 3 times — all from Ignite, same date, same system log.
+- Fix:
+  1. Before creating a new client from ANY source (Ignite, Gingr sync, manual), check if a client with that phone number exists
+  2. If match found, update existing record — don't create new one
+  3. Add UNIQUE constraint on normalized phone in lite_clients
+  4. Clean up existing duplicates — merge into one, preserve earliest created_date, combine lifecycle data
+  5. Dedup must work ACROSS source types (Gingr + Ignite + manual)
+  6. Normalize phone before comparing (strip +1, spaces, dashes, parens)
+- User Quote: "there can never be duplicate phone numbers. ever. for clients. across all source types. why do we have 3 of one guy?"
+
+### P8: CRITICAL — No duplicate clients by phone number
+Ignite webhook creates duplicate client records. Example: "Nj Haddonfield" (18565609393) appears 3 times.
+- Before creating a new client from ANY source (Ignite webhook, Gingr sync, manual create), normalize the phone number (strip +1, spaces, dashes, parens) and check if a client with that phone already exists
+- If a match exists, UPDATE the existing record — do NOT create a new one
+- Add a UNIQUE constraint on a normalized_phone column in lite_clients (or equivalent dedup mechanism)
+- Write a migration/cleanup script that finds existing duplicates, merges them into one record (preserve earliest created_date, combine lifecycle data), and deletes the extras
+- This dedup must work ACROSS source types: if a Gingr client exists with phone X, an Ignite lead with the same phone should match to them
+
 ## IMPORTANT RULES
 - Pull latest main before starting (other sessions may have pushed)
+- P8 is CRITICAL — dedup logic must be bulletproof. Test with the known duplicate (18565609393)
 - P3 is the most complex — take time to understand the lifecycle transition code in useGingrData.js before modifying
 - P4 is a new Settings section — follow the pattern of DashboardRefreshTab.jsx
 - P5 requires understanding ClientDetailPage.jsx thoroughly
@@ -601,5 +623,6 @@ Continuing the wave/letter/number pattern from Round 1:
 | W4·P5 | Unified client pages (all sources) | KOL Issues | P: Lifecycle |
 | W4·P6 | Ignite/Gingr data parity | KOL Issues | P: Lifecycle |
 | W4·P7 | Created dates from source systems | KOL Issues | P: Lifecycle |
+| W4·P8 | Deduplicate clients by phone — no dupes ever | KOL Issues | P: Lifecycle |
 
 **Total: 21 new Motion tasks**
