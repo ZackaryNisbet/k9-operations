@@ -295,7 +295,7 @@ function OperationsHub({ data, save, nav, profile }) {
         const logKey = `${viewDate}|bathing`;
         const administered = !!(res.activityLog && res.activityLog[logKey] && res.activityLog[logKey].administered);
         const coTime = res.checkOutTime || "";
-        const roomNum = res.room ? (res.room.match(/(\d+)/) || [])[1] || res.room : "—";
+        const roomNum = res.room ? (res.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || res.room : "—";
         bathRows.push({ dogName: dog.fields.name, bathType: bath, done: administered, checkOutTime: coTime, room: roomNum });
       }
     });
@@ -874,6 +874,7 @@ function OperationsHub({ data, save, nav, profile }) {
                 let countReady = dataLoaded;
                 if (item.routeKey === "bathing") {
                   count = inHouseToday.filter(r => {
+                    if (r.checkOut !== viewDate) return false;
                     const svcs = r._services;
                     if (!svcs) return false;
                     const arr = Array.isArray(svcs) ? svcs : [];

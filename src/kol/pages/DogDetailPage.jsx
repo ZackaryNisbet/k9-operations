@@ -626,7 +626,7 @@ function DogDetailPage({ data, clientId, dogId, nav, profile }) {
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                         <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{r._resTypeName || titleCase(r.type)}</span>
                         <span style={{ display: "inline-flex", padding: "2px 8px", borderRadius: 6, background: r.status === "checked-in" ? C.sucLt : C.priLt, color: r.status === "checked-in" ? C.suc : C.pri, fontSize: 10, fontWeight: 700, textTransform: "uppercase" }}>{r.status}</span>
-                        {r.room && <span style={{ display: "inline-flex", padding: "2px 8px", borderRadius: 6, background: C.accLt, color: C.acc, fontSize: 10, fontWeight: 700 }}>Room {(r.room.match(/(\d+)/) || [])[1] || r.room}</span>}
+                        {r.room && <span style={{ display: "inline-flex", padding: "2px 8px", borderRadius: 6, background: C.accLt, color: C.acc, fontSize: 10, fontWeight: 700 }}>Room {(r.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || r.room}</span>}
                       </div>
                       <div style={{ fontSize: 12, color: C.textSec }}>{r.checkIn} → {r.checkOut}{r.pricing?.total ? ` · $${r.pricing.total.toFixed(2)}` : ""}</div>
                     </div>
