@@ -1473,9 +1473,9 @@ function DashboardContent({
             <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(m.cashTotalRevenue)}</span>
           </div>
           <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" dateLabels={cashChartData.map(d => d.date)}
-            useRawPoints lineType="linear" solidFill fillOpacity={0.15} showGuideLines
+            useRawPoints lineType="linear" solidFill fillOpacity={0.35} showGuideLines
             todayHighlight={isToday} priorData={cashPriorChartData} showPriorLine={showPriorPeriod}
-            priorLineColor="#D4A017" priorFillColor="#D4A017" priorFillOpacity={0.10} />
+            priorLineColor="#D4A017" priorFillColor="#D4A017" priorFillOpacity={0.25} />
         </div>
 
         {/* Col 4 Toggle area */}
@@ -1531,9 +1531,9 @@ function DashboardContent({
             </span>
           </div>
           <ChartFill chartData={accrualChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="accrual-main" dateLabels={accrualChartData.map(d => d.date)}
-            useRawPoints lineType="linear" solidFill fillOpacity={0.15} showGuideLines
+            useRawPoints lineType="linear" solidFill fillOpacity={0.35} showGuideLines
             todayHighlight={isToday} priorData={accrualPriorChartData} showPriorLine={showPriorPeriod}
-            priorLineColor="#D4A017" priorFillColor="#D4A017" priorFillOpacity={0.10} />
+            priorLineColor="#D4A017" priorFillColor="#D4A017" priorFillOpacity={0.25} />
         </div>
 
         {/* Col 8: Private Play (row 5) */}
