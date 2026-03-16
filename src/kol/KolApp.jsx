@@ -14,6 +14,7 @@ import K9LoadingAnimation from "../shared/K9LoadingAnimation";
 import LocationSelector from "../shared/LocationSelector";
 import useGingrData from "../hooks/useGingrData";
 import { useRefreshSettings } from "../hooks/useRefreshSettings";
+import { useBackOfHouse } from "../hooks/useBackOfHouse";
 import { applyStructuredFilters } from "../hooks/useFilters";
 // Page imports
 import ClientsPage from "./pages/ClientsPage";
@@ -236,6 +237,12 @@ function LeanAppInner() {
   // Dashboard refresh settings (interval + business hours) from Supabase
   const { refreshIntervalMs, isWithinBusinessHours } = useRefreshSettings(currentLocation);
   const refreshOptions = useMemo(() => ({ refreshIntervalMs, isWithinBusinessHours }), [refreshIntervalMs, isWithinBusinessHours]);
+
+  // Live BOH poll — runs every 10s, shared across Dashboard + Checkout TV
+  const bohEnabled = page === "dashboard" || page === "checkout-tv";
+  const boh = useBackOfHouse(currentLocation, bohEnabled);
+  const bohStats = boh.stats;  // { total, boardingCount, daycareCount }
+  const bohLastFetch = boh.lastFetch;
 
   // Gingr data from Supabase (clients, dogs, reservations, rooms, etc.)
   const mockData = useGingrData(currentLocation, refreshOptions);
@@ -646,7 +653,7 @@ function LeanAppInner() {
           showFunnelMetrics: isOwnerOrManager,
           showHeroKPIs: isOwnerOrManager,
         };
-        return <DashboardPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} refreshOptions={refreshOptions} {...dashboardPermissions} />;
+        return <DashboardPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} refreshOptions={refreshOptions} bohStats={bohStats} bohLastFetch={bohLastFetch} {...dashboardPermissions} />;
       }
       case "lifecycle":
         return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Customer Lifecycle not available on Enterprise view</div> : (
