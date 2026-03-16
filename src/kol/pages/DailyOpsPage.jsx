@@ -658,11 +658,12 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   useEffect(() => {
     if (sub !== "bathing") return;
     const reservations = data.reservations || [];
-    const inHouse = reservations.filter(r =>
+    // Only show dogs whose reservation END DATE equals the view date
+    const endingToday = reservations.filter(r =>
       (r.status === "checked-in" || r.status === "upcoming") &&
-      r.checkIn <= viewDate && r.checkOut >= viewDate
+      r.checkOut === viewDate
     );
-    const bathRes = inHouse.filter(r => hasSvc(r._services, "Bath"));
+    const bathRes = endingToday.filter(r => hasSvc(r._services, "Bath"));
     if (bathRes.length === 0) return;
 
     const needsFetch = bathRes.filter(r => !bathTypeMap[r.id]);
@@ -733,19 +734,20 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const renderBathing = () => {
     const reservations = data.reservations || [];
     const dogs = data.dogs || [];
-    // Any in-house reservation (boarding OR daycare) with Bath service
-    const inHouse = reservations.filter(r =>
+    // Only show dogs whose reservation END DATE equals the view date (bath happens on checkout day)
+    const endingToday = reservations.filter(r =>
       (r.status === "checked-in" || r.status === "upcoming") &&
-      r.checkIn <= viewDate && r.checkOut >= viewDate
+      r.checkOut === viewDate
     );
     const bathRows = [];
-    inHouse.forEach(res => {
+    endingToday.forEach(res => {
       if (!hasSvc(res._services, "Bath")) return;
       const dog = dogs.find(d => d.id === res.dogId);
       const dogName = dog?.fields?.name || res._animalName || "Unknown";
       const roomNum = res.room ? (res.room.match(/(\d+)/) || [])[1] || res.room : "—";
       const bathType = bathTypeMap[res.id] || (bathTypeLoading ? "Loading…" : "Premium");
-      const coTime = res.scheduledCheckOutTime || res.checkOutTime || "—";
+      const rawCoTime = res.scheduledCheckOutTime || res.checkOutTime || "";
+      const coTime = rawCoTime ? formatTime12hr(rawCoTime) : "—";
       const completedInfo = bathCompleted[res.id];
       const isDone = !!completedInfo;
       bathRows.push({ resId: res.id, dogName, roomNum, bathType, coTime, isDone, completedInfo, resType: res.type });
@@ -762,80 +764,111 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       saveBathCompleted(newCompleted);
     };
 
+    // Show pulsing dog logo loading state while fetching bath types
+    if (bathTypeLoading && totalBaths === 0) {
+      return (
+        <div>
+          <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "inherit" }}>Bathing Report</span>
+          </Card>
+          <Card style={{ padding: "48px 20px", textAlign: "center" }}>
+            <K9LoadingAnimation size={64} message="Loading bathing report…" subMessage="Fetching bath types from Gingr" />
+          </Card>
+        </div>
+      );
+    }
+
+    const getBathBadgeStyle = (type) => {
+      const styles = {
+        "Loading…": { background: "#F3F4F6", color: "#9CA3AF" },
+        "Premium": { background: "#DBEAFE", color: "#1D4ED8" },
+        "Medicated": { background: "#FEE2E2", color: "#DC2626" },
+        "Whitening": { background: "#F3E8FF", color: "#7C3AED" },
+        "Shampoo From Home": { background: "#ECFDF5", color: "#059669" },
+      };
+      if (type.includes("Hypoallergenic")) return { background: "#FEF3C7", color: "#D97706" };
+      return styles[type] || { background: "#F3F4F6", color: "#6B7280" };
+    };
+
+    const thStyle = { textAlign: "left", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em", fontFamily: "inherit" };
+    const thCenterStyle = { ...thStyle, textAlign: "center" };
+
     return (
       <div>
         <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Bathing Report</span>
-              <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>{doneBaths}/{totalBaths} complete</span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "inherit" }}>Bathing Report</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec, fontFamily: "inherit" }}>{doneBaths}/{totalBaths} complete</span>
             </div>
-            {bathTypeLoading && <span style={{ fontSize: 12, color: C.pri, fontWeight: 600 }}>Fetching bath types from Gingr…</span>}
+            {bathTypeLoading && <span style={{ fontSize: 12, color: C.pri, fontWeight: 600, fontFamily: "inherit" }}>Fetching bath types…</span>}
           </div>
           {totalBaths > 0 && (
             <div style={{ marginTop: 10, height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
-              <div style={{ width: `${totalBaths > 0 ? Math.round((doneBaths / totalBaths) * 100) : 0}%`, height: "100%", borderRadius: 3, background: doneBaths === totalBaths ? "#10B981" : "#F59E0B", transition: "width 0.3s" }} />
+              <div style={{ width: `${Math.round((doneBaths / totalBaths) * 100)}%`, height: "100%", borderRadius: 3, background: doneBaths === totalBaths ? "#10B981" : "#F59E0B", transition: "width 0.3s" }} />
             </div>
           )}
         </Card>
         {totalBaths === 0 ? (
           <Card style={{ padding: 32, textAlign: "center" }}>
-            <div style={{ fontSize: 14, color: C.textMut }}>No baths scheduled for today</div>
+            <div style={{ fontSize: 14, color: C.textMut, fontFamily: "inherit" }}>No baths scheduled for {isToday ? "today" : fmtDate(viewDate)}</div>
           </Card>
         ) : (
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, fontFamily: "inherit" }}>
                 <thead>
                   <tr style={{ background: C.bg, borderBottom: `2px solid ${C.border}` }}>
-                    <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>DOG</th>
-                    <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>ROOM</th>
-                    <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>BATH TYPE</th>
-                    <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>CHECKOUT</th>
-                    <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>COMPLETED</th>
+                    <th style={thStyle}>DOG</th>
+                    <th style={thCenterStyle}>ROOM</th>
+                    <th style={thStyle}>BATH TYPE</th>
+                    <th style={thCenterStyle}>CHECKOUT</th>
+                    <th style={thCenterStyle}>DONE</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {bathRows.map((row, i) => (
-                    <tr key={row.resId} style={{
-                      borderBottom: i < bathRows.length - 1 ? `1px solid ${C.borderLight}` : "none",
-                      background: row.isDone ? "#F0FDF4" : "transparent",
-                      transition: "background 0.2s",
-                    }}>
-                      <td style={{ padding: "12px 14px", fontWeight: 600, color: C.text }}>
-                        {row.dogName}
-                        {row.resType === "daycare" && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEF3C7", color: "#D97706" }}>DC</span>}
-                      </td>
-                      <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri }}>{row.roomNum}</td>
-                      <td style={{ padding: "12px 14px", color: C.text }}>
-                        <span style={{
-                          display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700,
-                          background: row.bathType === "Loading…" ? "#F3F4F6" : row.bathType === "Premium" ? "#DBEAFE" : row.bathType.includes("Hypoallergenic") ? "#FEF3C7" : row.bathType === "Medicated" ? "#FEE2E2" : row.bathType === "Whitening" ? "#F3E8FF" : row.bathType === "Shampoo From Home" ? "#ECFDF5" : "#F3F4F6",
-                          color: row.bathType === "Loading…" ? "#9CA3AF" : row.bathType === "Premium" ? "#1D4ED8" : row.bathType.includes("Hypoallergenic") ? "#D97706" : row.bathType === "Medicated" ? "#DC2626" : row.bathType === "Whitening" ? "#7C3AED" : row.bathType === "Shampoo From Home" ? "#059669" : "#6B7280",
-                        }}>
-                          {row.bathType}
-                        </span>
-                      </td>
-                      <td style={{ padding: "12px 14px", textAlign: "center", color: C.textSec, fontSize: 12 }}>{row.coTime}</td>
-                      <td style={{ padding: "12px 14px", textAlign: "center" }}>
-                        <button onClick={() => toggleBath(row.resId)} style={{
-                          width: 28, height: 28, borderRadius: 8,
-                          border: row.isDone ? "2px solid #10B981" : `2px solid ${C.border}`,
-                          background: row.isDone ? "#10B981" : "transparent",
-                          cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center",
-                          color: row.isDone ? "#fff" : "transparent",
-                          fontSize: 14, fontWeight: 700, transition: "all 0.15s",
-                        }}>
-                          {row.isDone ? "✓" : ""}
-                        </button>
-                        {row.isDone && row.completedInfo && (
-                          <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>
-                            {row.completedInfo.by} · {new Date(row.completedInfo.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                  {bathRows.map((row, i) => {
+                    const badgeStyle = getBathBadgeStyle(row.bathType);
+                    return (
+                      <tr key={row.resId} style={{
+                        borderBottom: i < bathRows.length - 1 ? `1px solid ${C.borderLight}` : "none",
+                        background: row.isDone ? "#F0FDF4" : "transparent",
+                        transition: "background 0.2s",
+                      }}>
+                        <td style={{ padding: "12px 14px", fontWeight: 600, color: C.text, fontFamily: "inherit" }}>
+                          {row.dogName}
+                          {row.resType === "daycare" && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEF3C7", color: "#D97706" }}>DC</span>}
+                        </td>
+                        <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri, fontFamily: "inherit" }}>{row.roomNum}</td>
+                        <td style={{ padding: "12px 14px", color: C.text }}>
+                          <span style={{
+                            display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "inherit",
+                            ...badgeStyle,
+                          }}>
+                            {row.bathType}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 14px", textAlign: "center", color: C.textSec, fontSize: 12, fontFamily: "inherit" }}>{row.coTime}</td>
+                        <td style={{ padding: "12px 14px", textAlign: "center" }}>
+                          <button onClick={() => toggleBath(row.resId)} style={{
+                            width: 28, height: 28, borderRadius: 8,
+                            border: row.isDone ? "2px solid #10B981" : `2px solid ${C.border}`,
+                            background: row.isDone ? "#10B981" : "transparent",
+                            cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                            color: row.isDone ? "#fff" : "transparent",
+                            fontSize: 14, fontWeight: 700, transition: "all 0.15s", fontFamily: "inherit",
+                          }}>
+                            {row.isDone ? "✓" : ""}
+                          </button>
+                          {row.isDone && row.completedInfo && (
+                            <div style={{ fontSize: 10, color: C.textMut, marginTop: 2, fontFamily: "inherit" }}>
+                              {row.completedInfo.by} · {new Date(row.completedInfo.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
