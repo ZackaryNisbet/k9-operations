@@ -761,11 +761,8 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const notesCount = clientNotes.length + eodMentions.length;
   const clientSalesForCount = (data.packageSales || []).filter(s => s.clientId === clientId);
   const activePkgCount = clientSalesForCount.filter(s => (s.quantity || 0) - (s.used || 0) > 0).length;
-  const tabs = isLite ? [
-    ...(igniteLeads.length > 0 ? [{ id: "ignite", label: "Ignite", count: igniteLeads.length, color: "#F97316" }] : []),
-    { id: "lifecycle", label: "Lifecycle", count: lifecycleEventCount, color: "#8B5CF6" },
-    { id: "notes", label: "Notes", count: notesCount, color: "#F59E0B" },
-  ] : [
+  // P5: Unified tabs — ALL tabs shown for ALL clients regardless of source
+  const tabs = [
     { id: "dogs", label: "Dogs", count: dogs.length, color: C.pri },
     { id: "reservations", label: "Reservations", count: reservations.length, color: C.acc },
     { id: "payments", label: "Payments", count: pmts.length, color: C.info },
@@ -864,7 +861,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                 </span>
               )}
             </div>
-            {!isLite && <Btn variant="primary" onClick={()=>nav("new-reservation",{clientId})} icon={<I.Plus/>} size="sm">New</Btn>}
+            <Btn variant="primary" onClick={()=>nav("new-reservation",{clientId})} icon={<I.Plus/>} size="sm">New</Btn>
           </div>
         </div>
 
@@ -880,14 +877,12 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             )}
           </div>
           {isLite ? (
+            <>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Inp label="First Name" value={inlineFields.first_name || ""} onChange={v => updateInlineField("first_name", v)} />
               <Inp label="Last Name" value={inlineFields.last_name || ""} onChange={v => updateInlineField("last_name", v)} />
               <Inp label="Phone" value={inlineFields.phone || ""} onChange={v => updateInlineField("phone", v)} />
               <Inp label="Email" value={inlineFields.email || ""} onChange={v => updateInlineField("email", v)} />
-              <div style={{ gridColumn: "1 / -1" }}>
-                <Inp label="Notes" type="textarea" value={inlineFields.notes || ""} onChange={v => updateInlineField("notes", v)} />
-              </div>
               {client.sourceDate && (
                 <div>
                   <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Source Date</div>
@@ -901,6 +896,10 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                 </div>
               )}
             </div>
+            <div style={{ marginTop: 12 }}>
+              <Inp label="Notes" type="textarea" value={inlineFields.notes || ""} onChange={v => updateInlineField("notes", v)} />
+            </div>
+            </>
           ) : (
           <>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -931,8 +930,8 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           )}
         </div>
 
-        {/* Agreement Status Section — hidden for lite clients */}
-        {!isLite && <div style={{ marginBottom: 16, padding: "14px 18px", background: C.bg, borderRadius: 12 }}>
+        {/* Agreement Status Section */}
+        <div style={{ marginBottom: 16, padding: "14px 18px", background: C.bg, borderRadius: 12 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Agreement Status</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {(data.agreements || []).map(agr => {
@@ -979,11 +978,14 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                 );
               }
             })}
+            {(data.agreements || []).length === 0 && (
+              <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic" }}>No agreements configured</div>
+            )}
           </div>
-        </div>}
+        </div>
 
-        {/* Preferred Veterinarian Section — hidden for lite clients */}
-        {!isLite && <div style={{ marginBottom: 16, padding: "14px 18px", background: C.bg, borderRadius: 12, position: "relative" }}>
+        {/* Preferred Veterinarian Section */}
+        <div style={{ marginBottom: 16, padding: "14px 18px", background: C.bg, borderRadius: 12, position: "relative" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10 }}>Preferred Veterinarian</div>
           <div ref={vetDropRef} style={{ position: "relative" }}>
             <input
@@ -1049,33 +1051,17 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               </div>
             ) : null;
           })()}
-        </div>}
+        </div>
       </Card>
 
-      {/* Stats Bar — lite clients show simplified stats */}
-      {isLite ? (
-        <Card style={{marginBottom:16,padding:"16px 24px"}}>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {[
-              { label: "Source", value: liteSourceLabel, color: liteSourceColor },
-              { label: "Created", value: client.createdAt ? fmtDate(client.createdAt) : "N/A", color: C.text },
-              { label: "Stage", value: detectClientStage(client, data.serverStats), color: C.pri },
-            ].map(st => (
-              <div key={st.label} style={{flex:"1 1 140px",padding:"10px 14px",background:C.bg,borderRadius:10,textAlign:"center",minWidth:120}}>
-                <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>{st.label}</div>
-                <div style={{fontSize:16,fontWeight:800,color:st.color}}>{st.value}</div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      ) : (
+      {/* Stats Bar — unified for all clients */}
       <Card style={{marginBottom:16,padding:"16px 24px"}}>
         <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           {[
-            { label: "Referral Source", value: client.fields.referral_source || "Not set", color: client.fields.referral_source ? C.text : C.textMut },
-            { label: "Client Since", value: (() => { const firstRes = reservations.length > 0 ? reservations[reservations.length - 1] : null; return firstRes ? fmtDate(firstRes.checkIn) : "N/A"; })(), color: C.text },
-            { label: "Total Spent", value: `$${stats.totalSpent.toFixed(2)}`, color: C.suc },
-            { label: "Total Reservations", value: String(stats.totalRes), color: C.pri },
+            { label: "Source", value: isLite ? liteSourceLabel : (client.fields.referral_source || "Gingr"), color: isLite ? liteSourceColor : (client.fields.referral_source ? C.text : C.pri) },
+            { label: "Client Since", value: (() => { if (isLite) return client.createdAt ? fmtDate(client.createdAt) : "N/A"; const firstRes = reservations.length > 0 ? reservations[reservations.length - 1] : null; return firstRes ? fmtDate(firstRes.checkIn) : "N/A"; })(), color: C.text },
+            { label: "Total Spent", value: `$${(stats.totalSpent || 0).toFixed(2)}`, color: C.suc },
+            { label: "Total Reservations", value: String(stats.totalRes || 0), color: C.pri },
             { label: "Days Since Last Visit", value: stats.daysSince === null ? "N/A" : stats.daysSince === 0 ? "Today" : `${stats.daysSince} days`, color: stats.daysSince !== null && stats.daysSince <= 7 ? C.suc : stats.daysSince !== null && stats.daysSince <= 30 ? C.warn : C.textSec },
           ].map(st => (
             <div key={st.label} style={{flex:"1 1 140px",padding:"10px 14px",background:C.bg,borderRadius:10,textAlign:"center",minWidth:120}}>
@@ -1085,7 +1071,6 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
           ))}
         </div>
       </Card>
-      )}
 
       {/* Tab Bar */}
       <div style={{ display: "flex", borderBottom: `2px solid ${C.borderLight}`, background: C.bg, borderRadius: "12px 12px 0 0", marginBottom: 0, overflowX: "auto" }}>

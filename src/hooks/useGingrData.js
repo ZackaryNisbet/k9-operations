@@ -379,15 +379,27 @@ function useGingrData(locationId, refreshOptions = {}) {
             const il = igniteLeadsMap[lc.ignite_lead_id];
             if (il) {
               const fd = il.form_data || {};
-              const fdName = (fd.first_name || "") + (fd.last_name || "");
-              const fdPhone = fd.phone || "";
+              // P1: Check standard fields and alternate names (full_name, phone_number)
+              let fdFirst = fd.first_name || "";
+              let fdLast = fd.last_name || "";
+              if (!fdFirst && !fdLast && fd.full_name) {
+                const parts = fd.full_name.trim().split(/\s+/);
+                if (parts.length >= 2) { fdFirst = parts[0]; fdLast = parts.slice(1).join(" "); }
+                else if (parts.length === 1) { fdFirst = parts[0]; }
+              }
+              const fdPhone = fd.phone || fd.phone_number || "";
               const fdEmail = fd.email || fd.email_address || "";
+              const fdName = fdFirst + fdLast;
               if (!fdName.trim() && !fdPhone.trim() && !fdEmail.trim()) return false;
-              // Backfill lite_client fields from form_data (in memory only)
-              if (fd.first_name) lc.first_name = fd.first_name;
-              if (fd.last_name) lc.last_name = fd.last_name;
-              if (fd.phone) lc.phone = fd.phone;
-              if (fd.email || fd.email_address) lc.email = fd.email || fd.email_address;
+              // Backfill lite_client fields from form_data and persist to DB (P1 fix)
+              const backfillUpdates = {};
+              if (fdFirst && !lc.first_name) { lc.first_name = fdFirst; backfillUpdates.first_name = fdFirst; }
+              if (fdLast && !lc.last_name) { lc.last_name = fdLast; backfillUpdates.last_name = fdLast; }
+              if (fdPhone && !lc.phone) { lc.phone = fdPhone; backfillUpdates.phone = fdPhone; }
+              if (fdEmail && !lc.email) { lc.email = fdEmail; backfillUpdates.email = fdEmail; }
+              if (Object.keys(backfillUpdates).length > 0) {
+                supabase.from("lite_clients").update(backfillUpdates).eq("id", lc.id).then(() => {});
+              }
             } else {
               return false; // No ignite lead data at all — filter out
             }
@@ -434,6 +446,16 @@ function useGingrData(locationId, refreshOptions = {}) {
                 desiredService: fd.desired_service || null,
                 desiredDate: fd.desired_date_of_boarding_or_day_care || null,
                 createdAt: il.created_at,
+                // P2: UTM params and referring URL
+                utmSource: fd.utm_source || null,
+                utmMedium: fd.utm_medium || null,
+                utmCampaign: fd.utm_campaign || null,
+                utmTerm: fd.utm_term || null,
+                utmContent: fd.utm_content || null,
+                referringUrl: fd.referring_url || fd.referrer || null,
+                browser: fd.browser || null,
+                device: fd.device || null,
+                formData: fd,
               };
             } else {
               igniteData = { leadId: lc.ignite_lead_id };
@@ -442,7 +464,7 @@ function useGingrData(locationId, refreshOptions = {}) {
           return {
             id: `lc_${lc.id}`,
             gingrId: null,
-            createdAt: lc.created_at || new Date().toISOString(),
+            createdAt: lc.source_date || lc.created_at || new Date().toISOString(),
             source: lc.source || "manual",
             sourceData: { sourceDate: lc.source_date, igniteLeadId: lc.ignite_lead_id },
             isLiteClient: true,
@@ -739,6 +761,71 @@ function useGingrData(locationId, refreshOptions = {}) {
 // ─── Lite Client CRUD ────────────────────────────────────────────────────
 
 export async function insertLiteClient(locationId, fields) {
+  // P8: Phone-based dedup — check for existing lite_client with matching phone
+  const normalizePhone = (p) => {
+    if (!p) return "";
+    const d = p.replace(/\D/g, "");
+    return d.length === 10 ? "1" + d : d;
+  };
+  const normPhone = normalizePhone(fields.phone);
+  if (normPhone) {
+    const { data: existing } = await supabase
+      .from("lite_clients")
+      .select("id, phone, email")
+      .eq("location_id", locationId);
+    if (existing) {
+      const match = existing.find((lc) => normalizePhone(lc.phone) === normPhone);
+      if (match) {
+        // Update existing record instead of creating a duplicate
+        const updates = {};
+        if (fields.first_name) updates.first_name = fields.first_name;
+        if (fields.last_name) updates.last_name = fields.last_name;
+        if (fields.email) updates.email = fields.email;
+        if (fields.notes) updates.notes = fields.notes;
+        if (fields.ignite_lead_id) updates.ignite_lead_id = fields.ignite_lead_id;
+        if (fields.source) updates.source = fields.source;
+        if (fields.lifecycle_data) updates.lifecycle_data = fields.lifecycle_data;
+        if (Object.keys(updates).length > 0) {
+          const { data: updated, error } = await supabase
+            .from("lite_clients").update(updates).eq("id", match.id).select().single();
+          if (error) throw error;
+          return updated;
+        }
+        // No updates needed — return existing
+        const { data: full } = await supabase
+          .from("lite_clients").select("*").eq("id", match.id).single();
+        return full;
+      }
+    }
+  }
+  // Also check by email
+  if (!normPhone && fields.email) {
+    const { data: emailMatch } = await supabase
+      .from("lite_clients")
+      .select("id")
+      .eq("location_id", locationId)
+      .eq("email", fields.email)
+      .limit(1);
+    if (emailMatch && emailMatch.length > 0) {
+      const updates = {};
+      if (fields.first_name) updates.first_name = fields.first_name;
+      if (fields.last_name) updates.last_name = fields.last_name;
+      if (fields.phone) updates.phone = fields.phone;
+      if (fields.notes) updates.notes = fields.notes;
+      if (fields.ignite_lead_id) updates.ignite_lead_id = fields.ignite_lead_id;
+      if (fields.source) updates.source = fields.source;
+      if (Object.keys(updates).length > 0) {
+        const { data: updated, error } = await supabase
+          .from("lite_clients").update(updates).eq("id", emailMatch[0].id).select().single();
+        if (error) throw error;
+        return updated;
+      }
+      const { data: full } = await supabase
+        .from("lite_clients").select("*").eq("id", emailMatch[0].id).single();
+      return full;
+    }
+  }
+
   const row = {
     location_id: locationId,
     first_name: fields.first_name || null,
