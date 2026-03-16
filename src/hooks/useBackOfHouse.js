@@ -2,10 +2,17 @@
 // Fetches checking_in / checking_out lists directly from Gingr API
 // for near-real-time Checkout TV display. Bypasses 15-min Supabase sync.
 //
+// Data model (from Gingr):
+//   checking_in  = dogs scheduled to arrive today but NOT yet checked in
+//   checking_out = dogs that ARE checked in (here now), scheduled to leave today
+//   → The TV only cares about checking_out (active dogs)
+//
 // Features:
 //   - Configurable poll interval (default 10s)
 //   - Business-hours-only polling (configurable)
 //   - Page Visibility API pause — stops polling when tab is hidden
+//   - Tracks recent arrivals (new in checking_out) and departures (removed from checking_out)
+//   - 60-second highlight window for check-in / check-out transitions
 //   - Persists config in lite_settings under "tv_poll_config"
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
@@ -21,7 +28,9 @@ const DEFAULTS = {
   businessHoursEnd: "19:30",
 };
 
-// ── Gingr API config (same as used elsewhere in the app) ────────────────────
+const HIGHLIGHT_DURATION_MS = 60_000; // 60 seconds
+
+// ── Gingr API config ────────────────────────────────────────────────────────
 const GINGR_SUBDOMAIN = "your-gingr-subdomain";
 const GINGR_API_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
 const GINGR_LOCATION_ID = "1";
@@ -30,15 +39,19 @@ const BOH_URL = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/back_of_house?ke
 
 // ── Hook ────────────────────────────────────────────────────────────────────
 export function useBackOfHouse(locationId, enabled = true) {
-  const [checkingIn, setCheckingIn] = useState([]);
-  const [checkingOut, setCheckingOut] = useState([]);
+  // Active dogs = checking_out list (dogs that are here now)
+  const [activeDogs, setActiveDogs] = useState([]);
+  // Transition tracking: { id: { dog, type: "arrived"|"departed", timestamp } }
+  const [recentEvents, setRecentEvents] = useState({});
   const [lastFetch, setLastFetch] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState(DEFAULTS);
   const [configLoaded, setConfigLoaded] = useState(false);
   const timerRef = useRef(null);
+  const highlightTimerRef = useRef(null);
   const visibleRef = useRef(true);
+  const prevActiveIdsRef = useRef(null); // Set of IDs from previous poll
   const fetchCountRef = useRef(0);
 
   // ── Load config from Supabase ──────────────────────────────────────────
@@ -79,6 +92,26 @@ export function useBackOfHouse(locationId, enabled = true) {
     return mins >= (startH * 60 + startM) && mins <= (endH * 60 + endM);
   }, [config.businessHoursEnabled, config.businessHoursStart, config.businessHoursEnd]);
 
+  // ── Clean up expired highlights ────────────────────────────────────────
+  useEffect(() => {
+    highlightTimerRef.current = setInterval(() => {
+      const now = Date.now();
+      setRecentEvents(prev => {
+        const next = {};
+        let changed = false;
+        for (const [id, evt] of Object.entries(prev)) {
+          if (now - evt.timestamp < HIGHLIGHT_DURATION_MS) {
+            next[id] = evt;
+          } else {
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    }, 5000);
+    return () => clearInterval(highlightTimerRef.current);
+  }, []);
+
   // ── Fetch back_of_house ────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
     if (!enabled || !visibleRef.current || !isWithinBusinessHours()) return;
@@ -88,8 +121,43 @@ export function useBackOfHouse(locationId, enabled = true) {
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const json = await resp.json();
       const d = json.data || {};
-      setCheckingIn(d.checking_in || []);
-      setCheckingOut(d.checking_out || []);
+
+      // Active dogs = checking_out (dogs that are HERE)
+      const newActive = d.checking_out || [];
+      const newActiveIds = new Set(newActive.map(dog => dog.id));
+
+      // Detect transitions (skip on first fetch — no previous data to compare)
+      if (prevActiveIdsRef.current !== null) {
+        const prevIds = prevActiveIdsRef.current;
+        const now = Date.now();
+        const events = {};
+
+        // New arrivals: in newActive but not in prev
+        for (const dog of newActive) {
+          if (!prevIds.has(dog.id)) {
+            events[dog.id] = { dog, type: "arrived", timestamp: now };
+          }
+        }
+
+        // Departures: in prev but not in newActive
+        // We need the dog data from the previous active list for display
+        for (const id of prevIds) {
+          if (!newActiveIds.has(id)) {
+            // Find dog data from previous active list (stored on state)
+            const prevDog = (activeDogs || []).find(d => d.id === id);
+            if (prevDog) {
+              events[id] = { dog: prevDog, type: "departed", timestamp: now };
+            }
+          }
+        }
+
+        if (Object.keys(events).length > 0) {
+          setRecentEvents(prev => ({ ...prev, ...events }));
+        }
+      }
+
+      prevActiveIdsRef.current = newActiveIds;
+      setActiveDogs(newActive);
       setLastFetch(new Date());
       setError(null);
       fetchCountRef.current += 1;
@@ -98,13 +166,12 @@ export function useBackOfHouse(locationId, enabled = true) {
     } finally {
       setLoading(false);
     }
-  }, [enabled, isWithinBusinessHours]);
+  }, [enabled, isWithinBusinessHours, activeDogs]);
 
   // ── Page Visibility API ────────────────────────────────────────────────
   useEffect(() => {
     const onVisChange = () => {
       visibleRef.current = !document.hidden;
-      // If becoming visible again, fetch immediately
       if (visibleRef.current && enabled) fetchData();
     };
     document.addEventListener("visibilitychange", onVisChange);
@@ -115,7 +182,6 @@ export function useBackOfHouse(locationId, enabled = true) {
   useEffect(() => {
     if (!enabled || !configLoaded) return;
 
-    // Initial fetch
     fetchData();
 
     const ms = (config.pollIntervalSeconds || 10) * 1000;
@@ -126,34 +192,27 @@ export function useBackOfHouse(locationId, enabled = true) {
     };
   }, [enabled, configLoaded, config.pollIntervalSeconds, fetchData]);
 
-  // ── Derived data ───────────────────────────────────────────────────────
+  // ── Derived stats ─────────────────────────────────────────────────────
   const stats = useMemo(() => {
-    const allDogs = [...checkingIn, ...checkingOut];
-    const checkedIn = allDogs.filter(d => d.check_in_stamp);
-    const pending = allDogs.filter(d => !d.check_in_stamp);
-
-    const daycare = allDogs.filter(d => {
+    const classify = (d) => {
       const t = (d.type || "").toLowerCase();
-      return t.includes("daycare") || t.includes("day boarding") || t.includes("evaluation");
-    });
-    const boarding = allDogs.filter(d => {
-      const t = (d.type || "").toLowerCase();
-      return t.includes("boarding") && !t.includes("day boarding");
-    });
+      if (t.includes("daycare") || t.includes("day boarding") || t.includes("evaluation")) return "daycare";
+      return "boarding";
+    };
+    const daycare = activeDogs.filter(d => classify(d) === "daycare");
+    const boarding = activeDogs.filter(d => classify(d) === "boarding");
 
     return {
-      total: allDogs.length,
-      checkedInCount: checkedIn.length,
-      pendingCount: pending.length,
+      total: activeDogs.length,
       daycareCount: daycare.length,
       boardingCount: boarding.length,
       fetchCount: fetchCountRef.current,
     };
-  }, [checkingIn, checkingOut]);
+  }, [activeDogs]);
 
   return {
-    checkingIn,
-    checkingOut,
+    activeDogs,
+    recentEvents,
     stats,
     lastFetch,
     error,
