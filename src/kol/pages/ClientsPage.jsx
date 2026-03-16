@@ -291,43 +291,98 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     if (changed) save({ ...data, clients: updatedClients });
   }, [clientTabMap]);
 
-  // ── One-time backfill: add "Pulled lead from Ignite" system log for Ignite leads with 0 entries ──
+  // ── One-time backfill: add system explanations for ALL leads with 0 updates (P3) ──
   const igniteBackfillDoneRef = useRef(false);
   useEffect(() => {
     if (igniteBackfillDoneRef.current || !save) return;
     igniteBackfillDoneRef.current = true;
     let changed = false;
     const updatedClients = data.clients.map(c => {
-      // Only apply to Ignite-sourced lite clients with 0 updates
-      if (!c.isLiteClient) return c;
-      if (c.lifecycle?.conversion?.source !== "ignite") return c;
-      const updates = c.lifecycle?.conversion?.updates || [];
-      if (updates.length > 0) return c;
-      // Add system log entry
-      const leadType = c.igniteData?.leadType;
-      const src = c.igniteData?.source || "";
-      const typeLabel = leadType === "phone_call" ? "Phone Call" : leadType === "web_form" ? "Web Form" : leadType === "ad_click" ? "Ad Click" : "Lead";
+      const convUpdates = c.lifecycle?.conversion?.updates || [];
+      if (convUpdates.length > 0) return c;
+      // Ignite-sourced lite clients
+      if (c.isLiteClient && c.lifecycle?.conversion?.source === "ignite") {
+        const leadType = c.igniteData?.leadType;
+        const src = c.igniteData?.source || "";
+        const typeLabel = leadType === "phone_call" ? "Phone Call" : leadType === "web_form" ? "Web Form" : leadType === "ad_click" ? "Ad Click" : "Lead";
+        changed = true;
+        return {
+          ...c,
+          lifecycle: { ...c.lifecycle, conversion: { ...c.lifecycle.conversion, updates: [{
+            id: gid(), notes: `Pulled lead from Ignite \u2014 ${typeLabel}${src ? " (" + src + ")" : ""}`,
+            previousFollowUp: "", newFollowUp: c.lifecycle?.conversion?.followUpDate || "",
+            loggedBy: "System", loggedAt: c.createdAt || new Date().toISOString(),
+          }] } },
+        };
+      }
+      // Non-Ignite lite clients (manual leads)
+      if (c.isLiteClient) {
+        const src = c.lifecycle?.conversion?.source || "manual";
+        changed = true;
+        return {
+          ...c,
+          lifecycle: { ...(c.lifecycle || {}), conversion: { ...(c.lifecycle?.conversion || {}), updates: [{
+            id: gid(), notes: `Lead added manually \u2014 source: ${src}`,
+            previousFollowUp: "", newFollowUp: c.lifecycle?.conversion?.followUpDate || "",
+            loggedBy: "System", loggedAt: c.createdAt || new Date().toISOString(),
+          }] } },
+        };
+      }
+      // Gingr-sourced leads with no bookings
+      if (c.gingrId && !clientTabMap[c.id]?.isActive && !clientTabMap[c.id]?.isRetention && !c.lifecycle?.cold) {
+        const s = clientStats[c.id] || {};
+        const createdLabel = c.createdAt ? fmtDate(c.createdAt.split("T")[0]) : "unknown date";
+        changed = true;
+        return {
+          ...c,
+          lifecycle: { ...(c.lifecycle || {}), conversion: { ...(c.lifecycle?.conversion || { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }), updates: [{
+            id: gid(), notes: `Synced from Gingr on ${createdLabel} \u2014 ${s.totalRes || 0} reservations, $${(s.totalSpent || 0).toLocaleString()} spent`,
+            previousFollowUp: "", newFollowUp: c.lifecycle?.conversion?.followUpDate || "",
+            loggedBy: "System", loggedAt: c.createdAt || new Date().toISOString(),
+          }] } },
+        };
+      }
+      return c;
+    });
+    if (changed) save({ ...data, clients: updatedClients });
+  }, [data.clients, clientTabMap]);
+
+  // ── One-time backfill: add system explanations for lapsed clients with 0 retention updates (P3) ──
+  const lapsedBackfillDoneRef = useRef(false);
+  useEffect(() => {
+    if (lapsedBackfillDoneRef.current || !save || !clientTabMap || !Object.keys(clientTabMap).length) return;
+    lapsedBackfillDoneRef.current = true;
+    const dcThreshP3 = data.resortPolicies?.retentionDaycareDays ?? 90;
+    const bdThreshP3 = data.resortPolicies?.retentionBoardingDays ?? 180;
+    let changed = false;
+    const updatedClients = data.clients.map(c => {
+      if (!clientTabMap[c.id]?.isRetention) return c;
+      const retUpdates = c.lifecycle?.retention?.updates || [];
+      if (retUpdates.length > 0) return c;
+      // Generate detailed lapse explanation
+      const s = clientStats[c.id] || {};
+      const totalRes = s.totalRes || 0;
+      const boardingCount = s.boardingCount || 0;
+      const daycareCount = s.daycareCount || 0;
+      const bdPct = totalRes > 0 ? boardingCount / totalRes : 0;
+      const thresh = bdPct > 0.5 ? bdThreshP3 : dcThreshP3;
+      const threshLabel = bdPct > 0.5 ? "boarding" : "daycare";
+      const lastVisit = s.lastRes?.checkIn || "unknown";
+      const lastVisitFmt = lastVisit !== "unknown" ? fmtDate(lastVisit) : "unknown";
+      const daysSince = s.daysSinceLast ?? "?";
       changed = true;
       return {
         ...c,
-        lifecycle: {
-          ...c.lifecycle,
-          conversion: {
-            ...c.lifecycle.conversion,
-            updates: [{
-              id: gid(),
-              notes: `Pulled lead from Ignite \u2014 ${typeLabel}${src ? " (" + src + ")" : ""}`,
-              previousFollowUp: "",
-              newFollowUp: c.lifecycle.conversion.followUpDate || "",
-              loggedBy: "System",
-              loggedAt: c.createdAt || new Date().toISOString(),
-            }],
-          },
-        },
+        lifecycle: { ...(c.lifecycle || {}), retention: { ...(c.lifecycle?.retention || { notes:"",followUpDate:"",updates:[] }), updates: [{
+          id: gid(),
+          notes: `Client lapsed \u2014 last visit ${lastVisitFmt} (${daysSince} days ago). Threshold: ${thresh} days (${threshLabel}-heavy, ${boardingCount} boarding / ${daycareCount} daycare of ${totalRes} total). $${(s.totalSpent || 0).toLocaleString()} lifetime spend.`,
+          previousFollowUp: "", newFollowUp: c.lifecycle?.retention?.followUpDate || "",
+          loggedBy: "System", loggedAt: new Date().toISOString(),
+        }] } },
       };
     });
     if (changed) save({ ...data, clients: updatedClients });
-  }, [data.clients]);
+  }, [data.clients, clientTabMap, clientStats]);
 
   // ── Source lookup helpers ──
   const getClientSource = useCallback((client) => {
@@ -1448,6 +1503,16 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                       isWebForm && { label: "Pet Name", val: igd.petName },
                       isWebForm && igd.salesValue != null && { label: "Est. Value", val: `$${Number(igd.salesValue).toLocaleString("en-US",{minimumFractionDigits:2})}` },
                       isWebForm && { label: "Details", val: igd.details },
+                      // P2: UTM params, referring URL, browser/device
+                      igd.landingPage && { label: "Landing Page", val: igd.landingPage },
+                      igd.referringUrl && { label: "Referring URL", val: igd.referringUrl },
+                      igd.utmSource && { label: "UTM Source", val: igd.utmSource },
+                      igd.utmMedium && { label: "UTM Medium", val: igd.utmMedium },
+                      igd.utmCampaign && { label: "UTM Campaign", val: igd.utmCampaign },
+                      igd.utmTerm && { label: "UTM Term", val: igd.utmTerm },
+                      igd.utmContent && { label: "UTM Content", val: igd.utmContent },
+                      igd.browser && { label: "Browser", val: igd.browser },
+                      igd.device && { label: "Device", val: igd.device },
                     ].filter(f => f && f.val);
                     // Parse transcript into speaker blocks
                     const parseTranscript = (raw) => {

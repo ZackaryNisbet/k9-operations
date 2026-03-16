@@ -88,6 +88,14 @@ const LABEL_MAP: Record<string, string> = {
   "Call Duration": "call_duration",
   "Recording": "recording",
   "Call Transcription": "call_transcription",
+  // Contact / booking form fields
+  "Full Name": "full_name",
+  "Phone Number": "phone_number",
+  "First Name": "first_name",
+  "Last Name": "last_name",
+  "Email": "email",
+  "Email Address": "email_address",
+  "Phone": "phone",
   // Appointment specific
   "Lead Page": "lead_page",
   "Landing Page": "landing_page",
@@ -402,8 +410,19 @@ function parseIgniteEmail(
     // These are stored in form_data fields like first_name, last_name, email, phone, email_address
     if (!firstName && fields.first_name?.text) firstName = fields.first_name.text.trim();
     if (!lastName && fields.last_name?.text) lastName = fields.last_name.text.trim();
+    // P1: Also check full_name (used by booking/appointment forms)
+    if (!firstName && !lastName && fields.full_name?.text) {
+      const parts = fields.full_name.text.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        firstName = parts[0];
+        lastName = parts.slice(1).join(" ");
+      } else if (parts.length === 1) {
+        firstName = parts[0];
+      }
+    }
     if (!phone) {
-      const rawPh = fields.phone?.text || null;
+      // P1: Check both phone and phone_number fields
+      const rawPh = fields.phone?.text || fields.phone_number?.text || null;
       if (rawPh) {
         phoneRaw = rawPh;
         phone = normalizePhone(rawPh);
@@ -1033,57 +1052,110 @@ Deno.serve(async (req: Request): Promise<Response> => {
       `[ignite-webhook] Lead stored: ${lead.id} (${matchStatus})`,
     );
 
-    // ── Auto-create lite_client for unmatched leads ──────────────────────
+    // ── Auto-create or update lite_client for unmatched leads (P8: phone dedup) ──
     let liteClientId: string | null = null;
     if (matchStatus === MATCH_STATUSES.NO_MATCH && lead.id) {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
       const followUpDate = tomorrow.toISOString().split("T")[0];
 
-      const { data: liteClient, error: lcError } = await supabaseClient
-        .from("lite_clients")
-        .insert({
-          location_id: locationId,
-          first_name: parsed.firstName || null,
-          last_name: parsed.lastName || null,
-          phone: parsed.phone || null,
-          email: parsed.email || null,
-          source: "ignite",
-          source_date: new Date().toISOString(),
-          ignite_lead_id: lead.id,
-          notes: `Ignite ${parsed.leadType === "phone_call" ? "phone call" : "web form"} lead — ${new Date().toLocaleDateString()}`,
-          lifecycle_data: {
-            conversion: {
-              notes: "",
-              followUpDate,
-              updates: [{
-                id: "sys_" + Date.now().toString(36),
-                notes: `Pulled lead from Ignite — ${parsed.leadType === "phone_call" ? "Phone Call" : parsed.leadType === "ad_click" ? "Ad Click" : "Web Form"}${parsed.sourceDetail ? " (" + parsed.sourceDetail + ")" : ""}`,
-                previousFollowUp: "",
-                newFollowUp: followUpDate,
-                loggedBy: "System",
-                loggedAt: new Date().toISOString(),
-              }],
-              source: "ignite",
-              sourceDate: new Date().toISOString(),
-              sourceReservationId: "",
-            },
-            retention: { notes: "", followUpDate: "", updates: [] },
-            cold: false,
-            coldDate: "",
-            coldFrom: "",
-          },
-        })
-        .select("id")
-        .single();
+      // P8: Check for existing lite_client with same normalized phone
+      const leadPhone = normalizePhone(parsed.phone);
+      let existingLiteClient: { id: string } | null = null;
+      if (leadPhone) {
+        // Check lite_clients by normalized phone
+        const { data: existingLCs } = await supabaseClient
+          .from("lite_clients")
+          .select("id, phone")
+          .eq("location_id", locationId);
+        if (existingLCs) {
+          existingLiteClient = existingLCs.find(
+            (lc: { id: string; phone: string | null }) =>
+              normalizePhone(lc.phone) === leadPhone,
+          ) || null;
+        }
+      }
+      // Also check by email if no phone match
+      if (!existingLiteClient && parsed.email) {
+        const { data: emailMatch } = await supabaseClient
+          .from("lite_clients")
+          .select("id")
+          .eq("location_id", locationId)
+          .eq("email", parsed.email)
+          .limit(1);
+        if (emailMatch && emailMatch.length > 0) {
+          existingLiteClient = emailMatch[0];
+        }
+      }
 
-      if (lcError) {
-        console.error("[ignite-webhook] Lite client create error:", lcError);
+      if (existingLiteClient) {
+        // Update existing lite_client with new lead data instead of creating duplicate
+        liteClientId = existingLiteClient.id;
+        const { error: updateError } = await supabaseClient
+          .from("lite_clients")
+          .update({
+            ignite_lead_id: lead.id,
+            // Backfill name/phone/email if previously empty
+            ...(parsed.firstName ? { first_name: parsed.firstName } : {}),
+            ...(parsed.lastName ? { last_name: parsed.lastName } : {}),
+            ...(parsed.phone ? { phone: parsed.phone } : {}),
+            ...(parsed.email ? { email: parsed.email } : {}),
+          })
+          .eq("id", existingLiteClient.id);
+        if (updateError) {
+          console.error("[ignite-webhook] Lite client update error:", updateError);
+        } else {
+          console.log(
+            `[ignite-webhook] Linked lead ${lead.id} to existing lite_client: ${existingLiteClient.id} (phone dedup)`,
+          );
+        }
       } else {
-        liteClientId = liteClient.id;
-        console.log(
-          `[ignite-webhook] Auto-created lite_client: ${liteClient.id} for lead ${lead.id}`,
-        );
+        // No existing match — create new lite_client
+        const { data: liteClient, error: lcError } = await supabaseClient
+          .from("lite_clients")
+          .insert({
+            location_id: locationId,
+            first_name: parsed.firstName || null,
+            last_name: parsed.lastName || null,
+            phone: parsed.phone || null,
+            email: parsed.email || null,
+            source: "ignite",
+            source_date: new Date().toISOString(),
+            ignite_lead_id: lead.id,
+            notes: `Ignite ${parsed.leadType === "phone_call" ? "phone call" : "web form"} lead — ${new Date().toLocaleDateString()}`,
+            lifecycle_data: {
+              conversion: {
+                notes: "",
+                followUpDate,
+                updates: [{
+                  id: "sys_" + Date.now().toString(36),
+                  notes: `Pulled lead from Ignite — ${parsed.leadType === "phone_call" ? "Phone Call" : parsed.leadType === "ad_click" ? "Ad Click" : "Web Form"}${parsed.sourceDetail ? " (" + parsed.sourceDetail + ")" : ""}`,
+                  previousFollowUp: "",
+                  newFollowUp: followUpDate,
+                  loggedBy: "System",
+                  loggedAt: new Date().toISOString(),
+                }],
+                source: "ignite",
+                sourceDate: new Date().toISOString(),
+                sourceReservationId: "",
+              },
+              retention: { notes: "", followUpDate: "", updates: [] },
+              cold: false,
+              coldDate: "",
+              coldFrom: "",
+            },
+          })
+          .select("id")
+          .single();
+
+        if (lcError) {
+          console.error("[ignite-webhook] Lite client create error:", lcError);
+        } else {
+          liteClientId = liteClient.id;
+          console.log(
+            `[ignite-webhook] Auto-created lite_client: ${liteClient.id} for lead ${lead.id}`,
+          );
+        }
       }
     }
 
