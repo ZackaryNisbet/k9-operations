@@ -1033,9 +1033,29 @@ function CheckoutTVContent({ data, nav, profile }) {
       !existingGingrIds.has(r.gingrId) && !existingDogIds.has(r.dogId)
     );
 
+    const allRes = [...filteredBaseRes, ...newDaycareRes, ...newBoardingRes];
+    const allDogs = [...baseDogs, ...syntheticDogs];
+    // Debug: check for Boots(1550) and Bruno(9026)
+    const bootsRes = allRes.filter(r => r.dogId === 'g1550');
+    const brunoRes = allRes.filter(r => r.dogId === 'g9026');
+    const bootsInGingr = gingrBoardingDogs.filter(d => d.animal_id === '1550');
+    const brunoInGingr = gingrBoardingDogs.filter(d => d.animal_id === '9026');
+    const bootsInNewBoarding = newBoardingRes.filter(r => r.dogId === 'g1550');
+    const brunoInNewBoarding = newBoardingRes.filter(r => r.dogId === 'g9026');
+    const bootsInFiltered = filteredBaseRes.filter(r => r.dogId === 'g1550');
+    const brunoInFiltered = filteredBaseRes.filter(r => r.dogId === 'g9026');
+    const bootsInExisting = existingBoardingAnimalIds.has('1550');
+    const brunoInExisting = existingBoardingAnimalIds.has('9026');
+    const bootsExGingrId = existingGingrIds.has(141867) || existingGingrIds.has('141867');
+    const brunoExGingrId = existingGingrIds.has(140521) || existingGingrIds.has('140521');
+    const bootsExDogId = existingDogIds.has('g1550');
+    const brunoExDogId = existingDogIds.has('g9026');
+    console.log('[TV-DEBUG-BOOTS] inGingr:', bootsInGingr.length, 'inExistingAnimalIds:', bootsInExisting, 'inFiltered:', bootsInFiltered.length, 'inNewBoarding:', bootsInNewBoarding.length, 'inAllRes:', bootsRes.length, 'exGingrId:', bootsExGingrId, 'exDogId:', bootsExDogId);
+    console.log('[TV-DEBUG-BRUNO] inGingr:', brunoInGingr.length, 'inExistingAnimalIds:', brunoInExisting, 'inFiltered:', brunoInFiltered.length, 'inNewBoarding:', brunoInNewBoarding.length, 'inAllRes:', brunoRes.length, 'exGingrId:', brunoExGingrId, 'exDogId:', brunoExDogId);
+    console.log('[TV-DEBUG] filteredBaseRes:', filteredBaseRes.length, 'newDaycareRes:', newDaycareRes.length, 'newBoardingRes:', newBoardingRes.length, 'total:', allRes.length, 'syntheticDogs:', syntheticDogs.length);
     return {
-      reservations: [...filteredBaseRes, ...newDaycareRes, ...newBoardingRes],
-      dogs: [...baseDogs, ...syntheticDogs],
+      reservations: allRes,
+      dogs: allDogs,
     };
   }, [baseReservations, baseDogs, gingrDaycareDogs, gingrActiveDogs, gingrBoardingDogs]);
 
@@ -1695,7 +1715,7 @@ function CheckoutTVContent({ data, nav, profile }) {
 
       {/* Footer */}
       <div style={{ textAlign: "center", marginTop: 40, padding: "16px 0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time · TV-014: {gingrBoardingDogs.length} boarding from Gingr API</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time · TV-014: {gingrBoardingDogs.length} boarding from Gingr API · allRes: {reservations.length} · uniqueDogs: {uniqueDogs.length} · Boots(g1550): {reservations.some(r => r.dogId === 'g1550') ? 'YES' : 'NO'} · Bruno(g9026): {reservations.some(r => r.dogId === 'g9026') ? 'YES' : 'NO'}</div>
       </div>
 
       {/* Floating Exit Button — subtle, top-left corner */}
