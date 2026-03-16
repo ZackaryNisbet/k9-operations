@@ -35,7 +35,7 @@ const GINGR_SUBDOMAIN = "k9cherryhill";
 const GINGR_API_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
 const GINGR_LOCATION_ID = "1";
 
-const BOH_URL = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/back_of_house?key=${GINGR_API_KEY}&location_id=${GINGR_LOCATION_ID}&full_day=true`;
+const BOH_URL = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/back_of_house?key=${GINGR_API_KEY}&location_id=${GINGR_LOCATION_ID}&full_day=true&include_daycare=true`;
 
 // ── Hook ────────────────────────────────────────────────────────────────────
 export function useBackOfHouse(locationId, enabled = true) {
