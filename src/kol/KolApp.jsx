@@ -39,6 +39,7 @@ import InventoryPage from "./pages/InventoryPage";
 import InventoryReportPage from "./pages/InventoryReportPage";
 import CashTipsPage from "./pages/CashTipsPage";
 import TestHealthPage from "./pages/TestHealthPage";
+import OccupancyReportPage from "./pages/OccupancyReportPage";
 
 class LeanAppErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null, info: null }; }
@@ -93,6 +94,7 @@ const LITE_PAGE_SLUGS = {
   "enterprise-attendance": "enterprise/attendance",
   "enterprise-users": "enterprise/users",
   "test-health": "test-health",
+  "occupancy-report": "occupancy-report",
 };
 const LITE_SLUG_TO_PAGE = {};
 Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v]) LITE_SLUG_TO_PAGE[v] = k; });
@@ -742,6 +744,8 @@ function LeanAppInner() {
         return <InventoryReportPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "cash-tips":
         return <CashTipsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "occupancy-report":
+        return <OccupancyReportPage nav={nav} locationId={currentLocation} refreshOptions={refreshOptions} />;
       case "test-health":
         return <TestHealthPage />;
       case "roadmap":
