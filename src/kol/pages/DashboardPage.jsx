@@ -1096,7 +1096,6 @@ function DashboardContent({
         if (isBoarding && startD && endD) {
           const nights = countNights(startD, endD);
           if (nights <= 0) return;
-          const perNight = total > 0 ? total / nights : 0;
           // Count how many nights fall within selected date range
           let accrualNights = 0;
           let night = startD;
@@ -1105,14 +1104,14 @@ function DashboardContent({
             night = addDays(night, 1);
           }
           if (accrualNights <= 0) return;
-          const accrualAmount = perNight * accrualNights;
           const lastInit = r.owner_last_name ? r.owner_last_name.charAt(0).toUpperCase() + "." : "";
+          // Temporarily push with raw total — perNight adjusted after sibling grouping
           boarding.push({
             id: r.gingr_id, dogName: r.animal_name || "Unknown", lastInit, ownerName,
-            roomType, perNight, nights: accrualNights, totalNights: nights,
-            totalCost: total, accrualAmount, checkIn: startD, checkOut: endD,
+            roomType, nights: accrualNights, totalNights: nights,
+            totalCost: total, checkIn: startD, checkOut: endD,
+            _resKey: `${ownerName}|${startD}|${endD}|${total}`,
           });
-          boardingTotal += accrualAmount;
         } else if (isDaycare && startD >= dateFrom && startD <= dateTo) {
           // Classify daycare type & apply base rate
           let baseRate = dcRates.fullDay;
@@ -1140,6 +1139,16 @@ function DashboardContent({
             enrichmentMap[sName].totalCost += sCost;
           });
         }
+      });
+
+      // Sibling grouping: count dogs per reservation, compute per-night-per-dog rate
+      const resKeyCount = {};
+      boarding.forEach(b => { resKeyCount[b._resKey] = (resKeyCount[b._resKey] || 0) + 1; });
+      boarding.forEach(b => {
+        const dogsInRes = resKeyCount[b._resKey] || 1;
+        b.perNight = b.totalCost > 0 ? b.totalCost / b.totalNights / dogsInRes : 0;
+        b.accrualAmount = b.perNight * b.nights;
+        boardingTotal += b.accrualAmount;
       });
 
       // Build enrichment list sorted by total cost descending
@@ -1597,7 +1606,7 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
                     {item.dogName}{item.lastInit ? ` ${item.lastInit}` : ""}
                   </span>
                   <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0 }}>
-                    {item.perNight > 0 ? `${fmtMoney(item.perNight)}/nt × ${item.nights}nt` : `${item.nights}nt`}
+                    {item.totalCost > 0 ? `${fmtMoney(item.totalCost)} res · ${fmtMoney(item.perNight)}/nt` : `${item.totalNights}nt`}
                   </span>
                 </div>
                 <div style={{ fontSize: 11, fontWeight: item.accrualAmount > 0 ? 700 : 500, color: item.accrualAmount > 0 ? C.text : "rgba(20,83,45,0.35)", fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap", fontStyle: item.accrualAmount > 0 ? "normal" : "italic" }}>
