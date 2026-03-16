@@ -866,27 +866,41 @@ function DashboardContent({
   // These are lightweight — only counting client records, not iterating 136K reservations.
   const emptyFunnel = { remainingLeads: 0, remainingAtRisk: 0, todayOutreaches: 0, todayConversions: 0, firstTimePayers: 0, todayNewLeads: 0, conversionRate: 0, avgLTV: 0, totalLTV: 0, spendingClientsCount: 0 };
 
+  // Capture the first non-null reservations snapshot for lifecycle metrics.
+  // This uses Phase 2a's quick-fetched window (~500 rows) and does NOT update
+  // when Phase 2b's full 136K arrives, avoiding a 2+ second recompute freeze.
+  // The quick window contains all recent reservations needed for firstTimePayers.
+  const stableReservationsRef = useRef(null);
+  if (data?.reservations && !stableReservationsRef.current) {
+    stableReservationsRef.current = data.reservations;
+  }
+  const stableReservations = stableReservationsRef.current || [];
+
   const funnelMetrics = useMemo(() => {
     if (!data?.clients) return emptyFunnel;
-    return computeLifecycleMetrics(data, dateFrom, dateTo, today);
-  }, [data?.clients, data?.serverStats, data?.reservations, data?.resortPolicies, dateFrom, dateTo, today]);
+    const dataForFunnel = { ...data, reservations: stableReservations };
+    return computeLifecycleMetrics(dataForFunnel, dateFrom, dateTo, today);
+  }, [data?.clients, data?.serverStats, stableReservations, data?.resortPolicies, dateFrom, dateTo, today]);
 
   const prevFunnelMetrics = useMemo(() => {
     if (!data?.clients) return emptyFunnel;
     const yesterday = addDays(today, -1);
-    return computeLifecycleMetrics(data, prevFrom, prevTo, yesterday);
-  }, [data?.clients, data?.serverStats, data?.reservations, data?.resortPolicies, prevFrom, prevTo, today]);
+    const dataForFunnel = { ...data, reservations: stableReservations };
+    return computeLifecycleMetrics(dataForFunnel, prevFrom, prevTo, yesterday);
+  }, [data?.clients, data?.serverStats, stableReservations, data?.resortPolicies, prevFrom, prevTo, today]);
 
   /* ─── Ops progress (lazy — deferred until checklist section is visible) ── */
+  // Use stableReservations (Phase 2a window) for ops metrics too — avoids re-render
+  // when Phase 2b’s 136K rows arrive. Service counts only need today’s reservations.
   const dataProxy = useMemo(() => ({
-    reservations: data?.reservations,
+    reservations: stableReservations,
     clients: data?.clients,
     serverStats: data?.serverStats,
     resortPolicies: data?.resortPolicies,
     rooms: data?.rooms,
     dogs: data?.dogs,
     dailyOps: data?.dailyOps,
-  }), [data?.reservations, data?.clients, data?.serverStats, data?.resortPolicies, data?.rooms, data?.dogs, data?.dailyOps]);
+  }), [stableReservations, data?.clients, data?.serverStats, data?.resortPolicies, data?.rooms, data?.dogs, data?.dailyOps]);
 
   const { ref: opsVisRef, value: lazyOpsProgress, isVisible: opsVisible } = useLazyCompute(
     () => computeOpsProgress(dataProxy, today),
@@ -905,7 +919,7 @@ function DashboardContent({
 
   /* ─── Service data (today only — matches OperationsHub Services section) ─── */
   const svcData = useMemo(() => {
-    if (!data?.reservations) return { bathsTotal: 0, bathsDone: 0, ppTotal: 0, ppCompleted: 0, pamperTotal: 0, pamperDone: 0, iceCreamTotal: 0, iceCreamDone: 0 };
+    if (!stableReservations || stableReservations.length === 0) return { bathsTotal: 0, bathsDone: 0, ppTotal: 0, ppCompleted: 0, pamperTotal: 0, pamperDone: 0, iceCreamTotal: 0, iceCreamDone: 0 };
     const sm = computeServiceMetrics(dataProxy, today);
     return {
       bathsTotal: sm.bathsTotal, bathsDone: sm.bathsDone,

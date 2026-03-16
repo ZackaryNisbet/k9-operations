@@ -1,6 +1,6 @@
 // K9 Operations — Gingr Data Hook (Supabase + Gingr Sync)
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, startTransition } from "react";
 import { supabase } from "../supabaseClient";
 import { C, OPERATIONS_CATALOG, idbGet, idbSet, IDB_VERSION, todayStr, addDays, LITE_DEF_PRICING, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, LEAN_ROLES, ROOM_TYPES } from "../shared/theme";
 import { classifyReservationType, classifyReservationStatus, extractRoomFromType } from "../shared/opsHelpers";
@@ -273,9 +273,13 @@ function useGingrData(locationId, refreshOptions = {}) {
     return allRows;
   }, []);
 
+  // ── Yield to main thread (prevents browser "unresponsive" dialog) ──
+  const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0));
+
   // ── Load all data from Supabase ──
   // Phase 1: owners, animals, RPC stats (fast — renders lifecycle page instantly)
-  // Phase 2: reservations loaded in background (needed for ops hub, client detail)
+  // Phase 2a: today's reservations (fast — ~200 rows, dashboard-ready in <500ms)
+  // Phase 2b: full reservations loaded in background (needed for ops hub, client detail)
   const loadData = useCallback(async () => {
     if (!locationId) return;
     try {
@@ -309,7 +313,9 @@ function useGingrData(locationId, refreshOptions = {}) {
       (lcRes.data || []).forEach(r => { lcMap[r.gingr_id] = r.lifecycle_data; });
 
       const tClients = transformOwners(rawOwners);
+      await yieldToMain();
       const tDogs = transformAnimals(rawAnimals);
+      await yieldToMain();
       // Merge persisted lifecycle data onto clients (loaded from lite_client_lifecycle)
       tClients.forEach(c => {
         const lc = lcMap[String(c.gingrId)];
@@ -559,6 +565,9 @@ function useGingrData(locationId, refreshOptions = {}) {
         });
       }
 
+      // Yield to main thread before heavy state updates
+      await yieldToMain();
+
       setClients(tClients);
       setDogs(tDogs);
       setResTypes(typesRes.data || []);
@@ -577,15 +586,55 @@ function useGingrData(locationId, refreshOptions = {}) {
         resTypes: typesRes.data || [], immunizationTypes: immTypesRes.data || [],
       });
 
-      // Phase 2: Background fetch reservations (for ops hub, client detail, etc.)
-      fetchAll("gingr_reservations", locationId, "start_date", false,
-        "gingr_id,location_id,owner_gingr_id,animal_gingr_id,reservation_type_name,reservation_type_id,start_date,end_date,check_in_date,check_out_date,cancelled_date,transaction,deposit,services,animal_name,owner_first_name,owner_last_name,notes_reservation"
-      ).then(rawRes => {
-        const tReservations = transformReservations(rawRes);
-        const tRooms = buildRooms(typesRes.data || [], tReservations, roomCounts, roomNames);
-        const assignedRes = assignRoomsIntelligently(tReservations, tRooms);
-        setReservations(assignedRes);
-        setRooms(tRooms);
+      // Phase 2a: Quick fetch — reservations relevant to TODAY (for dashboard service metrics)
+      // Captures: checked-in (started past 30d, not yet checked out), upcoming (next 7d), recent checkouts
+      // This fetches ~300-500 rows instead of 136K, making the dashboard responsive in <500ms
+      const RES_COLS = "gingr_id,location_id,owner_gingr_id,animal_gingr_id,reservation_type_name,reservation_type_id,start_date,end_date,check_in_date,check_out_date,cancelled_date,transaction,deposit,services,animal_name,owner_first_name,owner_last_name,notes_reservation";
+      const todayWindow = todayStr();
+      const windowStart = addDays(todayWindow, -30); // capture long boarding stays
+      const windowEnd = addDays(todayWindow, 14);    // capture upcoming
+      try {
+        const { data: windowRes, error: windowErr } = await supabase
+          .from("gingr_reservations")
+          .select(RES_COLS)
+          .eq("location_id", locationId)
+          .gte("start_date", windowStart + "T00:00:00")
+          .lte("start_date", windowEnd + "T23:59:59")
+          .order("start_date", { ascending: false });
+        if (!windowErr && windowRes) {
+          const tReservations = transformReservations(windowRes);
+          const tRooms = buildRooms(typesRes.data || [], tReservations, roomCounts, roomNames);
+          const assignedRes = assignRoomsIntelligently(tReservations, tRooms);
+          setReservations(assignedRes);
+          setRooms(tRooms);
+        }
+      } catch (err) {
+        console.log("[K9 Lite] Quick reservation fetch failed:", err.message);
+      }
+
+      // Phase 2b: Full reservation fetch in background (for ops hub, client detail, reports)
+      // Chunked processing to prevent >200ms frame drops on 136K rows
+      fetchAll("gingr_reservations", locationId, "start_date", false, RES_COLS
+      ).then(async rawRes => {
+        // Process reservations in chunks of 10K to avoid blocking the main thread
+        const CHUNK = 10000;
+        const allTransformed = [];
+        for (let i = 0; i < rawRes.length; i += CHUNK) {
+          const chunk = rawRes.slice(i, i + CHUNK);
+          const transformed = transformReservations(chunk);
+          allTransformed.push(...transformed);
+          await yieldToMain(); // breathe between chunks
+        }
+        await yieldToMain();
+        const tRooms = buildRooms(typesRes.data || [], allTransformed, roomCounts, roomNames);
+        await yieldToMain();
+        const assignedRes = assignRoomsIntelligently(allTransformed, tRooms);
+        await yieldToMain();
+        // Use startTransition so React treats this as low-priority
+        startTransition(() => {
+          setReservations(assignedRes);
+          setRooms(tRooms);
+        });
       }).catch(err => console.error("Background reservation fetch failed:", err));
 
     } catch (err) {

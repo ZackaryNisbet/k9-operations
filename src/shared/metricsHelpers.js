@@ -213,20 +213,27 @@ export function computeLifecycleMetrics(data, dateFrom, dateTo, today) {
   }).length;
 
   // First-Time Spenders: clients whose chronologically first paid reservation is in the date range
-  // Sort client reservations by checkIn to find the true first paid visit
-  const firstTimePayers = clients.filter(c => {
-    const s = statsMap[c.id];
-    if (!s.hasSpent) return false;
-    const clientRes = reservations
-      .filter(r =>
-        r.status !== "cancelled" && (r.pricing?.total || 0) > 0 &&
-        String(r._clientId || r.clientId) === String(c.id)
-      )
-      .sort((a, b) => (a.checkIn || "").localeCompare(b.checkIn || ""));
-    const firstRes = clientRes[0];
-    if (firstRes && firstRes.checkIn >= dateFrom && firstRes.checkIn <= dateTo) return true;
-    return false;
-  }).length;
+  // Pre-index reservations by clientId — O(n) single pass instead of O(clients × reservations)
+  // Only build the index when we have reservations (Phase 2a provides recent ones, Phase 2b the full set)
+  let firstTimePayers = 0;
+  if (reservations.length > 0) {
+    const firstPaidResByClient = {};
+    for (let i = 0, len = reservations.length; i < len; i++) {
+      const r = reservations[i];
+      if (r.status === "cancelled" || !(r.pricing?.total > 0)) continue;
+      const cid = String(r._clientId || r.clientId);
+      const prev = firstPaidResByClient[cid];
+      if (!prev || (r.checkIn || "") < (prev.checkIn || "")) {
+        firstPaidResByClient[cid] = r;
+      }
+    }
+    firstTimePayers = clients.filter(c => {
+      const s = statsMap[c.id];
+      if (!s.hasSpent) return false;
+      const firstRes = firstPaidResByClient[String(c.id)];
+      return firstRes && firstRes.checkIn >= dateFrom && firstRes.checkIn <= dateTo;
+    }).length;
+  }
 
   // Conversion Rate = first-time payers / total leads in range × 100
   const conversionRate = leadsInRange.length > 0 ? (firstTimePayers / leadsInRange.length * 100) : 0;
@@ -238,8 +245,15 @@ export function computeLifecycleMetrics(data, dateFrom, dateTo, today) {
 
   // Remaining Leads: use same logic as ClientsPage clientTabMap
   // ClientsPage determines conversion = !hasSpent && !hasRealBooking && !isCold
-  const resByClient = {};
-  reservations.forEach(r => { (resByClient[r.clientId] || (resByClient[r.clientId] = [])).push(r); });
+  // Lazy-build resByClient only if we encounter clients without server stats
+  let resByClient = null;
+  const getResByClient = () => {
+    if (!resByClient) {
+      resByClient = {};
+      reservations.forEach(r => { (resByClient[r.clientId] || (resByClient[r.clientId] = [])).push(r); });
+    }
+    return resByClient;
+  };
 
   const td = today;
   let remainingLeads = 0;
@@ -267,10 +281,10 @@ export function computeLifecycleMetrics(data, dateFrom, dateTo, today) {
 
     const hasRealBookingSynced = srv
       ? (srv.has_real_booking || false)
-      : (resByClient[c.id] || []).some(r => r.type !== "tour" && r.type !== "evaluation");
+      : (getResByClient()[c.id] || []).some(r => r.type !== "tour" && r.type !== "evaluation");
     const hasUpcomingSynced = srv
       ? (srv.has_upcoming || false)
-      : (resByClient[c.id] || []).some(r => r.checkIn >= td && r.status === "upcoming" && r.type !== "tour" && r.type !== "evaluation");
+      : (getResByClient()[c.id] || []).some(r => r.checkIn >= td && r.status === "upcoming" && r.type !== "tour" && r.type !== "evaluation");
 
     const totalRes = s?.totalRes || 0;
     const hasEverBooked = totalRes > 0;
@@ -295,8 +309,8 @@ export function computeLifecycleMetrics(data, dateFrom, dateTo, today) {
       const lastResDate = s?.lastResDate || "";
       if (lastResDate) {
         const daysSince = Math.round((tdNoon - new Date(lastResDate + "T12:00:00")) / 86400000);
-        const resCount = srv ? Number(srv.total_res) : (resByClient[c.id] || []).length;
-        const boardingCount = srv ? (Number(srv.boarding_count) || 0) : (resByClient[c.id] || []).filter(r => r.type === "boarding").length;
+        const resCount = srv ? Number(srv.total_res) : (getResByClient()[c.id] || []).length;
+        const boardingCount = srv ? (Number(srv.boarding_count) || 0) : (getResByClient()[c.id] || []).filter(r => r.type === "boarding").length;
         const bdPct = resCount > 0 ? boardingCount / resCount : 0;
         const thresh = bdPct > 0.5 ? bdThresh : dcThresh;
         if (daysSince >= thresh && daysSince < thresh + LAPSED_RECENCY_DAYS) {
