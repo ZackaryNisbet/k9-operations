@@ -1131,10 +1131,15 @@ function CheckoutTVContent({ data, nav, profile }) {
       if (isPP) {
         pp.push(res);
 
-        // Only dual-tag if the dog is in group play too (daycare/evaluation).
-        // Boarding dogs with PP → PP only, NOT in large/small.
-        const isGroupPlay = res.type === "daycare" || res.type === "evaluation";
-        if (isGroupPlay) {
+        // Dayboarding-only dogs go ONLY in PP (they're not in group play)
+        if (res.type === "dayboarding" && !DAYCARE_TYPES.has(res.type)) {
+          // dayboarding IS in DAYCARE_TYPES, so this is actually dual-tagged
+        }
+
+        // If the dog is also in group play (daycare or boarding entering group),
+        // it's dual-tagged — appears in both daycare by size AND private play
+        if (res.type !== "dayboarding") {
+          // Boarding dog with PP or daycare dog with PP → dual-tagged
           dualIds.add(res.dogId);
           if (size === "small") {
             small.push(res);
