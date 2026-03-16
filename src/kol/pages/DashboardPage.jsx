@@ -933,7 +933,7 @@ function DashboardContent({
 
         {/* ═══ ROW 2: Customer Lifecycle ═══ */}
         <MetricCell label="Remaining Leads" value={funnelMetrics.remainingLeads} onClick={navTo["funnel"]} trend={showPriorPeriod ? pctChange(funnelMetrics.remainingLeads, prevFunnelMetrics.remainingLeads) : null} />
-        <MetricCell label="At-Risk" value={funnelMetrics.remainingAtRisk} onClick={navTo["lifecycle"]} color={funnelMetrics.remainingAtRisk > 0 ? C.warn : undefined} />
+        <MetricCell label="Lapsed" value={funnelMetrics.remainingAtRisk} onClick={navTo["lifecycle"]} color={funnelMetrics.remainingAtRisk > 0 ? C.warn : undefined} />
         <MetricCell label="Outreaches" value={funnelMetrics.todayOutreaches} onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(funnelMetrics.todayOutreaches, prevFunnelMetrics.todayOutreaches) : null} />
         <MetricCell label="Converted" value={funnelMetrics.todayConversions} color={funnelMetrics.todayConversions > 0 ? C.suc : undefined} onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(funnelMetrics.todayConversions, prevFunnelMetrics.todayConversions) : null} />
         <MetricCell label="First-Time Spenders" value={funnelMetrics.firstTimePayers} onClick={navTo["lifecycle"]} />
