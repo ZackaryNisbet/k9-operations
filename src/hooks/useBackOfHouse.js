@@ -50,6 +50,8 @@ export function useBackOfHouse(locationId, enabled = true) {
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState(DEFAULTS);
   const [configLoaded, setConfigLoaded] = useState(false);
+  // Supabase boarding dogs not in BOH (multi-night stays not going home today)
+  const [supabaseBoardingCount, setSupabaseBoardingCount] = useState(0);
   const timerRef = useRef(null);
   const highlightTimerRef = useRef(null);
   const visibleRef = useRef(true);
@@ -113,6 +115,44 @@ export function useBackOfHouse(locationId, enabled = true) {
     }, 5000);
     return () => clearInterval(highlightTimerRef.current);
   }, []);
+
+  // ── Fetch Supabase boarding dogs (checked-in but not going home today) ─
+  // BOH checking_out only has dogs going home today. Multi-night boarders
+  // staying past today are only in Supabase. This fetch gets the count of
+  // Supabase boarding dogs NOT already in BOH, for accurate dashboard stats.
+  useEffect(() => {
+    if (!locationId || !enabled) return;
+    let cancelled = false;
+
+    const fetchSupaboarders = async () => {
+      try {
+        // Get all checked-in boarding reservations from Supabase
+        // (check_in_date set, check_out_date not set, not cancelled)
+        const { data: rows } = await supabase
+          .from("gingr_reservations")
+          .select("animal_gingr_id")
+          .eq("location_id", locationId)
+          .not("check_in_date", "is", null)
+          .is("check_out_date", null)
+          .is("cancelled_date", null)
+          .ilike("reservation_type_name", "%boarding%")
+          .not("reservation_type_name", "ilike", "%day boarding%");
+
+        if (!cancelled && rows) {
+          // Count boarding dogs in Supabase but NOT in BOH active list
+          const bohAnimalIds = new Set(activeDogs.map(d => String(d.animal_id)));
+          const extraCount = rows.filter(r => !bohAnimalIds.has(String(r.animal_gingr_id))).length;
+          setSupabaseBoardingCount(extraCount);
+        }
+      } catch (e) {
+        // Silently ignore
+      }
+    };
+
+    fetchSupaboarders();
+    const interval = setInterval(fetchSupaboarders, 30000); // 30s refresh
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [locationId, enabled, activeDogs]);
 
   // ── Fetch back_of_house ────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -197,6 +237,9 @@ export function useBackOfHouse(locationId, enabled = true) {
   }, [enabled, configLoaded, config.pollIntervalSeconds, fetchData]);
 
   // ── Derived stats ─────────────────────────────────────────────────────
+  // Merges BOH active dogs with Supabase-only boarding dogs for accurate totals.
+  // BOH checking_out only contains dogs going home today (~54). Supabase has
+  // multi-night boarders not leaving today. We add them for the true in-house count.
   const stats = useMemo(() => {
     const classify = (d) => {
       const t = (d.type || "").toLowerCase();
@@ -204,16 +247,21 @@ export function useBackOfHouse(locationId, enabled = true) {
       return "boarding";
     };
     const daycare = activeDogs.filter(d => classify(d) === "daycare");
-    const boarding = activeDogs.filter(d => classify(d) === "boarding");
+    const bohBoarding = activeDogs.filter(d => classify(d) === "boarding");
+
+    // Total in-house = BOH active + Supabase-only boarders
+    const totalInHouse = activeDogs.length + supabaseBoardingCount;
+    const totalBoarding = bohBoarding.length + supabaseBoardingCount;
 
     // Expected = in-house + not-yet-arrived
-    const expectedCount = activeDogs.length + pendingDogs.length;
+    const expectedCount = totalInHouse + pendingDogs.length;
 
     // Pending breakdown
     const pendingDaycare = pendingDogs.filter(d => classify(d) === "daycare").length;
     const pendingBoarding = pendingDogs.filter(d => classify(d) === "boarding").length;
 
     // Going Home = checked-in dogs whose end_date is today (not staying overnight)
+    // Only applies to BOH dogs (Supabase-only boarders aren't going home today by definition)
     const todayStr = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
     const goingHomeCount = activeDogs.filter(d => {
       const endTs = parseInt(d.end_date, 10);
@@ -223,9 +271,9 @@ export function useBackOfHouse(locationId, enabled = true) {
     }).length;
 
     return {
-      total: activeDogs.length,
+      total: totalInHouse,
       daycareCount: daycare.length,
-      boardingCount: boarding.length,
+      boardingCount: totalBoarding,
       expectedCount,
       pendingCount: pendingDogs.length,
       pendingDaycare,
@@ -233,7 +281,7 @@ export function useBackOfHouse(locationId, enabled = true) {
       goingHomeCount,
       fetchCount: fetchCountRef.current,
     };
-  }, [activeDogs, pendingDogs]);
+  }, [activeDogs, pendingDogs, supabaseBoardingCount]);
 
   return {
     activeDogs,

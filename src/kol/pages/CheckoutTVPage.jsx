@@ -774,11 +774,12 @@ function CheckoutTVContent({ data, nav, profile }) {
    *   2. BOH daycare/eval/dayboarding dogs (live from Gingr API)
    *   3. BOH boarding dogs not yet in Supabase (new check-ins)
    *
-   * Critical fix: Filters out stale Supabase records where the dog has
-   * already been checked out in Gingr but the Supabase sync hasn't
-   * updated check_out_date yet. Detection: if a boarding reservation
-   * ends today or earlier and BOH (the live source) doesn't list that
-   * dog in checking_out, the dog has already left.
+   * Supabase's classifyReservationStatus already marks dogs with
+   * check_out_date as "checked-out", and the TV filters for status
+   * === "checked-in" downstream. No additional stale-record filter
+   * is needed — the previous filter incorrectly used BOH checking_out
+   * (which only contains dogs going home today, not ALL checked-in
+   * dogs), causing valid multi-night boarders to be dropped.
    * ──────────────────────────────────────────────────────────────────── */
   const { reservations, dogs } = useMemo(() => {
     const today = todayStr();
@@ -788,31 +789,11 @@ function CheckoutTVContent({ data, nav, profile }) {
       gingrActiveDogs.map(d => String(d.animal_id))
     );
 
-    // ── Step 1: Filter stale Supabase boarding reservations ───────────
-    // A Supabase boarding record is stale if:
-    //   - It's checked-in (status === "checked-in")
-    //   - Its scheduled end date (checkOut) is today or earlier
-    //   - The dog is NOT in the live BOH checking_out list
-    // This means the dog was checked out in Gingr but Supabase hasn't synced yet.
-    const filteredBaseRes = baseReservations.filter(r => {
-      if (r.status !== "checked-in") return true; // keep non-checked-in as-is
-      const rType = (r.type || "").toLowerCase();
-      if (!rType.includes("boarding")) return true; // only filter boarding
-      if (r._fromGingrApi) return true; // don't filter BOH-sourced records
-
-      // Extract the animal_gingr_id from dogId (format: "g{animal_id}")
-      const animalId = r.dogId?.startsWith("g") ? r.dogId.slice(1) : null;
-      if (!animalId) return true; // can't verify, keep it
-
-      // If the reservation ends today or earlier, verify against BOH
-      if (r.checkOut && r.checkOut <= today) {
-        if (bohActiveAnimalIds.size > 0 && !bohActiveAnimalIds.has(animalId)) {
-          // Dog's reservation ends today/earlier but BOH doesn't show it → stale
-          return false;
-        }
-      }
-      return true;
-    });
+    // ── Step 1: Use Supabase reservations as-is (no stale filter) ────
+    // classifyReservationStatus() already handles checked-out status
+    // via check_out_date. The downstream "checked-in" filter on the
+    // uniqueDogs computation handles the rest.
+    const filteredBaseRes = baseReservations;
 
     // ── Step 2: Build synthetic reservations from BOH daycare dogs ────
     const syntheticRes = (gingrDaycareDogs || []).map(gd => {
@@ -1187,6 +1168,9 @@ function CheckoutTVContent({ data, nav, profile }) {
     // TV-005: Private play badge
     const isPP = hasPrivatePlay(res) || res.type === "dayboarding";
 
+    // TV-018: Boarding label — distinguishes boarding dogs from day-only dogs
+    const isBoarding = res.type === "boarding";
+
     return (
       <div style={{
         display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 12px",
@@ -1219,6 +1203,22 @@ function CheckoutTVContent({ data, nav, profile }) {
             lineHeight: 1.4,
           }}>
             PP
+          </div>
+        )}
+
+        {/* TV-018: Boarding label — top-left (shifts down if PP badge is present) */}
+        {isBoarding && (
+          <div style={{
+            position: "absolute", top: isPP ? 30 : 8, left: 8,
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            fontSize: 9, fontWeight: 900, letterSpacing: "0.08em",
+            color: "#60A5FA",
+            background: "rgba(96,165,250,0.15)",
+            border: "1.5px solid rgba(96,165,250,0.35)",
+            borderRadius: 6, padding: "2px 5px",
+            lineHeight: 1.4,
+          }}>
+            BOARDING
           </div>
         )}
 
