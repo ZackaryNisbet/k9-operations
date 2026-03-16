@@ -3,7 +3,8 @@
 // Fixes: TV-001 (daycare count), TV-003 (large/small dog differentiation),
 //        TV-004 (room numbers), TV-005 (TV navigation with filtered views), TV-006 (checkout highlight animation),
 //        TV-010 (Gingr BOH poll for daycare dogs), TV-011 (view-dependent hero cards),
-//        TV-012 (unified BOH transition detection — replaced TV-002 Supabase poll + TV-007 edge function sync)
+//        TV-012 (unified BOH transition detection — replaced TV-002 Supabase poll + TV-007 edge function sync),
+//        TV-013 (persistent timestamp-based notices — immune to re-renders and poll cycles)
 //
 // TV-005 NOTE: In KolApp.jsx, the nav item for this page should be renamed from "Checkout TV" to "TV".
 // We cannot edit KolApp.jsx per AGENTS.md rules — only page files. This rename should be done separately.
@@ -689,7 +690,7 @@ function CheckoutTVContent({ data, nav, profile }) {
             }
           }
 
-          // Fire check-in TV notices
+          // Fire check-in TV notices (TV-013: timestamp-based, persistent)
           if (arrivals.length > 0) {
             const byOwner = {};
             for (const a of arrivals) {
@@ -697,20 +698,21 @@ function CheckoutTVContent({ data, nav, profile }) {
               if (!byOwner[key]) byOwner[key] = [];
               byOwner[key].push(a);
             }
+            const firedAt = Date.now();
             const grouped = Object.values(byOwner).map(group => ({
               id: group.map(a => a.id).join('+'),
               dogs: group,
               ownerLastName: group[0].ownerLastName,
-              remaining: 60,
-              fading: false,
+              firedAt,
+              durationMs: 60_000,
             }));
-            setCheckingIn(p => {
+            setCheckingInRaw(p => {
               const existing = new Set(p.map(e => e.id));
               return [...p, ...grouped.filter(g => !existing.has(g.id))];
             });
           }
 
-          // Fire check-out TV notices
+          // Fire check-out TV notices (TV-013: timestamp-based, persistent)
           if (departed.length > 0) {
             const byOwner = {};
             for (const d of departed) {
@@ -718,14 +720,15 @@ function CheckoutTVContent({ data, nav, profile }) {
               if (!byOwner[key]) byOwner[key] = [];
               byOwner[key].push(d);
             }
+            const firedAt = Date.now();
             const grouped = Object.values(byOwner).map(group => ({
               id: group.map(d => d.id).join('+'),
               dogs: group,
               ownerLastName: group[0].ownerLastName,
-              remaining: 60,
-              fading: false,
+              firedAt,
+              durationMs: 60_000,
             }));
-            setCheckingOut(p => {
+            setCheckingOutRaw(p => {
               const existing = new Set(p.map(e => e.id));
               return [...p, ...grouped.filter(g => !existing.has(g.id))];
             });
@@ -908,68 +911,66 @@ function CheckoutTVContent({ data, nav, profile }) {
     "boarding": boardingDogs.length,
   }), [uniqueDogs, smallDaycare, largeDaycare, privatePlayDogs, boardingDogs]);
 
-  /* ── TV-012: Check-in/check-out detection state ────────────────────── *
-   * TV notices are now driven entirely by the BOH poll above (TV-012).
-   * The old Supabase-based checkout detection (TV-002) and edge function
-   * sync (TV-007) have been removed — BOH provides faster, unified
-   * transition detection for ALL dog types (boarding + daycare).
+  /* ── TV-012/TV-013: Persistent TV notice system ────────────────────── *
+   * Notices (check-in / check-out hero cards) are stored with a timestamp
+   * (`firedAt`) and a fixed duration. A single 1-second interval drives
+   * the countdown for ALL active notices, computing `remaining` from
+   * wall-clock time so they are immune to re-renders, BOH poll cycles,
+   * or React state batching. Once fired, a notice lives for its full
+   * duration no matter what.
    * ──────────────────────────────────────────────────────────────────── */
-  const [checkingOut, setCheckingOut] = useState([]); // TV-008b: { id, dogs: [...], ownerLastName, remaining, fading }
+  const NOTICE_DURATION_MS = 60_000; // 60 seconds
+  const FADE_DURATION_MS = 1_200;    // fade-out animation length
+
+  // Raw notice stores — entries have { id, dogs, ownerLastName, firedAt, durationMs }
+  const [checkingOutRaw, setCheckingOutRaw] = useState([]);
+  const [checkingInRaw, setCheckingInRaw] = useState([]);
+
+  // Derived display state — recomputed every tick
+  const [checkingOut, setCheckingOut] = useState([]);
   const [checkingIn, setCheckingIn] = useState([]);
 
-  // Countdown timer — tick every second
+  // Single tick drives all notice countdowns
   useEffect(() => {
-    if (checkingOut.length === 0) return;
-    const id = setInterval(() => {
-      setCheckingOut(prev => {
-        const updated = prev.map(e => {
-          if (e.fading) return e;
-          const next = e.remaining - 1;
-          if (next <= 0) return { ...e, remaining: 0, fading: true };
-          return { ...e, remaining: next };
-        });
-        return updated;
-      });
-    }, 1000);
+    const hasAny = checkingOutRaw.length > 0 || checkingInRaw.length > 0;
+    if (!hasAny) {
+      setCheckingOut([]);
+      setCheckingIn([]);
+      return;
+    }
+
+    const tick = () => {
+      const now = Date.now();
+
+      const computeDisplay = (raw) => {
+        return raw
+          .map(e => {
+            const elapsed = now - e.firedAt;
+            const remaining = Math.max(0, Math.ceil((e.durationMs - elapsed) / 1000));
+            const fading = elapsed >= e.durationMs;
+            const expired = elapsed >= e.durationMs + FADE_DURATION_MS;
+            return { ...e, remaining, fading, expired };
+          })
+          .filter(e => !e.expired);
+      };
+
+      const outDisplay = computeDisplay(checkingOutRaw);
+      const inDisplay = computeDisplay(checkingInRaw);
+
+      setCheckingOut(outDisplay);
+      setCheckingIn(inDisplay);
+
+      // Prune expired entries from raw stores
+      const outExpired = outDisplay.length < checkingOutRaw.length;
+      const inExpired = inDisplay.length < checkingInRaw.length;
+      if (outExpired) setCheckingOutRaw(prev => prev.filter(e => now - e.firedAt < e.durationMs + FADE_DURATION_MS));
+      if (inExpired) setCheckingInRaw(prev => prev.filter(e => now - e.firedAt < e.durationMs + FADE_DURATION_MS));
+    };
+
+    tick(); // immediate first tick
+    const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-  }, [checkingOut.length > 0]);
-
-  // Clean up faded entries after animation completes
-  useEffect(() => {
-    const fading = checkingOut.filter(e => e.fading);
-    if (fading.length === 0) return;
-    const timeout = setTimeout(() => {
-      setCheckingOut(prev => prev.filter(e => !e.fading));
-    }, 1200);
-    return () => clearTimeout(timeout);
-  }, [checkingOut]);
-
-  /* ── TV-008d: Check-in countdown timer ─────────────────────────────── */
-  useEffect(() => {
-    if (checkingIn.length === 0) return;
-    const id = setInterval(() => {
-      setCheckingIn(prev => {
-        const updated = prev.map(e => {
-          if (e.fading) return e;
-          const next = e.remaining - 1;
-          if (next <= 0) return { ...e, remaining: 0, fading: true };
-          return { ...e, remaining: next };
-        });
-        return updated;
-      });
-    }, 1000);
-    return () => clearInterval(id);
-  }, [checkingIn.length > 0]);
-
-  // Clean up faded check-in entries
-  useEffect(() => {
-    const fading = checkingIn.filter(e => e.fading);
-    if (fading.length === 0) return;
-    const timeout = setTimeout(() => {
-      setCheckingIn(prev => prev.filter(e => !e.fading));
-    }, 1200);
-    return () => clearTimeout(timeout);
-  }, [checkingIn]);
+  }, [checkingOutRaw, checkingInRaw]);
 
   /* ── TV-011: View-dependent hero card filter ────────────────────────── *
    * When a filtered view is active (e.g. Small Daycare), only show
