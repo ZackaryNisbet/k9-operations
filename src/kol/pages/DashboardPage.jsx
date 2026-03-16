@@ -128,7 +128,7 @@ const DASH_CSS = `
 .dash-section-label {
   font-size: 9px;
   font-weight: 600;
-  color: #9CA3AF;
+  color: #14532D;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   line-height: 1;
@@ -694,7 +694,7 @@ function DashboardContent({
       "ops-opening", "ops-fe", "ops-be", "ops-rooms", "ops-closing",
       "ops-pamper", "ops-pp", "ops-svc", "eod", "photos", "cash-tips",
       "checkout-notes", "inventory", "test-health", "reports",
-      "enterprise-attendance", "enterprise-ops"];
+      "enterprise-ops"];
     const map = {};
     pages.forEach(p => { map[p] = () => nav(p); });
     return map;
@@ -995,7 +995,7 @@ function DashboardContent({
 
         {/* ═══ ROW 2: Customer Lifecycle ═══ */}
         <MetricCell label="Remaining Leads" value={funnelMetrics.remainingLeads} onClick={navTo["funnel"]} trend={showPriorPeriod ? pctChange(funnelMetrics.remainingLeads, prevFunnelMetrics.remainingLeads) : null} />
-        <MetricCell label="Lapsed" value={funnelMetrics.remainingAtRisk} onClick={navTo["lifecycle"]} color={funnelMetrics.remainingAtRisk > 0 ? C.warn : undefined} />
+        <MetricCell label="Lapsed" value={funnelMetrics.remainingAtRisk} onClick={navTo["lifecycle"]} />
         <MetricCell label="Outreaches" value={funnelMetrics.todayOutreaches} onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(funnelMetrics.todayOutreaches, prevFunnelMetrics.todayOutreaches) : null} />
         <MetricCell label="Converted" value={funnelMetrics.todayConversions} color={funnelMetrics.todayConversions > 0 ? C.suc : undefined} onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(funnelMetrics.todayConversions, prevFunnelMetrics.todayConversions) : null} />
         <MetricCell label="First-Time Spenders" value={funnelMetrics.firstTimePayers} onClick={navTo["lifecycle"]} />
@@ -1083,12 +1083,12 @@ function DashboardContent({
         <div className="dash-chart-cell" style={{ gridColumn: "5 / 8", gridRow: "span 3" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-              <span style={{ fontSize: 10, fontWeight: 800, color: C.accDk, textTransform: "uppercase", letterSpacing: "0.06em" }}>Accrual Revenue</span>
-              <Tip text="Revenue recognized per night. Each reservation's per-night rate is spread across the nights stayed."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
+              <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em" }}>Accrual Revenue</span>
+              <Tip text="Accrual revenue recognizes the full reservation cost divided evenly by the number of nights in the stay."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
             </span>
-            <span style={{ fontSize: 11, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</span>
+            <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</span>
           </div>
-          <ChartFill chartData={accrualChartData} color={C.acc} compareColor={C.pri} animEpoch={animEpoch} id="accrual-main" dateLabels={accrualChartData.map(d => d.date)}
+          <ChartFill chartData={accrualChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="accrual-main" dateLabels={accrualChartData.map(d => d.date)}
             useRawPoints lineType="linear" solidFill fillOpacity={0.18} showGuideLines showDots dotRadius={5} />
         </div>
 
@@ -1104,8 +1104,8 @@ function DashboardContent({
         {/* Col 9: Test Health (row 6) */}
         <MetricCell label="Test Health" value="172" sub="100% pass" onClick={navTo["test-health"]} color={C.suc} />
 
-        {/* Row 7: Col 8 Attendance, Col 9 empty */}
-        <QuickLinkCell label="Attendance" icon={<I.ClipboardCheck />} onClick={navTo["enterprise-attendance"]} />
+        {/* Row 7: Col 8-9 empty */}
+        <div className="dash-grid-cell empty-cell" />
         <div className="dash-grid-cell empty-cell" />
       </DashGrid>
     </div>
@@ -1181,8 +1181,8 @@ const MetricCell = memo(function MetricCell({ label, value, sub, color, trend, o
       ) : (
         <>
           <div className="dash-cell-value" style={{
-            color: hero ? C.pri : (color || C.text),
-            fontSize: hero ? 26 : 22,
+            color: color || C.pri,
+            fontSize: 26,
           }}>
             {typeof value === "number" ? <AnimatedNumber value={value} /> : value}
           </div>
