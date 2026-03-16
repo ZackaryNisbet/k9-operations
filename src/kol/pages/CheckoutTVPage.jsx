@@ -767,6 +767,37 @@ function CheckoutTVContent({ data, nav, profile }) {
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
+  /* ── TV-POLL: Supabase reconciliation sync (every 60s) ──────────────
+   * Calls the gingr-sync edge function in tv-poll mode to reconcile
+   * stale Supabase records (e.g. dogs that checked out but Supabase
+   * didn't update due to sync lag). Runs alongside BOH polling.
+   * Uses the existing supabase client (imported at top) so it picks
+   * up VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY automatically.
+   * ──────────────────────────────────────────────────────────────────── */
+  useEffect(() => {
+    let cancelled = false;
+    const TV_POLL_INTERVAL = 60_000; // 60 seconds
+
+    const triggerTvPoll = async () => {
+      if (cancelled) return;
+      try {
+        await supabase.functions.invoke("gingr-sync", {
+          body: {
+            location_id: "8ea382b0-63f7-44ac-b6f8-83243c03d946",
+            sync_type: "tv-poll",
+          },
+        });
+      } catch (e) {
+        // Silently ignore — sync will retry on next interval
+      }
+    };
+
+    // Initial sync after 5s delay (let BOH fetch settle first)
+    const initTimer = setTimeout(triggerTvPoll, 5000);
+    const interval = setInterval(triggerTvPoll, TV_POLL_INTERVAL);
+    return () => { cancelled = true; clearTimeout(initTimer); clearInterval(interval); };
+  }, []);
+
   /* ── Merge BOH live data with Supabase boarding ─────────────────────── *
    * This is the SINGLE source-of-truth computation for all checked-in dogs.
    * It combines:
