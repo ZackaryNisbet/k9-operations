@@ -12,6 +12,7 @@ import { Tip } from "../../shared/ui";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { useDashboardMetrics } from "../../hooks/useDashboardMetrics";
+import { useAccrualRevenue } from "../../hooks/useAccrualRevenue";
 import { supabase } from "../../supabaseClient";
 import { useLazyCompute, useSectionVisibility } from "../../hooks/useLazyCompute";
 import { computeOpsProgress, computeServiceMetrics, computeLifecycleMetrics } from "../../shared/metricsHelpers";
@@ -700,8 +701,8 @@ function DashGrid({ children }) {
    Chart container — measures height, renders InteractiveLineChart
    ═══════════════════════════════════════════════════════════════════════════ */
 function ChartFill({ chartData, color, compareColor, animEpoch, id, dateLabels,
-  useRawPoints, lineType, solidFill, fillColor, fillOpacity, showGuideLines, showDots, dotRadius,
-  todayHighlight, priorData, showPriorLine,
+  useRawPoints, lineType, solidFill, noFill, fillColor, fillOpacity, showGuideLines, showDots, dotRadius,
+  todayHighlight, priorData, showPriorLine, priorLineColor,
 }) {
   const containerRef = useRef(null);
   const [containerH, setContainerH] = useState(120);
@@ -732,6 +733,7 @@ function ChartFill({ chartData, color, compareColor, animEpoch, id, dateLabels,
         useRawPoints={useRawPoints}
         lineType={lineType}
         solidFill={solidFill}
+        noFill={noFill}
         fillColor={fillColor}
         fillOpacity={fillOpacity}
         showGuideLines={showGuideLines}
@@ -740,6 +742,7 @@ function ChartFill({ chartData, color, compareColor, animEpoch, id, dateLabels,
         todayHighlight={todayHighlight}
         priorData={priorData}
         showPriorLine={showPriorLine}
+        priorLineColor={priorLineColor}
       />
     </div>
   );
@@ -861,6 +864,16 @@ function DashboardContent({
   const pm = prevMetrics || {};
   const showSkeleton = !metrics && metricsLoading;
 
+  /* ─── ACCRUAL REVENUE — computed client-side from raw reservations ─── */
+  // Uses the same methodology as the receipt modal:
+  //   Boarding: sibling grouping + room rate fallback
+  //   Daycare: base rates ($45/$30) + enrichment costs
+  // This replaces reading accrual values from dashboard_metrics_daily.
+  const {
+    accrualDailyRows, accrualTotals,
+    prevAccrualDailyRows, prevAccrualTotals,
+  } = useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo);
+
   /* ─── Lifecycle metrics — still from client data (these need client state) ─── */
   // Lifecycle/funnel metrics require client lifecycle state which isn't in the daily table.
   // These are lightweight — only counting client records, not iterating 136K reservations.
@@ -969,13 +982,21 @@ function DashboardContent({
   }, [bucketMode]);
 
   const cashChartDataBase = useMemo(() => bucketRows(dailyRows, "cash_total_revenue"), [dailyRows, bucketRows]);
-  const accrualChartDataBase = useMemo(() => bucketRows(dailyRows, "accrual_total_revenue"), [dailyRows, bucketRows]);
+  // Accrual chart: uses receipt-methodology engine (accrualDailyRows from useAccrualRevenue)
+  const accrualChartDataBase = useMemo(() => bucketRows(accrualDailyRows, "accrual_total_revenue"), [accrualDailyRows, bucketRows]);
 
   /* ─── L1: Today view — fetch trailing week for chart context ─── */
   const trailingWeekFrom = useMemo(() => addDays(today, -6), [today]);
   const { dailyRows: trailingWeekRows } = useDashboardMetrics(
     range === "today" ? locationId : null, // only fetch when "today" is selected
     trailingWeekFrom, today, null, null, refreshOptions
+  );
+  // Also fetch trailing-week accrual from the receipt engine for today view
+  const {
+    accrualDailyRows: trailingWeekAccrualRows,
+  } = useAccrualRevenue(
+    range === "today" ? locationId : null,
+    trailingWeekFrom, today, null, null
   );
 
   // L1: When range is "today", show past week as chart with today as highlighted final point
@@ -993,14 +1014,14 @@ function DashboardContent({
 
   const accrualChartData = useMemo(() => {
     if (!isToday) return accrualChartDataBase;
-    if (!trailingWeekRows || trailingWeekRows.length === 0) return accrualChartDataBase;
-    return trailingWeekRows.map(r => ({
+    if (!trailingWeekAccrualRows || trailingWeekAccrualRows.length === 0) return accrualChartDataBase;
+    return trailingWeekAccrualRows.map(r => ({
       date: r.metric_date,
       label: fmtDateLabel(r.metric_date),
       value: Number(r.accrual_total_revenue) || 0,
       prevValue: 0,
     }));
-  }, [isToday, accrualChartDataBase, trailingWeekRows]);
+  }, [isToday, accrualChartDataBase, trailingWeekAccrualRows]);
 
   /* ─── L4: Prior period chart data ─── */
   const cashPriorChartData = useMemo(() => {
@@ -1012,14 +1033,15 @@ function DashboardContent({
     }));
   }, [prevDailyRows]);
 
+  // Accrual prior period from receipt engine
   const accrualPriorChartData = useMemo(() => {
-    if (!prevDailyRows || prevDailyRows.length === 0) return [];
-    return prevDailyRows.map(r => ({
+    if (!prevAccrualDailyRows || prevAccrualDailyRows.length === 0) return [];
+    return prevAccrualDailyRows.map(r => ({
       date: r.metric_date,
       label: fmtDateLabel(r.metric_date),
       value: Number(r.accrual_total_revenue) || 0,
     }));
-  }, [prevDailyRows]);
+  }, [prevAccrualDailyRows]);
 
   /* ─── Trend helper ─── */
   const pctChange = (cur, prev) => prev > 0 ? ((cur - prev) / prev) * 100 : 0;
@@ -1055,11 +1077,16 @@ function DashboardContent({
   const bookingsTrend = pctChange(m.cashTransactionCount, pm.cashTransactionCount);
 
   // Revenue values from server metrics
-  const revenue = m.accrualTotalRevenue || 0;
-  const prevRevenue = pm.accrualTotalRevenue || 0;
+  // Accrual revenue from the receipt-methodology engine (not from dashboard_metrics_daily)
+  const revenue = accrualTotals.totalRevenue || 0;
+  const prevRevenue = prevAccrualTotals.totalRevenue || 0;
   const revenueTrend = prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue) * 100 : 0;
-  const boardingPct = m.boardingPct || 0;
-  const daycarePct = m.daycarePct || 0;
+  const boardingPct = revenue > 0 ? (accrualTotals.boardingRevenue / revenue) * 100 : 0;
+  const daycarePct = revenue > 0 ? (accrualTotals.daycareRevenue / revenue) * 100 : 0;
+  // RevPAR from accrual engine boarding revenue (matches receipt methodology)
+  const totalRooms = m.totalRoomCount || 0;
+  const accrualRevPAR = totalRooms > 0 && days > 0 ? accrualTotals.boardingRevenue / (totalRooms * days) : 0;
+  const prevAccrualRevPAR = totalRooms > 0 && days > 0 ? prevAccrualTotals.boardingRevenue / (totalRooms * days) : 0;
 
   /* ─── Receipt data: fetched directly from Supabase on demand ─── */
   const [receiptData, setReceiptData] = useState(null);
@@ -1419,7 +1446,7 @@ function DashboardContent({
         {/* ═══ ROW 4: Reporting/Financial ═══ */}
         <MetricCell label="Transactions" value={m.cashTransactionCount} trend={showPriorPeriod ? bookingsTrend : null} skeleton={showSkeleton} />
         <MetricCell label="Average Transaction Price" value={`$${Math.round(m.cashAvgTransaction || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(m.cashAvgTransaction, pm.cashAvgTransaction) : null} skeleton={showSkeleton} />
-        <MetricCell label="Rev/PAR" value={`$${Math.round(m.revPAR || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(m.revPAR, pm.revPAR) : null} skeleton={showSkeleton} />
+        <MetricCell label="Rev/PAR" value={`$${Math.round(accrualRevPAR || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(accrualRevPAR, prevAccrualRevPAR) : null} skeleton={showSkeleton} />
         <MetricCell label="Refunds" value={m.refundCount} color={m.refundCount > 0 ? C.dan : undefined} trend={showPriorPeriod ? pctChange(m.refundCount, pm.refundCount) : null} skeleton={showSkeleton} />
         <MetricCell label="$ Refunded" value={`$${fmt$k(m.refundTotal)}`} color={m.refundTotal > 0 ? C.dan : undefined} skeleton={showSkeleton} />
         <MetricCell label="Discounted" value={m.discountedCount} color={m.discountedCount > 0 ? C.warn : undefined} skeleton={showSkeleton} />
@@ -1437,8 +1464,8 @@ function DashboardContent({
             <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(m.cashTotalRevenue)}</span>
           </div>
           <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" dateLabels={cashChartData.map(d => d.date)}
-            useRawPoints lineType="linear" solidFill fillOpacity={0.18} showGuideLines
-            todayHighlight={isToday} priorData={cashPriorChartData} showPriorLine={showPriorPeriod && !isToday} />
+            useRawPoints lineType="linear" noFill showGuideLines
+            todayHighlight={isToday} priorData={cashPriorChartData} showPriorLine={showPriorPeriod && !isToday} priorLineColor="#D4A017" />
         </div>
 
         {/* Col 4 Toggle area */}
@@ -1494,8 +1521,8 @@ function DashboardContent({
             </span>
           </div>
           <ChartFill chartData={accrualChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="accrual-main" dateLabels={accrualChartData.map(d => d.date)}
-            useRawPoints lineType="linear" solidFill fillOpacity={0.18} showGuideLines
-            todayHighlight={isToday} priorData={accrualPriorChartData} showPriorLine={showPriorPeriod && !isToday} />
+            useRawPoints lineType="linear" noFill showGuideLines
+            todayHighlight={isToday} priorData={accrualPriorChartData} showPriorLine={showPriorPeriod && !isToday} priorLineColor="#D4A017" />
         </div>
 
         {/* Col 8: Private Play (row 5) */}
