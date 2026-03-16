@@ -820,20 +820,27 @@ function CheckoutTVContent({ data, nav, profile }) {
       gingrActiveDogs.map(d => String(d.animal_id))
     );
 
-    // ── Step 1: Filter stale checked-in reservations from Supabase ────
-    // Old reservations may have check_in_date set but check_out_date never
-    // recorded (Gingr data quality issue). Exclude checked-in records whose
-    // scheduled checkOut is more than 1 day in the past.
-    const yesterday = (() => {
-      const d = new Date(today + "T00:00:00");
-      d.setDate(d.getDate() - 1);
-      return d.toISOString().slice(0, 10);
-    })();
+    // ── Step 1: Filter Supabase reservations using BOH as source of truth ─
+    // BOH (Gingr back_of_house API) is the real-time authority on who is
+    // physically in the building. Supabase often has stale "checked-in"
+    // records where check_out_date was never set.
+    //
+    // Strategy: For checked-in reservations from Supabase, only keep them
+    // if the dog is confirmed active by BOH, OR it's a boarding reservation
+    // whose checkout is today or later (multi-night boarders that BOH's
+    // checking_out list doesn't include because they're not going home today).
+    const BOARDING_TYPE_SET = new Set(["boarding"]);
     const filteredBaseRes = baseReservations.filter(r => {
-      if (r.status !== "checked-in") return true;
-      if (r._fromGingrApi) return true;
-      if (r.checkOut && r.checkOut < yesterday) return false;
-      return true;
+      if (r.status !== "checked-in") return true; // non-checked-in pass through
+      if (r._fromGingrApi) return true; // BOH-generated records always valid
+      // If BOH knows about this dog, keep the reservation
+      const animalId = r.dogId?.startsWith("g") ? r.dogId.slice(1) : null;
+      if (animalId && bohActiveAnimalIds.has(animalId)) return true;
+      // Boarding dogs not in BOH: keep only if checkOut >= today
+      // (multi-night boarders not leaving today won't be in BOH checking_out)
+      if (BOARDING_TYPE_SET.has(r.type) && r.checkOut && r.checkOut >= today) return true;
+      // Everything else is stale — dog isn't in BOH and isn't a future-checkout boarder
+      return false;
     });
 
     // ── Step 2: Build synthetic reservations from BOH daycare dogs ────
