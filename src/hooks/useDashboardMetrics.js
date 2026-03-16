@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "../supabaseClient";
 
 /**
- * useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prevTo)
+ * useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prevTo, options)
  *
  * Returns:
  *   metrics     — aggregated current-period metrics
@@ -15,16 +15,25 @@ import { supabase } from "../supabaseClient";
  *   prevDailyRows — raw daily rows for prior period charts
  *   loading     — true while fetching
  *   lastUpdated — when the data was last computed
+ *   lastFetchedAt — when data was last fetched from server
  *   refresh()   — manual refresh trigger
+ *
+ * options.refreshIntervalMs  — polling interval in ms (default: 15 min)
+ * options.isWithinBusinessHours — function returning boolean; polling pauses outside hours
  */
-export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prevTo) {
+const DEFAULT_REFRESH_MS = 15 * 60 * 1000; // 15 minutes
+
+export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prevTo, options = {}) {
+  const { refreshIntervalMs = DEFAULT_REFRESH_MS, isWithinBusinessHours } = options;
   const [metrics, setMetrics] = useState(null);
   const [prevMetrics, setPrevMetrics] = useState(null);
   const [dailyRows, setDailyRows] = useState([]);
   const [prevDailyRows, setPrevDailyRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [lastFetchedAt, setLastFetchedAt] = useState(null);
   const abortRef = useRef(null);
+  const intervalRef = useRef(null);
 
   const fetchMetrics = useCallback(async () => {
     if (!locationId || !dateFrom || !dateTo) return;
@@ -75,6 +84,7 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
       setMetrics(aggregateRows(rows, outstandingInvoices));
       setPrevMetrics(aggregateRows(prevRows, outstandingInvoices));
       setLastUpdated(rows.length > 0 ? rows[rows.length - 1].computed_at : null);
+      setLastFetchedAt(new Date());
     } catch (err) {
       console.error("Dashboard metrics fetch error:", err);
     } finally {
@@ -85,6 +95,18 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
   useEffect(() => {
     fetchMetrics();
   }, [fetchMetrics]);
+
+  // Auto-polling: re-fetch metrics at configured interval
+  // Skips polling outside business hours when isWithinBusinessHours is provided
+  useEffect(() => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    const ms = refreshIntervalMs || DEFAULT_REFRESH_MS;
+    intervalRef.current = setInterval(() => {
+      if (typeof isWithinBusinessHours === "function" && !isWithinBusinessHours()) return;
+      fetchMetrics();
+    }, ms);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [fetchMetrics, refreshIntervalMs, isWithinBusinessHours]);
 
   // Manual refresh: triggers gingr-sync, then re-fetches
   const refresh = useCallback(async () => {
@@ -103,7 +125,7 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
     }
   }, [locationId, fetchMetrics]);
 
-  return { metrics, prevMetrics, dailyRows, prevDailyRows, loading, lastUpdated, refresh };
+  return { metrics, prevMetrics, dailyRows, prevDailyRows, loading, lastUpdated, lastFetchedAt, refresh };
 }
 
 /**

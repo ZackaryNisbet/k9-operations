@@ -644,7 +644,7 @@ export default function DashboardPage(props) {
     );
   }
 
-  return <DashboardContent {...props} locationId={locationId} />;
+  return <DashboardContent {...props} locationId={locationId} refreshOptions={props.refreshOptions} />;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -653,7 +653,7 @@ export default function DashboardPage(props) {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 function DashboardContent({
-  data, save, nav, profile, addGlobalToast, locationId,
+  data, save, nav, profile, addGlobalToast, locationId, refreshOptions,
   showSnapshot, showRevenue, showFunnel, showLTV,
   showRevenueComposition, showRevenueByCategory, showDiscountAnalysis,
   showTopClients, showOps, showFunnelMetrics, showHeroKPIs,
@@ -725,8 +725,8 @@ function DashboardContent({
   }, [range, today, customFrom, customTo]);
 
   /* ─── SERVER-SIDE METRICS (the magic — no client-side iteration) ─── */
-  const { metrics, prevMetrics, dailyRows, prevDailyRows, loading: metricsLoading, lastUpdated, refresh } = useDashboardMetrics(
-    locationId, dateFrom, dateTo, prevFrom, prevTo
+  const { metrics, prevMetrics, dailyRows, prevDailyRows, loading: metricsLoading, lastUpdated, lastFetchedAt, refresh } = useDashboardMetrics(
+    locationId, dateFrom, dateTo, prevFrom, prevTo, refreshOptions
   );
 
   const m = metrics || {};
