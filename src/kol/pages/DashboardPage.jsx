@@ -1150,9 +1150,16 @@ function DashboardContent({
         siblingGroups[gKey].push(b);
       });
       // For each group, find the reservation total and split across all dogs
+      const br = LITE_DEF_PRICING.boardingRates;
       Object.values(siblingGroups).forEach(group => {
-        const resTotalFromGroup = Math.max(...group.map(b => b.totalCost));
+        let resTotalFromGroup = Math.max(...group.map(b => b.totalCost));
         const dogCount = group.length;
+        // Fallback: if no transaction/deposit pricing, estimate from room rate
+        if (resTotalFromGroup <= 0) {
+          const sampleNights = group[0].totalNights;
+          const roomRate = br[group[0].roomType] || 75; // default to Executive if unknown
+          resTotalFromGroup = roomRate * sampleNights * dogCount;
+        }
         group.forEach(b => {
           b.resTotalDisplay = resTotalFromGroup;
           b.dogsInRes = dogCount;
@@ -1617,13 +1624,11 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
                     {item.dogName}{item.lastInit ? ` ${item.lastInit}` : ""}
                   </span>
                   <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0 }}>
-                    {item.resTotalDisplay > 0
-                      ? `${fmtMoney(item.resTotalDisplay)} Total Reservation Cost / ${item.totalNights} Night${item.totalNights !== 1 ? "s" : ""}`
-                      : `${item.totalNights} Night${item.totalNights !== 1 ? "s" : ""}`}
+                    {`${fmtMoney(item.resTotalDisplay)} Total Reservation Cost / ${item.totalNights} Night${item.totalNights !== 1 ? "s" : ""}${item.dogsInRes > 1 ? ` / ${item.dogsInRes} Dogs` : ""}`}
                   </span>
                 </div>
-                <div style={{ fontSize: 11, fontWeight: item.accrualAmount > 0 ? 700 : 500, color: item.accrualAmount > 0 ? C.text : "rgba(20,83,45,0.35)", fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap", fontStyle: item.accrualAmount > 0 ? "normal" : "italic" }}>
-                  {item.accrualAmount > 0 ? fmtMoney(item.accrualAmount) : "multi-dog"}
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                  {fmtMoney(item.accrualAmount)}
                 </div>
               </div>
             ))}
