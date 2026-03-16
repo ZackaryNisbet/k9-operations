@@ -594,11 +594,11 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   }, [activeTab, locationSlug]);
 
   const renderSource = (client) => {
-    // Lite client source badges
-    if (client.isLiteClient) {
+    // Lite client source badges — non-ignite lite clients get simple badge
+    if (client.isLiteClient && client.source !== "ignite") {
       const src = client.source || "manual";
-      const srcLabel = src === "ignite" ? "Ignite" : src === "eval" ? "Eval" : src === "tour" ? "Tour" : titleCase(src);
-      const srcColor = src === "ignite" ? "#F97316" : src === "eval" ? C.acc : src === "tour" ? C.info : C.pri;
+      const srcLabel = src === "eval" ? "Eval" : src === "tour" ? "Tour" : titleCase(src);
+      const srcColor = src === "eval" ? C.acc : src === "tour" ? C.info : C.pri;
       return (
         <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11}}>
           <span style={{display:"inline-flex",alignItems:"center",gap:3,background:`${srcColor}14`,border:`1px solid ${srcColor}30`,borderRadius:6,padding:"2px 7px",fontWeight:700,color:srcColor,fontSize:10}}>{srcLabel}</span>
@@ -613,7 +613,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       // Fall through to normal source rendering but prepend lite source
     }
     const src = getClientSource(client);
-    const isIgnite = client.lifecycle?.conversion?.source === "ignite" || client._liteSource === "ignite";
+    const isIgnite = client.lifecycle?.conversion?.source === "ignite" || client._liteSource === "ignite" || (client.isLiteClient && client.source === "ignite");
     const isOnline = client.fields?.referral_source === "Online Booking" || client.lifecycle?.conversion?.source === "online_booking";
     const parts = [];
     if (isIgnite) parts.push({ label: "Ignite", type: "ignite" });
