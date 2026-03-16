@@ -790,8 +790,7 @@ function CheckoutTVContent({ data, nav, profile }) {
       try {
         const resp = await fetch(GINGR_RES_URL, {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
-          body: `key=${GINGR_KEY}&checked_in=true`,
+          body: new URLSearchParams({ key: GINGR_KEY, checked_in: "true" }),
         });
         if (!resp.ok || cancelled) return;
         const json = await resp.json();
