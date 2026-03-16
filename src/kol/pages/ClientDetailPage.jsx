@@ -919,45 +919,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             <div style={{ marginTop: 12 }}>
               <Inp label="Notes" type="textarea" value={inlineFields.notes || ""} onChange={v => updateInlineField("notes", v)} />
             </div>
-            {/* Ignite lead summary inline on profile for ignite-sourced lite clients */}
-            {client.source === "ignite" && client.igniteData && (() => {
-              const igd = client.igniteData;
-              const isPhoneCall = igd.leadType === "phone_call";
-              const isWebForm = igd.leadType === "web_form";
-              return (
-                <div style={{ marginTop: 14, padding: "12px 16px", background: "#FFF7ED", borderRadius: 10, border: "1px solid #FDBA7430", borderLeft: "3px solid #F97316" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: "#F97316" }}>Ignite {isPhoneCall ? "Phone Call" : isWebForm ? "Web Form" : "Lead"}</span>
-                    {igd.createdAt && <span style={{ fontSize: 10, color: C.textMut, marginLeft: "auto" }}>{new Date(igd.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>}
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: 11 }}>
-                    {igd.source && <div><span style={{ fontWeight: 700, color: C.textMut }}>Source:</span> <span style={{ color: C.text }}>{igd.source}</span></div>}
-                    {isPhoneCall && igd.callDuration && <div><span style={{ fontWeight: 700, color: C.textMut }}>Duration:</span> <span style={{ color: C.text }}>{igd.callDuration}</span></div>}
-                    {isPhoneCall && igd.callStatus && <div><span style={{ fontWeight: 700, color: C.textMut }}>Status:</span> <span style={{ color: C.text }}>{igd.callStatus}</span></div>}
-                    {isWebForm && igd.formName && <div><span style={{ fontWeight: 700, color: C.textMut }}>Form:</span> <span style={{ color: C.text }}>{igd.formName}</span></div>}
-                    {isWebForm && igd.desiredService && <div><span style={{ fontWeight: 700, color: C.textMut }}>Service:</span> <span style={{ color: C.text }}>{igd.desiredService}</span></div>}
-                    {(igd.city || igd.state || igd.zip) && <div><span style={{ fontWeight: 700, color: C.textMut }}>Location:</span> <span style={{ color: C.text }}>{[igd.city, igd.state, igd.zip].filter(Boolean).join(", ")}</span></div>}
-                  </div>
-                  {(igd.igniteProfileId && (igd.igniteLeadId || igd.leadId)) && (
-                    <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px solid #F9731620" }}>
-                      <a href={`https://leads.idigitalstrategies.com/profile/${igd.igniteProfileId}/leads?lid=${igd.igniteLeadId || igd.leadId}`} target="_blank" rel="noopener noreferrer"
-                        style={{ fontSize: 11, fontWeight: 700, color: "#F97316", textDecoration: "none" }}
-                        onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"}
-                        onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>View in Ignite ↗</a>
-                    </div>
-                  )}
-                  {igd.callRecordingUrl && (
-                    <div style={{ marginTop: 4 }}>
-                      <a href={igd.callRecordingUrl} target="_blank" rel="noopener noreferrer"
-                        style={{ fontSize: 11, fontWeight: 700, color: C.pri, textDecoration: "none" }}
-                        onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"}
-                        onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>🎧 Listen to Recording ↗</a>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+
             </>
           ) : (
           <>
@@ -1420,12 +1382,12 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                           )}
                         </div>
 
-                        {/* Form data fields */}
-                        {lead.form_data && Object.keys(lead.form_data).length > 0 && (
+                        {/* Form data fields (excluding call_transcription — rendered separately below) */}
+                        {lead.form_data && Object.keys(lead.form_data).filter(k => k !== 'call_transcription').length > 0 && (
                           <div style={{ marginBottom: 16 }}>
                             <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Captured Fields</div>
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "12px 14px", background: C.surface, borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
-                              {Object.entries(lead.form_data).map(([key, val]) => (
+                              {Object.entries(lead.form_data).filter(([key]) => key !== 'call_transcription').map(([key, val]) => (
                                 <div key={key}>
                                   <div style={{ fontSize: 10, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.03em" }}>{titleCase(key.replace(/_/g, " "))}</div>
                                   <div style={{ fontSize: 13, color: C.text, marginTop: 1 }}>{String(val)}</div>
@@ -1434,6 +1396,76 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
                             </div>
                           </div>
                         )}
+
+                        {/* Call transcript with speaker separation */}
+                        {lead.form_data?.call_transcription && (() => {
+                          const raw = lead.form_data.call_transcription;
+                          // Parse transcript: handles both newline-separated and inline formats
+                          const blocks = [];
+                          const lines = raw.split("\n");
+                          let currentSpeaker = null;
+                          let currentText = [];
+                          for (const line of lines) {
+                            const trimmed = line.trim();
+                            if (!trimmed) {
+                              if (currentText.length > 0 && currentSpeaker) {
+                                blocks.push({ speaker: currentSpeaker, text: currentText.join(" ").trim() });
+                                currentText = [];
+                                currentSpeaker = null;
+                              }
+                              continue;
+                            }
+                            if ((trimmed === "Caller" || trimmed === "Recipient") && currentText.length === 0) {
+                              currentSpeaker = trimmed;
+                            } else if (currentSpeaker) {
+                              currentText.push(trimmed);
+                            } else {
+                              if (blocks.length > 0) {
+                                blocks[blocks.length - 1].text += " " + trimmed;
+                              } else {
+                                blocks.push({ speaker: "Unknown", text: trimmed });
+                              }
+                            }
+                          }
+                          if (currentSpeaker && currentText.length > 0) {
+                            blocks.push({ speaker: currentSpeaker, text: currentText.join(" ").trim() });
+                          }
+                          // If newline parsing produced no usable blocks, try inline splitting
+                          let parsed = blocks.filter(b => b.text);
+                          if (parsed.length <= 1 && raw.length > 50) {
+                            const inlineBlocks = [];
+                            const parts = raw.split(/\b(Recipient|Caller)\b/);
+                            let spk = null;
+                            for (const part of parts) {
+                              const t = part.trim();
+                              if (t === "Recipient" || t === "Caller") {
+                                spk = t;
+                              } else if (spk && t) {
+                                inlineBlocks.push({ speaker: spk, text: t });
+                                spk = null;
+                              }
+                            }
+                            if (inlineBlocks.length > 1) parsed = inlineBlocks;
+                          }
+                          if (parsed.length === 0) return null;
+                          return (
+                            <div style={{ marginBottom: 16 }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Call Transcript</div>
+                              <div style={{ maxHeight: 400, overflowY: "auto", padding: "14px 16px", background: C.surface, borderRadius: 8, border: `1px solid ${C.borderLight}` }}>
+                                {parsed.map((block, bi) => (
+                                  <div key={bi} style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+                                    <span style={{ fontWeight: 700, color: block.speaker === "Caller" ? "#F97316" : C.pri, minWidth: 44, flexShrink: 0, fontSize: 11, paddingTop: 5, textAlign: "right" }}>
+                                      {block.speaker === "Caller" ? "Caller" : "Staff"}
+                                    </span>
+                                    <span style={{ color: C.text, fontSize: 13, lineHeight: 1.6, wordBreak: "break-word", flex: 1, background: block.speaker === "Caller" ? "#FFF7ED" : `${C.pri}06`, padding: "6px 10px", borderRadius: 8 }}>
+                                      {block.text}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })()}
 
                         {/* Call recording link */}
                         {lead.call_recording_url && (
