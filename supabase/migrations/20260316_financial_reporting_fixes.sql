@@ -1,64 +1,18 @@
 -- ============================================================================
--- Dashboard Metrics: Pre-computed daily metrics table + RPC
--- Eliminates client-side 136K reservation iteration.
--- Dashboard becomes a pure view layer reading pre-computed rows.
+-- Financial Reporting Fixes Migration
+-- Run this in the Supabase SQL Editor to apply all dashboard fixes.
 -- ============================================================================
 
--- ─── 1. Table ───────────────────────────────────────────────────────────────
+-- 1. Add outstanding invoice columns
+ALTER TABLE dashboard_metrics_daily ADD COLUMN IF NOT EXISTS outstanding_invoice_count INT DEFAULT 0;
+ALTER TABLE dashboard_metrics_daily ADD COLUMN IF NOT EXISTS outstanding_invoice_total NUMERIC(12,2) DEFAULT 0;
 
-CREATE TABLE IF NOT EXISTS dashboard_metrics_daily (
-  id              BIGSERIAL PRIMARY KEY,
-  location_id     TEXT NOT NULL,
-  metric_date     DATE NOT NULL,
-
-  -- ═══ Today's Snapshot ═══
-  dogs_expected       INT DEFAULT 0,
-  dogs_in_house       INT DEFAULT 0,
-  boarding_in_house   INT DEFAULT 0,
-  daycare_in_house    INT DEFAULT 0,
-  dogs_going_home     INT DEFAULT 0,
-  dogs_checked_out    INT DEFAULT 0,
-  dogs_arriving       INT DEFAULT 0,
-  occupancy_pct       INT DEFAULT 0,
-  total_room_count    INT DEFAULT 0,
-  bookings_today      INT DEFAULT 0,
-  tours_today         INT DEFAULT 0,
-  evals_today         INT DEFAULT 0,
-
-  -- ═══ Accrual Revenue (per-night rate spread across stay) ═══
-  accrual_boarding_revenue  NUMERIC(12,2) DEFAULT 0,
-  accrual_daycare_revenue   NUMERIC(12,2) DEFAULT 0,
-  accrual_total_revenue     NUMERIC(12,2) DEFAULT 0,
-  accrual_rooms_occupied    INT DEFAULT 0,
-
-  -- ═══ Cash-Basis Revenue (transaction price on start_date) ═══
-  cash_total_revenue    NUMERIC(12,2) DEFAULT 0,
-  cash_transaction_count INT DEFAULT 0,
-  cash_boarding_revenue NUMERIC(12,2) DEFAULT 0,
-  cash_daycare_revenue  NUMERIC(12,2) DEFAULT 0,
-
-  -- ═══ Refunds & Discounts ═══
-  refund_count        INT DEFAULT 0,
-  refund_total        NUMERIC(12,2) DEFAULT 0,
-  discounted_count    INT DEFAULT 0,
-  discount_total      NUMERIC(12,2) DEFAULT 0,
-
-  -- ═══ Outstanding Invoices (from gingr_owners.current_balance) ═══
-  outstanding_invoice_count INT DEFAULT 0,
-  outstanding_invoice_total NUMERIC(12,2) DEFAULT 0,
-
-  -- ═══ Metadata ═══
-  computed_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-  CONSTRAINT uq_dashboard_metrics UNIQUE (location_id, metric_date)
-);
-
-CREATE INDEX IF NOT EXISTS idx_dashboard_metrics_loc_date
-  ON dashboard_metrics_daily (location_id, metric_date DESC);
-
-
--- ─── 2. RPC: compute_dashboard_metrics ──────────────────────────────────────
-
+-- 2. Replace the compute_dashboard_metrics function with fixed version
+-- Fixes:
+--   a) Transaction count: counts ALL non-cancelled reservations (not just price > 0)
+--   b) Refunds: uses correct Gingr field names (is_returned, refund_amount)
+--   c) Discounts: implements rack-rate comparison instead of hardcoded zeros
+--   d) Outstanding invoices: queries gingr_owners.current_balance
 CREATE OR REPLACE FUNCTION compute_dashboard_metrics(
   p_location_id TEXT,
   p_date_from DATE DEFAULT CURRENT_DATE,
@@ -88,7 +42,6 @@ DECLARE
   v_cash_daycare NUMERIC(12,2);
   v_refund_count INT;
   v_refund_total NUMERIC(12,2);
-  v_first_visit_evals INT;
   v_discounted_count INT;
   v_discount_total NUMERIC(12,2);
   v_outstanding_count INT;
@@ -119,7 +72,6 @@ BEGIN
       COUNT(*) FILTER (WHERE
         r.check_in_date IS NOT NULL AND r.check_out_date IS NULL
         AND r.start_date::DATE <= d AND r.end_date::DATE >= d
-        AND LOWER(r.reservation_type_name) NOT LIKE '%tour%'
       ),
       COUNT(*) FILTER (WHERE
         r.check_in_date IS NOT NULL AND r.check_out_date IS NULL
@@ -142,7 +94,6 @@ BEGIN
       ),
       COUNT(*) FILTER (WHERE
         r.start_date::DATE = d AND r.cancelled_date IS NULL
-        AND LOWER(r.reservation_type_name) NOT LIKE '%tour%'
       ),
       COUNT(*) FILTER (WHERE
         r.check_in_date IS NOT NULL AND r.check_out_date IS NULL
@@ -150,7 +101,7 @@ BEGIN
         AND (LOWER(r.reservation_type_name) LIKE '%boarding%' OR LOWER(r.reservation_type_name) LIKE '%lodging%'
              OR LOWER(r.reservation_type_name) LIKE '%overnight%' OR LOWER(r.reservation_type_name) LIKE '%suite%')
       ),
-      COUNT(*) FILTER (WHERE r.created_date::DATE = d AND r.cancelled_date IS NULL AND LOWER(r.reservation_type_name) NOT LIKE '%tour%'),
+      COUNT(*) FILTER (WHERE r.start_date::DATE = d AND r.cancelled_date IS NULL),
       COUNT(*) FILTER (WHERE r.start_date::DATE = d AND LOWER(r.reservation_type_name) LIKE '%tour%'),
       COUNT(*) FILTER (WHERE r.start_date::DATE = d AND (LOWER(r.reservation_type_name) LIKE '%eval%' OR LOWER(r.reservation_type_name) LIKE '%assessment%'))
     INTO v_in_house, v_boarding_ih, v_daycare_ih, v_going_home, v_checked_out, v_arriving,
@@ -158,25 +109,6 @@ BEGIN
     FROM gingr_reservations r
     WHERE r.location_id = p_location_id
       AND r.cancelled_date IS NULL;
-
-    -- ═══ First-visit evaluations: dogs whose first-ever non-cancelled non-tour
-    -- reservation at this location starts on this day AND is a daycare type ═══
-    SELECT COUNT(DISTINCT r.animal_gingr_id)
-    INTO v_first_visit_evals
-    FROM gingr_reservations r
-    WHERE r.location_id = p_location_id
-      AND r.cancelled_date IS NULL
-      AND r.start_date::DATE = d
-      AND (LOWER(r.reservation_type_name) LIKE '%daycare%' OR LOWER(r.reservation_type_name) LIKE '%day care%' OR LOWER(r.reservation_type_name) LIKE '%day boarding%')
-      AND LOWER(r.reservation_type_name) NOT LIKE '%eval%'
-      AND NOT EXISTS (
-        SELECT 1 FROM gingr_reservations prev
-        WHERE prev.location_id = p_location_id
-          AND prev.animal_gingr_id = r.animal_gingr_id
-          AND prev.cancelled_date IS NULL
-          AND LOWER(prev.reservation_type_name) NOT LIKE '%tour%'
-          AND prev.start_date::DATE < d
-      );
 
     -- ═══ Accrual Revenue ═══
     SELECT
@@ -306,7 +238,7 @@ BEGIN
       v_arriving + v_in_house, v_in_house, v_boarding_ih, v_daycare_ih,
       v_going_home, v_checked_out, v_arriving,
       CASE WHEN v_total_rooms > 0 THEN ROUND(v_boarding_occupied::NUMERIC / v_total_rooms * 100)::INT ELSE 0 END,
-      v_total_rooms, v_bookings, v_tours, v_evals + v_first_visit_evals,
+      v_total_rooms, v_bookings, v_tours, v_evals,
       v_accrual_boarding, v_accrual_daycare, v_accrual_boarding + v_accrual_daycare, v_accrual_rooms,
       v_cash_total, v_cash_count, v_cash_boarding, v_cash_daycare,
       v_refund_count, v_refund_total, v_discounted_count, v_discount_total,
