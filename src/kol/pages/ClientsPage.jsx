@@ -277,6 +277,44 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     if (changed) save({ ...data, clients: updatedClients });
   }, [clientTabMap]);
 
+  // ── One-time backfill: add "Pulled lead from Ignite" system log for Ignite leads with 0 entries ──
+  const igniteBackfillDoneRef = useRef(false);
+  useEffect(() => {
+    if (igniteBackfillDoneRef.current || !save) return;
+    igniteBackfillDoneRef.current = true;
+    let changed = false;
+    const updatedClients = data.clients.map(c => {
+      // Only apply to Ignite-sourced lite clients with 0 updates
+      if (!c.isLiteClient) return c;
+      if (c.lifecycle?.conversion?.source !== "ignite") return c;
+      const updates = c.lifecycle?.conversion?.updates || [];
+      if (updates.length > 0) return c;
+      // Add system log entry
+      const leadType = c.igniteData?.leadType;
+      const src = c.igniteData?.source || "";
+      const typeLabel = leadType === "phone_call" ? "Phone Call" : leadType === "web_form" ? "Web Form" : leadType === "ad_click" ? "Ad Click" : "Lead";
+      changed = true;
+      return {
+        ...c,
+        lifecycle: {
+          ...c.lifecycle,
+          conversion: {
+            ...c.lifecycle.conversion,
+            updates: [{
+              id: gid(),
+              notes: `Pulled lead from Ignite \u2014 ${typeLabel}${src ? " (" + src + ")" : ""}`,
+              previousFollowUp: "",
+              newFollowUp: c.lifecycle.conversion.followUpDate || "",
+              loggedBy: "System",
+              loggedAt: c.createdAt || new Date().toISOString(),
+            }],
+          },
+        },
+      };
+    });
+    if (changed) save({ ...data, clients: updatedClients });
+  }, [data.clients]);
+
   // ── Source lookup helpers ──
   const getClientSource = useCallback((client) => {
     const base = client.fields?.referral_source || "";
@@ -1373,50 +1411,110 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                   {renderDogDetails(c)}
                   {expandedIgnite.has(c.id) && c.igniteData && (() => {
                     const igd = c.igniteData;
+                    const isPhoneCall = igd.leadType === "phone_call";
+                    const isWebForm = igd.leadType === "web_form";
                     const fields = [
                       { label: "Source", val: igd.source },
+                      { label: "Lead Type", val: isPhoneCall ? "Phone Call" : isWebForm ? "Web Form" : igd.leadType },
                       { label: "First Name", val: igd.firstName },
                       { label: "Last Name", val: igd.lastName },
-                      { label: "Caller Name", val: igd.callerName },
+                      isPhoneCall && { label: "Caller Name", val: igd.callerName },
                       { label: "Email", val: igd.email },
-                      { label: "Phone", val: igd.phone },
-                      { label: "Tracking Number", val: igd.trackingNumber },
-                      { label: "Call Duration", val: igd.callDuration },
-                      { label: "Call Status", val: igd.callStatus },
+                      { label: "Phone", val: igd.phone ? fmtPhone(igd.phone) : null },
+                      isPhoneCall && { label: "Tracking Number", val: igd.trackingNumber },
+                      isPhoneCall && { label: "Call Duration", val: igd.callDuration },
+                      isPhoneCall && { label: "Call Status", val: igd.callStatus },
                       { label: "Zip Code", val: igd.zip },
                       { label: "City", val: igd.city },
                       { label: "State", val: igd.state },
-                      { label: "Reason for Contact", val: igd.reason },
-                      { label: "Message", val: igd.message },
-                      { label: "Profile", val: igd.profile },
-                      { label: "Form Name", val: igd.formName },
-                      { label: "Lead ID", val: igd.leadId },
-                      { label: "Lead Page", val: igd.leadPage },
-                      { label: "Landing Page", val: igd.landingPage },
-                    ].filter(f => f.val);
+                      isWebForm && { label: "Form Name", val: igd.formName },
+                      isWebForm && { label: "Desired Service", val: igd.desiredService },
+                      isWebForm && { label: "Desired Date", val: igd.desiredDate },
+                      isWebForm && { label: "Booking", val: igd.bookingTitle },
+                      isWebForm && { label: "Pet Name", val: igd.petName },
+                      isWebForm && igd.salesValue != null && { label: "Est. Value", val: `$${Number(igd.salesValue).toLocaleString("en-US",{minimumFractionDigits:2})}` },
+                      isWebForm && { label: "Details", val: igd.details },
+                    ].filter(f => f && f.val);
+                    // Parse transcript into speaker blocks
+                    const parseTranscript = (raw) => {
+                      if (!raw) return null;
+                      const blocks = [];
+                      const lines = raw.split("\n");
+                      let currentSpeaker = null;
+                      let currentText = [];
+                      for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed) {
+                          if (currentText.length > 0 && currentSpeaker) {
+                            blocks.push({ speaker: currentSpeaker, text: currentText.join(" ").trim() });
+                            currentText = [];
+                            currentSpeaker = null;
+                          }
+                          continue;
+                        }
+                        if ((trimmed === "Caller" || trimmed === "Recipient") && currentText.length === 0) {
+                          currentSpeaker = trimmed;
+                        } else if (currentSpeaker) {
+                          currentText.push(trimmed);
+                        } else {
+                          if (blocks.length > 0) {
+                            blocks[blocks.length - 1].text += " " + trimmed;
+                          } else {
+                            blocks.push({ speaker: "Unknown", text: trimmed });
+                          }
+                        }
+                      }
+                      if (currentSpeaker && currentText.length > 0) {
+                        blocks.push({ speaker: currentSpeaker, text: currentText.join(" ").trim() });
+                      }
+                      return blocks.filter(b => b.text);
+                    };
+                    const transcriptBlocks = parseTranscript(igd.callTranscription);
                     return (
                       <div style={{padding:"12px 20px 12px 28px",background:`#FFF7ED`,borderBottom:`1px solid ${C.borderLight}`,borderLeft:"3px solid #F97316"}}>
                         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="#F97316" stroke="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-                          <span style={{fontSize:12,fontWeight:700,color:"#F97316"}}>Ignite Lead Data</span>
-                          <span style={{fontSize:10,color:C.textSec,fontWeight:500}}>Received {c.createdAt ? new Date(c.createdAt + "T12:00:00").toLocaleDateString("en-US",{month:"numeric",day:"numeric",year:"2-digit"}) : "—"}</span>
+                          {isPhoneCall ? (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2" strokeLinecap="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+                          ) : (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                          )}
+                          <span style={{fontSize:12,fontWeight:700,color:"#F97316"}}>Ignite {isPhoneCall ? "Phone Call" : isWebForm ? "Web Form" : "Lead"}</span>
+                          <span style={{fontSize:10,color:C.textSec,fontWeight:500}}>Received {igd.createdAt ? new Date(igd.createdAt).toLocaleDateString("en-US",{month:"numeric",day:"numeric",year:"2-digit"}) : c.createdAt ? new Date(c.createdAt + "T12:00:00").toLocaleDateString("en-US",{month:"numeric",day:"numeric",year:"2-digit"}) : "\u2014"}</span>
                         </div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px 24px"}}>
                           {fields.map((f, i) => (
-                            <div key={i} style={{display:"flex",gap:6,fontSize:11,lineHeight:1.5}}>
+                            <div key={i} style={{display:"flex",gap:6,fontSize:11,lineHeight:1.5,...(f.label==="Details"?{gridColumn:"1 / -1"}:{})}}>
                               <span style={{fontWeight:700,color:C.textSec,minWidth:110,flexShrink:0}}>{f.label}:</span>
                               <span style={{color:C.text,wordBreak:"break-word"}}>{f.val}</span>
                             </div>
                           ))}
                         </div>
-                        {(igd.igniteProfileId && igd.leadId || igd.callRecordingUrl) && (
+                        {/* Transcript with speaker separation */}
+                        {transcriptBlocks && transcriptBlocks.length > 0 && (
+                          <div style={{marginTop:10,paddingTop:8,borderTop:"1px solid #F9731620"}}>
+                            <div style={{fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",marginBottom:6}}>Call Transcript</div>
+                            <div style={{maxHeight:200,overflowY:"auto",paddingRight:8}}>
+                              {transcriptBlocks.map((block, bi) => (
+                                <div key={bi} style={{display:"flex",gap:8,marginBottom:6,fontSize:11,lineHeight:1.5}}>
+                                  <span style={{fontWeight:700,color:block.speaker==="Caller"?"#F97316":C.pri,minWidth:60,flexShrink:0,fontSize:10,paddingTop:1}}>
+                                    {block.speaker === "Caller" ? "Caller" : "Staff"}
+                                  </span>
+                                  <span style={{color:C.text,wordBreak:"break-word",flex:1,background:block.speaker==="Caller"?"#FFF7ED":`${C.pri}06`,padding:"4px 8px",borderRadius:6}}>
+                                    {block.text}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {(igd.igniteProfileId && (igd.igniteLeadId || igd.leadId) || igd.callRecordingUrl || igd.leadPage) && (
                           <div style={{marginTop:10,paddingTop:8,borderTop:"1px solid #F9731630",display:"flex",gap:8,flexWrap:"wrap"}}>
-                            {igd.igniteProfileId && igd.leadId && (
-                              <a href={`https://leads.idigitalstrategies.com/profile/${igd.igniteProfileId}/leads?lid=${igd.leadId}`} target="_blank" rel="noopener noreferrer"
+                            {igd.igniteProfileId && (igd.igniteLeadId || igd.leadId) && (
+                              <a href={`https://leads.idigitalstrategies.com/profile/${igd.igniteProfileId}/leads?lid=${igd.igniteLeadId || igd.leadId}`} target="_blank" rel="noopener noreferrer"
                                 style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:"#F97316",textDecoration:"none",padding:"4px 10px",borderRadius:6,border:"1px solid #F9731640",background:"white"}}
                                 onMouseEnter={e=>e.currentTarget.style.background="#FFF7ED"}
                                 onMouseLeave={e=>e.currentTarget.style.background="white"}>
-                                View in Ignite Dashboard ↗
+                                View in Ignite ↗
                               </a>
                             )}
                             {igd.callRecordingUrl && (
@@ -1424,7 +1522,15 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                                 style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:C.pri,textDecoration:"none",padding:"4px 10px",borderRadius:6,border:`1px solid ${C.pri}40`,background:"white"}}
                                 onMouseEnter={e=>e.currentTarget.style.background=`${C.pri}08`}
                                 onMouseLeave={e=>e.currentTarget.style.background="white"}>
-                                🎧 Listen to Call Recording ↗
+                                🎧 Listen to Recording ↗
+                              </a>
+                            )}
+                            {igd.leadPage && (
+                              <a href={igd.leadPage} target="_blank" rel="noopener noreferrer"
+                                style={{display:"inline-flex",alignItems:"center",gap:5,fontSize:11,fontWeight:700,color:C.textSec,textDecoration:"none",padding:"4px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:"white"}}
+                                onMouseEnter={e=>e.currentTarget.style.background=C.bg}
+                                onMouseLeave={e=>e.currentTarget.style.background="white"}>
+                                Lead Page ↗
                               </a>
                             )}
                           </div>
