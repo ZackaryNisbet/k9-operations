@@ -5,7 +5,7 @@ import { supabase } from "../supabaseClient";
 import { C, OPERATIONS_CATALOG, idbGet, idbSet, IDB_VERSION, todayStr, addDays, LITE_DEF_PRICING, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, LEAN_ROLES, ROOM_TYPES } from "../shared/theme";
 import { classifyReservationType, classifyReservationStatus, extractRoomFromType } from "../shared/opsHelpers";
 
-function useGingrData(locationId) {
+function useGingrData(locationId, refreshOptions = {}) {
   const [clients, setClients] = useState([]);
   const [dogs, setDogs] = useState([]);
   const [reservations, setReservations] = useState(null);
@@ -653,14 +653,17 @@ function useGingrData(locationId) {
     loadData();
   }, [loadData]);
 
-  // ── Auto-sync every 15 minutes ──
+  // ── Auto-sync at configured interval (default 15 min), pauses outside business hours ──
+  const gingrIntervalMs = refreshOptions.refreshIntervalMs || 15 * 60 * 1000;
+  const gingrBusinessCheck = refreshOptions.isWithinBusinessHours;
   useEffect(() => {
     if (!locationId) return;
     refreshTimerRef.current = setInterval(() => {
+      if (typeof gingrBusinessCheck === "function" && !gingrBusinessCheck()) return;
       triggerSync("incremental").catch(() => {});
-    }, 15 * 60 * 1000);
+    }, gingrIntervalMs);
     return () => { if (refreshTimerRef.current) clearInterval(refreshTimerRef.current); };
-  }, [locationId, triggerSync]);
+  }, [locationId, triggerSync, gingrIntervalMs, gingrBusinessCheck]);
 
   // Build daily ops (these are Lite-native, stored in Supabase lite tables, not from Gingr)
   const td = todayStr();
