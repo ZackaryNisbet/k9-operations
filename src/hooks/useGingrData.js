@@ -355,40 +355,122 @@ function useGingrData(locationId) {
           }
         });
       }
+      // ── Fetch ignite_leads data to enrich lite clients ──
+      const igniteLeadIds = rawLiteClients.filter(lc => lc.ignite_lead_id && !lc.gingr_owner_id && !lc._matched).map(lc => lc.ignite_lead_id);
+      let igniteLeadsMap = {};
+      if (igniteLeadIds.length > 0) {
+        const { data: igLeads } = await supabase
+          .from("ignite_leads")
+          .select("id, lead_type, first_name, last_name, email, phone, source_detail, call_recording_url, form_data, ignite_profile_id, match_status, created_at")
+          .in("id", igniteLeadIds);
+        (igLeads || []).forEach(il => { igniteLeadsMap[il.id] = il; });
+      }
+
       // Transform remaining unlinked lite clients into client shape
       const liteClientRecords = rawLiteClients
         .filter(lc => !lc.gingr_owner_id && !lc._matched)
-        .map(lc => ({
-          id: `lc_${lc.id}`,
-          gingrId: null,
-          createdAt: lc.created_at || new Date().toISOString(),
-          source: lc.source || "manual",
-          sourceData: { sourceDate: lc.source_date, igniteLeadId: lc.ignite_lead_id },
-          isLiteClient: true,
-          liteClientId: lc.id,
-          fields: {
-            phone: (lc.phone || "").replace(/\D/g, ""),
-            first_name: (lc.first_name || "").trim(),
-            last_name: (lc.last_name || "").trim(),
-            email: lc.email || "",
-          },
-          lifecycle: lc.lifecycle_data && Object.keys(lc.lifecycle_data).length > 0 ? lc.lifecycle_data : null,
-          lifecycleLog: [],
-          bookingDrafts: [],
-          igniteData: lc.ignite_lead_id ? { leadId: lc.ignite_lead_id } : null,
-          coldMarkedAt: null,
-          revivedAt: null,
-          discountUsage: [],
-          _lastReservation: null,
-          _nextReservation: null,
-          _numReservations: 0,
-          _balance: 0,
-          _animalNames: null,
-          _emergencyContact: null,
-          _emergencyPhone: null,
-          _address: null,
-          _notes: lc.notes || "",
-        }));
+        .filter(lc => {
+          // Filter out empty Ignite leads with no usable data
+          const hasName = (lc.first_name || "").trim() || (lc.last_name || "").trim();
+          const hasPhone = (lc.phone || "").trim();
+          const hasEmail = (lc.email || "").trim();
+          // For ignite leads, also check if the ignite_lead has form_data with name/phone/email
+          if (!hasName && !hasPhone && !hasEmail && lc.ignite_lead_id) {
+            const il = igniteLeadsMap[lc.ignite_lead_id];
+            if (il) {
+              const fd = il.form_data || {};
+              const fdName = (fd.first_name || "") + (fd.last_name || "");
+              const fdPhone = fd.phone || "";
+              const fdEmail = fd.email || fd.email_address || "";
+              if (!fdName.trim() && !fdPhone.trim() && !fdEmail.trim()) return false;
+              // Backfill lite_client fields from form_data (in memory only)
+              if (fd.first_name) lc.first_name = fd.first_name;
+              if (fd.last_name) lc.last_name = fd.last_name;
+              if (fd.phone) lc.phone = fd.phone;
+              if (fd.email || fd.email_address) lc.email = fd.email || fd.email_address;
+            } else {
+              return false; // No ignite lead data at all — filter out
+            }
+          }
+          if (!hasName && !hasPhone && !hasEmail && !lc.ignite_lead_id) return true; // Manual leads always show
+          return true;
+        })
+        .map(lc => {
+          // Build enriched igniteData from the actual ignite_leads table
+          let igniteData = null;
+          if (lc.ignite_lead_id) {
+            const il = igniteLeadsMap[lc.ignite_lead_id];
+            if (il) {
+              const fd = il.form_data || {};
+              igniteData = {
+                leadId: lc.ignite_lead_id,
+                leadType: il.lead_type,
+                source: il.source_detail,
+                firstName: il.first_name || fd.first_name || null,
+                lastName: il.last_name || fd.last_name || null,
+                callerName: fd.caller_name || null,
+                email: il.email || fd.email || fd.email_address || null,
+                phone: il.phone || fd.phone || null,
+                trackingNumber: fd.tracking_number || null,
+                callDuration: fd.call_duration || null,
+                callStatus: fd.answer_status || null,
+                zip: fd.zip || fd.zip_code || null,
+                city: fd.city || null,
+                state: fd.state || null,
+                callRecordingUrl: il.call_recording_url || null,
+                callTranscription: fd.call_transcription || null,
+                igniteProfileId: il.ignite_profile_id || null,
+                igniteLeadId: fd.ignite_lead_id || null,
+                // Web form specific
+                bookingTitle: fd.booking_title || null,
+                petName: fd.pet_name || null,
+                services: fd.services || null,
+                salesValue: fd.sales_value || null,
+                dates: fd.dates || null,
+                leadPage: fd.lead_page_url || null,
+                landingPage: fd.landing_page_url || null,
+                details: fd.details || null,
+                formName: fd.form_name || null,
+                desiredService: fd.desired_service || null,
+                desiredDate: fd.desired_date_of_boarding_or_day_care || null,
+                createdAt: il.created_at,
+              };
+            } else {
+              igniteData = { leadId: lc.ignite_lead_id };
+            }
+          }
+          return {
+            id: `lc_${lc.id}`,
+            gingrId: null,
+            createdAt: lc.created_at || new Date().toISOString(),
+            source: lc.source || "manual",
+            sourceData: { sourceDate: lc.source_date, igniteLeadId: lc.ignite_lead_id },
+            isLiteClient: true,
+            liteClientId: lc.id,
+            fields: {
+              phone: (lc.phone || "").replace(/\D/g, ""),
+              first_name: (lc.first_name || "").trim(),
+              last_name: (lc.last_name || "").trim(),
+              email: lc.email || "",
+            },
+            lifecycle: lc.lifecycle_data && Object.keys(lc.lifecycle_data).length > 0 ? lc.lifecycle_data : null,
+            lifecycleLog: [],
+            bookingDrafts: [],
+            igniteData,
+            coldMarkedAt: null,
+            revivedAt: null,
+            discountUsage: [],
+            _lastReservation: null,
+            _nextReservation: null,
+            _numReservations: 0,
+            _balance: 0,
+            _animalNames: null,
+            _emergencyContact: null,
+            _emergencyPhone: null,
+            _address: null,
+            _notes: lc.notes || "",
+          };
+        });
       // Append lite clients to Gingr clients
       tClients.push(...liteClientRecords);
 
