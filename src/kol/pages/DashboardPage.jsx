@@ -3,7 +3,7 @@
 // Timeframe changes = Supabase query returning ~1-365 pre-computed rows.
 // 9×11 Grid, viewport-locked, world-class data density.
 
-import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef, memo, startTransition } from "react";
 import {
   C, todayStr, addDays, fmtDate, fmtDateShort,
 } from "../../shared/theme";
@@ -54,6 +54,27 @@ const DASH_CSS = `
 @keyframes cancelFadeOut {
   0% { opacity: 1; }
   100% { opacity: 0; }
+}
+@keyframes dashSkeleton {
+  0% { background-position: -200px 0; }
+  100% { background-position: calc(200px + 100%) 0; }
+}
+.dash-skeleton-line {
+  height: 18px;
+  width: 60%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, rgba(20,83,45,0.04) 25%, rgba(20,83,45,0.08) 50%, rgba(20,83,45,0.04) 75%);
+  background-size: 200px 100%;
+  animation: dashSkeleton 1.2s ease-in-out infinite;
+}
+.dash-skeleton-label {
+  height: 9px;
+  width: 50%;
+  border-radius: 3px;
+  margin-top: 5px;
+  background: linear-gradient(90deg, rgba(20,83,45,0.03) 25%, rgba(20,83,45,0.06) 50%, rgba(20,83,45,0.03) 75%);
+  background-size: 200px 100%;
+  animation: dashSkeleton 1.2s ease-in-out infinite;
 }
 /* ── Cell styles ── */
 .dash-grid-cell {
@@ -693,7 +714,11 @@ function DashboardContent({
   }, [showCalendar]);
 
   const handleRangeChange = (key) => {
-    setRange(key);
+    // Decouple animation from data loading: update range in a transition
+    // so the pill slider animates immediately while data loads in background
+    startTransition(() => {
+      setRange(key);
+    });
     if (key === "custom") setShowCalendar(true);
     else setShowCalendar(false);
   };
@@ -731,6 +756,7 @@ function DashboardContent({
 
   const m = metrics || {};
   const pm = prevMetrics || {};
+  const showSkeleton = !metrics && metricsLoading;
 
   /* ─── Lifecycle metrics — still from client data (these need client state) ─── */
   // Lifecycle/funnel metrics require client lifecycle state which isn't in the daily table.
@@ -927,7 +953,18 @@ function DashboardContent({
       <DashGrid>
         {/* ─── Section Label: Gingr Data ─── */}
         <div style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
-          <span className="dash-section-label">Today's Snapshot</span>
+          <span className="dash-section-label">{
+            range === "today" ? "Today's Snapshot" :
+            range === "wtd" ? "WTD Snapshot" :
+            range === "past-week" ? "Past Week Snapshot" :
+            range === "mtd" ? "MTD Snapshot" :
+            range === "past-30" ? "Past 30 Days Snapshot" :
+            range === "qtd" ? "QTD Snapshot" :
+            range === "ytd" ? "YTD Snapshot" :
+            range === "lifetime" ? "Lifetime Snapshot" :
+            range === "custom" ? "Custom Range Snapshot" :
+            "Today's Snapshot"
+          }</span>
         </div>
         <div ref={opsVisRef} style={{ gridColumn: "8", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 2px" }}>
           <span className="dash-section-label">Checklists</span>
@@ -937,16 +974,16 @@ function DashboardContent({
         </div>
 
         {/* ═══ ROW 1: Gingr Data ═══ */}
-        <MetricCell label="Expected" value={m.dogsExpected} hero onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(m.dogsExpected, pm.dogsExpected) : null} />
-        <MetricCell label="In House" value={m.dogsInHouse} hero sub={`${m.boardingInHouse}B · ${m.daycareInHouse}D`} onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(m.dogsInHouse, pm.dogsInHouse) : null} />
+        <MetricCell label="Expected" value={m.dogsExpected} hero onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(m.dogsExpected, pm.dogsExpected) : null} skeleton={showSkeleton} />
+        <MetricCell label="In House" value={m.dogsInHouse} hero sub={`${m.boardingInHouse}B · ${m.daycareInHouse}D`} onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(m.dogsInHouse, pm.dogsInHouse) : null} skeleton={showSkeleton} />
         {days > 1
           ? <CanceledCell key={animEpoch} value={Math.max(0, (m.dogsExpected || 0) - (m.dogsInHouse || 0))} onClick={navTo["ops-bathing"]} animKey={animEpoch} />
-          : <MetricCell label="Going Home" value={m.dogsGoingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(m.dogsGoingHome, pm.dogsGoingHome) : null} />
+          : <MetricCell label="Going Home" value={m.dogsGoingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(m.dogsGoingHome, pm.dogsGoingHome) : null} skeleton={showSkeleton} />
         }
-        <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0)}%`} hero onClick={navTo["settings"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} />
-        <MetricCell label="Bookings" value={m.bookingsToday} hero />
-        <MetricCell label="Tours" value={m.toursToday} hero onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(m.toursToday, pm.toursToday) : null} />
-        <MetricCell label="Evals" value={m.evalsToday} hero onClick={navTo["lifecycle"]} />
+        <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0)}%`} hero onClick={navTo["settings"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} skeleton={showSkeleton} />
+        <MetricCell label="Bookings" value={m.bookingsToday} hero skeleton={showSkeleton} />
+        <MetricCell label="Tours" value={m.toursToday} hero onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(m.toursToday, pm.toursToday) : null} skeleton={showSkeleton} />
+        <MetricCell label="Evals" value={m.evalsToday} hero onClick={navTo["lifecycle"]} skeleton={showSkeleton} />
         <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={navTo["ops-opening"]} />
         <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={navTo["ops-bathing"]} />
 
@@ -994,15 +1031,15 @@ function DashboardContent({
         </div>
 
         {/* ═══ ROW 4: Reporting/Financial ═══ */}
-        <MetricCell label="Transactions" value={m.cashTransactionCount} trend={showPriorPeriod ? bookingsTrend : null} />
-        <MetricCell label="Average Transaction Price" value={`$${Math.round(m.cashAvgTransaction || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(m.cashAvgTransaction, pm.cashAvgTransaction) : null} />
-        <MetricCell label="Rev/PAR" value={`$${Math.round(m.revPAR || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(m.revPAR, pm.revPAR) : null} />
-        <MetricCell label="Refunds" value={m.refundCount} color={m.refundCount > 0 ? C.dan : undefined} trend={showPriorPeriod ? pctChange(m.refundCount, pm.refundCount) : null} />
-        <MetricCell label="$ Refunded" value={`$${fmt$k(m.refundTotal)}`} color={m.refundTotal > 0 ? C.dan : undefined} />
-        <MetricCell label="Discounted" value={m.discountedCount} color={m.discountedCount > 0 ? C.warn : undefined} />
-        <MetricCell label="$ Discounted" value={`$${fmt$k(m.discountTotal)}`} color={m.discountTotal > 0 ? C.warn : undefined} />
+        <MetricCell label="Transactions" value={m.cashTransactionCount} trend={showPriorPeriod ? bookingsTrend : null} skeleton={showSkeleton} />
+        <MetricCell label="Average Transaction Price" value={`$${Math.round(m.cashAvgTransaction || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(m.cashAvgTransaction, pm.cashAvgTransaction) : null} skeleton={showSkeleton} />
+        <MetricCell label="Rev/PAR" value={`$${Math.round(m.revPAR || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(m.revPAR, pm.revPAR) : null} skeleton={showSkeleton} />
+        <MetricCell label="Refunds" value={m.refundCount} color={m.refundCount > 0 ? C.dan : undefined} trend={showPriorPeriod ? pctChange(m.refundCount, pm.refundCount) : null} skeleton={showSkeleton} />
+        <MetricCell label="$ Refunded" value={`$${fmt$k(m.refundTotal)}`} color={m.refundTotal > 0 ? C.dan : undefined} skeleton={showSkeleton} />
+        <MetricCell label="Discounted" value={m.discountedCount} color={m.discountedCount > 0 ? C.warn : undefined} skeleton={showSkeleton} />
+        <MetricCell label="$ Discounted" value={`$${fmt$k(m.discountTotal)}`} color={m.discountTotal > 0 ? C.warn : undefined} skeleton={showSkeleton} />
         <ChecklistCell label="Room Clean" progress={getChecklistProgress("ops-rooms")} count={getChecklistCount("ops-rooms")} onClick={navTo["ops-rooms"]} />
-        <MetricCell label="Outstanding Invoices" value={m.outstandingInvoiceCount || 0} sub={`$${fmt$k(m.outstandingInvoiceTotal || 0)}`} color={(m.outstandingInvoiceCount || 0) > 0 ? C.warn : undefined} />
+        <MetricCell label="Outstanding Invoices" value={m.outstandingInvoiceCount || 0} sub={`$${fmt$k(m.outstandingInvoiceTotal || 0)}`} color={(m.outstandingInvoiceCount || 0) > 0 ? C.warn : undefined} skeleton={showSkeleton} />
 
         {/* ═══ ROWS 5-7: Charts ═══ */}
         <div className="dash-chart-cell" style={{ gridColumn: "1 / 4", gridRow: "span 3" }}>
@@ -1059,7 +1096,7 @@ function DashboardContent({
         <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={navTo["ops-pp"]} />
 
         {/* Col 9: Inventory (row 5) */}
-        <MetricCell label="Inventory" value="—" onClick={navTo["inventory"]} />
+        <QuickLinkCell label="Inventory" icon={<I.Package />} onClick={navTo["inventory"]} />
 
         {/* Col 8: Closing (row 6) */}
         <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={navTo["ops-closing"]} />
@@ -1067,8 +1104,8 @@ function DashboardContent({
         {/* Col 9: Test Health (row 6) */}
         <MetricCell label="Test Health" value="172" sub="100% pass" onClick={navTo["test-health"]} color={C.suc} />
 
-        {/* Row 7: Col 8 empty, Col 9 empty */}
-        <div className="dash-grid-cell empty-cell" />
+        {/* Row 7: Col 8 Attendance, Col 9 empty */}
+        <QuickLinkCell label="Attendance" icon={<I.ClipboardCheck />} onClick={navTo["enterprise-attendance"]} />
         <div className="dash-grid-cell empty-cell" />
       </DashGrid>
     </div>
@@ -1127,8 +1164,8 @@ const CanceledCell = memo(function CanceledCell({ value, onClick, animKey }) {
   );
 });
 
-/* MetricCell — standard data cell */
-const MetricCell = memo(function MetricCell({ label, value, sub, color, trend, onClick, hero }) {
+/* MetricCell — standard data cell with skeleton loading state */
+const MetricCell = memo(function MetricCell({ label, value, sub, color, trend, onClick, hero, skeleton }) {
   return (
     <div
       className={`dash-grid-cell${onClick ? " clickable" : ""}${hero ? " hero-cell" : ""}`}
@@ -1136,15 +1173,24 @@ const MetricCell = memo(function MetricCell({ label, value, sub, color, trend, o
       style={{ animation: "dashSlideIn 0.2s cubic-bezier(0.22,1,0.36,1) both", position: "relative" }}
     >
       {onClick && <LinkIcon />}
-      <div className="dash-cell-value" style={{
-        color: hero ? C.pri : (color || C.text),
-        fontSize: hero ? 26 : 22,
-      }}>
-        {typeof value === "number" ? <AnimatedNumber value={value} /> : value}
-      </div>
-      {trend != null && <TrendBadge value={trend} size="xs" />}
-      <div className="dash-cell-label" style={hero ? { color: C.textMut } : undefined}>{label}</div>
-      {sub && <div style={{ fontSize: 8, color: hero ? C.textMut : C.textMut, lineHeight: 1, marginTop: 1 }}>{sub}</div>}
+      {skeleton ? (
+        <>
+          <div className="dash-skeleton-line" />
+          <div className="dash-skeleton-label" />
+        </>
+      ) : (
+        <>
+          <div className="dash-cell-value" style={{
+            color: hero ? C.pri : (color || C.text),
+            fontSize: hero ? 26 : 22,
+          }}>
+            {typeof value === "number" ? <AnimatedNumber value={value} /> : value}
+          </div>
+          {trend != null && <TrendBadge value={trend} size="xs" />}
+          <div className="dash-cell-label" style={hero ? { color: C.textMut } : undefined}>{label}</div>
+          {sub && <div style={{ fontSize: 8, color: hero ? C.textMut : C.textMut, lineHeight: 1, marginTop: 1 }}>{sub}</div>}
+        </>
+      )}
     </div>
   );
 });
