@@ -208,8 +208,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       ? (resSvcIncludes(r, "Private Play") ? "Day Boarding + Add-On" : "Day Boarding")
       : "Private Play Add-On"
   })).sort((a, b) => {
-    const aNum = a.room ? (a.room.match(/(\d+)/) || [])[1] || "" : "";
-    const bNum = b.room ? (b.room.match(/(\d+)/) || [])[1] || "" : "";
+    const aNum = a.room ? (a.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || "" : "";
+    const bNum = b.room ? (b.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || "" : "";
     return aNum.localeCompare(bNum, undefined, { numeric: true });
   });
 
@@ -579,7 +579,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                   return (
                     <tr key={r.id} style={{ borderBottom: ri < dogs.length - 1 ? `1px solid ${C.border}` : "none" }}>
                       <td style={{ padding: "8px 12px", fontWeight: 700, color: C.text }}>{d ? d.fields.name : "?"}</td>
-                      <td style={{ padding: "8px 12px", color: C.pri, fontWeight: 700, fontSize: 11 }}>{r.room ? (r.room.match(/(\d+)/) || [])[1] || r.room : "—"}</td>
+                      <td style={{ padding: "8px 12px", color: C.pri, fontWeight: 700, fontSize: 11 }}>{r.room ? (r.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || r.room : "—"}</td>
                       <td style={{ padding: "8px 12px", fontSize: 10, fontWeight: 600, color: r._ppSource === "Day Boarding" ? C.acc : r._ppSource === "Day Boarding + Add-On" ? C.warn : C.pri }}>
                         <span style={{ padding: "2px 7px", borderRadius: 6, background: r._ppSource === "Day Boarding" ? C.acc + "18" : r._ppSource === "Day Boarding + Add-On" ? C.warn + "18" : C.priLt, whiteSpace: "nowrap" }}>{r._ppSource}</span>
                       </td>
@@ -744,7 +744,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       if (!hasSvc(res._services, "Bath")) return;
       const dog = dogs.find(d => d.id === res.dogId);
       const dogName = dog?.fields?.name || res._animalName || "Unknown";
-      const roomNum = res.room ? (res.room.match(/(\d+)/) || [])[1] || res.room : "—";
+      const roomNum = res.room ? (res.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || res.room : "—";
       const bathType = bathTypeMap[res.id] || (bathTypeLoading ? "Loading…" : "Premium");
       const rawCoTime = res.scheduledCheckOutTime || res.checkOutTime || "";
       const coTime = rawCoTime ? formatTime12hr(rawCoTime) : "—";
@@ -928,7 +928,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
       const dog = dogs.find(d => d.id === res.dogId);
       const dogName = dog?.fields?.name || res._animalName || "Unknown";
-      const roomNum = res.room ? (res.room.match(/(\d+)/) || [])[1] || res.room : "—";
+      const roomNum = res.room ? (res.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || res.room : "—";
       const ownerName = res._ownerName || "Unknown";
       const source = isLuxurySuite ? (hasPPAddon ? "Luxury Suite + Add-On" : "Luxury Suite") : "Add-On";
       const completedInfo = pamperCompleted[res.id];
@@ -1086,7 +1086,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
       const dog = dogs.find(d => d.id === res.dogId);
       const dogName = dog?.fields?.name || res._animalName || "Unknown";
-      const roomNum = res.room ? (res.room.match(/(\d+)/) || [])[1] || res.room : "—";
+      const roomNum = res.room ? (res.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || res.room : "—";
       const ownerName = res._ownerName || "Unknown";
       const completedInfo = genericSvcCompleted[res.id];
       const isDone = !!completedInfo;
