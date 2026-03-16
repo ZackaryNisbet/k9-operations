@@ -190,16 +190,14 @@ function SizeBadge({ size }) {
   );
 }
 
-/* ── TV-006 + TV-008b: Hero Checkout Card — supports grouped multi-dog entries ── */
-function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons }) {
-  // TV-008b: entry.dogs is an array of individual dog entries
+/* ── TV-006 + TV-008b + TV-015: Hero Checkout Card — compact mode for multi-notice ── */
+function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, compact }) {
   const entryDogs = entry.dogs || [entry];
   const resolvedDogs = entryDogs.map(d => {
     const dog = allDogs.find(dd => dd.gingrId === Number(d.animalGingrId) || dd.id === `g${d.animalGingrId}`);
     const iconData = animalIcons[dog?.gingrId];
     return {
-      ...d,
-      dog,
+      ...d, dog,
       name: dog?.fields?.name || d.animalName || "Unknown",
       breed: dog?.fields?.breed || "",
       image: iconData?.icon_url || dog?._image,
@@ -212,50 +210,54 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons }
   const firstDog = resolvedDogs[0];
   const theme = SIZE_THEME[firstDog.size];
 
+  // TV-015: Compact sizing
+  const imgSize = compact ? 72 : (resolvedDogs.length > 1 ? 96 : 120);
+  const nameSize = compact ? 28 : (resolvedDogs.length > 1 ? 34 : 42);
+  const badgeSize = compact ? 12 : 14;
+  const countdownSize = compact ? 64 : 100;
+  const pad = compact ? "16px 24px" : "32px 40px";
+  const gap = compact ? 20 : 36;
+  const radius = compact ? 20 : 28;
+
   return (
     <div style={{
-      display: "flex", alignItems: "center", gap: 36,
-      padding: "32px 40px",
+      display: "flex", alignItems: "center", gap,
+      padding: pad,
       background: "linear-gradient(135deg, rgba(132,204,22,0.22) 0%, rgba(132,204,22,0.08) 50%, rgba(0,26,51,0.95) 100%)",
-      borderRadius: 28,
+      borderRadius: radius,
       border: `3px solid ${isUrgent ? "rgba(239,68,68,0.6)" : "rgba(132,204,22,0.6)"}`,
       animation: fading
         ? "heroFadeOut 1s ease-out forwards"
         : `heroEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), heroPulse 2.5s ease-in-out infinite 0.6s`,
-      minHeight: 140,
+      minHeight: compact ? 80 : 140,
       position: "relative",
       overflow: "hidden",
       transition: "border-color 0.3s",
     }}>
-      {/* Subtle background glow */}
       <div style={{
         position: "absolute", top: "-50%", left: "-20%",
         width: "60%", height: "200%",
         background: `radial-gradient(ellipse, ${isUrgent ? "rgba(239,68,68,0.08)" : "rgba(132,204,22,0.08)"} 0%, transparent 70%)`,
         pointerEvents: "none",
-        transition: "background 0.3s",
       }} />
 
-      {/* TV-008b: Dog photos — side by side for multi-dog */}
-      <div style={{ display: "flex", gap: 12, flexShrink: 0, position: "relative", zIndex: 1 }}>
+      <div style={{ display: "flex", gap: compact ? 8 : 12, flexShrink: 0, position: "relative", zIndex: 1 }}>
         {resolvedDogs.map((rd, i) => (
           rd.image ? (
             <img key={rd.id || i} src={rd.image} alt={rd.name} style={{
-              width: resolvedDogs.length > 1 ? 96 : 120, height: resolvedDogs.length > 1 ? 96 : 120,
-              borderRadius: 24, objectFit: "cover",
-              border: `4px solid ${isUrgent ? "rgba(239,68,68,0.5)" : "rgba(132,204,22,0.6)"}`,
-              transition: "border-color 0.3s",
+              width: imgSize, height: imgSize,
+              borderRadius: compact ? 16 : 24, objectFit: "cover",
+              border: `${compact ? 3 : 4}px solid ${isUrgent ? "rgba(239,68,68,0.5)" : "rgba(132,204,22,0.6)"}`,
             }} />
           ) : (
             <div key={rd.id || i} style={{
-              width: resolvedDogs.length > 1 ? 96 : 120, height: resolvedDogs.length > 1 ? 96 : 120,
-              borderRadius: 24,
+              width: imgSize, height: imgSize,
+              borderRadius: compact ? 16 : 24,
               background: isUrgent ? "rgba(239,68,68,0.2)" : "rgba(132,204,22,0.25)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: resolvedDogs.length > 1 ? 36 : 48, fontWeight: 900,
+              fontSize: compact ? 24 : (resolvedDogs.length > 1 ? 36 : 48), fontWeight: 900,
               color: isUrgent ? "#EF4444" : "#84CC16",
-              border: `4px solid ${isUrgent ? "rgba(239,68,68,0.4)" : "rgba(132,204,22,0.4)"}`,
-              transition: "background 0.3s, color 0.3s, border-color 0.3s",
+              border: `${compact ? 3 : 4}px solid ${isUrgent ? "rgba(239,68,68,0.4)" : "rgba(132,204,22,0.4)"}`,
             }}>
               {rd.name[0]}
             </div>
@@ -263,80 +265,85 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons }
         ))}
       </div>
 
-      {/* Info — large text for TV visibility */}
       <div style={{ flex: 1, minWidth: 0, position: "relative", zIndex: 1 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: compact ? 10 : 14, marginBottom: compact ? 4 : 8, flexWrap: "wrap" }}>
           <span style={{
-            fontSize: 14, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase",
+            fontSize: badgeSize, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase",
             color: isUrgent ? "#EF4444" : "#84CC16",
             background: isUrgent ? "rgba(239,68,68,0.15)" : "rgba(132,204,22,0.15)",
-            padding: "5px 14px", borderRadius: 8,
+            padding: compact ? "3px 10px" : "5px 14px", borderRadius: 8,
             animation: isUrgent ? "urgentShake 0.5s ease-in-out infinite" : "none",
-            transition: "color 0.3s, background 0.3s",
           }}>
             {isUrgent ? "Leaving Now" : "Checking Out"}
           </span>
           <span style={{
-            fontSize: 13, fontWeight: 800, letterSpacing: "0.08em",
+            fontSize: compact ? 11 : 13, fontWeight: 800, letterSpacing: "0.08em",
             color: theme.accent,
             background: `rgba(${theme.accentRgb},0.15)`,
-            padding: "5px 14px", borderRadius: 8,
+            padding: compact ? "3px 10px" : "5px 14px", borderRadius: 8,
           }}>
             {theme.badge === "LG" ? "LARGE" : "SMALL"}
           </span>
         </div>
         <div style={{
-          fontSize: resolvedDogs.length > 1 ? 34 : 42, fontWeight: 900, color: "#fff",
-          lineHeight: 1.1, marginBottom: 6,
+          fontSize: nameSize, fontWeight: 900, color: "#fff",
+          lineHeight: 1.1, marginBottom: compact ? 2 : 6,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           letterSpacing: "-0.01em",
         }}>
           {allNames}
         </div>
-        <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-          {resolvedDogs.length === 1 && firstDog.breed && (
-            <span style={{ fontSize: 17, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>{firstDog.breed}</span>
-          )}
-          {resolvedDogs.length > 1 && (
-            <span style={{ fontSize: 15, color: "rgba(255,255,255,0.45)", fontWeight: 500 }}>
-              {resolvedDogs.map(d => d.breed).filter(Boolean).join(" · ")}
-            </span>
-          )}
-          {ownerLast && (
-            <span style={{ fontSize: 17, color: "rgba(132,204,22,0.8)", fontWeight: 700 }}>
-              Owner: {ownerLast}
-            </span>
-          )}
-        </div>
+        {!compact && (
+          <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+            {resolvedDogs.length === 1 && firstDog.breed && (
+              <span style={{ fontSize: 17, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>{firstDog.breed}</span>
+            )}
+            {resolvedDogs.length > 1 && (
+              <span style={{ fontSize: 15, color: "rgba(255,255,255,0.45)", fontWeight: 500 }}>
+                {resolvedDogs.map(d => d.breed).filter(Boolean).join(" · ")}
+              </span>
+            )}
+            {ownerLast && (
+              <span style={{ fontSize: 17, color: "rgba(132,204,22,0.8)", fontWeight: 700 }}>
+                Owner: {ownerLast}
+              </span>
+            )}
+          </div>
+        )}
+        {compact && ownerLast && (
+          <span style={{ fontSize: 13, color: "rgba(132,204,22,0.7)", fontWeight: 600 }}>
+            {firstDog.breed ? `${firstDog.breed} · ` : ""}Owner: {ownerLast}
+          </span>
+        )}
       </div>
 
-      {/* Large Countdown */}
       <div style={{
-        display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+        display: "flex", flexDirection: "column", alignItems: "center", gap: compact ? 4 : 8,
         position: "relative", zIndex: 1,
         animation: isUrgent ? "heroCountdownPulse 1s ease-in-out infinite" : "none",
       }}>
-        <CountdownCircle remaining={entry.remaining} total={60} size={100} strokeWidth={6} />
-        <span style={{
-          fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.35)",
-          textTransform: "uppercase", letterSpacing: "0.08em",
-        }}>
-          seconds
-        </span>
+        <CountdownCircle remaining={entry.remaining} total={60} size={countdownSize} strokeWidth={compact ? 4 : 6} />
+        {!compact && (
+          <span style={{
+            fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.35)",
+            textTransform: "uppercase", letterSpacing: "0.08em",
+          }}>
+            seconds
+          </span>
+        )}
       </div>
     </div>
   );
 }
 
-/* ── TV-008d: Hero Check-In Card — blue themed, same layout as checkout ── */
-function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading }) {
+/* ── TV-008d + TV-015: Hero Check-In Card — compact mode for multi-notice ── */
+function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading, compact }) {
   const entryDogs = entry.dogs || [entry];
   const resolvedDogs = entryDogs.map(d => {
     const dog = allDogs.find(dd => dd.gingrId === Number(d.animalGingrId) || dd.id === `g${d.animalGingrId}`);
     const iconData = animalIcons[dog?.gingrId];
     return {
-      ...d,
-      dog,
+      ...d, dog,
       name: dog?.fields?.name || d.animalName || "Unknown",
       breed: dog?.fields?.breed || "",
       image: iconData?.icon_url || dog?._image,
@@ -348,7 +355,6 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading }) {
   const firstDog = resolvedDogs[0];
   const theme = SIZE_THEME[firstDog.size];
 
-  // Determine group label from reservation type
   const resType = (entry.dogs?.[0]?.resType || entry.resType || "");
   const groupLabel = resType === "dayboarding" ? "PRIVATE PLAY"
     : resType === "boarding" ? "BOARDING"
@@ -357,22 +363,29 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading }) {
     : resType === "boarding" ? "#A78BFA"
     : theme?.accent || "#84CC16";
 
+  // TV-015: Compact sizing
+  const imgSize = compact ? 72 : (resolvedDogs.length > 1 ? 96 : 120);
+  const nameSize = compact ? 28 : (resolvedDogs.length > 1 ? 34 : 42);
+  const badgeSize = compact ? 12 : 14;
+  const countdownSize = compact ? 64 : 100;
+  const pad = compact ? "16px 24px" : "32px 40px";
+  const gap = compact ? 20 : 36;
+  const radius = compact ? 20 : 28;
+
   return (
     <div style={{
-      display: "flex", alignItems: "center", gap: 36,
-      padding: "32px 40px",
+      display: "flex", alignItems: "center", gap,
+      padding: pad,
       background: "linear-gradient(135deg, rgba(56,189,248,0.22) 0%, rgba(56,189,248,0.08) 50%, rgba(0,26,51,0.95) 100%)",
-      borderRadius: 28,
+      borderRadius: radius,
       border: "3px solid rgba(56,189,248,0.6)",
       animation: fading
         ? "heroFadeOut 1s ease-out forwards"
         : `heroEnter 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), checkinPulse 2.5s ease-in-out infinite 0.6s`,
-      minHeight: 140,
+      minHeight: compact ? 80 : 140,
       position: "relative",
       overflow: "hidden",
-      marginBottom: 12,
     }}>
-      {/* Background glow */}
       <div style={{
         position: "absolute", top: "-50%", left: "-20%",
         width: "60%", height: "200%",
@@ -380,24 +393,23 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading }) {
         pointerEvents: "none",
       }} />
 
-      {/* Dog photos */}
-      <div style={{ display: "flex", gap: 12, flexShrink: 0, position: "relative", zIndex: 1 }}>
+      <div style={{ display: "flex", gap: compact ? 8 : 12, flexShrink: 0, position: "relative", zIndex: 1 }}>
         {resolvedDogs.map((rd, i) => (
           rd.image ? (
             <img key={rd.id || i} src={rd.image} alt={rd.name} style={{
-              width: resolvedDogs.length > 1 ? 96 : 120, height: resolvedDogs.length > 1 ? 96 : 120,
-              borderRadius: 24, objectFit: "cover",
-              border: "4px solid rgba(56,189,248,0.6)",
+              width: imgSize, height: imgSize,
+              borderRadius: compact ? 16 : 24, objectFit: "cover",
+              border: `${compact ? 3 : 4}px solid rgba(56,189,248,0.6)`,
             }} />
           ) : (
             <div key={rd.id || i} style={{
-              width: resolvedDogs.length > 1 ? 96 : 120, height: resolvedDogs.length > 1 ? 96 : 120,
-              borderRadius: 24,
+              width: imgSize, height: imgSize,
+              borderRadius: compact ? 16 : 24,
               background: "rgba(56,189,248,0.25)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: resolvedDogs.length > 1 ? 36 : 48, fontWeight: 900,
+              fontSize: compact ? 24 : (resolvedDogs.length > 1 ? 36 : 48), fontWeight: 900,
               color: "#38BDF8",
-              border: "4px solid rgba(56,189,248,0.4)",
+              border: `${compact ? 3 : 4}px solid rgba(56,189,248,0.4)`,
             }}>
               {rd.name[0]}
             </div>
@@ -405,109 +417,71 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading }) {
         ))}
       </div>
 
-      {/* Info */}
       <div style={{ flex: 1, minWidth: 0, position: "relative", zIndex: 1 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: compact ? 10 : 14, marginBottom: compact ? 4 : 8, flexWrap: "wrap" }}>
           <span style={{
-            fontSize: 14, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase",
+            fontSize: badgeSize, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase",
             color: "#38BDF8",
             background: "rgba(56,189,248,0.15)",
-            padding: "5px 14px", borderRadius: 8,
+            padding: compact ? "3px 10px" : "5px 14px", borderRadius: 8,
           }}>
             Checking In
           </span>
           <span style={{
-            fontSize: 13, fontWeight: 800, letterSpacing: "0.08em",
+            fontSize: compact ? 11 : 13, fontWeight: 800, letterSpacing: "0.08em",
             color: groupColor,
             background: `${groupColor}22`,
-            padding: "5px 14px", borderRadius: 8,
+            padding: compact ? "3px 10px" : "5px 14px", borderRadius: 8,
           }}>
             {groupLabel}
           </span>
         </div>
         <div style={{
-          fontSize: resolvedDogs.length > 1 ? 34 : 42, fontWeight: 900, color: "#fff",
-          lineHeight: 1.1, marginBottom: 6,
+          fontSize: nameSize, fontWeight: 900, color: "#fff",
+          lineHeight: 1.1, marginBottom: compact ? 2 : 6,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
           letterSpacing: "-0.01em",
         }}>
           {allNames}
         </div>
-        <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-          {resolvedDogs.length === 1 && resolvedDogs[0].breed && (
-            <span style={{ fontSize: 17, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>{resolvedDogs[0].breed}</span>
-          )}
-          {resolvedDogs.length > 1 && (
-            <span style={{ fontSize: 15, color: "rgba(255,255,255,0.45)", fontWeight: 500 }}>
-              {resolvedDogs.map(d => d.breed).filter(Boolean).join(" · ")}
-            </span>
-          )}
-          {ownerLast && (
-            <span style={{ fontSize: 17, color: "rgba(56,189,248,0.8)", fontWeight: 700 }}>
-              Owner: {ownerLast}
-            </span>
-          )}
-        </div>
+        {!compact && (
+          <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+            {resolvedDogs.length === 1 && resolvedDogs[0].breed && (
+              <span style={{ fontSize: 17, color: "rgba(255,255,255,0.5)", fontWeight: 500 }}>{resolvedDogs[0].breed}</span>
+            )}
+            {resolvedDogs.length > 1 && (
+              <span style={{ fontSize: 15, color: "rgba(255,255,255,0.45)", fontWeight: 500 }}>
+                {resolvedDogs.map(d => d.breed).filter(Boolean).join(" · ")}
+              </span>
+            )}
+            {ownerLast && (
+              <span style={{ fontSize: 17, color: "rgba(56,189,248,0.8)", fontWeight: 700 }}>
+                Owner: {ownerLast}
+              </span>
+            )}
+          </div>
+        )}
+        {compact && ownerLast && (
+          <span style={{ fontSize: 13, color: "rgba(56,189,248,0.7)", fontWeight: 600 }}>
+            {firstDog.breed ? `${firstDog.breed} · ` : ""}Owner: {ownerLast}
+          </span>
+        )}
       </div>
 
-      {/* Countdown */}
       <div style={{
-        display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
+        display: "flex", flexDirection: "column", alignItems: "center", gap: compact ? 4 : 8,
         position: "relative", zIndex: 1,
       }}>
-        <CountdownCircle remaining={entry.remaining} total={30} size={100} strokeWidth={6} accentColor="#38BDF8" />
-        <span style={{
-          fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.35)",
-          textTransform: "uppercase", letterSpacing: "0.08em",
-        }}>
-          seconds
-        </span>
+        <CountdownCircle remaining={entry.remaining} total={60} size={countdownSize} strokeWidth={compact ? 4 : 6} accentColor="#38BDF8" />
+        {!compact && (
+          <span style={{
+            fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.35)",
+            textTransform: "uppercase", letterSpacing: "0.08em",
+          }}>
+            seconds
+          </span>
+        )}
       </div>
-    </div>
-  );
-}
-
-/* ── TV-006: Queue indicator for waiting checkouts ───────────────────── */
-function QueueCard({ entry, dogs, index }) {
-  const dog = dogs.find(d => d.gingrId === Number(entry.animalGingrId) || d.id === `g${entry.animalGingrId}`);
-  const name = dog?.fields?.name || entry.animalName || "Unknown";
-  const image = dog?._image;
-
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 14,
-      padding: "12px 18px",
-      background: "rgba(255,255,255,0.04)",
-      borderRadius: 14,
-      border: "1px solid rgba(132,204,22,0.2)",
-      animation: `queueSlideIn 0.3s ease-out ${index * 0.1}s both`,
-    }}>
-      <div style={{
-        fontSize: 12, fontWeight: 800, color: "rgba(132,204,22,0.5)",
-        width: 22, textAlign: "center",
-      }}>
-        {index + 2}
-      </div>
-      {image ? (
-        <img src={image} alt={name} style={{
-          width: 40, height: 40, borderRadius: 10, objectFit: "cover",
-          border: "2px solid rgba(132,204,22,0.3)",
-        }} />
-      ) : (
-        <div style={{
-          width: 40, height: 40, borderRadius: 10,
-          background: "rgba(132,204,22,0.15)", display: "flex",
-          alignItems: "center", justifyContent: "center",
-          fontSize: 16, fontWeight: 800, color: "#84CC16",
-        }}>
-          {name[0]}
-        </div>
-      )}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>{name}</div>
-        <div style={{ fontSize: 11, color: "rgba(132,204,22,0.6)", fontWeight: 600 }}>Up next</div>
-      </div>
-      <CountdownCircle remaining={entry.remaining} total={60} size={36} strokeWidth={3} />
     </div>
   );
 }
@@ -1018,17 +992,15 @@ function CheckoutTVContent({ data, nav, profile }) {
     });
   }, [activeView, dogs]);
 
-  /* ── TV-008d: Compute active and queued check-ins (view-filtered) ──── */
+  /* ── TV-015: All active notices rendered as full cards ────────────────
+   * No more "active + queue" split. Every notice gets a full hero card.
+   * Cards scale down when there are multiple to fit up to 5 on screen.
+   * ──────────────────────────────────────────────────────────────────── */
   const viewCheckingIn = checkingIn.filter(entryMatchesView);
-  const activeCheckIn = viewCheckingIn.find(e => !e.fading) || viewCheckingIn.find(e => e.fading) || null;
-  const fadingCheckIns = activeCheckIn ? viewCheckingIn.filter(e => e.fading && e !== activeCheckIn) : [];
-  const queuedCheckIns = viewCheckingIn.filter(e => !e.fading && e !== activeCheckIn);
-
-  /* ── TV-006: Compute active (hero) and queued checkouts (view-filtered) */
   const viewCheckingOut = checkingOut.filter(entryMatchesView);
-  const activeCheckout = viewCheckingOut.find(e => !e.fading) || viewCheckingOut.find(e => e.fading) || null;
-  const fadingCheckouts = activeCheckout ? viewCheckingOut.filter(e => e.fading && e !== activeCheckout) : [];
-  const queuedCheckouts = viewCheckingOut.filter(e => !e.fading && e !== activeCheckout);
+  const totalNotices = viewCheckingIn.length + viewCheckingOut.length;
+  // compact=true when 2+ notices — shrinks cards to fit more on screen
+  const compactNotices = totalNotices >= 2;
 
   // Set of dogIds currently checking out — used to keep them in the grid visually
   const checkingOutDogIds = useMemo(() => {
@@ -1292,99 +1264,38 @@ function CheckoutTVContent({ data, nav, profile }) {
         )}
       </div>
 
-      {/* TV-008d: Check-in hero cards — ABOVE checkout cards */}
-      <div style={{
-        maxHeight: hasCheckIns ? 500 : 0,
-        overflow: "hidden",
-        transition: "max-height 0.5s ease, opacity 0.3s ease",
-        opacity: hasCheckIns ? 1 : 0,
-      }}>
-        {activeCheckIn && (
-          <HeroCheckInCard
-            key={activeCheckIn.id}
-            entry={activeCheckIn}
-            dogs={dogs}
-            animalIcons={animalIcons}
-            fading={activeCheckIn.fading}
-          />
-        )}
-        {fadingCheckIns.map(entry => (
-          <HeroCheckInCard
-            key={entry.id}
-            entry={entry}
-            dogs={dogs}
-            animalIcons={animalIcons}
-            fading={true}
-          />
-        ))}
-        {queuedCheckIns.length > 0 && (
-          <div style={{ marginTop: 8, marginBottom: 12 }}>
-            <div style={{
-              fontSize: 11, fontWeight: 700, color: "rgba(56,189,248,0.5)",
-              textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6, paddingLeft: 4,
-            }}>
-              Also arriving ({queuedCheckIns.length})
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* TV-006 + TV-008c: Hero checkout card section with reflow transition */}
-      <div style={{
-        maxHeight: hasCheckouts ? 500 : 0,
-        overflow: "hidden",
-        transition: "max-height 0.5s ease, opacity 0.3s ease, margin 0.5s ease",
-        opacity: hasCheckouts ? 1 : 0,
-        marginBottom: hasCheckouts ? 20 : 0,
-      }}>
-        {/* Active hero card */}
-        {activeCheckout && (
-          <HeroCheckoutCard
-            key={activeCheckout.id}
-            entry={activeCheckout}
-            dogs={dogs}
-            clients={clients}
-            fading={activeCheckout.fading}
-            animalIcons={animalIcons}
-          />
-        )}
-
-        {/* Fading out cards */}
-        {fadingCheckouts.map(entry => (
-          <div key={entry.id} style={{ marginTop: 8 }}>
+      {/* TV-015: Unified notice section — all check-in + check-out cards shown simultaneously */}
+      {totalNotices > 0 && (
+        <div style={{
+          display: "flex", flexDirection: "column", gap: compactNotices ? 8 : 12,
+          marginBottom: 16,
+          animation: "tvGridFadeIn 0.35s ease-out",
+        }}>
+          {/* Check-in cards first */}
+          {viewCheckingIn.map(entry => (
+            <HeroCheckInCard
+              key={`in-${entry.id}`}
+              entry={entry}
+              dogs={dogs}
+              animalIcons={animalIcons}
+              fading={entry.fading}
+              compact={compactNotices}
+            />
+          ))}
+          {/* Then check-out cards */}
+          {viewCheckingOut.map(entry => (
             <HeroCheckoutCard
+              key={`out-${entry.id}`}
               entry={entry}
               dogs={dogs}
               clients={clients}
-              fading={true}
+              fading={entry.fading}
               animalIcons={animalIcons}
+              compact={compactNotices}
             />
-          </div>
-        ))}
-
-        {/* Queued checkouts — compact cards showing who's next */}
-        {queuedCheckouts.length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <div style={{
-              fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.3)",
-              textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8,
-              paddingLeft: 4,
-            }}>
-              Up Next ({queuedCheckouts.length} waiting)
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {queuedCheckouts.map((entry, i) => (
-                <QueueCard
-                  key={entry.id}
-                  entry={entry}
-                  dogs={dogs}
-                  index={i}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* TV-005 + TV-008c: Grid content with smooth reflow transition */}
       <div key={gridKey} style={{ animation: "tvGridFadeIn 0.35s ease-out", transition: "all 0.4s ease" }}>
