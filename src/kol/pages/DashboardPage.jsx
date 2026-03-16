@@ -1606,7 +1606,7 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
                     {item.dogName}{item.lastInit ? ` ${item.lastInit}` : ""}
                   </span>
                   <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0 }}>
-                    {item.totalCost > 0 ? `${fmtMoney(item.totalCost)} res · ${fmtMoney(item.perNight)}/nt` : `${item.totalNights}nt`}
+                    {item.totalCost > 0 ? `${fmtMoney(item.totalCost)} res / ${item.totalNights}nt = ${fmtMoney(item.perNight)} nightly` : `${item.totalNights}nt`}
                   </span>
                 </div>
                 <div style={{ fontSize: 11, fontWeight: item.accrualAmount > 0 ? 700 : 500, color: item.accrualAmount > 0 ? C.text : "rgba(20,83,45,0.35)", fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap", fontStyle: item.accrualAmount > 0 ? "normal" : "italic" }}>
