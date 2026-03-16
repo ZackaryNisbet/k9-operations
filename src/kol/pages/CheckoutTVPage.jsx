@@ -768,25 +768,31 @@ function CheckoutTVContent({ data, nav, profile }) {
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
-  /* ── TV-014: Direct Gingr reservations poll for boarding dogs ────────
-   * BOH (back_of_house) only returns dogs in checking_out (going home today).
-   * Multi-night boarders and newly checked-in boarders may be missing.
-   * This polls the Gingr reservations API directly for ALL checked-in
-   * reservations, extracts boarding-type ones, and feeds them into the
-   * merge as the primary boarding source — independent of Supabase/tv-poll.
+  /* ── TV-014: Direct Gingr reservations poll for ALL checked-in dogs ───
+   * Polls the Gingr reservations API directly for ALL checked-in
+   * reservations (boarding + daycare + evaluation + day boarding).
+   * This is the SINGLE authoritative source for who is in-house.
+   *
+   * Returns boarding dogs in gingrBoardingDogs (used by merge as primary
+   * boarding source) and daycare dogs in gingrDaycareFromRes (used to
+   * replace stale Supabase/BOH daycare data).
    * ──────────────────────────────────────────────────────────────────── */
+  const [gingrDaycareFromRes, setGingrDaycareFromRes] = useState([]);
   useEffect(() => {
     let cancelled = false;
     const GINGR_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
     const GINGR_RES_URL = "https://k9cherryhill.gingrapp.com/api/v1/reservations";
 
-    const isBoardingType = (typeStr) => {
+    const classifyType = (typeStr) => {
       const t = (typeStr || "").toLowerCase();
-      // "Boarding" but NOT "Day Boarding" and NOT "Daycare"
-      return t.includes("boarding") && !t.includes("day boarding") && !t.includes("daycare");
+      if (t.includes("evaluation")) return "evaluation";
+      if (t.includes("day boarding") && !t.includes("daycare")) return "dayboarding";
+      if (t.includes("daycare")) return "daycare";
+      if (t.includes("boarding")) return "boarding";
+      return "boarding";
     };
 
-    const fetchBoardingReservations = async () => {
+    const fetchAllCheckedIn = async () => {
       try {
         const resp = await fetch(GINGR_RES_URL, {
           method: "POST",
@@ -797,35 +803,38 @@ function CheckoutTVContent({ data, nav, profile }) {
         const resData = json.data || {};
 
         // resData is an object keyed by reservation_id
-        const boardingDogs = Object.values(resData)
-          .filter(r => isBoardingType(r.reservation_type?.type))
-          .map(r => ({
-            reservation_id: String(r.reservation_id),
-            animal_id: String(r.animal?.id || ""),
-            animal_name: (r.animal?.name || "Unknown").trim(),
-            breed: r.animal?.breed || "",
-            owner_id: String(r.owner?.id || ""),
-            owner_first: (r.owner?.first_name || "").trim(),
-            owner_last: (r.owner?.last_name || "").trim(),
-            start_date: r.start_date || "",
-            end_date: r.end_date || "",
-            check_in_date: r.check_in_date || "",
-            check_out_date: r.check_out_date || null,
-            run_name: r.run?.name || "",
-          }));
+        const allDogs = Object.values(resData).map(r => ({
+          reservation_id: String(r.reservation_id),
+          animal_id: String(r.animal?.id || ""),
+          animal_name: (r.animal?.name || "Unknown").trim(),
+          breed: r.animal?.breed || "",
+          owner_id: String(r.owner?.id || ""),
+          owner_first: (r.owner?.first_name || "").trim(),
+          owner_last: (r.owner?.last_name || "").trim(),
+          start_date: r.start_date || "",
+          end_date: r.end_date || "",
+          check_in_date: r.check_in_date || "",
+          check_out_date: r.check_out_date || null,
+          run_name: r.run?.name || "",
+          services: r.services || [],
+          resType: classifyType(r.reservation_type?.type),
+        }));
+
+        const boarding = allDogs.filter(d => d.resType === "boarding");
+        const daycare = allDogs.filter(d => d.resType !== "boarding");
 
         if (!cancelled) {
-          console.log('[TV-014] Gingr boarding poll:', boardingDogs.length, 'boarding dogs fetched');
-          if (boardingDogs.length > 0) console.log('[TV-014] First 3:', boardingDogs.slice(0, 3).map(d => d.animal_name));
-          setGingrBoardingDogs(boardingDogs);
+          console.log('[TV-014] Gingr poll:', allDogs.length, 'total,', boarding.length, 'boarding,', daycare.length, 'daycare/eval/db');
+          setGingrBoardingDogs(boarding);
+          setGingrDaycareFromRes(daycare);
         }
       } catch (e) {
-        console.error('[TV-014] Gingr boarding poll error:', e.message || e);
+        console.error('[TV-014] Gingr reservations poll error:', e.message || e);
       }
     };
 
-    fetchBoardingReservations();
-    const interval = setInterval(fetchBoardingReservations, 60000); // 60s poll
+    fetchAllCheckedIn();
+    const interval = setInterval(fetchAllCheckedIn, 60000); // 60s poll
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
@@ -875,137 +884,80 @@ function CheckoutTVContent({ data, nav, profile }) {
    * ──────────────────────────────────────────────────────────────────── */
   const { reservations, dogs } = useMemo(() => {
     const today = todayStr();
-    console.log('[TV-MERGE] gingrBoardingDogs:', gingrBoardingDogs.length, 'baseReservations:', baseReservations.length, 'gingrActiveDogs:', gingrActiveDogs.length);
+    const hasGingrRes = gingrBoardingDogs.length > 0 || gingrDaycareFromRes.length > 0;
+    console.log('[TV-MERGE] gingrBoarding:', gingrBoardingDogs.length, 'gingrDaycare:', gingrDaycareFromRes.length, 'baseRes:', baseReservations.length);
 
-    // Build set of animal IDs confirmed active by BOH (real-time Gingr)
-    const bohActiveAnimalIds = new Set(
-      gingrActiveDogs.map(d => String(d.animal_id))
-    );
-
-    // Build set of animal IDs from Gingr reservations API (boarding dogs)
-    const gingrResAnimalIds = new Set(
-      gingrBoardingDogs.map(d => d.animal_id)
-    );
+    // Build the complete set of Gingr-confirmed animal IDs
+    const gingrAllAnimalIds = new Set([
+      ...gingrBoardingDogs.map(d => d.animal_id),
+      ...gingrDaycareFromRes.map(d => d.animal_id),
+    ]);
 
     // ── Step 1: Filter Supabase reservations ────────────────────────
-    // For boarding: if gingrBoardingDogs is populated, it's authoritative —
-    // drop Supabase boarding records whose animal isn't in the Gingr set.
-    // For daycare: keep if BOH confirms the dog is active.
-    const BOARDING_TYPE_SET = new Set(["boarding"]);
-    const hasGingrBoarding = gingrBoardingDogs.length > 0;
+    // When Gingr reservations API is available, it's the authoritative
+    // source for who's checked in. Drop Supabase checked-in records whose
+    // animal isn't confirmed by Gingr. Keep non-checked-in records (history).
     const filteredBaseRes = baseReservations.filter(r => {
       if (r.status !== "checked-in") return true;
       if (r._fromGingrApi) return true;
+      if (!hasGingrRes) return true; // Gingr API not loaded yet, keep everything
       const animalId = r.dogId?.startsWith("g") ? r.dogId.slice(1) : null;
-      // Boarding reservations: validate against Gingr reservations API if available
-      if (BOARDING_TYPE_SET.has(r.type)) {
-        if (hasGingrBoarding) {
-          return animalId && gingrResAnimalIds.has(animalId);
-        }
-        // Fallback if Gingr reservations not yet loaded: use BOH + future checkout
-        if (animalId && bohActiveAnimalIds.has(animalId)) return true;
-        if (r.checkOut && r.checkOut > today) return true;
-        return false;
-      }
-      // Non-boarding: validate against BOH
-      if (animalId && bohActiveAnimalIds.has(animalId)) return true;
-      return false;
+      return animalId && gingrAllAnimalIds.has(animalId);
     });
 
-    // ── Step 2: Build synthetic reservations from BOH daycare dogs ────
-    const syntheticRes = (gingrDaycareDogs || []).map(gd => {
-      const t = (gd.type || "").toLowerCase();
-      let resType = "daycare";
-      if (t.includes("evaluation")) resType = "evaluation";
-      else if (t.includes("day boarding") && !t.includes("daycare")) resType = "dayboarding";
+    // ── Step 2: Build synthetic reservations from Gingr API ───────────
+    // Build reservation objects for boarding dogs from Gingr API
+    const gingrBoardingRes = gingrBoardingDogs.map(gd => ({
+      id: `gingr-res-${gd.reservation_id}`,
+      gingrId: Number(gd.reservation_id),
+      dogId: `g${gd.animal_id}`,
+      clientId: `g${gd.owner_id}`,
+      type: "boarding",
+      status: "checked-in",
+      _animalName: gd.animal_name,
+      _ownerName: gd.owner_last,
+      _services: gd.services || [],
+      room: gd.run_name || "",
+      checkIn: gd.start_date ? gd.start_date.slice(0, 10) : today,
+      checkOut: gd.end_date ? gd.end_date.slice(0, 10) : today,
+      _fromGingrApi: true,
+    }));
 
-      return {
-        id: `gingr-boh-${gd.id}`,
-        gingrId: Number(gd.id),
-        dogId: `g${gd.animal_id}`,
-        clientId: `g${gd.owner_id}`,
-        type: resType,
-        status: "checked-in",
-        _animalName: (gd.a_first || "Unknown").trim(),
-        _ownerName: (gd.o_last || "").trim(),
-        _services: [],
-        room: gd.run_name || "",
-        checkIn: gd.start_date ? new Date(Number(gd.start_date) * 1000).toISOString().slice(0, 10) : today,
-        checkOut: gd.end_date ? new Date(Number(gd.end_date) * 1000).toISOString().slice(0, 10) : today,
-        _fromGingrApi: true,
-      };
-    });
+    // Build reservation objects for daycare/eval/dayboarding dogs from Gingr API
+    const gingrDaycareRes = gingrDaycareFromRes.map(gd => ({
+      id: `gingr-res-${gd.reservation_id}`,
+      gingrId: Number(gd.reservation_id),
+      dogId: `g${gd.animal_id}`,
+      clientId: `g${gd.owner_id}`,
+      type: gd.resType || "daycare",
+      status: "checked-in",
+      _animalName: gd.animal_name,
+      _ownerName: gd.owner_last,
+      _services: gd.services || [],
+      room: gd.run_name || "",
+      checkIn: gd.start_date ? gd.start_date.slice(0, 10) : today,
+      checkOut: gd.end_date ? gd.end_date.slice(0, 10) : today,
+      _fromGingrApi: true,
+    }));
 
-    // ── Step 3: Build boarding reservations from Gingr reservations API ─
-    // gingrBoardingDogs (TV-014) is the primary boarding source.
-    // Falls back to BOH gingrActiveDogs if reservations API hasn't loaded.
-    const existingBoardingAnimalIds = new Set(
-      filteredBaseRes
-        .filter(r => r.status === "checked-in" && BOARDING_TYPE_SET.has(r.type))
-        .map(r => r.dogId?.startsWith("g") ? r.dogId.slice(1) : null)
-        .filter(Boolean)
-    );
-
-    let gingrResBoardingRes = [];
-    if (hasGingrBoarding) {
-      // Primary path: use Gingr reservations API data
-      gingrResBoardingRes = gingrBoardingDogs
-        .filter(gd => !existingBoardingAnimalIds.has(gd.animal_id))
-        .map(gd => ({
-          id: `gingr-res-${gd.reservation_id}`,
-          gingrId: Number(gd.reservation_id),
-          dogId: `g${gd.animal_id}`,
-          clientId: `g${gd.owner_id}`,
-          type: "boarding",
-          status: "checked-in",
-          _animalName: gd.animal_name,
-          _ownerName: gd.owner_last,
-          _services: [],
-          room: gd.run_name || "",
-          checkIn: gd.start_date ? gd.start_date.slice(0, 10) : today,
-          checkOut: gd.end_date ? gd.end_date.slice(0, 10) : today,
-          _fromGingrApi: true,
-        }));
-    } else {
-      // Fallback: use BOH data (only has checking_out dogs)
-      gingrResBoardingRes = gingrActiveDogs
-        .filter(gd => {
-          const t = (gd.type || "").toLowerCase();
-          const isBoarding = t.includes("boarding") && !t.includes("day boarding") && !t.includes("daycare");
-          return isBoarding && !existingBoardingAnimalIds.has(String(gd.animal_id));
-        })
-        .map(gd => ({
-          id: `gingr-boh-${gd.id}`,
-          gingrId: Number(gd.id),
-          dogId: `g${gd.animal_id}`,
-          clientId: `g${gd.owner_id}`,
-          type: "boarding",
-          status: "checked-in",
-          _animalName: (gd.a_first || "Unknown").trim(),
-          _ownerName: (gd.o_last || "").trim(),
-          _services: [],
-          room: gd.run_name || "",
-          checkIn: gd.start_date ? new Date(Number(gd.start_date) * 1000).toISOString().slice(0, 10) : today,
-          checkOut: gd.end_date ? new Date(Number(gd.end_date) * 1000).toISOString().slice(0, 10) : today,
-          _fromGingrApi: true,
-        }));
-    }
-
-    // ── Step 4: Build synthetic dog objects for display ───────────────
-    // Include dogs from BOH daycare + Gingr reservations boarding
+    // ── Step 3: Build synthetic dog objects for display ───────────────
     const syntheticDogSources = [
-      ...(gingrDaycareDogs || []).map(gd => ({
-        animal_id: gd.animal_id,
-        name: (gd.a_first || "Unknown").trim(),
-        breed: gd.breed_name || "",
-      })),
       ...gingrBoardingDogs.map(gd => ({
         animal_id: gd.animal_id,
         name: gd.animal_name,
         breed: gd.breed || "",
       })),
+      ...gingrDaycareFromRes.map(gd => ({
+        animal_id: gd.animal_id,
+        name: gd.animal_name,
+        breed: gd.breed || "",
+      })),
+      ...(gingrDaycareDogs || []).map(gd => ({
+        animal_id: gd.animal_id,
+        name: (gd.a_first || "Unknown").trim(),
+        breed: gd.breed_name || "",
+      })),
     ];
-    // Deduplicate by animal_id
     const seenAnimalIds = new Set();
     const syntheticDogs = syntheticDogSources
       .filter(gd => {
@@ -1025,44 +977,29 @@ function CheckoutTVContent({ data, nav, profile }) {
         _image: null,
       }));
 
-    // ── Step 5: Merge — avoid duplicating reservations ────────────────
-    // IMPORTANT: Only deduplicate against CHECKED-IN reservations from Supabase.
-    // Using ALL reservations (including old checked-out ones) would cause
-    // existingDogIds to contain dogIds from historical visits, blocking
-    // new check-ins for returning dogs (e.g., Boots, Bruno).
+    // ── Step 4: Merge — deduplicate against checked-in Supabase records ──
+    // Only deduplicate against CHECKED-IN reservations from Supabase.
+    // Historical (checked-out) records must not block new check-ins.
     const checkedInBaseRes = filteredBaseRes.filter(r => r.status === 'checked-in');
     const existingGingrIds = new Set(checkedInBaseRes.map(r => r.gingrId).filter(Boolean));
     const existingDogIds = new Set(checkedInBaseRes.map(r => r.dogId).filter(Boolean));
-    const newDaycareRes = syntheticRes.filter(r => !existingGingrIds.has(r.gingrId));
-    const newBoardingRes = gingrResBoardingRes.filter(r =>
+
+    const newBoardingRes = gingrBoardingRes.filter(r =>
+      !existingGingrIds.has(r.gingrId) && !existingDogIds.has(r.dogId)
+    );
+    const newDaycareRes = gingrDaycareRes.filter(r =>
       !existingGingrIds.has(r.gingrId) && !existingDogIds.has(r.dogId)
     );
 
-    const allRes = [...filteredBaseRes, ...newDaycareRes, ...newBoardingRes];
+    const allRes = [...filteredBaseRes, ...newBoardingRes, ...newDaycareRes];
     const allDogs = [...baseDogs, ...syntheticDogs];
-    // Debug: check for Boots(1550) and Bruno(9026)
-    const bootsRes = allRes.filter(r => r.dogId === 'g1550');
-    const brunoRes = allRes.filter(r => r.dogId === 'g9026');
-    const bootsInGingr = gingrBoardingDogs.filter(d => d.animal_id === '1550');
-    const brunoInGingr = gingrBoardingDogs.filter(d => d.animal_id === '9026');
-    const bootsInNewBoarding = newBoardingRes.filter(r => r.dogId === 'g1550');
-    const brunoInNewBoarding = newBoardingRes.filter(r => r.dogId === 'g9026');
-    const bootsInFiltered = filteredBaseRes.filter(r => r.dogId === 'g1550');
-    const brunoInFiltered = filteredBaseRes.filter(r => r.dogId === 'g9026');
-    const bootsInExisting = existingBoardingAnimalIds.has('1550');
-    const brunoInExisting = existingBoardingAnimalIds.has('9026');
-    const bootsExGingrId = existingGingrIds.has(141867) || existingGingrIds.has('141867');
-    const brunoExGingrId = existingGingrIds.has(140521) || existingGingrIds.has('140521');
-    const bootsExDogId = existingDogIds.has('g1550');
-    const brunoExDogId = existingDogIds.has('g9026');
-    console.log('[TV-DEBUG-BOOTS] inGingr:', bootsInGingr.length, 'inExistingAnimalIds:', bootsInExisting, 'inFiltered:', bootsInFiltered.length, 'inNewBoarding:', bootsInNewBoarding.length, 'inAllRes:', bootsRes.length, 'exGingrId:', bootsExGingrId, 'exDogId:', bootsExDogId);
-    console.log('[TV-DEBUG-BRUNO] inGingr:', brunoInGingr.length, 'inExistingAnimalIds:', brunoInExisting, 'inFiltered:', brunoInFiltered.length, 'inNewBoarding:', brunoInNewBoarding.length, 'inAllRes:', brunoRes.length, 'exGingrId:', brunoExGingrId, 'exDogId:', brunoExDogId);
-    console.log('[TV-DEBUG] filteredBaseRes:', filteredBaseRes.length, 'newDaycareRes:', newDaycareRes.length, 'newBoardingRes:', newBoardingRes.length, 'total:', allRes.length, 'syntheticDogs:', syntheticDogs.length);
+
+    console.log('[TV-MERGE] filteredBase:', filteredBaseRes.length, 'newBoarding:', newBoardingRes.length, 'newDaycare:', newDaycareRes.length, 'total:', allRes.length);
     return {
       reservations: allRes,
       dogs: allDogs,
     };
-  }, [baseReservations, baseDogs, gingrDaycareDogs, gingrActiveDogs, gingrBoardingDogs]);
+  }, [baseReservations, baseDogs, gingrDaycareDogs, gingrActiveDogs, gingrBoardingDogs, gingrDaycareFromRes]);
 
   /* ── TV-003: Fetch animal icons from Supabase ─────────────────────── */
   const locationId = profile?.location_id;
@@ -1720,7 +1657,7 @@ function CheckoutTVContent({ data, nav, profile }) {
 
       {/* Footer */}
       <div style={{ textAlign: "center", marginTop: 40, padding: "16px 0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time · TV-014: {gingrBoardingDogs.length} boarding from Gingr API</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time · Gingr: {gingrBoardingDogs.length + gingrDaycareFromRes.length} in-house ({gingrBoardingDogs.length}B + {gingrDaycareFromRes.length}D)</div>
       </div>
 
       {/* Floating Exit Button — subtle, top-left corner */}
