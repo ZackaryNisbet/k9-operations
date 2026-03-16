@@ -702,7 +702,7 @@ function DashGrid({ children }) {
    ═══════════════════════════════════════════════════════════════════════════ */
 function ChartFill({ chartData, color, compareColor, animEpoch, id, dateLabels,
   useRawPoints, lineType, solidFill, noFill, fillColor, fillOpacity, showGuideLines, showDots, dotRadius,
-  todayHighlight, priorData, showPriorLine, priorLineColor,
+  todayHighlight, priorData, showPriorLine, priorLineColor, priorFillColor, priorFillOpacity,
 }) {
   const containerRef = useRef(null);
   const [containerH, setContainerH] = useState(120);
@@ -743,6 +743,8 @@ function ChartFill({ chartData, color, compareColor, animEpoch, id, dateLabels,
         priorData={priorData}
         showPriorLine={showPriorLine}
         priorLineColor={priorLineColor}
+        priorFillColor={priorFillColor}
+        priorFillOpacity={priorFillOpacity}
       />
     </div>
   );
@@ -987,16 +989,19 @@ function DashboardContent({
 
   /* ─── L1: Today view — fetch trailing week for chart context ─── */
   const trailingWeekFrom = useMemo(() => addDays(today, -6), [today]);
-  const { dailyRows: trailingWeekRows } = useDashboardMetrics(
+  const trailingWeekPriorTo = useMemo(() => addDays(today, -7), [today]);
+  const trailingWeekPriorFrom = useMemo(() => addDays(today, -13), [today]);
+  const { dailyRows: trailingWeekRows, prevDailyRows: trailingWeekPrevRows } = useDashboardMetrics(
     range === "today" ? locationId : null, // only fetch when "today" is selected
-    trailingWeekFrom, today, null, null, refreshOptions
+    trailingWeekFrom, today, trailingWeekPriorFrom, trailingWeekPriorTo, refreshOptions
   );
   // Also fetch trailing-week accrual from the receipt engine for today view
   const {
     accrualDailyRows: trailingWeekAccrualRows,
+    prevAccrualDailyRows: trailingWeekPrevAccrualRows,
   } = useAccrualRevenue(
     range === "today" ? locationId : null,
-    trailingWeekFrom, today, null, null
+    trailingWeekFrom, today, trailingWeekPriorFrom, trailingWeekPriorTo
   );
 
   // L1: When range is "today", show past week as chart with today as highlighted final point
@@ -1025,23 +1030,27 @@ function DashboardContent({
 
   /* ─── L4: Prior period chart data ─── */
   const cashPriorChartData = useMemo(() => {
-    if (!prevDailyRows || prevDailyRows.length === 0) return [];
-    return prevDailyRows.map(r => ({
+    // When isToday, use trailing week's prior period (days -13 to -7)
+    const rows = isToday ? trailingWeekPrevRows : prevDailyRows;
+    if (!rows || rows.length === 0) return [];
+    return rows.map(r => ({
       date: r.metric_date,
       label: fmtDateLabel(r.metric_date),
       value: Number(r.cash_total_revenue) || 0,
     }));
-  }, [prevDailyRows]);
+  }, [isToday, trailingWeekPrevRows, prevDailyRows]);
 
   // Accrual prior period from receipt engine
   const accrualPriorChartData = useMemo(() => {
-    if (!prevAccrualDailyRows || prevAccrualDailyRows.length === 0) return [];
-    return prevAccrualDailyRows.map(r => ({
+    // When isToday, use trailing week's prior accrual (days -13 to -7)
+    const rows = isToday ? trailingWeekPrevAccrualRows : prevAccrualDailyRows;
+    if (!rows || rows.length === 0) return [];
+    return rows.map(r => ({
       date: r.metric_date,
       label: fmtDateLabel(r.metric_date),
       value: Number(r.accrual_total_revenue) || 0,
     }));
-  }, [prevAccrualDailyRows]);
+  }, [isToday, trailingWeekPrevAccrualRows, prevAccrualDailyRows]);
 
   /* ─── Trend helper ─── */
   const pctChange = (cur, prev) => prev > 0 ? ((cur - prev) / prev) * 100 : 0;
@@ -1464,8 +1473,9 @@ function DashboardContent({
             <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(m.cashTotalRevenue)}</span>
           </div>
           <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" dateLabels={cashChartData.map(d => d.date)}
-            useRawPoints lineType="linear" noFill showGuideLines
-            todayHighlight={isToday} priorData={cashPriorChartData} showPriorLine={showPriorPeriod && !isToday} priorLineColor="#D4A017" />
+            useRawPoints lineType="linear" solidFill fillOpacity={0.15} showGuideLines
+            todayHighlight={isToday} priorData={cashPriorChartData} showPriorLine={showPriorPeriod}
+            priorLineColor="#D4A017" priorFillColor="#D4A017" priorFillOpacity={0.10} />
         </div>
 
         {/* Col 4 Toggle area */}
@@ -1521,8 +1531,9 @@ function DashboardContent({
             </span>
           </div>
           <ChartFill chartData={accrualChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="accrual-main" dateLabels={accrualChartData.map(d => d.date)}
-            useRawPoints lineType="linear" noFill showGuideLines
-            todayHighlight={isToday} priorData={accrualPriorChartData} showPriorLine={showPriorPeriod && !isToday} priorLineColor="#D4A017" />
+            useRawPoints lineType="linear" solidFill fillOpacity={0.15} showGuideLines
+            todayHighlight={isToday} priorData={accrualPriorChartData} showPriorLine={showPriorPeriod}
+            priorLineColor="#D4A017" priorFillColor="#D4A017" priorFillOpacity={0.10} />
         </div>
 
         {/* Col 8: Private Play (row 5) */}
