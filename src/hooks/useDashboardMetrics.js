@@ -1,9 +1,10 @@
 // K9 Operations — Server-Side Dashboard Metrics Hook
 // Reads from pre-computed dashboard_metrics_daily table.
-// No client-side 136K iteration. Timeframe changes = simple Supabase query.
+// Implements stale-while-revalidate: shows cached data instantly, refreshes in background.
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "../supabaseClient";
+import { getCachedMetrics, setCachedMetrics } from "../shared/dashboardCache";
 
 /**
  * useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prevTo, options)
@@ -13,7 +14,7 @@ import { supabase } from "../supabaseClient";
  *   prevMetrics — aggregated prior-period metrics (for trend badges)
  *   dailyRows   — raw daily rows for chart rendering
  *   prevDailyRows — raw daily rows for prior period charts
- *   loading     — true while fetching
+ *   loading     — true while fetching (false if showing cached data)
  *   lastUpdated — when the data was last computed
  *   lastFetchedAt — when data was last fetched from server
  *   refresh()   — manual refresh trigger
@@ -32,13 +33,36 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [lastFetchedAt, setLastFetchedAt] = useState(null);
-  const abortRef = useRef(null);
+  const fetchIdRef = useRef(0);
   const intervalRef = useRef(null);
 
-  const fetchMetrics = useCallback(async () => {
+  const fetchMetrics = useCallback(async (skipCache = false) => {
     if (!locationId || !dateFrom || !dateTo) return;
 
-    setLoading(true);
+    const fetchId = ++fetchIdRef.current;
+
+    // Stale-while-revalidate: check cache first
+    if (!skipCache) {
+      const cached = getCachedMetrics(locationId, dateFrom, dateTo);
+      if (cached) {
+        // Show cached data immediately — no loading spinner
+        const { metrics: cm, prevMetrics: cpm, dailyRows: cdr, prevDailyRows: cpdr, lastUpdated: clu } = cached.data;
+        setMetrics(cm);
+        setPrevMetrics(cpm);
+        setDailyRows(cdr);
+        setPrevDailyRows(cpdr);
+        setLastUpdated(clu);
+        setLoading(false);
+
+        // If cache is fresh, skip network fetch entirely
+        if (cached.isFresh) return;
+        // Otherwise, revalidate in background (don't set loading=true)
+      } else {
+        setLoading(true);
+      }
+    } else {
+      setLoading(true);
+    }
 
     try {
       // Fetch current period, prior period, and outstanding invoices in parallel
@@ -67,6 +91,9 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
           .gt("current_balance", 0),
       ]);
 
+      // Abort if a newer fetch has been initiated
+      if (fetchId !== fetchIdRef.current) return;
+
       if (currentRes.error) throw currentRes.error;
 
       const rows = currentRes.data || [];
@@ -79,16 +106,31 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
         total: invoiceRows.reduce((sum, r) => sum + (Number(r.current_balance) || 0), 0),
       };
 
+      const newMetrics = aggregateRows(rows, outstandingInvoices);
+      const newPrevMetrics = aggregateRows(prevRows, outstandingInvoices);
+      const newLastUpdated = rows.length > 0 ? rows[rows.length - 1].computed_at : null;
+
       setDailyRows(rows);
       setPrevDailyRows(prevRows);
-      setMetrics(aggregateRows(rows, outstandingInvoices));
-      setPrevMetrics(aggregateRows(prevRows, outstandingInvoices));
-      setLastUpdated(rows.length > 0 ? rows[rows.length - 1].computed_at : null);
+      setMetrics(newMetrics);
+      setPrevMetrics(newPrevMetrics);
+      setLastUpdated(newLastUpdated);
       setLastFetchedAt(new Date());
+
+      // Cache the results for this timeframe
+      setCachedMetrics(locationId, dateFrom, dateTo, {
+        metrics: newMetrics,
+        prevMetrics: newPrevMetrics,
+        dailyRows: rows,
+        prevDailyRows: prevRows,
+        lastUpdated: newLastUpdated,
+      });
     } catch (err) {
       console.error("Dashboard metrics fetch error:", err);
     } finally {
-      setLoading(false);
+      if (fetchId === fetchIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [locationId, dateFrom, dateTo, prevFrom, prevTo]);
 
@@ -108,7 +150,7 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [fetchMetrics, refreshIntervalMs, isWithinBusinessHours]);
 
-  // Manual refresh: triggers gingr-sync, then re-fetches
+  // Manual refresh: triggers gingr-sync, then re-fetches (skipping cache)
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
@@ -118,7 +160,7 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
       });
       // Wait a beat for the RPC to finish, then re-fetch
       await new Promise(r => setTimeout(r, 1000));
-      await fetchMetrics();
+      await fetchMetrics(true);
     } catch (err) {
       console.error("Dashboard refresh error:", err);
       setLoading(false);
