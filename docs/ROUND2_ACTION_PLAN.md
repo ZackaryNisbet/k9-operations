@@ -89,13 +89,13 @@
 
 ### CATEGORY M: Data Accuracy (3 items)
 
-**M1: In-House 181 for Past Week — still wrong**
+**M1: In-House value and Occupancy % are wrong**
 - Priority: CRITICAL
-- Type: DATA_BUG
-- What's Wrong: Past Week shows 181 in-house. User says this cannot be right. Also 132% occupancy — impossible.
-- Investigation: The Wave 1 A session changed In-House from 40 to 187 (close to 181). The SUM of daily in-house snapshots across 7 days is NOT the right metric — each day's in-house count overlaps with the next (a boarding dog in-house Mon-Fri counts 5 times). Need to either show the AVERAGE daily in-house, or the UNIQUE dogs that were in-house at any point during the week.
-- Occupancy 132% similarly suggests the numerator is summing overlapping boarding-nights or the denominator is wrong.
+- Type: DATA_BUG + CALCULATION_FIX
+- **In-House**: SUM is actually correct (1 dog staying 7 nights = 7 dog-days). Resort does ~650 dogs/week so 181 may be too LOW — investigate. Display boarding sum and daycare sum as sub-values (e.g., "340B · 310D").
+- **Occupancy**: Can NEVER exceed 100%. Formula: SUM(occupied ROOMS per night) / (total rooms × days) × 100. Purely overnight — daycare dogs don't count. For multi-day ranges, AVERAGE daily occupancy %, don't sum. Cap at 100%.
 - User Quote: "in the past week view, it says 181 in house? cannot be right. also it says 132% occupancy. also impossible lol"
+- User Clarification: "my expectation is that you are taking the sum of the number of dogs overnight over the past 7 days and the number of dogs in daycare. if 1 dog is there for 7 days, they should count 7 times. it would be kinda nice if you had 2 values in this cell, 1 for daycare sum, the other for boarding sum."
 
 **M2: Conversion rate 22.2% with only 2 first-time spenders — formula wrong**
 - Priority: HIGH
@@ -360,21 +360,29 @@ You are a senior full-stack developer working on the K9 Operations dashboard. Yo
 
 ## FIXES REQUIRED (3 items):
 
-### M1: CRITICAL — In-House 181 and Occupancy 132% are wrong
-The Past Week view shows 181 "In House" and 132% occupancy. Both are impossible.
+### M1: CRITICAL — In-House value and Occupancy % are wrong
+The Past Week view shows 181 "In House" and 132% occupancy.
 
-The ROOT CAUSE: aggregateRows() uses `SUM` for multi-day ranges on dogsInHouse and occupancy. But In-House is a POINT-IN-TIME snapshot — a dog in house Monday through Friday is counted in each day's snapshot. Summing 7 daily snapshots double/triple/quadruple counts dogs.
+**IN-HOUSE FIX:**
+The SUM approach is actually CORRECT for In-House — if 1 dog stays 7 nights, they should count 7 times (total dog-days). The resort does ~650 dogs/week so 181 may actually be too LOW. Investigate why.
 
-Fix the aggregation for Past Week and other multi-day ranges:
-- **In-House**: For multi-day ranges, show the AVERAGE daily in-house count, not the SUM. `Math.round(sum("dogs_in_house") / rows.length)`. This gives the average daily occupancy level.
-- **Occupancy**: For multi-day ranges, show the AVERAGE daily occupancy percentage. `Math.round(rows.reduce((acc, r) => acc + (Number(r.occupancy_pct) || 0), 0) / rows.length)`. Do NOT sum occupancy percentages.
-- **Boarding In House / Daycare In House**: Same fix — use average not sum for multi-day.
-- Keep SUM for additive metrics that DON'T overlap: dogsExpected, bookingsToday, toursToday, evalsToday, dogsArriving (these are daily events, not snapshots)
-- The "Going Home" / "Checked Out" metrics are also additive (daily events), keep as SUM
+However, the In-House cell needs TWO sub-values for multi-day ranges:
+- Boarding sum (total overnight dog-nights across the period)
+- Daycare sum (total daycare dog-visits across the period)
+- Main value = combined total
+- Use the existing `sub` prop pattern: `sub={\`${boardingSum}B · ${daycareSum}D\`}` (already exists on In-House cell for Today view)
+- For multi-day ranges, SUM `boarding_in_house` and `daycare_in_house` separately and display both
 
-Think carefully about which metrics are SNAPSHOTS (point-in-time, should average) vs EVENTS (daily counts, should sum):
-- SNAPSHOT (average): dogsInHouse, boardingInHouse, daycareInHouse, occupancyPct
-- EVENT (sum): dogsExpected, dogsArriving, dogsGoingHome, dogsCheckedOut, bookingsToday, toursToday, evalsToday
+**OCCUPANCY FIX:**
+Occupancy can NEVER exceed 100%. The correct formula:
+- Numerator: SUM of occupied ROOMS each night across the period (NOT dogs — ROOMS. Multiple dogs can share a room.)
+- Denominator: Total rooms in resort × number of days in the period
+- Formula: `SUM(occupied_rooms_per_night) / (total_rooms × days) × 100`
+- This is purely OVERNIGHT occupancy — daycare dogs do NOT count
+- If the SQL `occupancy_pct` per day is already correct (rooms occupied that night / total rooms), then for multi-day ranges: AVERAGE the daily occupancy percentages, do NOT sum them
+- Cap occupancy at 100% max as a sanity check
+
+Keep SUM for additive event metrics: dogsExpected, bookingsToday, toursToday, evalsToday, dogsArriving, dogsGoingHome, dogsCheckedOut
 
 ### M2: HIGH — Conversion rate formula investigation
 Conversion rate shows 22.2% with only 2 first-time spenders. The formula is:
@@ -612,7 +620,7 @@ Continuing the wave/letter/number pattern from Round 1:
 | W3·L2 | X-axis day-of-week labels | KOL Issues | L: Chart Behavior |
 | W3·L3 | Smaller/hover-only data dots | KOL Issues | L: Chart Behavior |
 | W3·L4 | Prior period comparison line | KOL Issues | L: Chart Behavior |
-| W3·M1 | In-House & Occupancy — avg not sum | KOL Issues | M: Data Accuracy |
+| W3·M1 | In-House boarding/daycare split + Occupancy cap 100% | KOL Issues | M: Data Accuracy |
 | W3·M2 | Conversion rate formula fix | KOL Issues | M: Data Accuracy |
 | W3·M3 | Dashboard lag + stale data fix | KOL Issues | M: Data Accuracy |
 | W4·N1 | Occupancy Report page | KOL Enhancements | N: Occupancy Page |
