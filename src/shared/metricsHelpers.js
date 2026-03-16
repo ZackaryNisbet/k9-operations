@@ -186,9 +186,10 @@ export function computeLifecycleMetrics(data, dateFrom, dateTo, today) {
   const spendingClients = clients.filter(c => statsMap[c.id]?.hasSpent || statsMap[c.id]?.hasRealBooking);
   const totalLTV = spendingClients.reduce((sum, c) => sum + (statsMap[c.id]?.totalSpent || 0), 0);
   const avgLTV = spendingClients.length > 0 ? totalLTV / spendingClients.length : 0;
-  // Conversion Rate = (leads who became customers / total leads in range) × 100
-  // "Became customer" = hasSpent or hasRealBooking (boarding/daycare/grooming, not tour/eval)
-  const conversionRate = leadsInRange.length > 0 ? (newCustomers.length / leadsInRange.length * 100) : 0;
+  // Conversion Rate = first-time payers / total leads in range × 100
+  // Uses firstTimePayers (clients whose first paid reservation is in the date range)
+  // instead of newCustomers (which includes leads with bookings but no payment yet).
+  // firstTimePayers is computed below — we forward-declare the count here after computing it.
 
   // Today-specific metrics
   // Only count manual outreaches (exclude system-logged entries like auto-seeded follow-ups)
@@ -226,6 +227,9 @@ export function computeLifecycleMetrics(data, dateFrom, dateTo, today) {
     if (firstRes && firstRes.checkIn >= dateFrom && firstRes.checkIn <= dateTo) return true;
     return false;
   }).length;
+
+  // Conversion Rate = first-time payers / total leads in range × 100
+  const conversionRate = leadsInRange.length > 0 ? (firstTimePayers / leadsInRange.length * 100) : 0;
 
   const todayNewLeads = createdInRange.filter(c => {
     const created = c.createdAt ? c.createdAt.split("T")[0] : "";
