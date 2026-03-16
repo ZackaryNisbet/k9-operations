@@ -397,6 +397,18 @@ function parseIgniteEmail(
     petName = extractPetName(bookingTitle || undefined);
     salesValue = parseSalesValue(fields.sales_value?.text);
     services = parseServicesJson(fields.services?.text);
+
+    // Web form leads: extract name/phone/email from form fields
+    // These are stored in form_data fields like first_name, last_name, email, phone, email_address
+    if (!firstName && fields.first_name?.text) firstName = fields.first_name.text.trim();
+    if (!lastName && fields.last_name?.text) lastName = fields.last_name.text.trim();
+    if (!phone) {
+      const rawPh = fields.phone?.text || null;
+      if (rawPh) {
+        phoneRaw = rawPh;
+        phone = normalizePhone(rawPh);
+      }
+    }
   }
 
   // ── Step 7: Build form_data with all remaining fields ──────────────
@@ -446,6 +458,15 @@ function parseIgniteEmail(
   // Always include the Ignite lead ID in form_data for linking
   if (igniteLeadId) formData.ignite_lead_id = igniteLeadId;
 
+  // Extract email from form fields for web form leads
+  let email: string | null = null;
+  if (leadType === LEAD_TYPES.WEB_FORM) {
+    const rawEmail = fields.email_address?.text || fields.email?.text || null;
+    if (rawEmail && rawEmail.includes("@")) {
+      email = rawEmail.trim().toLowerCase();
+    }
+  }
+
   const clientName =
     [firstName, lastName].filter(Boolean).join(" ") || null;
 
@@ -454,7 +475,7 @@ function parseIgniteEmail(
     firstName,
     lastName,
     clientName,
-    email: null, // Ignite emails don't include lead email addresses
+    email,
     phone,
     phoneRaw,
     callRecordingUrl,
@@ -1035,7 +1056,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
             conversion: {
               notes: "",
               followUpDate,
-              updates: [],
+              updates: [{
+                id: "sys_" + Date.now().toString(36),
+                notes: `Pulled lead from Ignite — ${parsed.leadType === "phone_call" ? "Phone Call" : parsed.leadType === "ad_click" ? "Ad Click" : "Web Form"}${parsed.sourceDetail ? " (" + parsed.sourceDetail + ")" : ""}`,
+                previousFollowUp: "",
+                newFollowUp: followUpDate,
+                loggedBy: "System",
+                loggedAt: new Date().toISOString(),
+              }],
               source: "ignite",
               sourceDate: new Date().toISOString(),
               sourceReservationId: "",
