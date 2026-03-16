@@ -52,6 +52,8 @@ export function useBackOfHouse(locationId, enabled = true) {
   const [configLoaded, setConfigLoaded] = useState(false);
   // Supabase boarding dogs not in BOH (multi-night stays not going home today)
   const [supabaseBoardingCount, setSupabaseBoardingCount] = useState(0);
+  // Gingr reservations API — authoritative in-house count
+  const [gingrResCount, setGingrResCount] = useState({ total: 0, boarding: 0, daycare: 0, loaded: false });
   const bohAnimalIdsRef = useRef(new Set()); // Tracks current BOH animal IDs for Supabase dedup
   const timerRef = useRef(null);
   const highlightTimerRef = useRef(null);
@@ -168,6 +170,51 @@ export function useBackOfHouse(locationId, enabled = true) {
     return () => { cancelledSupaRef.current = true; if (supaboarderTimerRef.current) clearInterval(supaboarderTimerRef.current); };
   }, [locationId, enabled, fetchSupaboarders]);
 
+  // ── Poll Gingr reservations API for authoritative in-house count ────────
+  const GINGR_RES_URL = "https://k9cherryhill.gingrapp.com/api/v1/reservations";
+  const gingrResCancelledRef = useRef(false);
+  const gingrResTimerRef = useRef(null);
+
+  const fetchGingrResCount = useCallback(async () => {
+    if (gingrResCancelledRef.current) return;
+    try {
+      const resp = await fetch(GINGR_RES_URL, {
+        method: "POST",
+        body: new URLSearchParams({ key: GINGR_API_KEY, checked_in: "true" }),
+      });
+      if (!resp.ok || gingrResCancelledRef.current) return;
+      const json = await resp.json();
+      const resData = json.data || {};
+      const entries = Object.values(resData);
+      let boarding = 0;
+      let daycare = 0;
+      for (const r of entries) {
+        const t = (r.reservation_type?.type || "").toLowerCase();
+        if (t.includes("boarding") && !t.includes("day boarding") && !t.includes("daycare")) {
+          boarding++;
+        } else {
+          daycare++;
+        }
+      }
+      if (!gingrResCancelledRef.current) {
+        setGingrResCount({ total: entries.length, boarding, daycare, loaded: true });
+      }
+    } catch (e) {
+      // Silently ignore — will retry on next interval
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) return;
+    gingrResCancelledRef.current = false;
+    fetchGingrResCount();
+    gingrResTimerRef.current = setInterval(fetchGingrResCount, 60000); // 60s poll
+    return () => {
+      gingrResCancelledRef.current = true;
+      if (gingrResTimerRef.current) clearInterval(gingrResTimerRef.current);
+    };
+  }, [enabled, fetchGingrResCount]);
+
   // ── Fetch back_of_house ────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
     if (!enabled || !visibleRef.current || !isWithinBusinessHours()) return;
@@ -271,9 +318,18 @@ export function useBackOfHouse(locationId, enabled = true) {
     const daycare = activeDogs.filter(d => classify(d) === "daycare");
     const bohBoarding = activeDogs.filter(d => classify(d) === "boarding");
 
-    // Total in-house = BOH active + Supabase-only boarders
-    const totalInHouse = activeDogs.length + supabaseBoardingCount;
-    const totalBoarding = bohBoarding.length + supabaseBoardingCount;
+    // When Gingr reservations API is available, use it as authoritative source.
+    // Falls back to BOH + Supabase when API hasn't loaded yet.
+    let totalInHouse, totalBoarding, totalDaycare;
+    if (gingrResCount.loaded) {
+      totalInHouse = gingrResCount.total;
+      totalBoarding = gingrResCount.boarding;
+      totalDaycare = gingrResCount.daycare;
+    } else {
+      totalInHouse = activeDogs.length + supabaseBoardingCount;
+      totalBoarding = bohBoarding.length + supabaseBoardingCount;
+      totalDaycare = daycare.length;
+    }
 
     // Expected = in-house + not-yet-arrived
     const expectedCount = totalInHouse + pendingDogs.length;
@@ -294,7 +350,7 @@ export function useBackOfHouse(locationId, enabled = true) {
 
     return {
       total: totalInHouse,
-      daycareCount: daycare.length,
+      daycareCount: totalDaycare,
       boardingCount: totalBoarding,
       expectedCount,
       pendingCount: pendingDogs.length,
@@ -303,7 +359,7 @@ export function useBackOfHouse(locationId, enabled = true) {
       goingHomeCount,
       fetchCount: fetchCountRef.current,
     };
-  }, [activeDogs, pendingDogs, supabaseBoardingCount]);
+  }, [activeDogs, pendingDogs, supabaseBoardingCount, gingrResCount]);
 
   return {
     activeDogs,
