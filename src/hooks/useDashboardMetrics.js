@@ -252,7 +252,7 @@ function aggregateRows(rows, outstandingInvoices = { count: 0, total: 0 }) {
     // available room inventory (rooms × days). This is the standard hotel industry RevPAR formula.
     // VERIFIED: Matches industry standard RevPAR = Total Room Revenue / Available Rooms.
     revPAR: (() => {
-      const totalRooms = Number(last.total_room_count) || 28;
+      const totalRooms = Number(last.total_room_count) || 0;
       return totalRooms > 0 && rows.length > 0
         ? sum("accrual_boarding_revenue") / (totalRooms * rows.length)
         : 0;
@@ -268,9 +268,9 @@ function aggregateRows(rows, outstandingInvoices = { count: 0, total: 0 }) {
 
     // Occupancy rate (avg across range)
     occupancyRate: (() => {
-      const totalRooms = Number(last.total_room_count) || 28;
+      const totalRooms = Number(last.total_room_count) || 0;
       return totalRooms > 0 && rows.length > 0
-        ? (sum("accrual_rooms_occupied") / (totalRooms * rows.length)) * 100
+        ? Math.min((sum("accrual_rooms_occupied") / (totalRooms * rows.length)) * 100, 100)
         : 0;
     })(),
   };
