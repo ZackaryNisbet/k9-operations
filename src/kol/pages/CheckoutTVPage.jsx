@@ -814,9 +814,13 @@ function CheckoutTVContent({ data, nav, profile }) {
             run_name: r.run?.name || "",
           }));
 
-        if (!cancelled) setGingrBoardingDogs(boardingDogs);
+        if (!cancelled) {
+          console.log('[TV-014] Gingr boarding poll:', boardingDogs.length, 'boarding dogs fetched');
+          if (boardingDogs.length > 0) console.log('[TV-014] First 3:', boardingDogs.slice(0, 3).map(d => d.animal_name));
+          setGingrBoardingDogs(boardingDogs);
+        }
       } catch (e) {
-        // Silently ignore — Supabase/BOH data still works as fallback
+        console.error('[TV-014] Gingr boarding poll error:', e.message || e);
       }
     };
 
@@ -871,6 +875,7 @@ function CheckoutTVContent({ data, nav, profile }) {
    * ──────────────────────────────────────────────────────────────────── */
   const { reservations, dogs } = useMemo(() => {
     const today = todayStr();
+    console.log('[TV-MERGE] gingrBoardingDogs:', gingrBoardingDogs.length, 'baseReservations:', baseReservations.length, 'gingrActiveDogs:', gingrActiveDogs.length);
 
     // Build set of animal IDs confirmed active by BOH (real-time Gingr)
     const bohActiveAnimalIds = new Set(
