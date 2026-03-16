@@ -698,7 +698,7 @@ function DashboardContent({
       "ops-opening", "ops-fe", "ops-be", "ops-rooms", "ops-closing",
       "ops-pamper", "ops-pp", "ops-svc", "eod", "photos", "cash-tips",
       "checkout-notes", "inventory", "test-health", "reports",
-      "enterprise-ops"];
+      "enterprise-ops", "occupancy-report"];
     const map = {};
     pages.forEach(p => { map[p] = () => nav(p); });
     return map;
@@ -1034,7 +1034,7 @@ function DashboardContent({
           ? <CanceledCell key={animEpoch} value={Math.max(0, (m.dogsExpected || 0) - (m.dogsInHouse || 0))} onClick={navTo["ops-bathing"]} animKey={animEpoch} />
           : <MetricCell label="Going Home" value={m.dogsGoingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(m.dogsGoingHome, pm.dogsGoingHome) : null} skeleton={showSkeleton} />
         }
-        <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0)}%`} hero onClick={navTo["settings"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} skeleton={showSkeleton} />
+        <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0)}%`} hero onClick={navTo["occupancy-report"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} skeleton={showSkeleton} />
         <MetricCell label="Bookings" value={m.bookingsToday} hero skeleton={showSkeleton} />
         <MetricCell label="Tours" value={m.toursToday} hero onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(m.toursToday, pm.toursToday) : null} skeleton={showSkeleton} />
         <MetricCell label="Evals" value={m.evalsToday} hero onClick={navTo["lifecycle"]} skeleton={showSkeleton} />
