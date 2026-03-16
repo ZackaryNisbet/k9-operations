@@ -322,9 +322,10 @@ function formatDogNames(dogs) {
 }
 const titleCase = (s) => (s || "").replace(/\b\w/g, c => c.toUpperCase());
 const fmtPhone = (p) => { const d = (p||"").replace(/\D/g,""); return d.length===10?`(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`:p||""; };
-const fmtDate = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00"); return dt.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}); };
-const fmtDateFull = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00"); return `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${dt.getFullYear()}`; };
-const fmtDateShort = (d) => { if(!d) return ""; const dt=new Date(d+"T00:00:00"); return `${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${String(dt.getFullYear()).slice(2)}`; };
+const _toDateStr = (d) => { if(!d) return null; const s=String(d); if(s.length===10 && /^\d{4}-\d{2}-\d{2}$/.test(s)) return s; const m=s.match(/^(\d{4}-\d{2}-\d{2})/); return m?m[1]:null; };
+const fmtDate = (d) => { const ds=_toDateStr(d); if(!ds) return ""; const dt=new Date(ds+"T00:00:00"); return isNaN(dt.getTime())?"":dt.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}); };
+const fmtDateFull = (d) => { const ds=_toDateStr(d); if(!ds) return ""; const dt=new Date(ds+"T00:00:00"); return isNaN(dt.getTime())?"":`${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${dt.getFullYear()}`; };
+const fmtDateShort = (d) => { const ds=_toDateStr(d); if(!ds) return ""; const dt=new Date(ds+"T00:00:00"); return isNaN(dt.getTime())?"":`${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${String(dt.getFullYear()).slice(2)}`; };
 function fmtPhoneInput(val) { const d = (val || '').replace(/\D/g, '').slice(0, 10); if (d.length === 0) return ''; if (d.length <= 3) return `(${d}`; if (d.length <= 6) return `(${d.slice(0,3)}) ${d.slice(3)}`; return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`; }
 const fmtTime = (t) => { if(!t) return ""; const s = typeof t === "string" ? t : (t instanceof Date ? t.toTimeString().slice(0,5) : String(t)); const [h,m] = s.split(":").map(Number); const ampm = h >= 12 ? "PM" : "AM"; const h12 = h % 12 || 12; return `${h12}:${String(m).padStart(2,"0")} ${ampm}`; };
 const fmtInstr = (v) => Array.isArray(v) ? v.join(", ") : (v || "");

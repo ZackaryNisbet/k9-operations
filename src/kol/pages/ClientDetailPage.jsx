@@ -238,21 +238,41 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
   const [lcSeedDone, setLcSeedDone] = useState(false);
   const lcSeedRef = useRef(false);
 
-  // Fetch Ignite leads on mount
+  // Fetch Ignite leads on mount — works for both Gingr clients (matched_client_id) and lite clients (ignite_lead_id link)
   useEffect(() => {
     let cancelled = false;
     async function loadIgniteLeads() {
       setIgniteLoading(true);
       try {
-        const { data: leads, error } = await supabase
+        const selectCols = 'id, lead_type, first_name, last_name, email, phone, source_detail, call_recording_url, form_data, match_confidence, match_type, match_status, raw_email_subject, created_at, ignite_profile_id';
+        let allLeads = [];
+        // Query 1: Standard match via matched_client_id (Gingr clients)
+        const { data: matchedLeads, error: err1 } = await supabase
           .from('ignite_leads')
-          .select('id, lead_type, first_name, last_name, email, phone, source_detail, call_recording_url, form_data, match_confidence, match_type, match_status, raw_email_subject, created_at')
+          .select(selectCols)
           .eq('matched_client_id', clientId)
           .eq('match_status', 'matched')
           .order('created_at', { ascending: false });
+        if (err1) throw err1;
+        if (matchedLeads) allLeads.push(...matchedLeads);
+        // Query 2: Lite client linked via ignite_lead_id
+        if (isLite && client?.sourceData?.igniteLeadId) {
+          const { data: linkedLead, error: err2 } = await supabase
+            .from('ignite_leads')
+            .select(selectCols)
+            .eq('id', client.sourceData.igniteLeadId);
+          if (err2) throw err2;
+          if (linkedLead) {
+            // Deduplicate — don't add if already in matched set
+            const existingIds = new Set(allLeads.map(l => l.id));
+            for (const l of linkedLead) {
+              if (!existingIds.has(l.id)) allLeads.push(l);
+            }
+          }
+        }
         if (!cancelled) {
-          if (error) { setIgniteError(error.message); setIgniteLeads([]); }
-          else { setIgniteLeads(leads || []); setIgniteError(null); }
+          setIgniteLeads(allLeads);
+          setIgniteError(null);
         }
       } catch (e) {
         if (!cancelled) { setIgniteError(e.message); setIgniteLeads([]); }
@@ -261,7 +281,7 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
     }
     loadIgniteLeads();
     return () => { cancelled = true; };
-  }, [clientId]);
+  }, [clientId, isLite, client?.sourceData?.igniteLeadId]);
 
   // ─── CLM-008: Fetch lifecycle events from Supabase ─────────────────────────
   useEffect(() => {
@@ -883,10 +903,10 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
               <Inp label="Last Name" value={inlineFields.last_name || ""} onChange={v => updateInlineField("last_name", v)} />
               <Inp label="Phone" value={inlineFields.phone || ""} onChange={v => updateInlineField("phone", v)} />
               <Inp label="Email" value={inlineFields.email || ""} onChange={v => updateInlineField("email", v)} />
-              {client.sourceDate && (
+              {client.sourceData?.sourceDate && (
                 <div>
                   <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Source Date</div>
-                  <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{fmtDate(client.sourceDate)}</div>
+                  <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{fmtDate(client.sourceData.sourceDate)}</div>
                 </div>
               )}
               {client.createdAt && (
@@ -899,6 +919,45 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             <div style={{ marginTop: 12 }}>
               <Inp label="Notes" type="textarea" value={inlineFields.notes || ""} onChange={v => updateInlineField("notes", v)} />
             </div>
+            {/* Ignite lead summary inline on profile for ignite-sourced lite clients */}
+            {client.source === "ignite" && client.igniteData && (() => {
+              const igd = client.igniteData;
+              const isPhoneCall = igd.leadType === "phone_call";
+              const isWebForm = igd.leadType === "web_form";
+              return (
+                <div style={{ marginTop: 14, padding: "12px 16px", background: "#FFF7ED", borderRadius: 10, border: "1px solid #FDBA7430", borderLeft: "3px solid #F97316" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#F97316" }}>Ignite {isPhoneCall ? "Phone Call" : isWebForm ? "Web Form" : "Lead"}</span>
+                    {igd.createdAt && <span style={{ fontSize: 10, color: C.textMut, marginLeft: "auto" }}>{new Date(igd.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span>}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: 11 }}>
+                    {igd.source && <div><span style={{ fontWeight: 700, color: C.textMut }}>Source:</span> <span style={{ color: C.text }}>{igd.source}</span></div>}
+                    {isPhoneCall && igd.callDuration && <div><span style={{ fontWeight: 700, color: C.textMut }}>Duration:</span> <span style={{ color: C.text }}>{igd.callDuration}</span></div>}
+                    {isPhoneCall && igd.callStatus && <div><span style={{ fontWeight: 700, color: C.textMut }}>Status:</span> <span style={{ color: C.text }}>{igd.callStatus}</span></div>}
+                    {isWebForm && igd.formName && <div><span style={{ fontWeight: 700, color: C.textMut }}>Form:</span> <span style={{ color: C.text }}>{igd.formName}</span></div>}
+                    {isWebForm && igd.desiredService && <div><span style={{ fontWeight: 700, color: C.textMut }}>Service:</span> <span style={{ color: C.text }}>{igd.desiredService}</span></div>}
+                    {(igd.city || igd.state || igd.zip) && <div><span style={{ fontWeight: 700, color: C.textMut }}>Location:</span> <span style={{ color: C.text }}>{[igd.city, igd.state, igd.zip].filter(Boolean).join(", ")}</span></div>}
+                  </div>
+                  {(igd.igniteProfileId && (igd.igniteLeadId || igd.leadId)) && (
+                    <div style={{ marginTop: 8, paddingTop: 6, borderTop: "1px solid #F9731620" }}>
+                      <a href={`https://leads.idigitalstrategies.com/profile/${igd.igniteProfileId}/leads?lid=${igd.igniteLeadId || igd.leadId}`} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 11, fontWeight: 700, color: "#F97316", textDecoration: "none" }}
+                        onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"}
+                        onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>View in Ignite ↗</a>
+                    </div>
+                  )}
+                  {igd.callRecordingUrl && (
+                    <div style={{ marginTop: 4 }}>
+                      <a href={igd.callRecordingUrl} target="_blank" rel="noopener noreferrer"
+                        style={{ fontSize: 11, fontWeight: 700, color: C.pri, textDecoration: "none" }}
+                        onMouseEnter={e => e.currentTarget.style.textDecoration = "underline"}
+                        onMouseLeave={e => e.currentTarget.style.textDecoration = "none"}>🎧 Listen to Recording ↗</a>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             </>
           ) : (
           <>
