@@ -654,7 +654,7 @@ function ChartFill({ chartData, color, compareColor, animEpoch, id, dateLabels,
    ═══════════════════════════════════════════════════════════════════════════ */
 
 export default function DashboardPage(props) {
-  const { data, locationId } = props;
+  const { data, locationId, bohStats, bohLastFetch } = props;
 
   // Show loader only if we have no data context at all
   if (!data) {
@@ -669,7 +669,7 @@ export default function DashboardPage(props) {
     );
   }
 
-  return <DashboardContent {...props} locationId={locationId} refreshOptions={props.refreshOptions} />;
+  return <DashboardContent {...props} locationId={locationId} refreshOptions={props.refreshOptions} bohStats={bohStats} bohLastFetch={bohLastFetch} />;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -679,6 +679,7 @@ export default function DashboardPage(props) {
 
 function DashboardContent({
   data, save, nav, profile, addGlobalToast, locationId, refreshOptions,
+  bohStats, bohLastFetch,
   showSnapshot, showRevenue, showFunnel, showLTV,
   showRevenueComposition, showRevenueByCategory, showDiscountAnalysis,
   showTopClients, showOps, showFunnelMetrics, showHeroKPIs,
@@ -911,14 +912,30 @@ function DashboardContent({
   /* ─── Trend helper ─── */
   const pctChange = (cur, prev) => prev > 0 ? ((cur - prev) / prev) * 100 : 0;
 
-  /* ─── "Updated X min ago" ─── */
+  /* ─── "Updated X ago" — ticks every 15s so it stays accurate ─── */
+  const [tickNow, setTickNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setTickNow(Date.now()), 15000);
+    return () => clearInterval(t);
+  }, []);
+
   const updatedAgo = useMemo(() => {
-    if (!lastUpdated) return "";
-    const diff = Math.round((Date.now() - new Date(lastUpdated).getTime()) / 60000);
+    // Prefer lastFetchedAt (when we last read from Supabase), fall back to lastUpdated (when edge fn last computed)
+    const ts = lastFetchedAt || lastUpdated;
+    if (!ts) return "";
+    const diff = Math.round((tickNow - new Date(ts).getTime()) / 60000);
     if (diff < 1) return "just now";
     if (diff < 60) return `${diff}m ago`;
     return `${Math.round(diff / 60)}h ago`;
-  }, [lastUpdated]);
+  }, [lastFetchedAt, lastUpdated, tickNow]);
+
+  const bohLiveLabel = useMemo(() => {
+    if (!bohLastFetch) return null;
+    const diff = Math.round((tickNow - new Date(bohLastFetch).getTime()) / 1000);
+    if (diff < 30) return "Live";
+    if (diff < 120) return `${diff}s ago`;
+    return null;
+  }, [bohLastFetch, tickNow]);
 
   /* ═══════════════════════════════════════════════════════════════════════════
      RENDER
@@ -958,7 +975,13 @@ function DashboardContent({
           </span>
           {updatedAgo && (
             <span style={{ fontSize: 8, color: C.textMut, fontWeight: 500, opacity: 0.7 }}>
-              Updated {updatedAgo}
+              Synced {updatedAgo}
+            </span>
+          )}
+          {bohLiveLabel && range === "today" && (
+            <span style={{ fontSize: 8, fontWeight: 700, color: C.suc, display: "flex", alignItems: "center", gap: 3 }}>
+              <span style={{ width: 5, height: 5, borderRadius: "50%", background: C.suc, animation: "dashPulse 1.5s infinite" }} />
+              {bohLiveLabel}
             </span>
           )}
           <button
@@ -1028,10 +1051,25 @@ function DashboardContent({
         </div>
 
         {/* ═══ ROW 1: Gingr Data ═══ */}
+        {/* BOH live overlay: when on Today view and BOH has data, use real-time counts */}
         <MetricCell label="Expected" value={m.dogsExpected} hero onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(m.dogsExpected, pm.dogsExpected) : null} skeleton={showSkeleton} />
-        <MetricCell label="In House" value={m.dogsInHouse} hero sub={`${m.boardingInHouse}B · ${m.daycareInHouse}D`} onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(m.dogsInHouse, pm.dogsInHouse) : null} skeleton={showSkeleton} />
+        <MetricCell
+          label="In House"
+          value={isToday && bohStats?.total != null ? bohStats.total : m.dogsInHouse}
+          hero
+          sub={isToday && bohStats?.total != null
+            ? `${bohStats.boardingCount}B · ${bohStats.daycareCount}D`
+            : `${m.boardingInHouse}B · ${m.daycareInHouse}D`}
+          onClick={navTo["checkout-tv"]}
+          trend={showPriorPeriod ? pctChange(
+            isToday && bohStats?.total != null ? bohStats.total : m.dogsInHouse,
+            pm.dogsInHouse
+          ) : null}
+          skeleton={showSkeleton}
+          live={isToday && bohStats?.total != null}
+        />
         {days > 1
-          ? <CanceledCell key={animEpoch} value={Math.max(0, (m.dogsExpected || 0) - (m.dogsInHouse || 0))} onClick={navTo["ops-bathing"]} animKey={animEpoch} />
+          ? <CanceledCell key={animEpoch} value={Math.max(0, (m.dogsExpected || 0) - (isToday && bohStats?.total != null ? bohStats.total : m.dogsInHouse || 0))} onClick={navTo["ops-bathing"]} animKey={animEpoch} />
           : <MetricCell label="Going Home" value={m.dogsGoingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(m.dogsGoingHome, pm.dogsGoingHome) : null} skeleton={showSkeleton} />
         }
         <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0)}%`} hero onClick={navTo["occupancy-report"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} skeleton={showSkeleton} />
@@ -1221,7 +1259,7 @@ const CanceledCell = memo(function CanceledCell({ value, onClick, animKey }) {
 });
 
 /* MetricCell — standard data cell with skeleton loading state */
-const MetricCell = memo(function MetricCell({ label, value, sub, color, trend, onClick, hero, skeleton }) {
+const MetricCell = memo(function MetricCell({ label, value, sub, color, trend, onClick, hero, skeleton, live }) {
   return (
     <div
       className={`dash-grid-cell${onClick ? " clickable" : ""}${hero ? " hero-cell" : ""}`}
@@ -1229,6 +1267,10 @@ const MetricCell = memo(function MetricCell({ label, value, sub, color, trend, o
       style={{ animation: "dashSlideIn 0.2s cubic-bezier(0.22,1,0.36,1) both", position: "relative" }}
     >
       {onClick && <LinkIcon />}
+      {/* Live indicator dot — shown when BOH is feeding real-time data */}
+      {live && (
+        <div style={{ position: "absolute", top: 4, right: 4, width: 5, height: 5, borderRadius: "50%", background: "#22C55E", animation: "dashPulse 1.5s infinite" }} />
+      )}
       {skeleton ? (
         <>
           <div className="dash-skeleton-line" />
