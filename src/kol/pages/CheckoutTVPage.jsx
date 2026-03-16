@@ -100,15 +100,15 @@ function hasPrivatePlay(res) {
 /* ── TV-003: Size theme colors ────────────────────────────────────────── */
 const SIZE_THEME = {
   large: {
-    accent: "#0EA5E9",     // Sky blue
-    accentRgb: "14,165,233",
+    accent: "#84CC16",     // Green (brand accent)
+    accentRgb: "132,204,22",
     label: "Large Dog Daycare",
     badge: "LG",
     icon: "L",
   },
   small: {
-    accent: "#8B5CF6",     // Violet/purple
-    accentRgb: "139,92,246",
+    accent: "#0EA5E9",     // Blue
+    accentRgb: "14,165,233",
     label: "Small Dog Daycare",
     badge: "SM",
     icon: "S",
@@ -118,10 +118,10 @@ const SIZE_THEME = {
 /* ── TV-005: Navigation view definitions ──────────────────────────────── */
 const NAV_VIEWS = [
   { id: "all",           label: "All",            color: "#fff",     colorRgb: "255,255,255" },
-  { id: "small-daycare", label: "Small Daycare",  color: "#8B5CF6",  colorRgb: "139,92,246" },
-  { id: "large-daycare", label: "Large Daycare",  color: "#0EA5E9",  colorRgb: "14,165,233" },
-  { id: "private-play",  label: "Private Play",   color: "#F59E0B",  colorRgb: "245,158,11" },
-  { id: "boarding",      label: "Boarding",        color: "#84CC16",  colorRgb: "175,141,84" },
+  { id: "small-daycare", label: "Small Daycare",  color: "#0EA5E9",  colorRgb: "14,165,233" },
+  { id: "large-daycare", label: "Large Daycare",  color: "#84CC16",  colorRgb: "132,204,22" },
+  { id: "private-play",  label: "Private Play",   color: "#EF4444",  colorRgb: "239,68,68" },
+  { id: "boarding",      label: "Boarding",        color: "#A78BFA",  colorRgb: "167,139,250" },
 ];
 
 const AUTO_CYCLE_INTERVAL = 30000; // 30 seconds
@@ -345,6 +345,17 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading }) {
   });
   const ownerLast = entry.ownerLastName || "";
   const allNames = resolvedDogs.map(d => d.name).join(" & ");
+  const firstDog = resolvedDogs[0];
+  const theme = SIZE_THEME[firstDog.size];
+
+  // Determine group label from reservation type
+  const resType = (entry.dogs?.[0]?.resType || entry.resType || "");
+  const groupLabel = resType === "dayboarding" ? "PRIVATE PLAY"
+    : resType === "boarding" ? "BOARDING"
+    : firstDog.size === "small" ? "SMALL DAYCARE" : "LARGE DAYCARE";
+  const groupColor = resType === "dayboarding" ? "#EF4444"
+    : resType === "boarding" ? "#A78BFA"
+    : theme?.accent || "#84CC16";
 
   return (
     <div style={{
@@ -396,7 +407,7 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading }) {
 
       {/* Info */}
       <div style={{ flex: 1, minWidth: 0, position: "relative", zIndex: 1 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 8, flexWrap: "wrap" }}>
           <span style={{
             fontSize: 14, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase",
             color: "#38BDF8",
@@ -404,6 +415,14 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading }) {
             padding: "5px 14px", borderRadius: 8,
           }}>
             Checking In
+          </span>
+          <span style={{
+            fontSize: 13, fontWeight: 800, letterSpacing: "0.08em",
+            color: groupColor,
+            background: `${groupColor}22`,
+            padding: "5px 14px", borderRadius: 8,
+          }}>
+            {groupLabel}
           </span>
         </div>
         <div style={{
@@ -1079,9 +1098,9 @@ function CheckoutTVContent({ data, nav, profile }) {
             position: "absolute", top: 8, left: 8,
             display: "inline-flex", alignItems: "center", justifyContent: "center",
             fontSize: 10, fontWeight: 900, letterSpacing: "0.06em",
-            color: "#F59E0B",
-            background: "rgba(245,158,11,0.15)",
-            border: "1.5px solid rgba(245,158,11,0.35)",
+            color: "#EF4444",
+            background: "rgba(239,68,68,0.15)",
+            border: "1.5px solid rgba(239,68,68,0.35)",
             borderRadius: 6, padding: "2px 6px",
             lineHeight: 1.4,
           }}>
@@ -1169,11 +1188,19 @@ function CheckoutTVContent({ data, nav, profile }) {
       minHeight: "100vh", background: "linear-gradient(180deg, #001A33 0%, #00112A 50%, #000A1A 100%)",
       padding: "32px 40px", fontFamily: "'Outfit', -apple-system, sans-serif", overflow: "auto",
     }}>
-      {/* Header */}
+      {/* Header — K9 Operations branding */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <div>
-          <div style={{ fontSize: 28, fontWeight: 900, color: "#fff", letterSpacing: "-0.02em" }}>K9 Adair Forsythe</div>
-          <div style={{ fontSize: 13, color: "rgba(132,204,22,0.7)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 2 }}>Checkout Board</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {/* K9 Operations logo icon (white for dark bg) */}
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="163.70 160.20 678.60 678.60" style={{ width: 48, height: 48, flexShrink: 0 }}>
+            <g transform="translate(0,1024) scale(0.1,-0.1)" fill="#84CC16" stroke="none">
+              <path d="M5710 7969 c-414 -27 -846 -110 -1098 -210 -265 -105 -456 -268 -513-438 -29 -86 -19 -111 46 -111 51 0 141 29 230 73 l60 29 -25 -27 c-79 -86-250 -164 -455 -208 -158 -35 -260 -40 -545 -31 -490 15 -595 10 -800 -38-107 -25 -251 -93 -312 -147 -127 -113 -173 -275 -133 -463 7 -37 21 -79 29-95 15 -27 15 -25 16 60 0 51 4 87 10 87 6 0 10 -17 10 -37 0 -96 52 -308 134-550 19 -57 32 -103 30 -103 -10 0 -74 149 -104 242 -17 51 -33 100 -36 108-8 22 -38 -32 -68 -122 -42 -124 -67 -293 -73 -498 -19 -618 159 -1097 489-1316 67 -45 97 -54 62 -19 -30 29 -123 206 -154 293 -79 219 -77 465 6 599 10 15 33 44 51 64 l34 35 -25 55 c-31 68 -72 216 -91 334 -16 97 -20 221 -7 229 4 2 18 -45 30 -106 46 -224 124 -422 201 -510 29 -32 72 -63 138 -97 125-66 228 -136 393 -267 430 -340 698 -468 1135 -541 84 -14 160 -18 320 -17 215 1 281 9 502 61 40 9 75 14 78 11 11 -11 -7 -56 -37 -92 -127 -154 -504-153 -998 3 -52 17 -96 29 -98 27 -4 -5 77 -50 173 -95 341 -162 704 -218 922-141 229 80 307 285 193 510 -56 110 -121 193 -434 549 -69 79 -126 146 -126 148 0 7 22 -10 84 -65 73 -64 224 -160 371 -237 177 -92 257 -146 345 -235 81-81 140 -177 140 -229 0 -17 5 -31 10 -31 6 0 10 30 10 70 0 78 -23 152 -69 220 -38 56 -138 158 -176 178 -26 14 -27 16 -10 20 46 8 217 67 310 108 324 139 604 361 779 618 122 179 173 338 256 801 62 347 100 485 173 630 154 310 406 498 774 581 l81 18 -66 29 c-78 33 -294 106 -402 136 -201 55 -483 104-790 137 -173 18 -779 27 -980 13z m-2468 -973 c142 -42 242 -106 277 -179 12-24 21 -54 21 -68 0 -33 -19 -99 -29 -99 -4 0 -13 22 -20 50 -9 34 -27 66 -58 100 -83 92 -330 193 -506 207 -43 3 -80 11 -84 16 -4 7 48 8 153 4 129 -4 175-10 246 -31z m-529 -359 c18 -8 39 -22 47 -32 14 -18 14 -18 -10 -2 -14 9 -43 19 -65 22 -36 6 -45 3 -73 -23 -41 -38 -41 -61 1 -165 86 -212 179 -287 322-257 140 29 343 165 472 318 29 34 53 60 53 57 0 -35 -136 -222 -208 -287-282 -252 -600 -248 -720 11 -37 77 -43 210 -14 267 46 89 118 123 195 91z M2633 5000 c-106 -64 -125 -336 -39 -563 86 -229 310 -432 583 -531 140 -50 211 -60 565 -85 116 -8 134 -12 200 -44 88 -42 238 -166 337 -277 39 -44 135-160 213 -258 277 -345 478 -564 628 -683 69 -55 82 -57 20 -3 -187 164 -357 364 -615 724 -194 270 -256 351 -335 434 -41 44 -68 77 -60 74 9 -3 52 -16 95-28 133 -37 335 -124 430 -185 93 -59 101 -57 30 10 -119 111 -301 228 -427 274 -145 54 -254 70 -538 81 -129 5 -270 16 -313 24 -291 57 -503 208 -617 439 -27 56 -57 129 -65 162 -28 109 -15 217 27 231 61 19 191 -39 428 -189 74-47 136 -84 138 -82 9 9 -272 264 -428 390 -129 104 -192 125 -257 85z"/>
+            </g>
+          </svg>
+          <div>
+            <div style={{ fontSize: 28, fontWeight: 900, color: "#fff", letterSpacing: "-0.02em" }}>K9 Operations</div>
+            <div style={{ fontSize: 12, color: "rgba(132,204,22,0.6)", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginTop: 1 }}>The Operating System for Pet Resorts</div>
+          </div>
         </div>
         <div style={{ textAlign: "right" }}>
           <div style={{ fontSize: 36, fontWeight: 900, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{timeStr}</div>
@@ -1251,8 +1278,8 @@ function CheckoutTVContent({ data, nav, profile }) {
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>
           Small Daycare: <span style={{ fontWeight: 800, color: SIZE_THEME.small.accent }}>{smallDaycare.length}</span>
         </div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Private Play: <span style={{ fontWeight: 800, color: "#F59E0B" }}>{privatePlayDogs.length}</span></div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#84CC16" }}>{boardingDogs.length}</span></div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Private Play: <span style={{ fontWeight: 800, color: "#EF4444" }}>{privatePlayDogs.length}</span></div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Boarding: <span style={{ fontWeight: 800, color: "#A78BFA" }}>{boardingDogs.length}</span></div>
         {hasCheckIns && (
           <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: hasCheckouts ? 0 : "auto" }}>
             Checking in: <span style={{ fontWeight: 800, color: "#38BDF8" }}>{viewCheckingIn.filter(e => !e.fading).length}</span>
@@ -1439,7 +1466,7 @@ function CheckoutTVContent({ data, nav, profile }) {
                 <SectionLabel
                   label="Private Play"
                   count={privatePlayDogs.length}
-                  color="#F59E0B"
+                  color="#EF4444"
                   subtitle="Dogs with private play or day boarding"
                 />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
@@ -1451,7 +1478,7 @@ function CheckoutTVContent({ data, nav, profile }) {
             {/* Boarding section */}
             {boardingDogs.length > 0 && (
               <div>
-                <SectionLabel label="Boarding" count={boardingDogs.length} color="#84CC16" subtitle="Overnight boarding dogs" />
+                <SectionLabel label="Boarding" count={boardingDogs.length} color="#A78BFA" subtitle="Overnight boarding dogs" />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
                   {boardingDogs.map(r => <DogCard key={r.id} res={r} />)}
                 </div>
@@ -1469,7 +1496,7 @@ function CheckoutTVContent({ data, nav, profile }) {
 
       {/* Footer */}
       <div style={{ textAlign: "center", marginTop: 40, padding: "16px 0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations Lite · Auto-refreshes in real-time</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time</div>
       </div>
 
       {/* Floating Exit Button — subtle, top-left corner */}
