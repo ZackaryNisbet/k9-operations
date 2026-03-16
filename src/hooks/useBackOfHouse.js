@@ -41,6 +41,8 @@ const BOH_URL = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/back_of_house?ke
 export function useBackOfHouse(locationId, enabled = true) {
   // Active dogs = checking_out list (dogs that are here now)
   const [activeDogs, setActiveDogs] = useState([]);
+  // Pending dogs = checking_in list (scheduled but not yet arrived)
+  const [pendingDogs, setPendingDogs] = useState([]);
   // Transition tracking: { id: { dog, type: "arrived"|"departed", timestamp } }
   const [recentEvents, setRecentEvents] = useState({});
   const [lastFetch, setLastFetch] = useState(null);
@@ -124,6 +126,7 @@ export function useBackOfHouse(locationId, enabled = true) {
 
       // Active dogs = checking_out (dogs that are HERE)
       const newActive = d.checking_out || [];
+      const newPending = d.checking_in || [];
       const newActiveIds = new Set(newActive.map(dog => dog.id));
 
       // Detect transitions (skip on first fetch — no previous data to compare)
@@ -158,6 +161,7 @@ export function useBackOfHouse(locationId, enabled = true) {
 
       prevActiveIdsRef.current = newActiveIds;
       setActiveDogs(newActive);
+      setPendingDogs(newPending);
       setLastFetch(new Date());
       setError(null);
       fetchCountRef.current += 1;
@@ -202,16 +206,38 @@ export function useBackOfHouse(locationId, enabled = true) {
     const daycare = activeDogs.filter(d => classify(d) === "daycare");
     const boarding = activeDogs.filter(d => classify(d) === "boarding");
 
+    // Expected = in-house + not-yet-arrived
+    const expectedCount = activeDogs.length + pendingDogs.length;
+
+    // Pending breakdown
+    const pendingDaycare = pendingDogs.filter(d => classify(d) === "daycare").length;
+    const pendingBoarding = pendingDogs.filter(d => classify(d) === "boarding").length;
+
+    // Going Home = checked-in dogs whose end_date is today (not staying overnight)
+    const todayStr = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
+    const goingHomeCount = activeDogs.filter(d => {
+      const endTs = parseInt(d.end_date, 10);
+      if (!endTs) return false;
+      const endDate = new Date(endTs * 1000).toLocaleDateString("en-CA");
+      return endDate === todayStr;
+    }).length;
+
     return {
       total: activeDogs.length,
       daycareCount: daycare.length,
       boardingCount: boarding.length,
+      expectedCount,
+      pendingCount: pendingDogs.length,
+      pendingDaycare,
+      pendingBoarding,
+      goingHomeCount,
       fetchCount: fetchCountRef.current,
     };
-  }, [activeDogs]);
+  }, [activeDogs, pendingDogs]);
 
   return {
     activeDogs,
+    pendingDogs,
     recentEvents,
     stats,
     lastFetch,
