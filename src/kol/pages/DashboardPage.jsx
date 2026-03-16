@@ -1077,7 +1077,6 @@ function DashboardContent({
         const dep = r.deposit && !Array.isArray(r.deposit) ? r.deposit : {};
         const txn = r.transaction && !Array.isArray(r.transaction) ? r.transaction : {};
         const total = Number(txn.price) || Number(dep.amount) || 0;
-        if (total <= 0) return;
 
         const startD = r.start_date ? r.start_date.split("T")[0] : dateFrom;
         const endD = r.end_date ? r.end_date.split("T")[0] : startD;
@@ -1089,7 +1088,8 @@ function DashboardContent({
         if (isBoarding && startD && endD) {
           const nights = countNights(startD, endD);
           if (nights <= 0) return;
-          const perNight = total / nights;
+          const perNight = total > 0 ? total / nights : 0;
+          // Count how many nights fall within selected date range
           let accrualNights = 0;
           let night = startD;
           while (night < endD) {
@@ -1104,18 +1104,22 @@ function DashboardContent({
             accrualAmount, checkIn: startD, checkOut: endD,
           });
           boardingTotal += accrualAmount;
-        } else if (isDaycare && startD >= dateFrom && startD <= dateTo) {
-          daycare.push({
-            id: r.gingr_id, dogName: r.animal_name || "Unknown", ownerName,
-            resTypeName: r.reservation_type_name || "Daycare",
-            accrualAmount: total, checkIn: startD,
-          });
-          daycareTotal += total;
+        } else if ((isDaycare || (!isBoarding && !isDaycare)) && startD >= dateFrom && startD <= dateTo) {
+          // Include daycare and day boarding — pricing may be $0 until checkout
+          if (!isBoarding) {
+            daycare.push({
+              id: r.gingr_id, dogName: r.animal_name || "Unknown", ownerName,
+              resTypeName: r.reservation_type_name || "Daycare",
+              accrualAmount: total, checkIn: startD,
+            });
+            daycareTotal += total;
+          }
         }
       });
 
-      boarding.sort((a, b) => b.accrualAmount - a.accrualAmount);
-      daycare.sort((a, b) => b.accrualAmount - a.accrualAmount);
+      // Boarding: priced first (desc), then $0 entries alphabetical
+      boarding.sort((a, b) => b.accrualAmount - a.accrualAmount || a.dogName.localeCompare(b.dogName));
+      daycare.sort((a, b) => b.accrualAmount - a.accrualAmount || a.dogName.localeCompare(b.dogName));
       setReceiptData({ boarding, daycare, boardingTotal, daycareTotal, grandTotal: boardingTotal + daycareTotal });
     } catch (err) {
       console.error("Receipt fetch error:", err);
@@ -1521,8 +1525,9 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
         {/* Boarding section */}
         {!loading && boarding.length > 0 && (
           <>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.pri, letterSpacing: "0.08em", marginBottom: 6, textTransform: "uppercase" }}>
-              ■ Boarding
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.pri, letterSpacing: "0.08em", textTransform: "uppercase" }}>■ Boarding</span>
+              <span style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", fontStyle: "italic" }}>{boarding.length} dog{boarding.length !== 1 ? "s" : ""} boarding tonight</span>
             </div>
             {boarding.map((item, i) => (
               <div key={item.id || i} className="receipt-line-item" style={{ animationDelay: `${i * 0.03}s` }}>
@@ -1531,11 +1536,11 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
                     {item.dogName}
                   </div>
                   <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>
-                    {item.roomType || "Room"} · {fmtMoney(item.perNight)}/nt × {item.nights}nt
+                    {item.roomType || "Room"}{item.perNight > 0 ? ` · ${fmtMoney(item.perNight)}/nt × ${item.nights}nt` : ` · ${item.nights}nt`}
                   </div>
                 </div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
-                  {fmtMoney(item.accrualAmount)}
+                <div style={{ fontSize: 11, fontWeight: item.accrualAmount > 0 ? 700 : 500, color: item.accrualAmount > 0 ? C.text : "rgba(20,83,45,0.3)", fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap", fontStyle: item.accrualAmount > 0 ? "normal" : "italic" }}>
+                  {item.accrualAmount > 0 ? fmtMoney(item.accrualAmount) : "multi-dog"}
                 </div>
               </div>
             ))}
@@ -1551,8 +1556,9 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
         {/* Daycare section */}
         {!loading && daycare.length > 0 && (
           <>
-            <div style={{ fontSize: 12, fontWeight: 700, color: C.acc, letterSpacing: "0.08em", marginBottom: 6, textTransform: "uppercase" }}>
-              ■ Daycare
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.acc, letterSpacing: "0.08em", textTransform: "uppercase" }}>■ Daycare</span>
+              <span style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", fontStyle: "italic" }}>{daycare.length} dog{daycare.length !== 1 ? "s" : ""} in daycare</span>
             </div>
             {daycare.map((item, i) => (
               <div key={item.id || i} className="receipt-line-item" style={{ animationDelay: `${(boarding.length + i) * 0.03}s` }}>
@@ -1564,15 +1570,17 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
                     {item.resTypeName || "Daycare"}
                   </div>
                 </div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
-                  {fmtMoney(item.accrualAmount)}
+                <div style={{ fontSize: 11, fontWeight: item.accrualAmount > 0 ? 700 : 500, color: item.accrualAmount > 0 ? C.text : "rgba(20,83,45,0.3)", fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap", fontStyle: item.accrualAmount > 0 ? "normal" : "italic" }}>
+                  {item.accrualAmount > 0 ? fmtMoney(item.accrualAmount) : "at checkout"}
                 </div>
               </div>
             ))}
-            <div className="receipt-line-item" style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(20,83,45,0.08)" }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, letterSpacing: "0.04em" }}>DAYCARE SUBTOTAL</div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(daycareTotal)}</div>
-            </div>
+            {daycareTotal > 0 && (
+              <div className="receipt-line-item" style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(20,83,45,0.08)" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, letterSpacing: "0.04em" }}>DAYCARE SUBTOTAL</div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(daycareTotal)}</div>
+              </div>
+            )}
           </>
         )}
 
