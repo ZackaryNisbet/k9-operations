@@ -52,6 +52,7 @@ export function useBackOfHouse(locationId, enabled = true) {
   const [configLoaded, setConfigLoaded] = useState(false);
   // Supabase boarding dogs not in BOH (multi-night stays not going home today)
   const [supabaseBoardingCount, setSupabaseBoardingCount] = useState(0);
+  const bohAnimalIdsRef = useRef(new Set()); // Tracks current BOH animal IDs for Supabase dedup
   const timerRef = useRef(null);
   const highlightTimerRef = useRef(null);
   const visibleRef = useRef(true);
@@ -120,6 +121,10 @@ export function useBackOfHouse(locationId, enabled = true) {
   // BOH checking_out only has dogs going home today. Multi-night boarders
   // staying past today are only in Supabase. This fetch gets the count of
   // Supabase boarding dogs NOT already in BOH, for accurate dashboard stats.
+  //
+  // Uses bohAnimalIdsRef (updated on each BOH fetch) rather than activeDogs
+  // in deps to avoid re-creating the interval on every BOH poll.
+  const supaboarderTimerRef = useRef(null);
   useEffect(() => {
     if (!locationId || !enabled) return;
     let cancelled = false;
@@ -140,8 +145,8 @@ export function useBackOfHouse(locationId, enabled = true) {
 
         if (!cancelled && rows) {
           // Count boarding dogs in Supabase but NOT in BOH active list
-          const bohAnimalIds = new Set(activeDogs.map(d => String(d.animal_id)));
-          const extraCount = rows.filter(r => !bohAnimalIds.has(String(r.animal_gingr_id))).length;
+          const currentBohIds = bohAnimalIdsRef.current;
+          const extraCount = rows.filter(r => !currentBohIds.has(String(r.animal_gingr_id))).length;
           setSupabaseBoardingCount(extraCount);
         }
       } catch (e) {
@@ -150,9 +155,9 @@ export function useBackOfHouse(locationId, enabled = true) {
     };
 
     fetchSupaboarders();
-    const interval = setInterval(fetchSupaboarders, 30000); // 30s refresh
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [locationId, enabled, activeDogs]);
+    supaboarderTimerRef.current = setInterval(fetchSupaboarders, 30000); // 30s refresh
+    return () => { cancelled = true; if (supaboarderTimerRef.current) clearInterval(supaboarderTimerRef.current); };
+  }, [locationId, enabled]);
 
   // ── Fetch back_of_house ────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -200,6 +205,8 @@ export function useBackOfHouse(locationId, enabled = true) {
       }
 
       prevActiveIdsRef.current = newActiveIds;
+      // Update bohAnimalIdsRef so the Supabase boarding query can dedup correctly
+      bohAnimalIdsRef.current = new Set(newActive.map(d => String(d.animal_id)));
       setActiveDogs(newActive);
       setPendingDogs(newPending);
       setLastFetch(new Date());
