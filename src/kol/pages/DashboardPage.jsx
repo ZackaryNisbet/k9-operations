@@ -800,14 +800,14 @@ function DashboardContent({
     return op ? op.countLabel : "";
   };
 
-  /* ─── Service data (today only — lightweight) ─── */
+  /* ─── Service data (today only — matches OperationsHub Services section) ─── */
   const svcData = useMemo(() => {
     if (!data?.reservations) return { bathsTotal: 0, bathsDone: 0, ppTotal: 0, ppCompleted: 0, pamperTotal: 0, pamperDone: 0, iceCreamTotal: 0, iceCreamDone: 0 };
     const sm = computeServiceMetrics(dataProxy, today);
     return {
       bathsTotal: sm.bathsTotal, bathsDone: sm.bathsDone,
       ppTotal: sm.ppTotal, ppCompleted: sm.ppCompleted,
-      pamperTotal: 0, pamperDone: 0,
+      pamperTotal: sm.pamperTotal, pamperDone: sm.pamperDone,
       iceCreamTotal: sm.iceCreamTotal, iceCreamDone: sm.iceCreamDone,
     };
   }, [dataProxy, today]);
