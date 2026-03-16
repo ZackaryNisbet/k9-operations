@@ -19,6 +19,8 @@ const InteractiveLineChart = React.memo(({
   noFill = false,         // true = no fill area at all (line only)
   fillColor,              // override fill color (defaults to `color`)
   fillOpacity = 0.18,     // opacity for solid fill
+  priorFillColor,         // fill color under the prior period line
+  priorFillOpacity = 0.12, // opacity for prior period fill
   showGuideLines = false, // subtle vertical lines from x-axis to data points
   guideLineColor = "#D1D5DB",
   showDots = false,       // always-visible dot markers
@@ -160,6 +162,11 @@ const InteractiveLineChart = React.memo(({
   // L1: Fill path — covers all points including today
   const fillPath = `${buildFullPath(mainVals)} L ${x(n - 1)} ${y(0)} L ${x(0)} ${y(0)} Z`;
 
+  // Prior period fill path
+  const priorFillPath = showPriorLine && priorVals.length > 0
+    ? `${buildFullPath(priorVals)} L ${x(n - 1)} ${y(0)} L ${x(0)} ${y(0)} Z`
+    : null;
+
   // Today's value label for badge
   const todayValue = todayHighlight && chartData.length > 0 ? chartData[chartData.length - 1].value : null;
 
@@ -188,7 +195,14 @@ const InteractiveLineChart = React.memo(({
         {showGuideLines && mainVals.map((v, i) => (
           <line key={`guide-${i}`} x1={x(i)} y1={h - pad.bottom} x2={x(i)} y2={y(v)} stroke={guideLineColor} strokeWidth="0.7" strokeDasharray="3 2" opacity="0.5" />
         ))}
-        {/* Fill area */}
+        {/* ── LAYER 1 (background): Prior period fill + line ── */}
+        {showPriorLine && priorFillPath && priorFillColor && (
+          <path d={priorFillPath} fill={priorFillColor} opacity={priorFillOpacity} />
+        )}
+        {showPriorLine && priorVals.length > 0 && (
+          <path d={buildFullPath(priorVals)} fill="none" stroke={priorLineColor || color} strokeWidth="1.5" strokeLinecap="round" opacity={priorLineColor ? 0.7 : 0.4} />
+        )}
+        {/* ── LAYER 2 (foreground): Main period fill + line ── */}
         {noFill ? null : solidFill ? (
           <path d={fillPath} fill={actualFill} opacity={fillOpacity} />
         ) : (
@@ -207,10 +221,6 @@ const InteractiveLineChart = React.memo(({
         {/* L1: Dotted segment from yesterday to today */}
         {todayHighlight && mainDottedPath && (
           <path d={mainDottedPath} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeDasharray="4 3" />
-        )}
-        {/* L4: Prior period comparison line */}
-        {showPriorLine && priorVals.length > 0 && (
-          <path d={buildFullPath(priorVals)} fill="none" stroke={priorLineColor || color} strokeWidth="1.5" strokeDasharray={priorLineColor ? undefined : "6 4"} strokeLinecap="round" opacity={priorLineColor ? 0.7 : 0.4} />
         )}
         {/* Compare line (legacy) */}
         {showCompare && <path d={buildFullPath(cmpVals)} fill="none" stroke={compareColor} strokeWidth="1.5" strokeDasharray="4 3" strokeLinecap="round" opacity="0.6" />}
