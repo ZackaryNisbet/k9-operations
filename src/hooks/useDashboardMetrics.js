@@ -32,8 +32,8 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
     setLoading(true);
 
     try {
-      // Fetch current period + prior period in parallel
-      const [currentRes, priorRes] = await Promise.all([
+      // Fetch current period, prior period, and outstanding invoices in parallel
+      const [currentRes, priorRes, invoiceRes] = await Promise.all([
         supabase
           .from("dashboard_metrics_daily")
           .select("*")
@@ -50,6 +50,12 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
               .lte("metric_date", prevTo)
               .order("metric_date", { ascending: true })
           : Promise.resolve({ data: [], error: null }),
+        // Outstanding invoices: live query from gingr_owners (owners with balance > 0)
+        supabase
+          .from("gingr_owners")
+          .select("current_balance")
+          .eq("location_id", locationId)
+          .gt("current_balance", 0),
       ]);
 
       if (currentRes.error) throw currentRes.error;
@@ -57,10 +63,17 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
       const rows = currentRes.data || [];
       const prevRows = priorRes.data || [];
 
+      // Compute outstanding invoice snapshot from gingr_owners
+      const invoiceRows = invoiceRes.data || [];
+      const outstandingInvoices = {
+        count: invoiceRows.length,
+        total: invoiceRows.reduce((sum, r) => sum + (Number(r.current_balance) || 0), 0),
+      };
+
       setDailyRows(rows);
       setPrevDailyRows(prevRows);
-      setMetrics(aggregateRows(rows));
-      setPrevMetrics(aggregateRows(prevRows));
+      setMetrics(aggregateRows(rows, outstandingInvoices));
+      setPrevMetrics(aggregateRows(prevRows, outstandingInvoices));
       setLastUpdated(rows.length > 0 ? rows[rows.length - 1].computed_at : null);
     } catch (err) {
       console.error("Dashboard metrics fetch error:", err);
@@ -98,7 +111,7 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
  * For snapshot fields (in_house, occupancy), uses the LAST row (most recent day).
  * For cumulative fields (revenue, transactions), SUMs across all rows.
  */
-function aggregateRows(rows) {
+function aggregateRows(rows, outstandingInvoices = { count: 0, total: 0 }) {
   if (!rows || rows.length === 0) return emptyMetrics();
 
   const last = rows[rows.length - 1];
@@ -137,18 +150,36 @@ function aggregateRows(rows) {
     cashBoardingRevenue: sum("cash_boarding_revenue"),
     cashDaycareRevenue: sum("cash_daycare_revenue"),
 
-    // Average ticket
+    // Average Transaction Price = Total Cash Revenue / Total Transactions
+    // Formula: SUM(cash_total_revenue) / SUM(cash_transaction_count)
+    // cash_total_revenue = sum of all positive transaction.price values for the period
+    // cash_transaction_count = count of ALL non-cancelled reservations (including $0 package deals)
+    // VERIFIED: This is the standard "average transaction price" calculation.
     cashAvgTransaction: sum("cash_transaction_count") > 0
       ? sum("cash_total_revenue") / sum("cash_transaction_count")
       : 0,
 
     // Refunds (SUM across range)
+    // refund_count = reservations where transaction.is_returned = true AND refund_amount > 0
+    // refund_total = SUM of transaction.refund_amount for returned reservations
     refundCount: sum("refund_count"),
     refundTotal: sum("refund_total"),
+    // Discounts (SUM across range) — rack-rate comparison
+    // discounted_count = boarding reservations where actual price < 98% of rack rate
+    // discount_total = SUM of (rack_rate - actual_price) for discounted reservations
     discountedCount: sum("discounted_count"),
     discountTotal: sum("discount_total"),
 
-    // Derived: RevPAR
+    // Outstanding Invoices (live snapshot from gingr_owners, not from pre-computed table)
+    // Counts owners with current_balance > 0 — queried directly for real-time accuracy
+    outstandingInvoiceCount: outstandingInvoices.count,
+    outstandingInvoiceTotal: outstandingInvoices.total,
+
+    // RevPAR (Revenue Per Available Room) = Total Boarding Revenue / Total Available Room-Nights
+    // Formula: SUM(accrual_boarding_revenue) / (total_room_count × number_of_days_in_period)
+    // Uses accrual boarding revenue (per-night rate spread across stay) divided by
+    // available room inventory (rooms × days). This is the standard hotel industry RevPAR formula.
+    // VERIFIED: Matches industry standard RevPAR = Total Room Revenue / Available Rooms.
     revPAR: (() => {
       const totalRooms = Number(last.total_room_count) || 28;
       return totalRooms > 0 && rows.length > 0
@@ -183,6 +214,7 @@ function emptyMetrics() {
     cashTotalRevenue: 0, cashTransactionCount: 0, cashBoardingRevenue: 0, cashDaycareRevenue: 0,
     cashAvgTransaction: 0,
     refundCount: 0, refundTotal: 0, discountedCount: 0, discountTotal: 0,
+    outstandingInvoiceCount: 0, outstandingInvoiceTotal: 0,
     revPAR: 0, boardingPct: 0, daycarePct: 0, occupancyRate: 0,
   };
 }

@@ -985,14 +985,14 @@ function DashboardContent({
 
         {/* ═══ ROW 4: Reporting/Financial ═══ */}
         <MetricCell label="Transactions" value={m.cashTransactionCount} trend={showPriorPeriod ? bookingsTrend : null} />
-        <MetricCell label="Avg Ticket" value={`$${Math.round(m.cashAvgTransaction || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(m.cashAvgTransaction, pm.cashAvgTransaction) : null} />
+        <MetricCell label="Average Transaction Price" value={`$${Math.round(m.cashAvgTransaction || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(m.cashAvgTransaction, pm.cashAvgTransaction) : null} />
         <MetricCell label="Rev/PAR" value={`$${Math.round(m.revPAR || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(m.revPAR, pm.revPAR) : null} />
         <MetricCell label="Refunds" value={m.refundCount} color={m.refundCount > 0 ? C.dan : undefined} trend={showPriorPeriod ? pctChange(m.refundCount, pm.refundCount) : null} />
         <MetricCell label="$ Refunded" value={`$${fmt$k(m.refundTotal)}`} color={m.refundTotal > 0 ? C.dan : undefined} />
         <MetricCell label="Discounted" value={m.discountedCount} color={m.discountedCount > 0 ? C.warn : undefined} />
         <MetricCell label="$ Discounted" value={`$${fmt$k(m.discountTotal)}`} color={m.discountTotal > 0 ? C.warn : undefined} />
         <ChecklistCell label="Room Clean" progress={getChecklistProgress("ops-rooms")} count={getChecklistCount("ops-rooms")} onClick={navTo["ops-rooms"]} />
-        <MetricCell label="Attendance" value="—" onClick={navTo["enterprise-attendance"]} />
+        <MetricCell label="Outstanding Invoices" value={m.outstandingInvoiceCount || 0} sub={`$${fmt$k(m.outstandingInvoiceTotal || 0)}`} color={(m.outstandingInvoiceCount || 0) > 0 ? C.warn : undefined} />
 
         {/* ═══ ROWS 5-7: Charts ═══ */}
         <div className="dash-chart-cell" style={{ gridColumn: "1 / 4", gridRow: "span 3" }}>
