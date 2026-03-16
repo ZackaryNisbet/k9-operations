@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo, startTransition } from "react";
 import {
-  C, todayStr, addDays, fmtDate, fmtDateShort, countNights,
+  C, todayStr, addDays, fmtDate, fmtDateShort, countNights, LITE_DEF_PRICING,
 } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Tip } from "../../shared/ui";
@@ -1057,7 +1057,7 @@ function DashboardContent({
       // Fetch reservations that overlap the selected date range
       const { data: rawRes, error } = await supabase
         .from("gingr_reservations")
-        .select("gingr_id,animal_name,owner_first_name,owner_last_name,reservation_type_name,start_date,end_date,deposit,transaction,cancelled_date")
+        .select("gingr_id,animal_name,owner_first_name,owner_last_name,reservation_type_name,start_date,end_date,deposit,transaction,cancelled_date,services")
         .eq("location_id", locationId)
         .lte("start_date", dateTo + "T23:59:59")
         .gte("end_date", dateFrom + "T00:00:00")
@@ -1066,13 +1066,21 @@ function DashboardContent({
       if (error) { console.error("Receipt fetch error:", error); setReceiptLoading(false); return; }
 
       const boarding = [];
-      const daycare = [];
       let boardingTotal = 0;
-      let daycareTotal = 0;
+
+      // Daycare aggregation
+      const dcRates = LITE_DEF_PRICING.daycareRates;
+      let fullDayCount = 0;
+      let halfDayCount = 0;
+      let evalCount = 0;
+      let dayBoardCount = 0;
+      const enrichmentMap = {};   // name → { count, totalCost }
+      let daycareBaseTotal = 0;
+      let daycareEnrichTotal = 0;
 
       (rawRes || []).forEach(r => {
         const typeName = (r.reservation_type_name || "").toLowerCase();
-        const isBoarding = typeName.includes("boarding");
+        const isBoarding = typeName.includes("boarding") && !typeName.includes("day boarding");
         const isDaycare = typeName.includes("daycare") || typeName.includes("day care") || typeName.includes("day boarding");
         const dep = r.deposit && !Array.isArray(r.deposit) ? r.deposit : {};
         const txn = r.transaction && !Array.isArray(r.transaction) ? r.transaction : {};
@@ -1104,23 +1112,54 @@ function DashboardContent({
             accrualAmount, checkIn: startD, checkOut: endD,
           });
           boardingTotal += accrualAmount;
-        } else if ((isDaycare || (!isBoarding && !isDaycare)) && startD >= dateFrom && startD <= dateTo) {
-          // Include daycare and day boarding — pricing may be $0 until checkout
-          if (!isBoarding) {
-            daycare.push({
-              id: r.gingr_id, dogName: r.animal_name || "Unknown", ownerName,
-              resTypeName: r.reservation_type_name || "Daycare",
-              accrualAmount: total, checkIn: startD,
-            });
-            daycareTotal += total;
+        } else if (isDaycare && startD >= dateFrom && startD <= dateTo) {
+          // Classify daycare type & apply base rate
+          let baseRate = dcRates.fullDay;
+          if (typeName.includes("half")) {
+            halfDayCount++;
+            baseRate = dcRates.halfDay;
+          } else if (typeName.includes("evaluation")) {
+            evalCount++;
+            baseRate = dcRates.fullDay; // evals charged at full-day rate
+          } else if (typeName.includes("day boarding")) {
+            dayBoardCount++;
+            baseRate = dcRates.fullDay;
+          } else {
+            fullDayCount++;
           }
+          daycareBaseTotal += baseRate;
+
+          // Aggregate services / enrichments
+          const svcs = Array.isArray(r.services) ? r.services : [];
+          svcs.forEach(s => {
+            const sName = (s.name || "Service").trim();
+            const sCost = Number(s.cost) || 0;
+            if (!enrichmentMap[sName]) enrichmentMap[sName] = { count: 0, totalCost: 0, unitCost: sCost };
+            enrichmentMap[sName].count++;
+            enrichmentMap[sName].totalCost += sCost;
+          });
         }
       });
 
+      // Build enrichment list sorted by total cost descending
+      const enrichments = Object.entries(enrichmentMap)
+        .map(([name, v]) => ({ name, count: v.count, totalCost: v.totalCost, unitCost: v.unitCost }))
+        .sort((a, b) => b.totalCost - a.totalCost);
+      daycareEnrichTotal = enrichments.reduce((s, e) => s + e.totalCost, 0);
+
+      const daycareTotal = daycareBaseTotal + daycareEnrichTotal;
+      const totalDaycareDogs = fullDayCount + halfDayCount + evalCount + dayBoardCount;
+
+      const daycareAgg = {
+        fullDayCount, halfDayCount, evalCount, dayBoardCount,
+        fullDayRate: dcRates.fullDay, halfDayRate: dcRates.halfDay,
+        baseTotal: daycareBaseTotal, enrichments, enrichTotal: daycareEnrichTotal,
+        total: daycareTotal, dogCount: totalDaycareDogs,
+      };
+
       // Boarding: priced first (desc), then $0 entries alphabetical
       boarding.sort((a, b) => b.accrualAmount - a.accrualAmount || a.dogName.localeCompare(b.dogName));
-      daycare.sort((a, b) => b.accrualAmount - a.accrualAmount || a.dogName.localeCompare(b.dogName));
-      setReceiptData({ boarding, daycare, boardingTotal, daycareTotal, grandTotal: boardingTotal + daycareTotal });
+      setReceiptData({ boarding, daycareAgg, boardingTotal, daycareTotal, grandTotal: boardingTotal + daycareTotal });
     } catch (err) {
       console.error("Receipt fetch error:", err);
     } finally {
@@ -1475,7 +1514,7 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
 
   if (!open && !closing) return null;
 
-  const { boarding = [], daycare = [], boardingTotal = 0, daycareTotal = 0, grandTotal = 0 } = receiptData || {};
+  const { boarding = [], daycareAgg, boardingTotal = 0, daycareTotal = 0, grandTotal = 0 } = receiptData || {};
   const fmtMoney = (v) => `$${(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const now = new Date();
   const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -1551,36 +1590,100 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
           </>
         )}
 
-        {!loading && boarding.length > 0 && daycare.length > 0 && <hr className="receipt-dashed" />}
+        {!loading && boarding.length > 0 && daycareAgg && daycareAgg.dogCount > 0 && <hr className="receipt-dashed" />}
 
-        {/* Daycare section */}
-        {!loading && daycare.length > 0 && (
+        {/* Daycare section — aggregate view */}
+        {!loading && daycareAgg && daycareAgg.dogCount > 0 && (
           <>
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: C.acc, letterSpacing: "0.08em", textTransform: "uppercase" }}>■ Daycare</span>
-              <span style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", fontStyle: "italic" }}>{daycare.length} dog{daycare.length !== 1 ? "s" : ""} in daycare</span>
+              <span style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", fontStyle: "italic" }}>{daycareAgg.dogCount} dog{daycareAgg.dogCount !== 1 ? "s" : ""} in daycare</span>
             </div>
-            {daycare.map((item, i) => (
-              <div key={item.id || i} className="receipt-line-item" style={{ animationDelay: `${(boarding.length + i) * 0.03}s` }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11, color: C.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {item.dogName}
-                  </div>
+
+            {/* Full Day line */}
+            {daycareAgg.fullDayCount > 0 && (
+              <div className="receipt-line-item">
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Full Day</div>
                   <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>
-                    {item.resTypeName || "Daycare"}
+                    {daycareAgg.fullDayCount} dog{daycareAgg.fullDayCount !== 1 ? "s" : ""} × {fmtMoney(daycareAgg.fullDayRate)}
                   </div>
                 </div>
-                <div style={{ fontSize: 11, fontWeight: item.accrualAmount > 0 ? 700 : 500, color: item.accrualAmount > 0 ? C.text : "rgba(20,83,45,0.3)", fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap", fontStyle: item.accrualAmount > 0 ? "normal" : "italic" }}>
-                  {item.accrualAmount > 0 ? fmtMoney(item.accrualAmount) : "at checkout"}
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                  {fmtMoney(daycareAgg.fullDayCount * daycareAgg.fullDayRate)}
                 </div>
-              </div>
-            ))}
-            {daycareTotal > 0 && (
-              <div className="receipt-line-item" style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(20,83,45,0.08)" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, letterSpacing: "0.04em" }}>DAYCARE SUBTOTAL</div>
-                <div style={{ fontSize: 12, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(daycareTotal)}</div>
               </div>
             )}
+
+            {/* Half Day line */}
+            {daycareAgg.halfDayCount > 0 && (
+              <div className="receipt-line-item">
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Half Day</div>
+                  <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>
+                    {daycareAgg.halfDayCount} dog{daycareAgg.halfDayCount !== 1 ? "s" : ""} × {fmtMoney(daycareAgg.halfDayRate)}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                  {fmtMoney(daycareAgg.halfDayCount * daycareAgg.halfDayRate)}
+                </div>
+              </div>
+            )}
+
+            {/* Evaluation line */}
+            {daycareAgg.evalCount > 0 && (
+              <div className="receipt-line-item">
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Evaluation</div>
+                  <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>
+                    {daycareAgg.evalCount} dog{daycareAgg.evalCount !== 1 ? "s" : ""} × {fmtMoney(daycareAgg.fullDayRate)}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                  {fmtMoney(daycareAgg.evalCount * daycareAgg.fullDayRate)}
+                </div>
+              </div>
+            )}
+
+            {/* Day Boarding line */}
+            {daycareAgg.dayBoardCount > 0 && (
+              <div className="receipt-line-item">
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Day Boarding</div>
+                  <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>
+                    {daycareAgg.dayBoardCount} dog{daycareAgg.dayBoardCount !== 1 ? "s" : ""} × {fmtMoney(daycareAgg.fullDayRate)}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                  {fmtMoney(daycareAgg.dayBoardCount * daycareAgg.fullDayRate)}
+                </div>
+              </div>
+            )}
+
+            {/* Enrichments / Add-ons */}
+            {daycareAgg.enrichments.length > 0 && (
+              <>
+                <div style={{ marginTop: 8, marginBottom: 4, fontSize: 9, fontWeight: 700, color: "rgba(20,83,45,0.35)", letterSpacing: "0.08em", textTransform: "uppercase" }}>ADD-ONS / ENRICHMENTS</div>
+                {daycareAgg.enrichments.map((e, i) => (
+                  <div key={e.name} className="receipt-line-item" style={{ animationDelay: `${(boarding.length + i) * 0.03}s` }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 10, color: C.text, fontWeight: 500 }}>
+                        {e.count}× {e.name}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                      {fmtMoney(e.totalCost)}
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {/* Daycare subtotal */}
+            <div className="receipt-line-item" style={{ marginTop: 6, paddingTop: 4, borderTop: "1px solid rgba(20,83,45,0.08)" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, letterSpacing: "0.04em" }}>DAYCARE SUBTOTAL</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(daycareTotal)}</div>
+            </div>
           </>
         )}
 
@@ -1609,7 +1712,7 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
             {/* Footer */}
             <div style={{ textAlign: "center", marginTop: 16, paddingTop: 8, borderTop: "1px solid rgba(20,83,45,0.06)" }}>
               <div style={{ fontSize: 9, color: "rgba(20,83,45,0.3)", letterSpacing: "0.06em" }}>
-                {boarding.length + daycare.length} RESERVATION{(boarding.length + daycare.length) !== 1 ? "S" : ""}
+                {boarding.length + (daycareAgg ? daycareAgg.dogCount : 0)} RESERVATION{(boarding.length + (daycareAgg ? daycareAgg.dogCount : 0)) !== 1 ? "S" : ""}
               </div>
               <div style={{ fontSize: 8, color: "rgba(20,83,45,0.2)", marginTop: 4, letterSpacing: "0.04em" }}>
                 THANK YOU FOR CHOOSING K9
