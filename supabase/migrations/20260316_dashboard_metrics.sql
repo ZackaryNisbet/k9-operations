@@ -68,7 +68,7 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   d DATE;
-  v_total_rooms INT := 28;
+  v_total_rooms INT := 0;
   v_in_house INT;
   v_boarding_ih INT;
   v_daycare_ih INT;
@@ -94,22 +94,25 @@ DECLARE
   v_outstanding_count INT;
   v_outstanding_total NUMERIC(12,2);
 BEGIN
-  -- Get total room count from lite_settings room_config
+  -- Get total room count from lite_settings room_names
+  -- The setting_value is a JSON object like {"Luxury Suite": [...], "Executive Room": [...], ...}
+  -- Each key's value is an array of room name strings. Sum all array lengths = total rooms.
   BEGIN
     SELECT COALESCE(
       (SELECT SUM(jsonb_array_length(value))
-       FROM lite_settings s, jsonb_each(s.setting_value->'room_names')
+       FROM lite_settings s, jsonb_each(s.setting_value)
        WHERE s.location_id = p_location_id
-         AND s.setting_key = 'room_config'
+         AND s.setting_key = 'room_names'
       ),
-      28
+      0
     ) INTO v_total_rooms;
   EXCEPTION WHEN OTHERS THEN
-    v_total_rooms := 28;
+    v_total_rooms := 0;
   END;
 
   IF v_total_rooms IS NULL OR v_total_rooms = 0 THEN
-    v_total_rooms := 28;
+    RAISE WARNING 'No room_names setting found for location %. Occupancy will be 0.', p_location_id;
+    v_total_rooms := 1; -- Prevent division by zero but occupancy will be nonsensical — must configure rooms
   END IF;
 
   FOR d IN SELECT generate_series(p_date_from, p_date_to, '1 day'::interval)::DATE
