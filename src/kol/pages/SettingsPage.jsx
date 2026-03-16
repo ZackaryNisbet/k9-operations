@@ -26,6 +26,7 @@ import ChecklistTemplatesTab from "../settings/ChecklistTemplatesTab";
 import RetentionThresholdsTab from "../settings/RetentionThresholdsTab";
 import IgniteSettingsTab from "../settings/IgniteSettingsTab";
 import IgniteParserConfigTab from "../settings/IgniteParserConfigTab";
+import DashboardRefreshTab from "../settings/DashboardRefreshTab";
 
 function SettingsPage({ profile: parentProfile, addGlobalToast }) {
   const [tab, setTab] = useState(null); // null = show grid, set = show detail
@@ -36,6 +37,13 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
   const save = useCallback(() => {}, []);
 
   const sections = [
+    {
+      id: "dashboard",
+      label: "Dashboard",
+      cards: [
+        { id: "dashboard-refresh", label: "Dashboard Refresh", desc: "Configure refresh interval and business hours for automatic data updates" },
+      ],
+    },
     {
       id: "integrations",
       label: "Integrations",
@@ -88,6 +96,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
   // Tab detail components
   const renderDetail = () => {
     switch (tab) {
+      case "dashboard-refresh":
+        return <DashboardRefreshTab />;
       case "gingr":
         return <GingrIntegrationTab />;
       case "team":

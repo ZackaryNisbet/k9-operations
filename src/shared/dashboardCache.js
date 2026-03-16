@@ -3,7 +3,7 @@
 // On page load: show cached → fetch fresh in background → update when ready.
 
 const CACHE_KEY = 'k9_dashboard_cache';
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 15 * 60 * 1000; // 15 minutes — matches default refresh interval
 
 export function getCachedData() {
   try {
