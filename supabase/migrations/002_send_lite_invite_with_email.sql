@@ -147,6 +147,7 @@ BEGIN
     || '<div style="max-width:560px;margin:40px auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(20,83,45,0.10)">'
     -- Header: Forest Green with white wordmark + tagline
     || '<div style="background:#14532D;padding:32px 40px;text-align:center">'
+    || '<img src="https://k9operations.com/k9-email-logo-white.png" width="56" height="56" alt="K9 Operations" style="display:block;margin:0 auto 12px;border:0" />'
     || '<div style="font-size:26px;font-weight:800;color:#ffffff;letter-spacing:-0.5px;line-height:1;font-family:''Outfit'',''Segoe UI'',Roboto,Helvetica,Arial,sans-serif">K9 Operations</div>'
     || '<div style="margin-top:10px;font-size:11px;font-weight:500;color:#84CC16;letter-spacing:2.5px;text-transform:uppercase;font-family:''Outfit'',''Segoe UI'',Roboto,Helvetica,Arial,sans-serif">The operating system for pet care facilities</div>'
     || '</div>'
