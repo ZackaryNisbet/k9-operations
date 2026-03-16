@@ -1026,8 +1026,13 @@ function CheckoutTVContent({ data, nav, profile }) {
       }));
 
     // ── Step 5: Merge — avoid duplicating reservations ────────────────
-    const existingGingrIds = new Set(filteredBaseRes.map(r => r.gingrId).filter(Boolean));
-    const existingDogIds = new Set(filteredBaseRes.map(r => r.dogId).filter(Boolean));
+    // IMPORTANT: Only deduplicate against CHECKED-IN reservations from Supabase.
+    // Using ALL reservations (including old checked-out ones) would cause
+    // existingDogIds to contain dogIds from historical visits, blocking
+    // new check-ins for returning dogs (e.g., Boots, Bruno).
+    const checkedInBaseRes = filteredBaseRes.filter(r => r.status === 'checked-in');
+    const existingGingrIds = new Set(checkedInBaseRes.map(r => r.gingrId).filter(Boolean));
+    const existingDogIds = new Set(checkedInBaseRes.map(r => r.dogId).filter(Boolean));
     const newDaycareRes = syntheticRes.filter(r => !existingGingrIds.has(r.gingrId));
     const newBoardingRes = gingrResBoardingRes.filter(r =>
       !existingGingrIds.has(r.gingrId) && !existingDogIds.has(r.dogId)
@@ -1715,7 +1720,7 @@ function CheckoutTVContent({ data, nav, profile }) {
 
       {/* Footer */}
       <div style={{ textAlign: "center", marginTop: 40, padding: "16px 0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time · TV-014: {gingrBoardingDogs.length} boarding from Gingr API · allRes: {reservations.length} · uniqueDogs: {uniqueDogs.length} · Boots(g1550): {reservations.some(r => r.dogId === 'g1550') ? 'YES' : 'NO'} · Bruno(g9026): {reservations.some(r => r.dogId === 'g9026') ? 'YES' : 'NO'}</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time · TV-014: {gingrBoardingDogs.length} boarding from Gingr API</div>
       </div>
 
       {/* Floating Exit Button — subtle, top-left corner */}
