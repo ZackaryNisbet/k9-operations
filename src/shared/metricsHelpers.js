@@ -228,10 +228,13 @@ export function computeLifecycleMetrics(data, dateFrom, dateTo, today) {
   const td = today;
   let remainingLeads = 0;
   let remainingAtRisk = 0;
-  // Lapsed window: only count customers whose last visit was within the last 90 days.
-  // Anyone with last visit > 90 days ago is classified as "old Gingr data" and excluded.
-  const LAPSED_WINDOW_DAYS = 90;
-  const ninetyDaysAgo = addDays(td, -LAPSED_WINDOW_DAYS);
+  // Lapsed thresholds from settings (boarding-heavy customers get a longer window)
+  const dcThresh = data.resortPolicies?.retentionDaycareDays ?? 90;
+  const bdThresh = data.resortPolicies?.retentionBoardingDays ?? 180;
+  // Only show customers who lapsed within the last 30 days (recently crossed threshold).
+  // Anyone who lapsed longer ago is "old Gingr data" and excluded from the dashboard.
+  const LAPSED_RECENCY_DAYS = 30;
+  const tdNoon = new Date(td + "T12:00:00");
 
   clients.forEach(c => {
     const s = statsMap[c.id];
@@ -267,17 +270,24 @@ export function computeLifecycleMetrics(data, dateFrom, dateTo, today) {
 
     if (isConversion && !isOldGingrSync) remainingLeads++;
 
-    // Lapsed calculation: customer has a real booking, no upcoming reservation,
-    // and their last visit was within the 90-day window (not older).
-    // Customers with last visit > 90 days ago are "old Gingr data" — excluded from lapsed.
-    let isLapsed = false;
+    // Lapsed classification:
+    // 1. Determine service type: if >50% of bookings are boarding → boarding threshold, else daycare
+    // 2. daysSince >= threshold → customer has lapsed
+    // 3. daysSince < threshold + 30 → recently lapsed (show on dashboard)
+    // 4. daysSince >= threshold + 30 → old lapsed data, excluded
     if (hasRealBooking && !hasUpcoming && totalRes > 0 && !isCold) {
       const lastResDate = s?.lastResDate || "";
-      if (lastResDate && lastResDate >= ninetyDaysAgo && lastResDate < td) {
-        isLapsed = true;
+      if (lastResDate) {
+        const daysSince = Math.round((tdNoon - new Date(lastResDate + "T12:00:00")) / 86400000);
+        const resCount = srv ? Number(srv.total_res) : (resByClient[c.id] || []).length;
+        const boardingCount = srv ? (Number(srv.boarding_count) || 0) : (resByClient[c.id] || []).filter(r => r.type === "boarding").length;
+        const bdPct = resCount > 0 ? boardingCount / resCount : 0;
+        const thresh = bdPct > 0.5 ? bdThresh : dcThresh;
+        if (daysSince >= thresh && daysSince < thresh + LAPSED_RECENCY_DAYS) {
+          remainingAtRisk++;
+        }
       }
     }
-    if (isLapsed) remainingAtRisk++;
   });
 
   return {
