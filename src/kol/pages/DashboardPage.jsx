@@ -43,6 +43,18 @@ const DASH_CSS = `
   from { opacity: 0; transform: translateY(4px) scale(0.98); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
+@keyframes cancelStrikethrough {
+  0% { width: 0; }
+  100% { width: 100%; }
+}
+@keyframes cancelFadeIn {
+  0% { opacity: 0; transform: translateY(8px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes cancelFadeOut {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
 /* ── Cell styles ── */
 .dash-grid-cell {
   background: #FFFFFF;
@@ -917,8 +929,11 @@ function DashboardContent({
         {/* ═══ ROW 1: Gingr Data ═══ */}
         <MetricCell label="Expected" value={m.dogsExpected} hero onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(m.dogsExpected, pm.dogsExpected) : null} />
         <MetricCell label="In House" value={m.dogsInHouse} hero sub={`${m.boardingInHouse}B · ${m.daycareInHouse}D`} onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(m.dogsInHouse, pm.dogsInHouse) : null} />
-        <MetricCell label="Going Home" value={m.dogsGoingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(m.dogsGoingHome, pm.dogsGoingHome) : null} />
-        <MetricCell label="Occupancy" value={`${m.occupancyPct}%`} hero onClick={navTo["settings"]} trend={showPriorPeriod ? pctChange(m.occupancyPct, pm.occupancyPct) : null} />
+        {days > 1
+          ? <CanceledCell key={animEpoch} value={Math.max(0, (m.dogsExpected || 0) - (m.dogsInHouse || 0))} onClick={navTo["ops-bathing"]} animKey={animEpoch} />
+          : <MetricCell label="Going Home" value={m.dogsGoingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(m.dogsGoingHome, pm.dogsGoingHome) : null} />
+        }
+        <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0)}%`} hero onClick={navTo["settings"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} />
         <MetricCell label="Bookings" value={m.bookingsToday} hero />
         <MetricCell label="Tours" value={m.toursToday} hero onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(m.toursToday, pm.toursToday) : null} />
         <MetricCell label="Evals" value={m.evalsToday} hero onClick={navTo["lifecycle"]} />
@@ -1051,6 +1066,54 @@ function DashboardContent({
 /* ═══════════════════════════════════════════════════════════════════════════
    Grid Cell Components
    ═══════════════════════════════════════════════════════════════════════════ */
+
+/* CanceledCell — animated transition from "Going Home" to "Canceled" for multi-day views */
+const CanceledCell = memo(function CanceledCell({ value, onClick, animKey }) {
+  return (
+    <div
+      className="dash-grid-cell hero-cell clickable"
+      onClick={onClick}
+      style={{ animation: "dashSlideIn 0.2s cubic-bezier(0.22,1,0.36,1) both", position: "relative" }}
+    >
+      {onClick && <LinkIcon />}
+      {/* Phase 1: "Going Home" with strikethrough, then fade out */}
+      <div key={`strike-${animKey}`} style={{
+        position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        animation: "cancelFadeOut 0.2s 0.4s forwards",
+      }}>
+        <div style={{ position: "relative", display: "inline-block" }}>
+          <span style={{ fontSize: 26, fontWeight: 800, color: C.pri, lineHeight: 1, fontVariantNumeric: "tabular-nums lining-nums" }}>—</span>
+          <div key={`bar-${animKey}`} style={{
+            position: "absolute", top: "50%", left: 0, height: 2,
+            background: C.dan, borderRadius: 1,
+            animation: "cancelStrikethrough 0.35s 0.05s forwards",
+            width: 0,
+          }} />
+        </div>
+        <div className="dash-cell-label" style={{ color: C.textMut, position: "relative" }}>
+          Going Home
+          <div key={`lbar-${animKey}`} style={{
+            position: "absolute", top: "50%", left: 0, height: 1.5,
+            background: C.dan, borderRadius: 1,
+            animation: "cancelStrikethrough 0.35s 0.05s forwards",
+            width: 0,
+          }} />
+        </div>
+      </div>
+      {/* Phase 2: "Canceled" fades in after strikethrough */}
+      <div key={`cancel-${animKey}`} style={{
+        animation: "cancelFadeIn 0.3s 0.6s both",
+        display: "flex", flexDirection: "column", alignItems: "center",
+      }}>
+        <div className="dash-cell-value" style={{ color: C.dan, fontSize: 26 }}>
+          <AnimatedNumber value={value} />
+        </div>
+        <div className="dash-cell-label" style={{ color: C.dan }}>Canceled</div>
+      </div>
+    </div>
+  );
+});
 
 /* MetricCell — standard data cell */
 const MetricCell = memo(function MetricCell({ label, value, sub, color, trend, onClick, hero }) {

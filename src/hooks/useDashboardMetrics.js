@@ -108,20 +108,22 @@ function aggregateRows(rows) {
     return vals.length > 0 ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
   };
 
+  const isMultiDay = rows.length > 1;
+
   return {
-    // Snapshot (today or last day in range)
-    dogsExpected: Number(last.dogs_expected) || 0,
-    dogsInHouse: Number(last.dogs_in_house) || 0,
-    boardingInHouse: Number(last.boarding_in_house) || 0,
-    daycareInHouse: Number(last.daycare_in_house) || 0,
-    dogsGoingHome: Number(last.dogs_going_home) || 0,
-    dogsCheckedOut: Number(last.dogs_checked_out) || 0,
-    dogsArriving: Number(last.dogs_arriving) || 0,
+    // Snapshot for single day (Today), SUM for multi-day ranges (Past Week, etc.)
+    dogsExpected: isMultiDay ? sum("dogs_expected") : Number(last.dogs_expected) || 0,
+    dogsInHouse: isMultiDay ? sum("dogs_in_house") : Number(last.dogs_in_house) || 0,
+    boardingInHouse: isMultiDay ? sum("boarding_in_house") : Number(last.boarding_in_house) || 0,
+    daycareInHouse: isMultiDay ? sum("daycare_in_house") : Number(last.daycare_in_house) || 0,
+    dogsGoingHome: isMultiDay ? sum("dogs_going_home") : Number(last.dogs_going_home) || 0,
+    dogsCheckedOut: isMultiDay ? sum("dogs_checked_out") : Number(last.dogs_checked_out) || 0,
+    dogsArriving: isMultiDay ? sum("dogs_arriving") : Number(last.dogs_arriving) || 0,
     occupancyPct: Number(last.occupancy_pct) || 0,
     totalRoomCount: Number(last.total_room_count) || 0,
-    bookingsToday: Number(last.bookings_today) || 0,
-    toursToday: Number(last.tours_today) || 0,
-    evalsToday: Number(last.evals_today) || 0,
+    bookingsToday: isMultiDay ? sum("bookings_today") : Number(last.bookings_today) || 0,
+    toursToday: isMultiDay ? sum("tours_today") : Number(last.tours_today) || 0,
+    evalsToday: isMultiDay ? sum("evals_today") : Number(last.evals_today) || 0,
 
     // Accrual Revenue (SUM across range)
     accrualBoardingRevenue: sum("accrual_boarding_revenue"),
