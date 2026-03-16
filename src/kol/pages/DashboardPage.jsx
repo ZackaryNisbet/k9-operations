@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo, startTransition } from "react";
 import {
-  C, todayStr, addDays, fmtDate, fmtDateShort,
+  C, todayStr, addDays, fmtDate, fmtDateShort, countNights,
 } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Tip } from "../../shared/ui";
@@ -274,6 +274,101 @@ const DASH_CSS = `
   border-color: rgba(0,0,0,0.18);
   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
   transform: translateY(-1px);
+}
+/* ── Receipt Modal ── */
+@keyframes receiptBackdropIn {
+  from { opacity: 0; backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+  to   { opacity: 1; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+}
+@keyframes receiptBackdropOut {
+  from { opacity: 1; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  to   { opacity: 0; backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+}
+@keyframes receiptScaleIn {
+  from { opacity: 0; transform: scale(0.4); }
+  to   { opacity: 1; transform: scale(1); }
+}
+@keyframes receiptScaleOut {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.4); }
+}
+@keyframes receiptLineIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes receiptTearEdge {
+  0% { clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%); }
+  100% { clip-path: polygon(
+    0% 0%, 4% 2%, 8% 0%, 12% 2%, 16% 0%, 20% 2%, 24% 0%, 28% 2%, 32% 0%, 36% 2%, 40% 0%, 44% 2%, 48% 0%, 52% 2%, 56% 0%, 60% 2%, 64% 0%, 68% 2%, 72% 0%, 76% 2%, 80% 0%, 84% 2%, 88% 0%, 92% 2%, 96% 0%, 100% 2%,
+    100% 100%, 96% 98%, 92% 100%, 88% 98%, 84% 100%, 80% 98%, 76% 100%, 72% 98%, 68% 100%, 64% 98%, 60% 100%, 56% 98%, 52% 100%, 48% 98%, 44% 100%, 40% 98%, 36% 100%, 32% 98%, 28% 100%, 24% 98%, 20% 100%, 16% 98%, 12% 100%, 8% 98%, 4% 100%, 0% 98%
+  ); }
+}
+.receipt-modal-backdrop {
+  position: fixed; inset: 0; z-index: 9998;
+  background: rgba(20,83,45,0.12);
+  display: flex; align-items: center; justify-content: center;
+  animation: receiptBackdropIn 0.4s cubic-bezier(0.22,1,0.36,1) both;
+}
+.receipt-modal-backdrop.closing {
+  animation: receiptBackdropOut 0.3s cubic-bezier(0.22,1,0.36,1) both;
+}
+.receipt-modal-paper {
+  position: relative; z-index: 9999;
+  width: min(420px, 92vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  background: #FFFEF8;
+  border-radius: 2px;
+  padding: 28px 24px 20px;
+  box-shadow: 0 25px 60px rgba(20,83,45,0.18), 0 8px 24px rgba(0,0,0,0.12);
+  font-family: 'Courier New', Courier, monospace;
+  animation: receiptScaleIn 0.45s cubic-bezier(0.34,1.56,0.64,1) both;
+  clip-path: polygon(
+    0% 0%, 4% 1.5%, 8% 0%, 12% 1.5%, 16% 0%, 20% 1.5%, 24% 0%, 28% 1.5%, 32% 0%, 36% 1.5%, 40% 0%, 44% 1.5%, 48% 0%, 52% 1.5%, 56% 0%, 60% 1.5%, 64% 0%, 68% 1.5%, 72% 0%, 76% 1.5%, 80% 0%, 84% 1.5%, 88% 0%, 92% 1.5%, 96% 0%, 100% 1.5%,
+    100% 100%, 96% 98.5%, 92% 100%, 88% 98.5%, 84% 100%, 80% 98.5%, 76% 100%, 72% 98.5%, 68% 100%, 64% 98.5%, 60% 100%, 56% 98.5%, 52% 100%, 48% 98.5%, 44% 100%, 40% 98.5%, 36% 100%, 32% 98.5%, 28% 100%, 24% 98.5%, 20% 100%, 16% 98.5%, 12% 100%, 8% 98.5%, 4% 100%, 0% 98.5%
+  );
+}
+.receipt-modal-backdrop.closing .receipt-modal-paper {
+  animation: receiptScaleOut 0.25s cubic-bezier(0.22,1,0.36,1) both;
+}
+.receipt-modal-paper::-webkit-scrollbar { width: 4px; }
+.receipt-modal-paper::-webkit-scrollbar-track { background: transparent; }
+.receipt-modal-paper::-webkit-scrollbar-thumb { background: rgba(20,83,45,0.15); border-radius: 2px; }
+.receipt-line-item {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 2px 0;
+  animation: receiptLineIn 0.2s cubic-bezier(0.22,1,0.36,1) both;
+}
+.receipt-dashed {
+  border: none; border-top: 1px dashed rgba(20,83,45,0.25);
+  margin: 8px 0;
+}
+.receipt-trigger {
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.22,1,0.36,1);
+  border-radius: 6px;
+  position: relative;
+}
+.receipt-trigger:hover {
+  background: rgba(20,83,45,0.04);
+  transform: scale(1.02);
+}
+.receipt-trigger::after {
+  content: 'TAP FOR DETAILS';
+  position: absolute;
+  bottom: -2px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 6px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: ${C.acc};
+  opacity: 0;
+  transition: opacity 0.2s;
+  white-space: nowrap;
+}
+.receipt-trigger:hover::after {
+  opacity: 1;
 }
 `;
 
@@ -690,6 +785,8 @@ function DashboardContent({
   const [showCalendar, setShowCalendar] = useState(false);
   const [animEpoch, setAnimEpoch] = useState(0);
   const [showPriorPeriod, setShowPriorPeriod] = useState(true);
+  const [showReceipt, setShowReceipt] = useState(false);
+  const receiptTriggerRef = useRef(null);
   const today = todayStr();
 
   /* ─── Stable nav callbacks ─── */
@@ -949,6 +1046,71 @@ function DashboardContent({
   const boardingPct = m.boardingPct || 0;
   const daycarePct = m.daycarePct || 0;
 
+  /* ─── Receipt data: per-reservation accrual breakdown ─── */
+  const receiptData = useMemo(() => {
+    const reservations = data?.reservations || [];
+    const boarding = [];
+    const daycare = [];
+    let boardingTotal = 0;
+    let daycareTotal = 0;
+
+    reservations.forEach(res => {
+      if (res.status === "cancelled") return;
+      const total = res.pricing?.total || 0;
+      if (total <= 0) return;
+
+      if (res.type === "boarding" && res.checkIn && res.checkOut) {
+        const nights = countNights(res.checkIn, res.checkOut);
+        if (nights <= 0) return;
+        const perNight = total / nights;
+        // Count how many nights fall within the selected date range
+        let accrualNights = 0;
+        let night = res.checkIn;
+        while (night < res.checkOut) {
+          if (night >= dateFrom && night <= dateTo) accrualNights++;
+          night = addDays(night, 1);
+        }
+        if (accrualNights <= 0) return;
+        const accrualAmount = perNight * accrualNights;
+        boarding.push({
+          id: res.id,
+          dogName: res._animalName || "Unknown",
+          ownerName: res._ownerName || "",
+          roomType: res.roomType || res._resTypeName || "Room",
+          perNight,
+          nights: accrualNights,
+          totalNights: nights,
+          accrualAmount,
+          checkIn: res.checkIn,
+          checkOut: res.checkOut,
+        });
+        boardingTotal += accrualAmount;
+      } else if (res.type === "daycare" && res.checkIn) {
+        if (res.checkIn >= dateFrom && res.checkIn <= dateTo) {
+          daycare.push({
+            id: res.id,
+            dogName: res._animalName || "Unknown",
+            ownerName: res._ownerName || "",
+            resTypeName: res._resTypeName || "Daycare",
+            accrualAmount: total,
+            checkIn: res.checkIn,
+          });
+          daycareTotal += total;
+        }
+      }
+    });
+
+    // Sort by accrual amount descending within each section
+    boarding.sort((a, b) => b.accrualAmount - a.accrualAmount);
+    daycare.sort((a, b) => b.accrualAmount - a.accrualAmount);
+
+    return { boarding, daycare, boardingTotal, daycareTotal, grandTotal: boardingTotal + daycareTotal };
+  }, [data?.reservations, dateFrom, dateTo]);
+
+  const receiptDateLabel = dateFrom === dateTo
+    ? fmtDateLabel(dateFrom)
+    : `${fmtDateLabel(dateFrom)} \u2013 ${fmtDateLabel(dateTo)}`;
+
   return (
     <div style={{
       height: "calc(100vh - 64px)", overflow: "hidden",
@@ -1192,9 +1354,16 @@ function DashboardContent({
             </div>
           </div>
           <div style={{ width: "60%", height: 1, background: "rgba(20,83,45,0.08)" }} />
-          <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em" }}>Accrual Total</div>
-          <div style={{ fontSize: 14, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</div>
-          {showPriorPeriod && <TrendBadge value={revenueTrend} size="xs" />}
+          <div
+            ref={receiptTriggerRef}
+            className="receipt-trigger"
+            onClick={() => setShowReceipt(true)}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "4px 8px" }}
+          >
+            <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em" }}>Accrual Total</div>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</div>
+            {showPriorPeriod && <TrendBadge value={revenueTrend} size="xs" />}
+          </div>
         </div>
 
         {/* Accrual Revenue */}
@@ -1227,9 +1396,178 @@ function DashboardContent({
         <div className="dash-grid-cell empty-cell" />
         <div className="dash-grid-cell empty-cell" />
       </DashGrid>
+
+      {/* Accrual Revenue Receipt Modal */}
+      <AccrualReceiptModal
+        open={showReceipt}
+        onClose={() => setShowReceipt(false)}
+        receiptData={receiptData}
+        dateLabel={receiptDateLabel}
+        originRef={receiptTriggerRef}
+      />
     </div>
   );
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Accrual Receipt Modal
+   ═══════════════════════════════════════════════════════════════════════════ */
+const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, receiptData, dateLabel, originRef }) {
+  const [closing, setClosing] = useState(false);
+  const [originRect, setOriginRect] = useState(null);
+
+  useEffect(() => {
+    if (open && originRef?.current) {
+      setOriginRect(originRef.current.getBoundingClientRect());
+    }
+  }, [open, originRef]);
+
+  const handleClose = useCallback(() => {
+    setClosing(true);
+    setTimeout(() => { setClosing(false); onClose(); }, 300);
+  }, [onClose]);
+
+  // Escape key handler
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (e) => { if (e.key === "Escape") handleClose(); };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [open, handleClose]);
+
+  if (!open && !closing) return null;
+
+  const { boarding = [], daycare = [], boardingTotal = 0, daycareTotal = 0, grandTotal = 0 } = receiptData || {};
+  const fmtMoney = (v) => `$${(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+  // Transform origin for expand-from-button effect
+  const transformOriginStyle = originRect
+    ? { transformOrigin: `${originRect.left + originRect.width / 2}px ${originRect.top + originRect.height / 2}px` }
+    : {};
+
+  return (
+    <div
+      className={`receipt-modal-backdrop${closing ? " closing" : ""}`}
+      onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
+    >
+      <div className="receipt-modal-paper" style={transformOriginStyle} onClick={(e) => e.stopPropagation()}>
+        {/* Close button */}
+        <button
+          onClick={handleClose}
+          style={{
+            position: "absolute", top: 14, right: 14, background: "none", border: "none",
+            cursor: "pointer", color: "rgba(20,83,45,0.35)", fontSize: 18, lineHeight: 1,
+            padding: 4, borderRadius: 4, transition: "color 0.15s",
+          }}
+          onMouseEnter={(e) => e.target.style.color = C.pri}
+          onMouseLeave={(e) => e.target.style.color = "rgba(20,83,45,0.35)"}
+        >
+          ✕
+        </button>
+
+        {/* Header */}
+        <div style={{ textAlign: "center", marginBottom: 12, paddingTop: 4 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "0.12em", color: C.pri }}>K9 OPERATIONS</div>
+          <div style={{ fontSize: 10, color: "rgba(20,83,45,0.45)", letterSpacing: "0.06em", marginTop: 2 }}>ACCRUAL REVENUE BREAKDOWN</div>
+          <div style={{ fontSize: 10, color: "rgba(20,83,45,0.35)", marginTop: 4 }}>{dateLabel}</div>
+          <div style={{ fontSize: 9, color: "rgba(20,83,45,0.3)", marginTop: 1 }}>{timeStr}</div>
+        </div>
+
+        <hr className="receipt-dashed" />
+
+        {/* Boarding section */}
+        {boarding.length > 0 && (
+          <>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.pri, letterSpacing: "0.08em", marginBottom: 6, textTransform: "uppercase" }}>
+              ■ Boarding
+            </div>
+            {boarding.map((item, i) => (
+              <div key={item.id || i} className="receipt-line-item" style={{ animationDelay: `${i * 0.03}s` }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: C.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {item.dogName}
+                  </div>
+                  <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>
+                    {item.roomType || "Room"} · {fmtMoney(item.perNight)}/nt × {item.nights}nt
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                  {fmtMoney(item.accrualAmount)}
+                </div>
+              </div>
+            ))}
+            <div className="receipt-line-item" style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(20,83,45,0.08)" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.pri, letterSpacing: "0.04em" }}>BOARDING SUBTOTAL</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(boardingTotal)}</div>
+            </div>
+          </>
+        )}
+
+        {boarding.length > 0 && daycare.length > 0 && <hr className="receipt-dashed" />}
+
+        {/* Daycare section */}
+        {daycare.length > 0 && (
+          <>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.acc, letterSpacing: "0.08em", marginBottom: 6, textTransform: "uppercase" }}>
+              ■ Daycare
+            </div>
+            {daycare.map((item, i) => (
+              <div key={item.id || i} className="receipt-line-item" style={{ animationDelay: `${(boarding.length + i) * 0.03}s` }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, color: C.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {item.dogName}
+                  </div>
+                  <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>
+                    {item.resTypeName || "Daycare"}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                  {fmtMoney(item.accrualAmount)}
+                </div>
+              </div>
+            ))}
+            <div className="receipt-line-item" style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(20,83,45,0.08)" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, letterSpacing: "0.04em" }}>DAYCARE SUBTOTAL</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(daycareTotal)}</div>
+            </div>
+          </>
+        )}
+
+        <hr className="receipt-dashed" style={{ marginTop: 12 }} />
+
+        {/* Grand total */}
+        <div className="receipt-line-item" style={{ paddingTop: 4 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.pri, letterSpacing: "0.08em" }}>TOTAL</div>
+          <div style={{ fontSize: 16, fontWeight: 900, color: C.pri, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grandTotal)}</div>
+        </div>
+
+        {/* Revenue split bar */}
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+          <div style={{ width: "80%", height: 6, borderRadius: 3, overflow: "hidden", display: "flex" }}>
+            {grandTotal > 0 && <div style={{ width: `${(boardingTotal / grandTotal) * 100}%`, height: "100%", background: C.pri, transition: "width 0.4s" }} />}
+            {grandTotal > 0 && <div style={{ width: `${(daycareTotal / grandTotal) * 100}%`, height: "100%", background: C.acc, transition: "width 0.4s" }} />}
+          </div>
+          <div style={{ display: "flex", gap: 12, fontSize: 9, color: "rgba(20,83,45,0.45)" }}>
+            <span><span style={{ color: C.pri, fontWeight: 700 }}>{grandTotal > 0 ? ((boardingTotal / grandTotal) * 100).toFixed(0) : 0}%</span> Boarding</span>
+            <span><span style={{ color: C.acc, fontWeight: 700 }}>{grandTotal > 0 ? ((daycareTotal / grandTotal) * 100).toFixed(0) : 0}%</span> Daycare</span>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ textAlign: "center", marginTop: 16, paddingTop: 8, borderTop: "1px solid rgba(20,83,45,0.06)" }}>
+          <div style={{ fontSize: 9, color: "rgba(20,83,45,0.3)", letterSpacing: "0.06em" }}>
+            {boarding.length + daycare.length} RESERVATION{(boarding.length + daycare.length) !== 1 ? "S" : ""}
+          </div>
+          <div style={{ fontSize: 8, color: "rgba(20,83,45,0.2)", marginTop: 4, letterSpacing: "0.04em" }}>
+            THANK YOU FOR CHOOSING K9
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Grid Cell Components
