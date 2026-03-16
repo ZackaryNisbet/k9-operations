@@ -1052,7 +1052,21 @@ function DashboardContent({
 
         {/* ═══ ROW 1: Gingr Data ═══ */}
         {/* BOH live overlay: when on Today view and BOH has data, use real-time counts */}
-        <MetricCell label="Expected" value={m.dogsExpected} hero onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(m.dogsExpected, pm.dogsExpected) : null} skeleton={showSkeleton} />
+        <MetricCell
+          label="Expected"
+          value={isToday && bohStats?.expectedCount != null ? bohStats.expectedCount : m.dogsExpected}
+          hero
+          onClick={navTo["checkout-tv"]}
+          sub={isToday && bohStats?.expectedCount != null
+            ? `${bohStats.total} here · ${bohStats.pendingCount} pending`
+            : null}
+          trend={showPriorPeriod ? pctChange(
+            isToday && bohStats?.expectedCount != null ? bohStats.expectedCount : m.dogsExpected,
+            pm.dogsExpected
+          ) : null}
+          skeleton={showSkeleton}
+          live={isToday && bohStats?.expectedCount != null}
+        />
         <MetricCell
           label="In House"
           value={isToday && bohStats?.total != null ? bohStats.total : m.dogsInHouse}
@@ -1070,7 +1084,18 @@ function DashboardContent({
         />
         {days > 1
           ? <CanceledCell key={animEpoch} value={Math.max(0, (m.dogsExpected || 0) - (isToday && bohStats?.total != null ? bohStats.total : m.dogsInHouse || 0))} onClick={navTo["ops-bathing"]} animKey={animEpoch} />
-          : <MetricCell label="Going Home" value={m.dogsGoingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(m.dogsGoingHome, pm.dogsGoingHome) : null} skeleton={showSkeleton} />
+          : <MetricCell
+              label="Going Home"
+              value={isToday && bohStats?.goingHomeCount != null ? bohStats.goingHomeCount : m.dogsGoingHome}
+              hero
+              onClick={navTo["ops-bathing"]}
+              trend={showPriorPeriod ? pctChange(
+                isToday && bohStats?.goingHomeCount != null ? bohStats.goingHomeCount : m.dogsGoingHome,
+                pm.dogsGoingHome
+              ) : null}
+              skeleton={showSkeleton}
+              live={isToday && bohStats?.goingHomeCount != null}
+            />
         }
         <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0)}%`} hero onClick={navTo["occupancy-report"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} skeleton={showSkeleton} />
         <MetricCell label="Bookings" value={m.bookingsToday} hero skeleton={showSkeleton} />

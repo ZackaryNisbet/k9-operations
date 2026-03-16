@@ -241,7 +241,7 @@ function LeanAppInner() {
   // Live BOH poll — runs every 10s, shared across Dashboard + Checkout TV
   const bohEnabled = page === "dashboard" || page === "checkout-tv";
   const boh = useBackOfHouse(currentLocation, bohEnabled);
-  const bohStats = boh.stats;  // { total, boardingCount, daycareCount }
+  const bohStats = boh.stats;  // { total, boardingCount, daycareCount, expectedCount, pendingCount, pendingDaycare, pendingBoarding, goingHomeCount }
   const bohLastFetch = boh.lastFetch;
 
   // Gingr data from Supabase (clients, dogs, reservations, rooms, etc.)
