@@ -84,6 +84,7 @@ DECLARE
   v_cash_daycare NUMERIC(12,2);
   v_refund_count INT;
   v_refund_total NUMERIC(12,2);
+  v_first_visit_evals INT;
 BEGIN
   -- Get total room count from lite_settings room_config
   BEGIN
@@ -110,6 +111,7 @@ BEGIN
       COUNT(*) FILTER (WHERE
         r.check_in_date IS NOT NULL AND r.check_out_date IS NULL
         AND r.start_date::DATE <= d AND r.end_date::DATE >= d
+        AND LOWER(r.reservation_type_name) NOT LIKE '%tour%'
       ),
       COUNT(*) FILTER (WHERE
         r.check_in_date IS NOT NULL AND r.check_out_date IS NULL
@@ -132,6 +134,7 @@ BEGIN
       ),
       COUNT(*) FILTER (WHERE
         r.start_date::DATE = d AND r.cancelled_date IS NULL
+        AND LOWER(r.reservation_type_name) NOT LIKE '%tour%'
       ),
       COUNT(*) FILTER (WHERE
         r.check_in_date IS NOT NULL AND r.check_out_date IS NULL
@@ -139,7 +142,7 @@ BEGIN
         AND (LOWER(r.reservation_type_name) LIKE '%boarding%' OR LOWER(r.reservation_type_name) LIKE '%lodging%'
              OR LOWER(r.reservation_type_name) LIKE '%overnight%' OR LOWER(r.reservation_type_name) LIKE '%suite%')
       ),
-      COUNT(*) FILTER (WHERE r.start_date::DATE = d AND r.cancelled_date IS NULL),
+      COUNT(*) FILTER (WHERE r.created_date::DATE = d AND r.cancelled_date IS NULL AND LOWER(r.reservation_type_name) NOT LIKE '%tour%'),
       COUNT(*) FILTER (WHERE r.start_date::DATE = d AND LOWER(r.reservation_type_name) LIKE '%tour%'),
       COUNT(*) FILTER (WHERE r.start_date::DATE = d AND (LOWER(r.reservation_type_name) LIKE '%eval%' OR LOWER(r.reservation_type_name) LIKE '%assessment%'))
     INTO v_in_house, v_boarding_ih, v_daycare_ih, v_going_home, v_checked_out, v_arriving,
@@ -147,6 +150,25 @@ BEGIN
     FROM gingr_reservations r
     WHERE r.location_id = p_location_id
       AND r.cancelled_date IS NULL;
+
+    -- ═══ First-visit evaluations: dogs whose first-ever non-cancelled non-tour
+    -- reservation at this location starts on this day AND is a daycare type ═══
+    SELECT COUNT(DISTINCT r.animal_gingr_id)
+    INTO v_first_visit_evals
+    FROM gingr_reservations r
+    WHERE r.location_id = p_location_id
+      AND r.cancelled_date IS NULL
+      AND r.start_date::DATE = d
+      AND (LOWER(r.reservation_type_name) LIKE '%daycare%' OR LOWER(r.reservation_type_name) LIKE '%day care%' OR LOWER(r.reservation_type_name) LIKE '%day boarding%')
+      AND LOWER(r.reservation_type_name) NOT LIKE '%eval%'
+      AND NOT EXISTS (
+        SELECT 1 FROM gingr_reservations prev
+        WHERE prev.location_id = p_location_id
+          AND prev.animal_gingr_id = r.animal_gingr_id
+          AND prev.cancelled_date IS NULL
+          AND LOWER(prev.reservation_type_name) NOT LIKE '%tour%'
+          AND prev.start_date::DATE < d
+      );
 
     -- ═══ Accrual Revenue ═══
     SELECT
@@ -219,7 +241,7 @@ BEGIN
       v_arriving + v_in_house, v_in_house, v_boarding_ih, v_daycare_ih,
       v_going_home, v_checked_out, v_arriving,
       CASE WHEN v_total_rooms > 0 THEN ROUND(v_boarding_occupied::NUMERIC / v_total_rooms * 100)::INT ELSE 0 END,
-      v_total_rooms, v_bookings, v_tours, v_evals,
+      v_total_rooms, v_bookings, v_tours, v_evals + v_first_visit_evals,
       v_accrual_boarding, v_accrual_daycare, v_accrual_boarding + v_accrual_daycare, v_accrual_rooms,
       v_cash_total, v_cash_count, v_cash_boarding, v_cash_daycare,
       v_refund_count, v_refund_total, 0, 0,
