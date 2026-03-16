@@ -138,17 +138,17 @@ export function useDashboardMetrics(locationId, dateFrom, dateTo, prevFrom, prev
     fetchMetrics();
   }, [fetchMetrics]);
 
-  // Auto-polling: re-fetch metrics at configured interval
-  // Skips polling outside business hours when isWithinBusinessHours is provided
+  // Auto-polling: re-fetch metrics from Supabase at configured interval.
+  // NOT gated by business hours — dashboard reads from the local DB should always work.
+  // Only Gingr API sync (in useGingrData) is gated by business hours to save API calls.
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
     const ms = refreshIntervalMs || DEFAULT_REFRESH_MS;
     intervalRef.current = setInterval(() => {
-      if (typeof isWithinBusinessHours === "function" && !isWithinBusinessHours()) return;
       fetchMetrics();
     }, ms);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [fetchMetrics, refreshIntervalMs, isWithinBusinessHours]);
+  }, [fetchMetrics, refreshIntervalMs]);
 
   // Manual refresh: triggers gingr-sync, then re-fetches (skipping cache)
   const refresh = useCallback(async () => {
@@ -196,7 +196,14 @@ function aggregateRows(rows, outstandingInvoices = { count: 0, total: 0 }) {
     dogsGoingHome: isMultiDay ? sum("dogs_going_home") : Number(last.dogs_going_home) || 0,
     dogsCheckedOut: isMultiDay ? sum("dogs_checked_out") : Number(last.dogs_checked_out) || 0,
     dogsArriving: isMultiDay ? sum("dogs_arriving") : Number(last.dogs_arriving) || 0,
-    occupancyPct: Number(last.occupancy_pct) || 0,
+    // Cap each day's occupancy at 100% (DB sometimes has >100% due to accrual bug),
+    // then average across the range for multi-day views
+    occupancyPct: isMultiDay
+      ? (() => {
+          const capped = rows.map(r => Math.min(Number(r.occupancy_pct) || 0, 100));
+          return capped.reduce((a, b) => a + b, 0) / capped.length;
+        })()
+      : Math.min(Number(last.occupancy_pct) || 0, 100),
     totalRoomCount: Number(last.total_room_count) || 0,
     bookingsToday: isMultiDay ? sum("bookings_today") : Number(last.bookings_today) || 0,
     toursToday: isMultiDay ? sum("tours_today") : Number(last.tours_today) || 0,
