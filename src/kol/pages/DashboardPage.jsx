@@ -1106,10 +1106,11 @@ function DashboardContent({
           }
           if (accrualNights <= 0) return;
           const accrualAmount = perNight * accrualNights;
+          const lastInit = r.owner_last_name ? r.owner_last_name.charAt(0).toUpperCase() + "." : "";
           boarding.push({
-            id: r.gingr_id, dogName: r.animal_name || "Unknown", ownerName,
+            id: r.gingr_id, dogName: r.animal_name || "Unknown", lastInit, ownerName,
             roomType, perNight, nights: accrualNights, totalNights: nights,
-            accrualAmount, checkIn: startD, checkOut: endD,
+            totalCost: total, accrualAmount, checkIn: startD, checkOut: endD,
           });
           boardingTotal += accrualAmount;
         } else if (isDaycare && startD >= dateFrom && startD <= dateTo) {
@@ -1545,19 +1546,40 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
         </button>
 
         {/* Header */}
-        <div style={{ textAlign: "center", marginBottom: 12, paddingTop: 4 }}>
+        <div style={{ textAlign: "center", marginBottom: 8, paddingTop: 4 }}>
           <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "0.12em", color: C.pri }}>K9 OPERATIONS</div>
-          <div style={{ fontSize: 10, color: "rgba(20,83,45,0.45)", letterSpacing: "0.06em", marginTop: 2 }}>ACCRUAL REVENUE BREAKDOWN</div>
-          <div style={{ fontSize: 10, color: "rgba(20,83,45,0.35)", marginTop: 4 }}>{dateLabel}</div>
-          <div style={{ fontSize: 9, color: "rgba(20,83,45,0.3)", marginTop: 1 }}>{timeStr}</div>
+          <div style={{ fontSize: 10, color: C.text, fontWeight: 600, letterSpacing: "0.06em", marginTop: 2 }}>ACCRUAL REVENUE BREAKDOWN</div>
+          <div style={{ fontSize: 10, color: "rgba(20,83,45,0.5)", fontWeight: 500, marginTop: 4 }}>{dateLabel}</div>
+          <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>{timeStr}</div>
         </div>
+
+        {/* Grand Total — pinned at top so it's always visible */}
+        {!loading && (
+          <>
+            <hr className="receipt-dashed" />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0" }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.pri, letterSpacing: "0.08em" }}>TOTAL</div>
+              <div style={{ fontSize: 18, fontWeight: 900, color: C.pri, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grandTotal)}</div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", marginBottom: 4 }}>
+              <div style={{ width: "60%", height: 5, borderRadius: 3, overflow: "hidden", display: "flex" }}>
+                {grandTotal > 0 && <div style={{ width: `${(boardingTotal / grandTotal) * 100}%`, height: "100%", background: C.pri, transition: "width 0.4s" }} />}
+                {grandTotal > 0 && <div style={{ width: `${(daycareTotal / grandTotal) * 100}%`, height: "100%", background: C.acc, transition: "width 0.4s" }} />}
+              </div>
+              <div style={{ display: "flex", gap: 8, fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, flexShrink: 0 }}>
+                <span><span style={{ color: C.pri, fontWeight: 700 }}>{grandTotal > 0 ? ((boardingTotal / grandTotal) * 100).toFixed(0) : 0}%</span> Board</span>
+                <span><span style={{ color: C.acc, fontWeight: 700 }}>{grandTotal > 0 ? ((daycareTotal / grandTotal) * 100).toFixed(0) : 0}%</span> Day</span>
+              </div>
+            </div>
+          </>
+        )}
 
         <hr className="receipt-dashed" />
 
         {/* Loading state */}
         {loading && (
           <div style={{ textAlign: "center", padding: "20px 0" }}>
-            <div style={{ fontSize: 11, color: "rgba(20,83,45,0.4)", letterSpacing: "0.06em" }}>LOADING RESERVATIONS...</div>
+            <div style={{ fontSize: 11, color: "rgba(20,83,45,0.5)", fontWeight: 600, letterSpacing: "0.06em" }}>LOADING RESERVATIONS...</div>
           </div>
         )}
 
@@ -1566,19 +1588,19 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
           <>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: C.pri, letterSpacing: "0.08em", textTransform: "uppercase" }}>■ Boarding</span>
-              <span style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", fontStyle: "italic" }}>{boarding.length} dog{boarding.length !== 1 ? "s" : ""} boarding tonight</span>
+              <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, fontStyle: "italic" }}>{boarding.length} dog{boarding.length !== 1 ? "s" : ""} boarding tonight</span>
             </div>
             {boarding.map((item, i) => (
               <div key={item.id || i} className="receipt-line-item" style={{ animationDelay: `${i * 0.03}s` }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11, color: C.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {item.dogName}
-                  </div>
-                  <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>
-                    {item.roomType || "Room"}{item.perNight > 0 ? ` · ${fmtMoney(item.perNight)}/nt × ${item.nights}nt` : ` · ${item.nights}nt`}
-                  </div>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: C.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 1, minWidth: 0 }}>
+                    {item.dogName}{item.lastInit ? ` ${item.lastInit}` : ""}
+                  </span>
+                  <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0 }}>
+                    {item.perNight > 0 ? `${fmtMoney(item.perNight)}/nt × ${item.nights}nt` : `${item.nights}nt`}
+                  </span>
                 </div>
-                <div style={{ fontSize: 11, fontWeight: item.accrualAmount > 0 ? 700 : 500, color: item.accrualAmount > 0 ? C.text : "rgba(20,83,45,0.3)", fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap", fontStyle: item.accrualAmount > 0 ? "normal" : "italic" }}>
+                <div style={{ fontSize: 11, fontWeight: item.accrualAmount > 0 ? 700 : 500, color: item.accrualAmount > 0 ? C.text : "rgba(20,83,45,0.35)", fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap", fontStyle: item.accrualAmount > 0 ? "normal" : "italic" }}>
                   {item.accrualAmount > 0 ? fmtMoney(item.accrualAmount) : "multi-dog"}
                 </div>
               </div>
@@ -1597,17 +1619,17 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
           <>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
               <span style={{ fontSize: 12, fontWeight: 700, color: C.acc, letterSpacing: "0.08em", textTransform: "uppercase" }}>■ Daycare</span>
-              <span style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", fontStyle: "italic" }}>{daycareAgg.dogCount} dog{daycareAgg.dogCount !== 1 ? "s" : ""} in daycare</span>
+              <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, fontStyle: "italic" }}>{daycareAgg.dogCount} dog{daycareAgg.dogCount !== 1 ? "s" : ""} in daycare</span>
             </div>
 
             {/* Full Day line */}
             {daycareAgg.fullDayCount > 0 && (
               <div className="receipt-line-item">
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Full Day</div>
-                  <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>
+                <div style={{ flex: 1, display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Full Day</span>
+                  <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500 }}>
                     {daycareAgg.fullDayCount} dog{daycareAgg.fullDayCount !== 1 ? "s" : ""} × {fmtMoney(daycareAgg.fullDayRate)}
-                  </div>
+                  </span>
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
                   {fmtMoney(daycareAgg.fullDayCount * daycareAgg.fullDayRate)}
@@ -1618,11 +1640,11 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
             {/* Half Day line */}
             {daycareAgg.halfDayCount > 0 && (
               <div className="receipt-line-item">
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Half Day</div>
-                  <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>
+                <div style={{ flex: 1, display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Half Day</span>
+                  <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500 }}>
                     {daycareAgg.halfDayCount} dog{daycareAgg.halfDayCount !== 1 ? "s" : ""} × {fmtMoney(daycareAgg.halfDayRate)}
-                  </div>
+                  </span>
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
                   {fmtMoney(daycareAgg.halfDayCount * daycareAgg.halfDayRate)}
@@ -1633,11 +1655,11 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
             {/* Evaluation line */}
             {daycareAgg.evalCount > 0 && (
               <div className="receipt-line-item">
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Evaluation</div>
-                  <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>
+                <div style={{ flex: 1, display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Evaluation</span>
+                  <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500 }}>
                     {daycareAgg.evalCount} dog{daycareAgg.evalCount !== 1 ? "s" : ""} × {fmtMoney(daycareAgg.fullDayRate)}
-                  </div>
+                  </span>
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
                   {fmtMoney(daycareAgg.evalCount * daycareAgg.fullDayRate)}
@@ -1648,11 +1670,11 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
             {/* Day Boarding line */}
             {daycareAgg.dayBoardCount > 0 && (
               <div className="receipt-line-item">
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Day Boarding</div>
-                  <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>
+                <div style={{ flex: 1, display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Day Boarding</span>
+                  <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500 }}>
                     {daycareAgg.dayBoardCount} dog{daycareAgg.dayBoardCount !== 1 ? "s" : ""} × {fmtMoney(daycareAgg.fullDayRate)}
-                  </div>
+                  </span>
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
                   {fmtMoney(daycareAgg.dayBoardCount * daycareAgg.fullDayRate)}
@@ -1663,7 +1685,7 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
             {/* Enrichments / Add-ons */}
             {daycareAgg.enrichments.length > 0 && (
               <>
-                <div style={{ marginTop: 8, marginBottom: 4, fontSize: 9, fontWeight: 700, color: "rgba(20,83,45,0.35)", letterSpacing: "0.08em", textTransform: "uppercase" }}>ADD-ONS / ENRICHMENTS</div>
+                <div style={{ marginTop: 8, marginBottom: 4, fontSize: 9, fontWeight: 600, color: "rgba(20,83,45,0.5)", letterSpacing: "0.08em", textTransform: "uppercase" }}>ADD-ONS / ENRICHMENTS</div>
                 {daycareAgg.enrichments.map((e, i) => (
                   <div key={e.name} className="receipt-line-item" style={{ animationDelay: `${(boarding.length + i) * 0.03}s` }}>
                     <div style={{ flex: 1 }}>
@@ -1689,32 +1711,14 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
 
         {!loading && (
           <>
-            <hr className="receipt-dashed" style={{ marginTop: 12 }} />
-
-            {/* Grand total */}
-            <div className="receipt-line-item" style={{ paddingTop: 4 }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: C.pri, letterSpacing: "0.08em" }}>TOTAL</div>
-              <div style={{ fontSize: 16, fontWeight: 900, color: C.pri, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grandTotal)}</div>
-            </div>
-
-            {/* Revenue split bar */}
-            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-              <div style={{ width: "80%", height: 6, borderRadius: 3, overflow: "hidden", display: "flex" }}>
-                {grandTotal > 0 && <div style={{ width: `${(boardingTotal / grandTotal) * 100}%`, height: "100%", background: C.pri, transition: "width 0.4s" }} />}
-                {grandTotal > 0 && <div style={{ width: `${(daycareTotal / grandTotal) * 100}%`, height: "100%", background: C.acc, transition: "width 0.4s" }} />}
-              </div>
-              <div style={{ display: "flex", gap: 12, fontSize: 9, color: "rgba(20,83,45,0.45)" }}>
-                <span><span style={{ color: C.pri, fontWeight: 700 }}>{grandTotal > 0 ? ((boardingTotal / grandTotal) * 100).toFixed(0) : 0}%</span> Boarding</span>
-                <span><span style={{ color: C.acc, fontWeight: 700 }}>{grandTotal > 0 ? ((daycareTotal / grandTotal) * 100).toFixed(0) : 0}%</span> Daycare</span>
-              </div>
-            </div>
+            <hr className="receipt-dashed" style={{ marginTop: 10 }} />
 
             {/* Footer */}
-            <div style={{ textAlign: "center", marginTop: 16, paddingTop: 8, borderTop: "1px solid rgba(20,83,45,0.06)" }}>
-              <div style={{ fontSize: 9, color: "rgba(20,83,45,0.3)", letterSpacing: "0.06em" }}>
+            <div style={{ textAlign: "center", paddingTop: 6, paddingBottom: 2 }}>
+              <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", fontWeight: 500, letterSpacing: "0.06em" }}>
                 {boarding.length + (daycareAgg ? daycareAgg.dogCount : 0)} RESERVATION{(boarding.length + (daycareAgg ? daycareAgg.dogCount : 0)) !== 1 ? "S" : ""}
               </div>
-              <div style={{ fontSize: 8, color: "rgba(20,83,45,0.2)", marginTop: 4, letterSpacing: "0.04em" }}>
+              <div style={{ fontSize: 8, color: "rgba(20,83,45,0.25)", marginTop: 3, letterSpacing: "0.04em" }}>
                 THANK YOU FOR CHOOSING K9
               </div>
             </div>
