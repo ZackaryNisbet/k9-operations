@@ -122,42 +122,45 @@ export function useBackOfHouse(locationId, enabled = true) {
   // staying past today are only in Supabase. This fetch gets the count of
   // Supabase boarding dogs NOT already in BOH, for accurate dashboard stats.
   //
-  // Uses bohAnimalIdsRef (updated on each BOH fetch) rather than activeDogs
-  // in deps to avoid re-creating the interval on every BOH poll.
+  // fetchSupaboarders is extracted as a ref-stable function so fetchData can
+  // call it immediately after the first BOH fetch populates bohAnimalIdsRef,
+  // avoiding a 30-second window where the count is wrong.
   const supaboarderTimerRef = useRef(null);
+  const cancelledSupaRef = useRef(false);
+
+  const fetchSupaboarders = useCallback(async () => {
+    if (!locationId || cancelledSupaRef.current) return;
+    try {
+      const { data: rows } = await supabase
+        .from("gingr_reservations")
+        .select("animal_gingr_id")
+        .eq("location_id", locationId)
+        .not("check_in_date", "is", null)
+        .is("check_out_date", null)
+        .is("cancelled_date", null)
+        .ilike("reservation_type_name", "%boarding%")
+        .not("reservation_type_name", "ilike", "%day boarding%");
+
+      if (!cancelledSupaRef.current && rows) {
+        const currentBohIds = bohAnimalIdsRef.current;
+        const extraCount = rows.filter(r => !currentBohIds.has(String(r.animal_gingr_id))).length;
+        setSupabaseBoardingCount(extraCount);
+      }
+    } catch (e) {
+      // Silently ignore
+    }
+  }, [locationId]);
+
   useEffect(() => {
     if (!locationId || !enabled) return;
-    let cancelled = false;
+    cancelledSupaRef.current = false;
 
-    const fetchSupaboarders = async () => {
-      try {
-        // Get all checked-in boarding reservations from Supabase
-        // (check_in_date set, check_out_date not set, not cancelled)
-        const { data: rows } = await supabase
-          .from("gingr_reservations")
-          .select("animal_gingr_id")
-          .eq("location_id", locationId)
-          .not("check_in_date", "is", null)
-          .is("check_out_date", null)
-          .is("cancelled_date", null)
-          .ilike("reservation_type_name", "%boarding%")
-          .not("reservation_type_name", "ilike", "%day boarding%");
-
-        if (!cancelled && rows) {
-          // Count boarding dogs in Supabase but NOT in BOH active list
-          const currentBohIds = bohAnimalIdsRef.current;
-          const extraCount = rows.filter(r => !currentBohIds.has(String(r.animal_gingr_id))).length;
-          setSupabaseBoardingCount(extraCount);
-        }
-      } catch (e) {
-        // Silently ignore
-      }
-    };
-
-    fetchSupaboarders();
-    supaboarderTimerRef.current = setInterval(fetchSupaboarders, 30000); // 30s refresh
-    return () => { cancelled = true; if (supaboarderTimerRef.current) clearInterval(supaboarderTimerRef.current); };
-  }, [locationId, enabled]);
+    // Don't fetch immediately on mount — wait for first BOH fetch to populate
+    // bohAnimalIdsRef. The BOH fetchData will call fetchSupaboarders after it
+    // populates the ref. After that, poll every 30s.
+    supaboarderTimerRef.current = setInterval(fetchSupaboarders, 30000);
+    return () => { cancelledSupaRef.current = true; if (supaboarderTimerRef.current) clearInterval(supaboarderTimerRef.current); };
+  }, [locationId, enabled, fetchSupaboarders]);
 
   // ── Fetch back_of_house ────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -212,12 +215,18 @@ export function useBackOfHouse(locationId, enabled = true) {
       setLastFetch(new Date());
       setError(null);
       fetchCountRef.current += 1;
+
+      // After first BOH fetch, immediately recount Supabase boarders so the
+      // dashboard doesn't show stale counts during the initial 30s window.
+      if (fetchCountRef.current === 1) {
+        fetchSupaboarders();
+      }
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [enabled, isWithinBusinessHours, activeDogs]);
+  }, [enabled, isWithinBusinessHours, activeDogs, fetchSupaboarders]);
 
   // ── Page Visibility API ────────────────────────────────────────────────
   useEffect(() => {
