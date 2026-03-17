@@ -38,15 +38,15 @@ export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo
       const latest = dateTo;
 
       // Fetch all reservations that overlap the combined range
-      // Boarding: start_date <= latest AND end_date >= earliest (any overlap)
-      // Daycare: start_date within range
-      // We fetch broadly and let computeAccrualByDay filter per-day
+      // Boarding: start_date <= latest AND end_date >= earliest (overlap check)
+      // Daycare/Day Boarding: start_date within range (end_date may be NULL or same-day)
+      // Use OR to include records where end_date >= earliest OR end_date is null
       const { data: rawRes, error } = await supabase
         .from("gingr_reservations")
         .select("gingr_id,animal_name,owner_first_name,owner_last_name,reservation_type_name,start_date,end_date,deposit,transaction,cancelled_date,services")
         .eq("location_id", locationId)
         .lte("start_date", latest + "T23:59:59")
-        .gte("end_date", earliest + "T00:00:00")
+        .or(`end_date.gte.${earliest}T00:00:00,end_date.is.null`)
         .is("cancelled_date", null);
 
       if (fetchId !== fetchIdRef.current) return; // stale
