@@ -1019,7 +1019,7 @@ export default function LandingPage() {
             See it in action
           </h2>
           <p style={{ fontSize: 17, color: C.textSec, maxWidth: 600, margin: '0 auto 40px', lineHeight: 1.6 }}>
-            Real data. Real workflows. Every video uses live K9 Resorts Adair Forsythe data — 28 dogs, real names, real photos.
+            Real data. Real workflows.
           </p>
 
           {/* Demo Selector Tabs */}
