@@ -14,6 +14,8 @@ import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { useDashboardMetrics } from "../../hooks/useDashboardMetrics";
 import { useAccrualRevenue } from "../../hooks/useAccrualRevenue";
 import { useGingrLiveCache } from "../../hooks/useGingrLiveCache";
+import { useCashBasisLive, buildCashChartRows } from "../../hooks/useCashBasisRevenue";
+import { fetchCashBasisForDate } from "../../shared/cashBasisRevenue";
 import { supabase } from "../../supabaseClient";
 import { mergeGingrLive } from "../../shared/gingrLive";
 import { useLazyCompute, useSectionVisibility } from "../../hooks/useLazyCompute";
@@ -795,6 +797,10 @@ function DashboardContent({
   const [showPriorPeriod, setShowPriorPeriod] = useState(true);
   const [showReceipt, setShowReceipt] = useState(false);
   const receiptTriggerRef = useRef(null);
+  const [showCashReceipt, setShowCashReceipt] = useState(false);
+  const [cashReceiptData, setCashReceiptData] = useState(null);
+  const [cashReceiptLoading, setCashReceiptLoading] = useState(false);
+  const cashReceiptTriggerRef = useRef(null);
   const today = todayStr();
 
   /* ─── Stable nav callbacks ─── */
@@ -870,6 +876,9 @@ function DashboardContent({
 
   /* ─── GINGR LIVE CACHE — background 60s poll, shared by accrual + receipt ─── */
   const { liveRows: gingrLiveRows } = useGingrLiveCache(locationId);
+
+  /* ─── CASH BASIS LIVE — 60s poll for today's cash revenue from Gingr API ─── */
+  const { todayCashData } = useCashBasisLive(locationId);
 
   /* ─── ACCRUAL REVENUE — computed client-side from raw reservations ─── */
   // Uses the same methodology as the receipt modal:
@@ -988,7 +997,9 @@ function DashboardContent({
     return Object.values(buckets);
   }, [bucketMode]);
 
-  const cashChartDataBase = useMemo(() => bucketRows(dailyRows, "cash_total_revenue"), [dailyRows, bucketRows]);
+  // Overlay today's live-fetched cash basis revenue on server metrics
+  const correctedDailyRows = useMemo(() => buildCashChartRows(dailyRows, todayCashData), [dailyRows, todayCashData]);
+  const cashChartDataBase = useMemo(() => bucketRows(correctedDailyRows, "cash_total_revenue"), [correctedDailyRows, bucketRows]);
   // Accrual chart: uses receipt-methodology engine (accrualDailyRows from useAccrualRevenue)
   const accrualChartDataBase = useMemo(() => bucketRows(accrualDailyRows, "accrual_total_revenue"), [accrualDailyRows, bucketRows]);
 
@@ -1011,16 +1022,18 @@ function DashboardContent({
 
   // L1: When range is "today", show past week as chart with today as highlighted final point
   const isToday = range === "today";
+  // Overlay today's live cash data on trailing week rows too
+  const correctedTrailingWeekRows = useMemo(() => buildCashChartRows(trailingWeekRows, todayCashData), [trailingWeekRows, todayCashData]);
   const cashChartData = useMemo(() => {
     if (!isToday) return cashChartDataBase;
-    if (!trailingWeekRows || trailingWeekRows.length === 0) return cashChartDataBase;
-    return trailingWeekRows.map(r => ({
+    if (!correctedTrailingWeekRows || correctedTrailingWeekRows.length === 0) return cashChartDataBase;
+    return correctedTrailingWeekRows.map(r => ({
       date: r.metric_date,
       label: fmtDateLabel(r.metric_date),
       value: Number(r.cash_total_revenue) || 0,
       prevValue: 0,
     }));
-  }, [isToday, cashChartDataBase, trailingWeekRows]);
+  }, [isToday, cashChartDataBase, correctedTrailingWeekRows]);
 
   const accrualChartData = useMemo(() => {
     if (!isToday) return accrualChartDataBase;
@@ -1089,6 +1102,13 @@ function DashboardContent({
      RENDER
      ═══════════════════════════════════════════════════════════════════════════ */
   const bookingsTrend = pctChange(m.cashTransactionCount, pm.cashTransactionCount);
+
+  // Cash basis: use live data for today, sum server data for historical range
+  const cashTotalDisplay = useMemo(() => {
+    if (isToday && todayCashData) return todayCashData.netRevenue;
+    // For multi-day ranges, sum corrected daily rows
+    return correctedDailyRows.reduce((s, r) => s + (Number(r.cash_total_revenue) || 0), 0);
+  }, [isToday, todayCashData, correctedDailyRows]);
 
   // Revenue values from server metrics
   // Accrual revenue from the receipt-methodology engine (not from dashboard_metrics_daily)
@@ -1290,6 +1310,36 @@ function DashboardContent({
   useEffect(() => {
     if (showReceipt) fetchReceiptData();
   }, [showReceipt, fetchReceiptData]);
+
+  // Cash receipt: fetch on-demand when cash modal opens
+  const fetchCashReceiptData = useCallback(async () => {
+    setCashReceiptLoading(true);
+    try {
+      // For "today" view, use the already-polled data if available
+      if (isToday && todayCashData) {
+        setCashReceiptData(todayCashData);
+        setCashReceiptLoading(false);
+        return;
+      }
+      // For single-day views, fetch from Gingr API
+      if (dateFrom === dateTo) {
+        const data = await fetchCashBasisForDate(locationId, dateFrom);
+        setCashReceiptData(data);
+      } else {
+        // For multi-day ranges, fetch the last day (most recent) as receipt detail
+        const data = await fetchCashBasisForDate(locationId, dateTo);
+        setCashReceiptData(data);
+      }
+    } catch (err) {
+      console.error("Cash receipt fetch error:", err);
+    } finally {
+      setCashReceiptLoading(false);
+    }
+  }, [locationId, dateFrom, dateTo, isToday, todayCashData]);
+
+  useEffect(() => {
+    if (showCashReceipt) fetchCashReceiptData();
+  }, [showCashReceipt, fetchCashReceiptData]);
 
   const receiptDateLabel = dateFrom === dateTo
     ? fmtDateLabel(dateFrom)
@@ -1509,9 +1559,27 @@ function DashboardContent({
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
               <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cash Basis Revenue</span>
-              <Tip text="Cash basis revenue from Gingr's GET /transactions endpoint. Shows actual money collected per day."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
+              <Tip text="Cash basis = money collected on each day (payments + deposits - refunds). Today is live from Gingr API."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
             </span>
-            <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(m.cashTotalRevenue)}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(cashTotalDisplay)}</span>
+              <span
+                ref={cashReceiptTriggerRef}
+                onClick={() => setShowCashReceipt(true)}
+                style={{
+                  cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 18, height: 18, borderRadius: 4,
+                  background: "rgba(20,83,45,0.08)", color: C.pri,
+                  transition: "all 0.2s cubic-bezier(0.22,1,0.36,1)",
+                  flexShrink: 0,
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.18)"; e.currentTarget.style.transform = "scale(1.15)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.08)"; e.currentTarget.style.transform = "scale(1)"; }}
+                title="View cash basis breakdown"
+              >
+                <I.FileText style={{ width: 11, height: 11 }} />
+              </span>
+            </span>
           </div>
           <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" dateLabels={cashChartData.map(d => d.date)}
             useRawPoints lineType="linear" solidFill fillOpacity={0.35} showGuideLines
@@ -1602,6 +1670,16 @@ function DashboardContent({
         loading={receiptLoading}
         dateLabel={receiptDateLabel}
         originRef={receiptTriggerRef}
+      />
+
+      {/* Cash Basis Revenue Receipt Modal */}
+      <CashBasisReceiptModal
+        open={showCashReceipt}
+        onClose={() => setShowCashReceipt(false)}
+        cashData={cashReceiptData}
+        loading={cashReceiptLoading}
+        dateLabel={receiptDateLabel}
+        originRef={cashReceiptTriggerRef}
       />
     </div>
   );
@@ -1873,6 +1951,240 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
             <div style={{ textAlign: "center", paddingTop: 6, paddingBottom: 2 }}>
               <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", fontWeight: 500, letterSpacing: "0.06em" }}>
                 {boarding.length + (daycareAgg ? daycareAgg.dogCount : 0) + (dayBoardAgg ? dayBoardAgg.count : 0)} RESERVATION{(boarding.length + (daycareAgg ? daycareAgg.dogCount : 0) + (dayBoardAgg ? dayBoardAgg.count : 0)) !== 1 ? "S" : ""}
+              </div>
+              <div style={{ fontSize: 8, color: "rgba(20,83,45,0.25)", marginTop: 3, letterSpacing: "0.04em" }}>
+                THANK YOU FOR CHOOSING K9
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Cash Basis Receipt Modal
+   ═══════════════════════════════════════════════════════════════════════════ */
+const CashBasisReceiptModal = memo(function CashBasisReceiptModal({ open, onClose, cashData, loading, dateLabel, originRef }) {
+  const [closing, setClosing] = useState(false);
+  const [originRect, setOriginRect] = useState(null);
+
+  useEffect(() => {
+    if (open && originRef?.current) {
+      setOriginRect(originRef.current.getBoundingClientRect());
+    }
+  }, [open, originRef]);
+
+  const handleClose = useCallback(() => {
+    setClosing(true);
+    setTimeout(() => { setClosing(false); onClose(); }, 300);
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (e) => { if (e.key === "Escape") handleClose(); };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [open, handleClose]);
+
+  if (!open && !closing) return null;
+
+  const { payments = [], grossPayments = 0, depositCollections = 0, refunds = 0, netRevenue = 0 } = cashData || {};
+  const fmtMoney = (v) => `$${Math.abs(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+  const invoicePayments = payments.filter(p => p.source === "invoice" && !p.isRefund);
+  const depositPayments = payments.filter(p => p.source === "deposit");
+  const refundPayments = payments.filter(p => p.isRefund);
+
+  const transformOriginStyle = originRect
+    ? { transformOrigin: `${originRect.left + originRect.width / 2}px ${originRect.top + originRect.height / 2}px` }
+    : {};
+
+  return (
+    <div
+      className={`receipt-modal-backdrop${closing ? " closing" : ""}`}
+      onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
+    >
+      <div className="receipt-modal-paper" style={transformOriginStyle} onClick={(e) => e.stopPropagation()}>
+        {/* Close button */}
+        <button
+          onClick={handleClose}
+          style={{
+            position: "absolute", top: 14, right: 14, background: "none", border: "none",
+            cursor: "pointer", color: "rgba(20,83,45,0.35)", fontSize: 18, lineHeight: 1,
+            padding: 4, borderRadius: 4, transition: "color 0.15s",
+          }}
+          onMouseEnter={(e) => e.target.style.color = C.pri}
+          onMouseLeave={(e) => e.target.style.color = "rgba(20,83,45,0.35)"}
+        >
+          ✕
+        </button>
+
+        {/* Header */}
+        <div style={{ textAlign: "center", marginBottom: 8, paddingTop: 4 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, letterSpacing: "0.12em", color: C.pri }}>K9 OPERATIONS</div>
+          <div style={{ fontSize: 10, color: C.text, fontWeight: 600, letterSpacing: "0.06em", marginTop: 2 }}>CASH BASIS REVENUE BREAKDOWN</div>
+          <div style={{ fontSize: 10, color: "rgba(20,83,45,0.5)", fontWeight: 500, marginTop: 4 }}>{dateLabel}</div>
+          <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", marginTop: 1 }}>{timeStr}</div>
+        </div>
+
+        {/* Grand Total */}
+        {!loading && (
+          <>
+            <hr className="receipt-dashed" />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0" }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.pri, letterSpacing: "0.08em" }}>NET TOTAL</div>
+              <div style={{ fontSize: 18, fontWeight: 900, color: C.pri, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(netRevenue)}</div>
+            </div>
+            {/* Progress bar: payments vs deposits vs refunds */}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", marginBottom: 4 }}>
+              <div style={{ width: "60%", height: 5, borderRadius: 3, overflow: "hidden", display: "flex" }}>
+                {(grossPayments + depositCollections) > 0 && <div style={{ width: `${(grossPayments / (grossPayments + depositCollections)) * 100}%`, height: "100%", background: C.pri, transition: "width 0.4s" }} />}
+                {(grossPayments + depositCollections) > 0 && <div style={{ width: `${(depositCollections / (grossPayments + depositCollections)) * 100}%`, height: "100%", background: C.acc, transition: "width 0.4s" }} />}
+              </div>
+              <div style={{ display: "flex", gap: 8, fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, flexShrink: 0 }}>
+                <span><span style={{ color: C.pri, fontWeight: 700 }}>{fmtMoney(grossPayments)}</span> Pay</span>
+                <span><span style={{ color: C.acc, fontWeight: 700 }}>{fmtMoney(depositCollections)}</span> Dep</span>
+              </div>
+            </div>
+          </>
+        )}
+
+        <hr className="receipt-dashed" />
+
+        {/* Loading state */}
+        {loading && (
+          <div style={{ textAlign: "center", padding: "20px 0" }}>
+            <div style={{ fontSize: 11, color: "rgba(20,83,45,0.5)", fontWeight: 600, letterSpacing: "0.06em" }}>LOADING PAYMENTS...</div>
+          </div>
+        )}
+
+        {/* Payments section */}
+        {!loading && invoicePayments.length > 0 && (
+          <>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.pri, letterSpacing: "0.08em", textTransform: "uppercase" }}>■ Payments</span>
+              <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, fontStyle: "italic" }}>{invoicePayments.length} payment{invoicePayments.length !== 1 ? "s" : ""}</span>
+            </div>
+            {invoicePayments.map((p, i) => (
+              <div key={`pay-${i}`} className="receipt-line-item" style={{ animationDelay: `${i * 0.03}s` }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: C.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 1, minWidth: 0 }}>
+                    {p.ownerName}
+                  </span>
+                  <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0 }}>
+                    {p.timeStr} · {p.paymentMethod}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                  {fmtMoney(p.amount)}
+                </div>
+              </div>
+            ))}
+            <div className="receipt-line-item" style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(20,83,45,0.08)" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.pri, letterSpacing: "0.04em" }}>PAYMENTS SUBTOTAL</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grossPayments)}</div>
+            </div>
+          </>
+        )}
+
+        {!loading && invoicePayments.length > 0 && depositPayments.length > 0 && <hr className="receipt-dashed" />}
+
+        {/* Collected Deposits section */}
+        {!loading && depositPayments.length > 0 && (
+          <>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.acc, letterSpacing: "0.08em", textTransform: "uppercase" }}>■ Collected Deposits</span>
+              <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, fontStyle: "italic" }}>{depositPayments.length} deposit{depositPayments.length !== 1 ? "s" : ""}</span>
+            </div>
+            {depositPayments.map((p, i) => (
+              <div key={`dep-${i}`} className="receipt-line-item" style={{ animationDelay: `${(invoicePayments.length + i) * 0.03}s` }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: C.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 1, minWidth: 0 }}>
+                    {p.ownerName}{p.animalName ? ` (${p.animalName})` : ""}
+                  </span>
+                  <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0 }}>
+                    {p.timeStr}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                  {fmtMoney(p.amount)}
+                </div>
+              </div>
+            ))}
+            <div className="receipt-line-item" style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(20,83,45,0.08)" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, letterSpacing: "0.04em" }}>DEPOSITS SUBTOTAL</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(depositCollections)}</div>
+            </div>
+          </>
+        )}
+
+        {!loading && refundPayments.length > 0 && <hr className="receipt-dashed" />}
+
+        {/* Refunds section */}
+        {!loading && refundPayments.length > 0 && (
+          <>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.dan, letterSpacing: "0.08em", textTransform: "uppercase" }}>■ Refunds</span>
+              <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, fontStyle: "italic" }}>{refundPayments.length} refund{refundPayments.length !== 1 ? "s" : ""}</span>
+            </div>
+            {refundPayments.map((p, i) => (
+              <div key={`ref-${i}`} className="receipt-line-item" style={{ animationDelay: `${(invoicePayments.length + depositPayments.length + i) * 0.03}s` }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "baseline", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: C.dan, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 1, minWidth: 0 }}>
+                    {p.ownerName}
+                  </span>
+                  <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, whiteSpace: "nowrap", flexShrink: 0 }}>
+                    {p.timeStr} · {p.paymentMethod}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.dan, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                  -{fmtMoney(p.amount)}
+                </div>
+              </div>
+            ))}
+            <div className="receipt-line-item" style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(20,83,45,0.08)" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.dan, letterSpacing: "0.04em" }}>REFUNDS SUBTOTAL</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.dan, fontVariantNumeric: "tabular-nums" }}>-{fmtMoney(refunds)}</div>
+            </div>
+          </>
+        )}
+
+        {!loading && (
+          <>
+            <hr className="receipt-dashed" style={{ marginTop: 10 }} />
+
+            {/* Totals breakdown */}
+            <div style={{ padding: "6px 0" }}>
+              <div className="receipt-line-item">
+                <div style={{ fontSize: 10, fontWeight: 600, color: "rgba(20,83,45,0.6)" }}>Gross Payments</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(grossPayments)}</div>
+              </div>
+              <div className="receipt-line-item">
+                <div style={{ fontSize: 10, fontWeight: 600, color: "rgba(20,83,45,0.6)" }}>Collected Deposits</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(depositCollections)}</div>
+              </div>
+              {refunds > 0 && (
+                <div className="receipt-line-item">
+                  <div style={{ fontSize: 10, fontWeight: 600, color: C.dan }}>Refunds</div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.dan, fontVariantNumeric: "tabular-nums" }}>-{fmtMoney(refunds)}</div>
+                </div>
+              )}
+              <div className="receipt-line-item" style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(20,83,45,0.12)" }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.pri, letterSpacing: "0.06em" }}>NET TOTAL</div>
+                <div style={{ fontSize: 15, fontWeight: 900, color: C.pri, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(netRevenue)}</div>
+              </div>
+            </div>
+
+            <hr className="receipt-dashed" />
+
+            {/* Footer */}
+            <div style={{ textAlign: "center", paddingTop: 6, paddingBottom: 2 }}>
+              <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", fontWeight: 500, letterSpacing: "0.06em" }}>
+                {payments.length} TRANSACTION{payments.length !== 1 ? "S" : ""}
               </div>
               <div style={{ fontSize: 8, color: "rgba(20,83,45,0.25)", marginTop: 3, letterSpacing: "0.04em" }}>
                 THANK YOU FOR CHOOSING K9
