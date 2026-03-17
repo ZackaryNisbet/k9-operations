@@ -663,6 +663,7 @@ export default function LandingPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [legalModal, setLegalModal] = useState(null); // 'tos' | 'privacy'
   const [scrollY, setScrollY] = useState(0);
+  const [activeDemo, setActiveDemo] = useState(0);
 
   useEffect(() => {
     const handler = () => setScrollY(window.scrollY);
@@ -697,7 +698,7 @@ export default function LandingPage() {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 32 }} className="nav-links">
-            {['Features', 'How It Works'].map(item => (
+            {['Features', 'Demos', 'How It Works'].map(item => (
               <button key={item} onClick={() => scrollTo(item.toLowerCase().replace(/ /g, '-'))} style={{
                 background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: C.textSec,
                 padding: '4px 0', transition: 'color 0.2s',
@@ -721,7 +722,7 @@ export default function LandingPage() {
         {/* Mobile menu */}
         {mobileMenuOpen && (
           <div style={{ padding: '16px 24px', background: '#fff', borderTop: `1px solid ${C.border}` }} className="mobile-menu">
-            {['Features', 'How It Works'].map(item => (
+            {['Features', 'Demos', 'How It Works'].map(item => (
               <button key={item} onClick={() => scrollTo(item.toLowerCase().replace(/ /g, '-'))} style={{
                 display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none',
                 padding: '12px 0', fontSize: 15, fontWeight: 600, color: C.text, cursor: 'pointer',
@@ -999,6 +1000,96 @@ export default function LandingPage() {
                 <div style={{ fontSize: 14, color: C.textSec, lineHeight: 1.6 }}>{card.desc}</div>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+
+      {/* ─── PRODUCT DEMOS ─── */}
+      <section id="demos" style={{ padding: '80px 24px', background: '#FAFAFA' }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto', textAlign: 'center' }}>
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            padding: '6px 14px', borderRadius: 100,
+            background: C.acc + '15', marginBottom: 16,
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.accDk, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Product Demos</span>
+          </div>
+          <h2 style={{ fontSize: 'clamp(28px, 4vw, 44px)', fontWeight: 800, color: C.text, margin: '0 0 12px', letterSpacing: '-0.02em' }}>
+            See it in action
+          </h2>
+          <p style={{ fontSize: 17, color: C.textSec, maxWidth: 600, margin: '0 auto 40px', lineHeight: 1.6 }}>
+            Real data. Real workflows. Every video uses live K9 Resorts Adair Forsythe data — 28 dogs, real names, real photos.
+          </p>
+
+          {/* Demo Selector Tabs */}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 32 }}>
+            {[
+              { label: 'Dashboard', color: C.pri },
+              { label: 'Lifecycle CRM', color: C.pri },
+              { label: 'Operations Hub', color: '#0EA5E9' },
+              { label: 'EOD Notes', color: '#D97706' },
+              { label: 'Inventory', color: '#8B5CF6' },
+              { label: 'Checkout TV', color: '#84CC16' },
+              { label: 'Data Flow', color: '#6366F1' },
+            ].map((demo, i) => (
+              <button
+                key={i}
+                onClick={() => setActiveDemo(i)}
+                style={{
+                  padding: '8px 18px', borderRadius: 100, border: 'none', cursor: 'pointer',
+                  fontSize: 13, fontWeight: activeDemo === i ? 700 : 500,
+                  background: activeDemo === i ? demo.color : '#fff',
+                  color: activeDemo === i ? '#fff' : C.textSec,
+                  boxShadow: activeDemo === i ? `0 2px 12px ${demo.color}30` : '0 1px 3px rgba(0,0,0,0.08)',
+                  transition: 'all 0.25s ease',
+                }}
+              >
+                {demo.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Video Player */}
+          <div style={{
+            maxWidth: 960, margin: '0 auto', borderRadius: 16, overflow: 'hidden',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.15), 0 4px 16px rgba(0,0,0,0.08)',
+            border: `1px solid ${C.border}`,
+            background: '#000',
+          }}>
+            <video
+              key={activeDemo}
+              autoPlay
+              loop
+              muted
+              playsInline
+              style={{ width: '100%', display: 'block' }}
+            >
+              <source src={[
+                '/demos/dashboard.mp4',
+                '/demos/customer-lifecycle.mp4',
+                '/demos/operations-hub.mp4',
+                '/demos/eod-notes.mp4',
+                '/demos/weekly-inventory.mp4',
+                '/demos/checkout-tv.mp4',
+                '/demos/data-flow.mp4',
+              ][activeDemo]} type="video/mp4" />
+            </video>
+          </div>
+
+          {/* Demo Description */}
+          <div style={{ maxWidth: 600, margin: '24px auto 0', textAlign: 'center' }}>
+            <p style={{ fontSize: 14, color: C.textSec, lineHeight: 1.6 }}>
+              {[
+                'Real-time dashboard with KPIs, revenue charts, and occupancy metrics — all auto-calculated from your Gingr data.',
+                'Automatic lifecycle staging with follow-up logging, Ignite call tracking integration, and lead-to-booking conversion.',
+                'Six operational checklists plus smart room cleaning with automated status tracking from reservation data.',
+                'Staff notes with @mention dog tagging — notes automatically link to client profiles for persistent history.',
+                'Weekly supply tracking with par levels, restock alerts, and cost-per-dog-day analytics.',
+                'Fullscreen facility display showing every checked-in dog with photos, breeds, owners, and room assignments.',
+                'Gingr and Ignite data flows into K9 Operations, which distributes intelligence across your entire operation.',
+              ][activeDemo]}
+            </p>
           </div>
         </div>
       </section>
