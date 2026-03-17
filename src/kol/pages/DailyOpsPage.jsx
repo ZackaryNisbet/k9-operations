@@ -734,14 +734,23 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const renderBathing = () => {
     const reservations = data.reservations || [];
     const dogs = data.dogs || [];
-    // Only show dogs whose reservation END DATE equals the view date (bath happens on checkout day)
-    const endingToday = reservations.filter(r =>
-      (r.status === "checked-in" || r.status === "upcoming") &&
-      r.checkOut === viewDate
-    );
+    // Show ALL dogs with bath service SCHEDULED for the view date (matches mobile "Scheduled At" view).
+    // This includes dogs who have already departed — they appear dimmed with a "Departed" label.
+    // Previously filtered by checkOut date + checked-in status, which dropped dogs after checkout.
+    const withBathToday = reservations.filter(res => {
+      if (res.status === "cancelled") return false;
+      if (!hasSvc(res._services, "Bath")) return false;
+      // Check if any bath service has scheduled_at on the view date
+      const svcs = Array.isArray(res._services) ? res._services : [];
+      return svcs.some(s => {
+        const name = typeof s === "string" ? s : (s?.name || "");
+        if (!name.toLowerCase().includes("bath")) return false;
+        const schedAt = s?.scheduled_at || "";
+        return schedAt.includes(viewDate);
+      });
+    });
     const bathRows = [];
-    endingToday.forEach(res => {
-      if (!hasSvc(res._services, "Bath")) return;
+    withBathToday.forEach(res => {
       const dog = dogs.find(d => d.id === res.dogId);
       const dogName = dog?.fields?.name || res._animalName || "Unknown";
       const roomNum = res.room ? (res.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || res.room : "—";
@@ -750,7 +759,13 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       const coTime = rawCoTime ? formatTime12hr(rawCoTime) : "—";
       const completedInfo = bathCompleted[res.id];
       const isDone = !!completedInfo;
-      bathRows.push({ resId: res.id, dogName, roomNum, bathType, coTime, isDone, completedInfo, resType: res.type });
+      const isDeparted = res.status === "checked-out";
+      // Get the bath scheduled time
+      const svcs = Array.isArray(res._services) ? res._services : [];
+      const bathSvc = svcs.find(s => typeof s === "object" && s?.name?.toLowerCase().includes("bath") && (s.scheduled_at || "").includes(viewDate));
+      const schedAt = bathSvc?.scheduled_at || "";
+      const schedTime = schedAt ? formatTime12hr(schedAt.split("T")[1]?.slice(0, 5) || "") : "—";
+      bathRows.push({ resId: res.id, dogName, roomNum, bathType, coTime, isDone, completedInfo, resType: res.type, isDeparted, schedTime });
     });
     bathRows.sort((a, b) => (a.roomNum || "").localeCompare(b.roomNum || "", undefined, { numeric: true }));
 
@@ -822,6 +837,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                     <th style={thStyle}>DOG</th>
                     <th style={thCenterStyle}>ROOM</th>
                     <th style={thStyle}>BATH TYPE</th>
+                    <th style={thCenterStyle}>SCHEDULED</th>
                     <th style={thCenterStyle}>CHECKOUT</th>
                     <th style={thCenterStyle}>DONE</th>
                   </tr>
@@ -832,12 +848,16 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                     return (
                       <tr key={row.resId} style={{
                         borderBottom: i < bathRows.length - 1 ? `1px solid ${C.borderLight}` : "none",
-                        background: row.isDone ? "#F0FDF4" : "transparent",
+                        background: row.isDone ? "#F0FDF4" : row.isDeparted ? "#FAFAFA" : "transparent",
+                        opacity: row.isDeparted && !row.isDone ? 0.55 : 1,
                         transition: "background 0.2s",
                       }}>
                         <td style={{ padding: "12px 14px", fontWeight: 600, color: C.text, fontFamily: "inherit" }}>
-                          {row.dogName}
-                          {row.resType === "daycare" && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEF3C7", color: "#D97706" }}>DC</span>}
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            {row.dogName}
+                            {row.resType === "daycare" && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEF3C7", color: "#D97706" }}>DC</span>}
+                            {row.isDeparted && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEE2E2", color: "#DC2626" }}>Departed</span>}
+                          </div>
                         </td>
                         <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri, fontFamily: "inherit" }}>{row.roomNum}</td>
                         <td style={{ padding: "12px 14px", color: C.text }}>
@@ -848,6 +868,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                             {row.bathType}
                           </span>
                         </td>
+                        <td style={{ padding: "12px 14px", textAlign: "center", color: C.pri, fontSize: 12, fontWeight: 600, fontFamily: "inherit" }}>{row.schedTime}</td>
                         <td style={{ padding: "12px 14px", textAlign: "center", color: C.textSec, fontSize: 12, fontFamily: "inherit" }}>{row.coTime}</td>
                         <td style={{ padding: "12px 14px", textAlign: "center" }}>
                           <button onClick={() => toggleBath(row.resId)} style={{
