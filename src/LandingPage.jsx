@@ -698,7 +698,7 @@ export default function LandingPage() {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 32 }} className="nav-links">
-            {['Demos', 'How It Works', 'Pricing'].map(item => (
+            {['Demos', 'Pricing'].map(item => (
               <button key={item} onClick={() => scrollTo(item.toLowerCase().replace(/ /g, '-'))} style={{
                 background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: C.textSec,
                 padding: '4px 0', transition: 'color 0.2s',
@@ -722,7 +722,7 @@ export default function LandingPage() {
         {/* Mobile menu */}
         {mobileMenuOpen && (
           <div style={{ padding: '16px 24px', background: '#fff', borderTop: `1px solid ${C.border}` }} className="mobile-menu">
-            {['Demos', 'How It Works', 'Pricing'].map(item => (
+            {['Demos', 'Pricing'].map(item => (
               <button key={item} onClick={() => scrollTo(item.toLowerCase().replace(/ /g, '-'))} style={{
                 display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none',
                 padding: '12px 0', fontSize: 15, fontWeight: 600, color: C.text, cursor: 'pointer',
@@ -905,7 +905,7 @@ export default function LandingPage() {
             <p style={{ fontSize: 14, color: C.textSec, lineHeight: 1.6 }}>
               {[
                 'Gingr and Ignite data flows into K9 Operations, which distributes intelligence across your entire operation.',
-                'Real-time dashboard with KPIs, revenue charts, and occupancy metrics — all auto-calculated from your Gingr data.',
+                'Real-time dashboard with KPIs, revenue charts, and occupancy metrics — daycare and boarding revenue auto-calculated from your Gingr data.',
                 'Automatic lifecycle staging with follow-up logging, Ignite call tracking integration, and lead-to-booking conversion.',
                 'Six operational checklists plus smart room cleaning with automated status tracking from reservation data.',
                 'Staff notes with @mention dog tagging — notes automatically link to client profiles for persistent history.',
@@ -917,47 +917,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-
-      {/* ─── HOW IT WORKS ─── */}
-      <section id="how-it-works" style={{ padding: '80px 24px', background: '#fff' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', textAlign: 'center' }}>
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            padding: '6px 14px', borderRadius: 100,
-            background: C.pri + '08', marginBottom: 16,
-          }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.pri, letterSpacing: '0.06em', textTransform: 'uppercase' }}>How It Works</span>
-          </div>
-          <h2 style={{ fontSize: 'clamp(28px, 4vw, 44px)', fontWeight: 800, color: C.text, margin: '0 0 12px', letterSpacing: '-0.02em' }}>
-            Your data, intelligently distributed
-          </h2>
-          <p style={{ fontSize: 17, color: C.textSec, maxWidth: 600, margin: '0 auto 48px', lineHeight: 1.6 }}>
-            Gingr feeds owner, animal, and reservation data into K9 Operations.
-            The system processes and routes each client into the right lifecycle bucket automatically.
-          </p>
-          <DataFlowAnimation />
-
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 32, marginTop: 48, flexWrap: 'wrap' }}>
-            {[
-              { label: 'Cold', desc: 'Inactive 14+ days from sync — needs re-engagement', color: '#64748B' },
-              { label: 'Leads', desc: 'New leads from tours & evals — no booking yet', color: '#10B981' },
-              { label: 'Lapsed', desc: 'Lapsed clients past configurable threshold', color: '#F59E0B' },
-            ].map((item, i) => (
-              <div key={i} style={{ textAlign: 'center', maxWidth: 200 }}>
-                <div style={{
-                  width: 40, height: 40, borderRadius: 12, margin: '0 auto 12px',
-                  background: item.color + '12', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  border: `1.5px solid ${item.color}30`,
-                }}>
-                  <div style={{ width: 12, height: 12, borderRadius: '50%', background: item.color }} />
-                </div>
-                <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{item.label}</div>
-                <div style={{ fontSize: 13, color: C.textSec, marginTop: 4, lineHeight: 1.4 }}>{item.desc}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
 
       {/* ─── PRODUCT TIERS ─── */}
