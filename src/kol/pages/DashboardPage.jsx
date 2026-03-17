@@ -1105,12 +1105,13 @@ function DashboardContent({
     setReceiptLoading(true);
     try {
       // Fetch reservations that overlap the selected date range
+      // Use OR for end_date to include daycare/day boarding where end_date may be NULL
       const { data: rawRes, error } = await supabase
         .from("gingr_reservations")
         .select("gingr_id,animal_name,owner_first_name,owner_last_name,reservation_type_name,start_date,end_date,deposit,transaction,cancelled_date,services")
         .eq("location_id", locationId)
         .lte("start_date", dateTo + "T23:59:59")
-        .gte("end_date", dateFrom + "T00:00:00")
+        .or(`end_date.gte.${dateFrom}T00:00:00,end_date.is.null`)
         .is("cancelled_date", null);
 
       if (error) { console.error("Receipt fetch error:", error); setReceiptLoading(false); return; }
@@ -1118,20 +1119,22 @@ function DashboardContent({
       const boarding = [];
       let boardingTotal = 0;
 
-      // Daycare aggregation
+      // Daycare aggregation (separate from day boarding)
       const dcRates = LITE_DEF_PRICING.daycareRates;
       let fullDayCount = 0;
       let halfDayCount = 0;
       let evalCount = 0;
       let dayBoardCount = 0;
-      const enrichmentMap = {};   // name → { count, totalCost }
+      const dcEnrichMap = {};       // daycare enrichments: name → { count, totalCost }
+      const dbEnrichMap = {};       // day boarding enrichments: name → { count, totalCost }
       let daycareBaseTotal = 0;
-      let daycareEnrichTotal = 0;
+      let dayBoardBaseTotal = 0;
 
       (rawRes || []).forEach(r => {
         const typeName = (r.reservation_type_name || "").toLowerCase();
         const isBoarding = typeName.includes("boarding") && !typeName.includes("day boarding");
-        const isDaycare = typeName.includes("daycare") || typeName.includes("day care") || typeName.includes("day boarding");
+        const isDayBoarding = typeName.includes("day boarding");
+        const isDaycare = !isDayBoarding && (typeName.includes("daycare") || typeName.includes("day care"));
         const dep = r.deposit && !Array.isArray(r.deposit) ? r.deposit : {};
         const txn = r.transaction && !Array.isArray(r.transaction) ? r.transaction : {};
         const total = Number(txn.price) || Number(dep.amount) || 0;
@@ -1162,6 +1165,18 @@ function DashboardContent({
             totalCost: total, checkIn: startD, checkOut: endD,
             _resKey: `${ownerName}|${startD}|${endD}|${total}`,
           });
+        } else if (isDayBoarding && startD >= dateFrom && startD <= dateTo) {
+          dayBoardCount++;
+          dayBoardBaseTotal += dcRates.fullDay;
+          // Aggregate day boarding services / enrichments separately
+          const svcs = Array.isArray(r.services) ? r.services : [];
+          svcs.forEach(s => {
+            const sName = (s.name || "Service").trim();
+            const sCost = Number(s.cost) || 0;
+            if (!dbEnrichMap[sName]) dbEnrichMap[sName] = { count: 0, totalCost: 0, unitCost: sCost };
+            dbEnrichMap[sName].count++;
+            dbEnrichMap[sName].totalCost += sCost;
+          });
         } else if (isDaycare && startD >= dateFrom && startD <= dateTo) {
           // Classify daycare type & apply base rate
           let baseRate = dcRates.fullDay;
@@ -1171,22 +1186,19 @@ function DashboardContent({
           } else if (typeName.includes("evaluation")) {
             evalCount++;
             baseRate = dcRates.fullDay; // evals charged at full-day rate
-          } else if (typeName.includes("day boarding")) {
-            dayBoardCount++;
-            baseRate = dcRates.fullDay;
           } else {
             fullDayCount++;
           }
           daycareBaseTotal += baseRate;
 
-          // Aggregate services / enrichments
+          // Aggregate daycare services / enrichments separately
           const svcs = Array.isArray(r.services) ? r.services : [];
           svcs.forEach(s => {
             const sName = (s.name || "Service").trim();
             const sCost = Number(s.cost) || 0;
-            if (!enrichmentMap[sName]) enrichmentMap[sName] = { count: 0, totalCost: 0, unitCost: sCost };
-            enrichmentMap[sName].count++;
-            enrichmentMap[sName].totalCost += sCost;
+            if (!dcEnrichMap[sName]) dcEnrichMap[sName] = { count: 0, totalCost: 0, unitCost: sCost };
+            dcEnrichMap[sName].count++;
+            dcEnrichMap[sName].totalCost += sCost;
           });
         }
       });
@@ -1219,25 +1231,40 @@ function DashboardContent({
         });
       });
 
-      // Build enrichment list sorted by total cost descending
-      const enrichments = Object.entries(enrichmentMap)
+      // Build daycare enrichment list sorted by total cost descending
+      const dcEnrichments = Object.entries(dcEnrichMap)
         .map(([name, v]) => ({ name, count: v.count, totalCost: v.totalCost, unitCost: v.unitCost }))
         .sort((a, b) => b.totalCost - a.totalCost);
-      daycareEnrichTotal = enrichments.reduce((s, e) => s + e.totalCost, 0);
+      const dcEnrichTotal = dcEnrichments.reduce((s, e) => s + e.totalCost, 0);
 
-      const daycareTotal = daycareBaseTotal + daycareEnrichTotal;
-      const totalDaycareDogs = fullDayCount + halfDayCount + evalCount + dayBoardCount;
+      // Build day boarding enrichment list sorted by total cost descending
+      const dbEnrichments = Object.entries(dbEnrichMap)
+        .map(([name, v]) => ({ name, count: v.count, totalCost: v.totalCost, unitCost: v.unitCost }))
+        .sort((a, b) => b.totalCost - a.totalCost);
+      const dbEnrichTotal = dbEnrichments.reduce((s, e) => s + e.totalCost, 0);
+
+      const daycareTotal = daycareBaseTotal + dcEnrichTotal;
+      const dayBoardTotal = dayBoardBaseTotal + dbEnrichTotal;
+      const totalDaycareDogs = fullDayCount + halfDayCount + evalCount;
 
       const daycareAgg = {
-        fullDayCount, halfDayCount, evalCount, dayBoardCount,
+        fullDayCount, halfDayCount, evalCount,
         fullDayRate: dcRates.fullDay, halfDayRate: dcRates.halfDay,
-        baseTotal: daycareBaseTotal, enrichments, enrichTotal: daycareEnrichTotal,
+        baseTotal: daycareBaseTotal, enrichments: dcEnrichments, enrichTotal: dcEnrichTotal,
         total: daycareTotal, dogCount: totalDaycareDogs,
       };
 
+      const dayBoardAgg = {
+        count: dayBoardCount, rate: dcRates.fullDay,
+        baseTotal: dayBoardBaseTotal, enrichments: dbEnrichments, enrichTotal: dbEnrichTotal,
+        total: dayBoardTotal,
+      };
+
+      const allDaycareTotal = daycareTotal + dayBoardTotal;
+
       // Boarding: priced first (desc), then $0 entries alphabetical
       boarding.sort((a, b) => b.accrualAmount - a.accrualAmount || a.dogName.localeCompare(b.dogName));
-      setReceiptData({ boarding, daycareAgg, boardingTotal, daycareTotal, grandTotal: boardingTotal + daycareTotal });
+      setReceiptData({ boarding, daycareAgg, dayBoardAgg, boardingTotal, daycareTotal: allDaycareTotal, grandTotal: boardingTotal + allDaycareTotal });
     } catch (err) {
       console.error("Receipt fetch error:", err);
     } finally {
@@ -1594,7 +1621,7 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
 
   if (!open && !closing) return null;
 
-  const { boarding = [], daycareAgg, boardingTotal = 0, daycareTotal = 0, grandTotal = 0 } = receiptData || {};
+  const { boarding = [], daycareAgg, dayBoardAgg, boardingTotal = 0, daycareTotal = 0, grandTotal = 0 } = receiptData || {};
   const fmtMoney = (v) => `$${(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const now = new Date();
   const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -1746,22 +1773,7 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
               </div>
             )}
 
-            {/* Day Boarding line */}
-            {daycareAgg.dayBoardCount > 0 && (
-              <div className="receipt-line-item">
-                <div style={{ flex: 1, display: "flex", alignItems: "baseline", gap: 6 }}>
-                  <span style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Day Boarding</span>
-                  <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500 }}>
-                    {daycareAgg.dayBoardCount} dog{daycareAgg.dayBoardCount !== 1 ? "s" : ""} × {fmtMoney(daycareAgg.fullDayRate)}
-                  </span>
-                </div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
-                  {fmtMoney(daycareAgg.dayBoardCount * daycareAgg.fullDayRate)}
-                </div>
-              </div>
-            )}
-
-            {/* Enrichments / Add-ons */}
+            {/* Daycare Enrichments / Add-ons */}
             {daycareAgg.enrichments.length > 0 && (
               <>
                 <div style={{ marginTop: 8, marginBottom: 4, fontSize: 9, fontWeight: 600, color: "rgba(20,83,45,0.5)", letterSpacing: "0.08em", textTransform: "uppercase" }}>ADD-ONS / ENRICHMENTS</div>
@@ -1783,7 +1795,58 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
             {/* Daycare subtotal */}
             <div className="receipt-line-item" style={{ marginTop: 6, paddingTop: 4, borderTop: "1px solid rgba(20,83,45,0.08)" }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, letterSpacing: "0.04em" }}>DAYCARE SUBTOTAL</div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(daycareTotal)}</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(daycareAgg.total)}</div>
+            </div>
+          </>
+        )}
+
+        {/* Separator between daycare and day boarding */}
+        {!loading && ((daycareAgg && daycareAgg.dogCount > 0) || boarding.length > 0) && dayBoardAgg && dayBoardAgg.count > 0 && <hr className="receipt-dashed" />}
+
+        {/* Day Boarding section — separate from daycare */}
+        {!loading && dayBoardAgg && dayBoardAgg.count > 0 && (
+          <>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.acc, letterSpacing: "0.08em", textTransform: "uppercase" }}>■ Day Boarding</span>
+              <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500, fontStyle: "italic" }}>{dayBoardAgg.count} dog{dayBoardAgg.count !== 1 ? "s" : ""} day boarding</span>
+            </div>
+
+            {/* Day Boarding base rate line */}
+            <div className="receipt-line-item">
+              <div style={{ flex: 1, display: "flex", alignItems: "baseline", gap: 6 }}>
+                <span style={{ fontSize: 11, color: C.text, fontWeight: 600 }}>Day Boarding</span>
+                <span style={{ fontSize: 9, color: "rgba(20,83,45,0.55)", fontWeight: 500 }}>
+                  {dayBoardAgg.count} dog{dayBoardAgg.count !== 1 ? "s" : ""} × {fmtMoney(dayBoardAgg.rate)}
+                </span>
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                {fmtMoney(dayBoardAgg.count * dayBoardAgg.rate)}
+              </div>
+            </div>
+
+            {/* Day Boarding Enrichments / Add-ons */}
+            {dayBoardAgg.enrichments.length > 0 && (
+              <>
+                <div style={{ marginTop: 8, marginBottom: 4, fontSize: 9, fontWeight: 600, color: "rgba(20,83,45,0.5)", letterSpacing: "0.08em", textTransform: "uppercase" }}>ADD-ONS / ENRICHMENTS</div>
+                {dayBoardAgg.enrichments.map((e, i) => (
+                  <div key={e.name} className="receipt-line-item" style={{ animationDelay: `${(boarding.length + (daycareAgg ? daycareAgg.enrichments.length : 0) + i) * 0.03}s` }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 10, color: C.text, fontWeight: 500 }}>
+                        {e.count}× {e.name}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: C.text, fontVariantNumeric: "tabular-nums", marginLeft: 12, whiteSpace: "nowrap" }}>
+                      {fmtMoney(e.totalCost)}
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {/* Day Boarding subtotal */}
+            <div className="receipt-line-item" style={{ marginTop: 6, paddingTop: 4, borderTop: "1px solid rgba(20,83,45,0.08)" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, letterSpacing: "0.04em" }}>DAY BOARDING SUBTOTAL</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.acc, fontVariantNumeric: "tabular-nums" }}>{fmtMoney(dayBoardAgg.total)}</div>
             </div>
           </>
         )}
@@ -1795,13 +1858,13 @@ const AccrualReceiptModal = memo(function AccrualReceiptModal({ open, onClose, r
             {/* Footer */}
             <div style={{ textAlign: "center", paddingTop: 6, paddingBottom: 2 }}>
               <div style={{ fontSize: 9, color: "rgba(20,83,45,0.4)", fontWeight: 500, letterSpacing: "0.06em" }}>
-                {boarding.length + (daycareAgg ? daycareAgg.dogCount : 0)} RESERVATION{(boarding.length + (daycareAgg ? daycareAgg.dogCount : 0)) !== 1 ? "S" : ""}
+                {boarding.length + (daycareAgg ? daycareAgg.dogCount : 0) + (dayBoardAgg ? dayBoardAgg.count : 0)} RESERVATION{(boarding.length + (daycareAgg ? daycareAgg.dogCount : 0) + (dayBoardAgg ? dayBoardAgg.count : 0)) !== 1 ? "S" : ""}
               </div>
               <div style={{ fontSize: 8, color: "rgba(20,83,45,0.25)", marginTop: 3, letterSpacing: "0.04em" }}>
                 THANK YOU FOR CHOOSING K9
               </div>
             </div>
-          </>        
+          </>
         )}
       </div>
     </div>
