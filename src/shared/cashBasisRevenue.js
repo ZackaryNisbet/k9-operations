@@ -120,7 +120,7 @@ async function fetchTransaction(cfg, invoiceId) {
   );
   if (!resp.ok) return null;
   const json = await resp.json();
-  return json;
+  return json.data || json;
 }
 
 /**
@@ -145,9 +145,9 @@ function extractPaymentsForDate(txnData, targetDate, invoiceId) {
     }
   }
 
-  const ownerName = txnData?.owner_name ||
-    [txnData?.owner?.first_name, txnData?.owner?.last_name].filter(Boolean).join(" ") ||
-    "Unknown";
+  const ownerName = txnData?.transaction?.first_name && txnData?.transaction?.last_name
+    ? `${txnData.transaction.first_name} ${txnData.transaction.last_name}`
+    : txnData?.owner_name || "Unknown";
 
   const payments = [];
 
@@ -169,6 +169,9 @@ function extractPaymentsForDate(txnData, targetDate, invoiceId) {
 
       // Skip zero payments
       if (e.zero_payment === "1" || e.zero_payment === 1 || amount === 0) continue;
+
+      // Skip ADMIN credits/comps — these are not real cash
+      if (e.payment_method_type === "ADMIN - Credit Comped") continue;
 
       // Skip forfeited deposit payments
       if (forfeitedTs && Math.abs(ts - forfeitedTs) < 120) continue;
@@ -289,7 +292,7 @@ export async function fetchCashBasisForDate(locationId, targetDate) {
   if (!cfg) return emptyResult();
 
   // Fetch invoices and reservations in parallel
-  const invoiceFromDate = addDaysStr(targetDate, -180);
+  const invoiceFromDate = addDaysStr(targetDate, -7);
   const invoiceToDate = addDaysStr(targetDate, 1);
 
   // For reservations: search 30 days before and 60 days after target date
