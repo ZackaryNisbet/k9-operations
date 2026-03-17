@@ -8,7 +8,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "../supabaseClient";
 import { computeAccrualByDay, computeAccrualTotals } from "../shared/accrualEngine";
 import { addDays } from "../shared/theme";
-import { fetchTodayGingrReservations, mergeGingrLive } from "../shared/gingrLive";
+import { mergeGingrLive } from "../shared/gingrLive";
 
 /**
  * useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo)
@@ -20,7 +20,7 @@ import { fetchTodayGingrReservations, mergeGingrLive } from "../shared/gingrLive
  *   prevAccrualTotals  — totals for prior period
  *   loading            — boolean
  */
-export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo) {
+export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo, gingrLiveRows) {
   const [accrualDailyRows, setAccrualDailyRows] = useState([]);
   const [accrualTotals, setAccrualTotals] = useState({ boardingRevenue: 0, daycareRevenue: 0, totalRevenue: 0 });
   const [prevAccrualDailyRows, setPrevAccrualDailyRows] = useState([]);
@@ -54,15 +54,13 @@ export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo
       if (fetchId !== fetchIdRef.current) return; // stale
       if (error) { console.error("Accrual fetch error:", error); setLoading(false); return; }
 
-      // If the date range includes today, also fetch live Gingr data.
-      // Daycare/day-boarding are same-day reservations that only exist in Supabase
-      // once the sync has run. Fetching from Gingr ensures they appear immediately.
+      // If the date range includes today and we have cached live Gingr data,
+      // merge it in. This no longer blocks — gingrLiveRows comes from the
+      // background polling cache (useGingrLiveCache).
       const today = new Date().toISOString().split("T")[0];
       let rawRes = supabaseRes;
-      if (latest >= today) {
-        const liveRows = await fetchTodayGingrReservations(locationId, today);
-        if (fetchId !== fetchIdRef.current) return; // stale
-        rawRes = mergeGingrLive(supabaseRes, liveRows);
+      if (latest >= today && gingrLiveRows && gingrLiveRows.length > 0) {
+        rawRes = mergeGingrLive(supabaseRes, gingrLiveRows);
       }
 
       // Compute current period
@@ -103,7 +101,7 @@ export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo
     } finally {
       if (fetchId === fetchIdRef.current) setLoading(false);
     }
-  }, [locationId, dateFrom, dateTo, prevFrom, prevTo]);
+  }, [locationId, dateFrom, dateTo, prevFrom, prevTo, gingrLiveRows]);
 
   useEffect(() => {
     fetchAccrual();

@@ -13,8 +13,9 @@ import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { useDashboardMetrics } from "../../hooks/useDashboardMetrics";
 import { useAccrualRevenue } from "../../hooks/useAccrualRevenue";
+import { useGingrLiveCache } from "../../hooks/useGingrLiveCache";
 import { supabase } from "../../supabaseClient";
-import { fetchTodayGingrReservations, mergeGingrLive } from "../../shared/gingrLive";
+import { mergeGingrLive } from "../../shared/gingrLive";
 import { useLazyCompute, useSectionVisibility } from "../../hooks/useLazyCompute";
 import { computeOpsProgress, computeServiceMetrics, computeLifecycleMetrics } from "../../shared/metricsHelpers";
 
@@ -867,6 +868,9 @@ function DashboardContent({
   const pm = prevMetrics || {};
   const showSkeleton = !metrics && metricsLoading;
 
+  /* ─── GINGR LIVE CACHE — background 60s poll, shared by accrual + receipt ─── */
+  const { liveRows: gingrLiveRows } = useGingrLiveCache(locationId);
+
   /* ─── ACCRUAL REVENUE — computed client-side from raw reservations ─── */
   // Uses the same methodology as the receipt modal:
   //   Boarding: sibling grouping + room rate fallback
@@ -875,7 +879,7 @@ function DashboardContent({
   const {
     accrualDailyRows, accrualTotals,
     prevAccrualDailyRows, prevAccrualTotals,
-  } = useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo);
+  } = useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo, gingrLiveRows);
 
   /* ─── Lifecycle metrics — still from client data (these need client state) ─── */
   // Lifecycle/funnel metrics require client lifecycle state which isn't in the daily table.
@@ -1002,7 +1006,7 @@ function DashboardContent({
     prevAccrualDailyRows: trailingWeekPrevAccrualRows,
   } = useAccrualRevenue(
     range === "today" ? locationId : null,
-    trailingWeekFrom, today, trailingWeekPriorFrom, trailingWeekPriorTo
+    trailingWeekFrom, today, trailingWeekPriorFrom, trailingWeekPriorTo, gingrLiveRows
   );
 
   // L1: When range is "today", show past week as chart with today as highlighted final point
@@ -1117,13 +1121,13 @@ function DashboardContent({
 
       if (error) { console.error("Receipt fetch error:", error); setReceiptLoading(false); return; }
 
-      // Supplement with live Gingr data for today (daycare/day-boarding are same-day
-      // and may not be in Supabase yet if the sync hasn't run today)
+      // Supplement with cached live Gingr data for today (daycare/day-boarding
+      // are same-day and may not be in Supabase yet if the sync hasn't run today).
+      // gingrLiveRows comes from the background 60s polling cache — no await needed.
       const todayD = new Date().toISOString().split("T")[0];
       let rawRes = supabaseRes;
-      if (dateTo >= todayD) {
-        const liveRows = await fetchTodayGingrReservations(locationId, todayD);
-        rawRes = mergeGingrLive(supabaseRes, liveRows);
+      if (dateTo >= todayD && gingrLiveRows && gingrLiveRows.length > 0) {
+        rawRes = mergeGingrLive(supabaseRes, gingrLiveRows);
       }
 
       const boarding = [];
@@ -1280,7 +1284,7 @@ function DashboardContent({
     } finally {
       setReceiptLoading(false);
     }
-  }, [locationId, dateFrom, dateTo]);
+  }, [locationId, dateFrom, dateTo, gingrLiveRows]);
 
   // Fetch receipt data when modal opens
   useEffect(() => {
