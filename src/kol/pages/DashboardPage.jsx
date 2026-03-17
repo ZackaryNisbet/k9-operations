@@ -14,6 +14,7 @@ import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import { useDashboardMetrics } from "../../hooks/useDashboardMetrics";
 import { useAccrualRevenue } from "../../hooks/useAccrualRevenue";
 import { supabase } from "../../supabaseClient";
+import { fetchTodayGingrReservations, mergeGingrLive } from "../../shared/gingrLive";
 import { useLazyCompute, useSectionVisibility } from "../../hooks/useLazyCompute";
 import { computeOpsProgress, computeServiceMetrics, computeLifecycleMetrics } from "../../shared/metricsHelpers";
 
@@ -1106,7 +1107,7 @@ function DashboardContent({
     try {
       // Fetch reservations that overlap the selected date range
       // Use OR for end_date to include daycare/day boarding where end_date may be NULL
-      const { data: rawRes, error } = await supabase
+      const { data: supabaseRes, error } = await supabase
         .from("gingr_reservations")
         .select("gingr_id,animal_name,owner_first_name,owner_last_name,reservation_type_name,start_date,end_date,deposit,transaction,cancelled_date,services")
         .eq("location_id", locationId)
@@ -1115,6 +1116,15 @@ function DashboardContent({
         .is("cancelled_date", null);
 
       if (error) { console.error("Receipt fetch error:", error); setReceiptLoading(false); return; }
+
+      // Supplement with live Gingr data for today (daycare/day-boarding are same-day
+      // and may not be in Supabase yet if the sync hasn't run today)
+      const todayD = new Date().toISOString().split("T")[0];
+      let rawRes = supabaseRes;
+      if (dateTo >= todayD) {
+        const liveRows = await fetchTodayGingrReservations(locationId, todayD);
+        rawRes = mergeGingrLive(supabaseRes, liveRows);
+      }
 
       const boarding = [];
       let boardingTotal = 0;
