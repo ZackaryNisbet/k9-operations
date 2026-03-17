@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { supabase } from "../supabaseClient";
 import { computeAccrualByDay, computeAccrualTotals } from "../shared/accrualEngine";
 import { addDays } from "../shared/theme";
+import { fetchTodayGingrReservations, mergeGingrLive } from "../shared/gingrLive";
 
 /**
  * useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo)
@@ -41,7 +42,8 @@ export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo
       // Boarding: start_date <= latest AND end_date >= earliest (overlap check)
       // Daycare/Day Boarding: start_date within range (end_date may be NULL or same-day)
       // Use OR to include records where end_date >= earliest OR end_date is null
-      const { data: rawRes, error } = await supabase
+      // Fetch from Supabase (synced data)
+      const { data: supabaseRes, error } = await supabase
         .from("gingr_reservations")
         .select("gingr_id,animal_name,owner_first_name,owner_last_name,reservation_type_name,start_date,end_date,deposit,transaction,cancelled_date,services")
         .eq("location_id", locationId)
@@ -51,6 +53,17 @@ export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo
 
       if (fetchId !== fetchIdRef.current) return; // stale
       if (error) { console.error("Accrual fetch error:", error); setLoading(false); return; }
+
+      // If the date range includes today, also fetch live Gingr data.
+      // Daycare/day-boarding are same-day reservations that only exist in Supabase
+      // once the sync has run. Fetching from Gingr ensures they appear immediately.
+      const today = new Date().toISOString().split("T")[0];
+      let rawRes = supabaseRes;
+      if (latest >= today) {
+        const liveRows = await fetchTodayGingrReservations(locationId, today);
+        if (fetchId !== fetchIdRef.current) return; // stale
+        rawRes = mergeGingrLive(supabaseRes, liveRows);
+      }
 
       // Compute current period
       const currentDayMap = computeAccrualByDay(rawRes, dateFrom, dateTo);
