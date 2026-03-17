@@ -698,7 +698,7 @@ export default function LandingPage() {
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 32 }} className="nav-links">
-            {['Features', 'Demos', 'How It Works'].map(item => (
+            {['Demos', 'How It Works', 'Pricing'].map(item => (
               <button key={item} onClick={() => scrollTo(item.toLowerCase().replace(/ /g, '-'))} style={{
                 background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: C.textSec,
                 padding: '4px 0', transition: 'color 0.2s',
@@ -722,7 +722,7 @@ export default function LandingPage() {
         {/* Mobile menu */}
         {mobileMenuOpen && (
           <div style={{ padding: '16px 24px', background: '#fff', borderTop: `1px solid ${C.border}` }} className="mobile-menu">
-            {['Features', 'Demos', 'How It Works'].map(item => (
+            {['Demos', 'How It Works', 'Pricing'].map(item => (
               <button key={item} onClick={() => scrollTo(item.toLowerCase().replace(/ /g, '-'))} style={{
                 display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 'none',
                 padding: '12px 0', fontSize: 15, fontWeight: 600, color: C.text, cursor: 'pointer',
@@ -800,12 +800,12 @@ export default function LandingPage() {
               boxShadow: '0 4px 14px rgba(20,83,45,0.25)',
               transition: 'all 0.2s',
             }}>Get Started</a>
-            <a href="#features" style={{
+            <a href="#demos" style={{
               padding: '14px 32px', borderRadius: 10, background: '#fff', color: C.pri,
               fontSize: 15, fontWeight: 700, textDecoration: 'none',
               border: `1.5px solid ${C.border}`,
               transition: 'all 0.2s',
-            }}>See Features</a>
+            }}>See Demos</a>
           </div>
         </div>
       </section>
@@ -828,7 +828,97 @@ export default function LandingPage() {
       </section>
 
 
-      {/* ─── DATA FLOW ANIMATION ─── */}
+      {/* ─── PRODUCT DEMOS ─── */}
+      <section id="demos" style={{ padding: '80px 24px', background: '#FAFAFA' }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto', textAlign: 'center' }}>
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            padding: '6px 14px', borderRadius: 100,
+            background: C.acc + '15', marginBottom: 16,
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.accDk, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Product Demos</span>
+          </div>
+          <h2 style={{ fontSize: 'clamp(28px, 4vw, 44px)', fontWeight: 800, color: C.text, margin: '0 0 12px', letterSpacing: '-0.02em' }}>
+            See it in action
+          </h2>
+          <p style={{ fontSize: 17, color: C.textSec, maxWidth: 600, margin: '0 auto 40px', lineHeight: 1.6 }}>
+            Real data. Real workflows.
+          </p>
+
+          {/* Demo Selector Tabs */}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 32 }}>
+            {[
+              { label: 'Data Flow', color: '#6366F1' },
+              { label: 'Dashboard', color: C.pri },
+              { label: 'Lifecycle CRM', color: C.pri },
+              { label: 'Operations Hub', color: '#0EA5E9' },
+              { label: 'EOD Notes', color: '#D97706' },
+              { label: 'Inventory', color: '#8B5CF6' },
+              { label: 'Checkout TV', color: '#84CC16' },
+            ].map((demo, i) => (
+              <button
+                key={i}
+                onClick={() => setActiveDemo(i)}
+                style={{
+                  padding: '8px 18px', borderRadius: 100, border: 'none', cursor: 'pointer',
+                  fontSize: 13, fontWeight: activeDemo === i ? 700 : 500,
+                  background: activeDemo === i ? demo.color : '#fff',
+                  color: activeDemo === i ? '#fff' : C.textSec,
+                  boxShadow: activeDemo === i ? `0 2px 12px ${demo.color}30` : '0 1px 3px rgba(0,0,0,0.08)',
+                  transition: 'all 0.25s ease',
+                }}
+              >
+                {demo.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Video Player */}
+          <div style={{
+            maxWidth: 960, margin: '0 auto', borderRadius: 16, overflow: 'hidden',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.15), 0 4px 16px rgba(0,0,0,0.08)',
+            border: `1px solid ${C.border}`,
+            background: '#000',
+          }}>
+            <video
+              key={activeDemo}
+              autoPlay
+              loop
+              muted
+              playsInline
+              style={{ width: '100%', display: 'block' }}
+            >
+              <source src={[
+                '/demos/data-flow.mp4',
+                '/demos/dashboard.mp4',
+                '/demos/customer-lifecycle.mp4',
+                '/demos/operations-hub.mp4',
+                '/demos/eod-notes.mp4',
+                '/demos/weekly-inventory.mp4',
+                '/demos/checkout-tv.mp4',
+              ][activeDemo]} type="video/mp4" />
+            </video>
+          </div>
+
+          {/* Demo Description */}
+          <div style={{ maxWidth: 600, margin: '24px auto 0', textAlign: 'center' }}>
+            <p style={{ fontSize: 14, color: C.textSec, lineHeight: 1.6 }}>
+              {[
+                'Gingr and Ignite data flows into K9 Operations, which distributes intelligence across your entire operation.',
+                'Real-time dashboard with KPIs, revenue charts, and occupancy metrics — all auto-calculated from your Gingr data.',
+                'Automatic lifecycle staging with follow-up logging, Ignite call tracking integration, and lead-to-booking conversion.',
+                'Six operational checklists plus smart room cleaning with automated status tracking from reservation data.',
+                'Staff notes with @mention dog tagging — notes automatically link to client profiles for persistent history.',
+                'Weekly supply tracking with par levels, restock alerts, and cost-per-dog-day analytics.',
+                'Fullscreen facility display showing every checked-in dog with photos, breeds, owners, and room assignments.',
+              ][activeDemo]}
+            </p>
+          </div>
+        </div>
+      </section>
+
+
+      {/* ─── HOW IT WORKS ─── */}
       <section id="how-it-works" style={{ padding: '80px 24px', background: '#fff' }}>
         <div style={{ maxWidth: 1200, margin: '0 auto', textAlign: 'center' }}>
           <div style={{
@@ -870,233 +960,8 @@ export default function LandingPage() {
       </section>
 
 
-      {/* ─── FEATURES ─── */}
-      <section id="features" style={{ padding: '40px 24px 0', background: C.bg }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-
-          {/* Customer Lifecycle CRM */}
-          <FeatureSection
-            icon="lifecycle"
-            title="Customer Lifecycle CRM"
-            subtitle="Relationship Management"
-            accentColor={C.pri}
-            description="Every client automatically flows through four stages — Leads, Active, Lapsed, and Cold — based on their real booking behavior. No manual tagging required."
-            bullets={[
-              'Leads stage auto-captures leads from tours & evaluations with follow-up tracking',
-              'Active stage includes all clients with recent bookings — daycare, boarding, or both',
-              'Lapsed triggers when configurable lapse thresholds are exceeded (90 days daycare, 180 days boarding)',
-              'Cold stage for manually flagged leads with one-click Revive to re-engage',
-              'Advanced filtering: 17+ filter fields across client info, activity, services, and lifecycle stage',
-              'Full contact management with outreach logging, follow-up dates, and custom notes',
-            ]}
-            reversed={false}
-          />
-
-          {/* Operations Hub */}
-          <FeatureSection
-            icon="ops"
-            title="Operations Hub"
-            subtitle="Daily Facility Management"
-            accentColor="#0EA5E9"
-            description="A centralized command center for every daily task your facility needs to run. Six configurable checklists plus automated service reports derived from real reservation data."
-            bullets={[
-              'Opening, Front-End, Back-End, and Closing checklists with completion tracking',
-              'Room Cleaning with intelligent room assignment — clean, disinfect, and awaiting-checkout states',
-              'Bathing Report auto-generated from in-house reservations with "Bath" in services',
-              'Pamper Package Plus for Luxury Suite dogs and add-on purchasers',
-              'Private Play scheduling — 3 sessions per dog with time tracking',
-              'EOD Report with daily notes, incidents, and summary analytics (weekly + MTD trends)',
-            ]}
-            reversed={true}
-          />
-
-          {/* Checkout TV */}
-          <FeatureSection
-            icon="tv"
-            title="Checkout TV"
-            subtitle="Real-Time Facility Display"
-            accentColor="#84CC16"
-            description="A fullscreen display designed for staff to quickly identify dogs. Shows every checked-in dog with their photo, breed, owner name, and room number — updating in real time."
-            bullets={[
-              'Auto-populates from checked-in daycare and boarding reservations',
-              'Dog photos, breed info, and owner last name displayed per card',
-              'Room numbers from intelligent assignment algorithm',
-              'Daycare and boarding sections with live count stats',
-              'Real-time clock and auto-refresh — no manual interaction needed',
-              'One-click exit back to Operations Hub',
-            ]}
-            reversed={false}
-          />
-
-          {/* Reports */}
-          <FeatureSection
-            icon="reports"
-            title="Natural Language Reports"
-            subtitle="Ask Anything About Your Data"
-            accentColor="#8B5CF6"
-            description='Type a question like "Revenue by suite type" or "Top 10 clients by spend" and get instant charts and tables. No SQL, no spreadsheets — just answers.'
-            bullets={[
-              '14 pre-built query suggestions across Revenue, Clients, Operations, and Analysis',
-              'Custom date ranges: week, month, quarter, year, and custom',
-              'Compare mode for period-over-period analysis',
-              'Cash and accrual revenue views with sortable transaction tables',
-              'RevPAR, occupancy rates, average length of stay, and add-on attach rates',
-            ]}
-            reversed={true}
-          />
-        </div>
-      </section>
-
-
-      {/* ─── WHAT SETS US APART ─── */}
-      <section style={{ padding: '80px 24px', background: '#fff' }}>
-        <div style={{ maxWidth: 1000, margin: '0 auto', textAlign: 'center' }}>
-          <h2 style={{ fontSize: 'clamp(28px, 4vw, 40px)', fontWeight: 800, color: C.text, margin: '0 0 12px', letterSpacing: '-0.02em' }}>
-            Built different
-          </h2>
-          <p style={{ fontSize: 17, color: C.textSec, maxWidth: 520, margin: '0 auto 48px', lineHeight: 1.6 }}>
-            K9 Operations isn't a generic CRM bolted onto a pet app. It's purpose-built
-            infrastructure that sits on top of your existing Gingr PMS.
-          </p>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
-            {[
-              {
-                icon: 'sync', title: 'Gingr-Native',
-                desc: 'Direct API integration syncs owners, animals, reservations, and transactions. No CSV imports, no duplicate entry.',
-              },
-              {
-                icon: 'lifecycle', title: 'Automatic Lifecycle Staging',
-                desc: 'Clients move between Leads → Active → Lapsed → Cold based on real booking behavior, not manual tagging.',
-              },
-              {
-                icon: 'ops', title: 'Reservation-Driven Operations',
-                desc: 'Bathing reports, pamper lists, and room assignments generate automatically from today\'s checked-in reservations.',
-              },
-              {
-                icon: 'shield', title: 'Role-Based Permissions',
-                desc: 'Admin, manager, and staff roles with granular feature-level access control. Sensitive data stays protected.',
-              },
-              {
-                icon: 'funnel', title: 'Sales Funnel Tracking',
-                desc: 'Tour-to-booking and eval-to-booking conversion funnels with automated follow-up scheduling.',
-              },
-              {
-                icon: 'star', title: 'Multi-Location Ready',
-                desc: 'Enterprise tier supports operations matrix, cross-location attendance, and centralized user management.',
-              },
-            ].map((card, i) => (
-              <div key={i} style={{
-                padding: 28, borderRadius: 16, background: C.surfaceAlt, border: `1px solid ${C.borderLight}`,
-                textAlign: 'left', transition: 'all 0.2s',
-              }}>
-                <div style={{
-                  width: 40, height: 40, borderRadius: 10, background: C.pri + '08',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16,
-                }}>
-                  <Icon name={card.icon} size={20} color={C.pri} />
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 8 }}>{card.title}</div>
-                <div style={{ fontSize: 14, color: C.textSec, lineHeight: 1.6 }}>{card.desc}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-
-      {/* ─── PRODUCT DEMOS ─── */}
-      <section id="demos" style={{ padding: '80px 24px', background: '#FAFAFA' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', textAlign: 'center' }}>
-          <div style={{
-            display: 'inline-flex', alignItems: 'center', gap: 8,
-            padding: '6px 14px', borderRadius: 100,
-            background: C.acc + '15', marginBottom: 16,
-          }}>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.accDk, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Product Demos</span>
-          </div>
-          <h2 style={{ fontSize: 'clamp(28px, 4vw, 44px)', fontWeight: 800, color: C.text, margin: '0 0 12px', letterSpacing: '-0.02em' }}>
-            See it in action
-          </h2>
-          <p style={{ fontSize: 17, color: C.textSec, maxWidth: 600, margin: '0 auto 40px', lineHeight: 1.6 }}>
-            Real data. Real workflows.
-          </p>
-
-          {/* Demo Selector Tabs */}
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 32 }}>
-            {[
-              { label: 'Dashboard', color: C.pri },
-              { label: 'Lifecycle CRM', color: C.pri },
-              { label: 'Operations Hub', color: '#0EA5E9' },
-              { label: 'EOD Notes', color: '#D97706' },
-              { label: 'Inventory', color: '#8B5CF6' },
-              { label: 'Checkout TV', color: '#84CC16' },
-              { label: 'Data Flow', color: '#6366F1' },
-            ].map((demo, i) => (
-              <button
-                key={i}
-                onClick={() => setActiveDemo(i)}
-                style={{
-                  padding: '8px 18px', borderRadius: 100, border: 'none', cursor: 'pointer',
-                  fontSize: 13, fontWeight: activeDemo === i ? 700 : 500,
-                  background: activeDemo === i ? demo.color : '#fff',
-                  color: activeDemo === i ? '#fff' : C.textSec,
-                  boxShadow: activeDemo === i ? `0 2px 12px ${demo.color}30` : '0 1px 3px rgba(0,0,0,0.08)',
-                  transition: 'all 0.25s ease',
-                }}
-              >
-                {demo.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Video Player */}
-          <div style={{
-            maxWidth: 960, margin: '0 auto', borderRadius: 16, overflow: 'hidden',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.15), 0 4px 16px rgba(0,0,0,0.08)',
-            border: `1px solid ${C.border}`,
-            background: '#000',
-          }}>
-            <video
-              key={activeDemo}
-              autoPlay
-              loop
-              muted
-              playsInline
-              style={{ width: '100%', display: 'block' }}
-            >
-              <source src={[
-                '/demos/dashboard.mp4',
-                '/demos/customer-lifecycle.mp4',
-                '/demos/operations-hub.mp4',
-                '/demos/eod-notes.mp4',
-                '/demos/weekly-inventory.mp4',
-                '/demos/checkout-tv.mp4',
-                '/demos/data-flow.mp4',
-              ][activeDemo]} type="video/mp4" />
-            </video>
-          </div>
-
-          {/* Demo Description */}
-          <div style={{ maxWidth: 600, margin: '24px auto 0', textAlign: 'center' }}>
-            <p style={{ fontSize: 14, color: C.textSec, lineHeight: 1.6 }}>
-              {[
-                'Real-time dashboard with KPIs, revenue charts, and occupancy metrics — all auto-calculated from your Gingr data.',
-                'Automatic lifecycle staging with follow-up logging, Ignite call tracking integration, and lead-to-booking conversion.',
-                'Six operational checklists plus smart room cleaning with automated status tracking from reservation data.',
-                'Staff notes with @mention dog tagging — notes automatically link to client profiles for persistent history.',
-                'Weekly supply tracking with par levels, restock alerts, and cost-per-dog-day analytics.',
-                'Fullscreen facility display showing every checked-in dog with photos, breeds, owners, and room assignments.',
-                'Gingr and Ignite data flows into K9 Operations, which distributes intelligence across your entire operation.',
-              ][activeDemo]}
-            </p>
-          </div>
-        </div>
-      </section>
-
-
       {/* ─── PRODUCT TIERS ─── */}
-      <section style={{ padding: '80px 24px', background: C.bg }}>
+      <section id="pricing" style={{ padding: '80px 24px', background: C.bg }}>
         <div style={{ maxWidth: 900, margin: '0 auto', textAlign: 'center' }}>
           <h2 style={{ fontSize: 'clamp(28px, 4vw, 40px)', fontWeight: 800, color: C.text, margin: '0 0 12px', letterSpacing: '-0.02em' }}>
             Two tiers. One mission.
@@ -1167,9 +1032,9 @@ export default function LandingPage() {
             <div style={{ display: 'flex', gap: 48, flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 12 }}>Product</div>
-                {['Features', 'Sign In'].map((l, i) => (
+                {['Demos', 'Sign In'].map((l, i) => (
                   <div key={i} style={{ marginBottom: 8 }}>
-                    <a href={l === 'Sign In' ? '/login' : '#features'} style={{
+                    <a href={l === 'Sign In' ? '/login' : '#demos'} style={{
                       fontSize: 14, color: C.textSec, textDecoration: 'none',
                     }}>{l}</a>
                   </div>
