@@ -840,6 +840,306 @@ async function syncImmunizationTypes(
   return { synced: types.length };
 }
 
+// ─── DE Expansion Sync Functions ──────────────────────────────────────────
+
+async function syncFeedingSchedules(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string
+) {
+  // Get all animals for this location from gingr_animals
+  const { data: animals, error: fetchErr } = await supabase
+    .from("gingr_animals")
+    .select("gingr_id, name")
+    .eq("location_id", locationId);
+
+  if (fetchErr) throw new Error(`Feeding fetch animals error: ${fetchErr.message}`);
+  if (!animals || animals.length === 0) return { synced: 0, errors: 0 };
+
+  let total = 0;
+  let errorCount = 0;
+
+  // Process in batches of 10 with 100ms delay between batches
+  for (let i = 0; i < animals.length; i += 10) {
+    const batch = animals.slice(i, i + 10);
+    const results = await Promise.all(
+      batch.map(async (animal: any) => {
+        try {
+          const result = await gingrFetch(subdomain, "get_feeding_info", apiKey, "GET", {
+            animal_id: String(animal.gingr_id),
+          });
+          return { animalId: animal.gingr_id, animalName: animal.name, data: result };
+        } catch (err: any) {
+          console.error(`Feeding fetch error for animal ${animal.gingr_id}:`, err.message);
+          return { animalId: animal.gingr_id, animalName: animal.name, data: null, error: true };
+        }
+      })
+    );
+
+    const rows: any[] = [];
+    for (const { animalId, animalName, data, error } of results) {
+      if (error || data === null) {
+        errorCount++;
+        continue;
+      }
+      rows.push({
+        location_id: locationId,
+        gingr_animal_id: Number(animalId),
+        animal_name: animalName || null,
+        feeding_info: data,
+        synced_at: new Date().toISOString(),
+      });
+    }
+
+    if (rows.length > 0) {
+      const { error: upsertErr } = await supabase
+        .from("gingr_feeding_schedules")
+        .upsert(rows, { onConflict: "location_id,gingr_animal_id" });
+      if (upsertErr) throw new Error(`Feeding upsert error: ${upsertErr.message}`);
+      total += rows.length;
+    }
+
+    // Rate limit delay between batches
+    if (i + 10 < animals.length) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  return { synced: total, errors: errorCount };
+}
+
+async function syncMedications(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string
+) {
+  const { data: animals, error: fetchErr } = await supabase
+    .from("gingr_animals")
+    .select("gingr_id, name")
+    .eq("location_id", locationId);
+
+  if (fetchErr) throw new Error(`Medications fetch animals error: ${fetchErr.message}`);
+  if (!animals || animals.length === 0) return { synced: 0, errors: 0 };
+
+  let total = 0;
+  let errorCount = 0;
+
+  for (let i = 0; i < animals.length; i += 10) {
+    const batch = animals.slice(i, i + 10);
+    const results = await Promise.all(
+      batch.map(async (animal: any) => {
+        try {
+          const result = await gingrFetch(subdomain, "get_medication_info", apiKey, "GET", {
+            animal_id: String(animal.gingr_id),
+          });
+          return { animalId: animal.gingr_id, animalName: animal.name, data: result };
+        } catch (err: any) {
+          console.error(`Medication fetch error for animal ${animal.gingr_id}:`, err.message);
+          return { animalId: animal.gingr_id, animalName: animal.name, data: null, error: true };
+        }
+      })
+    );
+
+    const rows: any[] = [];
+    for (const { animalId, animalName, data, error } of results) {
+      if (error || data === null) {
+        errorCount++;
+        continue;
+      }
+      rows.push({
+        location_id: locationId,
+        gingr_animal_id: Number(animalId),
+        animal_name: animalName || null,
+        medication_info: data,
+        synced_at: new Date().toISOString(),
+      });
+    }
+
+    if (rows.length > 0) {
+      const { error: upsertErr } = await supabase
+        .from("gingr_medications")
+        .upsert(rows, { onConflict: "location_id,gingr_animal_id" });
+      if (upsertErr) throw new Error(`Medication upsert error: ${upsertErr.message}`);
+      total += rows.length;
+    }
+
+    if (i + 10 < animals.length) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  return { synced: total, errors: errorCount };
+}
+
+async function syncAnimalIcons(
+  supabase: any,
+  _subdomain: string,
+  _apiKey: string,
+  locationId: string
+) {
+  // Read image_url from gingr_animals (already synced — no API call needed)
+  const { data: animals, error: fetchErr } = await supabase
+    .from("gingr_animals")
+    .select("gingr_id, image_url")
+    .eq("location_id", locationId)
+    .not("image_url", "is", null);
+
+  if (fetchErr) throw new Error(`Animal icons fetch error: ${fetchErr.message}`);
+  if (!animals || animals.length === 0) return { synced: 0 };
+
+  const rows = animals.map((a: any) => ({
+    location_id: locationId,
+    gingr_animal_id: Number(a.gingr_id),
+    image_url: a.image_url,
+    synced_at: new Date().toISOString(),
+  }));
+
+  // Batch upsert in chunks of 500
+  let total = 0;
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500);
+    const { error: upsertErr } = await supabase
+      .from("gingr_animal_icons")
+      .upsert(chunk, { onConflict: "location_id,gingr_animal_id" });
+    if (upsertErr) throw new Error(`Animal icon upsert error: ${upsertErr.message}`);
+    total += chunk.length;
+  }
+
+  return { synced: total };
+}
+
+async function syncVets(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string
+) {
+  const result = await gingrFetch(subdomain, "get_vets", apiKey);
+  const vets = Array.isArray(result) ? result : result.data || [];
+
+  if (vets.length === 0) return { synced: 0 };
+
+  const rows = vets.map((v: any) => ({
+    location_id: locationId,
+    gingr_vet_id: Number(v.id || v.vet_id),
+    vet_data: v,
+    synced_at: new Date().toISOString(),
+  }));
+
+  // Batch upsert in chunks of 500
+  let total = 0;
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500);
+    const { error } = await supabase
+      .from("gingr_vets")
+      .upsert(chunk, { onConflict: "location_id,gingr_vet_id" });
+    if (error) throw new Error(`Vet upsert error: ${error.message}`);
+    total += chunk.length;
+  }
+
+  return { synced: total };
+}
+
+async function syncClientNotes(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string
+) {
+  // Get all owners for this location
+  const { data: owners, error: fetchErr } = await supabase
+    .from("gingr_owners")
+    .select("gingr_id")
+    .eq("location_id", locationId);
+
+  if (fetchErr) throw new Error(`Client notes fetch owners error: ${fetchErr.message}`);
+  if (!owners || owners.length === 0) return { synced: 0, errors: 0 };
+
+  let total = 0;
+  let errorCount = 0;
+
+  // Process in batches of 10 with 100ms delay between batches
+  for (let i = 0; i < owners.length; i += 10) {
+    const batch = owners.slice(i, i + 10);
+    const results = await Promise.all(
+      batch.map(async (owner: any) => {
+        try {
+          const result = await gingrFetch(subdomain, "owner", apiKey, "GET", {
+            id: String(owner.gingr_id),
+          });
+          const ownerData = result.data || result;
+          return { ownerId: owner.gingr_id, notes: ownerData?.notes || null };
+        } catch (err: any) {
+          console.error(`Client notes fetch error for owner ${owner.gingr_id}:`, err.message);
+          return { ownerId: owner.gingr_id, notes: null, error: true };
+        }
+      })
+    );
+
+    const rows: any[] = [];
+    for (const { ownerId, notes, error } of results) {
+      if (error) {
+        errorCount++;
+        continue;
+      }
+      rows.push({
+        location_id: locationId,
+        gingr_owner_id: Number(ownerId),
+        notes: notes ? (typeof notes === "string" ? { text: notes } : notes) : {},
+        synced_at: new Date().toISOString(),
+      });
+    }
+
+    if (rows.length > 0) {
+      const { error: upsertErr } = await supabase
+        .from("gingr_client_notes")
+        .upsert(rows, { onConflict: "location_id,gingr_owner_id" });
+      if (upsertErr) throw new Error(`Client notes upsert error: ${upsertErr.message}`);
+      total += rows.length;
+    }
+
+    if (i + 10 < owners.length) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  return { synced: total, errors: errorCount };
+}
+
+async function syncSubscriptions(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string
+) {
+  const result = await gingrFetch(subdomain, "get_subscriptions", apiKey);
+  const subscriptions = Array.isArray(result) ? result : result.data || [];
+
+  if (subscriptions.length === 0) return { synced: 0 };
+
+  const rows = subscriptions.map((s: any) => ({
+    location_id: locationId,
+    gingr_subscription_id: Number(s.id || s.subscription_id),
+    subscription_data: s,
+    synced_at: new Date().toISOString(),
+  }));
+
+  // Batch upsert in chunks of 500
+  let total = 0;
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500);
+    const { error } = await supabase
+      .from("gingr_subscriptions")
+      .upsert(chunk, { onConflict: "location_id,gingr_subscription_id" });
+    if (error) throw new Error(`Subscription upsert error: ${error.message}`);
+    total += chunk.length;
+  }
+
+  return { synced: total };
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 function getDateChunks(start: string, end: string, maxDays: number): [string, string][] {
@@ -1014,6 +1314,86 @@ Deno.serve(async (req: Request) => {
           checked_in_count: checkedIn.length,
           checked_out_count: checkedOutCount,
           duration_ms: Date.now() - startTime,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── DE Expansion mode: sync supplemental data tables ─────────────────
+    if (sync_type === "de-expansion") {
+      const deStartTime = Date.now();
+      const deResults: Record<string, any> = {};
+      const deEntities = entities || [
+        "feeding_schedules",
+        "medications",
+        "animal_icons",
+        "vets",
+        "client_notes",
+        "subscriptions",
+      ];
+
+      for (const entity of deEntities) {
+        await updateSyncState(supabase, location_id, `de_${entity}`, {
+          status: "syncing",
+          last_sync_at: new Date().toISOString(),
+        });
+
+        try {
+          switch (entity) {
+            case "feeding_schedules":
+              deResults.feeding_schedules = await syncFeedingSchedules(
+                supabase, subdomain, api_key, location_id
+              );
+              break;
+            case "medications":
+              deResults.medications = await syncMedications(
+                supabase, subdomain, api_key, location_id
+              );
+              break;
+            case "animal_icons":
+              deResults.animal_icons = await syncAnimalIcons(
+                supabase, subdomain, api_key, location_id
+              );
+              break;
+            case "vets":
+              deResults.vets = await syncVets(
+                supabase, subdomain, api_key, location_id
+              );
+              break;
+            case "client_notes":
+              deResults.client_notes = await syncClientNotes(
+                supabase, subdomain, api_key, location_id
+              );
+              break;
+            case "subscriptions":
+              deResults.subscriptions = await syncSubscriptions(
+                supabase, subdomain, api_key, location_id
+              );
+              break;
+          }
+
+          await updateSyncState(supabase, location_id, `de_${entity}`, {
+            status: "idle",
+            records_synced: deResults[entity]?.synced || 0,
+            sync_duration_ms: Date.now() - deStartTime,
+            error_message: null,
+          });
+        } catch (err: any) {
+          await updateSyncState(supabase, location_id, `de_${entity}`, {
+            status: "error",
+            error_message: err.message,
+          });
+          deResults[entity] = { error: err.message };
+        }
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          sync_type: "de-expansion",
+          location_id,
+          duration_ms: Date.now() - deStartTime,
+          results: deResults,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
