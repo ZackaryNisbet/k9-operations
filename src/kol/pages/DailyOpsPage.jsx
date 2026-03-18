@@ -151,10 +151,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, refreshBy: userName } }));
     } else if (field === "disinfect" && val === true) {
       setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, disinfectBy: userName } }));
-    } else if (field === "asNeeded" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededBy: userName } }));
-    } else if (field === "asNeededDone" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededDoneBy: userName } }));
+    } else if (field === "setupDone" && val === true) {
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, setupDoneBy: userName } }));
+    } else if (field === "setupBowl") {
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val } }));
     } else {
       setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val } }));
     }
@@ -306,11 +306,11 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const prevEntry = allOps.find(e => e.id === prevEntryId);
     const prevItems = prevEntry ? (prevEntry.items || {}) : {};
 
-    // Figure out which rooms needed disinfect / as-needed yesterday
+    // Figure out which rooms needed disinfect yesterday
     const prevBoardingCheckedOut = (data.reservations || []).filter(r => r.type === "boarding" && r.checkOut === prevDate && r.status === "checked-out");
     const prevBoardingToday = (data.reservations || []).filter(r => r.type === "boarding" && r.checkIn <= prevDate && r.checkOut >= prevDate && (r.status === "checked-in" || r.status === "upcoming" || r.status === "checked-out"));
 
-    // Build a map: room → { missedDisinfect, missedAsNeeded }
+    // Build a map: room → { missedDisinfect }
     const missedMap = {};
     Object.keys(allRooms).forEach(rt => {
       (allRooms[rt] || []).forEach(rm => {
@@ -319,25 +319,28 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         const prevActiveRes = prevBoardingToday.find(r => r.room === rm);
         const prevIsLastDay = prevActiveRes && prevActiveRes.checkOut === prevDate;
         const prevNeededDisinfect = !!prevCoRes || !!(prevActiveRes && prevIsLastDay);
-        const prevAsNeededFlagged = !!prevRi.asNeeded;
-        const prevAsNeededCompleted = !!prevRi.asNeededDone;
 
         let missedDisinfect = false;
-        let missedAsNeeded = false;
 
         // Disinfect missed: was needed yesterday but not done
         if (prevNeededDisinfect && !prevRi.disinfect) {
           missedDisinfect = true;
         }
-        // As-needed missed: was flagged yesterday but not marked done
-        if (prevAsNeededFlagged && !prevAsNeededCompleted) {
-          missedAsNeeded = true;
-        }
 
-        if (missedDisinfect || missedAsNeeded) {
-          missedMap[rm] = { missedDisinfect, missedAsNeeded };
+        if (missedDisinfect) {
+          missedMap[rm] = { missedDisinfect };
         }
       });
+    });
+
+    // ─── Setup data from computed_items ───
+    const rcEntry = allOps.find(e => e.id === `ops_room_cleaning_${viewDate}`);
+    const computedRooms = rcEntry?.computed_items?.rooms || [];
+    const setupRoomMap = {};
+    computedRooms.forEach(cr => {
+      if (cr.needsSetup) {
+        setupRoomMap[cr.dogName?.toLowerCase()] = cr;
+      }
     });
 
     // Count occupied rooms and rooms needing action
@@ -356,6 +359,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     });
     const totalNeeded = totalRefresh + totalDisinfect;
     const totalDone = doneRefresh + doneDisinfect;
+
+    // Setup counts from computed_items
+    const totalSetups = computedRooms.filter(cr => cr.needsSetup).length;
+    const doneSetups = computedRooms.filter(cr => cr.needsSetup && roomItems[cr.room]?.setupDone).length;
     return (
       <div>
         {/* Missed cleaning alert banner */}
@@ -365,8 +372,6 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
             <div style={{ fontSize: 13, fontWeight: 700, color: "#DC2626" }}>Missed Cleaning from {new Date(prevDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</div>
             <div style={{ fontSize: 11, color: "#DC2626", opacity: 0.8 }}>
               {Object.values(missedMap).filter(m => m.missedDisinfect).length > 0 && `${Object.values(missedMap).filter(m => m.missedDisinfect).length} full disinfect${Object.values(missedMap).filter(m => m.missedDisinfect).length > 1 ? "s" : ""} missed`}
-              {Object.values(missedMap).filter(m => m.missedDisinfect).length > 0 && Object.values(missedMap).filter(m => m.missedAsNeeded).length > 0 && " · "}
-              {Object.values(missedMap).filter(m => m.missedAsNeeded).length > 0 && `${Object.values(missedMap).filter(m => m.missedAsNeeded).length} as-needed missed`}
             </div>
           </div>
         </div>}
@@ -383,6 +388,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
           {totalDisinfect > 0 && <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
             <span style={{ fontSize: 20, fontWeight: 800, color: C.dan }}>{doneDisinfect}/{totalDisinfect}</span>
             <span style={{ fontSize: 12, color: C.textSec }}>Disinfects Done</span>
+          </div>}
+          {totalSetups > 0 && <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
+            <span style={{ fontSize: 20, fontWeight: 800, color: "#14532D" }}>{doneSetups}/{totalSetups}</span>
+            <span style={{ fontSize: 12, color: C.textSec }}>Setups Done</span>
           </div>}
         </div>
         {totalNeeded > 0 && <div style={{ marginBottom: 16 }}>
@@ -401,11 +410,11 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
             <div key={rt} style={{ marginBottom: 20 }}>
               <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>{rt} <Badge color="default" size="sm">{occupiedCount}/{rooms.length} occupied</Badge></h3>
               <Card>
-                <div style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 1fr 1fr 80px", borderBottom: `2px solid ${C.border}`, padding: "8px 12px", background: C.surfaceHover }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 1fr 1fr minmax(140px, auto)", borderBottom: `2px solid ${C.border}`, padding: "8px 12px", background: C.surfaceHover }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>ROOM</div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>ROOM REFRESH</div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>FULL DISINFECT</div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>AS NEEDED</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#14532D", textAlign: "center" }}>SETUPS</div>
                 </div>
                 {rooms.map((rm, i) => {
                   const ri = roomItems[rm] || {};
@@ -424,8 +433,13 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                   const isOccupied = !!currentRes;
                   // Checkout time: actual if checked out, or scheduled if it's checkout day
                   const coTimeDisplay = coRes ? fmtTimeShort(coRes.checkOutTime) : (isLastDay && activeRes) ? fmtTimeShort(activeRes.scheduledCheckOutTime) : null;
+                  // Setup data: match by dog name from computed_items
+                  const setupData = aDog ? setupRoomMap[aDog.toLowerCase()] : null;
+                  const hasSetup = !!setupData;
+                  const bowlSizeOptions = ["Small", "Medium", "Large"];
+                  const selectedBowl = ri.setupBowl || (setupData?.suggestedBowlSize) || "";
                   return (
-                    <div key={rm} style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 1fr 1fr 80px", padding: "8px 12px", borderBottom: i < rooms.length - 1 ? `1px solid ${C.border}` : "none", alignItems: "center", background: isOccupied ? undefined : undefined }}>
+                    <div key={rm} style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 1fr 1fr minmax(140px, auto)", padding: "8px 12px", borderBottom: i < rooms.length - 1 ? `1px solid ${C.border}` : "none", alignItems: "center" }}>
                       <div>
                         <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{rm}</span>
                         {isOccupied ? <div>
@@ -436,12 +450,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                           {canDisinfect && <div style={{ fontSize: 9, color: C.dan, fontWeight: 600, marginTop: 1 }}>{coRes.checkOutTime ? `Checked out ${fmtTimeShort(coRes.checkOutTime)}` : "Checked out"}</div>}
                           {needsRefresh && <div style={{ fontSize: 9, color: C.textMut, marginTop: 1 }}>Day {Math.ceil((new Date(viewDate + "T12:00:00") - new Date(activeRes.checkIn + "T12:00:00")) / 86400000)} of {Math.ceil((new Date(activeRes.checkOut + "T12:00:00") - new Date(activeRes.checkIn + "T12:00:00")) / 86400000)}</div>}
                           {missedMap[rm]?.missedDisinfect && <div style={{ fontSize: 10, fontWeight: 700, color: "#DC2626", marginTop: 2 }}>⚠ Full disinfect missed</div>}
-                          {missedMap[rm]?.missedAsNeeded && <div style={{ fontSize: 10, fontWeight: 700, color: "#DC2626", marginTop: 1 }}>⚠ As needed missed</div>}
                         </div> : <div>
-                          {(missedMap[rm]?.missedDisinfect || missedMap[rm]?.missedAsNeeded) ? <div>
+                          {missedMap[rm]?.missedDisinfect ? <div>
                             <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic", marginTop: 1 }}>Vacant</div>
                             {missedMap[rm]?.missedDisinfect && <div style={{ fontSize: 10, fontWeight: 700, color: "#DC2626", marginTop: 2 }}>⚠ Full disinfect missed</div>}
-                            {missedMap[rm]?.missedAsNeeded && <div style={{ fontSize: 10, fontWeight: 700, color: "#DC2626", marginTop: 1 }}>⚠ As needed missed</div>}
                           </div> : <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic", marginTop: 1 }}>Vacant</div>}
                         </div>}
                       </div>
@@ -464,11 +476,26 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                         </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
                       </div>
                       <div style={{ textAlign: "center" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                          <input type="checkbox" checked={!!ri.asNeeded} disabled={isLocked} onChange={e => toggleItem(rm, "asNeeded", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.acc }} />
-                          {ri.asNeeded && <input type="checkbox" checked={!!ri.asNeededDone} disabled={isLocked} onChange={e => toggleItem(rm, "asNeededDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.suc }} title="Mark done" />}
-                        </div>
-                        {ri.asNeeded && ri.asNeededBy && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.asNeededBy}</div>}
+                        {hasSetup ? <div>
+                          <div style={{ display: "inline-block", padding: "2px 6px", borderRadius: 4, background: "#14532D", color: "#fff", fontSize: 10, fontWeight: 700, fontFamily: "Outfit, sans-serif", marginBottom: 4 }}>{setupData.setupReason}</div>
+                          <div style={{ fontSize: 10, color: C.textSec, marginBottom: 4 }}>
+                            {setupData.dogWeight != null ? `${setupData.dogWeight} lbs` : "No weight"} — {setupData.suggestedBowlSize}
+                          </div>
+                          <select
+                            value={selectedBowl}
+                            disabled={isLocked}
+                            onChange={e => toggleItem(rm, "setupBowl", e.target.value)}
+                            style={{ fontSize: 11, padding: "2px 4px", borderRadius: 4, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontFamily: "Outfit, sans-serif", marginBottom: 4, width: "100%" }}
+                          >
+                            <option value="">Bowl size…</option>
+                            {bowlSizeOptions.map(s => <option key={s} value={s}>{s}</option>)}
+                          </select>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                            <input type="checkbox" checked={!!ri.setupDone} disabled={isLocked} onChange={e => toggleItem(rm, "setupDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: "#84CC16" }} />
+                            <span style={{ fontSize: 10, fontWeight: 700, color: ri.setupDone ? "#84CC16" : C.textMut }}>{ri.setupDone ? "Complete" : "Mark done"}</span>
+                          </div>
+                          {ri.setupDone && ri.setupDoneBy && <div style={{ fontSize: 9, color: C.textMut, marginTop: 2 }}>{ri.setupDoneBy}</div>}
+                        </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
                       </div>
                     </div>
                   );

@@ -78,11 +78,13 @@ function getRoomCleaningStats(data, date) {
   const ci = entry?.computed_items;
   if (ci && ci.rooms && ci.rooms.length > 0) {
     let totalNeeded = 0, totalDone = 0;
+    let totalSetups = 0, doneSetups = 0;
     ci.rooms.forEach(rm => {
       if (rm.needsRefresh) { totalNeeded++; if (ei[rm.room]?.refresh) totalDone++; }
       if (rm.needsDisinfect) { totalNeeded++; if (ei[rm.room]?.disinfect) totalDone++; }
+      if (rm.needsSetup) { totalSetups++; if (ei[rm.room]?.setupDone) doneSetups++; }
     });
-    return { totalNeeded, totalDone, total: totalNeeded, cleaned: totalDone };
+    return { totalNeeded, totalDone, total: totalNeeded, cleaned: totalDone, totalSetups, doneSetups };
   }
 
   // Fallback: client-side computation from reservations
