@@ -255,9 +255,20 @@ interface RoomEntry {
   cleaningType: string;
   needsDisinfect: boolean;
   needsRefresh: boolean;
+  needsSetup: boolean;
+  setupReason: string | null;
+  suggestedBowlSize: string | null;
+  dogWeight: number | null;
 }
 
-function computeRoomCleaning(bohData: any, today: string): any {
+function suggestBowlSize(weight: number | null): string {
+  if (weight == null || weight <= 0) return "Unknown — verify";
+  if (weight < 20) return "Small";
+  if (weight <= 50) return "Medium";
+  return "Large";
+}
+
+async function computeRoomCleaning(supabase: any, bohData: any, today: string): Promise<any> {
   const checkingOut = bohData?.data?.checking_out || [];
   const rooms: RoomEntry[] = [];
 
@@ -323,6 +334,135 @@ function computeRoomCleaning(bohData: any, today: string): any {
       cleaningType,
       needsDisinfect,
       needsRefresh,
+      needsSetup: false,
+      setupReason: null,
+      suggestedBowlSize: null,
+      dogWeight: null,
+    });
+  }
+
+  // ─── Setup detection ─────────────────────────────────────────────────
+  // Query today's reservations from Supabase for evaluation, dayboarding, and first-time daycare
+  const { data: todayReservations } = await supabase
+    .from("gingr_reservations")
+    .select("gingr_id, animal_gingr_id, animal_name, owner_last_name, reservation_type_name, start_date, raw_data")
+    .gte("start_date", today)
+    .lt("start_date", addDays(today, 1))
+    .is("cancelled_date", null);
+
+  const setupDogs: Array<{
+    animalGingrId: string;
+    dogName: string;
+    ownerLastName: string;
+    reason: string;
+    room: string | null;
+  }> = [];
+
+  for (const res of todayReservations || []) {
+    const typeName = res.reservation_type_name || "";
+    const t = typeName.toLowerCase();
+    let reason: string | null = null;
+
+    if (t.includes("evaluation") || t.includes("eval")) {
+      reason = "Evaluation";
+    } else if (t.includes("day boarding") || t === "day boarding") {
+      reason = "Day Boarding";
+    } else if (t.includes("daycare") || t.includes("day care")) {
+      // Check if this is the dog's first daycare reservation ever
+      const { count } = await supabase
+        .from("gingr_reservations")
+        .select("gingr_id", { count: "exact", head: true })
+        .eq("animal_gingr_id", res.animal_gingr_id)
+        .ilike("reservation_type_name", "%daycare%")
+        .lt("start_date", today)
+        .is("cancelled_date", null);
+      if (count === 0) {
+        reason = "First Daycare";
+      }
+    }
+
+    if (reason) {
+      // Try to find room assignment from raw_data (run_name from BOH)
+      const runName = res.raw_data?.run_name || null;
+      setupDogs.push({
+        animalGingrId: res.animal_gingr_id,
+        dogName: res.animal_name || "",
+        ownerLastName: res.owner_last_name || "",
+        reason,
+        room: runName,
+      });
+    }
+  }
+
+  // Fetch weights for all setup dogs
+  const setupAnimalIds = setupDogs.map((d) => d.animalGingrId).filter(Boolean);
+  let weightMap: Record<string, number | null> = {};
+  if (setupAnimalIds.length > 0) {
+    const { data: animals } = await supabase
+      .from("gingr_animals")
+      .select("gingr_id, weight")
+      .in("gingr_id", setupAnimalIds);
+    for (const a of animals || []) {
+      const w = a.weight ? parseFloat(a.weight) : null;
+      weightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
+    }
+  }
+
+  // Match setup dogs to rooms (by room name from BOH data)
+  // Build a map of room name → room entry index for quick lookup
+  const roomIndexMap = new Map<string, number>();
+  rooms.forEach((r, i) => roomIndexMap.set(r.room, i));
+
+  // Also try matching by dog name in existing rooms
+  const dogNameRoomMap = new Map<string, number>();
+  rooms.forEach((r, i) => {
+    if (r.dogName) dogNameRoomMap.set(r.dogName.toLowerCase(), i);
+  });
+
+  const unmatchedSetups: typeof setupDogs = [];
+  for (const sd of setupDogs) {
+    const weight = weightMap[sd.animalGingrId] ?? null;
+    const bowlSize = suggestBowlSize(weight);
+
+    // Try to match to an existing room entry
+    let matched = false;
+    // 1. Match by dog name
+    const nameKey = sd.dogName.toLowerCase();
+    if (dogNameRoomMap.has(nameKey)) {
+      const idx = dogNameRoomMap.get(nameKey)!;
+      rooms[idx].needsSetup = true;
+      rooms[idx].setupReason = sd.reason;
+      rooms[idx].suggestedBowlSize = bowlSize;
+      rooms[idx].dogWeight = weight;
+      matched = true;
+    }
+
+    if (!matched) {
+      unmatchedSetups.push(sd);
+    }
+  }
+
+  // Add unmatched setup dogs as new room entries (e.g. first-time daycare dogs without a room)
+  for (const sd of unmatchedSetups) {
+    const weight = weightMap[sd.animalGingrId] ?? null;
+    rooms.push({
+      room: sd.room || "Unassigned",
+      roomType: "",
+      areaName: "",
+      dogName: sd.dogName,
+      ownerLastName: sd.ownerLastName,
+      reservationType: sd.reason,
+      checkIn: today,
+      checkOut: today,
+      dayNumber: 1,
+      totalNights: 0,
+      cleaningType: "none",
+      needsDisinfect: false,
+      needsRefresh: false,
+      needsSetup: true,
+      setupReason: sd.reason,
+      suggestedBowlSize: suggestBowlSize(weight),
+      dogWeight: weight,
     });
   }
 
@@ -336,6 +476,7 @@ function computeRoomCleaning(bohData: any, today: string): any {
   const totalDisinfect = rooms.filter(
     (r) => r.cleaningType === "disinfect",
   ).length;
+  const totalSetups = rooms.filter((r) => r.needsSetup).length;
 
   return {
     rooms,
@@ -343,6 +484,7 @@ function computeRoomCleaning(bohData: any, today: string): any {
       totalOccupied: rooms.length,
       totalRefresh,
       totalDisinfect,
+      totalSetups,
     },
   };
 }
@@ -704,7 +846,7 @@ Deno.serve(async (req: Request) => {
     // ─── Compute all checklist items ───────────────────────────────────
 
     // 1. Room Cleaning
-    const roomCleaning = computeRoomCleaning(bohResult, today);
+    const roomCleaning = await computeRoomCleaning(supabase, bohResult, today);
 
     // 2. Private Play
     const privatePlay = computePrivatePlay(reservations);
