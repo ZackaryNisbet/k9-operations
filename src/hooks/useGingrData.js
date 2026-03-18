@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef, startTransition } from "react";
 import { supabase } from "../supabaseClient";
-import { C, OPERATIONS_CATALOG, idbGet, idbSet, IDB_VERSION, todayStr, addDays, LITE_DEF_PRICING, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, LEAN_ROLES, ROOM_TYPES } from "../shared/theme";
+import { C, OPERATIONS_CATALOG, idbGet, idbSet, IDB_VERSION, todayStr, addDays, LITE_DEF_PRICING, DEF_CLOSING_TEMPLATE, LEAN_ROLES, ROOM_TYPES } from "../shared/theme";
 import { classifyReservationType, classifyReservationStatus, extractRoomFromType } from "../shared/opsHelpers";
 
 function useGingrData(locationId, refreshOptions = {}) {
@@ -134,63 +134,6 @@ function useGingrData(locationId, refreshOptions = {}) {
         };
       });
   }, []);
-
-  // ── Intelligent Room Assignment ──
-  // Distributes boarding reservations across available rooms by type.
-  // Uses greedy interval scheduling: sort by check-in, assign to first non-overlapping room.
-  const assignRoomsIntelligently = useCallback((reservations, roomsMap) => {
-    if (!reservations || reservations.length === 0) return reservations;
-    const boarding = reservations.filter(r => r.type === "boarding" && r.roomType);
-    const rest = reservations.filter(r => r.type !== "boarding" || !r.roomType);
-    // Group by room type
-    const byType = {};
-    boarding.forEach(r => {
-      if (!byType[r.roomType]) byType[r.roomType] = [];
-      byType[r.roomType].push(r);
-    });
-    const assigned = [];
-    Object.entries(byType).forEach(([roomType, group]) => {
-      const rooms = roomsMap[roomType] || [];
-      if (rooms.length === 0) { group.forEach(r => assigned.push(r)); return; }
-      // Sort by check-in date, then ID for stability
-      group.sort((a, b) => (a.checkIn || "").localeCompare(b.checkIn || "") || (a.id || "").localeCompare(b.id || ""));
-      // Track occupancy per room: array of {checkIn, checkOut}
-      const occ = {};
-      rooms.forEach(rm => { occ[rm] = []; });
-      group.forEach(r => {
-        let picked = null;
-        for (const rm of rooms) {
-          const overlap = occ[rm].some(o => o.checkIn < r.checkOut && r.checkIn < o.checkOut);
-          if (!overlap) { picked = rm; break; }
-        }
-        if (!picked) picked = rooms[0]; // overflow fallback
-        occ[picked].push({ checkIn: r.checkIn, checkOut: r.checkOut });
-        assigned.push({ ...r, room: picked });
-      });
-    });
-    return [...rest, ...assigned];
-  }, []);
-
-  // ── Cache room assignments to lite_settings for mobile ──
-  const cacheRoomAssignments = useCallback((assignedReservations) => {
-    if (!locationId || !assignedReservations || assignedReservations.length === 0) return;
-    const td = todayStr();
-    const assignments = {};
-    assignedReservations.forEach(r => {
-      if (r.type === "boarding" && r.room && r.id) {
-        assignments[r.id] = r.room;
-      }
-    });
-    if (Object.keys(assignments).length === 0) return;
-    supabase.from("lite_settings").upsert({
-      location_id: locationId,
-      setting_key: `room_assignments_${td}`,
-      setting_value: assignments,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "location_id,setting_key" }).then(({ error }) => {
-      if (error) console.log("[K9 Lite] Room assignment cache error:", error.message);
-    });
-  }, [locationId]);
 
   // ── Build rooms from synced reservation types ──
   // Derives room type names from gingr_reservation_types where capacity_by_lodging=1
@@ -625,9 +568,7 @@ function useGingrData(locationId, refreshOptions = {}) {
         if (!windowErr && windowRes) {
           const tReservations = transformReservations(windowRes);
           const tRooms = buildRooms(typesRes.data || [], tReservations, roomCounts, roomNames);
-          const assignedRes = assignRoomsIntelligently(tReservations, tRooms);
-          cacheRoomAssignments(assignedRes);
-          setReservations(assignedRes);
+          setReservations(tReservations);
           setRooms(tRooms);
         }
       } catch (err) {
@@ -650,12 +591,9 @@ function useGingrData(locationId, refreshOptions = {}) {
         await yieldToMain();
         const tRooms = buildRooms(typesRes.data || [], allTransformed, roomCounts, roomNames);
         await yieldToMain();
-        const assignedRes = assignRoomsIntelligently(allTransformed, tRooms);
-        cacheRoomAssignments(assignedRes);
-        await yieldToMain();
         // Use startTransition so React treats this as low-priority
         startTransition(() => {
-          setReservations(assignedRes);
+          setReservations(allTransformed);
           setRooms(tRooms);
         });
       }).catch(err => console.error("Background reservation fetch failed:", err));
@@ -664,7 +602,7 @@ function useGingrData(locationId, refreshOptions = {}) {
       console.error("Failed to load data:", err);
       setError(err.message);
     }
-  }, [locationId, transformOwners, transformAnimals, transformReservations, buildRooms, assignRoomsIntelligently, cacheRoomAssignments]);
+  }, [locationId, transformOwners, transformAnimals, transformReservations, buildRooms]);
 
   // ── Helper: extract real error from edge function responses ──
   const extractEdgeFnError = async (fnError) => {
@@ -759,16 +697,27 @@ function useGingrData(locationId, refreshOptions = {}) {
     return () => { if (refreshTimerRef.current) clearInterval(refreshTimerRef.current); };
   }, [locationId, triggerSync, gingrIntervalMs, gingrBusinessCheck]);
 
-  // Build daily ops (these are Lite-native, stored in Supabase lite tables, not from Gingr)
+  // Fetch today's daily ops from Supabase (server-computed via ops-compute edge function)
   const td = todayStr();
-  const dailyOps = useMemo(() => [
-    { id: `ops_opening_${td}`, type: "checklist", typeSub: "opening", date: td, locked: false, items: DEF_OPENING_TEMPLATE.map(t => ({ ...t, done: false, completedBy: "", time: "" })) },
-    { id: `ops_closing_${td}`, type: "checklist", typeSub: "closing", date: td, locked: false, items: DEF_CLOSING_TEMPLATE.map(t => ({ ...t, done: false, completedBy: "", time: "" })) },
-    { id: `ops_fe_checklist_${td}`, type: "checklist", typeSub: "fe_checklist", date: td, locked: false, items: DEF_FE_TEMPLATE.map(t => ({ ...t, done: false, completedBy: "", time: "" })) },
-    { id: `ops_be_checklist_${td}`, type: "checklist", typeSub: "be_checklist", date: td, locked: false, items: DEF_BE_TEMPLATE.map(t => ({ ...t, done: false, completedBy: "", time: "" })) },
-    { id: `ops_room_cleaning_${td}`, type: "room_cleaning", typeSub: "room_cleaning", date: td, locked: false, items: {} },
-    { id: `ops_pp_${td}`, type: "pp", typeSub: "pp", date: td, locked: false, items: {} },
-  ], [td]);
+  const [dailyOps, setDailyOps] = useState([]);
+  useEffect(() => {
+    if (!locationId) return;
+    supabase.from("lite_daily_ops").select("*").eq("location_id", locationId).eq("date", td).then(({ data: rows }) => {
+      if (rows && rows.length > 0) {
+        setDailyOps(rows.map(r => ({
+          id: r.id,
+          type: r.type_sub || r.type,
+          typeSub: r.type_sub,
+          date: r.date,
+          locked: r.locked,
+          completedBy: r.completed_by,
+          items: r.items || {},
+          computed_items: r.computed_items || null,
+          history: r.history || [],
+        })));
+      }
+    });
+  }, [locationId, td]);
 
   // ── Stable static arrays (created once, never change) ──
   const EMPTY = useRef([]).current;

@@ -354,7 +354,7 @@ const LITE_DEF_PRICING = {
 const CHART_PTS = 30;
 
 // ── K9 Loading Animation (orbiting nodes — matches POS Ask AI) ──
-const OPS_TYPES = {opening:{key:"openingTemplate",def:DEF_OPENING_TEMPLATE,title:"Opening Checklist"},fe:{key:"feTemplate",def:DEF_FE_TEMPLATE,title:"Front-End Checklist",showTime:true},be:{key:"beTemplate",def:DEF_BE_TEMPLATE,title:"Back-End Checklist",showTime:true},closing:{key:"closingTemplate",def:DEF_CLOSING_TEMPLATE,title:"Closing Checklist"},room_cleaning:{title:"Room Cleaning"},pp:{title:"Private Play Checklist"},bathing:{title:"Bathing Report"},pamper:{title:"Pamper Package Plus"},svc:{title:"Service Report"},eod:{title:"End-of-Day Report",isEod:true}};
+const OPS_TYPES = {opening:{key:"openingTemplate",def:DEF_OPENING_TEMPLATE,title:"Opening Checklist"},fe_checklist:{key:"feTemplate",def:DEF_FE_TEMPLATE,title:"Front-End Checklist",showTime:true},be_checklist:{key:"beTemplate",def:DEF_BE_TEMPLATE,title:"Back-End Checklist",showTime:true},closing:{key:"closingTemplate",def:DEF_CLOSING_TEMPLATE,title:"Closing Checklist"},room_cleaning:{title:"Room Cleaning"},pp:{title:"Private Play Checklist"},bathing:{title:"Bathing Report"},pamper:{title:"Pamper Package Plus"},svc:{title:"Service Report"},eod:{title:"End-of-Day Report",isEod:true}};
 
 const DEF_LITE_EOD_TEMPLATE = [
   { id:"sales", title:"Sales", emoji:"💵", type:"text", defaultContent:"Today's Goal:\nWTD:\nMTD:\nYTD:" },
@@ -382,8 +382,8 @@ const DAY_NAMES_SHORT=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const OPERATIONS_CATALOG = [
   // Daily items (route to existing pages)
   { id:"ops-opening", label:"Opening Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"opening", routeTo:"ops-opening", permission:"view_daily_ops" },
-  { id:"ops-fe", label:"Front-End Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"fe", routeTo:"ops-fe", permission:"view_daily_ops" },
-  { id:"ops-be", label:"Back-End Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"be", routeTo:"ops-be", permission:"view_daily_ops" },
+  { id:"ops-fe", label:"Front-End Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"fe_checklist", routeTo:"ops-fe", permission:"view_daily_ops" },
+  { id:"ops-be", label:"Back-End Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"be_checklist", routeTo:"ops-be", permission:"view_daily_ops" },
   { id:"ops-rooms", label:"Room Cleaning", frequency:"daily", dataKey:"dailyOps", typeSub:"room_cleaning", routeTo:"ops-rooms", permission:"view_daily_ops" },
   { id:"ops-pp", label:"Private Play Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"pp", routeTo:"ops-pp", permission:"view_daily_ops" },
   { id:"ops-closing", label:"Closing Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"closing", routeTo:"ops-closing", permission:"view_daily_ops" },
