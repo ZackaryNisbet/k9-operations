@@ -627,216 +627,219 @@ function CheckoutTVContent({ data, nav, profile }) {
   const baseDogs = data.dogs || [];
   const clients = data.clients || [];
 
-  /* ── TV-010 + TV-012: Direct Gingr back_of_house polling ────────────
-   * Single source of truth for ALL active dogs (boarding + daycare).
-   * Polls every 10s, compares previous → current state, and fires
-   * TV notices (check-in / check-out hero cards) on transitions.
-   * Also provides daycare dogs for the grid (Supabase doesn't sync them).
+  /* ── TV-010 + TV-012: BOH data from Supabase gingr_back_of_house ─────
+   * Reads from Supabase gingr_back_of_house table (synced by server cron).
+   * Subscribes via Realtime for near-instant updates.
+   * Compares previous → current state and fires TV notices on transitions.
    * ──────────────────────────────────────────────────────────────────── */
   const [gingrActiveDogs, setGingrActiveDogs] = useState([]);   // all checked-in dogs from BOH
   const [gingrDaycareDogs, setGingrDaycareDogs] = useState([]); // daycare subset for grid merge
-  const [gingrBoardingDogs, setGingrBoardingDogs] = useState([]); // boarding dogs from Gingr reservations API
-  const prevBohIdsRef = useRef(null);     // Map<id, dogRecord> from previous poll
+  const [gingrBoardingDogs, setGingrBoardingDogs] = useState([]); // boarding dogs from reservations table
+  const prevBohIdsRef = useRef(null);     // Map<id, dogRecord> from previous fetch
   const bohPollCountRef = useRef(0);
 
+  const classifyBohType = useCallback((typeStr) => {
+    const t = (typeStr || "").toLowerCase();
+    if (t.includes("evaluation")) return "evaluation";
+    if (t.includes("day boarding") && !t.includes("daycare")) return "dayboarding";
+    if (t.includes("daycare")) return "daycare";
+    if (t.includes("boarding")) return "boarding";
+    return "boarding";
+  }, []);
+
+  const isDaycareType = useCallback((typeStr) => {
+    const t = (typeStr || "").toLowerCase();
+    return t.includes("daycare") || t.includes("day boarding") || t.includes("evaluation");
+  }, []);
+
+  const processBohRows = useCallback((rows) => {
+    // Convert gingr_back_of_house rows to the old BOH dog shape
+    const active = (rows || []).filter(r => r.status === "checking_out").map(r => ({
+      id: r.gingr_reservation_id,
+      animal_id: r.animal_id,
+      a_first: r.animal_name,
+      o_first: r.owner_name?.split(" ")[0] || "",
+      o_last: r.owner_name?.split(" ").slice(1).join(" ") || "",
+      type: r.reservation_type_name || "",
+      run_name: r.room_name || "",
+      area_name: r.area_name || "",
+    }));
+
+    const currentMap = new Map();
+    for (const dog of active) currentMap.set(dog.id, dog);
+
+    const prev = prevBohIdsRef.current;
+    if (prev !== null) {
+      const arrivals = [];
+      for (const [id, dog] of currentMap) {
+        if (!prev.has(id)) {
+          arrivals.push({
+            id: Number(id),
+            animalGingrId: dog.animal_id || "",
+            animalName: (dog.a_first || "Unknown").trim(),
+            ownerLastName: (dog.o_last || "").trim(),
+            room: dog.run_name || "",
+            resType: classifyBohType(dog.type),
+          });
+        }
+      }
+
+      const departed = [];
+      for (const [id, dog] of prev) {
+        if (!currentMap.has(id)) {
+          departed.push({
+            id: Number(id),
+            animalGingrId: dog.animal_id || "",
+            animalName: (dog.a_first || "Unknown").trim(),
+            ownerLastName: (dog.o_last || "").trim(),
+            room: dog.run_name || "",
+            resType: classifyBohType(dog.type),
+          });
+        }
+      }
+
+      if (arrivals.length > 0) {
+        const byOwner = {};
+        for (const a of arrivals) {
+          const key = a.ownerLastName || a.id;
+          if (!byOwner[key]) byOwner[key] = [];
+          byOwner[key].push(a);
+        }
+        const firedAt = Date.now();
+        const grouped = Object.values(byOwner).map(group => ({
+          id: group.map(a => a.id).join('+'),
+          dogs: group,
+          ownerLastName: group[0].ownerLastName,
+          firedAt,
+          durationMs: 60_000,
+        }));
+        setCheckingInRaw(p => {
+          const existing = new Set(p.map(e => e.id));
+          return [...p, ...grouped.filter(g => !existing.has(g.id))];
+        });
+      }
+
+      if (departed.length > 0) {
+        const byOwner = {};
+        for (const d of departed) {
+          const key = d.ownerLastName || d.id;
+          if (!byOwner[key]) byOwner[key] = [];
+          byOwner[key].push(d);
+        }
+        const firedAt = Date.now();
+        const grouped = Object.values(byOwner).map(group => ({
+          id: group.map(d => d.id).join('+'),
+          dogs: group,
+          ownerLastName: group[0].ownerLastName,
+          firedAt,
+          durationMs: 60_000,
+        }));
+        setCheckingOutRaw(p => {
+          const existing = new Set(p.map(e => e.id));
+          return [...p, ...grouped.filter(g => !existing.has(g.id))];
+        });
+      }
+    }
+
+    prevBohIdsRef.current = currentMap;
+    bohPollCountRef.current += 1;
+    setGingrActiveDogs(active);
+    setGingrDaycareDogs(active.filter(dog => isDaycareType(dog.type)));
+  }, [classifyBohType, isDaycareType]);
+
+  // Fetch BOH from Supabase + subscribe to Realtime
   useEffect(() => {
-    let cancelled = false;
-    const GINGR_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
-    const BOH_URL = `https://your-gingr-subdomain.gingrapp.com/api/v1/back_of_house?key=${GINGR_KEY}&location_id=1&full_day=true&include_daycare=true`;
-
-    const classifyBohType = (typeStr) => {
-      const t = (typeStr || "").toLowerCase();
-      if (t.includes("evaluation")) return "evaluation";
-      if (t.includes("day boarding") && !t.includes("daycare")) return "dayboarding";
-      if (t.includes("daycare")) return "daycare";
-      if (t.includes("boarding")) return "boarding";
-      return "boarding";
-    };
-
-    const isDaycareType = (typeStr) => {
-      const t = (typeStr || "").toLowerCase();
-      return t.includes("daycare") || t.includes("day boarding") || t.includes("evaluation");
-    };
+    const locId = profile?.location_id;
+    if (!locId) return;
 
     const fetchBoh = async () => {
-      try {
-        const resp = await fetch(BOH_URL);
-        if (!resp.ok || cancelled) return;
-        const json = await resp.json();
-        const d = json.data || {};
-        // checking_out = dogs that ARE checked in (here now)
-        const active = d.checking_out || [];
-
-        // Build current state map: id → dog record
-        const currentMap = new Map();
-        for (const dog of active) currentMap.set(dog.id, dog);
-
-        // Detect transitions (skip first poll — no previous state)
-        const prev = prevBohIdsRef.current;
-        if (prev !== null && !cancelled) {
-          // Arrivals: in current but not in prev
-          const arrivals = [];
-          for (const [id, dog] of currentMap) {
-            if (!prev.has(id)) {
-              arrivals.push({
-                id: Number(id),
-                animalGingrId: dog.animal_id || "",
-                animalName: (dog.a_first || "Unknown").trim(),
-                ownerLastName: (dog.o_last || "").trim(),
-                room: dog.run_name || "",
-                resType: classifyBohType(dog.type),
-              });
-            }
-          }
-
-          // Departures: in prev but not in current
-          const departed = [];
-          for (const [id, dog] of prev) {
-            if (!currentMap.has(id)) {
-              departed.push({
-                id: Number(id),
-                animalGingrId: dog.animal_id || "",
-                animalName: (dog.a_first || "Unknown").trim(),
-                ownerLastName: (dog.o_last || "").trim(),
-                room: dog.run_name || "",
-                resType: classifyBohType(dog.type),
-              });
-            }
-          }
-
-          // Fire check-in TV notices (TV-013: timestamp-based, persistent)
-          if (arrivals.length > 0) {
-            const byOwner = {};
-            for (const a of arrivals) {
-              const key = a.ownerLastName || a.id;
-              if (!byOwner[key]) byOwner[key] = [];
-              byOwner[key].push(a);
-            }
-            const firedAt = Date.now();
-            const grouped = Object.values(byOwner).map(group => ({
-              id: group.map(a => a.id).join('+'),
-              dogs: group,
-              ownerLastName: group[0].ownerLastName,
-              firedAt,
-              durationMs: 60_000,
-            }));
-            setCheckingInRaw(p => {
-              const existing = new Set(p.map(e => e.id));
-              return [...p, ...grouped.filter(g => !existing.has(g.id))];
-            });
-          }
-
-          // Fire check-out TV notices (TV-013: timestamp-based, persistent)
-          if (departed.length > 0) {
-            const byOwner = {};
-            for (const d of departed) {
-              const key = d.ownerLastName || d.id;
-              if (!byOwner[key]) byOwner[key] = [];
-              byOwner[key].push(d);
-            }
-            const firedAt = Date.now();
-            const grouped = Object.values(byOwner).map(group => ({
-              id: group.map(d => d.id).join('+'),
-              dogs: group,
-              ownerLastName: group[0].ownerLastName,
-              firedAt,
-              durationMs: 60_000,
-            }));
-            setCheckingOutRaw(p => {
-              const existing = new Set(p.map(e => e.id));
-              return [...p, ...grouped.filter(g => !existing.has(g.id))];
-            });
-          }
-        }
-
-        // Store current state for next comparison
-        prevBohIdsRef.current = currentMap;
-        bohPollCountRef.current += 1;
-
-        // Update display state
-        if (!cancelled) {
-          setGingrActiveDogs(active);
-          setGingrDaycareDogs(active.filter(dog => isDaycareType(dog.type)));
-        }
-      } catch (e) {
-        // Silently ignore — Supabase boarding data still works as fallback
-      }
+      const { data: rows } = await supabase
+        .from("gingr_back_of_house")
+        .select("*")
+        .eq("location_id", locId);
+      processBohRows(rows || []);
     };
 
     fetchBoh();
-    const interval = setInterval(fetchBoh, 10000); // 10s poll
-    return () => { cancelled = true; clearInterval(interval); };
-  }, []);
 
-  /* ── TV-014: Direct Gingr reservations poll for ALL checked-in dogs ───
-   * Polls the Gingr reservations API directly for ALL checked-in
-   * reservations (boarding + daycare + evaluation + day boarding).
-   * This is the SINGLE authoritative source for who is in-house.
-   *
-   * Returns boarding dogs in gingrBoardingDogs (used by merge as primary
-   * boarding source) and daycare dogs in gingrDaycareFromRes (used to
-   * replace stale Supabase/BOH daycare data).
+    const channel = supabase
+      .channel("tv-boh")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "gingr_back_of_house", filter: `location_id=eq.${locId}` },
+        () => { fetchBoh(); }
+      )
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [profile?.location_id, processBohRows]);
+
+  /* ── TV-014: Checked-in reservations from Supabase gingr_reservations ──
+   * Reads ALL checked-in reservations from Supabase (synced every minute
+   * by server-side cron). Polls every 60s as a fallback to Realtime.
+   * Returns boarding dogs in gingrBoardingDogs and daycare in gingrDaycareFromRes.
    * ──────────────────────────────────────────────────────────────────── */
   const [gingrDaycareFromRes, setGingrDaycareFromRes] = useState([]);
+
+  const classifyResType = useCallback((typeStr) => {
+    const t = (typeStr || "").toLowerCase();
+    if (t.includes("evaluation")) return "evaluation";
+    if (t.includes("day boarding") && !t.includes("daycare")) return "dayboarding";
+    if (t.includes("daycare")) return "daycare";
+    if (t.includes("boarding")) return "boarding";
+    return "boarding";
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    const GINGR_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
-    const GINGR_RES_URL = "https://your-gingr-subdomain.gingrapp.com/api/v1/reservations";
+    const locId = profile?.location_id;
+    if (!locId) return;
 
-    const classifyType = (typeStr) => {
-      const t = (typeStr || "").toLowerCase();
-      if (t.includes("evaluation")) return "evaluation";
-      if (t.includes("day boarding") && !t.includes("daycare")) return "dayboarding";
-      if (t.includes("daycare")) return "daycare";
-      if (t.includes("boarding")) return "boarding";
-      return "boarding";
-    };
-
-    const fetchAllCheckedIn = async () => {
+    const fetchCheckedIn = async () => {
       try {
-        const resp = await fetch(GINGR_RES_URL, {
-          method: "POST",
-          body: new URLSearchParams({ key: GINGR_KEY, checked_in: "true" }),
-        });
-        if (!resp.ok || cancelled) return;
-        const json = await resp.json();
-        const resData = json.data || {};
+        const { data: rows, error } = await supabase
+          .from("gingr_reservations")
+          .select("gingr_id, animal_name, animal_gingr_id, owner_first_name, owner_last_name, owner_gingr_id, reservation_type_name, start_date, end_date, check_in_date, check_out_date, services")
+          .eq("location_id", locId)
+          .not("check_in_date", "is", null)
+          .is("check_out_date", null)
+          .is("cancelled_date", null);
 
-        // resData is an object keyed by reservation_id
-        const allDogs = Object.values(resData).map(r => ({
-          reservation_id: String(r.reservation_id),
-          animal_id: String(r.animal?.id || ""),
-          animal_name: (r.animal?.name || "Unknown").trim(),
-          breed: r.animal?.breed || "",
-          owner_id: String(r.owner?.id || ""),
-          owner_first: (r.owner?.first_name || "").trim(),
-          owner_last: (r.owner?.last_name || "").trim(),
+        if (error || cancelled) return;
+
+        const allDogs = (rows || []).map(r => ({
+          reservation_id: String(r.gingr_id),
+          animal_id: String(r.animal_gingr_id || ""),
+          animal_name: (r.animal_name || "Unknown").trim(),
+          breed: "",
+          owner_id: String(r.owner_gingr_id || ""),
+          owner_first: (r.owner_first_name || "").trim(),
+          owner_last: (r.owner_last_name || "").trim(),
           start_date: r.start_date || "",
           end_date: r.end_date || "",
           check_in_date: r.check_in_date || "",
           check_out_date: r.check_out_date || null,
-          run_name: r.run?.name || "",
+          run_name: "",
           services: r.services || [],
-          resType: classifyType(r.reservation_type?.type),
+          resType: classifyResType(r.reservation_type_name),
         }));
 
         const boarding = allDogs.filter(d => d.resType === "boarding");
         const daycare = allDogs.filter(d => d.resType !== "boarding");
 
         if (!cancelled) {
-          console.log('[TV-014] Gingr poll:', allDogs.length, 'total,', boarding.length, 'boarding,', daycare.length, 'daycare/eval/db');
           setGingrBoardingDogs(boarding);
           setGingrDaycareFromRes(daycare);
         }
       } catch (e) {
-        console.error('[TV-014] Gingr reservations poll error:', e.message || e);
+        // Silently ignore — will retry on next interval
       }
     };
 
-    fetchAllCheckedIn();
-    const interval = setInterval(fetchAllCheckedIn, 60000); // 60s poll
+    fetchCheckedIn();
+    const interval = setInterval(fetchCheckedIn, 60000); // 60s poll
     return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  }, [profile?.location_id, classifyResType]);
 
   /* ── TV-POLL: Supabase reconciliation sync (every 60s) ──────────────
    * Calls the gingr-sync edge function in tv-poll mode to reconcile

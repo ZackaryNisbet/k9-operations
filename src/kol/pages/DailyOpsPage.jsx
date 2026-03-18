@@ -654,11 +654,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       });
   }, [sub, viewDate, profile?.location_id]);
 
-  // Auto-fetch bath types from Gingr existing_reservation_estimate
+  // Auto-fetch bath types from Supabase gingr_reservations.services_detail
   useEffect(() => {
     if (sub !== "bathing") return;
     const reservations = data.reservations || [];
-    // Only show dogs whose reservation END DATE equals the view date
     const endingToday = reservations.filter(r =>
       (r.status === "checked-in" || r.status === "upcoming") &&
       r.checkOut === viewDate
@@ -673,48 +672,34 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const locationId = profile?.location_id;
     if (!locationId) { setBathTypeLoading(false); return; }
 
-    supabase.from("lite_settings").select("setting_value")
-      .eq("location_id", locationId)
-      .eq("setting_key", "gingr_config")
-      .limit(1)
-      .then(async ({ data: cfgRows }) => {
-        if (!cfgRows || cfgRows.length === 0) { setBathTypeLoading(false); return; }
-        const cfg = cfgRows[0].setting_value;
-        const subdomain = cfg.subdomain;
-        const apiKey = cfg.api_key;
-        if (!subdomain || !apiKey) { setBathTypeLoading(false); return; }
+    const gingrIds = needsFetch
+      .map(r => String(r.gingrId || "").replace(/^g/, ""))
+      .filter(Boolean);
 
-        const BATH_ADDON_MAP = {
-          38: "Premium", 39: "Hypoallergenic - NO SPRAY",
-          79: "Hypoallergenic - WITH SPRAY", 40: "Medicated",
-          75: "Whitening", 76: "Shampoo From Home",
-        };
+    if (gingrIds.length === 0) {
+      const newMap = { ...bathTypeMap };
+      needsFetch.forEach(r => { newMap[r.id] = "Premium"; });
+      setBathTypeMap(newMap);
+      setBathTypeLoading(false);
+      return;
+    }
+
+    supabase
+      .from("gingr_reservations")
+      .select("gingr_id, services_detail")
+      .eq("location_id", locationId)
+      .in("gingr_id", gingrIds)
+      .then(({ data: rows }) => {
+        const detailMap = {};
+        (rows || []).forEach(r => { detailMap[String(r.gingr_id)] = r.services_detail; });
 
         const newMap = { ...bathTypeMap };
-        for (let i = 0; i < needsFetch.length; i += 5) {
-          const batch = needsFetch.slice(i, i + 5);
-          await Promise.all(batch.map(async (res) => {
-            try {
-              const gingrId = String(res.gingrId || "").replace(/^g/, "");
-              if (!gingrId) { newMap[res.id] = "Premium"; return; }
-              const resp = await fetch(
-                `https://${subdomain}.gingrapp.com/api/v1/existing_reservation_estimate?key=${apiKey}&id=${gingrId}`
-              );
-              const json = await resp.json();
-              if (json.error) { newMap[res.id] = "Premium"; return; }
-              const resSvcs = json.data?.reservations?.[0]?.reservation_services || [];
-              let foundBathType = null;
-              for (const svc of resSvcs) {
-                const sid = parseInt(svc.s_id);
-                if (BATH_ADDON_MAP[sid]) { foundBathType = BATH_ADDON_MAP[sid]; break; }
-              }
-              newMap[res.id] = foundBathType || "Premium";
-            } catch (err) {
-              console.error("Failed to fetch bath type for", res.id, err);
-              newMap[res.id] = "Premium";
-            }
-          }));
-        }
+        needsFetch.forEach(res => {
+          const gingrId = String(res.gingrId || "").replace(/^g/, "");
+          const detail = detailMap[gingrId];
+          // services_detail has shape: { bath_type: "Premium", reservation_services: [...] }
+          newMap[res.id] = detail?.bath_type || "Premium";
+        });
         setBathTypeMap(newMap);
         setBathTypeLoading(false);
       });

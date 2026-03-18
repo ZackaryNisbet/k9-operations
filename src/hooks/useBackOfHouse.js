@@ -1,18 +1,16 @@
-// K9 Operations — Direct Gingr back_of_house polling hook
-// Fetches checking_in / checking_out lists directly from Gingr API
-// for near-real-time Checkout TV display. Bypasses 15-min Supabase sync.
+// K9 Operations — Back-of-house hook (Supabase Realtime)
+// Reads checking_in / checking_out lists from gingr_back_of_house table
+// via Supabase Realtime subscription. ZERO direct Gingr API calls.
 //
-// Data model (from Gingr):
-//   checking_in  = dogs scheduled to arrive today but NOT yet checked in
-//   checking_out = dogs that ARE checked in (here now), scheduled to leave today
-//   → The TV only cares about checking_out (active dogs)
+// Data model (from gingr_back_of_house table, synced by server-side cron):
+//   status='checking_in'  = dogs scheduled to arrive today but NOT yet checked in
+//   status='checking_out' = dogs that ARE checked in (here now), scheduled to leave today
 //
 // Features:
-//   - Configurable poll interval (default 10s)
-//   - Business-hours-only polling (configurable)
-//   - Page Visibility API pause — stops polling when tab is hidden
-//   - Tracks recent arrivals (new in checking_out) and departures (removed from checking_out)
-//   - 60-second highlight window for check-in / check-out transitions
+//   - Supabase Realtime subscription (INSERT/UPDATE/DELETE)
+//   - Configurable business-hours-only gating
+//   - Page Visibility API pause
+//   - Tracks recent arrivals and departures (60s highlight window)
 //   - Persists config in lite_settings under "tv_poll_config"
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
@@ -30,18 +28,11 @@ const DEFAULTS = {
 
 const HIGHLIGHT_DURATION_MS = 60_000; // 60 seconds
 
-// ── Gingr API config ────────────────────────────────────────────────────────
-const GINGR_SUBDOMAIN = "your-gingr-subdomain";
-const GINGR_API_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
-const GINGR_LOCATION_ID = "1";
-
-const BOH_URL = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/back_of_house?key=${GINGR_API_KEY}&location_id=${GINGR_LOCATION_ID}&full_day=true&include_daycare=true`;
-
 // ── Hook ────────────────────────────────────────────────────────────────────
 export function useBackOfHouse(locationId, enabled = true) {
-  // Active dogs = checking_out list (dogs that are here now)
+  // Active dogs = checking_out (dogs that are here now)
   const [activeDogs, setActiveDogs] = useState([]);
-  // Pending dogs = checking_in list (scheduled but not yet arrived)
+  // Pending dogs = checking_in (scheduled but not yet arrived)
   const [pendingDogs, setPendingDogs] = useState([]);
   // Transition tracking: { id: { dog, type: "arrived"|"departed", timestamp } }
   const [recentEvents, setRecentEvents] = useState({});
@@ -52,13 +43,12 @@ export function useBackOfHouse(locationId, enabled = true) {
   const [configLoaded, setConfigLoaded] = useState(false);
   // Supabase boarding dogs not in BOH (multi-night stays not going home today)
   const [supabaseBoardingCount, setSupabaseBoardingCount] = useState(0);
-  // Gingr reservations API — authoritative in-house count
+  // In-house count from gingr_reservations (authoritative)
   const [gingrResCount, setGingrResCount] = useState({ total: 0, boarding: 0, daycare: 0, loaded: false });
-  const bohAnimalIdsRef = useRef(new Set()); // Tracks current BOH animal IDs for Supabase dedup
-  const timerRef = useRef(null);
+  const bohAnimalIdsRef = useRef(new Set());
   const highlightTimerRef = useRef(null);
   const visibleRef = useRef(true);
-  const prevActiveIdsRef = useRef(null); // Set of IDs from previous poll
+  const prevActiveIdsRef = useRef(null);
   const fetchCountRef = useRef(0);
 
   // ── Load config from Supabase ──────────────────────────────────────────
@@ -119,25 +109,132 @@ export function useBackOfHouse(locationId, enabled = true) {
     return () => clearInterval(highlightTimerRef.current);
   }, []);
 
+  // ── Convert a gingr_back_of_house row to the old Gingr API dog shape ──
+  const rowToDog = useCallback((row) => ({
+    id: row.gingr_reservation_id,
+    animal_id: row.animal_id,
+    a_first: row.animal_name,
+    o_first: row.owner_name?.split(" ")[0] || "",
+    o_last: row.owner_name?.split(" ").slice(1).join(" ") || "",
+    type: row.reservation_type_name || "",
+    start_date: row.check_in_time ? String(Math.floor(new Date(row.check_in_time).getTime() / 1000)) : null,
+    end_date: row.check_out_time ? String(Math.floor(new Date(row.check_out_time).getTime() / 1000)) : null,
+    run: row.room_name || "",
+    area: row.area_name || "",
+    _raw: row.raw_data,
+  }), []);
+
+  // ── Process BOH rows into active/pending + detect transitions ─────────
+  const processBohRows = useCallback((rows) => {
+    const checkingOut = rows.filter(r => r.status === "checking_out").map(rowToDog);
+    const checkingIn = rows.filter(r => r.status === "checking_in").map(rowToDog);
+
+    const newActiveIds = new Set(checkingOut.map(d => d.id));
+
+    // Detect transitions (skip on first fetch)
+    if (prevActiveIdsRef.current !== null) {
+      const prevIds = prevActiveIdsRef.current;
+      const now = Date.now();
+      const events = {};
+
+      for (const dog of checkingOut) {
+        if (!prevIds.has(dog.id)) {
+          events[dog.id] = { dog, type: "arrived", timestamp: now };
+        }
+      }
+
+      setActiveDogs(prev => {
+        for (const id of prevIds) {
+          if (!newActiveIds.has(id)) {
+            const prevDog = prev.find(d => d.id === id);
+            if (prevDog) {
+              events[id] = { dog: prevDog, type: "departed", timestamp: now };
+            }
+          }
+        }
+        if (Object.keys(events).length > 0) {
+          setRecentEvents(p => ({ ...p, ...events }));
+        }
+        return checkingOut;
+      });
+    } else {
+      setActiveDogs(checkingOut);
+    }
+
+    prevActiveIdsRef.current = newActiveIds;
+    bohAnimalIdsRef.current = new Set(checkingOut.map(d => String(d.animal_id)));
+    setPendingDogs(checkingIn);
+    setLastFetch(new Date());
+    setError(null);
+    setLoading(false);
+    fetchCountRef.current += 1;
+  }, [rowToDog]);
+
+  // ── Fetch BOH data from Supabase ──────────────────────────────────────
+  const fetchData = useCallback(async () => {
+    if (!enabled || !locationId) return;
+    try {
+      const { data: rows, error: err } = await supabase
+        .from("gingr_back_of_house")
+        .select("*")
+        .eq("location_id", locationId);
+
+      if (err) throw new Error(err.message);
+      processBohRows(rows || []);
+    } catch (err) {
+      setError(err.message);
+      setLoading(false);
+    }
+  }, [enabled, locationId, processBohRows]);
+
+  // ── Supabase Realtime subscription ────────────────────────────────────
+  useEffect(() => {
+    if (!enabled || !configLoaded || !locationId) return;
+
+    // Initial fetch
+    fetchData();
+
+    // Subscribe to realtime changes on gingr_back_of_house
+    const channel = supabase
+      .channel(`boh-${locationId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "gingr_back_of_house",
+          filter: `location_id=eq.${locationId}`,
+        },
+        () => {
+          // On any INSERT/UPDATE/DELETE, re-fetch the full table for this location
+          fetchData();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [enabled, configLoaded, locationId, fetchData]);
+
+  // ── Page Visibility API ────────────────────────────────────────────────
+  useEffect(() => {
+    const onVisChange = () => {
+      visibleRef.current = !document.hidden;
+      if (visibleRef.current && enabled) fetchData();
+    };
+    document.addEventListener("visibilitychange", onVisChange);
+    return () => document.removeEventListener("visibilitychange", onVisChange);
+  }, [enabled, fetchData]);
+
   // ── Fetch Supabase boarding dogs (checked-in but not going home today) ─
-  // BOH checking_out only has dogs going home today. Multi-night boarders
-  // staying past today are only in Supabase. This fetch gets the count of
-  // Supabase boarding dogs NOT already in BOH, for accurate dashboard stats.
-  //
-  // fetchSupaboarders is extracted as a ref-stable function so fetchData can
-  // call it immediately after the first BOH fetch populates bohAnimalIdsRef,
-  // avoiding a 30-second window where the count is wrong.
   const supaboarderTimerRef = useRef(null);
   const cancelledSupaRef = useRef(false);
 
   const fetchSupaboarders = useCallback(async () => {
     if (!locationId || cancelledSupaRef.current) return;
     try {
-      // Only count boarding reservations whose scheduled end_date is AFTER today.
-      // BOH checking_out already includes boarders going home today.
-      // Without this filter, stale records (check_out_date never set by Gingr)
-      // inflate the count with phantom dogs that left days/weeks ago.
-      const todayDate = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
+      const todayDate = new Date().toLocaleDateString("en-CA");
       const { data: rows } = await supabase
         .from("gingr_reservations")
         .select("animal_gingr_id")
@@ -162,34 +259,32 @@ export function useBackOfHouse(locationId, enabled = true) {
   useEffect(() => {
     if (!locationId || !enabled) return;
     cancelledSupaRef.current = false;
-
-    // Don't fetch immediately on mount — wait for first BOH fetch to populate
-    // bohAnimalIdsRef. The BOH fetchData will call fetchSupaboarders after it
-    // populates the ref. After that, poll every 30s.
+    fetchSupaboarders();
     supaboarderTimerRef.current = setInterval(fetchSupaboarders, 30000);
     return () => { cancelledSupaRef.current = true; if (supaboarderTimerRef.current) clearInterval(supaboarderTimerRef.current); };
   }, [locationId, enabled, fetchSupaboarders]);
 
-  // ── Poll Gingr reservations API for authoritative in-house count ────────
-  const GINGR_RES_URL = "https://your-gingr-subdomain.gingrapp.com/api/v1/reservations";
+  // ── Poll gingr_reservations for authoritative in-house count ──────────
   const gingrResCancelledRef = useRef(false);
   const gingrResTimerRef = useRef(null);
 
   const fetchGingrResCount = useCallback(async () => {
-    if (gingrResCancelledRef.current) return;
+    if (!locationId || gingrResCancelledRef.current) return;
     try {
-      const resp = await fetch(GINGR_RES_URL, {
-        method: "POST",
-        body: new URLSearchParams({ key: GINGR_API_KEY, checked_in: "true" }),
-      });
-      if (!resp.ok || gingrResCancelledRef.current) return;
-      const json = await resp.json();
-      const resData = json.data || {};
-      const entries = Object.values(resData);
+      const { data: rows, error: err } = await supabase
+        .from("gingr_reservations")
+        .select("reservation_type_name")
+        .eq("location_id", locationId)
+        .not("check_in_date", "is", null)
+        .is("check_out_date", null)
+        .is("cancelled_date", null);
+
+      if (err || gingrResCancelledRef.current) return;
+
       let boarding = 0;
       let daycare = 0;
-      for (const r of entries) {
-        const t = (r.reservation_type?.type || "").toLowerCase();
+      for (const r of (rows || [])) {
+        const t = (r.reservation_type_name || "").toLowerCase();
         if (t.includes("boarding") && !t.includes("day boarding") && !t.includes("daycare")) {
           boarding++;
         } else {
@@ -197,118 +292,25 @@ export function useBackOfHouse(locationId, enabled = true) {
         }
       }
       if (!gingrResCancelledRef.current) {
-        setGingrResCount({ total: entries.length, boarding, daycare, loaded: true });
+        setGingrResCount({ total: (rows || []).length, boarding, daycare, loaded: true });
       }
     } catch (e) {
       // Silently ignore — will retry on next interval
     }
-  }, []);
+  }, [locationId]);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !locationId) return;
     gingrResCancelledRef.current = false;
     fetchGingrResCount();
-    gingrResTimerRef.current = setInterval(fetchGingrResCount, 60000); // 60s poll
+    gingrResTimerRef.current = setInterval(fetchGingrResCount, 60000);
     return () => {
       gingrResCancelledRef.current = true;
       if (gingrResTimerRef.current) clearInterval(gingrResTimerRef.current);
     };
-  }, [enabled, fetchGingrResCount]);
-
-  // ── Fetch back_of_house ────────────────────────────────────────────────
-  const fetchData = useCallback(async () => {
-    if (!enabled || !visibleRef.current || !isWithinBusinessHours()) return;
-
-    try {
-      const resp = await fetch(BOH_URL);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const json = await resp.json();
-      const d = json.data || {};
-
-      // Active dogs = checking_out (dogs that are HERE)
-      const newActive = d.checking_out || [];
-      const newPending = d.checking_in || [];
-      const newActiveIds = new Set(newActive.map(dog => dog.id));
-
-      // Detect transitions (skip on first fetch — no previous data to compare)
-      if (prevActiveIdsRef.current !== null) {
-        const prevIds = prevActiveIdsRef.current;
-        const now = Date.now();
-        const events = {};
-
-        // New arrivals: in newActive but not in prev
-        for (const dog of newActive) {
-          if (!prevIds.has(dog.id)) {
-            events[dog.id] = { dog, type: "arrived", timestamp: now };
-          }
-        }
-
-        // Departures: in prev but not in newActive
-        // We need the dog data from the previous active list for display
-        for (const id of prevIds) {
-          if (!newActiveIds.has(id)) {
-            // Find dog data from previous active list (stored on state)
-            const prevDog = (activeDogs || []).find(d => d.id === id);
-            if (prevDog) {
-              events[id] = { dog: prevDog, type: "departed", timestamp: now };
-            }
-          }
-        }
-
-        if (Object.keys(events).length > 0) {
-          setRecentEvents(prev => ({ ...prev, ...events }));
-        }
-      }
-
-      prevActiveIdsRef.current = newActiveIds;
-      // Update bohAnimalIdsRef so the Supabase boarding query can dedup correctly
-      bohAnimalIdsRef.current = new Set(newActive.map(d => String(d.animal_id)));
-      setActiveDogs(newActive);
-      setPendingDogs(newPending);
-      setLastFetch(new Date());
-      setError(null);
-      fetchCountRef.current += 1;
-
-      // After first BOH fetch, immediately recount Supabase boarders so the
-      // dashboard doesn't show stale counts during the initial 30s window.
-      if (fetchCountRef.current === 1) {
-        fetchSupaboarders();
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [enabled, isWithinBusinessHours, activeDogs, fetchSupaboarders]);
-
-  // ── Page Visibility API ────────────────────────────────────────────────
-  useEffect(() => {
-    const onVisChange = () => {
-      visibleRef.current = !document.hidden;
-      if (visibleRef.current && enabled) fetchData();
-    };
-    document.addEventListener("visibilitychange", onVisChange);
-    return () => document.removeEventListener("visibilitychange", onVisChange);
-  }, [enabled, fetchData]);
-
-  // ── Polling loop ───────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!enabled || !configLoaded) return;
-
-    fetchData();
-
-    const ms = (config.pollIntervalSeconds || 10) * 1000;
-    timerRef.current = setInterval(fetchData, ms);
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [enabled, configLoaded, config.pollIntervalSeconds, fetchData]);
+  }, [enabled, locationId, fetchGingrResCount]);
 
   // ── Derived stats ─────────────────────────────────────────────────────
-  // Merges BOH active dogs with Supabase-only boarding dogs for accurate totals.
-  // BOH checking_out only contains dogs going home today (~54). Supabase has
-  // multi-night boarders not leaving today. We add them for the true in-house count.
   const stats = useMemo(() => {
     const classify = (d) => {
       const t = (d.type || "").toLowerCase();
@@ -318,8 +320,6 @@ export function useBackOfHouse(locationId, enabled = true) {
     const daycare = activeDogs.filter(d => classify(d) === "daycare");
     const bohBoarding = activeDogs.filter(d => classify(d) === "boarding");
 
-    // When Gingr reservations API is available, use it as authoritative source.
-    // Falls back to BOH + Supabase when API hasn't loaded yet.
     let totalInHouse, totalBoarding, totalDaycare;
     if (gingrResCount.loaded) {
       totalInHouse = gingrResCount.total;
@@ -331,16 +331,11 @@ export function useBackOfHouse(locationId, enabled = true) {
       totalDaycare = daycare.length;
     }
 
-    // Expected = in-house + not-yet-arrived
     const expectedCount = totalInHouse + pendingDogs.length;
-
-    // Pending breakdown
     const pendingDaycare = pendingDogs.filter(d => classify(d) === "daycare").length;
     const pendingBoarding = pendingDogs.filter(d => classify(d) === "boarding").length;
 
-    // Going Home = checked-in dogs whose end_date is today (not staying overnight)
-    // Only applies to BOH dogs (Supabase-only boarders aren't going home today by definition)
-    const todayStr = new Date().toLocaleDateString("en-CA"); // YYYY-MM-DD
+    const todayStr = new Date().toLocaleDateString("en-CA");
     const goingHomeCount = activeDogs.filter(d => {
       const endTs = parseInt(d.end_date, 10);
       if (!endTs) return false;

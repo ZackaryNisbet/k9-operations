@@ -2,13 +2,11 @@
 // Fetches raw reservations from Supabase for the selected date range
 // and computes accrual revenue per day using the receipt methodology
 // (sibling grouping + room rate fallback for boarding, base rates for daycare).
-// This replaces reading accrual values from dashboard_metrics_daily.
+// Phase 2: reads only from Supabase (gingr_reservations synced every 5 min).
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "../supabaseClient";
 import { computeAccrualByDay, computeAccrualTotals } from "../shared/accrualEngine";
-import { addDays } from "../shared/theme";
-import { mergeGingrLive } from "../shared/gingrLive";
 
 /**
  * useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo)
@@ -20,7 +18,7 @@ import { mergeGingrLive } from "../shared/gingrLive";
  *   prevAccrualTotals  — totals for prior period
  *   loading            — boolean
  */
-export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo, gingrLiveRows) {
+export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo) {
   const [accrualDailyRows, setAccrualDailyRows] = useState([]);
   const [accrualTotals, setAccrualTotals] = useState({ boardingRevenue: 0, daycareRevenue: 0, totalRevenue: 0 });
   const [prevAccrualDailyRows, setPrevAccrualDailyRows] = useState([]);
@@ -34,16 +32,10 @@ export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo
     setLoading(true);
 
     try {
-      // Determine the full date range needed (including prior period for overlap)
       const earliest = prevFrom && prevFrom < dateFrom ? prevFrom : dateFrom;
       const latest = dateTo;
 
-      // Fetch all reservations that overlap the combined range
-      // Boarding: start_date <= latest AND end_date >= earliest (overlap check)
-      // Daycare/Day Boarding: start_date within range (end_date may be NULL or same-day)
-      // Use OR to include records where end_date >= earliest OR end_date is null
-      // Fetch from Supabase (synced data)
-      const { data: supabaseRes, error } = await supabase
+      const { data: rawRes, error } = await supabase
         .from("gingr_reservations")
         .select("gingr_id,animal_name,owner_first_name,owner_last_name,reservation_type_name,start_date,end_date,deposit,transaction,cancelled_date,services")
         .eq("location_id", locationId)
@@ -53,15 +45,6 @@ export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo
 
       if (fetchId !== fetchIdRef.current) return; // stale
       if (error) { console.error("Accrual fetch error:", error); setLoading(false); return; }
-
-      // If the date range includes today and we have cached live Gingr data,
-      // merge it in. This no longer blocks — gingrLiveRows comes from the
-      // background polling cache (useGingrLiveCache).
-      const today = new Date().toISOString().split("T")[0];
-      let rawRes = supabaseRes;
-      if (latest >= today && gingrLiveRows && gingrLiveRows.length > 0) {
-        rawRes = mergeGingrLive(supabaseRes, gingrLiveRows);
-      }
 
       // Compute current period
       const currentDayMap = computeAccrualByDay(rawRes, dateFrom, dateTo);
@@ -101,7 +84,7 @@ export function useAccrualRevenue(locationId, dateFrom, dateTo, prevFrom, prevTo
     } finally {
       if (fetchId === fetchIdRef.current) setLoading(false);
     }
-  }, [locationId, dateFrom, dateTo, prevFrom, prevTo, gingrLiveRows]);
+  }, [locationId, dateFrom, dateTo, prevFrom, prevTo]);
 
   useEffect(() => {
     fetchAccrual();
