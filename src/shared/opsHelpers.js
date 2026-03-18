@@ -2,6 +2,33 @@
 
 import { C, OPERATIONS_CATALOG, OPS_TYPES, ROOM_TYPES, todayStr } from "./theme";
 
+// Weekly maintenance schedule — scheduledDays uses JS getDay() (0=Sun, 1=Mon, ..., 6=Sat)
+const WEEKLY_MAINTENANCE_TASKS = [
+  { id:"wm1", scheduledDays:[1,4] }, { id:"wm2", scheduledDays:[1,4] },
+  { id:"wm3", scheduledDays:[1,2,3,4,5,6,0] }, { id:"wm4", scheduledDays:[3] },
+  { id:"wm5", scheduledDays:[6] }, { id:"wm6", scheduledDays:[1,3,5] },
+  { id:"wm7", scheduledDays:[2,5] }, { id:"wm8", scheduledDays:[4] },
+  { id:"wm9", scheduledDays:[4] }, { id:"wm10", scheduledDays:[1,4] },
+  { id:"wm11", scheduledDays:[1,3,5] }, { id:"wm12", scheduledDays:[6] },
+  { id:"wm13", scheduledDays:[4] }, { id:"wm14", scheduledDays:[3,6] },
+  { id:"wm15", scheduledDays:[1] }, { id:"wm16", scheduledDays:[1,4] },
+  { id:"wm17", scheduledDays:[2,3,5] }, { id:"wm18", scheduledDays:[6] },
+  { id:"wm19", scheduledDays:[1,2,3,4,5,6,0] }, { id:"wm20", scheduledDays:[2,6] },
+  { id:"wm21", scheduledDays:[3] }, { id:"wm22", scheduledDays:[1] },
+  { id:"wm23", scheduledDays:[1] }, { id:"wm24", scheduledDays:[1,2,3,4,5,6,0] },
+];
+
+function getWeeklyMaintenanceStats(data, date) {
+  const td = date || todayStr();
+  const dayIdx = new Date(td + "T12:00:00").getDay();
+  const scheduled = WEEKLY_MAINTENANCE_TASKS.filter(t => t.scheduledDays.includes(dayIdx));
+  const entryId = `ops_weekly_maintenance_${td}`;
+  const entry = (data.dailyOps || []).find(e => e.id === entryId);
+  const ei = entry ? entry.items || {} : {};
+  const checked = Object.values(ei).filter(i => i && i.checked).length;
+  return { total: scheduled.length, checked };
+}
+
 function classifyReservationType(typeName) {
   if (!typeName) return "other";
   const t = typeName.toLowerCase();
@@ -137,6 +164,12 @@ function getOpsCardStatus(data, item, date) {
     if (ppStats.completedSessions >= ppStats.requiredSessions) return "completed";
     return ppStats.completedSessions > 0 ? "in_progress" : "not_started";
   }
+  if (item.typeSub === "weekly_maintenance") {
+    const wmStats = getWeeklyMaintenanceStats(data, td);
+    if (wmStats.total === 0) return "not_started";
+    if (wmStats.checked >= wmStats.total) return "completed";
+    return wmStats.checked > 0 ? "in_progress" : "not_started";
+  }
   if (Array.isArray(ei)) {
     return ei.some(i => i.checked) ? "in_progress" : "not_started";
   }
@@ -174,6 +207,10 @@ function getOpsProgress(data, item, date) {
     const ppStats = getPPStats(data, td);
     return ppStats.requiredSessions > 0 ? Math.round((ppStats.completedSessions / ppStats.requiredSessions) * 100) : 0;
   }
+  if (item.typeSub === "weekly_maintenance") {
+    const wmStats = getWeeklyMaintenanceStats(data, td);
+    return wmStats.total > 0 ? Math.round((wmStats.checked / wmStats.total) * 100) : 0;
+  }
   if (Array.isArray(ei)) {
     const total = ei.length;
     return total === 0 ? 0 : Math.round((ei.filter(i => i.checked).length / total) * 100);
@@ -210,6 +247,10 @@ function getOpsCountLabel(data, item, date) {
     const ppStats = getPPStats(data, td);
     if (ppStats.requiredSessions === 0) return "No PP dogs";
     return `${ppStats.completedSessions}/${ppStats.requiredSessions} required · ${ppStats.totalLogged} total`;
+  }
+  if (item.typeSub === "weekly_maintenance") {
+    const wmStats = getWeeklyMaintenanceStats(data, td);
+    return `${wmStats.checked}/${wmStats.total} tasks`;
   }
   return "";
 }
