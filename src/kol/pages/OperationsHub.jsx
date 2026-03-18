@@ -185,7 +185,7 @@ function OperationsHub({ data, save, nav, profile }) {
 
   // Resolve template items for a given checklist type
   const getTemplateForType = useCallback((typeSub) => {
-    const templates = { opening: data.openingTemplate || DEF_OPENING_TEMPLATE, fe: data.feTemplate || POS_FE_TEMPLATE, be: data.beTemplate || POS_BE_TEMPLATE, closing: data.closingTemplate || DEF_CLOSING_TEMPLATE };
+    const templates = { opening: data.openingTemplate || DEF_OPENING_TEMPLATE, fe_checklist: data.feTemplate || POS_FE_TEMPLATE, be_checklist: data.beTemplate || POS_BE_TEMPLATE, closing: data.closingTemplate || DEF_CLOSING_TEMPLATE };
     const template = templates[typeSub];
     if (!template) return [];
     const dayIdx = new Date(viewDate + "T12:00:00").getDay();

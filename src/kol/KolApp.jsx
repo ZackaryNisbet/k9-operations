@@ -16,6 +16,7 @@ import useGingrData from "../hooks/useGingrData";
 import { useRefreshSettings } from "../hooks/useRefreshSettings";
 import { useBackOfHouse } from "../hooks/useBackOfHouse";
 import { applyStructuredFilters } from "../hooks/useFilters";
+import useRealtimeOps from "../hooks/useRealtimeOps";
 // Page imports
 import ClientsPage from "./pages/ClientsPage";
 import FunnelPage from "./pages/FunnelPage";
@@ -255,6 +256,9 @@ function LeanAppInner() {
   const [liveEodEntries, setLiveEodEntries] = useState([]);
   const [liveResortPolicies, setLiveResortPolicies] = useState(null);
 
+  // Realtime subscription for cross-device sync
+  const { markLocalWrite } = useRealtimeOps(currentLocation, setLiveDailyOps);
+
   // Load persisted resort policies (retention thresholds) from lite_settings
   useEffect(() => {
     supabase.from("lite_settings").select("setting_value").eq("location_id", currentLocation).eq("setting_key", "resort_policies").then(({ data: rows }) => {
@@ -299,6 +303,7 @@ function LeanAppInner() {
             locked: r.locked,
             completedBy: r.completed_by,
             items: r.items || {},
+            computed_items: r.computed_items || null,
             sections: r.sections,
             mentions: r.mentions,
             history: r.history || [],
@@ -330,12 +335,14 @@ function LeanAppInner() {
   // Save function — persists dailyOps and auditLog to Supabase
   const save = useCallback(async (newData) => {
     try {
+      // Mark local write so realtime subscription skips our own echo
+      markLocalWrite();
       // Save dailyOps changes
       if (newData.dailyOps) {
         const opsRows = newData.dailyOps.map(d => ({
           id: d.id,
           location_id: currentLocation,
-          type: d.type === 'checklist' || ['opening','closing','fe','be','fe_checklist','be_checklist'].includes(d.typeSub || d.type) ? 'checklist' : (d.typeSub || d.type),
+          type: d.type === 'checklist' || ['opening','closing','fe_checklist','be_checklist'].includes(d.typeSub || d.type) ? 'checklist' : (d.typeSub || d.type),
           type_sub: d.typeSub || d.type,
           date: d.date,
           locked: d.locked || false,
@@ -701,9 +708,9 @@ function LeanAppInner() {
       case "ops-opening":
         return <DailyOpsPage data={data} save={save} sub="opening" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "ops-fe":
-        return <DailyOpsPage data={data} save={save} sub="fe" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+        return <DailyOpsPage data={data} save={save} sub="fe_checklist" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "ops-be":
-        return <DailyOpsPage data={data} save={save} sub="be" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+        return <DailyOpsPage data={data} save={save} sub="be_checklist" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "ops-rooms":
         return <DailyOpsPage data={data} save={save} sub="room_cleaning" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "ops-pictures":
