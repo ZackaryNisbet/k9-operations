@@ -81,38 +81,56 @@ function TeamManagementTab({ profile, data, save }) {
       return;
     }
 
+    const params = {
+      invite_email: inviteEmail.trim().toLowerCase(),
+      invite_name: inviteName.trim(),
+      invite_role: inviteRole,
+      invite_location: profile?.location_id || null,
+    };
+
+    // Retry up to 3 times — the server-side RPC now has its own retry loop,
+    // but if it still times out we give it another shot from the client side.
+    const MAX_RETRIES = 3;
+    let lastError = "";
+
     try {
-      // Call server-side RPC — creates auth user + lite_profiles row in one shot
-      // Uses SECURITY DEFINER + Supabase Vault service_role_key, so the
-      // caller's session is NOT affected (no accidental sign-out).
-      const { data: result, error: rpcError } = await supabase.rpc('send_lite_invite', {
-        invite_email: inviteEmail.trim().toLowerCase(),
-        invite_name: inviteName.trim(),
-        invite_role: inviteRole,
-        invite_location: profile?.location_id || null,
-      });
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        const { data: result, error: rpcError } = await supabase.rpc('send_lite_invite', params);
 
-      if (rpcError) {
-        setInviteError("RPC error: " + rpcError.message);
+        if (rpcError) {
+          lastError = rpcError.message;
+          break; // RPC-level errors (network, auth) won't resolve with retries
+        }
+
+        if (result && !result.success) {
+          const isRetryable = (result.error || "").toLowerCase().includes("timed out")
+            || (result.error || "").toLowerCase().includes("try again");
+
+          if (isRetryable && attempt < MAX_RETRIES) {
+            // Wait 2 s before retrying — the auth user may finish propagating
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
+
+          lastError = result.error || "Invite failed.";
+          break;
+        }
+
+        // Success
+        setInviteCredentials({
+          email: params.invite_email,
+          password: result.temp_password,
+          name: inviteName.trim(),
+        });
+        setInviteEmail("");
+        setInviteName("");
+        setInviteRole("pct");
+        fetchTeam();
         setInviting(false);
         return;
       }
 
-      if (result && !result.success) {
-        setInviteError(result.error || "Invite failed.");
-        setInviting(false);
-        return;
-      }
-
-      setInviteCredentials({
-        email: inviteEmail.trim().toLowerCase(),
-        password: result.temp_password,
-        name: inviteName.trim(),
-      });
-      setInviteEmail("");
-      setInviteName("");
-      setInviteRole("pct");
-      fetchTeam();
+      setInviteError(lastError || "Invite failed.");
     } catch (err) {
       setInviteError("Unexpected error: " + err.message);
     }
