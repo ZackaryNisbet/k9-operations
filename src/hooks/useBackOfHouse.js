@@ -30,7 +30,7 @@ const DEFAULTS = {
 
 const HIGHLIGHT_DURATION_MS = 60_000; // 60 seconds
 
-// ── Gingr API config — loaded dynamically from lite_settings ───────────────
+// ── Gingr API config — loaded dynamically per location from k9_gingr_credentials ──
 
 // ── Hook ────────────────────────────────────────────────────────────────────
 export function useBackOfHouse(locationId, enabled = true) {
@@ -45,8 +45,26 @@ export function useBackOfHouse(locationId, enabled = true) {
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState(DEFAULTS);
   const [configLoaded, setConfigLoaded] = useState(false);
-  // Gingr API credentials — loaded dynamically from lite_settings
-  const [gingrConfig, setGingrConfig] = useState(null); // { subdomain, api_key, gingr_location_id }
+
+  // ── Dynamic Gingr credentials from k9_gingr_credentials ────────────────
+  const [gingrCreds, setGingrCreds] = useState(null); // { subdomain, apiKey, gingrLocationId }
+  useEffect(() => {
+    if (!locationId) return;
+    supabase
+      .from("k9_gingr_credentials")
+      .select("gingr_subdomain, gingr_api_key, gingr_location_id")
+      .eq("location_id", locationId)
+      .maybeSingle()
+      .then(({ data: row }) => {
+        if (row) {
+          setGingrCreds({
+            subdomain: row.gingr_subdomain,
+            apiKey: row.gingr_api_key,
+            gingrLocationId: row.gingr_location_id || "1",
+          });
+        }
+      });
+  }, [locationId]);
   // Supabase boarding dogs not in BOH (multi-night stays not going home today)
   const [supabaseBoardingCount, setSupabaseBoardingCount] = useState(0);
   // Gingr reservations API — authoritative in-house count
@@ -58,21 +76,17 @@ export function useBackOfHouse(locationId, enabled = true) {
   const prevActiveIdsRef = useRef(null); // Set of IDs from previous poll
   const fetchCountRef = useRef(0);
 
-  // ── Load config + Gingr credentials from Supabase ──────────────────────
+  // ── Load poll config from Supabase ──────────────────────────────────
   useEffect(() => {
     if (!locationId) return;
-    Promise.all([
-      supabase.from("lite_settings").select("setting_value").eq("location_id", locationId).eq("setting_key", SETTING_KEY).maybeSingle(),
-      supabase.from("lite_settings").select("setting_value").eq("location_id", locationId).eq("setting_key", "gingr_config").maybeSingle(),
-    ]).then(([pollResult, gingrResult]) => {
-      if (pollResult.data?.setting_value) {
-        setConfig(prev => ({ ...prev, ...pollResult.data.setting_value }));
-      }
-      if (gingrResult.data?.setting_value) {
-        setGingrConfig(gingrResult.data.setting_value);
-      }
-      setConfigLoaded(true);
-    });
+    supabase.from("lite_settings").select("setting_value")
+      .eq("location_id", locationId).eq("setting_key", SETTING_KEY).maybeSingle()
+      .then(({ data: row }) => {
+        if (row?.setting_value) {
+          setConfig(prev => ({ ...prev, ...row.setting_value }));
+        }
+        setConfigLoaded(true);
+      });
   }, [locationId]);
 
   // ── Save config to Supabase ────────────────────────────────────────────
@@ -172,12 +186,12 @@ export function useBackOfHouse(locationId, enabled = true) {
   const gingrResTimerRef = useRef(null);
 
   const fetchGingrResCount = useCallback(async () => {
-    if (gingrResCancelledRef.current || !gingrConfig?.subdomain || !gingrConfig?.api_key) return;
+    if (gingrResCancelledRef.current || !gingrCreds) return;
     try {
-      const resUrl = `https://${gingrConfig.subdomain}.gingrapp.com/api/v1/reservations`;
+      const resUrl = `https://${gingrCreds.subdomain}.gingrapp.com/api/v1/reservations`;
       const resp = await fetch(resUrl, {
         method: "POST",
-        body: new URLSearchParams({ key: gingrConfig.api_key, checked_in: "true" }),
+        body: new URLSearchParams({ key: gingrCreds.apiKey, checked_in: "true" }),
       });
       if (!resp.ok || gingrResCancelledRef.current) return;
       const json = await resp.json();
@@ -199,10 +213,10 @@ export function useBackOfHouse(locationId, enabled = true) {
     } catch (e) {
       // Silently ignore — will retry on next interval
     }
-  }, [gingrConfig]);
+  }, [gingrCreds]);
 
   useEffect(() => {
-    if (!enabled || !gingrConfig) return;
+    if (!enabled || !gingrCreds) return;
     gingrResCancelledRef.current = false;
     fetchGingrResCount();
     gingrResTimerRef.current = setInterval(fetchGingrResCount, 60000); // 60s poll
@@ -214,10 +228,10 @@ export function useBackOfHouse(locationId, enabled = true) {
 
   // ── Fetch back_of_house ────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
-    if (!enabled || !visibleRef.current || !isWithinBusinessHours() || !gingrConfig?.subdomain || !gingrConfig?.api_key) return;
+    if (!enabled || !visibleRef.current || !isWithinBusinessHours() || !gingrCreds) return;
 
     try {
-      const bohUrl = `https://${gingrConfig.subdomain}.gingrapp.com/api/v1/back_of_house?key=${gingrConfig.api_key}&location_id=${gingrConfig.gingr_location_id || "1"}&full_day=true&include_daycare=true`;
+      const bohUrl = `https://${gingrCreds.subdomain}.gingrapp.com/api/v1/back_of_house?key=${gingrCreds.apiKey}&location_id=${gingrCreds.gingrLocationId}&full_day=true&include_daycare=true`;
       const resp = await fetch(bohUrl);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const json = await resp.json();
@@ -277,7 +291,7 @@ export function useBackOfHouse(locationId, enabled = true) {
     } finally {
       setLoading(false);
     }
-  }, [enabled, isWithinBusinessHours, activeDogs, fetchSupaboarders, gingrConfig]);
+  }, [enabled, isWithinBusinessHours, activeDogs, fetchSupaboarders, gingrCreds]);
 
   // ── Page Visibility API ────────────────────────────────────────────────
   useEffect(() => {

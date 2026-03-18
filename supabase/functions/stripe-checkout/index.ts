@@ -1,15 +1,8 @@
-// Supabase Edge Function: stripe-checkout
-// Creates Stripe Checkout sessions for subscription plans.
-//
-// Environment variables needed in Supabase Dashboard > Edge Functions > Secrets:
-//   STRIPE_SECRET_KEY       - Your Stripe secret key
-//   STRIPE_PRICE_SINGLE     - Stripe Price ID for single_location plan
-//   STRIPE_PRICE_MULTI_3    - Stripe Price ID for multi_location_3 plan
-//   STRIPE_PRICE_MULTI_10   - Stripe Price ID for multi_location_10 plan
-//   SUPABASE_URL            - Auto-provided by Supabase
-//   SUPABASE_SERVICE_ROLE_KEY - Auto-provided by Supabase
+// ============================================================================
+// Stripe Checkout Edge Function — K9 Operations
+// Creates Stripe Checkout Sessions for subscription plans.
+// ============================================================================
 
-import Stripe from "https://esm.sh/stripe@14?target=deno";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -19,193 +12,129 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-/** Map plan_type to the corresponding env var name for the Stripe Price ID. */
-const PLAN_PRICE_ENV_MAP: Record<string, string> = {
-  single_location: "STRIPE_PRICE_SINGLE",
-  multi_location_3: "STRIPE_PRICE_MULTI_3",
-  multi_location_10: "STRIPE_PRICE_MULTI_10",
+// Plan price IDs — set these in Supabase secrets
+const PRICE_MAP: Record<string, string> = {
+  single_location: Deno.env.get("STRIPE_PRICE_SINGLE") || "",
+  multi_location_3: Deno.env.get("STRIPE_PRICE_MULTI_3") || "",
+  multi_location_10: Deno.env.get("STRIPE_PRICE_MULTI_10") || "",
+  enterprise: Deno.env.get("STRIPE_PRICE_ENTERPRISE") || "",
 };
 
+const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY") || "";
+
+async function stripeRequest(
+  endpoint: string,
+  body: Record<string, string>,
+): Promise<any> {
+  const resp = await fetch(`https://api.stripe.com/v1/${endpoint}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${STRIPE_SECRET_KEY}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams(body).toString(),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json();
+    throw new Error(err.error?.message || `Stripe API error ${resp.status}`);
+  }
+  return resp.json();
+}
+
 Deno.serve(async (req: Request) => {
-  // Handle CORS preflight
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    // Only allow POST
-    if (req.method !== "POST") {
+    if (!STRIPE_SECRET_KEY) {
       return new Response(
-        JSON.stringify({ error: "Method not allowed" }),
-        {
-          status: 405,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+        JSON.stringify({ error: "Stripe is not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // Parse request body
-    const { plan_type, user_id, success_url, cancel_url } = await req.json();
+    const { plan_type, success_url, cancel_url } = await req.json();
 
-    // Validate required fields
-    if (!plan_type || !user_id || !success_url || !cancel_url) {
+    if (!plan_type || !PRICE_MAP[plan_type]) {
       return new Response(
-        JSON.stringify({
-          error:
-            "Missing required fields: plan_type, user_id, success_url, cancel_url",
-        }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+        JSON.stringify({ error: "Invalid plan_type" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // Enterprise plan requires contacting sales
-    if (plan_type === "enterprise") {
-      return new Response(
-        JSON.stringify({
-          error:
-            "Enterprise plans require a custom agreement. Please contact sales.",
-        }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
-      );
-    }
-
-    // Validate plan type
-    const priceEnvVar = PLAN_PRICE_ENV_MAP[plan_type];
-    if (!priceEnvVar) {
-      return new Response(
-        JSON.stringify({
-          error: `Invalid plan_type: ${plan_type}. Valid options: single_location, multi_location_3, multi_location_10, enterprise`,
-        }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
-      );
-    }
-
-    // Resolve the Stripe Price ID from environment
-    const priceId = Deno.env.get(priceEnvVar);
+    const priceId = PRICE_MAP[plan_type];
     if (!priceId) {
-      console.error(`Missing environment variable: ${priceEnvVar}`);
       return new Response(
-        JSON.stringify({ error: "Server configuration error: missing price ID" }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+        JSON.stringify({ error: "Price ID not configured for this plan" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
-    // Initialize Stripe
-    const stripeSecretKey = Deno.env.get("STRIPE_SECRET_KEY");
-    if (!stripeSecretKey) {
-      console.error("Missing environment variable: STRIPE_SECRET_KEY");
-      return new Response(
-        JSON.stringify({ error: "Server configuration error: missing Stripe key" }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
-      );
-    }
-
-    const stripe = new Stripe(stripeSecretKey, {
-      apiVersion: "2023-10-16",
-      httpClient: Stripe.createFetchHttpClient(),
-    });
-
-    // Initialize Supabase to look up user email
+    // Get user from auth header
+    const authHeader = req.headers.get("authorization") || "";
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Get user email from Supabase auth
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.admin.getUserById(user_id);
-
-    if (userError || !user) {
-      console.error("Failed to fetch user:", userError?.message);
-      return new Response(
-        JSON.stringify({ error: "User not found" }),
-        {
-          status: 404,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
-      );
-    }
-
-    const email = user.email;
-    if (!email) {
-      return new Response(
-        JSON.stringify({ error: "User does not have an email address" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
-      );
-    }
-
-    // Look up existing Stripe customer by email, or create a new one
-    const existingCustomers = await stripe.customers.list({
-      email,
-      limit: 1,
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
     });
 
-    let customerId: string;
-
-    if (existingCustomers.data.length > 0) {
-      customerId = existingCustomers.data[0].id;
-    } else {
-      const newCustomer = await stripe.customers.create({
-        email,
-        metadata: {
-          supabase_user_id: user_id,
-        },
-      });
-      customerId = newCustomer.id;
+    const { data: { user }, error: authErr } = await supabase.auth.getUser();
+    if (authErr || !user) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
-    // Create Stripe Checkout session
-    const session = await stripe.checkout.sessions.create({
+    // Check if user already has a Stripe customer ID
+    const supabaseService = createClient(
+      supabaseUrl,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+
+    const { data: existingSub } = await supabaseService
+      .from("subscriptions")
+      .select("stripe_customer_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    let customerId = existingSub?.stripe_customer_id;
+
+    // Create Stripe customer if needed
+    if (!customerId) {
+      const customer = await stripeRequest("customers", {
+        email: user.email || "",
+        "metadata[user_id]": user.id,
+        "metadata[plan_type]": plan_type,
+      });
+      customerId = customer.id;
+    }
+
+    // Create Checkout Session
+    const session = await stripeRequest("checkout/sessions", {
       customer: customerId,
       mode: "subscription",
-      line_items: [
-        {
-          price: priceId,
-          quantity: 1,
-        },
-      ],
-      success_url: success_url,
-      cancel_url: cancel_url,
-      metadata: {
-        user_id,
-        plan_type,
-      },
+      "line_items[0][price]": priceId,
+      "line_items[0][quantity]": "1",
+      success_url: success_url || `${req.headers.get("origin")}/lite/onboarding?step=provision&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: cancel_url || `${req.headers.get("origin")}/lite/pricing`,
+      "metadata[user_id]": user.id,
+      "metadata[plan_type]": plan_type,
+      "subscription_data[metadata][user_id]": user.id,
+      "subscription_data[metadata][plan_type]": plan_type,
     });
 
     return new Response(
-      JSON.stringify({ url: session.url }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+      JSON.stringify({ url: session.url, session_id: session.id }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   } catch (err: any) {
     console.error("stripe-checkout error:", err);
     return new Response(
-      JSON.stringify({ error: err.message || "Internal server error" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+      JSON.stringify({ error: err.message }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
   }
 });

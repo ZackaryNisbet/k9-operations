@@ -1,55 +1,78 @@
-// K9 Operations — Onboarding Wizard
-// Multi-step: Account → Resort Info → Gingr API → Plan/Payment → Auto-Provision
+// K9 Operations — Self-Service Onboarding Wizard
+// Multi-step flow: Account → Resort Info → Gingr API → Plan/Payment → Auto-Provision
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
-import { C } from "../../shared/theme";
+import { useAuth } from "../../AuthProvider";
+import { C, gid } from "../../shared/theme";
+import PricingPage from "./PricingPage";
 
 const STEPS = [
-  { key: "account", label: "Account", icon: "1" },
-  { key: "resort", label: "Resort Info", icon: "2" },
-  { key: "gingr", label: "Gingr API", icon: "3" },
-  { key: "plan", label: "Plan", icon: "4" },
-  { key: "provision", label: "Go Live", icon: "5" },
+  { id: "resort", label: "Resort Info", icon: "1" },
+  { id: "gingr", label: "Gingr Setup", icon: "2" },
+  { id: "plan", label: "Choose Plan", icon: "3" },
+  { id: "provision", label: "Getting Ready", icon: "4" },
 ];
 
-// ── Inline PricingCards (lightweight version for onboarding step) ──────────
-const PLANS = [
-  { id: "single_location", name: "Starter", subtitle: "Single Location", price: 149, period: "mo", popular: false },
-  { id: "multi_location_3", name: "Growth", subtitle: "Up to 3 Locations", price: 349, period: "mo", popular: true },
-  { id: "multi_location_10", name: "Scale", subtitle: "Up to 10 Locations", price: 799, period: "mo", popular: false },
-  { id: "enterprise", name: "Enterprise", subtitle: "Unlimited", price: null, period: null, popular: false },
+const US_TIMEZONES = [
+  { value: "America/New_York", label: "Eastern Time (ET)" },
+  { value: "America/Chicago", label: "Central Time (CT)" },
+  { value: "America/Denver", label: "Mountain Time (MT)" },
+  { value: "America/Los_Angeles", label: "Pacific Time (PT)" },
+  { value: "America/Phoenix", label: "Arizona (no DST)" },
+  { value: "Pacific/Honolulu", label: "Hawaii Time (HT)" },
+  { value: "America/Anchorage", label: "Alaska Time (AKT)" },
 ];
 
-// ── Step progress bar ─────────────────────────────────────────────────────
-function StepIndicator({ currentStep }) {
-  const idx = STEPS.findIndex(s => s.key === currentStep);
+// ─── Progress Indicator ─────────────────────────────────────────────────────
+function StepIndicator({ steps, currentIdx }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0, padding: "32px 24px 8px" }}>
-      {STEPS.map((step, i) => {
-        const done = i < idx;
-        const active = i === idx;
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "center",
+      gap: 0, margin: "0 auto 48px", maxWidth: 560,
+    }}>
+      {steps.map((step, i) => {
+        const isDone = i < currentIdx;
+        const isActive = i === currentIdx;
         return (
-          <React.Fragment key={step.key}>
+          <React.Fragment key={step.id}>
             {i > 0 && (
               <div style={{
-                width: 48, height: 2, background: done ? C.acc : "rgba(255,255,255,0.15)",
-                transition: "background 0.3s",
+                flex: 1, height: 2, maxWidth: 60,
+                background: isDone ? C.acc : "rgba(255,255,255,0.1)",
+                transition: "background 0.4s",
               }} />
             )}
             <div style={{
-              width: 36, height: 36, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 14, fontWeight: 700, flexShrink: 0, transition: "all 0.3s",
-              background: done ? C.acc : active ? "#fff" : "rgba(255,255,255,0.12)",
-              color: done ? "#fff" : active ? C.pri : "rgba(255,255,255,0.4)",
-              border: active ? `2px solid ${C.acc}` : "2px solid transparent",
-              boxShadow: active ? `0 0 0 4px rgba(132,204,22,0.2)` : "none",
+              display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+              opacity: isDone || isActive ? 1 : 0.4, transition: "opacity 0.3s",
             }}>
-              {done ? (
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path d="M4 8l3 3 5-5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              ) : step.icon}
+              <div style={{
+                width: 40, height: 40, borderRadius: 12,
+                background: isDone
+                  ? C.acc
+                  : isActive
+                    ? "rgba(132,204,22,0.2)"
+                    : "rgba(255,255,255,0.06)",
+                border: isActive ? `2px solid ${C.acc}` : isDone ? "none" : "1px solid rgba(255,255,255,0.1)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 16, fontWeight: 800,
+                color: isDone ? C.pri : isActive ? C.acc : "rgba(255,255,255,0.4)",
+                transition: "all 0.3s",
+              }}>
+                {isDone ? (
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                ) : step.icon}
+              </div>
+              <div style={{
+                fontSize: 11, fontWeight: 600,
+                color: isActive ? C.acc : "rgba(255,255,255,0.4)",
+                whiteSpace: "nowrap",
+              }}>
+                {step.label}
+              </div>
             </div>
           </React.Fragment>
         );
@@ -58,12 +81,32 @@ function StepIndicator({ currentStep }) {
   );
 }
 
-// ── Reusable input ────────────────────────────────────────────────────────
-function Field({ label, value, onChange, placeholder, type = "text", required, helpText }) {
+// ─── Step Card Wrapper ──────────────────────────────────────────────────────
+function StepCard({ title, subtitle, children }) {
+  return (
+    <div style={{
+      background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+      borderRadius: 24, padding: "40px 36px", maxWidth: 560, margin: "0 auto",
+    }}>
+      <h2 style={{ fontSize: 28, fontWeight: 900, color: "#fff", margin: "0 0 8px", lineHeight: 1.2 }}>
+        {title}
+      </h2>
+      {subtitle && (
+        <p style={{ fontSize: 15, color: "rgba(255,255,255,0.5)", margin: "0 0 32px", lineHeight: 1.5 }}>
+          {subtitle}
+        </p>
+      )}
+      {children}
+    </div>
+  );
+}
+
+// ─── Input Component ────────────────────────────────────────────────────────
+function OnboardInput({ label, value, onChange, placeholder, type = "text", required, error }) {
   return (
     <div style={{ marginBottom: 20 }}>
-      <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: C.text, marginBottom: 6 }}>
-        {label} {required && <span style={{ color: C.dan }}>*</span>}
+      <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 6 }}>
+        {label} {required && <span style={{ color: C.acc }}>*</span>}
       </label>
       <input
         type={type}
@@ -71,462 +114,450 @@ function Field({ label, value, onChange, placeholder, type = "text", required, h
         onChange={e => onChange(e.target.value)}
         placeholder={placeholder}
         style={{
-          width: "100%", padding: "12px 16px", borderRadius: 12, border: `1.5px solid ${C.border}`,
-          fontSize: 15, fontFamily: "inherit", outline: "none", background: "#fff",
-          transition: "border-color 0.15s", boxSizing: "border-box",
+          width: "100%", padding: "12px 16px",
+          background: "rgba(255,255,255,0.06)", border: error ? `1px solid ${C.dan}` : "1px solid rgba(255,255,255,0.1)",
+          borderRadius: 10, color: "#fff", fontSize: 15,
+          outline: "none", transition: "border-color 0.2s",
+          boxSizing: "border-box",
         }}
-        onFocus={e => { e.target.style.borderColor = C.pri; }}
-        onBlur={e => { e.target.style.borderColor = C.border; }}
+        onFocus={e => { e.target.style.borderColor = C.acc; }}
+        onBlur={e => { e.target.style.borderColor = error ? C.dan : "rgba(255,255,255,0.1)"; }}
       />
-      {helpText && <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>{helpText}</div>}
+      {error && <div style={{ fontSize: 12, color: C.dan, marginTop: 4 }}>{error}</div>}
     </div>
   );
 }
 
-// ── Primary action button ─────────────────────────────────────────────────
-function PrimaryBtn({ children, onClick, disabled, loading, style = {} }) {
+function OnboardSelect({ label, value, onChange, options, required }) {
   return (
-    <button
-      onClick={onClick}
-      disabled={disabled || loading}
-      style={{
-        padding: "14px 32px", borderRadius: 14, border: "none", fontSize: 15, fontWeight: 700,
-        fontFamily: "inherit", cursor: disabled ? "not-allowed" : "pointer",
-        background: disabled ? C.border : `linear-gradient(135deg, ${C.pri} 0%, #0D3B1E 100%)`,
-        color: disabled ? C.textMut : "#fff", transition: "all 0.2s",
-        opacity: loading ? 0.7 : 1, minWidth: 160, ...style,
-      }}
-    >
-      {loading ? "Processing..." : children}
-    </button>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// STEP 1: Account
-// ═══════════════════════════════════════════════════════════════════════════
-function StepAccount({ formData, setField, onNext }) {
-  const valid = formData.fullName?.trim() && formData.email?.trim();
-  return (
-    <div>
-      <h2 style={{ fontSize: 26, fontWeight: 800, color: "#fff", margin: "0 0 8px" }}>Create Your Account</h2>
-      <p style={{ fontSize: 15, color: "rgba(255,255,255,0.6)", margin: "0 0 32px" }}>
-        Let's get you set up with K9 Operations.
-      </p>
-      <div style={{ background: "#fff", borderRadius: 20, padding: "32px 28px", boxShadow: "0 8px 32px rgba(0,0,0,0.08)" }}>
-        <Field label="Full Name" value={formData.fullName || ""} onChange={v => setField("fullName", v)} placeholder="Jane Vance" required />
-        <Field label="Email" value={formData.email || ""} onChange={v => setField("email", v)} placeholder="jane@resort.com" type="email" required />
-        <Field label="Phone" value={formData.phone || ""} onChange={v => setField("phone", v)} placeholder="(555) 123-4567" type="tel" />
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
-          <PrimaryBtn onClick={onNext} disabled={!valid}>Continue</PrimaryBtn>
-        </div>
-      </div>
+    <div style={{ marginBottom: 20 }}>
+      <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.7)", marginBottom: 6 }}>
+        {label} {required && <span style={{ color: C.acc }}>*</span>}
+      </label>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{
+          width: "100%", padding: "12px 16px",
+          background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: 10, color: "#fff", fontSize: 15,
+          outline: "none", boxSizing: "border-box", appearance: "none",
+        }}
+      >
+        <option value="">Select...</option>
+        {options.map(o => (
+          <option key={o.value} value={o.value} style={{ background: "#1a1a1a" }}>{o.label}</option>
+        ))}
+      </select>
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// STEP 2: Resort Info
-// ═══════════════════════════════════════════════════════════════════════════
-function StepResort({ formData, setField, onNext, onBack }) {
-  const valid = formData.resortName?.trim() && formData.city?.trim() && formData.state?.trim();
-  return (
-    <div>
-      <h2 style={{ fontSize: 26, fontWeight: 800, color: "#fff", margin: "0 0 8px" }}>Tell Us About Your Resort</h2>
-      <p style={{ fontSize: 15, color: "rgba(255,255,255,0.6)", margin: "0 0 32px" }}>
-        We'll use this to configure your location.
-      </p>
-      <div style={{ background: "#fff", borderRadius: 20, padding: "32px 28px", boxShadow: "0 8px 32px rgba(0,0,0,0.08)" }}>
-        <Field label="Resort / Facility Name" value={formData.resortName || ""} onChange={v => setField("resortName", v)} placeholder="Bark Avenue Pet Resort" required />
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-          <Field label="City" value={formData.city || ""} onChange={v => setField("city", v)} placeholder="Austin" required />
-          <Field label="State" value={formData.state || ""} onChange={v => setField("state", v)} placeholder="TX" required />
-        </div>
-        <Field label="Address" value={formData.address || ""} onChange={v => setField("address", v)} placeholder="123 Main St" />
-        <Field label="Website" value={formData.website || ""} onChange={v => setField("website", v)} placeholder="https://barkavenue.com" type="url" />
-        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
-          <button onClick={onBack} style={{ padding: "12px 24px", borderRadius: 12, border: "none", background: "transparent", color: C.textMut, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Back</button>
-          <PrimaryBtn onClick={onNext} disabled={!valid}>Continue</PrimaryBtn>
-        </div>
-      </div>
-    </div>
-  );
-}
+// ─── Main Onboarding Component ──────────────────────────────────────────────
+export default function OnboardingPage({ nav }) {
+  const { user } = useAuth();
+  const [step, setStep] = useState(0);
 
-// ═══════════════════════════════════════════════════════════════════════════
-// STEP 3: Gingr API Setup
-// ═══════════════════════════════════════════════════════════════════════════
-function StepGingr({ formData, setField, onNext, onBack }) {
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState(null); // { ok, message }
+  // Check URL for step override (e.g., returning from Stripe checkout)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("step") === "provision") {
+      setStep(3); // Jump to provision step
+    }
+  }, []);
 
-  const handleTest = useCallback(async () => {
-    if (!formData.gingrSubdomain || !formData.gingrApiKey) return;
-    setTesting(true);
-    setTestResult(null);
+  // Resort info
+  const [resortName, setResortName] = useState("");
+  const [resortAddress, setResortAddress] = useState("");
+  const [resortPhone, setResortPhone] = useState("");
+  const [resortTimezone, setResortTimezone] = useState("America/New_York");
+  const [resortErrors, setResortErrors] = useState({});
+
+  // Gingr
+  const [gingrSubdomain, setGingrSubdomain] = useState("");
+  const [gingrApiKey, setGingrApiKey] = useState("");
+  const [gingrTesting, setGingrTesting] = useState(false);
+  const [gingrTestResult, setGingrTestResult] = useState(null); // { success: bool, message: string }
+
+  // Provision
+  const [provisioning, setProvisioning] = useState(false);
+  const [provisionDone, setProvisionDone] = useState(false);
+  const [provisionError, setProvisionError] = useState(null);
+  const [provisionSteps, setProvisionSteps] = useState([]);
+
+  const currentIdx = step;
+
+  // ─── Step 1: Resort Info ──────────────────────────────────────────────
+  const validateResort = () => {
+    const errors = {};
+    if (!resortName.trim()) errors.name = "Resort name is required";
+    if (!resortAddress.trim()) errors.address = "Address is required";
+    if (!resortPhone.trim()) errors.phone = "Phone number is required";
+    setResortErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleResortNext = () => {
+    if (validateResort()) setStep(1);
+  };
+
+  // ─── Step 2: Gingr Setup ─────────────────────────────────────────────
+  const testGingrConnection = async () => {
+    setGingrTesting(true);
+    setGingrTestResult(null);
+
     try {
-      const url = `https://${formData.gingrSubdomain}.gingrapp.com/api/v1/back_of_house?key=${formData.gingrApiKey}&location_id=${formData.gingrLocationId || "1"}&full_day=true`;
+      const url = `https://${gingrSubdomain.trim()}.gingrapp.com/api/v1/owners?key=${gingrApiKey.trim()}&limit=1`;
       const resp = await fetch(url);
+
       if (resp.ok) {
-        setTestResult({ ok: true, message: "Connection successful!" });
+        const data = await resp.json();
+        setGingrTestResult({
+          success: true,
+          message: `Connected! Found ${data.total || 0} owners in Gingr.`,
+        });
       } else {
-        setTestResult({ ok: false, message: `API returned ${resp.status}. Check credentials.` });
+        const text = await resp.text();
+        setGingrTestResult({
+          success: false,
+          message: `Connection failed (${resp.status}): ${text.slice(0, 100)}`,
+        });
       }
-    } catch {
-      setTestResult({ ok: false, message: "Could not reach Gingr. Check subdomain." });
+    } catch (err) {
+      setGingrTestResult({
+        success: false,
+        message: `Connection error: ${err.message}`,
+      });
     } finally {
-      setTesting(false);
+      setGingrTesting(false);
     }
-  }, [formData.gingrSubdomain, formData.gingrApiKey, formData.gingrLocationId]);
+  };
 
-  return (
-    <div>
-      <h2 style={{ fontSize: 26, fontWeight: 800, color: "#fff", margin: "0 0 8px" }}>Connect Gingr PMS</h2>
-      <p style={{ fontSize: 15, color: "rgba(255,255,255,0.6)", margin: "0 0 32px" }}>
-        Link your Gingr account for real-time data sync. You can skip this and configure later.
-      </p>
-      <div style={{ background: "#fff", borderRadius: 20, padding: "32px 28px", boxShadow: "0 8px 32px rgba(0,0,0,0.08)" }}>
-        <Field
-          label="Gingr Subdomain"
-          value={formData.gingrSubdomain || ""}
-          onChange={v => setField("gingrSubdomain", v)}
-          placeholder="yourresort"
-          helpText="The part before .gingrapp.com (e.g., 'yourresort' from yourresort.gingrapp.com)"
-        />
-        <Field
-          label="API Key"
-          value={formData.gingrApiKey || ""}
-          onChange={v => setField("gingrApiKey", v)}
-          placeholder="Your Gingr API key"
-          helpText="Found in Gingr → Settings → API"
-        />
-        <Field
-          label="Gingr Location ID"
-          value={formData.gingrLocationId || ""}
-          onChange={v => setField("gingrLocationId", v)}
-          placeholder="1"
-          helpText="Usually '1' for single-location setups"
-        />
-
-        {/* Test Connection */}
-        <div style={{ marginBottom: 20 }}>
-          <button
-            onClick={handleTest}
-            disabled={testing || !formData.gingrSubdomain || !formData.gingrApiKey}
-            style={{
-              padding: "10px 20px", borderRadius: 10, border: `1.5px solid ${C.pri}`,
-              background: "transparent", color: C.pri, fontSize: 13, fontWeight: 700,
-              cursor: "pointer", fontFamily: "inherit", opacity: testing ? 0.6 : 1,
-            }}
-          >
-            {testing ? "Testing..." : "Test Connection"}
-          </button>
-          {testResult && (
-            <span style={{ marginLeft: 12, fontSize: 13, fontWeight: 600, color: testResult.ok ? C.suc : C.dan }}>
-              {testResult.message}
-            </span>
-          )}
-        </div>
-
-        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
-          <button onClick={onBack} style={{ padding: "12px 24px", borderRadius: 12, border: "none", background: "transparent", color: C.textMut, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Back</button>
-          <div style={{ display: "flex", gap: 12 }}>
-            <button
-              onClick={onNext}
-              style={{ padding: "12px 24px", borderRadius: 12, border: `1.5px solid ${C.border}`, background: "transparent", color: C.textSec, fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
-            >
-              Skip for now
-            </button>
-            <PrimaryBtn onClick={onNext} disabled={!formData.gingrSubdomain || !formData.gingrApiKey}>
-              Continue
-            </PrimaryBtn>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// STEP 4: Plan Selection
-// ═══════════════════════════════════════════════════════════════════════════
-function StepPlan({ formData, setField, onNext, onBack, profile, addGlobalToast }) {
-  const [loading, setLoading] = useState(null);
-
-  const handleSelect = useCallback(async (planId) => {
-    if (planId === "enterprise") {
-      window.open("mailto:sales@k9operations.com?subject=Enterprise%20Plan%20Inquiry", "_blank");
-      return;
+  const handleGingrNext = () => {
+    if (gingrSubdomain.trim() && gingrApiKey.trim()) {
+      setStep(2);
     }
-    setField("selectedPlan", planId);
-    setLoading(planId);
+  };
 
+  // ─── Step 3: Plan selection ───────────────────────────────────────────
+  const handlePlanSelected = (planId) => {
+    // Store selected plan, then trigger Stripe checkout
+    // The stripe-checkout function will redirect back with session_id
+    handleStripeCheckout(planId);
+  };
+
+  const handleStripeCheckout = async (planId) => {
     try {
       const { data, error } = await supabase.functions.invoke("stripe-checkout", {
         body: {
           plan_type: planId,
-          user_id: profile?.id,
-          success_url: `${window.location.origin}/lite/onboarding?step=provision&session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${window.location.origin}/lite/onboarding?step=plan`,
+          success_url: `${window.location.origin}/lite/onboarding?step=provision`,
+          cancel_url: `${window.location.origin}/lite/onboarding`,
         },
       });
+
       if (error) throw error;
-      if (data?.url) {
-        window.location.href = data.url;
-      } else {
-        throw new Error("No checkout URL");
-      }
+      if (data?.url) window.location.href = data.url;
     } catch (err) {
-      console.log("[Onboarding] Checkout error:", err.message);
-      addGlobalToast?.("Failed to start checkout. Please try again.", "error");
-    } finally {
-      setLoading(null);
+      console.error("Checkout error:", err);
     }
-  }, [profile?.id, addGlobalToast, setField]);
+  };
 
-  return (
-    <div>
-      <h2 style={{ fontSize: 26, fontWeight: 800, color: "#fff", margin: "0 0 8px" }}>Choose Your Plan</h2>
-      <p style={{ fontSize: 15, color: "rgba(255,255,255,0.6)", margin: "0 0 32px" }}>
-        All plans include a 14-day free trial. No credit card required to start.
-      </p>
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", justifyContent: "center" }}>
-        {PLANS.map(plan => {
-          const pop = plan.popular;
-          return (
-            <div
-              key={plan.id}
-              style={{
-                flex: "1 1 200px", maxWidth: 220, background: "#fff", borderRadius: 16,
-                padding: "24px 20px", border: pop ? `2px solid ${C.acc}` : `1px solid ${C.borderLight}`,
-                boxShadow: pop ? `0 12px 40px rgba(132,204,22,0.12)` : "0 4px 16px rgba(0,0,0,0.05)",
-                textAlign: "center",
-              }}
-            >
-              {pop && (
-                <div style={{ fontSize: 10, fontWeight: 800, color: C.acc, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>
-                  Most Popular
-                </div>
-              )}
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>{plan.name}</div>
-              <div style={{ fontSize: 11, color: C.textSec, marginBottom: 12 }}>{plan.subtitle}</div>
-              {plan.price !== null ? (
-                <div style={{ marginBottom: 16 }}>
-                  <span style={{ fontSize: 36, fontWeight: 800, color: C.text }}>${plan.price}</span>
-                  <span style={{ fontSize: 13, color: C.textMut }}>/{plan.period}</span>
-                </div>
-              ) : (
-                <div style={{ fontSize: 22, fontWeight: 700, color: C.text, marginBottom: 16 }}>Custom</div>
-              )}
-              <button
-                onClick={() => handleSelect(plan.id)}
-                disabled={loading === plan.id}
-                style={{
-                  width: "100%", padding: "10px 0", borderRadius: 10,
-                  border: pop ? "none" : `1.5px solid ${C.pri}`,
-                  background: pop ? C.pri : "transparent",
-                  color: pop ? "#fff" : C.pri,
-                  fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
-                  opacity: loading === plan.id ? 0.6 : 1,
-                }}
-              >
-                {loading === plan.id ? "Loading..." : plan.id === "enterprise" ? "Contact Sales" : "Select"}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-      <div style={{ display: "flex", justifyContent: "center", marginTop: 24 }}>
-        <button onClick={onBack} style={{ padding: "12px 24px", borderRadius: 12, border: "none", background: "transparent", color: "rgba(255,255,255,0.5)", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Back</button>
-      </div>
-    </div>
-  );
-}
+  // ─── Step 4: Auto-Provision ───────────────────────────────────────────
+  useEffect(() => {
+    if (step !== 3 || provisioning || provisionDone) return;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// STEP 5: Auto-Provision
-// ═══════════════════════════════════════════════════════════════════════════
-function StepProvision({ formData, profile, addGlobalToast, nav }) {
-  const [status, setStatus] = useState("provisioning"); // provisioning | done | error
-  const [message, setMessage] = useState("Setting up your account...");
-  const provisionedRef = React.useRef(false);
+    const provision = async () => {
+      setProvisioning(true);
+      setProvisionSteps([]);
 
-  React.useEffect(() => {
-    if (provisionedRef.current) return;
-    provisionedRef.current = true;
-
-    (async () => {
       try {
-        // 1. Create location record
-        setMessage("Creating your location...");
-        const locationId = crypto.randomUUID();
-        const slug = (formData.resortName || "location")
-          .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
+        const addStep = (msg) => setProvisionSteps(prev => [...prev, msg]);
 
-        const { error: locErr } = await supabase.from("lite_locations").upsert({
+        // 1. Create location
+        addStep("Creating your resort location...");
+        const locationId = gid();
+        const slug = resortName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+$/, "");
+
+        const { error: locErr } = await supabase.from("locations").insert({
           id: locationId,
-          name: formData.resortName || "My Resort",
-          slug,
-          city: formData.city || "",
-          state: formData.state || "",
-          address: formData.address || "",
-          website: formData.website || "",
-          owner_id: profile?.user_id || profile?.id,
-        }, { onConflict: "id" });
-        if (locErr) console.log("[Provision] location upsert:", locErr.message);
+          name: resortName.trim(),
+          slug: slug || `resort-${locationId.slice(0, 8)}`,
+          address: resortAddress.trim(),
+          phone: resortPhone.trim(),
+          timezone: resortTimezone,
+        });
+        if (locErr) throw new Error(`Location: ${locErr.message}`);
 
-        // 2. Save Gingr config if provided
-        if (formData.gingrSubdomain && formData.gingrApiKey) {
-          setMessage("Configuring Gingr integration...");
-          await supabase.from("lite_settings").upsert({
+        // 2. Create lite_settings defaults
+        addStep("Configuring resort settings...");
+        const settingsRows = [
+          { location_id: locationId, setting_key: "resort_info", setting_value: { name: resortName, address: resortAddress, phone: resortPhone, timezone: resortTimezone } },
+          { location_id: locationId, setting_key: "resort_policies", setting_value: { lapsedThresholdDays: 60, coldThresholdDays: 120 } },
+        ];
+        await supabase.from("lite_settings").upsert(settingsRows, { onConflict: "location_id,setting_key" });
+
+        // 3. Store Gingr credentials
+        if (gingrSubdomain.trim() && gingrApiKey.trim()) {
+          addStep("Saving Gingr integration...");
+          await supabase.from("k9_gingr_credentials").upsert({
             location_id: locationId,
-            setting_key: "gingr_config",
-            setting_value: {
-              subdomain: formData.gingrSubdomain,
-              api_key: formData.gingrApiKey,
-              gingr_location_id: formData.gingrLocationId || "1",
-            },
-          }, { onConflict: "location_id,setting_key" });
+            gingr_subdomain: gingrSubdomain.trim(),
+            gingr_api_key: gingrApiKey.trim(),
+          }, { onConflict: "location_id" });
         }
 
-        // 3. Link profile to location
-        setMessage("Linking your profile...");
-        if (profile?.id) {
-          await supabase.from("lite_profiles").update({
+        // 4. Create location_roles entry (admin role)
+        addStep("Setting up your admin access...");
+        if (user?.id) {
+          await supabase.from("location_roles").upsert({
+            user_id: user.id,
             location_id: locationId,
-            full_name: formData.fullName || profile.full_name,
-          }).eq("id", profile.id);
+            role: "location_admin",
+          }, { onConflict: "user_id,location_id" });
+
+          // Update user profile with location_id
+          await supabase.from("profiles").upsert({
+            id: user.id,
+            location_id: locationId,
+          }, { onConflict: "id" });
         }
 
-        setMessage("You're all set!");
-        setStatus("done");
+        // 5. Trigger initial Gingr sync
+        if (gingrSubdomain.trim() && gingrApiKey.trim()) {
+          addStep("Running initial Gingr sync...");
+          try {
+            await supabase.functions.invoke("gingr-sync", {
+              body: { location_id: locationId, sync_type: "full" },
+            });
+          } catch (syncErr) {
+            // Non-fatal — sync can be retried later
+            console.log("Initial sync skipped:", syncErr);
+          }
+        }
+
+        addStep("All set! Redirecting to your dashboard...");
+        setProvisionDone(true);
+
+        // Redirect to the app after a brief delay
+        setTimeout(() => {
+          window.location.href = `/lite/${slug}/dashboard`;
+        }, 2000);
       } catch (err) {
-        console.log("[Provision] error:", err.message);
-        setMessage("Something went wrong. Please contact support.");
-        setStatus("error");
-        addGlobalToast?.("Provisioning failed. Please contact support.", "error");
+        console.error("Provision error:", err);
+        setProvisionError(err.message);
+      } finally {
+        setProvisioning(false);
       }
-    })();
-  }, [formData, profile, addGlobalToast]);
+    };
 
-  return (
-    <div style={{ textAlign: "center" }}>
-      {status === "provisioning" && (
-        <>
-          <div style={{ margin: "0 auto 24px", width: 64, height: 64 }}>
-            <svg width="64" height="64" viewBox="0 0 64 64">
-              <circle cx="32" cy="32" r="28" fill="none" stroke="rgba(255,255,255,0.15)" strokeWidth="4" />
-              <circle cx="32" cy="32" r="28" fill="none" stroke={C.acc} strokeWidth="4" strokeLinecap="round" strokeDasharray="80 100">
-                <animateTransform attributeName="transform" type="rotate" from="0 32 32" to="360 32 32" dur="1s" repeatCount="indefinite"/>
-              </circle>
-            </svg>
-          </div>
-          <h2 style={{ fontSize: 24, fontWeight: 800, color: "#fff", margin: "0 0 12px" }}>Setting Up Your Resort</h2>
-          <p style={{ fontSize: 15, color: "rgba(255,255,255,0.6)" }}>{message}</p>
-        </>
-      )}
-      {status === "done" && (
-        <>
-          <div style={{ margin: "0 auto 24px", width: 80, height: 80, borderRadius: "50%", background: C.acc, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-              <path d="M12 20l6 6 10-10" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
-          </div>
-          <h2 style={{ fontSize: 28, fontWeight: 800, color: "#fff", margin: "0 0 12px" }}>Welcome to K9 Operations!</h2>
-          <p style={{ fontSize: 16, color: "rgba(255,255,255,0.7)", margin: "0 0 32px", maxWidth: 400, marginLeft: "auto", marginRight: "auto" }}>
-            Your resort is ready. Let's start managing your operations.
-          </p>
-          <PrimaryBtn
-            onClick={() => { nav?.("dashboard"); }}
-            style={{ background: `linear-gradient(135deg, ${C.acc} 0%, ${C.accDk} 100%)`, fontSize: 16, padding: "16px 40px" }}
-          >
-            Go to Dashboard
-          </PrimaryBtn>
-        </>
-      )}
-      {status === "error" && (
-        <>
-          <div style={{ margin: "0 auto 24px", width: 80, height: 80, borderRadius: "50%", background: C.danLt, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <svg width="40" height="40" viewBox="0 0 40 40" fill="none">
-              <path d="M14 14l12 12M26 14l-12 12" stroke={C.dan} strokeWidth="3" strokeLinecap="round"/>
-            </svg>
-          </div>
-          <h2 style={{ fontSize: 24, fontWeight: 800, color: "#fff", margin: "0 0 12px" }}>Setup Issue</h2>
-          <p style={{ fontSize: 15, color: "rgba(255,255,255,0.6)" }}>{message}</p>
-          <a href="mailto:support@k9operations.com" style={{ color: C.acc, fontWeight: 600, fontSize: 14, marginTop: 16, display: "inline-block" }}>
-            Contact Support
-          </a>
-        </>
-      )}
-    </div>
-  );
-}
+    provision();
+  }, [step, provisioning, provisionDone, resortName, resortAddress, resortPhone, resortTimezone, gingrSubdomain, gingrApiKey, user?.id]);
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Main OnboardingPage
-// ═══════════════════════════════════════════════════════════════════════════
-export default function OnboardingPage({ profile, addGlobalToast, nav }) {
-  // Parse step from URL query param if returning from Stripe
-  const urlParams = new URLSearchParams(window.location.search);
-  const initialStep = urlParams.get("step") || "account";
-
-  const [step, setStep] = useState(initialStep);
-  const [formData, setFormData] = useState({
-    fullName: profile?.full_name || "",
-    email: profile?.email || "",
-    phone: "",
-    resortName: "",
-    city: "",
-    state: "",
-    address: "",
-    website: "",
-    gingrSubdomain: "",
-    gingrApiKey: "",
-    gingrLocationId: "1",
-    selectedPlan: null,
-  });
-
-  const setField = useCallback((key, val) => {
-    setFormData(prev => ({ ...prev, [key]: val }));
-  }, []);
-
-  const goNext = useCallback(() => {
-    const idx = STEPS.findIndex(s => s.key === step);
-    if (idx < STEPS.length - 1) setStep(STEPS[idx + 1].key);
-  }, [step]);
-
-  const goBack = useCallback(() => {
-    const idx = STEPS.findIndex(s => s.key === step);
-    if (idx > 0) setStep(STEPS[idx - 1].key);
-  }, [step]);
-
+  // ─── Render ───────────────────────────────────────────────────────────
   return (
     <div style={{
       minHeight: "100vh",
-      background: `linear-gradient(180deg, ${C.pri} 0%, #0D3B1E 50%, ${C.bg} 100%)`,
-      fontFamily: "'Outfit', sans-serif",
+      background: `linear-gradient(180deg, ${C.pri} 0%, #0A1F12 60%, #050D08 100%)`,
+      padding: "40px 24px 80px",
+      fontFamily: "'Outfit', -apple-system, sans-serif",
     }}>
       {/* Logo */}
-      <div style={{ textAlign: "center", paddingTop: 32 }}>
-        <img src="/k9-logo-full.svg" alt="K9 Operations" style={{ height: 40, filter: "brightness(0) invert(1)" }} />
+      <div style={{ textAlign: "center", marginBottom: 40 }}>
+        <img src="/k9-logo-full.svg" alt="K9 Operations" style={{ height: 40, opacity: 0.9 }} />
       </div>
 
-      {/* Step Indicator */}
-      <StepIndicator currentStep={step} />
+      <StepIndicator steps={STEPS} currentIdx={currentIdx} />
 
-      {/* Step label */}
-      <div style={{ textAlign: "center", padding: "8px 24px 24px", fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
-        Step {STEPS.findIndex(s => s.key === step) + 1} of {STEPS.length} — {STEPS.find(s => s.key === step)?.label}
-      </div>
+      {/* Step 1: Resort Info */}
+      {step === 0 && (
+        <StepCard
+          title="Tell us about your resort"
+          subtitle="We'll use this to set up your location in K9 Operations."
+        >
+          <OnboardInput
+            label="Resort Name" value={resortName} onChange={setResortName}
+            placeholder="K9 Resorts Adair Forsythe" required error={resortErrors.name}
+          />
+          <OnboardInput
+            label="Address" value={resortAddress} onChange={setResortAddress}
+            placeholder="123 Main St, Adair Forsythe, NJ 08034" required error={resortErrors.address}
+          />
+          <OnboardInput
+            label="Phone" value={resortPhone} onChange={setResortPhone}
+            placeholder="(856) 555-0123" type="tel" required error={resortErrors.phone}
+          />
+          <OnboardSelect
+            label="Timezone" value={resortTimezone} onChange={setResortTimezone}
+            options={US_TIMEZONES} required
+          />
 
-      {/* Content */}
-      <div style={{ maxWidth: 560, margin: "0 auto", padding: "0 24px 80px" }}>
-        {step === "account" && <StepAccount formData={formData} setField={setField} onNext={goNext} />}
-        {step === "resort" && <StepResort formData={formData} setField={setField} onNext={goNext} onBack={goBack} />}
-        {step === "gingr" && <StepGingr formData={formData} setField={setField} onNext={goNext} onBack={goBack} />}
-        {step === "plan" && <StepPlan formData={formData} setField={setField} onNext={goNext} onBack={goBack} profile={profile} addGlobalToast={addGlobalToast} />}
-        {step === "provision" && <StepProvision formData={formData} profile={profile} addGlobalToast={addGlobalToast} nav={nav} />}
-      </div>
+          <button
+            onClick={handleResortNext}
+            style={{
+              width: "100%", padding: "14px 0", marginTop: 12,
+              background: `linear-gradient(135deg, ${C.acc} 0%, ${C.accDk} 100%)`,
+              color: C.pri, border: "none", borderRadius: 12,
+              fontSize: 16, fontWeight: 700, cursor: "pointer",
+            }}
+          >
+            Continue
+          </button>
+        </StepCard>
+      )}
+
+      {/* Step 2: Gingr Setup */}
+      {step === 1 && (
+        <StepCard
+          title="Connect your Gingr account"
+          subtitle="Enter your Gingr subdomain and API key. We'll verify the connection before proceeding."
+        >
+          <OnboardInput
+            label="Gingr Subdomain" value={gingrSubdomain} onChange={setGingrSubdomain}
+            placeholder="yourresort" required
+          />
+          <div style={{ fontSize: 12, color: "rgba(255,255,255,0.35)", marginTop: -16, marginBottom: 16 }}>
+            Your Gingr URL is https://<strong>{gingrSubdomain || "yourresort"}</strong>.gingrapp.com
+          </div>
+          <OnboardInput
+            label="API Key" value={gingrApiKey} onChange={setGingrApiKey}
+            placeholder="Enter your Gingr API key" required
+          />
+
+          {/* Test Connection */}
+          <button
+            onClick={testGingrConnection}
+            disabled={gingrTesting || !gingrSubdomain.trim() || !gingrApiKey.trim()}
+            style={{
+              width: "100%", padding: "12px 0", marginBottom: 12,
+              background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)",
+              color: "#fff", borderRadius: 10, fontSize: 14, fontWeight: 600,
+              cursor: gingrTesting ? "wait" : "pointer", opacity: gingrTesting ? 0.7 : 1,
+            }}
+          >
+            {gingrTesting ? "Testing..." : "Test Connection"}
+          </button>
+
+          {gingrTestResult && (
+            <div style={{
+              padding: "12px 16px", borderRadius: 10, marginBottom: 16,
+              background: gingrTestResult.success ? "rgba(132,204,22,0.1)" : "rgba(220,38,38,0.1)",
+              border: `1px solid ${gingrTestResult.success ? "rgba(132,204,22,0.3)" : "rgba(220,38,38,0.3)"}`,
+              color: gingrTestResult.success ? C.acc : C.dan,
+              fontSize: 14,
+            }}>
+              {gingrTestResult.message}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+            <button
+              onClick={() => setStep(0)}
+              style={{
+                flex: 1, padding: "14px 0",
+                background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)",
+                color: "#fff", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer",
+              }}
+            >
+              Back
+            </button>
+            <button
+              onClick={handleGingrNext}
+              disabled={!gingrSubdomain.trim() || !gingrApiKey.trim()}
+              style={{
+                flex: 2, padding: "14px 0",
+                background: `linear-gradient(135deg, ${C.acc} 0%, ${C.accDk} 100%)`,
+                color: C.pri, border: "none", borderRadius: 12,
+                fontSize: 16, fontWeight: 700, cursor: "pointer",
+                opacity: (!gingrSubdomain.trim() || !gingrApiKey.trim()) ? 0.5 : 1,
+              }}
+            >
+              Continue
+            </button>
+          </div>
+
+          {/* Skip Gingr */}
+          <button
+            onClick={() => setStep(2)}
+            style={{
+              width: "100%", padding: "10px 0", marginTop: 12,
+              background: "none", border: "none",
+              color: "rgba(255,255,255,0.35)", fontSize: 13, fontWeight: 500,
+              cursor: "pointer", textDecoration: "underline",
+            }}
+          >
+            Skip — I'll set up Gingr later
+          </button>
+        </StepCard>
+      )}
+
+      {/* Step 3: Plan Selection */}
+      {step === 2 && (
+        <div>
+          <div style={{ textAlign: "center", marginBottom: 24 }}>
+            <button
+              onClick={() => setStep(1)}
+              style={{
+                background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)",
+                color: "#fff", padding: "8px 20px", borderRadius: 8,
+                fontSize: 13, fontWeight: 600, cursor: "pointer",
+              }}
+            >
+              Back to Gingr Setup
+            </button>
+          </div>
+          <PricingPage onSelectPlan={handlePlanSelected} />
+        </div>
+      )}
+
+      {/* Step 4: Provisioning */}
+      {step === 3 && (
+        <StepCard
+          title={provisionDone ? "You're all set!" : "Setting up your resort"}
+          subtitle={provisionDone ? "Redirecting to your dashboard..." : "This will only take a moment."}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {provisionSteps.map((msg, i) => (
+              <div key={i} style={{
+                display: "flex", alignItems: "center", gap: 12,
+                padding: "10px 14px", borderRadius: 10,
+                background: i === provisionSteps.length - 1 && !provisionDone
+                  ? "rgba(132,204,22,0.1)"
+                  : "rgba(255,255,255,0.03)",
+              }}>
+                <div style={{
+                  width: 24, height: 24, borderRadius: 8,
+                  background: i < provisionSteps.length - 1 || provisionDone ? C.acc : "rgba(132,204,22,0.3)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  flexShrink: 0,
+                }}>
+                  {(i < provisionSteps.length - 1 || provisionDone) ? (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  ) : (
+                    <div style={{
+                      width: 8, height: 8, borderRadius: "50%",
+                      background: C.acc, animation: "pulse 1s ease-in-out infinite",
+                    }} />
+                  )}
+                </div>
+                <span style={{ fontSize: 14, color: "rgba(255,255,255,0.8)" }}>{msg}</span>
+              </div>
+            ))}
+          </div>
+
+          {provisionError && (
+            <div style={{
+              marginTop: 16, padding: "12px 16px", borderRadius: 10,
+              background: "rgba(220,38,38,0.1)", border: "1px solid rgba(220,38,38,0.3)",
+              color: C.dan, fontSize: 14,
+            }}>
+              Error: {provisionError}
+            </div>
+          )}
+        </StepCard>
+      )}
     </div>
   );
 }

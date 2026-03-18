@@ -571,7 +571,7 @@ function TVNavButton({ view, isActive, count, onClick }) {
 }
 
 /* ── Main Component ───────────────────────────────────────────────────── */
-function CheckoutTVPage({ data, nav, profile }) {
+function CheckoutTVPage({ data, nav, profile, locationId: propLocationId }) {
   /* ── Loading gate: pulsing K9 logo until reservation data is ready ── */
   if (!data || !data.reservations) {
     return (
@@ -584,25 +584,17 @@ function CheckoutTVPage({ data, nav, profile }) {
       </div>
     );
   }
-  return <CheckoutTVContent data={data} nav={nav} profile={profile} />;
+  return <CheckoutTVContent data={data} nav={nav} profile={profile} locationId={propLocationId} />;
 }
 
-function CheckoutTVContent({ data, nav, profile }) {
+function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
 
-  // ── Dynamic Gingr credentials from lite_settings ──────────────────
-  const locationId = profile?.location_id;
-  const [gingrCfg, setGingrCfg] = useState(null);
-  useEffect(() => {
-    if (!locationId) return;
-    supabase.from("lite_settings").select("setting_value")
-      .eq("location_id", locationId).eq("setting_key", "gingr_config").maybeSingle()
-      .then(({ data: row }) => { if (row?.setting_value) setGingrCfg(row.setting_value); });
-  }, [locationId]);
+  // ── Dynamic Gingr credentials (loaded via k9_gingr_credentials) ────
 
   /* ── TV-005: Navigation state ──────────────────────────────────────── */
   const [activeView, setActiveView] = useState("all");
@@ -649,10 +641,31 @@ function CheckoutTVContent({ data, nav, profile }) {
   const prevBohIdsRef = useRef(null);     // Map<id, dogRecord> from previous poll
   const bohPollCountRef = useRef(0);
 
+  // ── Dynamic Gingr credentials from k9_gingr_credentials ────────────────
+  const tvLocationId = propLocationId || profile?.location_id;
+  const [gingrCreds, setGingrCreds] = useState(null);
   useEffect(() => {
-    if (!gingrCfg?.subdomain || !gingrCfg?.api_key) return;
+    if (!tvLocationId) return;
+    supabase
+      .from("k9_gingr_credentials")
+      .select("gingr_subdomain, gingr_api_key, gingr_location_id")
+      .eq("location_id", tvLocationId)
+      .maybeSingle()
+      .then(({ data: row }) => {
+        if (row) {
+          setGingrCreds({
+            subdomain: row.gingr_subdomain,
+            apiKey: row.gingr_api_key,
+            gingrLocationId: row.gingr_location_id || "1",
+          });
+        }
+      });
+  }, [tvLocationId]);
+
+  useEffect(() => {
+    if (!gingrCreds) return;
     let cancelled = false;
-    const BOH_URL = `https://${gingrCfg.subdomain}.gingrapp.com/api/v1/back_of_house?key=${gingrCfg.api_key}&location_id=${gingrCfg.gingr_location_id || "1"}&full_day=true&include_daycare=true`;
+    const BOH_URL = `https://${gingrCreds.subdomain}.gingrapp.com/api/v1/back_of_house?key=${gingrCreds.apiKey}&location_id=${gingrCreds.gingrLocationId}&full_day=true&include_daycare=true`;
 
     const classifyBohType = (typeStr) => {
       const t = (typeStr || "").toLowerCase();
@@ -776,7 +789,7 @@ function CheckoutTVContent({ data, nav, profile }) {
     fetchBoh();
     const interval = setInterval(fetchBoh, 10000); // 10s poll
     return () => { cancelled = true; clearInterval(interval); };
-  }, [gingrCfg]);
+  }, [gingrCreds]);
 
   /* ── TV-014: Direct Gingr reservations poll for ALL checked-in dogs ───
    * Polls the Gingr reservations API directly for ALL checked-in
@@ -789,9 +802,9 @@ function CheckoutTVContent({ data, nav, profile }) {
    * ──────────────────────────────────────────────────────────────────── */
   const [gingrDaycareFromRes, setGingrDaycareFromRes] = useState([]);
   useEffect(() => {
-    if (!gingrCfg?.subdomain || !gingrCfg?.api_key) return;
+    if (!gingrCreds) return;
     let cancelled = false;
-    const GINGR_RES_URL = `https://${gingrCfg.subdomain}.gingrapp.com/api/v1/reservations`;
+    const GINGR_RES_URL = `https://${gingrCreds.subdomain}.gingrapp.com/api/v1/reservations`;
 
     const classifyType = (typeStr) => {
       const t = (typeStr || "").toLowerCase();
@@ -806,7 +819,7 @@ function CheckoutTVContent({ data, nav, profile }) {
       try {
         const resp = await fetch(GINGR_RES_URL, {
           method: "POST",
-          body: new URLSearchParams({ key: gingrCfg.api_key, checked_in: "true" }),
+          body: new URLSearchParams({ key: gingrCreds.apiKey, checked_in: "true" }),
         });
         if (!resp.ok || cancelled) return;
         const json = await resp.json();
@@ -846,7 +859,7 @@ function CheckoutTVContent({ data, nav, profile }) {
     fetchAllCheckedIn();
     const interval = setInterval(fetchAllCheckedIn, 60000); // 60s poll
     return () => { cancelled = true; clearInterval(interval); };
-  }, [gingrCfg]);
+  }, [gingrCreds]);
 
   /* ── TV-POLL: Supabase reconciliation sync (every 60s) ──────────────
    * Calls the gingr-sync edge function in tv-poll mode to reconcile
@@ -864,7 +877,7 @@ function CheckoutTVContent({ data, nav, profile }) {
       try {
         await supabase.functions.invoke("gingr-sync", {
           body: {
-            location_id: locationId,
+            location_id: tvLocationId,
             sync_type: "tv-poll",
           },
         });
@@ -877,7 +890,7 @@ function CheckoutTVContent({ data, nav, profile }) {
     const initTimer = setTimeout(triggerTvPoll, 5000);
     const interval = setInterval(triggerTvPoll, TV_POLL_INTERVAL);
     return () => { cancelled = true; clearTimeout(initTimer); clearInterval(interval); };
-  }, []);
+  }, [tvLocationId]);
 
   /* ── Merge BOH live data + Gingr reservations with Supabase ─────────── *
    * This is the SINGLE source-of-truth computation for all checked-in dogs.
