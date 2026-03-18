@@ -41,6 +41,7 @@ import InventoryReportPage from "./pages/InventoryReportPage";
 import CashTipsPage from "./pages/CashTipsPage";
 import TestHealthPage from "./pages/TestHealthPage";
 import OccupancyReportPage from "./pages/OccupancyReportPage";
+import WeeklyMaintenancePage from "./pages/WeeklyMaintenancePage";
 
 class LeanAppErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null, info: null }; }
@@ -79,6 +80,7 @@ const LITE_PAGE_SLUGS = {
   "ops-bathing": "ops/bathing",
   "ops-pamper": "ops/pamper",
   "ops-svc": "ops/service",
+  "ops-weekly-maintenance": "ops/weekly-maintenance",
   "eod": "eod",
   "attendance": "attendance",
   "mgmt-attendance": "attendance",
@@ -527,6 +529,7 @@ function LeanAppInner() {
       case "ops-bathing": return "Bathing Report";
       case "ops-pamper": return "Pamper Package Plus";
       case "ops-svc": return params?.svcName || "Service Report";
+      case "ops-weekly-maintenance": return "Weekly Maintenance";
       case "eod": return "End of Day";
       case "daily-ops": return "Daily Ops";
       case "attendance": case "mgmt-attendance": return "Attendance Tracker";
@@ -715,6 +718,8 @@ function LeanAppInner() {
         return <DailyOpsPage data={data} save={save} sub="pamper" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "ops-svc":
         return <DailyOpsPage data={data} save={save} sub="svc" nav={nav} profile={profile} addGlobalToast={addGlobalToast} params={params} />;
+      case "ops-weekly-maintenance":
+        return <WeeklyMaintenancePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "eod":
         return <LiteEODPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "mgmt-audit-log":
