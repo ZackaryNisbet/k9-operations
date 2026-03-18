@@ -398,7 +398,7 @@ function generateDailyOccupancy(avg, days, consistency) {
 /* ═══════════════════════════════════════════════════════════════════════════
    Main Component
    ═══════════════════════════════════════════════════════════════════════════ */
-export default function EnterpriseDashboard({ data, save, nav, profile, addGlobalToast }) {
+export default function EnterpriseDashboard({ data, save, nav, profile, addGlobalToast, userLocationIds }) {
   const [range, setRange] = useState("mtd");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
@@ -408,8 +408,13 @@ export default function EnterpriseDashboard({ data, save, nav, profile, addGloba
   const [alertsExpanded, setAlertsExpanded] = useState(true);
   const today = todayStr();
 
-  // Location data
-  const allLocations = useMemo(() => generateLocationData(), []);
+  // Location data — filtered by user's accessible locations
+  const allLocations = useMemo(() => {
+    const all = generateLocationData();
+    // null = full access (enterprise_admin/developer/owner)
+    if (!userLocationIds) return all;
+    return all.filter(l => userLocationIds.includes(l.id));
+  }, [userLocationIds]);
 
   // Initialize all locations as selected
   useEffect(() => {

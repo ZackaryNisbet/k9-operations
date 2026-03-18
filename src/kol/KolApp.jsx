@@ -8,7 +8,7 @@ import { supabase } from "../supabaseClient";
 import { C, LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX, POS_BASE, PAGE_SLUGS, SLUG_TO_PAGE, ENT_SLUG_TO_PAGE, buildUrl, parseUrl, NAV_ITEMS, K9_LOCATIONS, gid, todayStr, addDays, LITE_DEF_PRICING, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, OPERATIONS_CATALOG, OPS_TYPES, ROOM_TYPES, DEF_CLIENT_FIELDS, DEF_DOG_FIELDS, DEFAULT_LIFECYCLE_BANNERS, LC_OP_LABELS, LC_FILTER_FIELDS, LITE_ACTION_LABELS, LITE_ACTION_LEVELS, DEF_LITE_EOD_TEMPLATE, DAY_NAMES_SHORT, CHART_PTS, K9_LOGO_SRC, K9_LOGO_PNG, LEAN_ROLES, titleCase, fmtPhone, fmtDate, fmtDateFull, fmtDateShort, fmtTime, fmtInstr, formatTime12hr, countNights, countHours, formatDogNames, fmtPhoneInput, IDB_VERSION, idbGet, idbSet } from "../shared/theme";
 import { I, Icons } from "../shared/icons";
 import { K9Logo, K9LogoMini, Btn, Tip, Badge, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, isFieldRequired, validateClientFields } from "../shared/ui";
-import { hasLeanPermission, hasPermission, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP } from "../shared/permissions";
+import { hasLeanPermission, hasPermission, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP, getUserLocationIds } from "../shared/permissions";
 import { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, resSvcIncludes, getPPStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel } from "../shared/opsHelpers";
 import K9LoadingAnimation from "../shared/K9LoadingAnimation";
 import LocationSelector from "../shared/LocationSelector";
@@ -323,6 +323,34 @@ function LeanAppInner() {
     name: user?.user_metadata?.full_name || "Demo User",
     location_id: currentLocation,
   };
+
+  // Fetch user's location_roles for role-based location filtering
+  const [userLocationRoles, setUserLocationRoles] = useState([]);
+  useEffect(() => {
+    if (!user?.id) return;
+    supabase.from("location_roles").select("*").eq("user_id", user.id)
+      .then(({ data: rows }) => { if (rows) setUserLocationRoles(rows); });
+  }, [user?.id]);
+
+  // Compute accessible location IDs (null = all)
+  const userLocationIds = useMemo(
+    () => getUserLocationIds(profile, userLocationRoles),
+    [profile.role, profile.location_id, userLocationRoles]
+  );
+
+  // Filter K9_LEAN_LOCATIONS to only locations the user can access
+  const filteredLocations = useMemo(() => {
+    // null means "all locations" (enterprise_admin, developer, owner)
+    if (userLocationIds === null) return K9_LEAN_LOCATIONS;
+    return K9_LEAN_LOCATIONS.filter(loc => {
+      // Always include enterprise view for multi_location_admin
+      if (loc.isEnterprise) return profile.role === "multi_location_admin" || profile.role === "enterprise_admin" || profile.role === "owner" || profile.role === "developer";
+      // Include POS locations for everyone who had access
+      if (loc.isPOS) return true;
+      // Filter regular locations by user's assigned location_ids
+      return userLocationIds.includes(loc.id);
+    });
+  }, [userLocationIds, profile.role]);
 
   // Load ops data from Supabase on mount & location change
   useEffect(() => {
@@ -687,7 +715,7 @@ function LeanAppInner() {
       case "dashboard": {
         // DASH-002: Permission-based dashboard views
         const role = (profile.role || "pct").toLowerCase();
-        const isOwnerOrManager = role === "owner" || role === "manager" || role === "admin" || role === "enterprise_admin" || role === "regional" || role === "developer";
+        const isOwnerOrManager = role === "owner" || role === "manager" || role === "admin" || role === "enterprise_admin" || role === "multi_location_admin" || role === "regional" || role === "developer";
         const isCSR = role === "csr" || role === "supervisor";
         const dashboardPermissions = {
           showSnapshot: true,
@@ -791,11 +819,11 @@ function LeanAppInner() {
       case "photos":
         return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Photos not available on Enterprise view</div> : <PhotosPage data={data} nav={nav} profile={profile} />;
       case "enterprise-ops":
-        return <EnterpriseOpsMatrix />;
+        return <EnterpriseOpsMatrix profile={profile} userLocationIds={userLocationIds} />;
       case "enterprise-attendance":
-        return <EnterpriseAttendance />;
+        return <EnterpriseAttendance profile={profile} userLocationIds={userLocationIds} />;
       case "enterprise-users":
-        return <EnterpriseUserManagement profile={profile} />;
+        return <EnterpriseUserManagement profile={profile} userLocationIds={userLocationIds} />;
       case "inventory":
         return <InventoryPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "inventory-report":
@@ -859,7 +887,7 @@ function LeanAppInner() {
             currentLocation={currentLocation}
             onLocationChange={handleLocationChange}
             collapsed={!sbExpanded}
-            allLocations={allLocations}
+            allLocations={filteredLocations}
             profile={profile}
           />
         </div>

@@ -14,15 +14,28 @@ import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 
-function EnterpriseUserManagement({ profile }) {
-  const isEnterpriseAdmin = profile?.role === "enterprise_admin" || profile?.role === "owner";
+function EnterpriseUserManagement({ profile, userLocationIds }) {
+  const isEnterpriseAdmin = profile?.role === "enterprise_admin" || profile?.role === "owner" || profile?.role === "multi_location_admin";
   const [adminEmail, setAdminEmail] = useState("");
   const [adminName, setAdminName] = useState("");
+  const [selectedRole, setSelectedRole] = useState("location_admin");
 
-  const enterprises = [
+  const ASSIGNABLE_ROLES = [
+    { id: "pct", label: "PCT (Pet Care Tech)" },
+    { id: "csr", label: "CSR (Customer Service)" },
+    { id: "supervisor", label: "Supervisor" },
+    { id: "manager", label: "Manager" },
+    { id: "location_admin", label: "Location Admin" },
+    { id: "multi_location_admin", label: "Multi-Location Admin" },
+    { id: "enterprise_admin", label: "Enterprise Admin" },
+  ];
+
+  const allEnterprises = [
     { id: "ch", name: "Adair Forsythe", adminName: "Alice Johnson", adminEmail: "alice@k9operations.com" },
     { id: "demo", name: "Demo Location", adminName: "Bob Vance", adminEmail: "bob@k9operations.com" },
   ];
+  // Filter locations by user's accessible location_ids (null = all)
+  const enterprises = userLocationIds ? allEnterprises.filter(l => userLocationIds.includes(l.id)) : allEnterprises;
 
   return (
     <div>
@@ -30,14 +43,19 @@ function EnterpriseUserManagement({ profile }) {
 
       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <div>
-          <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700, color: C.text }}>Enterprise Admins</h3>
+          <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 700, color: C.text }}>Add User</h3>
           <Card style={{ padding: "16px 20px", background: C.bg, marginBottom: 16 }}>
-            <div style={{ fontSize: 13, color: C.textSec, marginBottom: 12 }}>Current Enterprise Admins can add new Enterprise Admins. {!isEnterpriseAdmin && "You don't have permission to create Enterprise Admins."}</div>
+            <div style={{ fontSize: 13, color: C.textSec, marginBottom: 12 }}>Admins can add new users and assign roles. {!isEnterpriseAdmin && "You don't have permission to manage users."}</div>
             {isEnterpriseAdmin && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 12, alignItems: "flex-end" }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 12, alignItems: "flex-end" }}>
                 <input type="text" value={adminName} onChange={e => setAdminName(e.target.value)} placeholder="Full name" style={{ padding: "10px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit" }} />
                 <input type="email" value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="Email" style={{ padding: "10px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit" }} />
-                <button style={{ padding: "10px 20px", background: isEnterpriseAdmin ? C.pri : C.textMut, color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: isEnterpriseAdmin ? "pointer" : "default", fontFamily: "inherit", opacity: isEnterpriseAdmin ? 1 : 0.5 }}>Create Admin</button>
+                <select value={selectedRole} onChange={e => setSelectedRole(e.target.value)} style={{ padding: "10px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: "inherit", background: C.surface }}>
+                  {ASSIGNABLE_ROLES.map(r => (
+                    <option key={r.id} value={r.id}>{r.label}</option>
+                  ))}
+                </select>
+                <button style={{ padding: "10px 20px", background: C.pri, color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Add User</button>
               </div>
             )}
           </Card>
