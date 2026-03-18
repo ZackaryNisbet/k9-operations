@@ -30,6 +30,86 @@ import DashboardRefreshTab from "../settings/DashboardRefreshTab";
 import ApiOverviewTab from "../settings/ApiOverviewTab";
 import ApiDashboardTab from "../settings/ApiDashboardTab";
 
+// ── Subscription Management Tab ────────────────────────────────────────────
+const PLAN_LABELS = {
+  single_location: "Starter — Single Location",
+  multi_location_3: "Growth — Up to 3 Locations",
+  multi_location_10: "Scale — Up to 10 Locations",
+  enterprise: "Enterprise — Unlimited",
+};
+
+function SubscriptionTab({ profile, addGlobalToast }) {
+  const [sub, setSub] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [portalLoading, setPortalLoading] = useState(false);
+
+  useEffect(() => {
+    if (!profile?.user_id && !profile?.id) { setLoading(false); return; }
+    const uid = profile.user_id || profile.id;
+    supabase
+      .from("subscriptions")
+      .select("*")
+      .eq("user_id", uid)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+      .then(({ data: row }) => { setSub(row); setLoading(false); });
+  }, [profile?.user_id, profile?.id]);
+
+  const openPortal = async () => {
+    setPortalLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("stripe-checkout", {
+        body: { action: "portal", user_id: profile?.user_id || profile?.id },
+      });
+      if (error) throw error;
+      if (data?.url) window.location.href = data.url;
+    } catch {
+      addGlobalToast?.("Could not open billing portal.", "error");
+    } finally {
+      setPortalLoading(false);
+    }
+  };
+
+  if (loading) return <div style={{ padding: 20, color: C.textSec }}>Loading subscription...</div>;
+
+  return (
+    <div>
+      <h3 style={{ margin: "0 0 20px", fontSize: 18, fontWeight: 700, color: C.text }}>Subscription</h3>
+      {sub ? (
+        <div style={{ background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 14, padding: 24 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{PLAN_LABELS[sub.plan_type] || sub.plan_type}</div>
+              <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>
+                Status: <span style={{ color: sub.status === "active" ? C.suc : C.warn, fontWeight: 600 }}>{sub.status}</span>
+              </div>
+            </div>
+            <Badge color={sub.status === "active" ? "success" : "warning"}>{sub.status}</Badge>
+          </div>
+          {sub.current_period_end && (
+            <div style={{ fontSize: 13, color: C.textSec, marginBottom: 16 }}>
+              Current period ends: {new Date(sub.current_period_end).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}
+            </div>
+          )}
+          <Btn variant="secondary" size="sm" onClick={openPortal} disabled={portalLoading}>
+            {portalLoading ? "Opening..." : "Manage Billing"}
+          </Btn>
+        </div>
+      ) : (
+        <div style={{ background: C.priLt, border: `1.5px solid ${C.pri}40`, borderRadius: 14, padding: 24, textAlign: "center" }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: C.text, marginBottom: 8 }}>No active subscription</div>
+          <div style={{ fontSize: 13, color: C.textSec, marginBottom: 16 }}>Choose a plan to unlock all features.</div>
+          <Btn variant="primary" size="sm" onClick={() => { window.location.href = "/lite/pricing"; }}>
+            View Plans
+          </Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsPage({ profile: parentProfile, addGlobalToast }) {
   const [tab, setTab] = useState(null); // null = show grid, set = show detail
   const [searchQuery, setSearchQuery] = useState("");
@@ -86,6 +166,13 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
         { id: "checklist-templates", label: "Checklist Templates", desc: "Customize opening, closing, FE, and BE checklists" },
       ],
     },
+    {
+      id: "billing",
+      label: "Billing & Subscription",
+      cards: [
+        { id: "subscription", label: "Subscription", desc: "Manage your plan, billing, and payment method" },
+      ],
+    },
   ];
 
   // Filter cards by search
@@ -122,6 +209,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
         return <ApiOverviewTab />;
       case "api-dashboard":
         return <ApiDashboardTab />;
+      case "subscription":
+        return <SubscriptionTab profile={profile} addGlobalToast={addGlobalToast} />;
       default:
         return null;
     }
