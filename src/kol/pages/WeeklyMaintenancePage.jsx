@@ -534,15 +534,11 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
                   : (task.scheduledDays ? task.scheduledDays.includes(dIdx) : false);
                 const items = getItems(date);
                 const it = items[task.id] || {};
-                const isPast = date < td;
-                const isTodayCol = date === td;
                 return (
                   <div key={date} style={{
                     padding: "6px 4px", textAlign: "center", display: "flex", flexDirection: "column",
                     alignItems: "center", justifyContent: "center",
-                    background: isScheduled
-                      ? (it.checked ? "rgba(34,139,34,0.08)" : isTodayCol ? "rgba(99,102,241,0.08)" : isPast && !it.checked ? "rgba(217,119,6,0.06)" : "transparent")
-                      : C.surfaceHover,
+                    background: isScheduled ? "transparent" : C.surfaceHover,
                     borderLeft: `1px solid ${C.borderLight}`,
                   }}>
                     {isScheduled ? (
@@ -575,13 +571,20 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
   const weeklyProgressRow = useMemo(() => {
     return weekDates.map(d => {
       const dIdx = new Date(d + "T12:00:00").getDay();
-      const ci = getComputedItems(d);
-      const taskList = (ci && ci.tasks) ? ci.tasks.filter(t => !t.isCarryover && t.active !== false) : WM_TASKS.filter(t => t.scheduledDays && t.scheduledDays.includes(dIdx));
+      // Use weekGrid for scheduled task count (most reliable)
+      let total = 0;
+      if (weekGrid && weekGrid[d]) {
+        total = weekGrid[d].length;
+      } else {
+        // Fallback: use default tasks with scheduledDays
+        total = WM_TASKS_DEFAULT.filter(t => t.scheduledDays && t.scheduledDays.includes(dIdx)).length;
+      }
       const items = getItems(d);
-      const checked = taskList.filter(t => items[t.id]?.checked).length;
-      return { date: d, total: taskList.length, checked };
+      const scheduledIds = weekGrid ? (weekGrid[d] || []) : WM_TASKS_DEFAULT.filter(t => t.scheduledDays && t.scheduledDays.includes(dIdx)).map(t => t.id);
+      const checked = scheduledIds.filter(id => items[id]?.checked).length;
+      return { date: d, total, checked };
     });
-  }, [weekDates, getItems, getComputedItems, WM_TASKS]);
+  }, [weekDates, getItems, weekGrid]);
 
   return (
     <div style={{ padding: "0 0 40px", maxWidth: 1200, margin: "0 auto" }}>
