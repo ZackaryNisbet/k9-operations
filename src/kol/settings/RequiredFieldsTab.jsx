@@ -345,6 +345,7 @@ function RequiredFieldsTab() {
 
   // Load Gingr form definitions from Supabase (if available)
   useEffect(() => {
+    if (!profile?.location_id) return;
     let cancelled = false;
     async function loadGingrFields() {
       setGingrLoading(true);
@@ -352,7 +353,7 @@ function RequiredFieldsTab() {
         const { data, error } = await supabase
           .from("gingr_form_definitions")
           .select("*")
-          .eq("location_id", profile?.location_id || "cherry-hill")
+          .eq("location_id", profile.location_id)
           .order("display_order", { ascending: true });
 
         if (!error && data && data.length > 0 && !cancelled) {
@@ -387,7 +388,7 @@ function RequiredFieldsTab() {
     }
     loadGingrFields();
     return () => { cancelled = true; };
-  }, []);
+  }, [profile?.location_id]);
 
   // Build left (K9 Ops) fields
   const leftFields = useMemo(() => {
