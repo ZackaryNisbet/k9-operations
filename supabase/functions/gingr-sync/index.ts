@@ -840,6 +840,113 @@ async function syncImmunizationTypes(
   return { synced: types.length };
 }
 
+// ─── Bath type enrichment ──────────────────────────────────────────────────
+
+const BATH_ADDON_MAP: Record<number, string> = {
+  38: "Premium",
+  39: "Hypoallergenic - NO SPRAY",
+  79: "Hypoallergenic - WITH SPRAY",
+  40: "Medicated",
+  75: "Whitening",
+  76: "Shampoo From Home",
+};
+
+async function syncBathTypes(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string
+) {
+  const today = new Date().toISOString().split("T")[0];
+
+  // Get reservations that are checked-in OR have start_date of today
+  const { data: checkedInRes } = await supabase
+    .from("gingr_reservations")
+    .select("gingr_id")
+    .eq("location_id", locationId)
+    .not("check_in_date", "is", null)
+    .is("check_out_date", null)
+    .is("cancelled_date", null);
+
+  const { data: todayRes } = await supabase
+    .from("gingr_reservations")
+    .select("gingr_id")
+    .eq("location_id", locationId)
+    .eq("start_date", today);
+
+  // Deduplicate reservation IDs
+  const allIds = new Set<string>();
+  for (const r of checkedInRes || []) allIds.add(r.gingr_id);
+  for (const r of todayRes || []) allIds.add(r.gingr_id);
+
+  const reservationIds = Array.from(allIds);
+  if (reservationIds.length === 0) return { synced: 0 };
+
+  let total = 0;
+
+  // Process in batches of 5 concurrent API calls
+  for (let i = 0; i < reservationIds.length; i += 5) {
+    const batch = reservationIds.slice(i, i + 5);
+    const results = await Promise.all(
+      batch.map(async (resId: string) => {
+        try {
+          const result = await gingrFetch(
+            subdomain,
+            "existing_reservation_estimate",
+            apiKey,
+            "GET",
+            { id: resId }
+          );
+          return { resId, data: result };
+        } catch (err: any) {
+          console.error(`Bath type fetch error for reservation ${resId}:`, err.message);
+          return { resId, data: null };
+        }
+      })
+    );
+
+    for (const { resId, data } of results) {
+      if (!data) continue;
+
+      const reservations = data.data?.reservations || data.reservations || [];
+      const reservation = reservations[0];
+      if (!reservation) continue;
+
+      const services = reservation.reservation_services || [];
+
+      // Determine bath type from services
+      let bathType: string | null = null;
+      for (const svc of services) {
+        const sId = Number(svc.s_id);
+        if (BATH_ADDON_MAP[sId]) {
+          bathType = BATH_ADDON_MAP[sId];
+          break;
+        }
+      }
+
+      const servicesDetail = {
+        bath_type: bathType,
+        reservation_services: services,
+        synced_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from("gingr_reservations")
+        .update({ services_detail: servicesDetail, synced_at: new Date().toISOString() })
+        .eq("location_id", locationId)
+        .eq("gingr_id", resId);
+
+      if (error) {
+        console.error(`Bath type update error for ${resId}:`, error.message);
+      } else {
+        total++;
+      }
+    }
+  }
+
+  return { synced: total };
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 function getDateChunks(start: string, end: string, maxDays: number): [string, string][] {
@@ -1019,6 +1126,131 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // ── Today-sync mode ───────────────────────────────────────────────────
+    // Fast sync: only today's reservations + checked-in + bath types + metrics
+    if (sync_type === "today-sync") {
+      const startTime = Date.now();
+      const today = new Date().toISOString().split("T")[0];
+      const results: Record<string, any> = {};
+
+      // 1. Sync today's reservations (single API call)
+      try {
+        const todayResult = await gingrFetch(subdomain, "reservations", api_key, "POST", {
+          start_date: today,
+          end_date: today,
+        });
+        const resMap = todayResult.data || {};
+        const reservations = Object.values(resMap) as any[];
+
+        if (reservations.length > 0) {
+          const rows = reservations.map((r: any) => mapReservationRow(r, location_id));
+          for (let i = 0; i < rows.length; i += 500) {
+            const chunk = rows.slice(i, i + 500);
+            await supabase
+              .from("gingr_reservations")
+              .upsert(chunk, { onConflict: "location_id,gingr_id" });
+          }
+        }
+        results.today_reservations = { synced: reservations.length };
+      } catch (err: any) {
+        results.today_reservations = { error: err.message };
+      }
+
+      // 2. Sync checked-in reservations
+      try {
+        const checkedInResult = await gingrFetch(subdomain, "reservations", api_key, "POST", {
+          checked_in: "true",
+        });
+        const checkedInMap = checkedInResult.data || {};
+        const checkedIn = Object.values(checkedInMap) as any[];
+
+        if (checkedIn.length > 0) {
+          const rows = checkedIn.map((r: any) => mapReservationRow(r, location_id));
+          for (let i = 0; i < rows.length; i += 500) {
+            const chunk = rows.slice(i, i + 500);
+            await supabase
+              .from("gingr_reservations")
+              .upsert(chunk, { onConflict: "location_id,gingr_id" });
+          }
+        }
+        results.checked_in = { synced: checkedIn.length };
+
+        // Reconcile checked-out dogs
+        try {
+          const { data: supaCheckedIn } = await supabase
+            .from("gingr_reservations")
+            .select("gingr_id")
+            .eq("location_id", location_id)
+            .not("check_in_date", "is", null)
+            .is("check_out_date", null)
+            .is("cancelled_date", null);
+
+          const gingrCheckedInIds = new Set(
+            checkedIn.map((r: any) => String(r.reservation_id))
+          );
+          const staleIds = (supaCheckedIn || [])
+            .filter((r: any) => !gingrCheckedInIds.has(r.gingr_id))
+            .map((r: any) => r.gingr_id);
+
+          const isLikelyApiError =
+            checkedIn.length === 0 && (supaCheckedIn || []).length > 20;
+
+          if (staleIds.length > 0 && !isLikelyApiError) {
+            const nowIso = new Date().toISOString();
+            for (let i = 0; i < staleIds.length; i += 100) {
+              const chunk = staleIds.slice(i, i + 100);
+              await supabase
+                .from("gingr_reservations")
+                .update({ check_out_date: nowIso, synced_at: nowIso })
+                .eq("location_id", location_id)
+                .in("gingr_id", chunk);
+            }
+            results.checked_out = { count: staleIds.length };
+          }
+        } catch (_) {
+          // Non-fatal
+        }
+      } catch (err: any) {
+        results.checked_in = { error: err.message };
+      }
+
+      // 3. Sync bath types for today's + checked-in reservations
+      try {
+        results.bath_types = await syncBathTypes(supabase, subdomain, api_key, location_id);
+      } catch (err: any) {
+        results.bath_types = { error: err.message };
+      }
+
+      // 4. Recompute dashboard metrics
+      try {
+        await supabase.rpc("compute_dashboard_metrics", {
+          p_location_id: location_id,
+          p_date_from: new Date(Date.now() - 86400000).toISOString().split("T")[0],
+          p_date_to: today,
+        });
+      } catch (metricsErr: any) {
+        console.error("Dashboard metrics recompute error:", metricsErr.message);
+      }
+
+      // 5. Compute cash basis metrics
+      try {
+        await computeCashBasisMetrics(supabase, location_id, subdomain, api_key);
+      } catch (cashErr: any) {
+        console.error("Cash basis metrics error:", cashErr.message);
+      }
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          sync_type: "today-sync",
+          location_id,
+          duration_ms: Date.now() - startTime,
+          results,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const results: Record<string, any> = {};
     const startTime = Date.now();
 
@@ -1027,7 +1259,7 @@ Deno.serve(async (req: Request) => {
       entities ||
       (sync_type === "full"
         ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "invoices", "invoice_payments", "deposits"]
-        : ["owners", "animals", "reservations", "invoices", "invoice_payments", "deposits"]);
+        : ["owners", "animals", "reservations", "bath_types", "invoices", "invoice_payments", "deposits"]);
 
     for (const entity of toSync) {
       await updateSyncState(supabase, location_id, entity, {
@@ -1078,6 +1310,14 @@ Deno.serve(async (req: Request) => {
             break;
           case "invoice_payments":
             results.invoice_payments = await syncInvoicePayments(
+              supabase,
+              subdomain,
+              api_key,
+              location_id
+            );
+            break;
+          case "bath_types":
+            results.bath_types = await syncBathTypes(
               supabase,
               subdomain,
               api_key,
