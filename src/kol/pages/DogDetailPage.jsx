@@ -97,6 +97,9 @@ function DogDetailPage({ data, clientId, dogId, nav, profile }) {
   const [vets, setVets] = useState([]);
   const [animalIcon, setAnimalIcon] = useState(null);
   const [enrichmentLoading, setEnrichmentLoading] = useState(true);
+  const [dogPhotos, setDogPhotos] = useState([]);
+  const [dogPhotosLoading, setDogPhotosLoading] = useState(true);
+  const [expandedPhotoUrl, setExpandedPhotoUrl] = useState(null);
 
   // ─── Fetch enrichment data from Supabase ────────────────────────────────
   useEffect(() => {
@@ -132,6 +135,24 @@ function DogDetailPage({ data, clientId, dogId, nav, profile }) {
     fetchAll();
     return () => { cancelled = true; };
   }, [profile?.location_id, dog.gingrId]);
+
+  // ─── Fetch dog photos from Supabase ────────────────────────────────────
+  useEffect(() => {
+    if (!dog.gingrId) { setDogPhotosLoading(false); return; }
+    let cancelled = false;
+    const fetchPhotos = async () => {
+      setDogPhotosLoading(true);
+      const { data: rows } = await supabase
+        .from("photos")
+        .select("*")
+        .eq("paired_dog_id", dog.gingrId)
+        .order("taken_at", { ascending: false });
+      if (!cancelled && rows) setDogPhotos(rows);
+      if (!cancelled) setDogPhotosLoading(false);
+    };
+    fetchPhotos();
+    return () => { cancelled = true; };
+  }, [dog.gingrId]);
 
   // ─── Reservation data ───────────────────────────────────────────────────
   const allReservations = (data.reservations || []).filter(r => r.dogId === dogId).sort((a, b) => b.checkIn.localeCompare(a.checkIn));
@@ -608,7 +629,62 @@ function DogDetailPage({ data, clientId, dogId, nav, profile }) {
               ) : null}
             </CollapsibleSection>
           )}
+
+          {/* 6. Photos Gallery */}
+          {!dogPhotosLoading && dogPhotos.length > 0 && (
+            <CollapsibleSection
+              title="Photos"
+              icon={"\uD83D\uDCF7"}
+              badge={`${dogPhotos.length} photo${dogPhotos.length !== 1 ? "s" : ""}`}
+              badgeColor="blue"
+              defaultOpen={false}
+            >
+              <div style={{ overflowX: "auto", paddingBottom: 4 }}>
+                <div style={{ display: "flex", gap: 10, minWidth: "min-content" }}>
+                  {dogPhotos.map(photo => {
+                    const imgUrl = photo.storage_path
+                      ? `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/public/pet-photos/${photo.storage_path}`
+                      : null;
+                    return (
+                      <div
+                        key={photo.id}
+                        onClick={() => imgUrl && setExpandedPhotoUrl(imgUrl)}
+                        style={{
+                          flex: "0 0 auto", width: 110, cursor: imgUrl ? "pointer" : "default",
+                          borderRadius: 10, overflow: "hidden",
+                          border: `1px solid ${C.borderLight}`, transition: "transform 0.15s",
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.04)"; }}
+                        onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; }}
+                      >
+                        {imgUrl ? (
+                          <img src={imgUrl} alt={photo.paired_dog_name || "Photo"} loading="lazy"
+                            style={{ width: 110, height: 90, objectFit: "cover", display: "block" }} />
+                        ) : (
+                          <div style={{ width: 110, height: 90, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut, fontSize: 10 }}>No image</div>
+                        )}
+                        <div style={{ padding: "5px 8px", fontSize: 10, color: C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {photo.taken_at ? fmtDateShort(photo.taken_at) : ""}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </CollapsibleSection>
+          )}
         </>
+      )}
+
+      {/* Expanded Photo Modal */}
+      {expandedPhotoUrl && (
+        <Modal title="Photo" onClose={() => setExpandedPhotoUrl(null)}>
+          <img
+            src={expandedPhotoUrl}
+            alt="Full size"
+            style={{ width: "100%", borderRadius: 10, objectFit: "contain", maxHeight: "70vh" }}
+          />
+        </Modal>
       )}
 
       {/* Active Reservations */}
