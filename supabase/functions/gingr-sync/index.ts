@@ -840,6 +840,220 @@ async function syncImmunizationTypes(
   return { synced: types.length };
 }
 
+// ─── Server-side room assignment ─────────────────────────────────────────
+
+const ROOM_TYPES = ["Luxury Suite", "Executive Room", "Double Compartment", "Single Compartment"];
+
+function classifyReservationType(typeName: string | null): string {
+  if (!typeName) return "other";
+  const t = typeName.toLowerCase();
+  if (t.includes("evaluation") || t.includes("eval")) return "evaluation";
+  if (t.includes("tour")) return "tour";
+  if (t.includes("day boarding") || t === "day boarding") return "dayboarding";
+  if (t.includes("daycare") || t.includes("day care")) return "daycare";
+  if (t.includes("boarding")) return "boarding";
+  if (t.includes("groom") || t.includes("bath")) return "grooming";
+  return "other";
+}
+
+function extractRoomFromType(typeName: string | null): string | null {
+  if (!typeName) return null;
+  for (const rt of ROOM_TYPES) {
+    if (typeName.toLowerCase().includes(rt.toLowerCase())) return rt;
+  }
+  return null;
+}
+
+async function assignRoomsServerSide(
+  supabase: any,
+  locationId: string
+) {
+  // 1. Load room names config from lite_settings
+  const { data: roomNamesRow } = await supabase
+    .from("lite_settings")
+    .select("setting_value")
+    .eq("location_id", locationId)
+    .eq("setting_key", "room_names")
+    .maybeSingle();
+
+  let roomsMap: Record<string, string[]> = {};
+
+  if (roomNamesRow?.setting_value && typeof roomNamesRow.setting_value === "object") {
+    const names = roomNamesRow.setting_value as Record<string, string[]>;
+    for (const [typeName, nameList] of Object.entries(names)) {
+      if (Array.isArray(nameList) && nameList.length > 0) {
+        roomsMap[typeName] = [...nameList];
+      }
+    }
+  }
+
+  // Fallback: generate numbered rooms from reservation types
+  if (Object.keys(roomsMap).length === 0) {
+    const { data: resTypes } = await supabase
+      .from("gingr_reservation_types")
+      .select("name, type_label, raw_data")
+      .eq("location_id", locationId);
+
+    const defaultCounts: Record<string, number> = {
+      "Luxury Suite": 4,
+      "Executive Room": 6,
+      "Double Compartment": 8,
+      "Single Compartment": 10,
+    };
+
+    const boardingTypes = (resTypes || []).filter((rt: any) => {
+      const raw = rt.raw_data || {};
+      const hasLodging = raw.capacity_by_lodging === "1" || raw.capacity_by_lodging === 1;
+      const isSingleDay = raw.single_day === "1" || raw.single_day === 1;
+      return hasLodging && !isSingleDay;
+    });
+
+    if (boardingTypes.length > 0) {
+      for (const bt of boardingTypes) {
+        const name = bt.name || bt.type_label || "";
+        const clean = name.replace(/^Boarding\s*\|\s*/i, "").replace(/\s*\(All Inclusive\)\s*$/i, "").trim();
+        if (!clean) continue;
+        const count = defaultCounts[clean] ?? 6;
+        roomsMap[clean] = [];
+        for (let i = 1; i <= count; i++) {
+          roomsMap[clean].push(`${clean} ${i}`);
+        }
+      }
+    } else {
+      // Final fallback: hardcoded room types
+      for (const rt of ROOM_TYPES) {
+        const count = defaultCounts[rt] ?? 6;
+        roomsMap[rt] = [];
+        for (let i = 1; i <= count; i++) {
+          roomsMap[rt].push(`${rt} ${i}`);
+        }
+      }
+    }
+  }
+
+  // 2. Query boarding reservations in the assignment window (-30 to +90 days)
+  //    Pre-filter with ILIKE to only fetch boarding-type reservations (not daycare, grooming, etc.)
+  //    This dramatically reduces the result set for the room assignment algorithm.
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - 30 * 86400000).toISOString().split("T")[0];
+  const windowEnd = new Date(now.getTime() + 90 * 86400000).toISOString().split("T")[0];
+
+  // Paginate to avoid Supabase's 1000-row default limit
+  let reservations: any[] = [];
+  let page = 0;
+  const PAGE_SIZE = 1000;
+  while (true) {
+    const { data: pageData, error: resErr } = await supabase
+      .from("gingr_reservations")
+      .select("gingr_id, reservation_type_name, start_date, end_date")
+      .eq("location_id", locationId)
+      .gte("start_date", windowStart + "T00:00:00")
+      .lte("start_date", windowEnd + "T23:59:59")
+      .is("cancelled_date", null)
+      .ilike("reservation_type_name", "%boarding%")
+      .order("start_date", { ascending: true })
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+    if (resErr) {
+      console.error("Room assignment query error:", resErr.message);
+      return { assigned: 0 };
+    }
+    if (!pageData || pageData.length === 0) break;
+    reservations = reservations.concat(pageData);
+    if (pageData.length < PAGE_SIZE) break;
+    page++;
+  }
+
+  // 3. Classify and filter for assignable boarding reservations
+  //    "Day Boarding" types will be excluded by classifyReservationType → "dayboarding"
+  const boarding: Array<{
+    gingr_id: string;
+    roomType: string;
+    checkIn: string;
+    checkOut: string;
+  }> = [];
+
+  for (const r of reservations) {
+    const type = classifyReservationType(r.reservation_type_name);
+    const roomType = extractRoomFromType(r.reservation_type_name);
+
+    if (type === "boarding" && roomType) {
+      const checkIn = r.start_date ? r.start_date.split("T")[0] : "";
+      const checkOut = r.end_date ? r.end_date.split("T")[0] : checkIn;
+      boarding.push({ gingr_id: r.gingr_id, roomType, checkIn, checkOut });
+    }
+  }
+
+  // 4. Group by room type
+  const byType: Record<string, typeof boarding> = {};
+  for (const r of boarding) {
+    if (!byType[r.roomType]) byType[r.roomType] = [];
+    byType[r.roomType].push(r);
+  }
+
+  // 5. Greedy interval scheduling per room type
+  const assignments: Array<{ gingr_id: string; room: string }> = [];
+
+  for (const [roomType, group] of Object.entries(byType)) {
+    const rooms = roomsMap[roomType] || [];
+    if (rooms.length === 0) {
+      // No rooms available — leave unassigned (null)
+      continue;
+    }
+
+    // Sort by start_date ASC, then gingr_id ASC for determinism
+    group.sort((a, b) =>
+      a.checkIn.localeCompare(b.checkIn) || a.gingr_id.localeCompare(b.gingr_id)
+    );
+
+    // Track occupancy per room
+    const occ: Record<string, Array<{ checkIn: string; checkOut: string }>> = {};
+    for (const rm of rooms) {
+      occ[rm] = [];
+    }
+
+    for (const r of group) {
+      let picked: string | null = null;
+      for (const rm of rooms) {
+        const overlap = occ[rm].some(
+          (o) => o.checkIn < r.checkOut && r.checkIn < o.checkOut
+        );
+        if (!overlap) {
+          picked = rm;
+          break;
+        }
+      }
+      if (!picked) picked = rooms[0]; // overflow fallback
+      occ[picked].push({ checkIn: r.checkIn, checkOut: r.checkOut });
+      assignments.push({ gingr_id: r.gingr_id, room: picked });
+    }
+  }
+
+  // 6. Batch update room assignments — group by room name for efficiency
+  let updated = 0;
+
+  // Group assignments by room name so we can do one UPDATE per room
+  const byRoom: Record<string, string[]> = {};
+  for (const { gingr_id, room } of assignments) {
+    if (!byRoom[room]) byRoom[room] = [];
+    byRoom[room].push(gingr_id);
+  }
+
+  for (const [room, ids] of Object.entries(byRoom)) {
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk = ids.slice(i, i + 100);
+      const { error } = await supabase
+        .from("gingr_reservations")
+        .update({ room_assignment: room })
+        .eq("location_id", locationId)
+        .in("gingr_id", chunk);
+      if (!error) updated += chunk.length;
+    }
+  }
+
+  return { assigned: updated };
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 function getDateChunks(start: string, end: string, maxDays: number): [string, string][] {
@@ -1007,12 +1221,21 @@ Deno.serve(async (req: Request) => {
         // Non-fatal — reconciliation is best-effort
       }
 
+      // Run room assignment after tv-poll reservation sync
+      let roomResult = { assigned: 0 };
+      try {
+        roomResult = await assignRoomsServerSide(supabase, location_id);
+      } catch (roomErr: any) {
+        console.error("Room assignment error (tv-poll):", roomErr.message);
+      }
+
       return new Response(
         JSON.stringify({
           success: true,
           sync_type: "tv-poll",
           checked_in_count: checkedIn.length,
           checked_out_count: checkedOutCount,
+          rooms_assigned: roomResult.assigned,
           duration_ms: Date.now() - startTime,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -1116,6 +1339,15 @@ Deno.serve(async (req: Request) => {
           last_full_sync_at: new Date().toISOString(),
         });
       }
+    }
+
+    // ── Run server-side room assignment after reservation sync ───────────
+    try {
+      const roomResult = await assignRoomsServerSide(supabase, location_id);
+      results.room_assignment = roomResult;
+    } catch (roomErr: any) {
+      console.error("Room assignment error:", roomErr.message);
+      results.room_assignment = { error: roomErr.message };
     }
 
     // ── Recompute dashboard metrics after sync ────────────────────────────
