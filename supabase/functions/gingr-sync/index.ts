@@ -721,34 +721,78 @@ async function computeCashBasisMetrics(
       .gt("paid_amount", 0);
 
     const deposits = depositData || [];
-    let collectedDeposits = 0;
+    const allDepositsTotal = deposits
+      .reduce((sum: number, d: any) => sum + parseFloat(d.paid_amount || 0), 0);
 
-    if (deposits.length > 0 && subdomain && apiKey) {
-      // Get unique owner IDs
-      const uniqueOwnerIds = [...new Set(deposits.map((d: any) => d.owner_id).filter(Boolean))];
+    // 3) Detect store credit from forfeited deposits
+    // When a deposit is forfeited, the paid_amount becomes store credit.
+    // We look for deposits forfeited around this date and calculate how much
+    // store credit was used for new deposits.
+    let storeCreditExclusion = 0;
 
-      // Check each owner's current_balance via Gingr API
-      const storeCreditOwners = new Set<number>();
-      for (const ownerId of uniqueOwnerIds) {
+    // Check for deposits forfeited on this date (use a wide UTC window to cover timezone)
+    const { data: forfeitedData } = await supabase
+      .from("gingr_deposits")
+      .select("paid_amount, owner_id")
+      .eq("location_id", locationId)
+      .gte("forfeited_at", `${dateStr}T00:00:00`)
+      .lt("forfeited_at", `${dateStr}T23:59:59`)
+      .gt("paid_amount", 0);
+
+    const forfeitedDeposits = forfeitedData || [];
+
+    if (forfeitedDeposits.length > 0 && subdomain && apiKey) {
+      // For each owner with a forfeited deposit, check how much store credit was used
+      const processedOwners = new Set<number>();
+
+      for (const fd of forfeitedDeposits) {
+        const ownerId = fd.owner_id;
+        if (!ownerId || processedOwners.has(Number(ownerId))) continue;
+        processedOwners.add(Number(ownerId));
+
+        const forfeitedAmount = parseFloat(fd.paid_amount || "0");
+        if (forfeitedAmount <= 0) continue;
+
         try {
+          // Get owner's current balance from Gingr API
           const ownerResult = await gingrFetch(subdomain, "owner", apiKey, "GET", { id: String(ownerId) });
           const ownerData = ownerResult.data;
-          if (ownerData && parseFloat(ownerData.current_balance || "0") < 0) {
-            storeCreditOwners.add(Number(ownerId));
+          const currentBalance = parseFloat(ownerData?.current_balance || "0");
+
+          let storeCreditUsed = 0;
+          if (currentBalance < 0) {
+            // Owner still has remaining store credit
+            // Store credit used = forfeited amount - remaining credit
+            storeCreditUsed = forfeitedAmount - Math.abs(currentBalance);
+          } else {
+            // All store credit was used up
+            storeCreditUsed = forfeitedAmount;
           }
+
+          // Can't exclude more than was actually forfeited, and can't be negative
+          storeCreditUsed = Math.max(0, Math.min(storeCreditUsed, forfeitedAmount));
+
+          // Also can't exclude more than this owner's deposits on this date
+          const ownerDepositsToday = deposits
+            .filter((d: any) => Number(d.owner_id) === Number(ownerId))
+            .reduce((sum: number, d: any) => sum + parseFloat(d.paid_amount || 0), 0);
+          storeCreditUsed = Math.min(storeCreditUsed, ownerDepositsToday);
+
+          if (storeCreditUsed > 0) {
+            console.log(`Store credit exclusion: owner ${ownerId}, forfeited $${forfeitedAmount}, balance $${currentBalance}, excluding $${storeCreditUsed}`);
+          }
+
+          storeCreditExclusion += storeCreditUsed;
         } catch (err) {
-          // If owner lookup fails, assume Cash/CC (include the deposit)
           console.error(`Owner lookup failed for ${ownerId}:`, err);
+          // If lookup fails, don't exclude anything (safe default)
         }
       }
-
-      // Sum deposits excluding store credit owners
-      collectedDeposits = deposits
-        .filter((d: any) => !storeCreditOwners.has(Number(d.owner_id)))
-        .reduce((sum: number, d: any) => sum + parseFloat(d.paid_amount || 0), 0);
     }
 
-    // 3) Compute and upsert
+    const collectedDeposits = Math.max(0, allDepositsTotal - storeCreditExclusion);
+
+    // 4) Compute and upsert
     const cashNetRevenue = collectedPayments + collectedDeposits - refunds;
 
     await supabase
