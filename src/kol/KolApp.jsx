@@ -15,6 +15,7 @@ import LocationSelector from "../shared/LocationSelector";
 import useGingrData from "../hooks/useGingrData";
 import { useRefreshSettings } from "../hooks/useRefreshSettings";
 import { useBackOfHouse } from "../hooks/useBackOfHouse";
+import { useLocation } from "../contexts/LocationContext";
 import { applyStructuredFilters } from "../hooks/useFilters";
 // Page imports
 import ClientsPage from "./pages/ClientsPage";
@@ -184,15 +185,23 @@ const LEAN_ENTERPRISE_NAV_ITEMS = [
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
-const K9_LEAN_LOCATIONS = [
+// Location list is now derived from LocationContext + static enterprise/POS entries.
+// The UUID-based Adair Forsythe entry is replaced by dynamic locations from lite_settings.
+const K9_STATIC_LOCATIONS = [
   { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
-  { id: "11111111-1111-1111-1111-111111111111", name: "Adair Forsythe", slug: "cherry-hill" },
   { id: "demo-pos", name: "Demo POS", slug: "demo", isPOS: true },
 ];
 
 // ─── Main App Component ───────────────────────────────────────────────────
 function LeanAppInner() {
   const { user, profile: authProfile } = useAuth();
+  const { locationId: ctxLocationId, locationName: ctxLocationName, setLocation: ctxSetLocation, availableLocations: ctxLocations, gingrConfig, isLoading: locationLoading } = useLocation();
+
+  // Build location list for LocationSelector: merge context locations + static entries
+  const allLocations = useMemo(() => {
+    const dynamicLocs = ctxLocations.map(l => ({ id: l.id, name: l.name, slug: l.slug }));
+    return [...K9_STATIC_LOCATIONS, ...dynamicLocs];
+  }, [ctxLocations]);
 
   // Parse URL on initial load to determine starting page and location
   const initialParsed = useMemo(() => {
@@ -201,14 +210,14 @@ function LeanAppInner() {
     return { locSlug: null, page: "dashboard", params: {} };
   }, []);
 
-  // Resolve initial location from URL slug or auth profile
+  // Resolve initial location from URL slug or context
   const initialLocation = useMemo(() => {
     if (initialParsed.locSlug) {
-      const match = K9_LEAN_LOCATIONS.find(l => l.slug === initialParsed.locSlug);
+      const match = allLocations.find(l => l.slug === initialParsed.locSlug);
       if (match) return match.id;
     }
-    return authProfile?.location_id || "11111111-1111-1111-1111-111111111111";
-  }, [initialParsed.locSlug, authProfile?.location_id]);
+    return ctxLocationId || authProfile?.location_id || null;
+  }, [initialParsed.locSlug, ctxLocationId, authProfile?.location_id, allLocations]);
 
   const [page, setPage] = useState(initialParsed.page);
   const [params, setParams] = useState(initialParsed.params);
@@ -218,7 +227,7 @@ function LeanAppInner() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sbExpanded = sidebarOpen;
 
-  // Use the auth profile's location_id (UUID) so it matches Supabase data
+  // Use location from context as the primary source
   const [currentLocation, setCurrentLocation] = useState(initialLocation);
   const [accountSwitchOpen, setAccountSwitchOpen] = useState(false);
   const [switchTarget, setSwitchTarget] = useState(null);
@@ -227,12 +236,19 @@ function LeanAppInner() {
   const [switchLoading, setSwitchLoading] = useState(false);
   const [teamAccounts, setTeamAccounts] = useState([]);
 
-  // Sync currentLocation with auth profile when it loads
+  // Sync currentLocation with context location when it changes
   useEffect(() => {
-    if (authProfile?.location_id && authProfile.location_id !== currentLocation) {
+    if (ctxLocationId && ctxLocationId !== currentLocation) {
+      setCurrentLocation(ctxLocationId);
+    }
+  }, [ctxLocationId]);
+
+  // Also sync from auth profile as fallback
+  useEffect(() => {
+    if (!ctxLocationId && authProfile?.location_id && authProfile.location_id !== currentLocation) {
       setCurrentLocation(authProfile.location_id);
     }
-  }, [authProfile?.location_id]);
+  }, [authProfile?.location_id, ctxLocationId]);
 
   // Dashboard refresh settings (interval + business hours) from Supabase
   const { refreshIntervalMs, isWithinBusinessHours } = useRefreshSettings(currentLocation);
@@ -240,7 +256,7 @@ function LeanAppInner() {
 
   // Live BOH poll — runs every 10s, shared across Dashboard + Checkout TV
   const bohEnabled = page === "dashboard" || page === "checkout-tv";
-  const boh = useBackOfHouse(currentLocation, bohEnabled);
+  const boh = useBackOfHouse(currentLocation, bohEnabled, gingrConfig);
   const bohStats = boh.stats;  // { total, boardingCount, daycareCount, expectedCount, pendingCount, pendingDaycare, pendingBoarding, goingHomeCount }
   const bohLastFetch = boh.lastFetch;
 
@@ -429,9 +445,9 @@ function LeanAppInner() {
   // ─── URL Routing ──────────────────────────────────────────────────────
   const skipUrlPush = useRef(false);
   const locSlug = useMemo(() => {
-    const loc = K9_LEAN_LOCATIONS.find(l => l.id === currentLocation);
-    return loc?.slug || "cherry-hill";
-  }, [currentLocation]);
+    const loc = allLocations.find(l => l.id === currentLocation);
+    return loc?.slug || currentLocation || "location";
+  }, [currentLocation, allLocations]);
 
   // Sync URL when page/params change
   const initialUrlSet = useRef(false);
@@ -480,14 +496,14 @@ function LeanAppInner() {
         newPage = e.state.page;
         newParams = e.state.params || {};
         if (e.state.loc) {
-          const locMatch = K9_LEAN_LOCATIONS.find(l => l.id === e.state.loc);
+          const locMatch = allLocations.find(l => l.id === e.state.loc);
           if (locMatch) setCurrentLocation(locMatch.id);
         }
       } else {
         const parsed = parseLiteUrl(window.location.pathname, data);
         newPage = parsed.page;
         newParams = parsed.params;
-        const locMatch = K9_LEAN_LOCATIONS.find(l => l.slug === parsed.locSlug);
+        const locMatch = allLocations.find(l => l.slug === parsed.locSlug);
         if (locMatch) setCurrentLocation(locMatch.id);
       }
       setPage(newPage);
@@ -576,17 +592,21 @@ function LeanAppInner() {
     }
   }, []);
 
-  // Handle location change
+  // Handle location change — updates both local state and context
   const handleLocationChange = useCallback((locId) => {
     // Demo POS redirects to the full POS app
-    const loc = K9_LEAN_LOCATIONS.find(l => l.id === locId);
+    const loc = allLocations.find(l => l.id === locId);
     if (loc?.isPOS) {
       window.location.href = "/pos/" + (loc.slug || "demo");
       return;
     }
     setCurrentLocation(locId);
+    // Also update the location context (which persists to localStorage and updates gingrConfig)
+    if (locId !== "enterprise") {
+      ctxSetLocation(locId);
+    }
     try { localStorage.setItem("k9_lite_location", locId); } catch {}
-  }, []);
+  }, [allLocations, ctxSetLocation]);
 
   // Fetch team accounts for quick-switch
   useEffect(() => {
@@ -726,7 +746,7 @@ function LeanAppInner() {
       case "dog-detail":
         return <DogDetailPage data={data} clientId={params.clientId} dogId={params.dogId} nav={nav} />;
       case "checkout-tv":
-        return <CheckoutTVPage data={data} nav={nav} profile={profile} />;
+        return <CheckoutTVPage data={data} nav={nav} profile={profile} locationId={currentLocation} gingrConfig={gingrConfig} />;
       case "client-detail":
         return <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "new-client":
@@ -804,7 +824,7 @@ function LeanAppInner() {
             currentLocation={currentLocation}
             onLocationChange={handleLocationChange}
             collapsed={!sbExpanded}
-            allLocations={K9_LEAN_LOCATIONS}
+            allLocations={allLocations}
             profile={profile}
           />
         </div>

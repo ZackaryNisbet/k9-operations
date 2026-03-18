@@ -571,7 +571,7 @@ function TVNavButton({ view, isActive, count, onClick }) {
 }
 
 /* ── Main Component ───────────────────────────────────────────────────── */
-function CheckoutTVPage({ data, nav, profile }) {
+function CheckoutTVPage({ data, nav, profile, locationId, gingrConfig }) {
   /* ── Loading gate: pulsing K9 logo until reservation data is ready ── */
   if (!data || !data.reservations) {
     return (
@@ -641,8 +641,8 @@ function CheckoutTVContent({ data, nav, profile }) {
 
   useEffect(() => {
     let cancelled = false;
-    const GINGR_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
-    const BOH_URL = `https://your-gingr-subdomain.gingrapp.com/api/v1/back_of_house?key=${GINGR_KEY}&location_id=1&full_day=true&include_daycare=true`;
+    if (!gingrConfig?.subdomain || !gingrConfig?.api_key) return;
+    const BOH_URL = `https://${gingrConfig.subdomain}.gingrapp.com/api/v1/back_of_house?key=${gingrConfig.api_key}&location_id=${gingrConfig.location_id || "1"}&full_day=true&include_daycare=true`;
 
     const classifyBohType = (typeStr) => {
       const t = (typeStr || "").toLowerCase();
@@ -766,7 +766,7 @@ function CheckoutTVContent({ data, nav, profile }) {
     fetchBoh();
     const interval = setInterval(fetchBoh, 10000); // 10s poll
     return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  }, [gingrConfig]);
 
   /* ── TV-014: Direct Gingr reservations poll for ALL checked-in dogs ───
    * Polls the Gingr reservations API directly for ALL checked-in
@@ -780,8 +780,9 @@ function CheckoutTVContent({ data, nav, profile }) {
   const [gingrDaycareFromRes, setGingrDaycareFromRes] = useState([]);
   useEffect(() => {
     let cancelled = false;
-    const GINGR_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
-    const GINGR_RES_URL = "https://your-gingr-subdomain.gingrapp.com/api/v1/reservations";
+    if (!gingrConfig?.subdomain || !gingrConfig?.api_key) return;
+    const GINGR_KEY = gingrConfig.api_key;
+    const GINGR_RES_URL = `https://${gingrConfig.subdomain}.gingrapp.com/api/v1/reservations`;
 
     const classifyType = (typeStr) => {
       const t = (typeStr || "").toLowerCase();
@@ -836,7 +837,7 @@ function CheckoutTVContent({ data, nav, profile }) {
     fetchAllCheckedIn();
     const interval = setInterval(fetchAllCheckedIn, 60000); // 60s poll
     return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  }, [gingrConfig]);
 
   /* ── TV-POLL: Supabase reconciliation sync (every 60s) ──────────────
    * Calls the gingr-sync edge function in tv-poll mode to reconcile
@@ -854,7 +855,7 @@ function CheckoutTVContent({ data, nav, profile }) {
       try {
         await supabase.functions.invoke("gingr-sync", {
           body: {
-            location_id: "11111111-1111-1111-1111-111111111111",
+            location_id: locationId,
             sync_type: "tv-poll",
           },
         });

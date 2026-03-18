@@ -30,15 +30,8 @@ const DEFAULTS = {
 
 const HIGHLIGHT_DURATION_MS = 60_000; // 60 seconds
 
-// ── Gingr API config ────────────────────────────────────────────────────────
-const GINGR_SUBDOMAIN = "your-gingr-subdomain";
-const GINGR_API_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
-const GINGR_LOCATION_ID = "1";
-
-const BOH_URL = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/back_of_house?key=${GINGR_API_KEY}&location_id=${GINGR_LOCATION_ID}&full_day=true&include_daycare=true`;
-
 // ── Hook ────────────────────────────────────────────────────────────────────
-export function useBackOfHouse(locationId, enabled = true) {
+export function useBackOfHouse(locationId, enabled = true, gingrConfig = null) {
   // Active dogs = checking_out list (dogs that are here now)
   const [activeDogs, setActiveDogs] = useState([]);
   // Pending dogs = checking_in list (scheduled but not yet arrived)
@@ -171,16 +164,16 @@ export function useBackOfHouse(locationId, enabled = true) {
   }, [locationId, enabled, fetchSupaboarders]);
 
   // ── Poll Gingr reservations API for authoritative in-house count ────────
-  const GINGR_RES_URL = "https://your-gingr-subdomain.gingrapp.com/api/v1/reservations";
   const gingrResCancelledRef = useRef(false);
   const gingrResTimerRef = useRef(null);
 
   const fetchGingrResCount = useCallback(async () => {
-    if (gingrResCancelledRef.current) return;
+    if (gingrResCancelledRef.current || !gingrConfig?.subdomain || !gingrConfig?.api_key) return;
     try {
-      const resp = await fetch(GINGR_RES_URL, {
+      const resUrl = `https://${gingrConfig.subdomain}.gingrapp.com/api/v1/reservations`;
+      const resp = await fetch(resUrl, {
         method: "POST",
-        body: new URLSearchParams({ key: GINGR_API_KEY, checked_in: "true" }),
+        body: new URLSearchParams({ key: gingrConfig.api_key, checked_in: "true" }),
       });
       if (!resp.ok || gingrResCancelledRef.current) return;
       const json = await resp.json();
@@ -202,7 +195,7 @@ export function useBackOfHouse(locationId, enabled = true) {
     } catch (e) {
       // Silently ignore — will retry on next interval
     }
-  }, []);
+  }, [gingrConfig]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -218,9 +211,12 @@ export function useBackOfHouse(locationId, enabled = true) {
   // ── Fetch back_of_house ────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
     if (!enabled || !visibleRef.current || !isWithinBusinessHours()) return;
+    if (!gingrConfig?.subdomain || !gingrConfig?.api_key) return;
+
+    const bohUrl = `https://${gingrConfig.subdomain}.gingrapp.com/api/v1/back_of_house?key=${gingrConfig.api_key}&location_id=${gingrConfig.location_id || "1"}&full_day=true&include_daycare=true`;
 
     try {
-      const resp = await fetch(BOH_URL);
+      const resp = await fetch(bohUrl);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const json = await resp.json();
       const d = json.data || {};
@@ -279,7 +275,7 @@ export function useBackOfHouse(locationId, enabled = true) {
     } finally {
       setLoading(false);
     }
-  }, [enabled, isWithinBusinessHours, activeDogs, fetchSupaboarders]);
+  }, [enabled, isWithinBusinessHours, activeDogs, fetchSupaboarders, gingrConfig]);
 
   // ── Page Visibility API ────────────────────────────────────────────────
   useEffect(() => {

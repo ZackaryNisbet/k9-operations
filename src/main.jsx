@@ -46,6 +46,7 @@ if (import.meta.env.PROD) {
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
 import { AuthProvider, useAuth } from './AuthProvider';
+import { LocationProvider } from './contexts/LocationContext';
 import { supabase } from './supabaseClient';
 import Login from './Login';
 import App from './App';
@@ -193,6 +194,8 @@ function Root() {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <AuthProvider>
-    <Root />
+    <LocationProvider>
+      <Root />
+    </LocationProvider>
   </AuthProvider>
 );
