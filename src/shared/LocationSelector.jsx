@@ -61,8 +61,8 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
       {open && (
         <div ref={dropRef} style={{ position: "fixed", top: dropPos.top, left: dropPos.left, width: dropPos.width || 212, zIndex: 9999, background: "#0D3B1E", border: "1.5px solid rgba(132,204,22,0.25)", borderRadius: 12, boxShadow: "0 16px 48px rgba(0,0,0,0.4)", overflow: "hidden", display: "flex", flexDirection: "column" }}>
           <div style={{ padding: "6px 6px" }}>
-            {/* Enterprise — only for owner/enterprise_admin */}
-            {profile?.role && (profile.role === 'owner' || profile.role === 'enterprise_admin') && (<>
+            {/* Enterprise — for owner/enterprise_admin/multi_location_admin */}
+            {profile?.role && (profile.role === 'owner' || profile.role === 'enterprise_admin' || profile.role === 'multi_location_admin') && (<>
             <button onClick={() => { onLocationChange("enterprise"); setOpen(false); }}
               style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: currentLocation === "enterprise" ? "rgba(132,204,22,0.2)" : "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginBottom: 2 }}
               onMouseEnter={e => { if (currentLocation !== "enterprise") e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
