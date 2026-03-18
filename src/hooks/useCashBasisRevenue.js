@@ -75,7 +75,7 @@ export function buildCashChartRows(dailyRows, todayCashData) {
     if (row.metric_date === today) {
       return {
         ...row,
-        cash_total_revenue: todayCashData.netRevenue,
+        cash_net_revenue: todayCashData.netRevenue,
       };
     }
     return row;

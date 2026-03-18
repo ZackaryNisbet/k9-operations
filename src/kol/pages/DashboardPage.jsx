@@ -999,7 +999,7 @@ function DashboardContent({
 
   // Overlay today's live-fetched cash basis revenue on server metrics
   const correctedDailyRows = useMemo(() => buildCashChartRows(dailyRows, todayCashData), [dailyRows, todayCashData]);
-  const cashChartDataBase = useMemo(() => bucketRows(correctedDailyRows, "cash_total_revenue"), [correctedDailyRows, bucketRows]);
+  const cashChartDataBase = useMemo(() => bucketRows(correctedDailyRows, "cash_net_revenue"), [correctedDailyRows, bucketRows]);
   // Accrual chart: uses receipt-methodology engine (accrualDailyRows from useAccrualRevenue)
   const accrualChartDataBase = useMemo(() => bucketRows(accrualDailyRows, "accrual_total_revenue"), [accrualDailyRows, bucketRows]);
 
@@ -1030,7 +1030,7 @@ function DashboardContent({
     return correctedTrailingWeekRows.map(r => ({
       date: r.metric_date,
       label: fmtDateLabel(r.metric_date),
-      value: Number(r.cash_total_revenue) || 0,
+      value: Number(r.cash_net_revenue) || 0,
       prevValue: 0,
     }));
   }, [isToday, cashChartDataBase, correctedTrailingWeekRows]);
@@ -1054,7 +1054,7 @@ function DashboardContent({
     return rows.map(r => ({
       date: r.metric_date,
       label: fmtDateLabel(r.metric_date),
-      value: Number(r.cash_total_revenue) || 0,
+      value: Number(r.cash_net_revenue) || 0,
     }));
   }, [isToday, trailingWeekPrevRows, prevDailyRows]);
 
@@ -1107,7 +1107,7 @@ function DashboardContent({
   const cashTotalDisplay = useMemo(() => {
     if (isToday && todayCashData) return todayCashData.netRevenue;
     // For multi-day ranges, sum corrected daily rows
-    return correctedDailyRows.reduce((s, r) => s + (Number(r.cash_total_revenue) || 0), 0);
+    return correctedDailyRows.reduce((s, r) => s + (Number(r.cash_net_revenue) || 0), 0);
   }, [isToday, todayCashData, correctedDailyRows]);
 
   // Revenue values from server metrics

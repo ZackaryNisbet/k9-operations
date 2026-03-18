@@ -30,17 +30,19 @@ function emptyResult() {
  * }
  */
 export async function fetchCashBasisForDate(locationId, targetDate) {
-  // Fetch invoices for this date
-  const { data: invoices, error: invErr } = await supabase
-    .from("gingr_invoices")
-    .select("id, first_name, last_name, total, is_returned, created_at")
+  // Fetch Cash + CC payment entries for this date
+  const { data: paymentEntries, error: payErr } = await supabase
+    .from("gingr_invoice_payments")
+    .select("id, invoice_id, payment_method_type, total_balance, transaction_time")
     .eq("location_id", locationId)
-    .gte("created_at", `${targetDate}T00:00:00`)
-    .lt("created_at", `${targetDate}T23:59:59`)
-    .order("created_at", { ascending: true });
+    .eq("transaction_date", targetDate)
+    .in("payment_method_type", ["Cash", "Credit Card"])
+    .eq("is_zero_payment", false)
+    .eq("is_admin_comp", false)
+    .order("transaction_time", { ascending: true });
 
-  if (invErr) {
-    console.error("Error fetching invoices:", invErr.message);
+  if (payErr) {
+    console.error("Error fetching payment entries:", payErr.message);
     return emptyResult();
   }
 
@@ -59,34 +61,47 @@ export async function fetchCashBasisForDate(locationId, targetDate) {
     return emptyResult();
   }
 
+  // Also fetch invoice details for owner names
+  const invoiceIds = [...new Set((paymentEntries || []).map(p => p.invoice_id))];
+  let invoiceMap = {};
+  if (invoiceIds.length > 0) {
+    const { data: invoices } = await supabase
+      .from("gingr_invoices")
+      .select("id, first_name, last_name")
+      .eq("location_id", locationId)
+      .in("id", invoiceIds);
+    (invoices || []).forEach(inv => {
+      invoiceMap[inv.id] = `${inv.first_name || ""} ${inv.last_name || ""}`.trim() || "Unknown";
+    });
+  }
+
   const payments = [];
 
-  // Map invoices to payment entries
-  for (const inv of (invoices || [])) {
-    const amount = parseFloat(inv.total) || 0;
-    if (amount === 0) continue;
+  // Map payment entries
+  for (const entry of (paymentEntries || [])) {
+    const balance = parseFloat(entry.total_balance) || 0;
+    if (balance === 0) continue;
 
-    const ownerName = [inv.first_name, inv.last_name].filter(Boolean).join(" ") || "Unknown";
-    const createdAt = new Date(inv.created_at);
-    const timeStr = createdAt.toLocaleTimeString("en-US", {
+    const txTime = entry.transaction_time ? new Date(entry.transaction_time) : new Date();
+    const timeStr = txTime.toLocaleTimeString("en-US", {
       timeZone: TZ,
       hour: "2-digit",
       minute: "2-digit",
     });
 
     payments.push({
-      amount: inv.is_returned ? -amount : amount,
-      ownerName,
-      paymentMethod: inv.is_returned ? "Refund" : "Invoice",
-      time: createdAt.getTime() / 1000,
+      amount: balance, // positive for payment, negative for refund
+      ownerName: invoiceMap[entry.invoice_id] || "Unknown",
+      paymentMethod: balance < 0 ? "Refund" : entry.payment_method_type,
+      time: txTime.getTime() / 1000,
       timeStr,
-      isRefund: !!inv.is_returned,
-      invoiceId: inv.id,
+      isRefund: balance < 0,
+      invoiceId: entry.invoice_id,
       source: "invoice",
     });
   }
 
-  // Map deposits to payment entries
+  // Map deposits
   for (const dep of (deposits || [])) {
     const amount = parseFloat(dep.paid_amount) || 0;
     if (amount <= 0) continue;
@@ -111,10 +126,8 @@ export async function fetchCashBasisForDate(locationId, targetDate) {
     });
   }
 
-  // Sort by time
   payments.sort((a, b) => (a.time || 0) - (b.time || 0));
 
-  // Calculate totals
   const grossPayments = payments
     .filter(p => !p.isRefund && p.source === "invoice")
     .reduce((sum, p) => sum + p.amount, 0);
