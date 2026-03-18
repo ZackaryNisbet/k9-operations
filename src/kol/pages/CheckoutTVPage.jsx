@@ -594,6 +594,16 @@ function CheckoutTVContent({ data, nav, profile }) {
     return () => clearInterval(id);
   }, []);
 
+  // ── Dynamic Gingr credentials from lite_settings ──────────────────
+  const locationId = profile?.location_id;
+  const [gingrCfg, setGingrCfg] = useState(null);
+  useEffect(() => {
+    if (!locationId) return;
+    supabase.from("lite_settings").select("setting_value")
+      .eq("location_id", locationId).eq("setting_key", "gingr_config").maybeSingle()
+      .then(({ data: row }) => { if (row?.setting_value) setGingrCfg(row.setting_value); });
+  }, [locationId]);
+
   /* ── TV-005: Navigation state ──────────────────────────────────────── */
   const [activeView, setActiveView] = useState("all");
   const [autoCycle, setAutoCycle] = useState(false);
@@ -640,9 +650,9 @@ function CheckoutTVContent({ data, nav, profile }) {
   const bohPollCountRef = useRef(0);
 
   useEffect(() => {
+    if (!gingrCfg?.subdomain || !gingrCfg?.api_key) return;
     let cancelled = false;
-    const GINGR_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
-    const BOH_URL = `https://k9cherryhill.gingrapp.com/api/v1/back_of_house?key=${GINGR_KEY}&location_id=1&full_day=true&include_daycare=true`;
+    const BOH_URL = `https://${gingrCfg.subdomain}.gingrapp.com/api/v1/back_of_house?key=${gingrCfg.api_key}&location_id=${gingrCfg.gingr_location_id || "1"}&full_day=true&include_daycare=true`;
 
     const classifyBohType = (typeStr) => {
       const t = (typeStr || "").toLowerCase();
@@ -766,7 +776,7 @@ function CheckoutTVContent({ data, nav, profile }) {
     fetchBoh();
     const interval = setInterval(fetchBoh, 10000); // 10s poll
     return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  }, [gingrCfg]);
 
   /* ── TV-014: Direct Gingr reservations poll for ALL checked-in dogs ───
    * Polls the Gingr reservations API directly for ALL checked-in
@@ -779,9 +789,9 @@ function CheckoutTVContent({ data, nav, profile }) {
    * ──────────────────────────────────────────────────────────────────── */
   const [gingrDaycareFromRes, setGingrDaycareFromRes] = useState([]);
   useEffect(() => {
+    if (!gingrCfg?.subdomain || !gingrCfg?.api_key) return;
     let cancelled = false;
-    const GINGR_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
-    const GINGR_RES_URL = "https://k9cherryhill.gingrapp.com/api/v1/reservations";
+    const GINGR_RES_URL = `https://${gingrCfg.subdomain}.gingrapp.com/api/v1/reservations`;
 
     const classifyType = (typeStr) => {
       const t = (typeStr || "").toLowerCase();
@@ -796,7 +806,7 @@ function CheckoutTVContent({ data, nav, profile }) {
       try {
         const resp = await fetch(GINGR_RES_URL, {
           method: "POST",
-          body: new URLSearchParams({ key: GINGR_KEY, checked_in: "true" }),
+          body: new URLSearchParams({ key: gingrCfg.api_key, checked_in: "true" }),
         });
         if (!resp.ok || cancelled) return;
         const json = await resp.json();
@@ -836,7 +846,7 @@ function CheckoutTVContent({ data, nav, profile }) {
     fetchAllCheckedIn();
     const interval = setInterval(fetchAllCheckedIn, 60000); // 60s poll
     return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  }, [gingrCfg]);
 
   /* ── TV-POLL: Supabase reconciliation sync (every 60s) ──────────────
    * Calls the gingr-sync edge function in tv-poll mode to reconcile
@@ -854,7 +864,7 @@ function CheckoutTVContent({ data, nav, profile }) {
       try {
         await supabase.functions.invoke("gingr-sync", {
           body: {
-            location_id: "8ea382b0-63f7-44ac-b6f8-83243c03d946",
+            location_id: locationId,
             sync_type: "tv-poll",
           },
         });
@@ -1002,7 +1012,6 @@ function CheckoutTVContent({ data, nav, profile }) {
   }, [baseReservations, baseDogs, gingrDaycareDogs, gingrActiveDogs, gingrBoardingDogs, gingrDaycareFromRes]);
 
   /* ── TV-003: Fetch animal icons from Supabase ─────────────────────── */
-  const locationId = profile?.location_id;
   const [animalIcons, setAnimalIcons] = useState({}); // keyed by animal_gingr_id
 
   useEffect(() => {

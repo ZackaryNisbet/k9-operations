@@ -15,8 +15,9 @@ const corsHeaders = {
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
-const GINGR_SUBDOMAIN = "k9cherryhill";
-const GINGR_API_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
+// Gingr credentials are loaded dynamically from lite_settings per location
+let GINGR_SUBDOMAIN = "";
+let GINGR_API_KEY = "";
 const DEFAULT_LOCATION_ID = "8ea382b0-63f7-44ac-b6f8-83243c03d946";
 
 const DAY_NAMES = [
@@ -681,10 +682,30 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // ─── Load Gingr credentials from lite_settings ────────────────────
+    const { data: settingsRows } = await supabase
+      .from("lite_settings")
+      .select("setting_value")
+      .eq("location_id", locationId)
+      .eq("setting_key", "gingr_config")
+      .limit(1);
+
+    const gingrConfig = settingsRows?.[0]?.setting_value;
+    if (!gingrConfig?.api_key || !gingrConfig?.subdomain) {
+      return new Response(
+        JSON.stringify({ error: "Gingr not configured for this location." }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    GINGR_SUBDOMAIN = gingrConfig.subdomain;
+    GINGR_API_KEY = gingrConfig.api_key;
+    const gingrLocationId = gingrConfig.gingr_location_id || "1";
+
     // ─── Fetch Gingr data in parallel ──────────────────────────────────
     const [bohResult, resResult] = await Promise.all([
       gingrFetch(
-        `back_of_house?location_id=1&full_day=true&include_daycare=true`,
+        `back_of_house?location_id=${gingrLocationId}&full_day=true&include_daycare=true`,
         "GET",
       ),
       gingrFetch("reservations", "POST", { checked_in: "true" }),
