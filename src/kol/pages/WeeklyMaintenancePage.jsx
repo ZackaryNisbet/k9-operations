@@ -354,7 +354,7 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
       <div style={hdrStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={() => nav("ops-hub")} style={{ ...nbtn, background: C.surfaceHover, color: C.textMut, display: "flex", alignItems: "center", gap: 4 }}>
-            <I name="ChevronLeft" size={14} /> Back
+            <I.Back /> Back
           </button>
           <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.text }}>Weekly Maintenance</h2>
         </div>
