@@ -511,6 +511,101 @@ async function syncInvoices(
   return { synced: total };
 }
 
+async function syncInvoicePayments(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string
+) {
+  // Get recent invoices (last 7 days) from gingr_invoices
+  const now = new Date();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .split("T")[0];
+
+  const { data: recentInvoices, error: invErr } = await supabase
+    .from("gingr_invoices")
+    .select("id")
+    .eq("location_id", locationId)
+    .gte("created_at", `${sevenDaysAgo}T00:00:00`);
+
+  if (invErr) throw new Error(`Invoice payments query error: ${invErr.message}`);
+  if (!recentInvoices || recentInvoices.length === 0) return { synced: 0 };
+
+  let total = 0;
+
+  // Process in batches of 5 concurrent API calls
+  for (let i = 0; i < recentInvoices.length; i += 5) {
+    const batch = recentInvoices.slice(i, i + 5);
+    const results = await Promise.all(
+      batch.map(async (inv: any) => {
+        try {
+          const result = await gingrFetch(
+            subdomain,
+            "transaction",
+            apiKey,
+            "POST",
+            { id: String(inv.id) }
+          );
+          return { invoiceId: inv.id, data: result.data };
+        } catch (err: any) {
+          console.error(`Transaction fetch error for invoice ${inv.id}:`, err.message);
+          return { invoiceId: inv.id, data: null };
+        }
+      })
+    );
+
+    const rows: any[] = [];
+    for (const { invoiceId, data } of results) {
+      if (!data?.detailed_payments) continue;
+
+      for (const [key, entry] of Object.entries(data.detailed_payments) as [string, any][]) {
+        // Skip the "deposit" key — it's metadata, not a payment entry
+        if (key === "deposit") continue;
+
+        const paymentId = parseInt(key, 10);
+        if (isNaN(paymentId)) continue;
+
+        const txTime = entry.transaction_time
+          ? new Date(Number(entry.transaction_time) * 1000).toISOString()
+          : null;
+        const txDate = txTime ? txTime.split("T")[0] : null;
+
+        rows.push({
+          id: paymentId,
+          location_id: locationId,
+          invoice_id: invoiceId,
+          payment_method_type: entry.payment_method_type || null,
+          total_balance: parseFloat(entry.total_balance) || 0,
+          transaction_time: txTime,
+          transaction_date: txDate,
+          is_zero_payment:
+            entry.zero_payment === "1" || entry.zero_payment === 1,
+          is_admin_comp: (entry.payment_method_type || "").includes("ADMIN"),
+          raw_data: entry,
+          synced_at: new Date().toISOString(),
+        });
+      }
+    }
+
+    // Batch upsert
+    if (rows.length > 0) {
+      const chunkSize = 500;
+      for (let j = 0; j < rows.length; j += chunkSize) {
+        const chunk = rows.slice(j, j + chunkSize);
+        const { error } = await supabase
+          .from("gingr_invoice_payments")
+          .upsert(chunk, { onConflict: "location_id,id" });
+
+        if (error) throw new Error(`Invoice payment upsert error: ${error.message}`);
+      }
+      total += rows.length;
+    }
+  }
+
+  return { synced: total };
+}
+
 async function syncDeposits(
   supabase: any,
   subdomain: string,
@@ -594,21 +689,23 @@ async function computeCashBasisMetrics(
   const yesterday = new Date(now.getTime() - 86400000).toISOString().split("T")[0];
 
   for (const dateStr of [yesterday, today]) {
-    // Get invoices for this date
-    const { data: invoiceData } = await supabase
-      .from("gingr_invoices")
-      .select("total, is_returned")
+    // Get Cash + CC payments from invoice_payments table
+    const { data: paymentData } = await supabase
+      .from("gingr_invoice_payments")
+      .select("total_balance")
       .eq("location_id", locationId)
-      .gte("created_at", `${dateStr}T00:00:00`)
-      .lt("created_at", `${dateStr}T23:59:59`);
+      .eq("transaction_date", dateStr)
+      .in("payment_method_type", ["Cash", "Credit Card"])
+      .eq("is_zero_payment", false)
+      .eq("is_admin_comp", false);
 
-    const invoices = invoiceData || [];
-    const collectedPayments = invoices
-      .filter((i: any) => !i.is_returned)
-      .reduce((sum: number, i: any) => sum + parseFloat(i.total || 0), 0);
-    const refunds = invoices
-      .filter((i: any) => i.is_returned)
-      .reduce((sum: number, i: any) => sum + parseFloat(i.total || 0), 0);
+    const entries = paymentData || [];
+    const collectedPayments = entries
+      .filter((e: any) => parseFloat(e.total_balance) > 0)
+      .reduce((sum: number, e: any) => sum + parseFloat(e.total_balance), 0);
+    const refunds = entries
+      .filter((e: any) => parseFloat(e.total_balance) < 0)
+      .reduce((sum: number, e: any) => sum + Math.abs(parseFloat(e.total_balance)), 0);
 
     // Get deposits paid on this date
     const { data: depositData } = await supabase
@@ -619,6 +716,7 @@ async function computeCashBasisMetrics(
       .lt("last_payment", `${dateStr}T23:59:59`)
       .gt("paid_amount", 0);
 
+    // TODO: Add store credit exclusion once we track deposit payment method
     const deposits = depositData || [];
     const collectedDeposits = deposits
       .reduce((sum: number, d: any) => sum + parseFloat(d.paid_amount || 0), 0);
@@ -855,8 +953,8 @@ Deno.serve(async (req: Request) => {
     const toSync =
       entities ||
       (sync_type === "full"
-        ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "invoices", "deposits"]
-        : ["owners", "animals", "reservations", "invoices", "deposits"]);
+        ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "invoices", "invoice_payments", "deposits"]
+        : ["owners", "animals", "reservations", "invoices", "invoice_payments", "deposits"]);
 
     for (const entity of toSync) {
       await updateSyncState(supabase, location_id, entity, {
@@ -903,6 +1001,14 @@ Deno.serve(async (req: Request) => {
               api_key,
               location_id,
               sync_type === "full"
+            );
+            break;
+          case "invoice_payments":
+            results.invoice_payments = await syncInvoicePayments(
+              supabase,
+              subdomain,
+              api_key,
+              location_id
             );
             break;
           case "deposits":
