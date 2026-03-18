@@ -1,14 +1,15 @@
 // K9 Operations — Weekly Maintenance Checklist Page
 // Two views: Daily (default) and Weekly grid
+// Supports computed_items from server + CRUD via lite_checklist_templates
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
-import { C, todayStr, addDays, DAY_NAMES_SHORT } from "../../shared/theme";
-import { Card, Badge, Btn } from "../../shared/ui";
+import { C, todayStr, addDays, DAY_NAMES_SHORT, gid } from "../../shared/theme";
+import { Card, Badge, Btn, Modal } from "../../shared/ui";
 import { I } from "../../shared/icons";
 
-// ─── Weekly Maintenance Task Schedule ────────────────────────────────────
-const WM_TASKS = [
+// ─── Default Weekly Maintenance Task Schedule (fallback) ────────────────
+const WM_TASKS_DEFAULT = [
   { id:"wm1", label:"Disinfect Bathrooms + Refill Toilet Paper in Wall Mounts", supplies:"Mop bucket w/ rescue, bucket w/ rescue, sponge, squeegee mirror w/ windex", scheduledDays:[1,4] },
   { id:"wm2", label:"Wipe Down Executive Room Cubbies", supplies:"Rescue wipes", scheduledDays:[1,4] },
   { id:"wm3", label:"Sweep Sidewalk & Remove Trash from Parking Lot", supplies:"Black/Yellow rubber broom, trash bag", scheduledDays:[1,2,3,4,5,6,0] },
@@ -37,34 +38,204 @@ const WM_TASKS = [
 
 const DAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const WEEK_DAYS_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Mon-Sun display order
+const TEMPLATE_ID = "3ea0e6a0-03d5-4e03-a87e-0f036f8ffb39";
+const LOCATION_ID_DEFAULT = "11111111-1111-1111-1111-111111111111";
 
-// Get Monday of the week containing the given date string
 function getWeekMonday(dateStr) {
   const d = new Date(dateStr + "T12:00:00");
   const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day; // Monday is day 1
+  const diff = day === 0 ? -6 : 1 - day;
   d.setDate(d.getDate() + diff);
   return d.toISOString().split("T")[0];
 }
 
-// Get array of date strings for Mon-Sun of the week containing dateStr
 function getWeekDates(dateStr) {
   const mon = getWeekMonday(dateStr);
   return WEEK_DAYS_ORDER.map((_, i) => addDays(mon, i));
 }
 
+// ─── Manage Tasks Modal ─────────────────────────────────────────────────
+function ManageTasksModal({ onClose, locationId }) {
+  const [templateTasks, setTemplateTasks] = useState(null); // null = loading
+  const [templateId, setTemplateId] = useState(null);
+  const [editTask, setEditTask] = useState(null); // task being edited or new task
+  const [saving, setSaving] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
+
+  // Load template
+  useEffect(() => {
+    supabase.from("lite_checklist_templates").select("*")
+      .eq("location_id", locationId)
+      .eq("template_type", "weekly_maintenance")
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          setTemplateTasks(data.items || []);
+          setTemplateId(data.id);
+        } else {
+          setTemplateTasks([]);
+        }
+      });
+  }, [locationId]);
+
+  const activeTasks = useMemo(() => (templateTasks || []).filter(t => t.active !== false), [templateTasks]);
+  const inactiveTasks = useMemo(() => (templateTasks || []).filter(t => t.active === false), [templateTasks]);
+
+  const saveTemplate = useCallback(async (updatedItems) => {
+    setSaving(true);
+    try {
+      if (templateId) {
+        await supabase.from("lite_checklist_templates")
+          .update({ items: updatedItems, updated_at: new Date().toISOString() })
+          .eq("id", templateId);
+      } else {
+        const { data } = await supabase.from("lite_checklist_templates")
+          .insert({ id: TEMPLATE_ID, location_id: locationId, template_type: "weekly_maintenance", items: updatedItems, updated_at: new Date().toISOString() })
+          .select().single();
+        if (data) setTemplateId(data.id);
+      }
+      setTemplateTasks(updatedItems);
+    } finally {
+      setSaving(false);
+    }
+  }, [templateId, locationId]);
+
+  const handleSaveTask = useCallback(async () => {
+    if (!editTask || !editTask.label.trim()) return;
+    const items = [...(templateTasks || [])];
+    const idx = items.findIndex(t => t.id === editTask.id);
+    if (idx >= 0) {
+      items[idx] = { ...items[idx], label: editTask.label, supplies: editTask.supplies, scheduledDays: editTask.scheduledDays };
+    } else {
+      items.push({ id: `wm_${Date.now()}`, label: editTask.label, supplies: editTask.supplies, scheduledDays: editTask.scheduledDays, active: true });
+    }
+    await saveTemplate(items);
+    setEditTask(null);
+  }, [editTask, templateTasks, saveTemplate]);
+
+  const handleDelete = useCallback(async (taskId) => {
+    const items = (templateTasks || []).map(t => t.id === taskId ? { ...t, active: false } : t);
+    await saveTemplate(items);
+  }, [templateTasks, saveTemplate]);
+
+  const handleReactivate = useCallback(async (taskId) => {
+    const items = (templateTasks || []).map(t => t.id === taskId ? { ...t, active: true } : t);
+    await saveTemplate(items);
+  }, [templateTasks, saveTemplate]);
+
+  const toggleDay = (dayIdx) => {
+    if (!editTask) return;
+    const days = editTask.scheduledDays.includes(dayIdx)
+      ? editTask.scheduledDays.filter(d => d !== dayIdx)
+      : [...editTask.scheduledDays, dayIdx];
+    setEditTask({ ...editTask, scheduledDays: days });
+  };
+
+  const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  const dayValues = [1, 2, 3, 4, 5, 6, 0];
+
+  if (templateTasks === null) {
+    return <Modal title="Manage Tasks" onClose={onClose}><div style={{ padding: 20, textAlign: "center", color: C.textMut }}>Loading...</div></Modal>;
+  }
+
+  return (
+    <Modal title="Manage Weekly Maintenance Tasks" onClose={onClose} wide>
+      <div style={{ padding: "0 0 12px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: C.warn, fontWeight: 500 }}>Changes will appear within 1 minute</div>
+          <button
+            onClick={() => setEditTask({ id: null, label: "", supplies: "", scheduledDays: [] })}
+            style={{ border: "none", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontFamily: "inherit", fontWeight: 600, fontSize: 12, background: C.pri, color: "#fff" }}
+          >+ Add Task</button>
+        </div>
+
+        {/* Edit/Add form */}
+        {editTask && (
+          <Card style={{ marginBottom: 16, padding: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: C.text }}>{editTask.id ? "Edit Task" : "New Task"}</div>
+            <input
+              value={editTask.label} onChange={e => setEditTask({ ...editTask, label: e.target.value })}
+              placeholder="Task label" style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, marginBottom: 8, fontFamily: "inherit", boxSizing: "border-box" }}
+            />
+            <input
+              value={editTask.supplies} onChange={e => setEditTask({ ...editTask, supplies: e.target.value })}
+              placeholder="Supplies needed" style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, marginBottom: 8, fontFamily: "inherit", boxSizing: "border-box" }}
+            />
+            <div style={{ fontSize: 12, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>Scheduled Days</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+              {dayLabels.map((lbl, i) => {
+                const active = editTask.scheduledDays.includes(dayValues[i]);
+                return (
+                  <button key={lbl} onClick={() => toggleDay(dayValues[i])} style={{
+                    border: `1px solid ${active ? C.pri : C.border}`, borderRadius: 6, padding: "4px 10px",
+                    cursor: "pointer", fontFamily: "inherit", fontWeight: 600, fontSize: 11,
+                    background: active ? C.pri : C.surface, color: active ? "#fff" : C.textMut,
+                  }}>{lbl}</button>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={handleSaveTask} disabled={saving || !editTask.label.trim()} style={{
+                border: "none", borderRadius: 6, padding: "6px 16px", cursor: "pointer", fontFamily: "inherit",
+                fontWeight: 600, fontSize: 12, background: C.pri, color: "#fff", opacity: saving ? 0.6 : 1,
+              }}>{saving ? "Saving..." : "Save"}</button>
+              <button onClick={() => setEditTask(null)} style={{
+                border: `1px solid ${C.border}`, borderRadius: 6, padding: "6px 16px", cursor: "pointer",
+                fontFamily: "inherit", fontWeight: 600, fontSize: 12, background: C.surface, color: C.textMut,
+              }}>Cancel</button>
+            </div>
+          </Card>
+        )}
+
+        {/* Active tasks */}
+        {activeTasks.map(task => (
+          <div key={task.id} style={{ display: "flex", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${C.borderLight}`, gap: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, color: C.text }}>{task.label}</div>
+              <div style={{ fontSize: 11, color: C.textMut }}>{task.supplies || ""} {task.scheduledDays?.length > 0 && `\u00B7 ${task.scheduledDays.map(d => ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][d]).join(", ")}`}</div>
+            </div>
+            <button onClick={() => setEditTask({ ...task })} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, color: C.info, fontWeight: 600 }}>Edit</button>
+            <button onClick={() => handleDelete(task.id)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, color: C.dan, fontWeight: 600 }}>Delete</button>
+          </div>
+        ))}
+
+        {activeTasks.length === 0 && (
+          <div style={{ padding: 16, textAlign: "center", color: C.textMut, fontSize: 13 }}>No active tasks. Add one above.</div>
+        )}
+
+        {/* Inactive tasks toggle */}
+        {inactiveTasks.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <button onClick={() => setShowInactive(!showInactive)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, color: C.textMut, fontWeight: 600 }}>
+              {showInactive ? "Hide" : "Show"} {inactiveTasks.length} inactive task{inactiveTasks.length !== 1 ? "s" : ""}
+            </button>
+            {showInactive && inactiveTasks.map(task => (
+              <div key={task.id} style={{ display: "flex", alignItems: "center", padding: "6px 0", gap: 8, opacity: 0.5 }}>
+                <div style={{ flex: 1, fontSize: 13, color: C.textMut, textDecoration: "line-through" }}>{task.label}</div>
+                <button onClick={() => handleReactivate(task.id)} style={{ border: "none", background: "transparent", cursor: "pointer", fontSize: 12, color: C.suc, fontWeight: 600 }}>Reactivate</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// ─── Main Page ──────────────────────────────────────────────────────────
 function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
   const td = todayStr();
   const [viewDate, setViewDate] = useState(td);
   const [viewMode, setViewMode] = useState("daily"); // "daily" or "weekly"
-  const [weekOpsData, setWeekOpsData] = useState({}); // { "2026-03-17": { items: {...} }, ... }
+  const [weekOpsData, setWeekOpsData] = useState({}); // { "2026-03-17": { items: {...}, computed_items: null }, ... }
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showManage, setShowManage] = useState(false);
 
   const isToday = viewDate === td;
   const dayIdx = new Date(viewDate + "T12:00:00").getDay();
   const weekDates = useMemo(() => getWeekDates(viewDate), [viewDate]);
-  const locationId = profile?.location_id || data?.locationId;
+  const locationId = profile?.location_id || data?.locationId || LOCATION_ID_DEFAULT;
 
   // Load week ops data from Supabase for all 7 days of this week
   useEffect(() => {
@@ -74,7 +245,7 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
       const map = {};
       (rows || []).forEach(r => {
         const date = r.date || r.id.replace("ops_weekly_maintenance_", "");
-        map[date] = { items: r.items || {}, locked: r.locked, history: r.history || [] };
+        map[date] = { items: r.items || {}, computed_items: r.computed_items || null, locked: r.locked, history: r.history || [] };
       });
       setWeekOpsData(map);
     });
@@ -82,12 +253,28 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
 
   // Get items for a specific date
   const getItems = useCallback((date) => {
-    // Check live dailyOps first (in-memory), then weekOpsData from direct fetch
     const entryId = `ops_weekly_maintenance_${date}`;
     const liveEntry = (data.dailyOps || []).find(e => e.id === entryId);
     if (liveEntry) return liveEntry.items || {};
     return weekOpsData[date]?.items || {};
   }, [data.dailyOps, weekOpsData]);
+
+  // Get computed_items for a specific date (server-generated task list)
+  const getComputedItems = useCallback((date) => {
+    const entryId = `ops_weekly_maintenance_${date}`;
+    const liveEntry = (data.dailyOps || []).find(e => e.id === entryId);
+    if (liveEntry?.computed_items) return liveEntry.computed_items;
+    return weekOpsData[date]?.computed_items || null;
+  }, [data.dailyOps, weekOpsData]);
+
+  // Resolve WM_TASKS: use computed_items if available, fallback to hardcoded defaults
+  const WM_TASKS = useMemo(() => {
+    const ci = getComputedItems(viewDate);
+    if (ci && ci.tasks && ci.tasks.length > 0) {
+      return ci.tasks.filter(t => t.active !== false);
+    }
+    return WM_TASKS_DEFAULT;
+  }, [viewDate, getComputedItems]);
 
   // ─── Carryover Logic ────────────────────────────────────────────────────
   // For daily view: find tasks scheduled on earlier days this week that weren't completed
@@ -95,33 +282,53 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
     if (viewMode !== "daily") return [];
     const result = [];
     const todayDateIdx = weekDates.indexOf(viewDate);
-    if (todayDateIdx <= 0) return result; // Monday or not found — no carryover
+    if (todayDateIdx <= 0) return result;
 
+    // Use computed_items carryover if available
+    const ci = getComputedItems(viewDate);
+    if (ci && ci.tasks) {
+      const carryovers = ci.tasks.filter(t => t.isCarryover);
+      const todayScheduled = new Set(ci.tasks.filter(t => !t.isCarryover).map(t => t.id));
+      carryovers.forEach(task => {
+        // Dedup: skip if task is already scheduled for today
+        if (todayScheduled.has(task.id)) return;
+        const todayItems = getItems(viewDate);
+        if (todayItems[task.id]?.checked) return;
+        if (result.some(r => r.task.id === task.id)) return;
+        result.push({ task, fromDate: null, fromDay: task.fromDay || "earlier this week" });
+      });
+      return result;
+    }
+
+    // Fallback: client-side carryover computation
     for (let i = 0; i < todayDateIdx; i++) {
       const pastDate = weekDates[i];
       const pastDayIdx = new Date(pastDate + "T12:00:00").getDay();
       const pastItems = getItems(pastDate);
 
       WM_TASKS.forEach(task => {
-        if (!task.scheduledDays.includes(pastDayIdx)) return; // Not scheduled that day
-        if (pastItems[task.id]?.checked) return; // Was completed
-        // Also check if already completed today
+        if (!task.scheduledDays || !task.scheduledDays.includes(pastDayIdx)) return;
+        if (pastItems[task.id]?.checked) return;
         const todayItems = getItems(viewDate);
         if (todayItems[task.id]?.checked) return;
-        // Check if already carried from an earlier day
         if (result.some(r => r.task.id === task.id)) return;
         result.push({ task, fromDate: pastDate, fromDay: DAY_NAMES_FULL[pastDayIdx] });
       });
     }
     return result;
-  }, [viewMode, viewDate, weekDates, getItems]);
+  }, [viewMode, viewDate, weekDates, getItems, getComputedItems, WM_TASKS]);
 
   // Tasks scheduled for today
   const todayTasks = useMemo(() => {
-    return WM_TASKS.filter(t => t.scheduledDays.includes(dayIdx));
-  }, [dayIdx]);
+    // If using computed_items, filter for non-carryover tasks
+    const ci = getComputedItems(viewDate);
+    if (ci && ci.tasks) {
+      return ci.tasks.filter(t => !t.isCarryover && t.active !== false);
+    }
+    return WM_TASKS.filter(t => t.scheduledDays && t.scheduledDays.includes(dayIdx));
+  }, [dayIdx, WM_TASKS, viewDate, getComputedItems]);
 
-  // Combined task list for daily view: today's tasks + carryover
+  // Combined task list for daily view: today's tasks + carryover (deduped)
   const dailyTaskList = useMemo(() => {
     const todayIds = new Set(todayTasks.map(t => t.id));
     const carried = carryoverTasks.filter(c => !todayIds.has(c.task.id));
@@ -159,7 +366,7 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
     if (idx >= 0) allOps[idx] = entry;
     else allOps.push(entry);
     await save({ ...data, dailyOps: allOps });
-    setWeekOpsData(prev => ({ ...prev, [date]: { items, history: newHistory, locked: false } }));
+    setWeekOpsData(prev => ({ ...prev, [date]: { ...prev[date], items, history: newHistory, locked: false } }));
   }, [data, save, weekOpsData]);
 
   // Toggle a checkbox
@@ -303,7 +510,7 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
                 {task.label}
               </div>
               {weekDateLabels.map(({ date, dayIdx: dIdx }) => {
-                const isScheduled = task.scheduledDays.includes(dIdx);
+                const isScheduled = task.scheduledDays ? task.scheduledDays.includes(dIdx) : false;
                 const items = getItems(date);
                 const it = items[task.id] || {};
                 return (
@@ -341,12 +548,13 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
   const weeklyProgressRow = useMemo(() => {
     return weekDates.map(d => {
       const dIdx = new Date(d + "T12:00:00").getDay();
-      const scheduled = WM_TASKS.filter(t => t.scheduledDays.includes(dIdx));
+      const ci = getComputedItems(d);
+      const taskList = (ci && ci.tasks) ? ci.tasks.filter(t => !t.isCarryover && t.active !== false) : WM_TASKS.filter(t => t.scheduledDays && t.scheduledDays.includes(dIdx));
       const items = getItems(d);
-      const checked = scheduled.filter(t => items[t.id]?.checked).length;
-      return { date: d, total: scheduled.length, checked };
+      const checked = taskList.filter(t => items[t.id]?.checked).length;
+      return { date: d, total: taskList.length, checked };
     });
-  }, [weekDates, getItems]);
+  }, [weekDates, getItems, getComputedItems, WM_TASKS]);
 
   return (
     <div style={{ padding: "0 0 40px", maxWidth: 1200, margin: "0 auto" }}>
@@ -359,10 +567,16 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
           <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: C.text }}>Weekly Maintenance</h2>
         </div>
 
-        {/* View toggle */}
-        <div style={pillContainer}>
-          <button style={pillBtn(viewMode === "daily")} onClick={() => setViewMode("daily")}>Daily</button>
-          <button style={pillBtn(viewMode === "weekly")} onClick={() => setViewMode("weekly")}>Weekly</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Manage Tasks button */}
+          <button onClick={() => setShowManage(true)} style={{ ...nbtn, background: C.surfaceHover, color: C.textSec, display: "flex", alignItems: "center", gap: 4 }}>
+            Manage Tasks
+          </button>
+          {/* View toggle */}
+          <div style={pillContainer}>
+            <button style={pillBtn(viewMode === "daily")} onClick={() => setViewMode("daily")}>Daily</button>
+            <button style={pillBtn(viewMode === "weekly")} onClick={() => setViewMode("weekly")}>Weekly</button>
+          </div>
         </div>
       </div>
 
@@ -399,6 +613,9 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
 
       {/* Content */}
       {viewMode === "daily" ? renderDailyView() : renderWeeklyView()}
+
+      {/* Manage Tasks Modal */}
+      {showManage && <ManageTasksModal onClose={() => setShowManage(false)} locationId={locationId} />}
     </div>
   );
 }

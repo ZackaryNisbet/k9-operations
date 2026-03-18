@@ -20,12 +20,20 @@ const WEEKLY_MAINTENANCE_TASKS = [
 
 function getWeeklyMaintenanceStats(data, date) {
   const td = date || todayStr();
-  const dayIdx = new Date(td + "T12:00:00").getDay();
-  const scheduled = WEEKLY_MAINTENANCE_TASKS.filter(t => t.scheduledDays.includes(dayIdx));
   const entryId = `ops_weekly_maintenance_${td}`;
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   const ei = entry ? entry.items || {} : {};
   const checked = Object.values(ei).filter(i => i && i.checked).length;
+
+  // Use computed_items if available (server-generated task list)
+  const ci = entry?.computed_items;
+  if (ci && ci.tasks && ci.tasks.length > 0) {
+    return { total: ci.tasks.length, checked };
+  }
+
+  // Fallback: client-side schedule
+  const dayIdx = new Date(td + "T12:00:00").getDay();
+  const scheduled = WEEKLY_MAINTENANCE_TASKS.filter(t => t.scheduledDays.includes(dayIdx));
   return { total: scheduled.length, checked };
 }
 
@@ -53,27 +61,36 @@ function classifyReservationStatus(r) {
 
 function extractRoomFromType(typeName) {
   if (!typeName) return null;
-  // "Boarding | Luxury Suite (All Inclusive)" → "Luxury Suite"
-  // "Boarding | Executive Room (All Inclusive)" → "Executive Room"
-  // "Boarding | Double Compartment (All Inclusive)" → "Double Compartment"
-  // "Boarding | Single Compartment (All Inclusive)" → "Single Compartment"
   for (const rt of ROOM_TYPES) {
     if (typeName.toLowerCase().includes(rt.toLowerCase())) return rt;
   }
   return null;
 }
 
-// ─── useGingrData Hook (Supabase + Gingr Sync) ────────────────────────────
+// ─── Room Cleaning Stats ────────────────────────────────────────────────────
 function getRoomCleaningStats(data, date) {
   const td = date || todayStr();
+  const entryId = `ops_room_cleaning_${td}`;
+  const entry = (data.dailyOps || []).find(e => e.id === entryId);
+  const ei = entry ? entry.items || {} : {};
+
+  // Use computed_items if available (server-generated room list)
+  const ci = entry?.computed_items;
+  if (ci && ci.rooms && ci.rooms.length > 0) {
+    let totalNeeded = 0, totalDone = 0;
+    ci.rooms.forEach(rm => {
+      if (rm.needsRefresh) { totalNeeded++; if (ei[rm.room]?.refresh) totalDone++; }
+      if (rm.needsDisinfect) { totalNeeded++; if (ei[rm.room]?.disinfect) totalDone++; }
+    });
+    return { totalNeeded, totalDone, total: totalNeeded, cleaned: totalDone };
+  }
+
+  // Fallback: client-side computation from reservations
   const allRooms = data.rooms || {};
   const reservations = data.reservations || [];
   const boardingToday = reservations.filter(r => r.type === "boarding" && r.checkIn <= td && r.checkOut >= td && (r.status === "checked-in" || r.status === "upcoming"));
   const boardingCheckedOut = reservations.filter(r => r.type === "boarding" && r.checkOut === td && r.status === "checked-out");
   let totalNeeded = 0, totalDone = 0;
-  const entryId = `ops_room_cleaning_${td}`;
-  const entry = (data.dailyOps || []).find(e => e.id === entryId);
-  const ei = entry ? entry.items || {} : {};
   Object.keys(allRooms).forEach(rt => {
     (allRooms[rt] || []).forEach(rm => {
       const activeRes = boardingToday.find(r => r.room === rm);
@@ -106,7 +123,28 @@ function getPPStats(data, date) {
   const entryId = `ops_pp_${td}`;
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   const ei = entry ? entry.items || {} : {};
-  // Count PP dogs: dogs with "Private Play" add-on OR day boarding dogs
+
+  // Use computed_items if available (server-generated dog list)
+  const ci = entry?.computed_items;
+  if (ci && ci.dogs && ci.dogs.length > 0) {
+    const totalDogs = ci.dogs.length;
+    const requiredSessions = totalDogs * 3;
+    let completedSessions = 0;
+    let totalLogged = 0;
+    Object.values(ei).forEach(d => {
+      if (d && d.sessions) {
+        d.sessions.forEach((s, si) => {
+          if (s.time || s.urinate || s.defecate) {
+            totalLogged++;
+            if (si < 3) completedSessions++;
+          }
+        });
+      }
+    });
+    return { totalDogs, requiredSessions, completedSessions, totalLogged };
+  }
+
+  // Fallback: client-side computation from reservations
   const reservations = data.reservations || [];
   const ppRes = reservations.filter(r =>
     (r.type === "boarding" || r.type === "daycare" || r.type === "dayboarding") &&
@@ -141,6 +179,16 @@ function getOpsCardStatus(data, item, date) {
   if (entry.locked) return "completed";
   const ei = entry.items;
   if (!ei) return "not_started";
+
+  // Use computed_items for template checklists if available
+  const ci = entry.computed_items;
+  if (ci && Array.isArray(ci) && ci.length > 0) {
+    const total = ci.length;
+    const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : ei.filter(i => i.checked).length;
+    if (total > 0 && checked >= total) return "completed";
+    return checked > 0 ? "in_progress" : "not_started";
+  }
+
   // Template checklists: check if ALL items are done
   const meta = OPS_TYPES[item.typeSub];
   if (meta && meta.key) {
@@ -185,6 +233,16 @@ function getOpsProgress(data, item, date) {
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
   if (!entry) return 0;
   if (entry.locked) return 100;
+
+  // Use computed_items for template checklists if available
+  const ci = entry.computed_items;
+  if (ci && Array.isArray(ci) && ci.length > 0) {
+    const total = ci.length;
+    const ei = entry.items || {};
+    const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : ei.filter(i => i.checked).length;
+    return Math.round((checked / total) * 100);
+  }
+
   const meta = OPS_TYPES[item.typeSub];
   const isTemplate = meta && !!meta.key;
   if (isTemplate) {
@@ -226,6 +284,16 @@ function getOpsCountLabel(data, item, date) {
   const td = date || todayStr();
   const entryId = `ops_${item.typeSub}_${td}`;
   const entry = (data.dailyOps || []).find(e => e.id === entryId);
+
+  // Use computed_items for template checklists if available
+  const ci = entry?.computed_items;
+  if (ci && Array.isArray(ci) && ci.length > 0) {
+    const total = ci.length;
+    const ei = entry.items || {};
+    const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : ei.filter(i => i.checked).length;
+    return `${checked}/${total} tasks`;
+  }
+
   const meta = OPS_TYPES[item.typeSub];
   const isTemplate = meta && !!meta.key;
   if (isTemplate) {
