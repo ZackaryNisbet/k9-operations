@@ -750,7 +750,7 @@ function LeanAppInner() {
       case "refunds":
         return <RefundsPage data={data} nav={nav} profile={profile} />;
       case "photos":
-        return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Photos not available on Enterprise view</div> : <PhotosPage />;
+        return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Photos not available on Enterprise view</div> : <PhotosPage data={data} nav={nav} profile={profile} />;
       case "enterprise-ops":
         return <EnterpriseOpsMatrix />;
       case "enterprise-attendance":
