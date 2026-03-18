@@ -513,23 +513,29 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
                 const isScheduled = task.scheduledDays ? task.scheduledDays.includes(dIdx) : false;
                 const items = getItems(date);
                 const it = items[task.id] || {};
+                const isPast = date < td;
+                const isTodayCol = date === td;
                 return (
                   <div key={date} style={{
                     padding: "6px 4px", textAlign: "center", display: "flex", flexDirection: "column",
                     alignItems: "center", justifyContent: "center",
-                    background: isScheduled ? "transparent" : "#F0F0F0",
+                    background: isScheduled
+                      ? (it.checked ? "rgba(34,139,34,0.08)" : isTodayCol ? "rgba(99,102,241,0.08)" : isPast && !it.checked ? "rgba(217,119,6,0.06)" : "transparent")
+                      : C.surfaceHover,
                     borderLeft: `1px solid ${C.borderLight}`,
                   }}>
-                    <input type="checkbox" checked={!!it.checked} onChange={() => toggleItem(task.id, date)}
-                      style={{
-                        width: isScheduled ? 18 : 14, height: isScheduled ? 18 : 14,
-                        cursor: "pointer", accentColor: C.pri,
-                        opacity: isScheduled ? 1 : 0.5,
-                      }} />
-                    {it.checked && it.initials && (
-                      <div style={{ fontSize: 9, color: C.suc, fontWeight: 600, marginTop: 2 }}>
-                        {it.initials}
-                      </div>
+                    {isScheduled ? (
+                      <>
+                        <input type="checkbox" checked={!!it.checked} onChange={() => toggleItem(task.id, date)}
+                          style={{ width: 18, height: 18, cursor: "pointer", accentColor: it.checked ? C.suc : C.pri }} />
+                        {it.checked && it.initials && (
+                          <div style={{ fontSize: 9, color: C.suc, fontWeight: 600, marginTop: 2 }}>
+                            {it.initials}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 11, color: C.borderLight }}>—</span>
                     )}
                   </div>
                 );
