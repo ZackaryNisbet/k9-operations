@@ -276,6 +276,25 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
     return WM_TASKS_DEFAULT;
   }, [viewDate, getComputedItems]);
 
+  // Server-generated weekGrid: { "2026-03-18": ["wm3", "wm6", ...], ... }
+  const weekGrid = useMemo(() => {
+    const ci = getComputedItems(viewDate);
+    return ci?.weekGrid || null;
+  }, [viewDate, getComputedItems]);
+
+  // All unique tasks for weekly view (union of all days in weekGrid, or fallback to WM_TASKS_DEFAULT)
+  const allWeekTasks = useMemo(() => {
+    if (!weekGrid) return WM_TASKS_DEFAULT;
+    const allIds = new Set();
+    Object.values(weekGrid).forEach(ids => ids.forEach(id => allIds.add(id)));
+    // Build task objects from WM_TASKS_DEFAULT or computed tasks
+    const taskMap = new Map();
+    WM_TASKS_DEFAULT.forEach(t => taskMap.set(t.id, t));
+    const ci = getComputedItems(viewDate);
+    if (ci?.tasks) ci.tasks.forEach(t => taskMap.set(t.id, t));
+    return [...allIds].map(id => taskMap.get(id)).filter(Boolean);
+  }, [weekGrid, getComputedItems, viewDate]);
+
   // ─── Carryover Logic ────────────────────────────────────────────────────
   // For daily view: find tasks scheduled on earlier days this week that weren't completed
   const carryoverTasks = useMemo(() => {
@@ -501,16 +520,18 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
           </div>
 
           {/* Task rows */}
-          {WM_TASKS.map((task, rowIdx) => (
+          {allWeekTasks.map((task, rowIdx) => (
             <div key={task.id} style={{
               display: "grid", gridTemplateColumns: "minmax(240px, 2fr) repeat(7, 1fr) minmax(150px, 1.5fr)",
-              borderBottom: rowIdx < WM_TASKS.length - 1 ? `1px solid ${C.border}` : "none",
+              borderBottom: rowIdx < allWeekTasks.length - 1 ? `1px solid ${C.border}` : "none",
             }}>
               <div style={{ padding: "8px 12px", fontSize: 12, color: C.text, lineHeight: 1.4, display: "flex", alignItems: "center" }}>
                 {task.label}
               </div>
               {weekDateLabels.map(({ date, dayIdx: dIdx }) => {
-                const isScheduled = task.scheduledDays ? task.scheduledDays.includes(dIdx) : false;
+                const isScheduled = weekGrid
+                  ? (weekGrid[date] || []).includes(task.id)
+                  : (task.scheduledDays ? task.scheduledDays.includes(dIdx) : false);
                 const items = getItems(date);
                 const it = items[task.id] || {};
                 const isPast = date < td;
