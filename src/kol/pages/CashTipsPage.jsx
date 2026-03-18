@@ -17,7 +17,7 @@ const RANGES = [
 ];
 
 export default function CashTipsPage({ data, save, nav, profile, addGlobalToast }) {
-  const locationId = profile?.location_id || "11111111-1111-1111-1111-111111111111";
+  const locationId = profile?.location_id;
   const today = todayStr();
 
   // ─── State ──────────────────────────────────────────────────────────

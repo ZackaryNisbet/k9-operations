@@ -39,7 +39,7 @@ const WM_TASKS_DEFAULT = [
 const DAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const WEEK_DAYS_ORDER = [1, 2, 3, 4, 5, 6, 0]; // Mon-Sun display order
 const TEMPLATE_ID = "3ea0e6a0-03d5-4e03-a87e-0f036f8ffb39";
-const LOCATION_ID_DEFAULT = "11111111-1111-1111-1111-111111111111";
+// Location ID comes from profile props — no hardcoded default
 
 function getWeekMonday(dateStr) {
   const d = new Date(dateStr + "T12:00:00");
@@ -235,7 +235,7 @@ function WeeklyMaintenancePage({ data, save, nav, profile, addGlobalToast }) {
   const isToday = viewDate === td;
   const dayIdx = new Date(viewDate + "T12:00:00").getDay();
   const weekDates = useMemo(() => getWeekDates(viewDate), [viewDate]);
-  const locationId = profile?.location_id || data?.locationId || LOCATION_ID_DEFAULT;
+  const locationId = profile?.location_id;
 
   // Load week ops data from Supabase for all 7 days of this week
   useEffect(() => {
