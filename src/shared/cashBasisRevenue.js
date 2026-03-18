@@ -46,6 +46,13 @@ export async function fetchCashBasisForDate(locationId, targetDate) {
     return emptyResult();
   }
 
+  // NOTE: Store credit from forfeited deposits is excluded server-side only
+  // (in computeCashBasisMetrics in gingr-sync/index.ts). The server needs to
+  // call the Gingr API to check owner balances, which can't be done from the
+  // browser. This means the live poll total may be very slightly higher than
+  // the pre-computed dashboard_metrics_daily value on rare days when deposits
+  // are forfeited. The sync runs frequently and corrects this automatically.
+
   // Fetch deposits paid on this date
   const { data: deposits, error: depErr } = await supabase
     .from("gingr_deposits")
