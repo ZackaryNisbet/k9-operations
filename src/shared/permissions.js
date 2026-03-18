@@ -4,7 +4,7 @@ import { LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX } from "./theme";
 
 const LEGACY_ROLE_MAP = { owner:"role_owner", enterprise_admin:"role_enterprise_admin", manager:"role_manager", staff:"role_staff" };
 // New role code map for location_roles table (7-role system)
-const ROLE_CODE_MAP = { pct:"pct", csr:"csr", supervisor:"supervisor", manager:"manager", regional:"regional", admin:"admin", developer:"developer" };
+const ROLE_CODE_MAP = { pct:"pct", csr:"csr", supervisor:"supervisor", manager:"manager", regional:"regional", admin:"admin", multi_location_admin:"multi_location_admin", developer:"developer" };
 
 function _resolveRole(profile, data) {
   if (!profile || !data) return null;
@@ -35,8 +35,8 @@ function _resolveRole(profile, data) {
 
 function hasPermission(profile, data, permKey) {
   if (!profile || !data) return true; // graceful fallback during loading
-  // Owner and enterprise_admin always have full access
-  if (profile.role === 'owner' || profile.role === 'enterprise_admin') return true;
+  // Owner, enterprise_admin, and multi_location_admin always have full access (scoping is at data layer)
+  if (profile.role === 'owner' || profile.role === 'enterprise_admin' || profile.role === 'multi_location_admin') return true;
   const locationRoles = data.locationRoles || [];
   const legacyRoles = data.roles || [];
   if (locationRoles.length === 0 && legacyRoles.length === 0) return true; // no roles system yet
@@ -49,11 +49,31 @@ function hasPermission(profile, data, permKey) {
 function hasLeanPermission(profile, area) {
   if (!profile) return false;
   const userRole = profile.role || "pct";
+  // Map owner → enterprise_admin, multi_location_admin uses its own matrix entry
   const roleKey = userRole === "owner" ? "enterprise_admin" : userRole;
   const perms = LEAN_PERMISSION_MATRIX[roleKey] || {};
   return perms[area] === true;
 }
 
+// ─── getUserLocationIds ─────────────────────────────────────────────────────
+// Returns the location IDs a user has access to based on their location_roles.
+// - enterprise_admin / developer / owner: returns null (meaning "all locations")
+// - multi_location_admin: returns array of their assigned location_ids
+// - others: returns array with just their profile location_id
+function getUserLocationIds(profile, locationRoles) {
+  if (!profile) return [];
+  const role = profile.role || "pct";
+  // Full-access roles see everything
+  if (role === "enterprise_admin" || role === "developer" || role === "owner") return null;
+  // multi_location_admin sees their assigned locations from location_roles table
+  if (role === "multi_location_admin" && locationRoles && locationRoles.length > 0) {
+    const ids = locationRoles.filter(r => r.role_code === "multi_location_admin").map(r => r.location_id);
+    return ids.length > 0 ? ids : [profile.location_id];
+  }
+  // Default: single location from profile
+  return profile.location_id ? [profile.location_id] : [];
+}
+
 // ─── Gingr Reservation Type → Lite Type Mapping ───────────────────────────
 
-export { LEGACY_ROLE_MAP, ROLE_CODE_MAP, _resolveRole, hasPermission, hasLeanPermission };
+export { LEGACY_ROLE_MAP, ROLE_CODE_MAP, _resolveRole, hasPermission, hasLeanPermission, getUserLocationIds };
