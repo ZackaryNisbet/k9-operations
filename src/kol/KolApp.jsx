@@ -43,6 +43,8 @@ import CashTipsPage from "./pages/CashTipsPage";
 import TestHealthPage from "./pages/TestHealthPage";
 import OccupancyReportPage from "./pages/OccupancyReportPage";
 import WeeklyMaintenancePage from "./pages/WeeklyMaintenancePage";
+import OnboardingPage from "./pages/OnboardingPage";
+import PricingPage from "./pages/PricingPage";
 
 class LeanAppErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null, info: null }; }
@@ -99,6 +101,8 @@ const LITE_PAGE_SLUGS = {
   "enterprise-users": "enterprise/users",
   "test-health": "test-health",
   "occupancy-report": "occupancy-report",
+  "onboarding": "onboarding",
+  "pricing": "pricing",
 };
 const LITE_SLUG_TO_PAGE = {};
 Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v]) LITE_SLUG_TO_PAGE[v] = k; });
@@ -210,7 +214,7 @@ function LeanAppInner() {
       const match = K9_LEAN_LOCATIONS.find(l => l.slug === initialParsed.locSlug);
       if (match) return match.id;
     }
-    return authProfile?.location_id || "11111111-1111-1111-1111-111111111111";
+    return authProfile?.location_id || K9_LEAN_LOCATIONS.find(l => !l.isEnterprise && !l.isPOS)?.id || null;
   }, [initialParsed.locSlug, authProfile?.location_id]);
 
   const [page, setPage] = useState(initialParsed.page);
@@ -771,12 +775,16 @@ function LeanAppInner() {
         return <RoadmapPage nav={nav} />;
       case "settings":
         return <SettingsPage profile={profile} addGlobalToast={addGlobalToast} />;
+      case "onboarding":
+        return <OnboardingPage profile={profile} addGlobalToast={addGlobalToast} nav={nav} />;
+      case "pricing":
+        return <PricingPage profile={profile} addGlobalToast={addGlobalToast} nav={nav} />;
       default:
         return <div>Page not found</div>;
     }
   };
 
-  const isFullscreenPage = page === "checkout-tv";
+  const isFullscreenPage = page === "checkout-tv" || page === "onboarding" || page === "pricing";
   const isEdgeToEdgePage = page === "dashboard" || isFullscreenPage;
 
   return (
