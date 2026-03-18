@@ -14,10 +14,7 @@ const corsHeaders = {
 };
 
 // ─── Constants ─────────────────────────────────────────────────────────────
-
-const GINGR_SUBDOMAIN = "k9cherryhill";
-const GINGR_API_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
-const DEFAULT_LOCATION_ID = "8ea382b0-63f7-44ac-b6f8-83243c03d946";
+// Gingr credentials are now loaded dynamically per location from k9_gingr_credentials
 
 const DAY_NAMES = [
   "Sunday",
@@ -98,16 +95,18 @@ const DEF_CLOSING_TEMPLATE = [
 // ─── Gingr API helper (matches gingr-sync pattern) ────────────────────────
 
 async function gingrFetch(
+  subdomain: string,
+  apiKey: string,
   endpoint: string,
   method: "GET" | "POST" = "GET",
   body?: Record<string, string>,
 ): Promise<any> {
-  const baseUrl = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/${endpoint}`;
+  const baseUrl = `https://${subdomain}.gingrapp.com/api/v1/${endpoint}`;
 
   let resp: Response;
   if (method === "POST") {
     const params = new URLSearchParams();
-    params.append("key", GINGR_API_KEY);
+    params.append("key", apiKey);
     if (body) {
       for (const [k, v] of Object.entries(body)) {
         params.append(k, v);
@@ -121,9 +120,8 @@ async function gingrFetch(
       body: params.toString(),
     });
   } else {
-    // Build URL properly — endpoint may already contain query params
     const sep = baseUrl.includes("?") ? "&" : "?";
-    const params = new URLSearchParams({ key: GINGR_API_KEY });
+    const params = new URLSearchParams({ key: apiKey });
     if (body) {
       for (const [k, v] of Object.entries(body)) {
         params.append(k, v);
@@ -803,7 +801,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    let locationId = DEFAULT_LOCATION_ID;
+    let locationId: string | null = null;
     let dateOverride: string | null = null;
 
     // Parse body if present
@@ -812,7 +810,14 @@ Deno.serve(async (req: Request) => {
       if (body.location_id) locationId = body.location_id;
       if (body.date) dateOverride = body.date;
     } catch {
-      // No body or invalid JSON — use defaults
+      // No body or invalid JSON
+    }
+
+    if (!locationId) {
+      return new Response(
+        JSON.stringify({ error: "location_id is required" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     const today = dateOverride || todayStr();
@@ -823,13 +828,33 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    // ─── Load Gingr credentials for this location ─────────────────────
+    const { data: creds, error: credsErr } = await supabase
+      .from("k9_gingr_credentials")
+      .select("gingr_subdomain, gingr_api_key, gingr_location_id")
+      .eq("location_id", locationId)
+      .maybeSingle();
+
+    if (credsErr || !creds) {
+      return new Response(
+        JSON.stringify({ error: "No Gingr credentials found for location", location_id: locationId }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    const gingrSubdomain = creds.gingr_subdomain;
+    const gingrApiKey = creds.gingr_api_key;
+    const gingrLocationId = creds.gingr_location_id || "1";
+
     // ─── Fetch Gingr data in parallel ──────────────────────────────────
     const [bohResult, resResult] = await Promise.all([
       gingrFetch(
-        `back_of_house?location_id=1&full_day=true&include_daycare=true`,
+        gingrSubdomain,
+        gingrApiKey,
+        `back_of_house?location_id=${gingrLocationId}&full_day=true&include_daycare=true`,
         "GET",
       ),
-      gingrFetch("reservations", "POST", { checked_in: "true" }),
+      gingrFetch(gingrSubdomain, gingrApiKey, "reservations", "POST", { checked_in: "true" }),
     ]);
 
     const reservations: Record<string, any> = resResult.data || {};

@@ -43,6 +43,10 @@ import CashTipsPage from "./pages/CashTipsPage";
 import TestHealthPage from "./pages/TestHealthPage";
 import OccupancyReportPage from "./pages/OccupancyReportPage";
 import WeeklyMaintenancePage from "./pages/WeeklyMaintenancePage";
+import OnboardingPage from "./pages/OnboardingPage";
+import PricingPage from "./pages/PricingPage";
+import SubscriptionGate from "../shared/SubscriptionGate";
+import useSubscription from "../hooks/useSubscription";
 
 class LeanAppErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null, info: null }; }
@@ -99,12 +103,17 @@ const LITE_PAGE_SLUGS = {
   "enterprise-users": "enterprise/users",
   "test-health": "test-health",
   "occupancy-report": "occupancy-report",
+  "cash-tips": "cash-tips",
+  "onboarding": "onboarding",
+  "pricing": "pricing",
 };
 const LITE_SLUG_TO_PAGE = {};
 Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v]) LITE_SLUG_TO_PAGE[v] = k; });
 
 function buildLiteUrl(locSlug, pg, prms, dataRef) {
   const slug = LITE_PAGE_SLUGS[pg] || pg;
+  // Top-level pages (no location slug)
+  if (pg === "onboarding" || pg === "pricing") return `${LITE_BASE}/${slug}`;
   if (locSlug === "enterprise") return `${LITE_BASE}/enterprise/${slug.replace("enterprise/", "")}`;
   if (pg === "client-detail" && prms?.clientId && dataRef) {
     // Lite clients: use lc_ ID directly in URL
@@ -127,6 +136,9 @@ function parseLiteUrl(pathname, dataRef) {
   if (cleanPath.startsWith(LITE_BASE)) cleanPath = cleanPath.slice(LITE_BASE.length) || "/";
   const parts = cleanPath.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
   if (parts.length === 0) return { locSlug: "cherry-hill", page: "dashboard", params: {} };
+  // Top-level pages (no location slug): /lite/onboarding, /lite/pricing
+  if (parts[0] === "onboarding") return { locSlug: null, page: "onboarding", params: {} };
+  if (parts[0] === "pricing") return { locSlug: null, page: "pricing", params: {} };
   const locSlug = parts[0];
   if (locSlug === "enterprise") {
     const epSlug = parts.slice(1).join("/") || "operations";
@@ -187,15 +199,17 @@ const LEAN_ENTERPRISE_NAV_ITEMS = [
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
-const K9_LEAN_LOCATIONS = [
+// Location list — loaded dynamically from Supabase in production.
+// Cherry Hill is the seed location; additional locations are added by the onboarding flow.
+const STATIC_LOCATIONS = [
   { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
-  { id: "8ea382b0-63f7-44ac-b6f8-83243c03d946", name: "Cherry Hill", slug: "cherry-hill" },
   { id: "demo-pos", name: "Demo POS", slug: "demo", isPOS: true },
 ];
 
 // ─── Main App Component ───────────────────────────────────────────────────
 function LeanAppInner() {
   const { user, profile: authProfile } = useAuth();
+  const { subscription, loading: subLoading, isActive: subIsActive, isPastDue: subIsPastDue } = useSubscription(user?.id);
 
   // Parse URL on initial load to determine starting page and location
   const initialParsed = useMemo(() => {
@@ -207,10 +221,11 @@ function LeanAppInner() {
   // Resolve initial location from URL slug or auth profile
   const initialLocation = useMemo(() => {
     if (initialParsed.locSlug) {
-      const match = K9_LEAN_LOCATIONS.find(l => l.slug === initialParsed.locSlug);
+      const match = STATIC_LOCATIONS.find(l => l.slug === initialParsed.locSlug);
       if (match) return match.id;
     }
-    return authProfile?.location_id || "8ea382b0-63f7-44ac-b6f8-83243c03d946";
+    // For non-static locations, use auth profile (DB locations load async)
+    return authProfile?.location_id || null;
   }, [initialParsed.locSlug, authProfile?.location_id]);
 
   const [page, setPage] = useState(initialParsed.page);
@@ -229,6 +244,30 @@ function LeanAppInner() {
   const [switchError, setSwitchError] = useState("");
   const [switchLoading, setSwitchLoading] = useState(false);
   const [teamAccounts, setTeamAccounts] = useState([]);
+
+  // ── Dynamic location list from Supabase ────────────────────────────────
+  const [dbLocations, setDbLocations] = useState([]);
+  useEffect(() => {
+    supabase
+      .from("locations")
+      .select("id, name, slug")
+      .then(({ data: rows }) => {
+        if (rows && rows.length > 0) setDbLocations(rows);
+      });
+  }, []);
+  const allLocations = useMemo(() => {
+    const base = STATIC_LOCATIONS.filter(l => l.isEnterprise || l.isPOS);
+    const dbMapped = dbLocations.map(l => ({ id: l.id, name: l.name, slug: l.slug }));
+    return [...base, ...dbMapped];
+  }, [dbLocations]);
+
+  // Resolve URL slug to DB location once locations load
+  useEffect(() => {
+    if (initialParsed.locSlug && dbLocations.length > 0 && !currentLocation) {
+      const match = dbLocations.find(l => l.slug === initialParsed.locSlug);
+      if (match) setCurrentLocation(match.id);
+    }
+  }, [dbLocations, initialParsed.locSlug, currentLocation]);
 
   // Sync currentLocation with auth profile when it loads
   useEffect(() => {
@@ -438,7 +477,7 @@ function LeanAppInner() {
   // ─── URL Routing ──────────────────────────────────────────────────────
   const skipUrlPush = useRef(false);
   const locSlug = useMemo(() => {
-    const loc = K9_LEAN_LOCATIONS.find(l => l.id === currentLocation);
+    const loc = allLocations.find(l => l.id === currentLocation);
     return loc?.slug || "cherry-hill";
   }, [currentLocation]);
 
@@ -489,14 +528,14 @@ function LeanAppInner() {
         newPage = e.state.page;
         newParams = e.state.params || {};
         if (e.state.loc) {
-          const locMatch = K9_LEAN_LOCATIONS.find(l => l.id === e.state.loc);
+          const locMatch = allLocations.find(l => l.id === e.state.loc);
           if (locMatch) setCurrentLocation(locMatch.id);
         }
       } else {
         const parsed = parseLiteUrl(window.location.pathname, data);
         newPage = parsed.page;
         newParams = parsed.params;
-        const locMatch = K9_LEAN_LOCATIONS.find(l => l.slug === parsed.locSlug);
+        const locMatch = allLocations.find(l => l.slug === parsed.locSlug);
         if (locMatch) setCurrentLocation(locMatch.id);
       }
       setPage(newPage);
@@ -589,7 +628,7 @@ function LeanAppInner() {
   // Handle location change
   const handleLocationChange = useCallback((locId) => {
     // Demo POS redirects to the full POS app
-    const loc = K9_LEAN_LOCATIONS.find(l => l.id === locId);
+    const loc = allLocations.find(l => l.id === locId);
     if (loc?.isPOS) {
       window.location.href = "/pos/" + (loc.slug || "demo");
       return;
@@ -726,7 +765,7 @@ function LeanAppInner() {
       case "ops-svc":
         return <DailyOpsPage data={data} save={save} sub="svc" nav={nav} profile={profile} addGlobalToast={addGlobalToast} params={params} />;
       case "ops-weekly-maintenance":
-        return <WeeklyMaintenancePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+        return <WeeklyMaintenancePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} />;
       case "eod":
         return <LiteEODPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "mgmt-audit-log":
@@ -738,7 +777,7 @@ function LeanAppInner() {
       case "dog-detail":
         return <DogDetailPage data={data} clientId={params.clientId} dogId={params.dogId} nav={nav} />;
       case "checkout-tv":
-        return <CheckoutTVPage data={data} nav={nav} profile={profile} />;
+        return <CheckoutTVPage data={data} nav={nav} profile={profile} locationId={currentLocation} />;
       case "client-detail":
         return <ClientDetailPage data={data} save={save} clientId={params.clientId} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "new-client":
@@ -762,7 +801,7 @@ function LeanAppInner() {
       case "inventory-report":
         return <InventoryReportPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "cash-tips":
-        return <CashTipsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+        return <CashTipsPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} />;
       case "occupancy-report":
         return <OccupancyReportPage nav={nav} locationId={currentLocation} refreshOptions={refreshOptions} />;
       case "test-health":
@@ -771,12 +810,16 @@ function LeanAppInner() {
         return <RoadmapPage nav={nav} />;
       case "settings":
         return <SettingsPage profile={profile} addGlobalToast={addGlobalToast} />;
+      case "onboarding":
+        return <OnboardingPage nav={nav} />;
+      case "pricing":
+        return <PricingPage nav={nav} onSelectPlan={(planId) => { nav("onboarding", { selectedPlan: planId }); }} />;
       default:
         return <div>Page not found</div>;
     }
   };
 
-  const isFullscreenPage = page === "checkout-tv";
+  const isFullscreenPage = page === "checkout-tv" || page === "onboarding" || page === "pricing";
   const isEdgeToEdgePage = page === "dashboard" || isFullscreenPage;
 
   return (
@@ -816,7 +859,7 @@ function LeanAppInner() {
             currentLocation={currentLocation}
             onLocationChange={handleLocationChange}
             collapsed={!sbExpanded}
-            allLocations={K9_LEAN_LOCATIONS}
+            allLocations={allLocations}
             profile={profile}
           />
         </div>
@@ -973,7 +1016,19 @@ function LeanAppInner() {
               ))}
             </div>
           )}
-          {renderPage()}
+          {page === "onboarding" || page === "pricing" ? (
+            renderPage()
+          ) : (
+            <SubscriptionGate
+              subscription={subscription}
+              loading={subLoading}
+              isActive={subIsActive}
+              isPastDue={subIsPastDue}
+              onNavigate={nav}
+            >
+              {renderPage()}
+            </SubscriptionGate>
+          )}
         </div>
       </div>
     </div>
