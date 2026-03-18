@@ -52,6 +52,7 @@ const LEAN_ROLES = [
   { id: "supervisor", name: "Supervisor", shortName: "Supervisor" },
   { id: "manager", name: "Manager", shortName: "Manager" },
   { id: "location_admin", name: "Location Admin", shortName: "Location Admin" },
+  { id: "multi_location_admin", name: "Multi-Location Admin", shortName: "Multi-Loc Admin" },
   { id: "enterprise_admin", name: "Enterprise Admin", shortName: "Enterprise Admin" },
 ];
 
@@ -133,6 +134,19 @@ const LEAN_PERMISSION_MATRIX = {
     "Gingr Integration": true,
     "Checklist Templates": true,
     "Enterprise View": false,
+    "Inventory Management": true,
+  },
+  multi_location_admin: {
+    "Operations Hub": true,
+    "EOD Reports": true,
+    "Customer Lifecycle": true,
+    "Photos Module": true,
+    "Attendance Tracker": true,
+    "User Management": true,
+    "Permissions Management": true,
+    "Gingr Integration": true,
+    "Checklist Templates": true,
+    "Enterprise View": true,
     "Inventory Management": true,
   },
   enterprise_admin: {
