@@ -682,14 +682,18 @@ async function syncDeposits(
 
 async function computeCashBasisMetrics(
   supabase: any,
-  locationId: string
+  locationId: string,
+  subdomain: string,
+  apiKey: string
 ) {
   const now = new Date();
   const today = now.toISOString().split("T")[0];
   const yesterday = new Date(now.getTime() - 86400000).toISOString().split("T")[0];
 
   for (const dateStr of [yesterday, today]) {
-    // Get Cash + CC payments from invoice_payments table
+    // 1) Get Cash + CC payments from invoice_payments table
+    //    Include ALL positive Cash+CC (including deposit-payment entries)
+    //    These don't overlap with gingr_deposits (different reservation sets)
     const { data: paymentData } = await supabase
       .from("gingr_invoice_payments")
       .select("total_balance")
@@ -707,21 +711,46 @@ async function computeCashBasisMetrics(
       .filter((e: any) => parseFloat(e.total_balance) < 0)
       .reduce((sum: number, e: any) => sum + Math.abs(parseFloat(e.total_balance)), 0);
 
-    // Get deposits paid on this date
+    // 2) Get deposits paid on this date from gingr_deposits
     const { data: depositData } = await supabase
       .from("gingr_deposits")
-      .select("paid_amount")
+      .select("paid_amount, owner_id")
       .eq("location_id", locationId)
       .gte("last_payment", `${dateStr}T00:00:00`)
       .lt("last_payment", `${dateStr}T23:59:59`)
       .gt("paid_amount", 0);
 
-    // TODO: Add store credit exclusion once we track deposit payment method
     const deposits = depositData || [];
-    const collectedDeposits = deposits
-      .reduce((sum: number, d: any) => sum + parseFloat(d.paid_amount || 0), 0);
+    let collectedDeposits = 0;
 
-    // Upsert to dashboard_metrics_daily
+    if (deposits.length > 0 && subdomain && apiKey) {
+      // Get unique owner IDs
+      const uniqueOwnerIds = [...new Set(deposits.map((d: any) => d.owner_id).filter(Boolean))];
+
+      // Check each owner's current_balance via Gingr API
+      const storeCreditOwners = new Set<number>();
+      for (const ownerId of uniqueOwnerIds) {
+        try {
+          const ownerResult = await gingrFetch(subdomain, "owner", apiKey, "GET", { id: String(ownerId) });
+          const ownerData = ownerResult.data;
+          if (ownerData && parseFloat(ownerData.current_balance || "0") < 0) {
+            storeCreditOwners.add(Number(ownerId));
+          }
+        } catch (err) {
+          // If owner lookup fails, assume Cash/CC (include the deposit)
+          console.error(`Owner lookup failed for ${ownerId}:`, err);
+        }
+      }
+
+      // Sum deposits excluding store credit owners
+      collectedDeposits = deposits
+        .filter((d: any) => !storeCreditOwners.has(Number(d.owner_id)))
+        .reduce((sum: number, d: any) => sum + parseFloat(d.paid_amount || 0), 0);
+    }
+
+    // 3) Compute and upsert
+    const cashNetRevenue = collectedPayments + collectedDeposits - refunds;
+
     await supabase
       .from("dashboard_metrics_daily")
       .upsert(
@@ -731,7 +760,7 @@ async function computeCashBasisMetrics(
           cash_collected_payments: collectedPayments,
           cash_collected_deposits: collectedDeposits,
           cash_refunds: refunds,
-          cash_net_revenue: collectedPayments + collectedDeposits - refunds,
+          cash_net_revenue: cashNetRevenue,
           computed_at: new Date().toISOString(),
         },
         { onConflict: "location_id,metric_date" }
@@ -1063,7 +1092,7 @@ Deno.serve(async (req: Request) => {
     // Updates cash_collected_payments, cash_collected_deposits, cash_refunds,
     // cash_net_revenue on dashboard_metrics_daily for today and yesterday.
     try {
-      await computeCashBasisMetrics(supabase, location_id);
+      await computeCashBasisMetrics(supabase, location_id, subdomain, api_key);
     } catch (cashErr: any) {
       // Non-fatal — cash basis metrics are best-effort
       console.error('Cash basis metrics error:', cashErr.message);
