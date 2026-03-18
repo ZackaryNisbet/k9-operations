@@ -171,6 +171,27 @@ function useGingrData(locationId, refreshOptions = {}) {
     return [...rest, ...assigned];
   }, []);
 
+  // ── Cache room assignments to lite_settings for mobile ──
+  const cacheRoomAssignments = useCallback((assignedReservations) => {
+    if (!locationId || !assignedReservations || assignedReservations.length === 0) return;
+    const td = todayStr();
+    const assignments = {};
+    assignedReservations.forEach(r => {
+      if (r.type === "boarding" && r.room && r.id) {
+        assignments[r.id] = r.room;
+      }
+    });
+    if (Object.keys(assignments).length === 0) return;
+    supabase.from("lite_settings").upsert({
+      location_id: locationId,
+      setting_key: `room_assignments_${td}`,
+      setting_value: assignments,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "location_id,setting_key" }).then(({ error }) => {
+      if (error) console.log("[K9 Lite] Room assignment cache error:", error.message);
+    });
+  }, [locationId]);
+
   // ── Build rooms from synced reservation types ──
   // Derives room type names from gingr_reservation_types where capacity_by_lodging=1
   // Room counts come from lite_settings "room_counts" config, with sensible defaults
@@ -605,6 +626,7 @@ function useGingrData(locationId, refreshOptions = {}) {
           const tReservations = transformReservations(windowRes);
           const tRooms = buildRooms(typesRes.data || [], tReservations, roomCounts, roomNames);
           const assignedRes = assignRoomsIntelligently(tReservations, tRooms);
+          cacheRoomAssignments(assignedRes);
           setReservations(assignedRes);
           setRooms(tRooms);
         }
@@ -629,6 +651,7 @@ function useGingrData(locationId, refreshOptions = {}) {
         const tRooms = buildRooms(typesRes.data || [], allTransformed, roomCounts, roomNames);
         await yieldToMain();
         const assignedRes = assignRoomsIntelligently(allTransformed, tRooms);
+        cacheRoomAssignments(assignedRes);
         await yieldToMain();
         // Use startTransition so React treats this as low-priority
         startTransition(() => {
@@ -641,7 +664,7 @@ function useGingrData(locationId, refreshOptions = {}) {
       console.error("Failed to load data:", err);
       setError(err.message);
     }
-  }, [locationId, transformOwners, transformAnimals, transformReservations, buildRooms, assignRoomsIntelligently]);
+  }, [locationId, transformOwners, transformAnimals, transformReservations, buildRooms, assignRoomsIntelligently, cacheRoomAssignments]);
 
   // ── Helper: extract real error from edge function responses ──
   const extractEdgeFnError = async (fnError) => {

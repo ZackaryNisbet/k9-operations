@@ -391,7 +391,7 @@ const OPERATIONS_CATALOG = [
   { id:"eod", label:"EOD Report", frequency:"daily", dataKey:"eodEntries", typeSub:null, routeTo:"eod", permission:"view_eod" },
   // Weekly placeholders
   { id:"weekly-inventory", label:"Weekly Inventory", frequency:"weekly", routeTo:"inventory", permission:"view_inventory" },
-  { id:"weekly-maintenance", label:"Weekly Maintenance", frequency:"weekly", comingSoon:true },
+  { id:"weekly-maintenance", label:"Weekly Maintenance", frequency:"weekly", dataKey:"dailyOps", typeSub:"weekly_maintenance", routeTo:"ops-weekly-maintenance", permission:"view_daily_ops" },
 ];
 
 // ─── Client & Dog Field Definitions ───────────────────────────────────────
