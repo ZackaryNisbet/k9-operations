@@ -113,16 +113,20 @@ const ENT_CSS = `
 .ent-toggle-chip:hover {
   transform: scale(1.03);
 }
+@media (max-width: 768px) {
+  .ent-report-grid { grid-template-columns: 1fr !important; }
+}
 `;
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Timeframe config
    ═══════════════════════════════════════════════════════════════════════════ */
 const RANGES = [
-  { key: "wtd",      label: "WTD" },
+  { key: "today",    label: "Today" },
+  { key: "wtd",      label: "This Week" },
   { key: "past-week", label: "Past Week" },
-  { key: "mtd",      label: "MTD" },
-  { key: "past-30",  label: "Past 30" },
+  { key: "mtd",      label: "This Month" },
+  { key: "past-30",  label: "Last 30 Days" },
   { key: "qtd",      label: "QTD" },
   { key: "ytd",      label: "YTD" },
   { key: "lifetime", label: "Lifetime" },
@@ -444,12 +448,17 @@ export default function EnterpriseDashboard({ data, save, nav, profile, addGloba
     }
   }, [allLocations, selectedLocations]);
 
+  /* ─── Reporting data from Supabase ────────────────────────────────── */
+  const [reportData, setReportData] = useState({ loading: true, revenue: null, occupancy: null, ops: null, staff: null });
+  const [reportExpanded, setReportExpanded] = useState({ revenue: false, occupancy: false, ops: false, staff: false });
+
   /* ─── Date range computation ──────────────────────────────────────── */
   const { dateFrom, dateTo, days, prevFrom, prevTo } = useMemo(() => {
     const now = new Date();
     const end = today;
     let start;
     switch (range) {
+      case "today": start = end; break;
       case "wtd": {
         const d = new Date(now); d.setDate(d.getDate() - d.getDay());
         start = d.toISOString().split("T")[0]; break;
@@ -474,6 +483,163 @@ export default function EnterpriseDashboard({ data, save, nav, profile, addGloba
     const pFrom = addDays(pTo, -(dayCount - 1));
     return { dateFrom: start, dateTo: to, days: dayCount, prevFrom: pFrom, prevTo: pTo };
   }, [range, today, customFrom, customTo]);
+
+  /* ─── Fetch reporting data from Supabase ────────────────────────── */
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchReportData() {
+      setReportData(prev => ({ ...prev, loading: true }));
+      try {
+        // Fetch all locations' IDs — use K9_LOCATIONS or fallback to known ids
+        const locationIds = allLocations.map(l => l.id);
+
+        // 1. Revenue — from dashboard_metrics_daily
+        const revenuePromise = supabase
+          .from("dashboard_metrics_daily")
+          .select("location_id, metric_date, cash_total_revenue, cash_boarding_revenue, cash_daycare_revenue, cash_net_revenue, cash_transaction_count")
+          .gte("metric_date", dateFrom)
+          .lte("metric_date", dateTo)
+          .order("metric_date", { ascending: true });
+
+        // 2. Occupancy — active boarding reservations for today
+        const occupancyPromise = supabase
+          .from("gingr_reservations")
+          .select("location_id, gingr_id, reservation_type_name, start_date, end_date")
+          .lte("start_date", today + "T23:59:59")
+          .gte("end_date", today + "T00:00:00")
+          .in("reservation_type_name", ["Boarding", "boarding", "Luxury Suite", "Executive Room", "Standard Room"]);
+
+        // 3. Room capacity — from lite_settings
+        const roomCapPromise = supabase
+          .from("lite_settings")
+          .select("location_id, setting_value")
+          .eq("setting_key", "room_counts");
+
+        // 4. Operations — lite_daily_ops for the date range
+        const opsPromise = supabase
+          .from("lite_daily_ops")
+          .select("location_id, date, type, computed_items, items, locked")
+          .gte("date", dateFrom)
+          .lte("date", dateTo);
+
+        // 5. Staff — profiles
+        const staffPromise = supabase
+          .from("profiles")
+          .select("id, full_name, role, location_id");
+
+        const [revRes, occRes, roomRes, opsRes, staffRes] = await Promise.all([
+          revenuePromise, occupancyPromise, roomCapPromise, opsPromise, staffPromise,
+        ]);
+
+        if (cancelled) return;
+
+        // Process Revenue
+        const revRows = revRes.data || [];
+        const revByLoc = {};
+        const revByDate = {};
+        revRows.forEach(r => {
+          const lid = r.location_id || "unknown";
+          if (!revByLoc[lid]) revByLoc[lid] = { total: 0, boarding: 0, daycare: 0, net: 0, txCount: 0 };
+          revByLoc[lid].total += r.cash_total_revenue || 0;
+          revByLoc[lid].boarding += r.cash_boarding_revenue || 0;
+          revByLoc[lid].daycare += r.cash_daycare_revenue || 0;
+          revByLoc[lid].net += r.cash_net_revenue || 0;
+          revByLoc[lid].txCount += r.cash_transaction_count || 0;
+          const d = r.metric_date;
+          if (!revByDate[d]) revByDate[d] = 0;
+          revByDate[d] += r.cash_total_revenue || 0;
+        });
+        const totalRevenue = Object.values(revByLoc).reduce((s, l) => s + l.total, 0);
+        const revenueTrend = Object.entries(revByDate)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, value]) => ({ date, label: fmtDateLabel(date), value }));
+
+        // Per-location revenue trend
+        const revByLocDate = {};
+        revRows.forEach(r => {
+          const lid = r.location_id || "unknown";
+          if (!revByLocDate[lid]) revByLocDate[lid] = {};
+          const d = r.metric_date;
+          revByLocDate[lid][d] = (revByLocDate[lid][d] || 0) + (r.cash_total_revenue || 0);
+        });
+        const perLocRevTrend = Object.entries(revByLocDate).map(([lid, dateMap]) => ({
+          locationId: lid,
+          data: Object.entries(dateMap).sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, label: fmtDateLabel(date), value })),
+        }));
+
+        // Process Occupancy
+        const occRows = occRes.data || [];
+        const occByLoc = {};
+        occRows.forEach(r => {
+          const lid = r.location_id || "unknown";
+          if (!occByLoc[lid]) occByLoc[lid] = 0;
+          occByLoc[lid]++;
+        });
+        const roomRows = roomRes.data || [];
+        const roomCapByLoc = {};
+        roomRows.forEach(r => {
+          const lid = r.location_id || "unknown";
+          const val = r.setting_value;
+          if (typeof val === "object" && val) {
+            roomCapByLoc[lid] = Object.values(val).reduce((s, v) => s + (parseInt(v) || 0), 0);
+          } else if (typeof val === "number") {
+            roomCapByLoc[lid] = val;
+          }
+        });
+        const totalBoarding = Object.values(occByLoc).reduce((s, v) => s + v, 0);
+        const totalCapacity = Object.values(roomCapByLoc).reduce((s, v) => s + v, 0);
+
+        // Process Ops
+        const opsRows = opsRes.data || [];
+        const opsByLoc = {};
+        opsRows.forEach(r => {
+          const lid = r.location_id || "unknown";
+          if (!opsByLoc[lid]) opsByLoc[lid] = { total: 0, completed: 0, bathing: { total: 0, done: 0 }, cleaning: { total: 0, done: 0 }, play: { total: 0, done: 0 } };
+          const items = r.computed_items || r.items || {};
+          const type = (r.type || "").toLowerCase();
+          Object.entries(items).forEach(([key, val]) => {
+            const isDone = val === true || val === "done" || val === "completed" || (typeof val === "object" && val && val.done);
+            opsByLoc[lid].total++;
+            if (isDone) opsByLoc[lid].completed++;
+            if (type.includes("bath") || key.toLowerCase().includes("bath")) {
+              opsByLoc[lid].bathing.total++;
+              if (isDone) opsByLoc[lid].bathing.done++;
+            }
+            if (type.includes("clean") || type.includes("room") || key.toLowerCase().includes("clean") || key.toLowerCase().includes("room")) {
+              opsByLoc[lid].cleaning.total++;
+              if (isDone) opsByLoc[lid].cleaning.done++;
+            }
+            if (type.includes("play") || key.toLowerCase().includes("play")) {
+              opsByLoc[lid].play.total++;
+              if (isDone) opsByLoc[lid].play.done++;
+            }
+          });
+        });
+
+        // Process Staff
+        const staffRows = staffRes.data || [];
+        const staffByLoc = {};
+        staffRows.forEach(r => {
+          const lid = r.location_id || "unknown";
+          if (!staffByLoc[lid]) staffByLoc[lid] = [];
+          staffByLoc[lid].push({ id: r.id, name: r.full_name, role: r.role });
+        });
+
+        setReportData({
+          loading: false,
+          revenue: { byLocation: revByLoc, totalRevenue, trend: revenueTrend, perLocTrend: perLocRevTrend },
+          occupancy: { byLocation: occByLoc, roomCapacity: roomCapByLoc, totalBoarding, totalCapacity },
+          ops: { byLocation: opsByLoc },
+          staff: { byLocation: staffByLoc, total: staffRows.length },
+        });
+      } catch (err) {
+        console.error("Enterprise report fetch error:", err);
+        if (!cancelled) setReportData(prev => ({ ...prev, loading: false }));
+      }
+    }
+    fetchReportData();
+    return () => { cancelled = true; };
+  }, [dateFrom, dateTo, today, allLocations]);
 
   /* ─── Aggregated metrics ─────────────────────────────────────────── */
   const agg = useMemo(() => {
@@ -1028,6 +1194,406 @@ export default function EnterpriseDashboard({ data, save, nav, profile, addGloba
           <DrillDownView location={drillLocation} allLocations={allLocations} />
         </Modal>
       )}
+
+      {/* ═══════════════════════════════════════════════════════════════
+          AGGREGATED REPORTING — Revenue, Occupancy, Ops, Staffing
+          Below the alert engine, powered by Supabase data
+          ═══════════════════════════════════════════════════════════════ */}
+      <div style={{ marginTop: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+          <div style={{ height: 2, flex: 1, background: `linear-gradient(90deg, ${C.pri}30, transparent)` }} />
+          <span style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" }}>Cross-Location Reporting</span>
+          <div style={{ height: 2, flex: 1, background: `linear-gradient(270deg, ${C.pri}30, transparent)` }} />
+        </div>
+
+        {reportData.loading ? (
+          <div className="ent-card" style={{ textAlign: "center", padding: 40 }}>
+            <K9LoadingAnimation message="Loading aggregated reports..." />
+          </div>
+        ) : (
+          <>
+            {/* ═══ REVENUE REPORTING ═══════════════════════════════════ */}
+            <div style={{ ...gridBase, marginBottom: 20 }}>
+              {/* Total Revenue Card */}
+              <div className="ent-card" style={{ gridColumn: "span 4", animationDelay: "0.52s" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Total Revenue</div>
+                  <button
+                    onClick={() => setReportExpanded(p => ({ ...p, revenue: !p.revenue }))}
+                    style={{ fontSize: 10, fontWeight: 600, color: C.pri, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}
+                  >
+                    {reportExpanded.revenue ? "Collapse" : "Details"}
+                  </button>
+                </div>
+                <div className="ent-hero-num" style={{ fontSize: 28, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+                  <AnimatedNumber value={reportData.revenue?.totalRevenue || 0} prefix="$" decimals={0} />
+                </div>
+                <div style={{ fontSize: 11, color: C.textMut }}>
+                  {fmtDateLabel(dateFrom)} – {fmtDateLabel(dateTo)} · {Object.keys(reportData.revenue?.byLocation || {}).length} location{Object.keys(reportData.revenue?.byLocation || {}).length !== 1 ? "s" : ""}
+                </div>
+                {reportExpanded.revenue && reportData.revenue?.byLocation && (
+                  <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${C.borderLight}`, animation: "entFadeIn 0.3s ease" }}>
+                    {Object.entries(reportData.revenue.byLocation).map(([lid, rev], i) => {
+                      const locName = allLocations.find(l => l.id === lid)?.name || lid;
+                      return (
+                        <div key={lid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: `1px solid ${C.borderLight}` }}>
+                          <span style={{ fontSize: 12, color: C.textSec }}>{locName}</span>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>${fmt$k(rev.total)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Revenue by Location — Horizontal Bar Chart */}
+              <div className="ent-card" style={{ gridColumn: "span 8", animationDelay: "0.56s" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Revenue by Location</div>
+                {(() => {
+                  const locRevEntries = Object.entries(reportData.revenue?.byLocation || {})
+                    .sort(([, a], [, b]) => b.total - a.total);
+                  const maxRev = locRevEntries.length > 0 ? Math.max(...locRevEntries.map(([, r]) => r.total)) : 1;
+                  return locRevEntries.length === 0 ? (
+                    <div style={{ fontSize: 12, color: C.textMut, textAlign: "center", padding: 20 }}>No revenue data for this period</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {locRevEntries.map(([lid, rev], i) => {
+                        const locName = allLocations.find(l => l.id === lid)?.name || lid;
+                        const pct = maxRev > 0 ? (rev.total / maxRev) * 100 : 0;
+                        const share = (reportData.revenue?.totalRevenue || 1) > 0 ? (rev.total / reportData.revenue.totalRevenue) * 100 : 0;
+                        const color = LOC_COLORS[allLocations.findIndex(l => l.id === lid) % LOC_COLORS.length] || C.pri;
+                        return (
+                          <div key={lid} style={{ animation: `entFadeIn 0.35s ${0.06 * i + 0.58}s both` }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
+                                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{locName}</span>
+                              </div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>${fmt$k(rev.total)}</span>
+                                <span style={{ fontSize: 10, color: C.textMut }}>({share.toFixed(1)}%)</span>
+                              </div>
+                            </div>
+                            <div style={{ height: 10, background: C.bg, borderRadius: 5, overflow: "hidden" }}>
+                              <div className="ent-bar-fill" style={{
+                                width: `${pct}%`, height: "100%",
+                                background: `linear-gradient(90deg, ${color}, ${color}bb)`,
+                                borderRadius: 5, animationDelay: `${0.08 * i + 0.6}s`,
+                              }} />
+                            </div>
+                            {reportExpanded.revenue && (
+                              <div style={{ display: "flex", gap: 16, marginTop: 4, animation: "entFadeIn 0.2s ease" }}>
+                                <span style={{ fontSize: 10, color: C.textMut }}>Boarding: ${fmt$k(rev.boarding)}</span>
+                                <span style={{ fontSize: 10, color: C.textMut }}>Daycare: ${fmt$k(rev.daycare)}</span>
+                                <span style={{ fontSize: 10, color: C.textMut }}>Transactions: {rev.txCount}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* Revenue Trend Line Chart */}
+            {(reportData.revenue?.trend || []).length > 1 && (
+              <div className="ent-card" style={{ marginBottom: 20, animationDelay: "0.60s" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Revenue Trend — Reporting Period</div>
+                    <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>{fmtDateLabel(dateFrom)} – {fmtDateLabel(dateTo)}</div>
+                  </div>
+                </div>
+                <InteractiveLineChart
+                  chartData={reportData.revenue.trend}
+                  color={C.suc}
+                  height={200}
+                  id="ent-report-rev-trend"
+                  animationEpoch={animEpoch}
+                />
+                {/* Per-location trend overlay */}
+                {reportExpanded.revenue && (reportData.revenue.perLocTrend || []).length > 0 && (
+                  <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: `repeat(${Math.min(reportData.revenue.perLocTrend.length, 3)}, 1fr)`, gap: 14, animation: "entFadeIn 0.3s ease" }}>
+                    {reportData.revenue.perLocTrend.map((loc, idx) => {
+                      const locName = allLocations.find(l => l.id === loc.locationId)?.name || loc.locationId;
+                      const color = LOC_COLORS[allLocations.findIndex(l => l.id === loc.locationId) % LOC_COLORS.length] || C.pri;
+                      return (
+                        <div key={loc.locationId}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
+                            <span style={{ fontSize: 11, fontWeight: 600, color: C.text }}>{locName}</span>
+                          </div>
+                          <InteractiveLineChart
+                            chartData={loc.data}
+                            color={color}
+                            height={100}
+                            id={`ent-report-rev-${loc.locationId}`}
+                            animationEpoch={animEpoch}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ═══ OCCUPANCY REPORTING ═════════════════════════════════ */}
+            <div style={{ ...gridBase, marginBottom: 20 }}>
+              <div className="ent-card" style={{ gridColumn: "span 4", animationDelay: "0.64s" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Aggregate Occupancy</div>
+                  <button
+                    onClick={() => setReportExpanded(p => ({ ...p, occupancy: !p.occupancy }))}
+                    style={{ fontSize: 10, fontWeight: 600, color: C.pri, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}
+                  >
+                    {reportExpanded.occupancy ? "Collapse" : "Details"}
+                  </button>
+                </div>
+                {(() => {
+                  const occ = reportData.occupancy || {};
+                  const rate = occ.totalCapacity > 0 ? (occ.totalBoarding / occ.totalCapacity) * 100 : 0;
+                  const rateColor = rate >= 80 ? C.suc : rate >= 65 ? C.acc : C.dan;
+                  return (
+                    <>
+                      <div className="ent-hero-num" style={{ fontSize: 28, fontWeight: 700, color: rateColor, marginBottom: 4 }}>
+                        <AnimatedNumber value={rate} suffix="%" decimals={1} />
+                      </div>
+                      <div style={{ fontSize: 11, color: C.textMut }}>{occ.totalBoarding || 0} dogs / {occ.totalCapacity || 0} rooms</div>
+                      <div style={{ height: 10, background: C.bg, borderRadius: 5, overflow: "hidden", marginTop: 10 }}>
+                        <div className="ent-bar-fill" style={{ width: `${Math.min(rate, 100)}%`, height: "100%", background: rateColor, borderRadius: 5, animationDelay: "0.66s" }} />
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* Per-location occupancy bars */}
+              <div className="ent-card" style={{ gridColumn: "span 8", animationDelay: "0.68s" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Occupancy by Location</div>
+                {(() => {
+                  const occ = reportData.occupancy || {};
+                  const entries = Object.keys({ ...occ.byLocation, ...occ.roomCapacity })
+                    .filter((v, i, a) => a.indexOf(v) === i)
+                    .map(lid => {
+                      const dogs = occ.byLocation?.[lid] || 0;
+                      const cap = occ.roomCapacity?.[lid] || 0;
+                      const rate = cap > 0 ? (dogs / cap) * 100 : 0;
+                      return { lid, dogs, cap, rate };
+                    })
+                    .sort((a, b) => b.rate - a.rate);
+
+                  return entries.length === 0 ? (
+                    <div style={{ fontSize: 12, color: C.textMut, textAlign: "center", padding: 20 }}>No occupancy data available</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                      {entries.map((e, i) => {
+                        const locName = allLocations.find(l => l.id === e.lid)?.name || e.lid;
+                        const color = e.rate >= 80 ? C.suc : e.rate >= 65 ? C.acc : C.dan;
+                        return (
+                          <div key={e.lid} style={{ animation: `entFadeIn 0.4s ${0.08 * i + 0.7}s both` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{locName}</span>
+                              <span style={{ fontSize: 12, fontWeight: 700, color }}>{e.rate.toFixed(1)}%</span>
+                            </div>
+                            <div style={{ height: 8, background: C.bg, borderRadius: 4, overflow: "hidden" }}>
+                              <div className="ent-bar-fill" style={{ width: `${Math.min(e.rate, 100)}%`, height: "100%", background: color, borderRadius: 4, animationDelay: `${0.1 * i + 0.7}s` }} />
+                            </div>
+                            <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{e.dogs}/{e.cap} rooms</div>
+                            {reportExpanded.occupancy && (
+                              <div style={{ display: "flex", gap: 12, marginTop: 2, animation: "entFadeIn 0.2s ease" }}>
+                                <span style={{ fontSize: 10, color: C.textMut }}>Boarding dogs: {e.dogs}</span>
+                                <span style={{ fontSize: 10, color: C.textMut }}>Total capacity: {e.cap}</span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* ═══ SERVICE COMPLETION REPORTING ═════════════════════════ */}
+            <div style={{ ...gridBase, marginBottom: 20 }}>
+              <div className="ent-card" style={{ gridColumn: "span 6", animationDelay: "0.72s" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Aggregate Service Completion</div>
+                  <button
+                    onClick={() => setReportExpanded(p => ({ ...p, ops: !p.ops }))}
+                    style={{ fontSize: 10, fontWeight: 600, color: C.pri, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}
+                  >
+                    {reportExpanded.ops ? "Collapse" : "Details"}
+                  </button>
+                </div>
+                {(() => {
+                  const opsLocs = reportData.ops?.byLocation || {};
+                  const aggOps = Object.values(opsLocs).reduce((acc, l) => ({
+                    total: acc.total + l.total, completed: acc.completed + l.completed,
+                    bathing: { total: acc.bathing.total + l.bathing.total, done: acc.bathing.done + l.bathing.done },
+                    cleaning: { total: acc.cleaning.total + l.cleaning.total, done: acc.cleaning.done + l.cleaning.done },
+                    play: { total: acc.play.total + l.play.total, done: acc.play.done + l.play.done },
+                  }), { total: 0, completed: 0, bathing: { total: 0, done: 0 }, cleaning: { total: 0, done: 0 }, play: { total: 0, done: 0 } });
+                  const overallRate = aggOps.total > 0 ? (aggOps.completed / aggOps.total) * 100 : 0;
+                  const rateColor = overallRate >= 90 ? C.suc : overallRate >= 75 ? C.warn : C.dan;
+
+                  const categories = [
+                    { label: "Bathing", ...aggOps.bathing, icon: "🛁" },
+                    { label: "Room Cleaning", ...aggOps.cleaning, icon: "🧹" },
+                    { label: "Private Play", ...aggOps.play, icon: "🎾" },
+                  ];
+
+                  return (
+                    <>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14 }}>
+                        <div className="ent-hero-num" style={{ fontSize: 28, fontWeight: 700, color: rateColor }}>
+                          <AnimatedNumber value={overallRate} suffix="%" decimals={1} />
+                        </div>
+                        <span style={{ fontSize: 11, color: C.textMut }}>overall completion</span>
+                      </div>
+                      <div style={{ height: 12, borderRadius: 6, overflow: "hidden", background: C.bg, marginBottom: 16 }}>
+                        <div className="ent-bar-fill" style={{ width: `${overallRate}%`, height: "100%", background: rateColor, borderRadius: 6, animationDelay: "0.74s" }} />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                        {categories.map((cat, i) => {
+                          const catRate = cat.total > 0 ? (cat.done / cat.total) * 100 : 0;
+                          const catColor = catRate >= 90 ? C.suc : catRate >= 75 ? C.warn : C.dan;
+                          return (
+                            <div key={cat.label} style={{ padding: "12px", borderRadius: 10, background: `${catColor}08`, border: `1px solid ${catColor}20`, textAlign: "center" }}>
+                              <div style={{ fontSize: 16, marginBottom: 4 }}>{cat.icon}</div>
+                              <div style={{ fontSize: 15, fontWeight: 700, color: catColor }}>{catRate.toFixed(0)}%</div>
+                              <div style={{ fontSize: 10, fontWeight: 600, color: C.textMut }}>{cat.label}</div>
+                              <div style={{ fontSize: 9, color: C.textMut, marginTop: 2 }}>{cat.done}/{cat.total}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* Per-location service breakdown */}
+              <div className="ent-card" style={{ gridColumn: "span 6", animationDelay: "0.76s" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Completion by Location</div>
+                {(() => {
+                  const opsLocs = reportData.ops?.byLocation || {};
+                  const entries = Object.entries(opsLocs)
+                    .map(([lid, data]) => {
+                      const rate = data.total > 0 ? (data.completed / data.total) * 100 : 0;
+                      return { lid, ...data, rate };
+                    })
+                    .sort((a, b) => b.rate - a.rate);
+                  return entries.length === 0 ? (
+                    <div style={{ fontSize: 12, color: C.textMut, textAlign: "center", padding: 20 }}>No operations data for this period</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {entries.map((e, i) => {
+                        const locName = allLocations.find(l => l.id === e.lid)?.name || e.lid;
+                        const color = e.rate >= 90 ? C.suc : e.rate >= 75 ? C.warn : C.dan;
+                        return (
+                          <div key={e.lid} style={{ animation: `entFadeIn 0.35s ${0.06 * i + 0.78}s both` }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                              <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{locName}</span>
+                              <OpsCompletionPill value={Math.round(e.rate)} />
+                            </div>
+                            <div style={{ height: 6, background: C.bg, borderRadius: 3, overflow: "hidden" }}>
+                              <div className="ent-bar-fill" style={{ width: `${e.rate}%`, height: "100%", background: color, borderRadius: 3, animationDelay: `${0.08 * i + 0.78}s` }} />
+                            </div>
+                            {reportExpanded.ops && (
+                              <div style={{ display: "flex", gap: 14, marginTop: 4, animation: "entFadeIn 0.2s ease" }}>
+                                <span style={{ fontSize: 10, color: C.textMut }}>
+                                  Bathing: {e.bathing.total > 0 ? `${Math.round(e.bathing.done / e.bathing.total * 100)}%` : "—"}
+                                </span>
+                                <span style={{ fontSize: 10, color: C.textMut }}>
+                                  Cleaning: {e.cleaning.total > 0 ? `${Math.round(e.cleaning.done / e.cleaning.total * 100)}%` : "—"}
+                                </span>
+                                <span style={{ fontSize: 10, color: C.textMut }}>
+                                  Play: {e.play.total > 0 ? `${Math.round(e.play.done / e.play.total * 100)}%` : "—"}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* ═══ STAFFING OVERVIEW ═══════════════════════════════════ */}
+            <div style={{ ...gridBase, marginBottom: 20 }}>
+              <div className="ent-card" style={{ gridColumn: "span 4", animationDelay: "0.80s" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Staffing Overview</div>
+                  <button
+                    onClick={() => setReportExpanded(p => ({ ...p, staff: !p.staff }))}
+                    style={{ fontSize: 10, fontWeight: 600, color: C.pri, background: "none", border: "none", cursor: "pointer", fontFamily: "inherit", textDecoration: "underline" }}
+                  >
+                    {reportExpanded.staff ? "Collapse" : "Details"}
+                  </button>
+                </div>
+                <div className="ent-hero-num" style={{ fontSize: 28, fontWeight: 700, color: "#7C3AED", marginBottom: 4 }}>
+                  <AnimatedNumber value={reportData.staff?.total || 0} />
+                </div>
+                <div style={{ fontSize: 11, color: C.textMut }}>
+                  Total staff across {Object.keys(reportData.staff?.byLocation || {}).length} location{Object.keys(reportData.staff?.byLocation || {}).length !== 1 ? "s" : ""}
+                </div>
+              </div>
+
+              {/* Per-location staff */}
+              <div className="ent-card" style={{ gridColumn: "span 8", animationDelay: "0.84s" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 16 }}>Staff by Location</div>
+                {(() => {
+                  const staffLocs = reportData.staff?.byLocation || {};
+                  const entries = Object.entries(staffLocs)
+                    .map(([lid, members]) => ({ lid, count: members.length, members }))
+                    .sort((a, b) => b.count - a.count);
+                  const maxCount = entries.length > 0 ? Math.max(...entries.map(e => e.count)) : 1;
+                  return entries.length === 0 ? (
+                    <div style={{ fontSize: 12, color: C.textMut, textAlign: "center", padding: 20 }}>No staff data available</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {entries.map((e, i) => {
+                        const locName = allLocations.find(l => l.id === e.lid)?.name || e.lid;
+                        const pct = maxCount > 0 ? (e.count / maxCount) * 100 : 0;
+                        const color = LOC_COLORS[allLocations.findIndex(l => l.id === e.lid) % LOC_COLORS.length] || "#7C3AED";
+                        return (
+                          <div key={e.lid} style={{ animation: `entFadeIn 0.35s ${0.06 * i + 0.86}s both` }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
+                                <span style={{ fontSize: 12, fontWeight: 600, color: C.text }}>{locName}</span>
+                              </div>
+                              <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{e.count} staff</span>
+                            </div>
+                            <div style={{ height: 8, background: C.bg, borderRadius: 4, overflow: "hidden" }}>
+                              <div className="ent-bar-fill" style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 4, animationDelay: `${0.08 * i + 0.86}s` }} />
+                            </div>
+                            {reportExpanded.staff && (
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6, animation: "entFadeIn 0.2s ease" }}>
+                                {e.members.map((m, mi) => (
+                                  <span key={m.id || mi} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 10, background: `${color}10`, color: C.textSec, border: `1px solid ${color}20` }}>
+                                    {m.name || "—"}{m.role ? ` · ${m.role}` : ""}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
