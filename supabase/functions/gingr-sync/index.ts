@@ -437,6 +437,210 @@ async function syncReservationTypes(
   return { synced: types.length };
 }
 
+async function syncInvoices(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string,
+  fullSync = false
+) {
+  const now = new Date();
+  const toDate = now.toISOString().split("T")[0];
+  // Incremental: last 7 days to catch late-closing invoices. Full: from 2015-01-01.
+  const fromDate = fullSync
+    ? "2015-01-01"
+    : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+
+  let total = 0;
+  let page = 1;
+  const perPage = 200;
+
+  while (true) {
+    const result = await gingrFetch(subdomain, "list_invoices", apiKey, "GET", {
+      complete: "true",
+      from_date: fromDate,
+      to_date: toDate,
+      per_page: String(perPage),
+      page: String(page),
+    });
+
+    const invoices = result.data || result;
+    if (!Array.isArray(invoices) || invoices.length === 0) break;
+
+    // Map to rows
+    const rows = invoices.map((inv: any) => ({
+      id: Number(inv.id),
+      location_id: locationId,
+      owner_id: inv.owner_id ? Number(inv.owner_id) : null,
+      first_name: inv.first_name?.trim() || null,
+      last_name: inv.last_name?.trim() || null,
+      email: inv.email || null,
+      subtotal: inv.subtotal ? parseFloat(inv.subtotal) : null,
+      tax_amount: inv.tax_amount ? parseFloat(inv.tax_amount) : null,
+      total: inv.total ? parseFloat(inv.total) : null,
+      is_returned: inv.is_returned === 1 || inv.is_returned === "1" || inv.is_returned === true,
+      item_count: inv.item_count ? parseInt(inv.item_count) : null,
+      voided_item_count: inv.voided_item_count ? parseInt(inv.voided_item_count) : null,
+      username: inv.username || null,
+      user_id: inv.user_id ? Number(inv.user_id) : null,
+      // convert create_stamp (Unix timestamp) to ISO date
+      created_at: inv.create_stamp
+        ? new Date(Number(inv.create_stamp) * 1000).toISOString()
+        : inv.created_at || null,
+      synced_at: new Date().toISOString(),
+    }));
+
+    // Batch upsert in 500-row chunks
+    const chunkSize = 500;
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunk = rows.slice(i, i + chunkSize);
+      const { error } = await supabase
+        .from("gingr_invoices")
+        .upsert(chunk, { onConflict: "location_id,id" });
+
+      if (error) throw new Error(`Invoice upsert error: ${error.message}`);
+    }
+
+    total += invoices.length;
+    if (invoices.length < perPage) break;
+    page++;
+    // Safety cap
+    if (page > 500) break;
+  }
+
+  return { synced: total };
+}
+
+async function syncDeposits(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string
+) {
+  const now = new Date();
+  const todayStr = now.toISOString().split("T")[0];
+  let total = 0;
+
+  // Sweep 30-day chunks from today to today+180 days (6 API calls)
+  for (let offset = 0; offset < 180; offset += 30) {
+    const chunkStart = new Date(now.getTime() + offset * 24 * 60 * 60 * 1000)
+      .toISOString().split("T")[0];
+    const chunkEnd = new Date(now.getTime() + (offset + 30) * 24 * 60 * 60 * 1000)
+      .toISOString().split("T")[0];
+
+    const result = await gingrFetch(subdomain, "reservations", apiKey, "POST", {
+      start_date: chunkStart,
+      end_date: chunkEnd,
+    });
+
+    const resMap = result.data || {};
+    const reservations = Object.entries(resMap) as [string, any][];
+
+    const rows: any[] = [];
+    for (const [resId, res] of reservations) {
+      const dep = res.deposit;
+      // deposit is sometimes an empty array [] when no deposit exists
+      if (!dep || typeof dep !== "object" || Array.isArray(dep)) continue;
+
+      const paidAmount = parseFloat(dep.paid_amount) || 0;
+      if (paidAmount <= 0) continue;
+
+      const ownerName = [res.owner?.first_name, res.owner?.last_name]
+        .filter(Boolean)
+        .join(" ") || null;
+
+      rows.push({
+        reservation_gingr_id: Number(res.reservation_id || resId),
+        location_id: locationId,
+        owner_id: res.owner?.id ? Number(res.owner.id) : null,
+        owner_name: ownerName,
+        animal_name: res.animal?.name || null,
+        deposit_amount: dep.amount ? parseFloat(dep.amount) : null,
+        paid_amount: paidAmount,
+        last_payment: dep.last_payment || null,
+        consumed_at: dep.consumed_at || null,
+        forfeited_at: dep.forfeited_at || null,
+        refunded_at: dep.refunded_at || null,
+        last_email_sent: dep.last_email_sent || null,
+        reservation_start: res.start_date || null,
+        reservation_end: res.end_date || null,
+        synced_at: new Date().toISOString(),
+      });
+    }
+
+    // Batch upsert in 500-row chunks
+    const chunkSize = 500;
+    for (let i = 0; i < rows.length; i += chunkSize) {
+      const chunk = rows.slice(i, i + chunkSize);
+      const { error } = await supabase
+        .from("gingr_deposits")
+        .upsert(chunk, { onConflict: "location_id,reservation_gingr_id" });
+
+      if (error) throw new Error(`Deposit upsert error: ${error.message}`);
+    }
+
+    total += rows.length;
+  }
+
+  return { synced: total };
+}
+
+async function computeCashBasisMetrics(
+  supabase: any,
+  locationId: string
+) {
+  const now = new Date();
+  const today = now.toISOString().split("T")[0];
+  const yesterday = new Date(now.getTime() - 86400000).toISOString().split("T")[0];
+
+  for (const dateStr of [yesterday, today]) {
+    // Get invoices for this date
+    const { data: invoiceData } = await supabase
+      .from("gingr_invoices")
+      .select("total, is_returned")
+      .eq("location_id", locationId)
+      .gte("created_at", `${dateStr}T00:00:00`)
+      .lt("created_at", `${dateStr}T23:59:59`);
+
+    const invoices = invoiceData || [];
+    const collectedPayments = invoices
+      .filter((i: any) => !i.is_returned)
+      .reduce((sum: number, i: any) => sum + parseFloat(i.total || 0), 0);
+    const refunds = invoices
+      .filter((i: any) => i.is_returned)
+      .reduce((sum: number, i: any) => sum + parseFloat(i.total || 0), 0);
+
+    // Get deposits paid on this date
+    const { data: depositData } = await supabase
+      .from("gingr_deposits")
+      .select("paid_amount")
+      .eq("location_id", locationId)
+      .gte("last_payment", `${dateStr}T00:00:00`)
+      .lt("last_payment", `${dateStr}T23:59:59`)
+      .gt("paid_amount", 0);
+
+    const deposits = depositData || [];
+    const collectedDeposits = deposits
+      .reduce((sum: number, d: any) => sum + parseFloat(d.paid_amount || 0), 0);
+
+    // Upsert to dashboard_metrics_daily
+    await supabase
+      .from("dashboard_metrics_daily")
+      .upsert(
+        {
+          location_id: locationId,
+          metric_date: dateStr,
+          cash_collected_payments: collectedPayments,
+          cash_collected_deposits: collectedDeposits,
+          cash_refunds: refunds,
+          cash_net_revenue: collectedPayments + collectedDeposits - refunds,
+          computed_at: new Date().toISOString(),
+        },
+        { onConflict: "location_id,metric_date" }
+      );
+  }
+}
+
 async function syncImmunizationTypes(
   supabase: any,
   subdomain: string,
@@ -651,8 +855,8 @@ Deno.serve(async (req: Request) => {
     const toSync =
       entities ||
       (sync_type === "full"
-        ? ["reservation_types", "immunization_types", "owners", "animals", "reservations"]
-        : ["owners", "animals", "reservations"]);
+        ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "invoices", "deposits"]
+        : ["owners", "animals", "reservations", "invoices", "deposits"]);
 
     for (const entity of toSync) {
       await updateSyncState(supabase, location_id, entity, {
@@ -686,6 +890,23 @@ Deno.serve(async (req: Request) => {
             break;
           case "immunization_types":
             results.immunization_types = await syncImmunizationTypes(
+              supabase,
+              subdomain,
+              api_key,
+              location_id
+            );
+            break;
+          case "invoices":
+            results.invoices = await syncInvoices(
+              supabase,
+              subdomain,
+              api_key,
+              location_id,
+              sync_type === "full"
+            );
+            break;
+          case "deposits":
+            results.deposits = await syncDeposits(
               supabase,
               subdomain,
               api_key,
@@ -730,6 +951,16 @@ Deno.serve(async (req: Request) => {
     } catch (metricsErr: any) {
       // Non-fatal — dashboard metrics recompute is best-effort
       console.error('Dashboard metrics recompute error:', metricsErr.message);
+    }
+
+    // ── Compute cash basis metrics from synced invoices + deposits ───────
+    // Updates cash_collected_payments, cash_collected_deposits, cash_refunds,
+    // cash_net_revenue on dashboard_metrics_daily for today and yesterday.
+    try {
+      await computeCashBasisMetrics(supabase, location_id);
+    } catch (cashErr: any) {
+      // Non-fatal — cash basis metrics are best-effort
+      console.error('Cash basis metrics error:', cashErr.message);
     }
 
     const totalDuration = Date.now() - startTime;
