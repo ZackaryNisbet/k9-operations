@@ -817,7 +817,7 @@ function DashboardContent({
   }, [nav]);
 
   // ─── Inventory snapshot status (same logic as OperationsHub) ──────────────
-  const [invStatus, setInvStatus] = useState({ itemsCounted: 0, totalItems: 0 });
+  const [invStatus, setInvStatus] = useState({ itemsCounted: 0, totalItems: 0, overdue: false });
   const [invTick, setInvTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
@@ -842,11 +842,14 @@ function DashboardContent({
         ]);
         if (cancelled) return;
         const totalItems = catalogRes.data?.length || 0;
+        const dow = new Date().getDay(); // 0=Sun
+        const isPastMonday = dow !== 1; // overdue if any day past Monday
         if (snapshotRes.data?.length > 0) {
           const counted = (snapshotRes.data[0].setting_value || []).filter(e => e.count > 0).length;
-          if (!cancelled) setInvStatus({ itemsCounted: counted, totalItems });
+          const allDone = counted >= totalItems && totalItems > 0;
+          if (!cancelled) setInvStatus({ itemsCounted: counted, totalItems, overdue: isPastMonday && !allDone });
         } else {
-          if (!cancelled) setInvStatus({ itemsCounted: 0, totalItems });
+          if (!cancelled) setInvStatus({ itemsCounted: 0, totalItems, overdue: isPastMonday && totalItems > 0 });
         }
       } catch { /* silent */ }
     })();
@@ -1701,7 +1704,7 @@ function DashboardContent({
         <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={navTo["ops-pp"]} />
 
         {/* Col 9: Inventory (row 5) */}
-        <ServiceCell label="Inventory" done={invStatus.itemsCounted} total={invStatus.totalItems} onClick={navTo["inventory"]} />
+        <InventoryCell done={invStatus.itemsCounted} total={invStatus.totalItems} overdue={invStatus.overdue} onClick={navTo["inventory"]} />
 
         {/* Col 8: Closing (row 6) */}
         <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={navTo["ops-closing"]} />
@@ -2402,6 +2405,48 @@ const QuickLinkCell = memo(function QuickLinkCell({ label, icon, onClick }) {
       </div>
       <div style={{ fontSize: 9, fontWeight: 700, color: C.pri, lineHeight: 1, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%", opacity: 0.7 }}>
         {label}
+      </div>
+    </div>
+  );
+});
+
+/* InventoryCell — icon + progress bar + overdue badge + due day */
+const InventoryCell = memo(function InventoryCell({ done, total, overdue, onClick }) {
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const allDone = total > 0 && done >= total;
+  const barColor = allDone ? C.suc : overdue ? "#EF4444" : C.acc;
+  const statusLabel = allDone ? "Complete" : overdue ? "Overdue" : total > 0 && done > 0 ? "In Progress" : "Due Monday";
+  const statusBg = allDone ? "rgba(16,185,129,0.1)" : overdue ? "rgba(239,68,68,0.1)" : "rgba(20,83,45,0.06)";
+  const statusColor = allDone ? C.suc : overdue ? "#EF4444" : C.textMut;
+  return (
+    <div className="dash-checklist-cell" onClick={onClick}
+      style={{ animation: "dashSlideIn 0.2s cubic-bezier(0.22,1,0.36,1) both", position: "relative" }}
+    >
+      {onClick && <LinkIcon />}
+      <div style={{ color: barColor, opacity: 0.6, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 2 }}>
+        <I.Package size={18} />
+      </div>
+      <div style={{ fontSize: 9, fontWeight: 700, color: allDone ? C.suc : C.text, lineHeight: 1, marginBottom: 4, textAlign: "center" }}>
+        Inventory
+      </div>
+      {total > 0 && (
+        <>
+          <div style={{ width: "80%", height: 5, background: "rgba(20,83,45,0.06)", borderRadius: 3, overflow: "hidden", marginBottom: 3 }}>
+            <div style={{
+              width: `${pct}%`, height: "100%", background: barColor, borderRadius: 3,
+              transformOrigin: "left", animation: "dashBarGrow 0.4s 0.1s cubic-bezier(0.22,1,0.36,1) both",
+            }} />
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: barColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", marginBottom: 4 }}>
+            {done}/{total}
+          </div>
+        </>
+      )}
+      <div style={{
+        fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em",
+        padding: "2px 6px", borderRadius: 8, background: statusBg, color: statusColor, lineHeight: 1.3,
+      }}>
+        {statusLabel}
       </div>
     </div>
   );
