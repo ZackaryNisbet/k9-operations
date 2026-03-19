@@ -695,10 +695,10 @@ function PhotosPage({ data, nav, profile }) {
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h2 style={{ margin: "0 0 4px", fontSize: 22, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif" }}>
+          <h2 style={{ margin: "0 0 4px", fontSize: 24, fontWeight: 800, color: C.text, fontFamily: "'Outfit', sans-serif", letterSpacing: "-0.02em" }}>
             Photos
           </h2>
-          <p style={{ margin: 0, fontSize: 13, color: C.textSec }}>
+          <p style={{ margin: 0, fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
             Upload, tag, and pair photos with dogs
           </p>
         </div>
@@ -740,13 +740,13 @@ function PhotosPage({ data, nav, profile }) {
         onDrop={handleDrop}
         onClick={() => !uploading && fileInputRef.current?.click()}
         style={{
-          padding: uploading ? "20px" : "32px 20px",
-          borderRadius: 14,
+          padding: uploading ? "20px" : "36px 20px",
+          borderRadius: 16,
           border: `2px dashed ${dragOver ? C.pri : C.border}`,
           background: dragOver ? C.priLt : C.bg,
           textAlign: "center",
           cursor: uploading ? "default" : "pointer",
-          transition: "all 0.2s",
+          transition: "all 0.25s cubic-bezier(0.4,0,0.2,1)",
           marginBottom: 20,
         }}
       >
@@ -782,11 +782,12 @@ function PhotosPage({ data, nav, profile }) {
               key={f.key}
               onClick={() => { setFilter(f.key); if (f.key !== "date") setDateFilter(""); }}
               style={{
-                padding: "6px 14px", borderRadius: 8, border: "none",
+                padding: "7px 16px", borderRadius: 10, border: "none",
                 background: filter === f.key ? C.pri : C.surfaceHover,
                 color: filter === f.key ? "#fff" : C.textSec,
                 fontSize: 13, fontWeight: 600, cursor: "pointer",
-                fontFamily: "inherit", transition: "all 0.15s",
+                fontFamily: "inherit", transition: "all 0.18s cubic-bezier(0.4,0,0.2,1)",
+                boxShadow: filter === f.key ? "0 1px 3px rgba(20,83,45,0.25)" : "none",
               }}
             >
               {f.label}
@@ -823,10 +824,15 @@ function PhotosPage({ data, nav, profile }) {
           <K9LoadingAnimation />
         </div>
       ) : filteredPhotos.length === 0 ? (
-        <Card style={{ padding: "48px 20px", textAlign: "center" }}>
-          <div style={{ color: C.textMut, marginBottom: 8 }}><Icons.Photos /></div>
-          <div style={{ fontSize: 14, color: C.textSec, fontWeight: 500 }}>
-            {filter === "unpaired" ? "All photos are paired!" : filter === "date" && dateFilter ? "No photos for this date" : "No photos yet. Upload some!"}
+        <Card style={{ padding: "64px 24px", textAlign: "center" }}>
+          <div style={{ width: 56, height: 56, borderRadius: 16, background: C.priLt, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
+            <Icons.Photos />
+          </div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+            {filter === "unpaired" ? "All caught up!" : filter === "date" && dateFilter ? "No photos found" : "No photos yet"}
+          </div>
+          <div style={{ fontSize: 13, color: C.textMut, maxWidth: 300, margin: "0 auto", lineHeight: 1.5 }}>
+            {filter === "unpaired" ? "Every photo has been paired with a dog. Great work!" : filter === "date" && dateFilter ? "There are no photos for the selected date." : "Upload photos to get started. Drag and drop or click the upload button above."}
           </div>
         </Card>
       ) : (
@@ -843,13 +849,13 @@ function PhotosPage({ data, nav, profile }) {
                 key={photo.id}
                 style={{
                   position: "relative",
-                  borderRadius: 12,
+                  borderRadius: 14,
                   overflow: "hidden",
                   border: `2px solid ${isSelected ? C.pri : C.border}`,
                   background: C.surface,
                   cursor: "pointer",
-                  transition: "all 0.15s",
-                  boxShadow: isSelected ? `0 0 0 2px ${C.pri}40` : "0 1px 3px rgba(0,0,0,0.04)",
+                  transition: "all 0.2s cubic-bezier(0.4,0,0.2,1)",
+                  boxShadow: isSelected ? `0 0 0 3px ${C.pri}25` : "0 1px 4px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03)",
                 }}
               >
                 {/* Selection checkbox */}

@@ -48,6 +48,7 @@ import ReactDOM from 'react-dom/client';
 import { AuthProvider, useAuth } from './AuthProvider';
 import { supabase } from './supabaseClient';
 import Login from './Login';
+import SignupPage from './SignupPage';
 import App from './App';
 import LiteApp from './kol/KolApp';
 import BookingPage from './BookingPage';
@@ -63,6 +64,8 @@ function Root() {
   const isPublicRoadmap = path === '/public-roadmap';
   const isWelcomePage = path === '/welcome';
   const isLoginPage = path === '/login';
+  const isSignupPage = path === '/signup';
+  const isPublicPricing = path === '/pricing';
   const isLandingPage = path === '/' || path === '';
   const isPOS = path.startsWith('/pos');
   const isLite = path.startsWith('/lite');
@@ -71,6 +74,8 @@ function Root() {
   if (isBookingPage) return <BookingPage />;
   if (isPublicLink) return <PublicPage />;
   if (isWelcomePage) return <LandingPage />;
+  if (isSignupPage) return <SignupPage />;
+  if (isPublicPricing) return <LandingPage />;
 
   const { user, profile, loading, signOut, needsPasswordSet, updatePassword } = useAuth();
 

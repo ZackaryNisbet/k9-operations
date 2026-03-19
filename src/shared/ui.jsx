@@ -36,14 +36,14 @@ function Tip({ text, children }) {
 function Badge({children,color="default",size="sm",tip}) {
   const cm={default:{bg:C.surfaceHover,text:C.textSec},primary:{bg:C.priLt,text:C.pri},success:{bg:C.sucLt,text:C.suc},warning:{bg:C.warnLt,text:C.warn},danger:{bg:C.danLt,text:C.dan},info:{bg:C.infoLt,text:C.info},accent:{bg:C.accLt,text:C.accDk}};
   const s=cm[color]||cm.default;
-  const el = <span style={{display:"inline-flex",alignItems:"center",padding:size==="sm"?"2px 10px":"4px 14px",borderRadius:20,fontSize:size==="sm"?11:13,fontWeight:600,background:s.bg,color:s.text,letterSpacing:"0.01em",whiteSpace:"nowrap"}}>{children}</span>;
+  const el = <span style={{display:"inline-flex",alignItems:"center",padding:size==="sm"?"3px 10px":"5px 14px",borderRadius:20,fontSize:size==="sm"?11:13,fontWeight:700,background:s.bg,color:s.text,letterSpacing:"0.02em",whiteSpace:"nowrap",lineHeight:1.3}}>{children}</span>;
   return tip ? <Tip text={tip}>{el}</Tip> : el;
 }
 
 function Btn({children,variant="primary",size="md",onClick,disabled,style={},icon}) {
-  const base={display:"inline-flex",alignItems:"center",gap:6,border:"none",cursor:disabled?"not-allowed":"pointer",fontWeight:600,fontFamily:"inherit",borderRadius:10,transition:"all 0.15s",opacity:disabled?0.5:1,letterSpacing:"0.01em"};
-  const sz={sm:{padding:"6px 14px",fontSize:13},md:{padding:"10px 20px",fontSize:14},lg:{padding:"12px 24px",fontSize:15}};
-  const vr={primary:{background:C.pri,color:"#fff"},accent:{background:C.acc,color:"#fff"},secondary:{background:C.surfaceHover,color:C.text,border:`1px solid ${C.border}`},ghost:{background:"transparent",color:C.textSec},danger:{background:C.danLt,color:C.dan},success:{background:C.suc,color:"#fff"}};
+  const base={display:"inline-flex",alignItems:"center",gap:7,border:"none",cursor:disabled?"not-allowed":"pointer",fontWeight:600,fontFamily:"inherit",borderRadius:12,transition:"all 0.18s cubic-bezier(0.4,0,0.2,1)",opacity:disabled?0.5:1,letterSpacing:"0.01em"};
+  const sz={sm:{padding:"7px 14px",fontSize:13},md:{padding:"10px 22px",fontSize:14},lg:{padding:"13px 26px",fontSize:15}};
+  const vr={primary:{background:C.pri,color:"#fff",boxShadow:"0 1px 3px rgba(20,83,45,0.3)"},accent:{background:C.acc,color:"#fff",boxShadow:"0 1px 3px rgba(132,204,22,0.3)"},secondary:{background:C.surfaceHover,color:C.text,border:`1px solid ${C.border}`},ghost:{background:"transparent",color:C.textSec},danger:{background:C.danLt,color:C.dan},success:{background:C.suc,color:"#fff",boxShadow:"0 1px 3px rgba(22,163,74,0.3)"}};
   return <button onClick={onClick} disabled={disabled} style={{...base,...sz[size],...vr[variant],...style}}>{icon&&icon}{children}</button>;
 }
 
@@ -183,7 +183,7 @@ function ComplianceCheckItem({ok, warn, label, detail, expandKey, expanded, onTo
 function Inp({label,value,onChange,type="text",placeholder,required,style={},options,rows,autoFocus,disabled}) {
   const ls={display:"block",fontSize:11,fontWeight:600,color:C.textSec,marginBottom:4,letterSpacing:"0.03em",textTransform:"uppercase"};
   const dis=disabled?{opacity:0.55,pointerEvents:"none",background:C.bg}:{};
-  const is={width:"100%",padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:10,fontSize:14,fontFamily:"inherit",color:C.text,background:C.surface,outline:"none",transition:"border 0.15s",boxSizing:"border-box",...style,...dis};
+  const is={width:"100%",padding:"10px 14px",border:`1.5px solid ${C.border}`,borderRadius:12,fontSize:14,fontFamily:"inherit",color:C.text,background:C.surface,outline:"none",transition:"border 0.18s cubic-bezier(0.4,0,0.2,1)",boxSizing:"border-box",...style,...dis};
   if(type==="select") {
     const opts = (options||[]).map(o => typeof o === "string" ? { value: o, label: o } : o);
     return <label style={{display:"block"}}>{label&&<span style={ls}>{label}{required&&<span style={{color:C.dan}}> *</span>}</span>}<CustomSelect value={value||""} onChange={onChange} options={opts} placeholder={placeholder||"Select..."} disabled={disabled}/></label>;
@@ -331,12 +331,12 @@ function CalendarPicker({ label, value, onChange, required, disabled, min, max, 
 function Modal({title,onClose,children,wide,fullWidth}) {
   useEffect(() => { const h = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }; document.addEventListener("keydown", h); return () => document.removeEventListener("keydown", h); }, [onClose]);
   const mw = fullWidth ? "calc(100vw - 60px)" : wide ? 720 : 520;
-  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",backdropFilter:"blur(4px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:fullWidth?16:20}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:18,width:"100%",maxWidth:mw,maxHeight:fullWidth?"calc(100vh - 32px)":"90vh",overflow:"auto",boxShadow:"0 24px 48px rgba(0,0,0,0.15)"}}><div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"20px 24px",borderBottom:`1px solid ${C.borderLight}`}}><h3 style={{margin:0,fontSize:18,fontWeight:700,color:C.text}}>{title}</h3><button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,display:"flex",padding:4,borderRadius:8}}><I.X/></button></div><div style={{padding:24}}>{children}</div></div></div>;
+  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.45)",backdropFilter:"blur(6px)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:fullWidth?16:20}} onClick={onClose}><div onClick={e=>e.stopPropagation()} style={{background:C.surface,borderRadius:20,width:"100%",maxWidth:mw,maxHeight:fullWidth?"calc(100vh - 32px)":"90vh",overflow:"auto",boxShadow:"0 24px 64px rgba(0,0,0,0.18), 0 8px 20px rgba(0,0,0,0.08)"}}><div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"22px 26px",borderBottom:`1px solid ${C.borderLight}`}}><h3 style={{margin:0,fontSize:18,fontWeight:700,color:C.text,letterSpacing:"-0.01em"}}>{title}</h3><button onClick={onClose} style={{background:"none",border:"none",cursor:"pointer",color:C.textMut,display:"flex",padding:4,borderRadius:8}}><I.X/></button></div><div style={{padding:26}}>{children}</div></div></div>;
 }
 
 function Card({children,style={},onClick,hoverable}) {
   const [h,setH]=useState(false);
-  return <div onClick={onClick} onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)} style={{background:C.surface,borderRadius:14,border:`1px solid ${h&&hoverable?C.priLt:C.border}`,padding:20,transition:"all 0.2s",cursor:onClick?"pointer":"default",transform:h&&hoverable?"translateY(-1px)":"none",boxShadow:h&&hoverable?"0 4px 12px rgba(0,0,0,0.06)":"0 1px 3px rgba(0,0,0,0.02)",...style}}>{children}</div>;
+  return <div onClick={onClick} onMouseEnter={()=>setH(true)} onMouseLeave={()=>setH(false)} style={{background:C.surface,borderRadius:16,border:`1px solid ${h&&hoverable?C.priLt:C.border}`,padding:20,transition:"all 0.2s cubic-bezier(0.4,0,0.2,1)",cursor:onClick?"pointer":"default",transform:h&&hoverable?"translateY(-2px)":"none",boxShadow:h&&hoverable?"0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04)":"0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",...style}}>{children}</div>;
 }
 
 // ─── Permission Helper ──────────────────────────────────────────────────────

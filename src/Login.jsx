@@ -280,6 +280,10 @@ export default function Login() {
                     style={{ background: 'none', border: 'none', color: C.textMut, fontSize: 13, cursor: 'pointer', fontFamily: 'inherit', textDecoration: 'underline', padding: 0 }}>
                     Forgot your password?
                   </button>
+                  <div style={{ marginTop: 12 }}>
+                    <span style={{ fontSize: 13, color: C.textMut }}>Don't have an account? </span>
+                    <a href="/signup" style={{ fontSize: 13, color: C.pri, fontWeight: 600, textDecoration: 'none' }}>Sign Up</a>
+                  </div>
                 </div>
               )}
 

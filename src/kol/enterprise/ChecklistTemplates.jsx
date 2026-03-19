@@ -701,8 +701,9 @@ function EnterpriseChecklistTemplates({ data, save, nav, profile, addGlobalToast
 
             {/* Items */}
             {currentItems.length === 0 ? (
-              <div style={{ padding: 40, textAlign: "center", color: C.textMut, fontSize: 14 }}>
-                No items yet. Click "Add Item" to get started.
+              <div style={{ padding: "48px 24px", textAlign: "center" }}>
+                <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 6 }}>No items yet</div>
+                <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>Click "Add Item" to get started.</div>
               </div>
             ) : (
               currentItems.map((item, idx) => (
