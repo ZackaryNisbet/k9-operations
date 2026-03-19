@@ -1679,8 +1679,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             <h1 style={{ margin: 0, fontSize: 28, fontWeight: 700, color: C.text, fontFamily: "'Outfit', sans-serif", lineHeight: 1.2 }}>
               Weekly Inventory Count
             </h1>
-            <div style={{ fontSize: 13, color: C.textSec, marginTop: 4 }}>
-              Track on-hand stock, transit items, and reorder needs
+            <div style={{ fontSize: 13, color: C.textSec, marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span>Due every Monday</span>
+              <span style={{ color: C.borderLight }}>·</span>
+              <span>Track on-hand stock, transit items, and reorder needs</span>
             </div>
           </div>
 
@@ -1707,6 +1709,30 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                 {snapshot.status === "completed" ? "Completed" : snapshot.status === "in_progress" ? "In Progress" : "Draft"}
               </span>
             )}
+
+            {/* Overdue indicator — current week, past Monday, not completed */}
+            {currentWeekStart === thisWeekStart && (() => {
+              const dow = new Date().getDay();
+              const isPastMonday = dow !== 1;
+              const daysSince = dow === 0 ? 6 : dow - 1;
+              return isPastMonday && (!snapshot || snapshot.status !== "completed") ? (
+                <span style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "6px 14px",
+                  borderRadius: 20,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  background: "#FEF2F2",
+                  color: "#DC2626",
+                  border: "1.5px solid #DC262640",
+                }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#DC2626", display: "inline-block" }} />
+                  {daysSince} day{daysSince !== 1 ? "s" : ""} overdue
+                </span>
+              ) : null;
+            })()}
 
             {/* Auto-save indicator */}
             <span style={{
@@ -1749,6 +1775,11 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
               {currentWeekStart === thisWeekStart && (
                 <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: C.priLt, color: C.pri }}>
                   CURRENT
+                </span>
+              )}
+              {currentWeekStart === thisWeekStart && new Date().getDay() !== 1 && (!snapshot || snapshot.status !== "completed") && (
+                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: "#FEF2F2", color: "#DC2626" }}>
+                  OVERDUE
                 </span>
               )}
             </div>
