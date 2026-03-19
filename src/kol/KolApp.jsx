@@ -338,11 +338,11 @@ function LeanAppInner() {
     [profile.role, profile.location_id, userLocationRoles]
   );
 
-  // Filter K9_LEAN_LOCATIONS to only locations the user can access
+  // Filter K9_LOCATIONS to only locations the user can access
   const filteredLocations = useMemo(() => {
     // null means "all locations" (enterprise_admin, developer, owner)
-    if (userLocationIds === null) return K9_LEAN_LOCATIONS;
-    return K9_LEAN_LOCATIONS.filter(loc => {
+    if (userLocationIds === null) return K9_LOCATIONS;
+    return K9_LOCATIONS.filter(loc => {
       // Always include enterprise view for multi_location_admin
       if (loc.isEnterprise) return profile.role === "multi_location_admin" || profile.role === "enterprise_admin" || profile.role === "owner" || profile.role === "developer";
       // Include POS locations for everyone who had access
