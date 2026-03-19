@@ -98,14 +98,16 @@ function TimelineIcon({ type, color }) {
 // ─── CLM-008: Lifecycle stage detection helper ─────────────────────────────
 function detectClientStage(client, serverStats) {
   if (client.isLiteClient) {
-    return client.lifecycle?.cold === true ? "Cold" : "Leads";
+    if (client.lifecycle?.reclassifiedReason) return "Reclassified";
+    return client.lifecycle?.cold === true ? "Reclassified" : "Leads";
   }
   const gingrId = String(client.gingrId);
   const srv = serverStats && serverStats[gingrId];
   if (!srv) return "Leads";
 
   const isCold = client.lifecycle?.cold === true;
-  if (isCold) return "Cold";
+  if (client.lifecycle?.reclassifiedReason) return "Reclassified";
+  if (isCold) return "Reclassified";
 
   const hasSpent = Number(srv.total_spent) > 0;
   const hasRealBooking = !!srv.has_real_booking;
@@ -461,9 +463,9 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
       events.push({
         id: evt.id || `mem-${evt.event}-${evt.date}`,
         date: evt.date ? new Date(evt.date + "T12:00:00").toISOString() : new Date().toISOString(),
-        eventType: evt.event === "moved_to_active" || evt.event === "moved_to_retention" || evt.event === "marked_cold" ? "stage_change" : "note",
+        eventType: evt.event === "moved_to_active" || evt.event === "moved_to_retention" || evt.event === "marked_cold" || evt.event === "reclassified" ? "stage_change" : "note",
         fromStage: null,
-        toStage: evt.event === "moved_to_active" ? "active" : evt.event === "moved_to_retention" ? "lapsed" : evt.event === "marked_cold" ? "cold" : null,
+        toStage: evt.event === "moved_to_active" ? "active" : evt.event === "moved_to_retention" ? "lapsed" : (evt.event === "marked_cold" || evt.event === "reclassified") ? "reclassified" : null,
         description: evt.details || titleCase(evt.event || "Event"),
         followUpDate: null,
         triggeredBy: "System",
@@ -1517,8 +1519,8 @@ function ClientDetailPage({ data, save, clientId, nav, profile, openReservationI
             {/* Current stage badge */}
             {(() => {
               const stage = detectClientStage(client, data.serverStats);
-              const stageColors = { Active: C.suc, Leads: C.acc, Lapsed: C.dan, Cold: C.textMut };
-              const stageBgs = { Active: C.sucLt, Leads: C.accLt, Lapsed: C.danLt, Cold: C.bg };
+              const stageColors = { Active: C.suc, Leads: C.acc, Lapsed: C.dan, Reclassified: C.textMut };
+              const stageBgs = { Active: C.sucLt, Leads: C.accLt, Lapsed: C.danLt, Reclassified: C.bg };
               return (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 8, background: stageBgs[stage] || C.bg, border: `1.5px solid ${(stageColors[stage] || C.textMut)}25` }}>
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: stageColors[stage] || C.textMut }} />

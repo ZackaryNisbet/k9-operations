@@ -283,20 +283,6 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
    ═══════════════════════════════════════════════════════════════════════════ */
 function OccupancyChart({ chartData, dateLabels, animEpoch, height = 300 }) {
   const containerRef = useRef(null);
-  const [containerH, setContainerH] = useState(height);
-
-  useEffect(() => {
-    const measure = () => {
-      if (containerRef.current) {
-        const h = containerRef.current.clientHeight;
-        if (h > 30) setContainerH(h);
-      }
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    if (containerRef.current) ro.observe(containerRef.current);
-    return () => ro.disconnect();
-  }, []);
 
   // Scale values: InteractiveLineChart shows $ on y-axis.
   // We render a custom y-axis overlay and hide the chart's built-in one.
@@ -320,7 +306,7 @@ function OccupancyChart({ chartData, dateLabels, animEpoch, height = 300 }) {
       <InteractiveLineChart
         chartData={chartData}
         color={C.pri}
-        height={containerH}
+        height={height}
         id="occupancy-chart"
         animationEpoch={animEpoch}
         dateLabels={dateLabels}

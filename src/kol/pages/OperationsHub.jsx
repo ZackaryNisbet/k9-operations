@@ -304,7 +304,15 @@ function OperationsHub({ data, save, nav, profile }) {
         const logKey = `${viewDate}|bathing`;
         const administered = !!(res.activityLog && res.activityLog[logKey] && res.activityLog[logKey].administered);
         const coTime = res.checkOutTime || "";
-        const roomNum = res.room ? (res.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || res.room : "—";
+        // Resolve room display — keep codes like DC1, SC5 intact instead of stripping to just numbers
+        const roomNum = (() => {
+          if (!res.room) return "—";
+          const r = res.room.trim();
+          if (/^[A-Z]{1,3}\d+[A-Za-z]?$/.test(r)) return r;
+          const m = r.match(/(?:Luxury Suite|Executive Room|Double Compartment|Single Compartment)\s+(.+)/i);
+          if (m) return m[1].trim();
+          return (r.match(/(\d+[A-Za-z]*)$/) || [])[1] || r;
+        })();
         bathRows.push({ dogName: dog.fields.name, bathType: bath, done: administered, checkOutTime: coTime, room: roomNum });
       }
     });
@@ -883,12 +891,18 @@ function OperationsHub({ data, save, nav, profile }) {
                 let count = 0;
                 let countReady = dataLoaded;
                 if (item.routeKey === "bathing") {
+                  // Match DailyOpsPage bathing logic: count dogs with bath service scheduled_at on viewDate
                   count = inHouseToday.filter(r => {
-                    if (r.checkOut !== viewDate) return false;
+                    if (r.status === "cancelled") return false;
                     const svcs = r._services;
                     if (!svcs) return false;
                     const arr = Array.isArray(svcs) ? svcs : [];
-                    return arr.some(s => (typeof s === "string" ? s : s?.name || "").toLowerCase() === "bath");
+                    return arr.some(s => {
+                      const name = typeof s === "string" ? s : (s?.name || "");
+                      if (!name.toLowerCase().includes("bath")) return false;
+                      const schedAt = s?.scheduled_at || "";
+                      return schedAt.includes(viewDate);
+                    });
                   }).length;
                 } else if (item.routeKey === "pamper") {
                   const seen = new Set();

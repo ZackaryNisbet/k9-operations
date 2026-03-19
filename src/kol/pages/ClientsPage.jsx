@@ -40,6 +40,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
   const [bulkReason, setBulkReason] = useState("");
   const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [reclassifyModal, setReclassifyModal] = useState(null); // { clientId } when open
+  const [reclassifyReason, setReclassifyReason] = useState("");
+  const [reclassifyReasonFilter, setReclassifyReasonFilter] = useState(new Set());
   const [activeViewId, setActiveViewId] = useState(null);
   const [showSaveView, setShowSaveView] = useState(false);
   const [viewName, setViewName] = useState("");
@@ -185,7 +188,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       // Lite clients: place in leads tab (they have no Gingr bookings/spend)
       if (c.isLiteClient) {
         const isCold = c.lifecycle?.cold === true;
-        map[c.id] = { isConversion: !isCold, isOldGingrSync: false, isActive: false, isRetention: false, isCold, isAll: true };
+        const isReclassified = !!c.lifecycle?.reclassifiedReason;
+        map[c.id] = { isConversion: !isCold && !isReclassified, isOldGingrSync: false, isActive: false, isRetention: false, isCold: isCold && !isReclassified, isReclassified, isAll: true };
         return;
       }
       const s = clientStats[c.id] || {};
@@ -203,6 +207,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
       const totalRes = s.totalRes || 0;
       const isCold = c.lifecycle?.cold === true;
+      const isReclassified = !!c.lifecycle?.reclassifiedReason;
 
       // Lapsed classification:
       // 1. Determine if boarding-heavy (>50% boarding) → use bdThreshVal, else dcThreshVal
@@ -211,7 +216,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       // 4. daysSince >= threshold + 30 → old lapsed (route to Old Gingr Sync)
       let isRetention = false;
       let isOldGingrLapsed = false;
-      if (hasRealBooking && !hasUpcoming && totalRes > 0 && !isCold) {
+      if (hasRealBooking && !hasUpcoming && totalRes > 0 && !isCold && !isReclassified) {
         const daysSince = s.daysSinceLast;
         if (daysSince != null) {
           const resCount = srv ? Number(srv.total_res) : (resByClient[c.id] || []).length;
@@ -229,38 +234,60 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         }
       }
 
-      const isConversion = !hasSpent && !hasRealBooking && !isCold;
+      const isConversion = !hasSpent && !hasRealBooking && !isCold && !isReclassified;
       // CLM-001: Gingr-sourced clients created >14 days ago go to "Old From Gingr Sync"
       const fourteenDaysAgo = addDays(td, -14);
       const isOldGingrSync = isConversion && !!c.gingrId && c.createdAt && c.createdAt.split("T")[0] < fourteenDaysAgo;
-      const isActive = (hasSpent || hasRealBooking) && !isRetention && !isCold && !isOldGingrLapsed;
-      if (isCold) isRetention = false;
-      map[c.id] = { isConversion: isConversion && !isOldGingrSync, isOldGingrSync: isOldGingrSync || isOldGingrLapsed, isActive, isRetention: isRetention && !isCold, isCold, isAll: true };
+      const isActive = (hasSpent || hasRealBooking) && !isRetention && !isCold && !isOldGingrLapsed && !isReclassified;
+      if (isCold || isReclassified) isRetention = false;
+      map[c.id] = { isConversion: isConversion && !isOldGingrSync, isOldGingrSync: (isOldGingrSync || isOldGingrLapsed) && !isReclassified, isActive, isRetention: isRetention && !isCold && !isReclassified, isCold: isCold && !isReclassified, isReclassified, isAll: true };
     });
     return map;
   }, [data.clients, data.serverStats, clientStats, resByClient, data.resortPolicies?.retentionDaycareDays, data.resortPolicies?.retentionBoardingDays]);
 
-  // ── TEMP DIAGNOSTIC: why are clients in conversion? ──
-  // ── Lifecycle event tracking ──
+  // ── Lifecycle event tracking — log inter-section movements with system entries ──
   const prevTabMapRef = useRef(null);
   useEffect(() => {
     if (!prevTabMapRef.current || !save) { prevTabMapRef.current = clientTabMap; return; }
     const prev = prevTabMapRef.current;
+    const td = todayStr();
     let changed = false;
     const updatedClients = data.clients.map(c => {
       const oldM = prev[c.id]; const newM = clientTabMap[c.id];
       if (!oldM || !newM) return c;
+      const s = clientStats[c.id] || {};
       let event = null;
-      if (oldM.isConversion && newM.isActive) event = { event: "moved_to_active", date: todayStr(), details: "Moved to Active Customers (first booking/payment)" };
-      else if (oldM.isActive && newM.isRetention) event = { event: "moved_to_retention", date: todayStr(), details: "Moved to Retention (lapsed client)" };
-      else if (oldM.isRetention && newM.isActive) event = { event: "moved_to_active", date: todayStr(), details: "Returned to Active Customers (re-engaged)" };
+      let systemLogTab = null;
+      let systemLogNote = null;
+      if (oldM.isConversion && newM.isActive) {
+        const payDate = s.lastRes?.checkIn ? fmtDate(s.lastRes.checkIn) : td;
+        event = { event: "moved_to_active", date: td, details: `System: Moved from Leads to Active Customers \u2014 first payment detected on ${payDate}` };
+        systemLogTab = "conversion";
+        systemLogNote = event.details;
+      } else if (oldM.isActive && newM.isRetention) {
+        const lastVisit = s.lastRes?.checkIn ? fmtDate(s.lastRes.checkIn) : "unknown";
+        event = { event: "moved_to_retention", date: td, details: `System: Moved from Active to Lapsed \u2014 no activity since ${lastVisit}` };
+        systemLogTab = "retention";
+        systemLogNote = event.details;
+      } else if (oldM.isRetention && newM.isActive) {
+        event = { event: "moved_to_active", date: td, details: `System: Moved from Lapsed to Active Customers \u2014 re-engaged with new booking` };
+        systemLogTab = "conversion";
+        systemLogNote = event.details;
+      }
       if (event) {
         changed = true;
         let updated = { ...c, lifecycleEvents: [...(c.lifecycleEvents || []), event] };
-        // When moving to retention, set follow-up date to lapse date (today = day they crossed threshold)
+        const lc = updated.lifecycle || { conversion: { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }, retention: { notes:"",followUpDate:"",updates:[] }, cold:false, coldDate:"", coldFrom:"" };
+        // Add system log entry to the relevant tab's updates
+        if (systemLogTab && systemLogNote) {
+          const tabData = lc[systemLogTab] || { notes:"", followUpDate:"", updates:[] };
+          const systemEntry = { id: gid(), notes: systemLogNote, previousFollowUp: "", newFollowUp: tabData.followUpDate || "", loggedBy: "System", loggedAt: new Date().toISOString() };
+          updated = { ...updated, lifecycle: { ...lc, [systemLogTab]: { ...tabData, updates: [systemEntry, ...(tabData.updates || [])] } } };
+        }
+        // When moving to retention, set follow-up date to lapse date
         if (event.event === "moved_to_retention") {
-          const lc = updated.lifecycle || { conversion: { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }, retention: { notes:"",followUpDate:"",updates:[] }, cold:false, coldDate:"", coldFrom:"" };
-          updated = { ...updated, lifecycle: { ...lc, retention: { ...lc.retention, followUpDate: todayStr() } } };
+          const updLC = updated.lifecycle;
+          updated = { ...updated, lifecycle: { ...updLC, retention: { ...updLC.retention, followUpDate: td } } };
         }
         return updated;
       }
@@ -336,7 +363,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         return {
           ...c,
           lifecycle: { ...(c.lifecycle || {}), conversion: { ...(c.lifecycle?.conversion || { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }), updates: [{
-            id: gid(), notes: `Synced from Gingr on ${createdLabel} \u2014 ${s.totalRes || 0} reservations, $${(s.totalSpent || 0).toLocaleString()} spent`,
+            id: gid(), notes: `Imported from Gingr on ${createdLabel} \u2014 ${s.totalRes || 0} reservations, $${(s.totalSpent || 0).toLocaleString()} spent`,
             previousFollowUp: "", newFollowUp: c.lifecycle?.conversion?.followUpDate || "",
             loggedBy: "System", loggedAt: c.createdAt || new Date().toISOString(),
           }] } },
@@ -375,9 +402,44 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         ...c,
         lifecycle: { ...(c.lifecycle || {}), retention: { ...(c.lifecycle?.retention || { notes:"",followUpDate:"",updates:[] }), updates: [{
           id: gid(),
-          notes: `Client lapsed \u2014 last visit ${lastVisitFmt} (${daysSince} days ago). Threshold: ${thresh} days (${threshLabel}-heavy, ${boardingCount} boarding / ${daycareCount} daycare of ${totalRes} total). $${(s.totalSpent || 0).toLocaleString()} lifetime spend.`,
+          notes: `No activity detected since ${lastVisitFmt} (${daysSince} days ago). Threshold: ${thresh} days (${threshLabel}-heavy, ${boardingCount} boarding / ${daycareCount} daycare of ${totalRes} total). $${(s.totalSpent || 0).toLocaleString()} lifetime spend.`,
           previousFollowUp: "", newFollowUp: c.lifecycle?.retention?.followUpDate || "",
           loggedBy: "System", loggedAt: new Date().toISOString(),
+        }] } },
+      };
+    });
+    if (changed) save({ ...data, clients: updatedClients });
+  }, [data.clients, clientTabMap, clientStats]);
+
+  // ── One-time backfill: add system explanations for active clients with 0 updates (P3) ──
+  const activeBackfillDoneRef = useRef(false);
+  useEffect(() => {
+    if (activeBackfillDoneRef.current || !save || !clientTabMap || !Object.keys(clientTabMap).length) return;
+    activeBackfillDoneRef.current = true;
+    let changed = false;
+    const updatedClients = data.clients.map(c => {
+      if (!clientTabMap[c.id]?.isActive) return c;
+      // Check both conversion and retention updates — active clients may have been leads first
+      const convUpdates = c.lifecycle?.conversion?.updates || [];
+      const retUpdates = c.lifecycle?.retention?.updates || [];
+      if (convUpdates.length > 0 || retUpdates.length > 0) return c;
+      // Generate system explanation for active client
+      const s = clientStats[c.id] || {};
+      const totalRes = s.totalRes || 0;
+      const totalSpent = s.totalSpent || 0;
+      const nextRes = s.nextRes?.checkIn ? fmtDate(s.nextRes.checkIn) : null;
+      const lastRes = s.lastRes?.checkIn ? fmtDate(s.lastRes.checkIn) : null;
+      let detail = `Customer has active reservations/spending in Gingr \u2014 ${totalRes} reservations, $${totalSpent.toLocaleString()} lifetime spend.`;
+      if (nextRes) detail += ` Next reservation: ${nextRes}.`;
+      else if (lastRes) detail += ` Last visit: ${lastRes}.`;
+      changed = true;
+      return {
+        ...c,
+        lifecycle: { ...(c.lifecycle || {}), conversion: { ...(c.lifecycle?.conversion || { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }), updates: [{
+          id: gid(),
+          notes: detail,
+          previousFollowUp: "", newFollowUp: "",
+          loggedBy: "System", loggedAt: c.createdAt || new Date().toISOString(),
         }] } },
       };
     });
@@ -412,7 +474,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     const active = all.filter(c => clientTabMap[c.id]?.isActive);
     const ret = all.filter(c => clientTabMap[c.id]?.isRetention);
     const cold = all.filter(c => clientTabMap[c.id]?.isCold);
-    return { leads: conv, oldGingrSync, active, lapsed: ret, cold, all };
+    const reclassified = all.filter(c => clientTabMap[c.id]?.isReclassified);
+    return { leads: conv, oldGingrSync, active, lapsed: ret, cold, reclassified, all };
   }, [data.clients, search, clientTabMap, clientStats, activeTab]);
 
   // ── Apply sub-filters (structured filters, source filter, overdue toggle) ──
@@ -462,7 +525,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           case "totalSpent": va = sa.totalSpent||0; vb = sb.totalSpent||0; break;
           case "nextRes": va = sa.nextRes?.checkIn||"zzz"; vb = sb.nextRes?.checkIn||"zzz"; break;
           case "followUp": { const t = activeTab==="lapsed"?"retention":"conversion"; va = a.lifecycle?.[t]?.followUpDate||"zzz"; vb = b.lifecycle?.[t]?.followUpDate||"zzz"; break; }
-          case "coldDate": va = a.lifecycle?.coldDate||""; vb = b.lifecycle?.coldDate||""; break;
+          case "coldDate": va = a.lifecycle?.reclassifiedDate||a.lifecycle?.coldDate||""; vb = b.lifecycle?.reclassifiedDate||b.lifecycle?.coldDate||""; break;
           case "totalPaid": va = sa.totalSpent||0; vb = sb.totalSpent||0; break;
           case "totalAppts": va = sa.totalRes||0; vb = sb.totalRes||0; break;
           default: va = ""; vb = "";
@@ -505,7 +568,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       const evt = { event: isRevive ? "revived_from_cold" : "logged_outreach", date: today, details: isRevive ? `Revived back to ${tabKey}` : `Logged in ${tabKey}: "${logNotes.substring(0,50)}"` };
       return {
         ...c,
-        lifecycle: { ...lc, [tabKey]: updatedTab, ...(isRevive ? { cold: false } : {}) },
+        lifecycle: { ...lc, [tabKey]: updatedTab, ...(isRevive ? { cold: false, reclassifiedReason: null, reclassifiedDate: null, reclassifiedFrom: null } : {}) },
         lifecycleEvents: [...(c.lifecycleEvents || []), evt]
       };
     });
@@ -514,21 +577,32 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     addGlobalToast?.({ message: isRevive ? "Client revived" : "Log saved" });
   };
 
-  const markCold = async (clientId) => {
+  const openReclassifyModal = (clientId) => {
+    setReclassifyModal({ clientId });
+    setReclassifyReason("");
+  };
+
+  const confirmReclassify = async () => {
+    if (!reclassifyModal || !reclassifyReason) return;
+    const clientId = reclassifyModal.clientId;
+    const reason = reclassifyReason;
     const prevClient = data.clients.find(c => c.id === clientId);
     const prevLifecycle = prevClient ? JSON.parse(JSON.stringify(prevClient.lifecycle || {})) : {};
     const prevEvents = prevClient ? [...(prevClient.lifecycleEvents || [])] : [];
+    const fromTab = activeTab === "lapsed" ? "Lapsed" : activeTab === "active" ? "Active Customers" : "Leads";
     const newClients = data.clients.map(c => {
       if (c.id !== clientId) return c;
       return {
         ...c,
-        lifecycle: { ...(c.lifecycle||{}), cold: true, coldDate: today, coldFrom: activeTab === "lapsed" ? "lapsed" : "leads" },
-        lifecycleEvents: [...(c.lifecycleEvents||[]), { event: "marked_cold", date: today, details: `Marked as cold from ${activeTab}` }]
+        lifecycle: { ...(c.lifecycle||{}), cold: true, coldDate: today, coldFrom: activeTab === "lapsed" ? "lapsed" : "leads", reclassifiedReason: reason, reclassifiedDate: today, reclassifiedFrom: fromTab },
+        lifecycleEvents: [...(c.lifecycleEvents||[]), { event: "reclassified", date: today, details: `Reclassified from ${fromTab} — Reason: ${reason}` }]
       };
     });
     await save({ ...data, clients: newClients });
+    setReclassifyModal(null);
+    setReclassifyReason("");
     addGlobalToast?.({
-      message: "Client marked as cold",
+      message: `Client reclassified as "${reason}"`,
       actionLabel: "Undo",
       onAction: async () => {
         const undoClients = data.clients.map(c => {
@@ -545,7 +619,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const filteredTabCounts = useMemo(() => {
     if (activeFilterCount === 0) return null;
     const out = {};
-    for (const key of ["leads","oldGingrSync","active","lapsed","cold","all"]) {
+    for (const key of ["leads","oldGingrSync","active","lapsed","reclassified","all"]) {
       out[key] = applyStructuredFilters(tabLists[key] || [], clientStats, clientTabMap, lcFilters).length;
     }
     return out;
@@ -555,7 +629,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     { id: "leads", label: "Leads", count: filteredTabCounts ? filteredTabCounts.leads : tabLists.leads.length, color: C.acc },
     { id: "active", label: "Active Customers", count: filteredTabCounts ? filteredTabCounts.active : tabLists.active.length, color: C.pri },
     { id: "lapsed", label: "Lapsed", count: filteredTabCounts ? filteredTabCounts.lapsed : tabLists.lapsed.length, color: C.dan },
-    { id: "cold", label: "Cold", count: filteredTabCounts ? filteredTabCounts.cold : tabLists.cold.length, color: C.textSec },
+    { id: "reclassified", label: "Reclassified", count: filteredTabCounts ? filteredTabCounts.reclassified : tabLists.reclassified.length, color: C.textSec },
     { id: "all", label: "All", count: filteredTabCounts ? filteredTabCounts.all : tabLists.all.length, color: C.info },
     // Old Gingr Data tab — far right, hidden by default behind toggle
     { id: "oldGingrSync", label: "Old Gingr Data", count: filteredTabCounts ? filteredTabCounts.oldGingrSync : tabLists.oldGingrSync.length, color: C.textMut, hidden: true },
@@ -802,11 +876,11 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     );
   };
 
-  // ── Cold button cell ──
-  const renderColdBtn = (client) => (
-    <button onClick={(e) => { e.stopPropagation(); markCold(client.id); }}
+  // ── Reclassify button cell ──
+  const renderReclassifyBtn = (client) => (
+    <button onClick={(e) => { e.stopPropagation(); openReclassifyModal(client.id); }}
       style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${C.dan}30`,background:`${C.dan}08`,color:C.dan,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
-      Cold
+      Reclassify
     </button>
   );
 
@@ -817,6 +891,17 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       Revive
     </button>
   );
+
+  // ── Reclassified reason badge ──
+  const renderReasonBadge = (reason) => {
+    const colors = { "Unresponsive": C.warn, "Uninterested": C.dan, "Spam": "#9333EA", "Other": C.textSec };
+    const color = colors[reason] || C.textSec;
+    return (
+      <span style={{display:"inline-block",padding:"3px 10px",borderRadius:8,fontSize:10,fontWeight:700,background:`${color}15`,color,border:`1.5px solid ${color}30`}}>
+        {reason}
+      </span>
+    );
+  };
 
   // ── Client name cell (clickable) ──
   const renderName = (client) => {
@@ -840,7 +925,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     // Consistent base: Client(1.4fr), Phone(1fr), Dogs(45px), Created(75px) — then tab-specific data columns
     if (activeTab === "leads" || activeTab === "oldGingrSync") return "minmax(110px,1.4fr) minmax(75px,1fr) 45px 75px minmax(55px,0.7fr) minmax(60px,0.7fr) minmax(70px,0.8fr) minmax(80px,1fr) minmax(80px,1fr) minmax(70px,0.8fr) 50px";
     if (activeTab === "lapsed") return "minmax(100px,1.3fr) minmax(75px,1fr) 45px 75px minmax(70px,0.8fr) minmax(70px,0.8fr) minmax(80px,1fr) minmax(70px,0.8fr) minmax(60px,0.7fr) minmax(55px,0.6fr) 50px 50px";
-    if (activeTab === "cold") return "minmax(110px,1.4fr) minmax(75px,1fr) 45px 75px minmax(80px,1fr) minmax(80px,1fr) minmax(100px,1.2fr) 60px";
+    if (activeTab === "reclassified") return "minmax(110px,1.4fr) minmax(75px,1fr) 45px 75px minmax(70px,0.8fr) minmax(80px,1fr) minmax(80px,1fr) minmax(100px,1.2fr) 60px";
     // Active / All — Client, Phone, Dogs, Created
     const base = "minmax(120px,1.4fr) minmax(80px,1fr) 45px 75px";
     const dataCols = shownDataCols.map(k => {
@@ -884,8 +969,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               ? ["First Name","Last Name","Phone","Email","Dogs","Source","Follow-Up Date","Notes"]
               : activeTab === "active"
               ? ["First Name","Last Name","Phone","Email","Dogs","Reservations","Last Visit","Days Since","Total Spent"]
-              : activeTab === "cold"
-              ? ["First Name","Last Name","Phone","Email","Dogs","Cold Date","Previous Stage"]
+              : activeTab === "reclassified"
+              ? ["First Name","Last Name","Phone","Email","Dogs","Reason","Reclassified Date","Previous Stage"]
               : ["First Name","Last Name","Phone","Email","Dogs"];
             const rows = activeList.map(c => {
               const f = c.fields || {};
@@ -900,8 +985,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                 const daysSince = lastRes ? Math.floor((new Date(todayStr()+"T12:00:00") - new Date(lastRes.checkIn+"T12:00:00")) / 86400000) : "";
                 const totalSpent = (data.payments || []).filter(p => p.clientId === c.id).reduce((s,p) => s + (p.amount||0), 0);
                 return [...base, resCount, lastRes?.checkIn || "", daysSince, "$" + totalSpent.toFixed(2)];
-              } else if (activeTab === "cold") {
-                return [...base, c.lifecycle?.coldDate || "", c.lifecycle?.coldFrom || ""];
+              } else if (activeTab === "reclassified") {
+                return [...base, c.lifecycle?.reclassifiedReason || "", c.lifecycle?.reclassifiedDate || c.lifecycle?.coldDate || "", c.lifecycle?.reclassifiedFrom || c.lifecycle?.coldFrom || ""];
               }
               return base;
             });
@@ -928,23 +1013,24 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           </div>
         </div>;
 
-        const handleBulkCold = async () => {
+        const handleBulkReclassify = async () => {
           if (!bulkReason.trim()) return;
           setBulkProcessing(true);
           const today = todayStr();
+          const fromTab = activeTab === "lapsed" ? "Lapsed" : activeTab === "active" ? "Active Customers" : "Leads";
           const ids = activeList.map(c => c.id);
           const newClients = data.clients.map(c => {
             if (!ids.includes(c.id)) return c;
             return {
               ...c,
-              lifecycle: { ...(c.lifecycle || {}), cold: true, coldDate: today, coldFrom: activeTab === "lapsed" ? "lapsed" : "leads", coldReason: bulkReason.trim() },
-              lifecycleEvents: [...(c.lifecycleEvents || []), { event: "bulk_marked_cold", date: today, details: `Bulk marked as cold: ${bulkReason.trim()}` }],
+              lifecycle: { ...(c.lifecycle || {}), cold: true, coldDate: today, coldFrom: activeTab === "lapsed" ? "lapsed" : "leads", reclassifiedReason: bulkReason.trim(), reclassifiedDate: today, reclassifiedFrom: fromTab },
+              lifecycleEvents: [...(c.lifecycleEvents || []), { event: "bulk_reclassified", date: today, details: `Bulk reclassified from ${fromTab}: ${bulkReason.trim()}` }],
             };
           });
           await save({ ...data, clients: newClients });
           setShowBulkUpdate(false);
           setBulkProcessing(false);
-          addGlobalToast?.({ message: `${ids.length} clients marked as cold`, type: "success" });
+          addGlobalToast?.({ message: `${ids.length} clients reclassified`, type: "success" });
         };
 
         return (
@@ -952,7 +1038,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             <div style={{background:"#fff",borderRadius:16,padding:32,maxWidth:480,width:"90%",boxShadow:"0 20px 60px rgba(0,0,0,0.2)",animation:"filterFadeIn 0.2s ease-out"}} onClick={e=>e.stopPropagation()}>
               <h3 style={{margin:"0 0 4px",fontSize:18,fontWeight:800,color:C.text}}>Bulk Update</h3>
               <p style={{margin:"0 0 20px",fontSize:13,color:C.textSec}}>
-                This will mark <strong style={{color:C.dan}}>{activeList.length} filtered clients</strong> as Cold.
+                This will reclassify <strong style={{color:C.dan}}>{activeList.length} filtered clients</strong>.
               </p>
 
               <label style={{display:"block",fontSize:12,fontWeight:700,color:C.text,marginBottom:6}}>Reason <span style={{color:C.dan}}>*</span></label>
@@ -971,9 +1057,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                   style={{padding:"10px 20px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
                   Cancel
                 </button>
-                <button onClick={handleBulkCold} disabled={!bulkReason.trim() || bulkProcessing}
+                <button onClick={handleBulkReclassify} disabled={!bulkReason.trim() || bulkProcessing}
                   style={{padding:"10px 20px",borderRadius:8,border:"none",background:bulkReason.trim()?C.dan:"#ccc",color:"#fff",fontSize:13,fontWeight:700,cursor:bulkReason.trim()?"pointer":"not-allowed",fontFamily:"inherit",opacity:bulkProcessing?0.6:1,transition:"all 0.15s"}}>
-                  {bulkProcessing ? "Processing..." : `Mark ${activeList.length} as Cold`}
+                  {bulkProcessing ? "Processing..." : `Reclassify ${activeList.length} Clients`}
                 </button>
               </div>
             </div>
@@ -1475,7 +1561,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                     <div>{renderFollowUp(c, "conversion")}</div>
                     <div>{renderNotes(c, "conversion")}</div>
                     <div>{renderUpdatesLog(c, "conversion")}</div>
-                    <div>{renderColdBtn(c)}</div>
+                    <div>{renderReclassifyBtn(c)}</div>
                   </div>
                   {renderDogDetails(c)}
                   {expandedIgnite.has(c.id) && c.igniteData && (() => {
@@ -1811,7 +1897,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                     <div>{renderFollowUp(c, "conversion")}</div>
                     <div>{renderNotes(c, "conversion")}</div>
                     <div>{renderUpdatesLog(c, "conversion")}</div>
-                    <div>{renderColdBtn(c)}</div>
+                    <div>{renderReclassifyBtn(c)}</div>
                   </div>
                   {renderDogDetails(c)}
                   {isExp && updates.length > 0 && (
@@ -1869,7 +1955,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                     <div style={{fontSize:11}}>{s.lastRes ? <><span>{fmtDate(s.lastRes.checkIn)}</span></> : <span style={{color:C.textMut}}>—</span>}</div>
                     <div style={{fontSize:11,fontWeight:600}}>${(s.totalSpent||0).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:0})}</div>
                     <div style={{fontSize:11,fontWeight:600}}>{s.totalRes||0}</div>
-                    <div>{renderColdBtn(c)}</div>
+                    <div>{renderReclassifyBtn(c)}</div>
                   </div>
                   {renderDogDetails(c)}
                   {isExp && updates.length > 0 && (
@@ -1889,25 +1975,43 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
           </>;
         })()}
 
-        {activeTab === "cold" && (() => {
+        {activeTab === "reclassified" && (() => {
           const grid = getGrid();
+          const RECLASSIFY_REASONS = ["Unresponsive", "Uninterested", "Spam", "Other"];
+          const filteredReclassified = reclassifyReasonFilter.size > 0
+            ? displayedList.filter(c => reclassifyReasonFilter.has(c.lifecycle?.reclassifiedReason || "Other"))
+            : displayedList;
           return <>
+            {/* Reason filter pills */}
+            <div style={{display:"flex",gap:6,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,flexWrap:"wrap",alignItems:"center"}}>
+              <span style={{fontSize:11,fontWeight:700,color:C.textMut,marginRight:4}}>Filter:</span>
+              {RECLASSIFY_REASONS.map(reason => {
+                const colors = { "Unresponsive": C.warn, "Uninterested": C.dan, "Spam": "#9333EA", "Other": C.textSec };
+                const color = colors[reason] || C.textSec;
+                const on = reclassifyReasonFilter.has(reason);
+                return <button key={reason} onClick={() => setReclassifyReasonFilter(prev => { const n = new Set(prev); if (n.has(reason)) n.delete(reason); else n.add(reason); return n; })}
+                  style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on ? color : C.border}`,background:on ? color : "transparent",color:on ? "#fff" : C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{reason}</button>;
+              })}
+              {reclassifyReasonFilter.size > 0 && <button onClick={() => setReclassifyReasonFilter(new Set())} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:"0 2px",display:"flex",alignItems:"center"}} title="Clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+            </div>
             <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
               <div style={colHeaderStyle("name")} onClick={()=>handleSort("name")}>Client <SortIcon col="name"/></div>
               <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
               <div style={colHeaderStyle("dogCount")} onClick={()=>handleSort("dogCount")}>Dogs <SortIcon col="dogCount"/></div>
               <div style={colHeaderStyle("createdAt")} onClick={()=>handleSort("createdAt")}>Created <SortIcon col="createdAt"/></div>
-              <div>Source</div>
-              <div style={colHeaderStyle("coldDate")} onClick={()=>handleSort("coldDate")}>Date Cold <SortIcon col="coldDate"/></div>
+              <div>Reason</div>
+              <div style={colHeaderStyle("coldDate")} onClick={()=>handleSort("coldDate")}>Reclassified <SortIcon col="coldDate"/></div>
+              <div>Previous Stage</div>
               <div>Last Notes</div>
               <div></div>
             </div>
-            {displayedList.length === 0 ? (
-              <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No cold clients{search?" matching search":""}</div></div>
-            ) : displayedList.map(c => {
-              const rawFrom = c.lifecycle?.coldFrom || "leads";
-              const fromTab = (rawFrom === "lapsed" || rawFrom === "retention") ? "retention" : "conversion";
+            {filteredReclassified.length === 0 ? (
+              <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No reclassified clients{search || reclassifyReasonFilter.size > 0?" matching filters":""}</div></div>
+            ) : filteredReclassified.map(c => {
+              const rawFrom = c.lifecycle?.reclassifiedFrom || c.lifecycle?.coldFrom || "Leads";
+              const fromTab = (rawFrom === "lapsed" || rawFrom === "retention" || rawFrom === "Lapsed") ? "retention" : "conversion";
               const lastUpdate = c.lifecycle?.[fromTab]?.updates?.[0];
+              const reason = c.lifecycle?.reclassifiedReason || "Other";
               return (
                 <div key={c.id}>
                   <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,alignItems:"center",fontSize:12,transition:"background 0.1s"}}
@@ -1916,8 +2020,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                     <div style={{fontSize:11}}>{fmtPhone(c.fields.phone)}</div>
                     <div>{renderDogCount(c)}</div>
                     <div style={{fontSize:11,color:C.textSec}}>{c.createdAt ? new Date(c.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}) : "—"}</div>
-                    <div>{renderSource(c)}</div>
-                    <div style={{fontSize:11}}>{c.lifecycle?.coldDate ? fmtDate(c.lifecycle.coldDate) : "—"}</div>
+                    <div>{renderReasonBadge(reason)}</div>
+                    <div style={{fontSize:11}}>{(c.lifecycle?.reclassifiedDate || c.lifecycle?.coldDate) ? fmtDate(c.lifecycle.reclassifiedDate || c.lifecycle.coldDate) : "—"}</div>
+                    <div style={{fontSize:11,color:C.textSec}}>{rawFrom}</div>
                     <div style={{fontSize:11,color:C.text,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{lastUpdate?.notes || <span style={{color:C.textMut}}>—</span>}</div>
                     <div>{renderReviveBtn(c)}</div>
                   </div>
@@ -2022,6 +2127,40 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
             <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
               <Btn size="sm" variant="ghost" onClick={()=>{setLogPopover(null);setLogNotes("");setLogDate("");}}>Cancel</Btn>
               <Btn size="sm" onClick={handleSaveLog}>{logPopover.isRevive ? "Revive" : "Save Log"}</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reclassify Modal */}
+      {reclassifyModal && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)"}}
+          onClick={() => { setReclassifyModal(null); setReclassifyReason(""); }}>
+          <div onClick={e => e.stopPropagation()} style={{background:C.surface,borderRadius:16,padding:"28px 32px",maxWidth:420,width:"90%",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
+            <h3 style={{margin:"0 0 4px",fontSize:18,fontWeight:800,color:C.text}}>Reclassify Client</h3>
+            <p style={{margin:"0 0 20px",fontSize:13,color:C.textSec}}>Select a reason for reclassifying this client.</p>
+            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:24}}>
+              {["Unresponsive", "Uninterested", "Spam", "Other"].map(reason => {
+                const colors = { "Unresponsive": C.warn, "Uninterested": C.dan, "Spam": "#9333EA", "Other": C.textSec };
+                const color = colors[reason];
+                const on = reclassifyReason === reason;
+                return (
+                  <button key={reason} onClick={() => setReclassifyReason(reason)}
+                    style={{padding:"8px 18px",borderRadius:10,border:`2px solid ${on ? color : C.border}`,background:on ? color : "transparent",color:on ? "#fff" : C.text,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",minWidth:100}}>
+                    {reason}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <button onClick={() => { setReclassifyModal(null); setReclassifyReason(""); }}
+                style={{padding:"10px 20px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
+                Cancel
+              </button>
+              <button onClick={confirmReclassify} disabled={!reclassifyReason}
+                style={{padding:"10px 20px",borderRadius:8,border:"none",background:reclassifyReason ? C.dan : "#ccc",color:"#fff",fontSize:13,fontWeight:700,cursor:reclassifyReason ? "pointer" : "not-allowed",fontFamily:"inherit",transition:"all 0.15s"}}>
+                Reclassify
+              </button>
             </div>
           </div>
         </div>
