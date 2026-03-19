@@ -266,22 +266,58 @@ function suggestBowlSize(weight: number | null): string {
   return "Large";
 }
 
-async function computeRoomCleaning(supabase: any, bohData: any, today: string): Promise<any> {
+async function computeRoomCleaning(supabase: any, bohData: any, locationId: string, today: string): Promise<any> {
+  // ─── Step 1: Build room name lookup from BOH ─────────────────────────
+  // BOH checking_out = dogs HERE now, leaving today (has run_name = actual room)
+  // BOH checking_in = dogs arriving today, not yet checked in (may have run_name)
+  // Neither list includes multi-night dogs staying past today.
+  const bohRoomMap: Record<string, { runName: string; areaName: string }> = {};
   const checkingOut = bohData?.data?.checking_out || [];
+  const checkingIn = bohData?.data?.checking_in || [];
+  for (const dog of [...checkingOut, ...checkingIn]) {
+    const animalId = String(dog.animal_id || dog.id || "");
+    if (animalId && dog.run_name) {
+      bohRoomMap[animalId] = { runName: dog.run_name, areaName: dog.area_name || "" };
+    }
+  }
+
+  // ─── Step 2: Get ALL active boarding reservations from Supabase ──────
+  // These are dogs currently checked in (have check_in_date, no check_out_date, not cancelled)
+  // This captures mid-stay dogs that BOH misses.
+  const { data: activeReservations } = await supabase
+    .from("gingr_reservations")
+    .select("gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, raw_data, room_assignment")
+    .eq("location_id", locationId)
+    .not("check_in_date", "is", null)
+    .is("check_out_date", null)
+    .is("cancelled_date", null);
+
   const rooms: RoomEntry[] = [];
+  const seenAnimals = new Set<string>();
 
-  for (const dog of checkingOut) {
-    const runName = dog.run_name || "";
-    const typeName = dog.type || "";
-    const areaName = dog.area_name || "";
-    const startDate = (dog.start_date || "").split(" ")[0];
-    const endDate = (dog.end_date || "").split(" ")[0];
+  // ─── Step 3: Process all active reservations ────────────────────────
+  for (const res of activeReservations || []) {
+    const typeName = res.reservation_type_name || "";
+    const tLower = typeName.toLowerCase();
 
-    // Skip daycare dogs (no room)
-    if (typeName.toLowerCase().startsWith("daycare")) continue;
+    // Skip pure daycare (no room needed)
+    if (tLower.startsWith("daycare") || tLower.startsWith("day care")) continue;
 
-    const isDayBoarding = typeName.toLowerCase().startsWith("day boarding");
+    const animalId = res.animal_gingr_id ? String(res.animal_gingr_id) : "";
+    if (animalId && seenAnimals.has(animalId)) continue;
+    if (animalId) seenAnimals.add(animalId);
+
+    const isDayBoarding = tLower.includes("day boarding");
     const roomType = parseRoomType(typeName);
+
+    // Get dates — Supabase stores as TIMESTAMPTZ
+    const startDate = res.start_date ? res.start_date.split("T")[0] : today;
+    const endDate = res.end_date ? res.end_date.split("T")[0] : today;
+
+    // Room name: room_assignment (server-side) → BOH lookup → raw_data → generate from type
+    const bohInfo = animalId ? bohRoomMap[animalId] : null;
+    const runName = res.room_assignment || bohInfo?.runName || res.raw_data?.run_name || "";
+    const areaName = bohInfo?.areaName || res.raw_data?.area_name || "";
 
     // Determine cleaning type
     let cleaningType = "refresh";
@@ -292,11 +328,11 @@ async function computeRoomCleaning(supabase: any, bohData: any, today: string): 
       cleaningType = "disinfect";
       needsDisinfect = true;
     } else if (endDate === today) {
-      // Last day — full disinfect
+      // Last day — full disinfect needed
       cleaningType = "disinfect";
       needsDisinfect = true;
     } else if (startDate === today) {
-      // First day — just refresh
+      // First day — refresh
       cleaningType = "refresh";
       needsRefresh = true;
     } else {
@@ -309,19 +345,64 @@ async function computeRoomCleaning(supabase: any, bohData: any, today: string): 
     const startD = new Date(startDate + "T12:00:00");
     const todayD = new Date(today + "T12:00:00");
     const endD = new Date(endDate + "T12:00:00");
-    const dayNumber = Math.max(
-      1,
-      Math.round((todayD.getTime() - startD.getTime()) / 86400000) + 1,
-    );
-    const totalNights = Math.max(
-      1,
-      Math.round((endD.getTime() - startD.getTime()) / 86400000),
-    );
+    const dayNumber = Math.max(1, Math.round((todayD.getTime() - startD.getTime()) / 86400000) + 1);
+    const totalNights = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
 
     rooms.push({
       room: runName || `${roomType} (unassigned)`,
       roomType,
       areaName,
+      dogName: res.animal_name || "",
+      ownerLastName: res.owner_last_name || "",
+      reservationType: typeName,
+      checkIn: startDate,
+      checkOut: endDate,
+      dayNumber,
+      totalNights,
+      cleaningType,
+      needsDisinfect,
+      needsRefresh,
+      needsSetup: false,
+      setupReason: null,
+      suggestedBowlSize: null,
+      dogWeight: null,
+    });
+  }
+
+  // ─── Step 4: Also add BOH checking_out dogs not already in Supabase ──
+  // (edge case: BOH might have dogs that haven't synced to Supabase yet)
+  for (const dog of checkingOut) {
+    const animalId = String(dog.animal_id || dog.id || "");
+    if (animalId && seenAnimals.has(animalId)) continue;
+    if (animalId) seenAnimals.add(animalId);
+
+    const typeName = dog.type || "";
+    if (typeName.toLowerCase().startsWith("daycare")) continue;
+
+    const isDayBoarding = typeName.toLowerCase().startsWith("day boarding");
+    const roomType = parseRoomType(typeName);
+    const startDate = (dog.start_date || "").split(" ")[0];
+    const endDate = (dog.end_date || "").split(" ")[0];
+
+    let cleaningType = "refresh";
+    let needsDisinfect = false;
+    let needsRefresh = false;
+
+    if (isDayBoarding) { cleaningType = "disinfect"; needsDisinfect = true; }
+    else if (endDate === today) { cleaningType = "disinfect"; needsDisinfect = true; }
+    else if (startDate === today) { cleaningType = "refresh"; needsRefresh = true; }
+    else { cleaningType = "refresh"; needsRefresh = true; }
+
+    const startD = new Date(startDate + "T12:00:00");
+    const todayD = new Date(today + "T12:00:00");
+    const endD = new Date(endDate + "T12:00:00");
+    const dayNumber = Math.max(1, Math.round((todayD.getTime() - startD.getTime()) / 86400000) + 1);
+    const totalNights = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
+
+    rooms.push({
+      room: dog.run_name || `${roomType} (unassigned)`,
+      roomType,
+      areaName: dog.area_name || "",
       dogName: dog.a_first || "",
       ownerLastName: dog.o_last || "",
       reservationType: typeName,
@@ -339,11 +420,12 @@ async function computeRoomCleaning(supabase: any, bohData: any, today: string): 
     });
   }
 
-  // ─── Setup detection ─────────────────────────────────────────────────
+  // ─── Step 5: Setup detection ─────────────────────────────────────────
   // Query today's reservations from Supabase for evaluation, dayboarding, and first-time daycare
   const { data: todayReservations } = await supabase
     .from("gingr_reservations")
     .select("gingr_id, animal_gingr_id, animal_name, owner_last_name, reservation_type_name, start_date, raw_data")
+    .eq("location_id", locationId)
     .gte("start_date", today)
     .lt("start_date", addDays(today, 1))
     .is("cancelled_date", null);
@@ -371,6 +453,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, today: string): 
         .from("gingr_reservations")
         .select("gingr_id", { count: "exact", head: true })
         .eq("animal_gingr_id", res.animal_gingr_id)
+        .eq("location_id", locationId)
         .ilike("reservation_type_name", "%daycare%")
         .lt("start_date", today)
         .is("cancelled_date", null);
@@ -380,8 +463,9 @@ async function computeRoomCleaning(supabase: any, bohData: any, today: string): 
     }
 
     if (reason) {
-      // Try to find room assignment from raw_data (run_name from BOH)
-      const runName = res.raw_data?.run_name || null;
+      const animalId = res.animal_gingr_id ? String(res.animal_gingr_id) : "";
+      const bohInfo = animalId ? bohRoomMap[animalId] : null;
+      const runName = bohInfo?.runName || res.raw_data?.run_name || null;
       setupDogs.push({
         animalGingrId: res.animal_gingr_id,
         dogName: res.animal_name || "",
@@ -406,12 +490,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, today: string): 
     }
   }
 
-  // Match setup dogs to rooms (by room name from BOH data)
-  // Build a map of room name → room entry index for quick lookup
-  const roomIndexMap = new Map<string, number>();
-  rooms.forEach((r, i) => roomIndexMap.set(r.room, i));
-
-  // Also try matching by dog name in existing rooms
+  // Match setup dogs to rooms (by dog name)
   const dogNameRoomMap = new Map<string, number>();
   rooms.forEach((r, i) => {
     if (r.dogName) dogNameRoomMap.set(r.dogName.toLowerCase(), i);
@@ -422,9 +501,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, today: string): 
     const weight = weightMap[sd.animalGingrId] ?? null;
     const bowlSize = suggestBowlSize(weight);
 
-    // Try to match to an existing room entry
     let matched = false;
-    // 1. Match by dog name
     const nameKey = sd.dogName.toLowerCase();
     if (dogNameRoomMap.has(nameKey)) {
       const idx = dogNameRoomMap.get(nameKey)!;
@@ -440,7 +517,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, today: string): 
     }
   }
 
-  // Add unmatched setup dogs as new room entries (e.g. first-time daycare dogs without a room)
+  // Add unmatched setup dogs as new room entries
   for (const sd of unmatchedSetups) {
     const weight = weightMap[sd.animalGingrId] ?? null;
     rooms.push({
@@ -464,22 +541,20 @@ async function computeRoomCleaning(supabase: any, bohData: any, today: string): 
     });
   }
 
-  // Sort by area, then room name
+  // Sort by room type, then room name
   rooms.sort((a, b) => {
-    if (a.areaName !== b.areaName) return a.areaName.localeCompare(b.areaName);
-    return a.room.localeCompare(b.room);
+    if (a.roomType !== b.roomType) return a.roomType.localeCompare(b.roomType);
+    return a.room.localeCompare(b.room, undefined, { numeric: true });
   });
 
-  const totalRefresh = rooms.filter((r) => r.cleaningType === "refresh").length;
-  const totalDisinfect = rooms.filter(
-    (r) => r.cleaningType === "disinfect",
-  ).length;
+  const totalRefresh = rooms.filter((r) => r.needsRefresh).length;
+  const totalDisinfect = rooms.filter((r) => r.needsDisinfect).length;
   const totalSetups = rooms.filter((r) => r.needsSetup).length;
 
   return {
     rooms,
     summary: {
-      totalOccupied: rooms.length,
+      totalOccupied: rooms.filter((r) => r.cleaningType !== "none").length,
       totalRefresh,
       totalDisinfect,
       totalSetups,
@@ -871,7 +946,7 @@ Deno.serve(async (req: Request) => {
     // ─── Compute all checklist items ───────────────────────────────────
 
     // 1. Room Cleaning
-    const roomCleaning = await computeRoomCleaning(supabase, bohResult, today);
+    const roomCleaning = await computeRoomCleaning(supabase, bohResult, locationId, today);
 
     // 2. Private Play
     const privatePlay = computePrivatePlay(reservations);

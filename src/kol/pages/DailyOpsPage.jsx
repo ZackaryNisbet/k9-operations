@@ -153,6 +153,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, disinfectBy: userName } }));
     } else if (field === "setupDone" && val === true) {
       setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, setupDoneBy: userName } }));
+    } else if (field === "asNeeded" && val === true) {
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededBy: userName } }));
+    } else if (field === "asNeededDone" && val === true) {
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededDoneBy: userName } }));
     } else if (field === "setupBowl") {
       setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val } }));
     } else {
@@ -306,63 +310,168 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const prevEntry = allOps.find(e => e.id === prevEntryId);
     const prevItems = prevEntry ? (prevEntry.items || {}) : {};
 
-    // Figure out which rooms needed disinfect yesterday
-    const prevBoardingCheckedOut = (data.reservations || []).filter(r => r.type === "boarding" && r.checkOut === prevDate && r.status === "checked-out");
-    const prevBoardingToday = (data.reservations || []).filter(r => r.type === "boarding" && r.checkIn <= prevDate && r.checkOut >= prevDate && (r.status === "checked-in" || r.status === "upcoming" || r.status === "checked-out"));
-
-    // Build a map: room → { missedDisinfect }
+    // Previous-day missed disinfect from computed_items
+    const prevComputedRooms = prevEntry?.computed_items?.rooms || [];
     const missedMap = {};
-    Object.keys(allRooms).forEach(rt => {
-      (allRooms[rt] || []).forEach(rm => {
-        const prevRi = prevItems[rm] || {};
-        const prevCoRes = prevBoardingCheckedOut.find(r => r.room === rm);
-        const prevActiveRes = prevBoardingToday.find(r => r.room === rm);
-        const prevIsLastDay = prevActiveRes && prevActiveRes.checkOut === prevDate;
-        const prevNeededDisinfect = !!prevCoRes || !!(prevActiveRes && prevIsLastDay);
-
-        let missedDisinfect = false;
-
-        // Disinfect missed: was needed yesterday but not done
-        if (prevNeededDisinfect && !prevRi.disinfect) {
-          missedDisinfect = true;
-        }
-
-        if (missedDisinfect) {
-          missedMap[rm] = { missedDisinfect };
+    if (prevComputedRooms.length > 0) {
+      prevComputedRooms.forEach(cr => {
+        if (cr.needsDisinfect && !(prevItems[cr.room]?.disinfect)) {
+          missedMap[cr.room] = { missedDisinfect: true };
         }
       });
-    });
+    } else {
+      // Fallback: client-side missed detection
+      const prevBoardingCheckedOut = (data.reservations || []).filter(r => r.type === "boarding" && r.checkOut === prevDate && r.status === "checked-out");
+      const prevBoardingToday = (data.reservations || []).filter(r => r.type === "boarding" && r.checkIn <= prevDate && r.checkOut >= prevDate && (r.status === "checked-in" || r.status === "upcoming" || r.status === "checked-out"));
+      Object.keys(allRooms).forEach(rt => {
+        (allRooms[rt] || []).forEach(rm => {
+          const prevRi = prevItems[rm] || {};
+          const prevCoRes = prevBoardingCheckedOut.find(r => r.room === rm);
+          const prevActiveRes = prevBoardingToday.find(r => r.room === rm);
+          const prevIsLastDay = prevActiveRes && prevActiveRes.checkOut === prevDate;
+          const prevNeededDisinfect = !!prevCoRes || !!(prevActiveRes && prevIsLastDay);
+          if (prevNeededDisinfect && !prevRi.disinfect) {
+            missedMap[rm] = { missedDisinfect: true };
+          }
+        });
+      });
+    }
 
-    // ─── Setup data from computed_items ───
+    // ─── Server-computed room data (primary source) ───
     const rcEntry = allOps.find(e => e.id === `ops_room_cleaning_${viewDate}`);
     const computedRooms = rcEntry?.computed_items?.rooms || [];
-    const setupRoomMap = {};
-    computedRooms.forEach(cr => {
-      if (cr.needsSetup) {
-        setupRoomMap[cr.dogName?.toLowerCase()] = cr;
-      }
-    });
+    const hasComputedData = computedRooms.length > 0;
 
-    // Count occupied rooms and rooms needing action
+    // ─── Compute stats from server data or client-side fallback ───
     let totalOccupied = 0, totalRefresh = 0, totalDisinfect = 0, doneRefresh = 0, doneDisinfect = 0;
-    Object.keys(allRooms).forEach(rt => {
-      (allRooms[rt] || []).forEach(rm => {
-        const ri = roomItems[rm] || {};
-        const activeRes = boardingToday.find(r => r.room === rm);
-        const coRes = boardingCheckedOut.find(r => r.room === rm);
-        if (activeRes || coRes) totalOccupied++;
-        const notFirst = activeRes && activeRes.checkIn < viewDate;
-        const notLast = activeRes && activeRes.checkOut > viewDate;
-        if (activeRes && notFirst && notLast) { totalRefresh++; if (ri.refresh) doneRefresh++; }
-        if (coRes) { totalDisinfect++; if (ri.disinfect) doneDisinfect++; }
+    let totalSetups = 0, doneSetups = 0;
+
+    if (hasComputedData) {
+      // Use server-computed data
+      totalOccupied = rcEntry?.computed_items?.summary?.totalOccupied || computedRooms.length;
+      computedRooms.forEach(cr => {
+        const ri = roomItems[cr.room] || {};
+        if (cr.needsRefresh) { totalRefresh++; if (ri.refresh) doneRefresh++; }
+        if (cr.needsDisinfect) { totalDisinfect++; if (ri.disinfect) doneDisinfect++; }
+        if (cr.needsSetup) { totalSetups++; if (ri.setupDone) doneSetups++; }
       });
-    });
+    } else {
+      // Fallback: client-side computation
+      Object.keys(allRooms).forEach(rt => {
+        (allRooms[rt] || []).forEach(rm => {
+          const ri = roomItems[rm] || {};
+          const activeRes = boardingToday.find(r => r.room === rm);
+          const coRes = boardingCheckedOut.find(r => r.room === rm);
+          if (activeRes || coRes) totalOccupied++;
+          const notFirst = activeRes && activeRes.checkIn < viewDate;
+          const notLast = activeRes && activeRes.checkOut > viewDate;
+          if (activeRes && notFirst && notLast) { totalRefresh++; if (ri.refresh) doneRefresh++; }
+          if (coRes) { totalDisinfect++; if (ri.disinfect) doneDisinfect++; }
+        });
+      });
+    }
     const totalNeeded = totalRefresh + totalDisinfect;
     const totalDone = doneRefresh + doneDisinfect;
 
-    // Setup counts from computed_items
-    const totalSetups = computedRooms.filter(cr => cr.needsSetup).length;
-    const doneSetups = computedRooms.filter(cr => cr.needsSetup && roomItems[cr.room]?.setupDone).length;
+    // ─── Group computed rooms by roomType for display ───
+    const groupedRooms = {};
+    if (hasComputedData) {
+      computedRooms.forEach(cr => {
+        const key = cr.roomType || cr.areaName || "Other";
+        if (!groupedRooms[key]) groupedRooms[key] = [];
+        groupedRooms[key].push(cr);
+      });
+    }
+
+    // Count "as needed" items
+    const asNeededCount = Object.values(roomItems).filter(ri => ri.asNeeded).length;
+    const asNeededDoneCount = Object.values(roomItems).filter(ri => ri.asNeeded && ri.asNeededDone).length;
+
+    const bowlSizeOptions = ["Small", "Medium", "Large"];
+    const gridCols = "minmax(140px, 1.2fr) 1fr 1fr minmax(120px, 1fr) minmax(100px, auto)";
+
+    // ─── Render a single room row (shared by both computed and fallback paths) ───
+    const renderRoomRow = (rm, ri, crData, i, totalRows) => {
+      const needsRefresh = crData ? crData.needsRefresh : false;
+      const needsDisinfect = crData ? crData.needsDisinfect : false;
+      const hasSetup = crData ? crData.needsSetup : false;
+      const isOccupied = !!crData;
+      const aDog = crData ? crData.dogName : null;
+      const aOwner = crData ? crData.ownerLastName : null;
+      const selectedBowl = ri.setupBowl || (crData?.suggestedBowlSize) || "";
+
+      return (
+        <div key={rm} style={{ display: "grid", gridTemplateColumns: gridCols, padding: "8px 12px", borderBottom: i < totalRows - 1 ? `1px solid ${C.border}` : "none", alignItems: "center" }}>
+          <div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{rm}</span>
+            {isOccupied ? <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: C.pri, marginTop: 1 }}>{aDog}</div>
+              {aOwner && <div style={{ fontSize: 10, color: C.textMut }}>{aOwner}</div>}
+              {crData && crData.checkIn === viewDate && crData.checkOut !== viewDate && <div style={{ fontSize: 9, color: C.acc, fontWeight: 600, marginTop: 1 }}>Check-in day</div>}
+              {crData && crData.checkOut === viewDate && crData.cleaningType !== "disinfect" && <div style={{ fontSize: 9, color: "#F59E0B", fontWeight: 600, marginTop: 1 }}>Checkout day</div>}
+              {crData && crData.cleaningType === "disinfect" && <div style={{ fontSize: 9, color: C.dan, fontWeight: 600, marginTop: 1 }}>Checked out</div>}
+              {needsRefresh && crData && <div style={{ fontSize: 9, color: C.textMut, marginTop: 1 }}>Day {crData.dayNumber} of {crData.totalNights}</div>}
+              {missedMap[rm]?.missedDisinfect && <div style={{ fontSize: 10, fontWeight: 700, color: "#DC2626", marginTop: 2 }}>⚠ Full disinfect missed</div>}
+            </div> : <div>
+              {missedMap[rm]?.missedDisinfect ? <div>
+                <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic", marginTop: 1 }}>Vacant</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#DC2626", marginTop: 2 }}>⚠ Full disinfect missed</div>
+              </div> : <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic", marginTop: 1 }}>Vacant</div>}
+            </div>}
+          </div>
+          <div style={{ textAlign: "center" }}>
+            {needsRefresh ? <div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                <input type="checkbox" checked={!!ri.refresh} disabled={isLocked} onChange={e => toggleItem(rm, "refresh", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.suc }} />
+                <span style={{ fontSize: 11, fontWeight: 700, color: ri.refresh ? C.suc : C.pri }}>{ri.refresh ? "Done" : "Required"}</span>
+              </div>
+              {ri.refresh && ri.refreshBy && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.refreshBy}</div>}
+            </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
+          </div>
+          <div style={{ textAlign: "center" }}>
+            {needsDisinfect ? <div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                <input type="checkbox" checked={!!ri.disinfect} disabled={isLocked} onChange={e => toggleItem(rm, "disinfect", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.dan }} />
+                <span style={{ fontSize: 11, fontWeight: 700, color: ri.disinfect ? C.suc : C.dan }}>{ri.disinfect ? "Done" : "Required"}</span>
+              </div>
+              {ri.disinfect && ri.disinfectBy && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.disinfectBy}</div>}
+            </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
+          </div>
+          <div style={{ textAlign: "center" }}>
+            {hasSetup ? <div>
+              <div style={{ display: "inline-block", padding: "2px 6px", borderRadius: 4, background: "#14532D", color: "#fff", fontSize: 10, fontWeight: 700, fontFamily: "Outfit, sans-serif", marginBottom: 4 }}>{crData.setupReason}</div>
+              <div style={{ fontSize: 10, color: C.textSec, marginBottom: 4 }}>
+                {crData.dogWeight != null ? `${crData.dogWeight} lbs` : "No weight"} — {crData.suggestedBowlSize}
+              </div>
+              <select
+                value={selectedBowl}
+                disabled={isLocked}
+                onChange={e => toggleItem(rm, "setupBowl", e.target.value)}
+                style={{ fontSize: 11, padding: "2px 4px", borderRadius: 4, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontFamily: "Outfit, sans-serif", marginBottom: 4, width: "100%" }}
+              >
+                <option value="">Bowl size…</option>
+                {bowlSizeOptions.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                <input type="checkbox" checked={!!ri.setupDone} disabled={isLocked} onChange={e => toggleItem(rm, "setupDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: "#84CC16" }} />
+                <span style={{ fontSize: 10, fontWeight: 700, color: ri.setupDone ? "#84CC16" : C.textMut }}>{ri.setupDone ? "Complete" : "Mark done"}</span>
+              </div>
+              {ri.setupDone && ri.setupDoneBy && <div style={{ fontSize: 9, color: C.textMut, marginTop: 2 }}>{ri.setupDoneBy}</div>}
+            </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
+          </div>
+          <div style={{ textAlign: "center" }}>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                <input type="checkbox" checked={!!ri.asNeeded} disabled={isLocked} onChange={e => toggleItem(rm, "asNeeded", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.acc }} />
+                {ri.asNeeded && <input type="checkbox" checked={!!ri.asNeededDone} disabled={isLocked} onChange={e => toggleItem(rm, "asNeededDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.suc }} title="Mark done" />}
+              </div>
+              {ri.asNeeded && ri.asNeededBy && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.asNeededBy}</div>}
+            </div>
+          </div>
+        </div>
+      );
+    };
+
     return (
       <div>
         {/* Missed cleaning alert banner */}
@@ -393,6 +502,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
             <span style={{ fontSize: 20, fontWeight: 800, color: "#14532D" }}>{doneSetups}/{totalSetups}</span>
             <span style={{ fontSize: 12, color: C.textSec }}>Setups Done</span>
           </div>}
+          {asNeededCount > 0 && <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
+            <span style={{ fontSize: 20, fontWeight: 800, color: C.acc }}>{asNeededDoneCount}/{asNeededCount}</span>
+            <span style={{ fontSize: 12, color: C.textSec }}>As Needed Done</span>
+          </div>}
         </div>
         {totalNeeded > 0 && <div style={{ marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -402,7 +515,29 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
             <span style={{ fontSize: 13, fontWeight: 600, color: totalDone === totalNeeded ? C.suc : C.text }}>{totalDone}/{totalNeeded}</span>
           </div>
         </div>}
-        {Object.keys(allRooms).map(rt => {
+        {/* ─── Server-computed room data (primary path) ─── */}
+        {hasComputedData ? Object.keys(groupedRooms).map(rt => {
+          const rooms = groupedRooms[rt];
+          return (
+            <div key={rt} style={{ marginBottom: 20 }}>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>{rt} <Badge color="default" size="sm">{rooms.length} rooms</Badge></h3>
+              <Card>
+                <div style={{ display: "grid", gridTemplateColumns: gridCols, borderBottom: `2px solid ${C.border}`, padding: "8px 12px", background: C.surfaceHover }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>ROOM</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>ROOM REFRESH</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>FULL DISINFECT</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#14532D", textAlign: "center" }}>SETUPS</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, textAlign: "center" }}>AS NEEDED</div>
+                </div>
+                {rooms.map((cr, i) => {
+                  const ri = roomItems[cr.room] || {};
+                  return renderRoomRow(cr.room, ri, cr, i, rooms.length);
+                })}
+              </Card>
+            </div>
+          );
+        }) : /* ─── Fallback: client-side room data ─── */
+        Object.keys(allRooms).map(rt => {
           const rooms = allRooms[rt] || [];
           if (!rooms.length) return null;
           const occupiedCount = rooms.filter(rm => boardingToday.find(r => r.room === rm) || boardingCheckedOut.find(r => r.room === rm)).length;
@@ -410,101 +545,23 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
             <div key={rt} style={{ marginBottom: 20 }}>
               <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>{rt} <Badge color="default" size="sm">{occupiedCount}/{rooms.length} occupied</Badge></h3>
               <Card>
-                <div style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 1fr 1fr minmax(140px, auto)", borderBottom: `2px solid ${C.border}`, padding: "8px 12px", background: C.surfaceHover }}>
+                <div style={{ display: "grid", gridTemplateColumns: gridCols, borderBottom: `2px solid ${C.border}`, padding: "8px 12px", background: C.surfaceHover }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>ROOM</div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>ROOM REFRESH</div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>FULL DISINFECT</div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#14532D", textAlign: "center" }}>SETUPS</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, textAlign: "center" }}>AS NEEDED</div>
                 </div>
                 {rooms.map((rm, i) => {
                   const ri = roomItems[rm] || {};
-                  const activeRes = boardingToday.find(r => r.room === rm);
-                  const coRes = boardingCheckedOut.find(r => r.room === rm);
-                  const notFirst = activeRes && activeRes.checkIn < viewDate;
-                  const notLast = activeRes && activeRes.checkOut > viewDate;
-                  const isFirstDay = activeRes && activeRes.checkIn === viewDate;
-                  const isLastDay = activeRes && activeRes.checkOut === viewDate;
-                  const needsRefresh = !!(activeRes && notFirst && notLast);
-                  const needsDisinfect = !!(activeRes && isLastDay) || !!coRes;
-                  const canDisinfect = !!coRes;
-                  const currentRes = activeRes || coRes;
-                  const aDog = currentRes ? dogName(currentRes.dogId) : null;
-                  const aOwner = currentRes ? (currentRes._ownerName || ownerName(currentRes.clientId)) : null;
-                  const isOccupied = !!currentRes;
-                  // Checkout time: actual if checked out, or scheduled if it's checkout day
-                  const coTimeDisplay = coRes ? fmtTimeShort(coRes.checkOutTime) : (isLastDay && activeRes) ? fmtTimeShort(activeRes.scheduledCheckOutTime) : null;
-                  // Setup data: match by dog name from computed_items
-                  const setupData = aDog ? setupRoomMap[aDog.toLowerCase()] : null;
-                  const hasSetup = !!setupData;
-                  const bowlSizeOptions = ["Small", "Medium", "Large"];
-                  const selectedBowl = ri.setupBowl || (setupData?.suggestedBowlSize) || "";
-                  return (
-                    <div key={rm} style={{ display: "grid", gridTemplateColumns: "minmax(140px, 1fr) 1fr 1fr minmax(140px, auto)", padding: "8px 12px", borderBottom: i < rooms.length - 1 ? `1px solid ${C.border}` : "none", alignItems: "center" }}>
-                      <div>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{rm}</span>
-                        {isOccupied ? <div>
-                          <div style={{ fontSize: 11, fontWeight: 600, color: C.pri, marginTop: 1 }}>{aDog}</div>
-                          {aOwner && <div style={{ fontSize: 10, color: C.textMut }}>{aOwner}</div>}
-                          {isFirstDay && !isLastDay && <div style={{ fontSize: 9, color: C.acc, fontWeight: 600, marginTop: 1 }}>Check-in day</div>}
-                          {isLastDay && !canDisinfect && <div style={{ fontSize: 9, color: "#F59E0B", fontWeight: 600, marginTop: 1 }}>{coTimeDisplay ? `Checkout ${coTimeDisplay}` : "Checkout day"}</div>}
-                          {canDisinfect && <div style={{ fontSize: 9, color: C.dan, fontWeight: 600, marginTop: 1 }}>{coRes.checkOutTime ? `Checked out ${fmtTimeShort(coRes.checkOutTime)}` : "Checked out"}</div>}
-                          {needsRefresh && <div style={{ fontSize: 9, color: C.textMut, marginTop: 1 }}>Day {Math.ceil((new Date(viewDate + "T12:00:00") - new Date(activeRes.checkIn + "T12:00:00")) / 86400000)} of {Math.ceil((new Date(activeRes.checkOut + "T12:00:00") - new Date(activeRes.checkIn + "T12:00:00")) / 86400000)}</div>}
-                          {missedMap[rm]?.missedDisinfect && <div style={{ fontSize: 10, fontWeight: 700, color: "#DC2626", marginTop: 2 }}>⚠ Full disinfect missed</div>}
-                        </div> : <div>
-                          {missedMap[rm]?.missedDisinfect ? <div>
-                            <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic", marginTop: 1 }}>Vacant</div>
-                            {missedMap[rm]?.missedDisinfect && <div style={{ fontSize: 10, fontWeight: 700, color: "#DC2626", marginTop: 2 }}>⚠ Full disinfect missed</div>}
-                          </div> : <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic", marginTop: 1 }}>Vacant</div>}
-                        </div>}
-                      </div>
-                      <div style={{ textAlign: "center" }}>
-                        {needsRefresh ? <div>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                            <input type="checkbox" checked={!!ri.refresh} disabled={isLocked} onChange={e => toggleItem(rm, "refresh", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.suc }} />
-                            <span style={{ fontSize: 11, fontWeight: 700, color: ri.refresh ? C.suc : C.pri }}>{ri.refresh ? "Done" : "Required"}</span>
-                          </div>
-                          {ri.refresh && ri.refreshBy && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.refreshBy}</div>}
-                        </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
-                      </div>
-                      <div style={{ textAlign: "center" }}>
-                        {needsDisinfect ? <div>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                            <input type="checkbox" checked={!!ri.disinfect} disabled={isLocked} onChange={e => toggleItem(rm, "disinfect", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.dan }} />
-                            <span style={{ fontSize: 11, fontWeight: 700, color: ri.disinfect ? C.suc : C.dan }}>{ri.disinfect ? "Done" : "Required"}</span>
-                          </div>
-                          {ri.disinfect && ri.disinfectBy && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.disinfectBy}</div>}
-                        </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
-                      </div>
-                      <div style={{ textAlign: "center" }}>
-                        {hasSetup ? <div>
-                          <div style={{ display: "inline-block", padding: "2px 6px", borderRadius: 4, background: "#14532D", color: "#fff", fontSize: 10, fontWeight: 700, fontFamily: "Outfit, sans-serif", marginBottom: 4 }}>{setupData.setupReason}</div>
-                          <div style={{ fontSize: 10, color: C.textSec, marginBottom: 4 }}>
-                            {setupData.dogWeight != null ? `${setupData.dogWeight} lbs` : "No weight"} — {setupData.suggestedBowlSize}
-                          </div>
-                          <select
-                            value={selectedBowl}
-                            disabled={isLocked}
-                            onChange={e => toggleItem(rm, "setupBowl", e.target.value)}
-                            style={{ fontSize: 11, padding: "2px 4px", borderRadius: 4, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontFamily: "Outfit, sans-serif", marginBottom: 4, width: "100%" }}
-                          >
-                            <option value="">Bowl size…</option>
-                            {bowlSizeOptions.map(s => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                            <input type="checkbox" checked={!!ri.setupDone} disabled={isLocked} onChange={e => toggleItem(rm, "setupDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: "#84CC16" }} />
-                            <span style={{ fontSize: 10, fontWeight: 700, color: ri.setupDone ? "#84CC16" : C.textMut }}>{ri.setupDone ? "Complete" : "Mark done"}</span>
-                          </div>
-                          {ri.setupDone && ri.setupDoneBy && <div style={{ fontSize: 9, color: C.textMut, marginTop: 2 }}>{ri.setupDoneBy}</div>}
-                        </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
-                      </div>
-                    </div>
-                  );
+                  return renderRoomRow(rm, ri, null, i, rooms.length);
                 })}
               </Card>
             </div>
           );
         })}
-        {!Object.values(allRooms).some(r => r.length > 0) && <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No rooms configured. Add rooms in Settings → Rooms.</div></Card>}
+        {!hasComputedData && !Object.values(allRooms).some(r => r.length > 0) && <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No rooms configured. Add rooms in Settings → Rooms.</div></Card>}
+        {hasComputedData && computedRooms.length === 0 && <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No occupied rooms today.</div></Card>}
       </div>
     );
   };
