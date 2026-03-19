@@ -870,13 +870,17 @@ function OperationsHub({ data, save, nav, profile }) {
         orderedServices.push({ name: "Bath", routeKey: "bathing", desc: "Auto-pulled bath types from Gingr" });
         svcSet.delete("Bath");
         orderedServices.push({ name: "Pamper Package Plus", routeKey: "pamper", desc: "Luxury Suite + Add-On dogs" });
+        // Always show Enrichment as a core service
+        orderedServices.push({ name: "Enrichment", routeKey: "enrichment", desc: "Enrichment add-on activities" });
+        // Remove enrichment from dynamic set to avoid duplicates
+        Array.from(svcSet).forEach(n => { if (n.toLowerCase().includes("enrichment")) svcSet.delete(n); });
         // Add any additional discovered services
         Array.from(svcSet).sort().forEach(name => {
           const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/_+$/, "");
           orderedServices.push({ name, routeKey: `svc_${key}`, desc: "Service report" });
         });
 
-        const dynamicCount = orderedServices.length - 2; // extra beyond bath + pamper
+        const dynamicCount = orderedServices.length - 3; // extra beyond bath + pamper + enrichment
         return (
           <div style={{ marginBottom: 32 }}>
             <div style={{ margin: "8px 0 18px", height: 1, background: C.borderLight }} />
@@ -891,8 +895,9 @@ function OperationsHub({ data, save, nav, profile }) {
                 let count = 0;
                 let countReady = dataLoaded;
                 if (item.routeKey === "bathing") {
-                  // Match DailyOpsPage bathing logic: count dogs with bath service scheduled_at on viewDate
-                  count = inHouseToday.filter(r => {
+                  // Match DailyOpsPage bathing logic: count ALL non-cancelled dogs with bath service scheduled_at on viewDate
+                  // Uses full reservations list (not just inHouseToday) to include checked-out dogs
+                  count = reservations.filter(r => {
                     if (r.status === "cancelled") return false;
                     const svcs = r._services;
                     if (!svcs) return false;
@@ -903,6 +908,14 @@ function OperationsHub({ data, save, nav, profile }) {
                       const schedAt = s?.scheduled_at || "";
                       return schedAt.includes(viewDate);
                     });
+                  }).length;
+                } else if (item.routeKey === "enrichment") {
+                  // Count in-house dogs with any enrichment service
+                  count = inHouseToday.filter(r => {
+                    const svcs = r._services;
+                    if (!svcs) return false;
+                    const arr = Array.isArray(svcs) ? svcs : [];
+                    return arr.some(s => (typeof s === "string" ? s : s?.name || "").toLowerCase().includes("enrichment"));
                   }).length;
                 } else if (item.routeKey === "pamper") {
                   const seen = new Set();

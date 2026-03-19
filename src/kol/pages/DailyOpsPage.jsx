@@ -1233,7 +1233,11 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const svcRows = [];
     inHouse.forEach(res => {
       const names = getSvcNames(res._services);
-      const matchCount = names.filter(n => n === svcName).length;
+      // For enrichment, use case-insensitive includes to match variants like "Enrichment Activity"
+      const isEnrichmentSvc = svcName.toLowerCase() === "enrichment";
+      const matchCount = isEnrichmentSvc
+        ? names.filter(n => n.toLowerCase().includes("enrichment")).length
+        : names.filter(n => n === svcName).length;
       if (matchCount === 0) return;
 
       const dog = dogs.find(d => d.id === res.dogId);
