@@ -63,14 +63,19 @@ export function computeServiceMetrics(data, today) {
     (r.status === "upcoming" && (r.scheduledCheckIn || r.checkIn) <= today && (r.scheduledCheckOut || r.checkOut) >= today)
   );
 
-  // Baths: only count reservations checking out today with "bath" in _services
-  // (matches Bathing Report in DailyOpsPage which filters by r.checkOut === viewDate)
-  const bathsTotal = inHouseToday.filter(r => {
-    if (r.checkOut !== today) return false;
+  // Baths: count ALL non-cancelled reservations with bath service scheduled_at on today
+  // (matches DailyOpsPage which filters by scheduled_at, not checkOut date)
+  const bathsTotal = reservations.filter(r => {
+    if (r.status === "cancelled") return false;
     const svcs = r._services;
     if (!svcs) return false;
     const arr = Array.isArray(svcs) ? svcs : [];
-    return arr.some(s => (typeof s === "string" ? s : s?.name || "").toLowerCase() === "bath");
+    return arr.some(s => {
+      const name = typeof s === "string" ? s : (s?.name || "");
+      if (!name.toLowerCase().includes("bath")) return false;
+      const schedAt = s?.scheduled_at || "";
+      return schedAt.includes(today);
+    });
   }).length;
   const bathsDone = 0; // OperationsHub Services section only shows total count, no done tracking
 
