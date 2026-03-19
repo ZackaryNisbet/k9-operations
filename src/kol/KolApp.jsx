@@ -1048,6 +1048,8 @@ function LeanAppInner() {
           )}
           {page === "onboarding" || page === "pricing" ? (
             renderPage()
+          ) : (profile.role === "owner" || profile.role === "developer") ? (
+            renderPage()
           ) : (
             <SubscriptionGate
               subscription={subscription}
