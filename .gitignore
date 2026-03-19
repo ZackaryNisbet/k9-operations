@@ -7,3 +7,5 @@ dist
 inventory_items.json
 public/test-results.json
 public/test-results.json.raw
+.vercel
+.env*.local
