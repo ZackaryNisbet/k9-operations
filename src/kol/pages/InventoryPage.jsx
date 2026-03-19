@@ -668,6 +668,8 @@ function CatalogEditor({ locationId, onClose, addGlobalToast, onCatalogChange })
           .from("inventory_catalog")
           .select("*")
           .eq("location_id", locationId)
+          .order("category", { ascending: true })
+          .order("subcategory", { ascending: true })
           .order("sort_order", { ascending: true });
         if (error) throw error;
         setItems(data || []);
@@ -1291,12 +1293,14 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     setLoading(true);
     setLoadError(null);
     try {
-      // 1. Load catalog items
+      // 1. Load catalog items (sorted: category → subcategory → sort_order)
       const { data: catalog, error: catErr } = await supabase
         .from("inventory_catalog")
         .select("*")
         .eq("location_id", locationId)
         .eq("is_active", true)
+        .order("category", { ascending: true })
+        .order("subcategory", { ascending: true })
         .order("sort_order", { ascending: true });
       if (catErr) throw catErr;
       setCatalogItems(catalog || []);
@@ -1680,7 +1684,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
               Weekly Inventory Count
             </h1>
             <div style={{ fontSize: 13, color: C.textSec, marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <span>Due every Monday</span>
+              <span>{new Date().getDay() === 1 ? "Due today" : "Due every Monday"}</span>
               <span style={{ color: C.borderLight }}>·</span>
               <span>Track on-hand stock, transit items, and reorder needs</span>
             </div>

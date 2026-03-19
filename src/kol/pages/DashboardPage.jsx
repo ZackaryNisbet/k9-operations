@@ -816,8 +816,8 @@ function DashboardContent({
     return map;
   }, [nav]);
 
-  // ─── Inventory snapshot status (same logic as OperationsHub) ──────────────
-  const [invStatus, setInvStatus] = useState({ itemsCounted: 0, totalItems: 0, overdue: false });
+  // ─── Inventory snapshot status (reads from inventory_snapshots + inventory_counts) ──
+  const [invStatus, setInvStatus] = useState({ itemsCounted: 0, totalItems: 0, overdue: false, daysOverdue: 0 });
   const [invTick, setInvTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
@@ -830,39 +830,37 @@ function DashboardContent({
         const diff = day === 0 ? 6 : day - 1;
         const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff);
         const monday = `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, "0")}-${String(mon.getDate()).padStart(2, "0")}`;
-        const [catalogRes, snapshotRes] = await Promise.all([
+        const [catalogRes, snapRes] = await Promise.all([
           supabase.from("inventory_catalog").select("id").eq("location_id", locId).eq("is_active", true),
-          supabase.from("lite_settings").select("setting_key, setting_value")
-            .eq("location_id", locId)
-            .like("setting_key", "inventory_snapshot_%")
-            .gte("setting_key", `inventory_snapshot_${monday}`)
-            .lte("setting_key", `inventory_snapshot_${today}`)
-            .order("setting_key", { ascending: false })
-            .limit(1),
+          supabase.from("inventory_snapshots").select("id").eq("location_id", locId).eq("week_start", monday).maybeSingle(),
         ]);
         if (cancelled) return;
         const totalItems = catalogRes.data?.length || 0;
-        const dow = new Date().getDay(); // 0=Sun
-        const isPastMonday = dow !== 1; // overdue if any day past Monday
-        if (snapshotRes.data?.length > 0) {
-          const counted = (snapshotRes.data[0].setting_value || []).filter(e => e.count > 0).length;
+        const now = new Date();
+        const dow = now.getDay();
+        const isPastMonday = dow !== 1;
+        const daysSinceMonday = dow === 0 ? 6 : dow - 1;
+        if (snapRes.data?.id) {
+          const { data: countRows } = await supabase.from("inventory_counts").select("stock_count").eq("snapshot_id", snapRes.data.id);
+          if (cancelled) return;
+          const counted = (countRows || []).filter(r => r.stock_count > 0).length;
           const allDone = counted >= totalItems && totalItems > 0;
-          if (!cancelled) setInvStatus({ itemsCounted: counted, totalItems, overdue: isPastMonday && !allDone });
+          if (!cancelled) setInvStatus({ itemsCounted: counted, totalItems, overdue: isPastMonday && !allDone, daysOverdue: daysSinceMonday });
         } else {
-          if (!cancelled) setInvStatus({ itemsCounted: 0, totalItems, overdue: isPastMonday && totalItems > 0 });
+          if (!cancelled) setInvStatus({ itemsCounted: 0, totalItems, overdue: isPastMonday && totalItems > 0, daysOverdue: daysSinceMonday });
         }
       } catch { /* silent */ }
     })();
     return () => { cancelled = true; };
   }, [today, profile?.location_id, invTick]);
 
-  // Realtime: re-fetch inventory when lite_settings changes
+  // Realtime: re-fetch inventory when inventory_counts changes
   useEffect(() => {
     const locId = profile?.location_id;
     if (!locId) return;
     const chan = supabase.channel("dash-inv-rt")
-      .on("postgres_changes", { event: "*", schema: "public", table: "lite_settings", filter: `location_id=eq.${locId}` },
-        (payload) => { if (payload.new?.setting_key?.startsWith("inventory_snapshot_")) setInvTick(t => t + 1); }
+      .on("postgres_changes", { event: "*", schema: "public", table: "inventory_counts" },
+        () => { setInvTick(t => t + 1); }
       ).subscribe();
     return () => { supabase.removeChannel(chan); };
   }, [profile?.location_id]);
@@ -1704,7 +1702,7 @@ function DashboardContent({
         <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={navTo["ops-pp"]} />
 
         {/* Col 9: Inventory (row 5) */}
-        <InventoryCell done={invStatus.itemsCounted} total={invStatus.totalItems} overdue={invStatus.overdue} onClick={navTo["inventory"]} />
+        <InventoryCell done={invStatus.itemsCounted} total={invStatus.totalItems} overdue={invStatus.overdue} daysOverdue={invStatus.daysOverdue} onClick={navTo["inventory"]} />
 
         {/* Col 8: Closing (row 6) */}
         <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={navTo["ops-closing"]} />
@@ -2411,11 +2409,12 @@ const QuickLinkCell = memo(function QuickLinkCell({ label, icon, onClick }) {
 });
 
 /* InventoryCell — icon + progress bar + overdue badge + due day */
-const InventoryCell = memo(function InventoryCell({ done, total, overdue, onClick }) {
+const InventoryCell = memo(function InventoryCell({ done, total, overdue, daysOverdue, onClick }) {
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
   const allDone = total > 0 && done >= total;
   const barColor = allDone ? C.suc : overdue ? "#EF4444" : C.acc;
-  const statusLabel = allDone ? "Complete" : overdue ? "Overdue" : total > 0 && done > 0 ? "In Progress" : "Due Monday";
+  const isMonday = new Date().getDay() === 1;
+  const statusLabel = allDone ? "Complete" : overdue ? `${daysOverdue}d overdue` : total > 0 && done > 0 ? "In Progress" : isMonday ? "Due Today" : "Due Monday";
   const statusBg = allDone ? "rgba(16,185,129,0.1)" : overdue ? "rgba(239,68,68,0.1)" : "rgba(20,83,45,0.06)";
   const statusColor = allDone ? C.suc : overdue ? "#EF4444" : C.textMut;
   return (
