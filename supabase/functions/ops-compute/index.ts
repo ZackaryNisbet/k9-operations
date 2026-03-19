@@ -904,22 +904,42 @@ Deno.serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     // ─── Load Gingr credentials for this location ─────────────────────
-    const { data: creds, error: credsErr } = await supabase
-      .from("k9_gingr_credentials")
-      .select("gingr_subdomain, gingr_api_key, gingr_location_id")
+    // Primary: lite_settings gingr_config (same as gingr-sync)
+    // Fallback: k9_gingr_credentials table
+    const { data: settingsRows } = await supabase
+      .from("lite_settings")
+      .select("setting_value")
       .eq("location_id", locationId)
-      .maybeSingle();
+      .eq("setting_key", "gingr_config")
+      .limit(1);
 
-    if (credsErr || !creds) {
-      return new Response(
-        JSON.stringify({ error: "No Gingr credentials found for location", location_id: locationId }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+    const gingrConfig = settingsRows?.[0]?.setting_value;
+    let gingrSubdomain: string;
+    let gingrApiKey: string;
+    let gingrLocationId: string;
+
+    if (gingrConfig?.api_key && gingrConfig?.subdomain) {
+      gingrSubdomain = gingrConfig.subdomain;
+      gingrApiKey = gingrConfig.api_key;
+      gingrLocationId = gingrConfig.gingr_location_id || "1";
+    } else {
+      // Fallback to k9_gingr_credentials
+      const { data: creds } = await supabase
+        .from("k9_gingr_credentials")
+        .select("gingr_subdomain, gingr_api_key, gingr_location_id")
+        .eq("location_id", locationId)
+        .maybeSingle();
+
+      if (!creds) {
+        return new Response(
+          JSON.stringify({ error: "No Gingr credentials found for location", location_id: locationId }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      gingrSubdomain = creds.gingr_subdomain;
+      gingrApiKey = creds.gingr_api_key;
+      gingrLocationId = creds.gingr_location_id || "1";
     }
-
-    const gingrSubdomain = creds.gingr_subdomain;
-    const gingrApiKey = creds.gingr_api_key;
-    const gingrLocationId = creds.gingr_location_id || "1";
 
     // ─── Fetch Gingr data in parallel ──────────────────────────────────
     const [bohResult, resResult] = await Promise.all([
