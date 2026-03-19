@@ -123,7 +123,7 @@ function useGingrData(locationId, refreshOptions = {}) {
           scheduledCheckOutTime: r.end_date ? r.end_date.split("T")[1]?.slice(0, 5) : null,
           status,
           pricing: { total: typeof price === "number" ? price : parseFloat(price) || 0 },
-          room: null, // assigned later by assignRoomsIntelligently()
+          room: r.room_assignment || null, // assigned server-side by gingr-sync
           roomType: roomType, // preserve for room assignment
           _resTypeName: r.reservation_type_name,
           _resTypeId: r.reservation_type_id,
@@ -553,7 +553,7 @@ function useGingrData(locationId, refreshOptions = {}) {
       // Phase 2a: Quick fetch — reservations relevant to TODAY (for dashboard service metrics)
       // Captures: checked-in (started past 30d, not yet checked out), upcoming (next 7d), recent checkouts
       // This fetches ~300-500 rows instead of 136K, making the dashboard responsive in <500ms
-      const RES_COLS = "gingr_id,location_id,owner_gingr_id,animal_gingr_id,reservation_type_name,reservation_type_id,start_date,end_date,check_in_date,check_out_date,cancelled_date,transaction,deposit,services,animal_name,owner_first_name,owner_last_name,notes_reservation";
+      const RES_COLS = "gingr_id,location_id,owner_gingr_id,animal_gingr_id,reservation_type_name,reservation_type_id,start_date,end_date,check_in_date,check_out_date,cancelled_date,transaction,deposit,services,animal_name,owner_first_name,owner_last_name,notes_reservation,room_assignment";
       const todayWindow = todayStr();
       const windowStart = addDays(todayWindow, -30); // capture long boarding stays
       const windowEnd = addDays(todayWindow, 14);    // capture upcoming
