@@ -616,8 +616,10 @@ async function syncDeposits(
   const todayStr = now.toISOString().split("T")[0];
   let total = 0;
 
-  // Sweep 30-day chunks from today to today+180 days (6 API calls)
-  for (let offset = 0; offset < 180; offset += 30) {
+  // Sweep 30-day chunks from today-7 to today+180 days.
+  // Starting from -7 ensures deposits paid in the last week for already-started
+  // reservations are captured (not just future reservations).
+  for (let offset = -7; offset < 180; offset += 30) {
     const chunkStart = new Date(now.getTime() + offset * 24 * 60 * 60 * 1000)
       .toISOString().split("T")[0];
     const chunkEnd = new Date(now.getTime() + (offset + 30) * 24 * 60 * 60 * 1000)
@@ -688,9 +690,15 @@ async function computeCashBasisMetrics(
 ) {
   const now = new Date();
   const today = now.toISOString().split("T")[0];
-  const yesterday = new Date(now.getTime() - 86400000).toISOString().split("T")[0];
 
-  for (const dateStr of [yesterday, today]) {
+  // Compute cash basis metrics for the last 7 days (not just yesterday+today).
+  // This fills in gaps from any days where the sync didn't run.
+  const datesToCompute: string[] = [];
+  for (let i = 6; i >= 0; i--) {
+    datesToCompute.push(new Date(now.getTime() - i * 86400000).toISOString().split("T")[0]);
+  }
+
+  for (const dateStr of datesToCompute) {
     // 1) Get Cash + CC payments from invoice_payments table
     //    Include ALL positive Cash+CC (including deposit-payment entries)
     //    These don't overlap with gingr_deposits (different reservation sets)
@@ -1345,7 +1353,7 @@ Deno.serve(async (req: Request) => {
     try {
       await supabase.rpc('compute_dashboard_metrics', {
         p_location_id: location_id,
-        p_date_from: new Date(Date.now() - 86400000).toISOString().split('T')[0],
+        p_date_from: new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0],
         p_date_to: new Date().toISOString().split('T')[0],
       });
     } catch (metricsErr: any) {

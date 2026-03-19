@@ -313,7 +313,7 @@ export default function OnboardingPage({ nav }) {
           await supabase.from("location_roles").upsert({
             user_id: user.id,
             location_id: locationId,
-            role: "location_admin",
+            role: "enterprise_admin",
           }, { onConflict: "user_id,location_id" });
 
           // Update user profile with location_id
