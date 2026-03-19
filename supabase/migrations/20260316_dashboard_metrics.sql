@@ -75,6 +75,7 @@ DECLARE
   v_going_home INT;
   v_checked_out INT;
   v_arriving INT;
+  v_pending INT;
   v_boarding_occupied INT;
   v_bookings INT;
   v_tours INT;
@@ -147,6 +148,12 @@ BEGIN
         r.start_date::DATE = d AND r.cancelled_date IS NULL
         AND LOWER(r.reservation_type_name) NOT LIKE '%tour%'
       ),
+      -- PENDING: dogs scheduled for today that have NOT yet checked in
+      COUNT(*) FILTER (WHERE
+        r.start_date::DATE = d AND r.cancelled_date IS NULL
+        AND r.check_in_date IS NULL
+        AND LOWER(r.reservation_type_name) NOT LIKE '%tour%'
+      ),
       COUNT(*) FILTER (WHERE
         r.check_in_date IS NOT NULL AND r.check_out_date IS NULL
         AND r.start_date::DATE <= d AND r.end_date::DATE > d
@@ -157,7 +164,7 @@ BEGIN
       COUNT(*) FILTER (WHERE r.start_date::DATE = d AND LOWER(r.reservation_type_name) LIKE '%tour%'),
       COUNT(*) FILTER (WHERE r.start_date::DATE = d AND (LOWER(r.reservation_type_name) LIKE '%eval%' OR LOWER(r.reservation_type_name) LIKE '%assessment%'))
     INTO v_in_house, v_boarding_ih, v_daycare_ih, v_going_home, v_checked_out, v_arriving,
-         v_boarding_occupied, v_bookings, v_tours, v_evals
+         v_pending, v_boarding_occupied, v_bookings, v_tours, v_evals
     FROM gingr_reservations r
     WHERE r.location_id = p_location_id
       AND r.cancelled_date IS NULL;
@@ -306,7 +313,7 @@ BEGIN
       computed_at
     ) VALUES (
       p_location_id, d,
-      v_arriving + v_in_house, v_in_house, v_boarding_ih, v_daycare_ih,
+      v_pending, v_in_house, v_boarding_ih, v_daycare_ih,
       v_going_home, v_checked_out, v_arriving,
       CASE WHEN v_total_rooms > 0 THEN ROUND(v_boarding_occupied::NUMERIC / v_total_rooms * 100)::INT ELSE 0 END,
       v_total_rooms, v_bookings, v_tours, v_evals + v_first_visit_evals,
