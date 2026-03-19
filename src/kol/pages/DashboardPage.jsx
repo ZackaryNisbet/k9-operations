@@ -816,6 +816,54 @@ function DashboardContent({
     return map;
   }, [nav]);
 
+  // ─── Inventory snapshot status (same logic as OperationsHub) ──────────────
+  const [invStatus, setInvStatus] = useState({ itemsCounted: 0, totalItems: 0 });
+  const [invTick, setInvTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const locId = profile?.location_id;
+        if (!locId) return;
+        const d = new Date(today + "T12:00:00");
+        const day = d.getDay();
+        const diff = day === 0 ? 6 : day - 1;
+        const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff);
+        const monday = `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, "0")}-${String(mon.getDate()).padStart(2, "0")}`;
+        const [catalogRes, snapshotRes] = await Promise.all([
+          supabase.from("inventory_catalog").select("id").eq("location_id", locId).eq("is_active", true),
+          supabase.from("lite_settings").select("setting_key, setting_value")
+            .eq("location_id", locId)
+            .like("setting_key", "inventory_snapshot_%")
+            .gte("setting_key", `inventory_snapshot_${monday}`)
+            .lte("setting_key", `inventory_snapshot_${today}`)
+            .order("setting_key", { ascending: false })
+            .limit(1),
+        ]);
+        if (cancelled) return;
+        const totalItems = catalogRes.data?.length || 0;
+        if (snapshotRes.data?.length > 0) {
+          const counted = (snapshotRes.data[0].setting_value || []).filter(e => e.count > 0).length;
+          if (!cancelled) setInvStatus({ itemsCounted: counted, totalItems });
+        } else {
+          if (!cancelled) setInvStatus({ itemsCounted: 0, totalItems });
+        }
+      } catch { /* silent */ }
+    })();
+    return () => { cancelled = true; };
+  }, [today, profile?.location_id, invTick]);
+
+  // Realtime: re-fetch inventory when lite_settings changes
+  useEffect(() => {
+    const locId = profile?.location_id;
+    if (!locId) return;
+    const chan = supabase.channel("dash-inv-rt")
+      .on("postgres_changes", { event: "*", schema: "public", table: "lite_settings", filter: `location_id=eq.${locId}` },
+        (payload) => { if (payload.new?.setting_key?.startsWith("inventory_snapshot_")) setInvTick(t => t + 1); }
+      ).subscribe();
+    return () => { supabase.removeChannel(chan); };
+  }, [profile?.location_id]);
+
   /* ─── Lazy-compute refs for below-fold sections ───────────────────── */
   const { ref: financialRef } = useSectionVisibility();
 
@@ -1653,7 +1701,7 @@ function DashboardContent({
         <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={navTo["ops-pp"]} />
 
         {/* Col 9: Inventory (row 5) */}
-        <QuickLinkCell label="Inventory" icon={<I.Package />} onClick={navTo["inventory"]} />
+        <ServiceCell label="Inventory" done={invStatus.itemsCounted} total={invStatus.totalItems} onClick={navTo["inventory"]} />
 
         {/* Col 8: Closing (row 6) */}
         <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={navTo["ops-closing"]} />
