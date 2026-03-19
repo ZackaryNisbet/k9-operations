@@ -453,12 +453,12 @@ function Skeleton({ h = 20, w = "100%", radius = 6 }) {
 /* ─── Empty State ──────────────────────────────────────────────────────────── */
 function EmptyState({ message = "No data available for this timeframe" }) {
   return (
-    <div style={{ textAlign: "center", padding: "48px 24px", color: C.textMut, fontFamily: "Outfit, sans-serif" }}>
-      <div style={{ fontSize: 36, marginBottom: 12, opacity: 0.4 }}>
+    <div style={{ textAlign: "center", padding: "56px 24px", color: C.textMut, fontFamily: "Outfit, sans-serif" }}>
+      <div style={{ width: 52, height: 52, borderRadius: 14, background: C.surfaceHover, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 16, color: C.textMut }}>
         <I.BarChart />
       </div>
-      <div style={{ fontSize: 14, fontWeight: 600, color: C.textSec, marginBottom: 6 }}>No Data Yet</div>
-      <div style={{ fontSize: 13 }}>{message}</div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 6 }}>No Data Yet</div>
+      <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5, maxWidth: 280, margin: "0 auto" }}>{message}</div>
     </div>
   );
 }

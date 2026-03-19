@@ -41,10 +41,10 @@ function CollapsibleSection({ title, icon, badge, badgeColor, defaultOpen = fals
         )}
         {badge && (
           <span style={{
-            display: "inline-flex", padding: "2px 10px", borderRadius: 6,
+            display: "inline-flex", padding: "3px 10px", borderRadius: 20,
             background: badgeColor === "green" ? C.sucLt : badgeColor === "red" ? C.danLt : badgeColor === "amber" ? "#FEF3C7" : C.priLt,
             color: badgeColor === "green" ? C.suc : badgeColor === "red" ? C.dan : badgeColor === "amber" ? "#92400E" : C.pri,
-            fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+            fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em",
           }}>{badge}</span>
         )}
         <span style={{
@@ -87,7 +87,7 @@ function InfoRow({ label, value, highlight }) {
 function DogDetailPage({ data, clientId, dogId, nav, profile }) {
   const client = data.clients.find(c => c.id === clientId);
   const dog = data.dogs.find(d => d.id === dogId);
-  if (!dog || !client) return <div style={{ padding: 40, textAlign: "center", color: C.textSec }}>Dog not found</div>;
+  if (!dog || !client) return <div style={{ padding: "64px 24px", textAlign: "center" }}><div style={{ width: 56, height: 56, borderRadius: 16, background: C.warnLt, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 14, fontSize: 22 }}>?</div><div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 6 }}>Dog not found</div><div style={{ fontSize: 13, color: C.textMut }}>This dog profile may have been removed or the link is invalid.</div></div>;
   const df = dog.fields || {};
 
   // ─── Enrichment data state ──────────────────────────────────────────────
@@ -233,9 +233,9 @@ function DogDetailPage({ data, clientId, dogId, nav, profile }) {
           )}
           <div style={{ flex: 1 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <h2 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, fontFamily: "'Outfit', sans-serif" }}>{dog.fields.name}</h2>
-              {dog._vip && <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 6, background: "#FEF3C7", color: "#92400E", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em" }}>VIP</span>}
-              {dog._banned && <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 6, background: C.danLt, color: C.dan, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em" }}>BANNED</span>}
+              <h2 style={{ margin: 0, fontSize: 26, fontWeight: 800, color: C.text, fontFamily: "'Outfit', sans-serif", letterSpacing: "-0.02em" }}>{dog.fields.name}</h2>
+              {dog._vip && <span style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", borderRadius: 20, background: "#FEF3C7", color: "#92400E", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em" }}>VIP</span>}
+              {dog._banned && <span style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", borderRadius: 20, background: C.danLt, color: C.dan, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em" }}>BANNED</span>}
             </div>
             <div style={{ fontSize: 14, color: C.textSec, marginTop: 4 }}>
               {dog.fields.breed}{dog.fields.weight ? ` · ${dog.fields.weight} lbs` : ""}{genderLabel ? ` · ${genderLabel}` : ""}{dog.fields.age ? ` · ${dog.fields.age} yrs` : ""} · {fixedLabel}
@@ -746,8 +746,12 @@ function DogDetailPage({ data, clientId, dogId, nav, profile }) {
       )}
 
       {activeRes.length === 0 && pastRes.length === 0 && (
-        <Card style={{ padding: 32, textAlign: "center" }}>
-          <div style={{ fontSize: 14, color: C.textSec }}>No reservations found for {dog.fields.name}</div>
+        <Card style={{ padding: "48px 24px", textAlign: "center" }}>
+          <div style={{ width: 48, height: 48, borderRadius: 14, background: C.priLt, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 14, fontSize: 20 }}>
+            <I.Calendar />
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 6 }}>No reservations yet</div>
+          <div style={{ fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>No reservation history found for {df.name || "this dog"}.</div>
         </Card>
       )}
     </div>

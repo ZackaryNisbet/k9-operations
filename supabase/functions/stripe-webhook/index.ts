@@ -1,6 +1,11 @@
 // ============================================================================
 // Stripe Webhook Edge Function — K9 Operations
 // Handles Stripe subscription lifecycle events.
+// Includes role auto-assignment based on subscription tier.
+//
+// TODO: Add STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET to Supabase secrets:
+//   supabase secrets set STRIPE_SECRET_KEY=sk_live_...
+//   supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_...
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -12,8 +17,20 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// TODO: Add STRIPE_SECRET_KEY to Supabase Edge Function secrets
 const STRIPE_SECRET_KEY = Deno.env.get("STRIPE_SECRET_KEY") || "";
+// TODO: Add STRIPE_WEBHOOK_SECRET to Supabase Edge Function secrets
 const STRIPE_WEBHOOK_SECRET = Deno.env.get("STRIPE_WEBHOOK_SECRET") || "";
+
+// ─── Plan → Role & Location Limit Mapping ──────────────────────────────────
+// This mapping determines the role and location limit assigned when a user
+// subscribes to a plan. The plan_type comes from Stripe checkout metadata.
+const PLAN_CONFIG: Record<string, { role: string; locationLimit: number }> = {
+  single_location:   { role: "location_admin",       locationLimit: 1 },
+  multi_location_3:  { role: "multi_location_admin",  locationLimit: 3 },
+  multi_location_10: { role: "multi_location_admin",  locationLimit: 10 },
+  enterprise:        { role: "enterprise_admin",      locationLimit: -1 }, // -1 = unlimited
+};
 
 // ─── Stripe signature verification ──────────────────────────────────────────
 async function verifySignature(
@@ -53,6 +70,24 @@ async function verifySignature(
     .join("");
 
   return expectedSig === signature;
+}
+
+// ─── Helper: Update user role in profiles table ─────────────────────────────
+async function updateUserRole(
+  supabase: any,
+  userId: string,
+  role: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("profiles")
+    .update({ role })
+    .eq("id", userId);
+
+  if (error) {
+    console.error(`Failed to update role for user ${userId}:`, error.message);
+  } else {
+    console.log(`Role updated for user ${userId}: ${role}`);
+  }
 }
 
 Deno.serve(async (req: Request) => {
@@ -116,6 +151,9 @@ Deno.serve(async (req: Request) => {
           }
         }
 
+        // Determine role and location limit from plan type
+        const planConfig = PLAN_CONFIG[planType] || PLAN_CONFIG.single_location;
+
         // Upsert subscription record
         const { error } = await supabase.from("subscriptions").upsert(
           {
@@ -124,6 +162,7 @@ Deno.serve(async (req: Request) => {
             stripe_subscription_id: stripeSubscriptionId,
             plan_type: planType,
             status: "active",
+            location_limit: planConfig.locationLimit,
             current_period_start: periodStart,
             current_period_end: periodEnd,
           },
@@ -131,7 +170,11 @@ Deno.serve(async (req: Request) => {
         );
 
         if (error) console.error("Upsert subscription error:", error.message);
-        console.log(`Subscription created for user ${userId}: ${planType}`);
+
+        // Auto-assign role based on subscription tier
+        await updateUserRole(supabase, userId, planConfig.role);
+
+        console.log(`Subscription created for user ${userId}: ${planType} → role: ${planConfig.role}, locations: ${planConfig.locationLimit}`);
         break;
       }
 
@@ -148,13 +191,28 @@ Deno.serve(async (req: Request) => {
               ? "trialing"
               : "active";
 
+        // Check if plan changed (upgrade/downgrade)
+        const planType = subscription.metadata?.plan_type;
+        const updateData: Record<string, any> = {
+          status,
+          current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
+          current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+        };
+
+        // If plan type is in metadata, update it and the location limit
+        if (planType && PLAN_CONFIG[planType]) {
+          updateData.plan_type = planType;
+          updateData.location_limit = PLAN_CONFIG[planType].locationLimit;
+
+          // Update role on plan change (only if subscription is still active)
+          if (status === "active" || status === "trialing") {
+            await updateUserRole(supabase, userId, PLAN_CONFIG[planType].role);
+          }
+        }
+
         await supabase
           .from("subscriptions")
-          .update({
-            status,
-            current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
-            current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
-          })
+          .update(updateData)
           .eq("stripe_subscription_id", subscription.id);
 
         console.log(`Subscription updated ${subscription.id}: ${status}`);
@@ -163,13 +221,18 @@ Deno.serve(async (req: Request) => {
 
       case "customer.subscription.deleted": {
         const subscription = event.data.object;
+        const userId = subscription.metadata?.user_id;
 
         await supabase
           .from("subscriptions")
           .update({ status: "cancelled" })
           .eq("stripe_subscription_id", subscription.id);
 
-        console.log(`Subscription cancelled: ${subscription.id}`);
+        // Note: We do NOT revoke the user's role here immediately.
+        // The SubscriptionGate component handles blocking access for cancelled subs.
+        // This allows the user to still log in and see the "Subscription Required" gate.
+
+        console.log(`Subscription cancelled: ${subscription.id} (user: ${userId || "unknown"})`);
         break;
       }
 

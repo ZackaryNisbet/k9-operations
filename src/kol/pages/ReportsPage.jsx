@@ -953,7 +953,7 @@ function LiteReportsPage({ data, nav }) {
 
   const InteractiveBarChart = ({ items, height = 220, onBarClick }) => {
     const [hoverIdx, setHoverIdx] = useState(null);
-    if (!items || items.length === 0) return <div style={{ height: 80, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut, fontSize: 13 }}>No data</div>;
+    if (!items || items.length === 0) return <div style={{ height: 100, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.textMut, fontSize: 13, gap: 6 }}><span style={{ fontSize: 15, fontWeight: 600, color: C.textSec }}>No data available</span></div>;
     const max = Math.max(...items.map(i => i.value), 1);
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

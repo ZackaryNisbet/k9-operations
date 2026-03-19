@@ -707,10 +707,15 @@ export default function LandingPage() {
               </button>
             ))}
             <a href="/login" style={{
+              padding: '8px 20px', borderRadius: 8, background: 'transparent', color: C.pri,
+              fontSize: 13, fontWeight: 700, textDecoration: 'none', transition: 'all 0.2s',
+              border: `1.5px solid ${C.border}`, cursor: 'pointer',
+            }}>Sign In</a>
+            <a href="/signup" style={{
               padding: '8px 20px', borderRadius: 8, background: C.pri, color: '#fff',
               fontSize: 13, fontWeight: 700, textDecoration: 'none', transition: 'all 0.2s',
               border: 'none', cursor: 'pointer',
-            }}>Sign In</a>
+            }}>Start Free Trial</a>
           </div>
           {/* Mobile menu button */}
           <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} style={{
@@ -731,8 +736,13 @@ export default function LandingPage() {
             ))}
             <a href="/login" style={{
               display: 'block', textAlign: 'center', marginTop: 12, padding: '12px', borderRadius: 8,
-              background: C.pri, color: '#fff', fontSize: 14, fontWeight: 700, textDecoration: 'none',
+              background: 'transparent', color: C.pri, fontSize: 14, fontWeight: 700, textDecoration: 'none',
+              border: `1.5px solid ${C.border}`,
             }}>Sign In</a>
+            <a href="/signup" style={{
+              display: 'block', textAlign: 'center', marginTop: 8, padding: '12px', borderRadius: 8,
+              background: C.pri, color: '#fff', fontSize: 14, fontWeight: 700, textDecoration: 'none',
+            }}>Start Free Trial</a>
           </div>
         )}
       </nav>
@@ -794,12 +804,12 @@ export default function LandingPage() {
           </p>
 
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
-            <a href="/login" style={{
+            <a href="/signup" style={{
               padding: '14px 32px', borderRadius: 10, background: C.pri, color: '#fff',
               fontSize: 15, fontWeight: 700, textDecoration: 'none',
               boxShadow: '0 4px 14px rgba(20,83,45,0.25)',
               transition: 'all 0.2s',
-            }}>Get Started</a>
+            }}>Start Free Trial</a>
             <a href="#demos" style={{
               padding: '14px 32px', borderRadius: 10, background: '#fff', color: C.pri,
               fontSize: 15, fontWeight: 700, textDecoration: 'none',
@@ -919,56 +929,123 @@ export default function LandingPage() {
 
 
 
-      {/* ─── PRODUCT TIERS ─── */}
+      {/* ─── PRICING ─── */}
       <section id="pricing" style={{ padding: '80px 24px', background: C.bg }}>
-        <div style={{ maxWidth: 900, margin: '0 auto', textAlign: 'center' }}>
+        <div style={{ maxWidth: 1200, margin: '0 auto', textAlign: 'center' }}>
+          <div style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            padding: '6px 14px', borderRadius: 100,
+            background: C.acc + '15', marginBottom: 16,
+          }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: C.accDk, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Simple, transparent pricing</span>
+          </div>
           <h2 style={{ fontSize: 'clamp(28px, 4vw, 40px)', fontWeight: 800, color: C.text, margin: '0 0 12px', letterSpacing: '-0.02em' }}>
-            Two tiers. One mission.
+            The operating system your resort deserves
           </h2>
           <p style={{ fontSize: 17, color: C.textSec, maxWidth: 500, margin: '0 auto 48px' }}>
-            Choose the product that matches your facility's needs.
+            Start with one location. Scale to many. Every plan includes a 14-day free trial.
           </p>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 24 }}>
-            {/* KOL */}
-            <div style={{
-              padding: 36, borderRadius: 20, background: '#fff', border: `2px solid ${C.pri}`,
-              textAlign: 'left', position: 'relative',
-            }}>
-              <div style={{
-                position: 'absolute', top: -12, left: 24, padding: '4px 14px', borderRadius: 100,
-                background: C.pri, color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em',
-              }}>CURRENT</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.textMut, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4, marginTop: 4 }}>K9 Operations Lite</div>
-              <div style={{ fontSize: 28, fontWeight: 900, color: C.pri, marginBottom: 4 }}>KOL</div>
-              <div style={{ fontSize: 14, color: C.textSec, marginBottom: 24, lineHeight: 1.5 }}>Full CRM, operations hub, reports, and facility management tools.</div>
-              {['Customer Lifecycle CRM', 'Operations Hub (6 checklists)', 'Checkout TV', 'NLP Reports', 'Sales Funnel', 'Multi-location support'].map((f, i) => (
-                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0' }}>
-                  <Icon name="check" size={15} color={C.success} />
-                  <span style={{ fontSize: 14, color: C.text }}>{f}</span>
-                </div>
-              ))}
-            </div>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+            gap: 20, maxWidth: 1200, margin: '0 auto',
+          }}>
+            {[
+              {
+                name: 'Starter', subtitle: 'Single Location', price: 149,
+                features: ['1 resort location', 'Unlimited team members', 'Operations Hub + checklists', 'Customer Lifecycle CRM', 'Gingr integration', 'Revenue dashboard', 'EOD reports'],
+                popular: false,
+              },
+              {
+                name: 'Growth', subtitle: 'Up to 3 Locations', price: 349,
+                features: ['Up to 3 resort locations', 'Everything in Starter', 'Enterprise dashboard', 'Cross-location reporting', 'Centralized user management', 'Priority support'],
+                popular: true,
+              },
+              {
+                name: 'Scale', subtitle: 'Up to 10 Locations', price: 799,
+                features: ['Up to 10 resort locations', 'Everything in Growth', 'Operations matrix', 'Multi-location attendance', 'Advanced analytics', 'Dedicated account manager'],
+                popular: false,
+              },
+              {
+                name: 'Enterprise', subtitle: 'Unlimited Locations', price: null,
+                features: ['Unlimited locations', 'Everything in Scale', 'Custom integrations', 'SSO / SAML', 'SLA guarantee', 'Dedicated success team', 'Custom onboarding'],
+                popular: false,
+              },
+            ].map((plan, i) => (
+              <div key={i} style={{
+                background: '#fff',
+                border: plan.popular ? `2px solid ${C.acc}` : `1px solid ${C.border}`,
+                borderRadius: 20, padding: '32px 28px',
+                display: 'flex', flexDirection: 'column',
+                position: 'relative', textAlign: 'left',
+                transition: 'transform 0.2s, box-shadow 0.2s',
+              }}
+                onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 12px 40px rgba(0,0,0,0.08)'; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
+              >
+                {plan.popular && (
+                  <div style={{
+                    position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
+                    background: C.acc, color: C.pri, fontSize: 12, fontWeight: 800,
+                    padding: '4px 16px', borderRadius: 12, letterSpacing: '0.05em',
+                  }}>MOST POPULAR</div>
+                )}
 
-            {/* KOP */}
-            <div style={{
-              padding: 36, borderRadius: 20, background: '#fff', border: `1px solid ${C.border}`,
-              textAlign: 'left', position: 'relative', opacity: 0.75,
-            }}>
-              <div style={{
-                position: 'absolute', top: -12, left: 24, padding: '4px 14px', borderRadius: 100,
-                background: C.textMut, color: '#fff', fontSize: 11, fontWeight: 700, letterSpacing: '0.04em',
-              }}>COMING SOON</div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: C.textMut, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4, marginTop: 4 }}>K9 Operations POS</div>
-              <div style={{ fontSize: 28, fontWeight: 900, color: C.text, marginBottom: 4 }}>KOP</div>
-              <div style={{ fontSize: 14, color: C.textSec, marginBottom: 24, lineHeight: 1.5 }}>Point-of-sale tier with booking, payments, and full Gingr replacement.</div>
-              {['Everything in KOL', 'Online Booking Engine', 'Payment Processing', 'Digital Report Cards', 'Automated Invoicing', 'Customer Portal'].map((f, i) => (
-                <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '6px 0' }}>
-                  <Icon name="check" size={15} color={C.textMut} />
-                  <span style={{ fontSize: 14, color: C.textSec }}>{f}</span>
+                <div style={{ fontSize: 13, fontWeight: 600, color: C.accDk, letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: 4 }}>
+                  {plan.subtitle}
                 </div>
-              ))}
-            </div>
+                <div style={{ fontSize: 28, fontWeight: 900, color: C.text, marginBottom: 12 }}>
+                  {plan.name}
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 24 }}>
+                  {plan.price ? (
+                    <>
+                      <span style={{ fontSize: 48, fontWeight: 900, color: C.text, lineHeight: 1 }}>${plan.price}</span>
+                      <span style={{ fontSize: 16, color: C.textMut, fontWeight: 500 }}>/mo</span>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 28, fontWeight: 700, color: C.textMut }}>Custom pricing</span>
+                  )}
+                </div>
+
+                <div style={{ flex: 1, marginBottom: 24 }}>
+                  {plan.features.map((f, fi) => (
+                    <div key={fi} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '6px 0' }}>
+                      <div style={{
+                        width: 20, height: 20, borderRadius: 6,
+                        background: C.acc + '20', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1,
+                      }}>
+                        <Icon name="check" size={12} color={C.accDk} />
+                      </div>
+                      <span style={{ fontSize: 14, color: C.textSec, lineHeight: 1.4 }}>{f}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <a
+                  href={plan.price ? '/signup' : 'mailto:sales@k9operations.com?subject=Enterprise%20Plan%20Inquiry'}
+                  style={{
+                    display: 'block', width: '100%', padding: '14px 0', textAlign: 'center',
+                    background: plan.popular ? C.pri : 'transparent',
+                    color: plan.popular ? '#fff' : C.pri,
+                    border: plan.popular ? 'none' : `1.5px solid ${C.border}`,
+                    borderRadius: 12, fontSize: 15, fontWeight: 700,
+                    cursor: 'pointer', textDecoration: 'none',
+                    transition: 'opacity 0.2s, background 0.2s',
+                  }}
+                >
+                  {plan.price ? 'Start Free Trial' : 'Contact Sales'}
+                </a>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ textAlign: 'center', maxWidth: 500, margin: '40px auto 0', color: C.textMut, fontSize: 14, lineHeight: 1.6 }}>
+            All plans include a 14-day free trial. No credit card required to start.
+            Cancel anytime. Prices in USD.
           </div>
         </div>
       </section>
@@ -991,9 +1068,9 @@ export default function LandingPage() {
             <div style={{ display: 'flex', gap: 48, flexWrap: 'wrap' }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 700, color: C.textMut, letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 12 }}>Product</div>
-                {['Demos', 'Sign In'].map((l, i) => (
+                {['Demos', 'Pricing', 'Sign In', 'Sign Up'].map((l, i) => (
                   <div key={i} style={{ marginBottom: 8 }}>
-                    <a href={l === 'Sign In' ? '/login' : '#demos'} style={{
+                    <a href={l === 'Sign In' ? '/login' : l === 'Sign Up' ? '/signup' : l === 'Pricing' ? '#pricing' : '#demos'} style={{
                       fontSize: 14, color: C.textSec, textDecoration: 'none',
                     }}>{l}</a>
                   </div>

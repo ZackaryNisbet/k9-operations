@@ -95,6 +95,13 @@ export default function PricingPage({ nav, onSelectPlan }) {
 
     setLoadingPlan(planId);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        // User not logged in — redirect to signup
+        window.location.href = `/signup`;
+        return;
+      }
+
       const { data, error } = await supabase.functions.invoke("stripe-checkout", {
         body: {
           plan_type: planId,
@@ -103,10 +110,26 @@ export default function PricingPage({ nav, onSelectPlan }) {
         },
       });
 
-      if (error) throw error;
+      if (error) {
+        // Handle "Stripe not configured" gracefully
+        if (error.message?.includes("not configured") || data?.error?.includes("not configured")) {
+          alert("Payment processing is being set up. Please try again shortly.");
+          return;
+        }
+        throw error;
+      }
+      if (data?.error) {
+        if (data.error.includes("not configured")) {
+          alert("Payment processing is being set up. Please try again shortly.");
+          return;
+        }
+        throw new Error(data.error);
+      }
       if (data?.url) window.location.href = data.url;
     } catch (err) {
       console.error("Checkout error:", err);
+      // Show user-friendly error
+      alert("Unable to start checkout. Please try again or contact support.");
     } finally {
       setLoadingPlan(null);
     }
@@ -156,7 +179,7 @@ export default function PricingPage({ nav, onSelectPlan }) {
             border: plan.popular
               ? "2px solid rgba(132,204,22,0.4)"
               : "1px solid rgba(255,255,255,0.08)",
-            borderRadius: 20, padding: "32px 28px",
+            borderRadius: 22, padding: "36px 30px",
             display: "flex", flexDirection: "column",
             position: "relative", transition: "transform 0.2s, border-color 0.2s",
           }}
@@ -218,7 +241,7 @@ export default function PricingPage({ nav, onSelectPlan }) {
                   : "rgba(255,255,255,0.08)",
                 color: plan.popular ? C.pri : "#fff",
                 border: plan.popular ? "none" : "1px solid rgba(255,255,255,0.15)",
-                borderRadius: 12, fontSize: 15, fontWeight: 700,
+                borderRadius: 14, fontSize: 15, fontWeight: 700,
                 cursor: loadingPlan === plan.id ? "wait" : "pointer",
                 opacity: loadingPlan === plan.id ? 0.7 : 1,
                 transition: "opacity 0.2s, background 0.2s",
