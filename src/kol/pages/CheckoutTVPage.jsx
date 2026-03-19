@@ -588,6 +588,7 @@ function CheckoutTVPage({ data, nav, profile, locationId: propLocationId }) {
 }
 
 function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
+  const locationId = propLocationId || profile?.location_id;
   const [now, setNow] = useState(new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
