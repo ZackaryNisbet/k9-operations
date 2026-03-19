@@ -9,73 +9,23 @@ import { I } from "../../shared/icons";
 const PLANS = [
   {
     id: "single_location",
-    name: "Starter",
-    subtitle: "Single Location",
-    price: 149,
+    name: "K9 Operations",
+    subtitle: "Everything You Need",
+    price: 50,
     period: "mo",
     features: [
-      "1 resort location",
+      "Unlimited locations",
       "Unlimited team members",
       "Operations Hub + checklists",
       "Customer Lifecycle CRM",
       "Gingr integration",
       "Revenue dashboard",
+      "Enterprise reporting",
       "EOD reports",
-    ],
-    cta: "Get Started",
-    popular: false,
-  },
-  {
-    id: "multi_location_3",
-    name: "Growth",
-    subtitle: "Up to 3 Locations",
-    price: 349,
-    period: "mo",
-    features: [
-      "Up to 3 resort locations",
-      "Everything in Starter",
-      "Enterprise dashboard",
-      "Cross-location reporting",
-      "Centralized user management",
       "Priority support",
     ],
     cta: "Get Started",
     popular: true,
-  },
-  {
-    id: "multi_location_10",
-    name: "Scale",
-    subtitle: "Up to 10 Locations",
-    price: 799,
-    period: "mo",
-    features: [
-      "Up to 10 resort locations",
-      "Everything in Growth",
-      "Operations matrix",
-      "Multi-location attendance",
-      "Advanced analytics",
-      "Dedicated account manager",
-    ],
-    cta: "Get Started",
-    popular: false,
-  },
-  {
-    id: "enterprise",
-    name: "Enterprise",
-    subtitle: "Unlimited Locations",
-    price: null,
-    period: null,
-    features: [
-      "Unlimited locations",
-      "Everything in Scale",
-      "Custom integrations",
-      "SSO / SAML",
-      "SLA guarantee",
-      "Dedicated success team",
-      "Custom onboarding",
-    ],
-    cta: "Contact Sales",
-    popular: false,
   },
 ];
 
@@ -83,11 +33,6 @@ export default function PricingPage({ nav, onSelectPlan }) {
   const [loadingPlan, setLoadingPlan] = useState(null);
 
   const handleSelect = async (planId) => {
-    if (planId === "enterprise") {
-      window.open("mailto:sales@k9operations.com?subject=Enterprise%20Plan%20Inquiry", "_blank");
-      return;
-    }
-
     if (onSelectPlan) {
       onSelectPlan(planId);
       return;
@@ -161,15 +106,15 @@ export default function PricingPage({ nav, onSelectPlan }) {
         <p style={{
           fontSize: 18, color: "rgba(255,255,255,0.6)", lineHeight: 1.6, margin: 0,
         }}>
-          Start with one location. Scale to many. Every plan includes a 14-day free trial.
+          One simple price. Everything included. 14-day free trial.
         </p>
       </div>
 
       {/* Plan Cards */}
       <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-        gap: 20, maxWidth: 1200, margin: "0 auto",
+        display: "flex",
+        justifyContent: "center",
+        gap: 20, maxWidth: 440, margin: "0 auto",
       }}>
         {PLANS.map((plan) => (
           <div key={plan.id} style={{
