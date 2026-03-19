@@ -124,7 +124,7 @@ function OperationsHub({ data, save, nav, profile }) {
   const hp = (k) => hasPermission(profile, data, k);
 
   // ─── Inventory snapshot status for weekly-inventory card ────────────────────
-  // Reads from lite_settings (same source as mobile app)
+  // Reads from inventory_snapshots + inventory_counts (consolidated source of truth)
   const [invStatus, setInvStatus] = useState(null); // { status, itemsCounted, totalItems }
   useEffect(() => {
     let cancelled = false;
@@ -140,22 +140,19 @@ function OperationsHub({ data, save, nav, profile }) {
         const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff);
         const monday = `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, "0")}-${String(mon.getDate()).padStart(2, "0")}`;
 
-        const [catalogRes, snapshotRes] = await Promise.all([
+        const [catalogRes, snapRes] = await Promise.all([
           supabase.from("inventory_catalog").select("id").eq("location_id", locId).eq("is_active", true),
-          supabase.from("lite_settings").select("setting_key, setting_value")
-            .eq("location_id", locId)
-            .like("setting_key", "inventory_snapshot_%")
-            .gte("setting_key", `inventory_snapshot_${monday}`)
-            .lte("setting_key", `inventory_snapshot_${viewDate}`)
-            .order("setting_key", { ascending: false })
-            .limit(1),
+          supabase.from("inventory_snapshots").select("id, status")
+            .eq("location_id", locId).eq("week_start", monday).maybeSingle(),
         ]);
         if (cancelled) return;
 
         const totalItems = catalogRes.data?.length || 0;
-        if (snapshotRes.data && snapshotRes.data.length > 0) {
-          const snapshot = snapshotRes.data[0].setting_value || [];
-          const counted = snapshot.filter(e => e.count > 0).length;
+        if (snapRes.data?.id) {
+          const { data: countRows } = await supabase.from("inventory_counts")
+            .select("stock_count").eq("snapshot_id", snapRes.data.id);
+          if (cancelled) return;
+          const counted = (countRows || []).filter(r => r.stock_count > 0).length;
           const status = counted >= totalItems && totalItems > 0 ? "completed" : counted > 0 ? "in_progress" : "not_started";
           if (!cancelled) setInvStatus({ status, itemsCounted: counted, totalItems });
         } else {
