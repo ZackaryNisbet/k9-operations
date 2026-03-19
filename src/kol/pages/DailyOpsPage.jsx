@@ -226,7 +226,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const renderDateNav = () => (
     <div style={hdrStyle}>
       <div>
-        <h2 style={{ fontSize: 22, fontWeight: 700, color: C.text, margin: 0 }}>{meta.title}</h2>
+        <h2 style={{ fontSize: 24, fontWeight: 800, color: C.text, margin: 0, letterSpacing: "-0.02em" }}>{meta.title}</h2>
         {isTemplate && meta.showTime && todayItems.some(t => t.dayOfWeek != null) && <div style={{ fontSize: 11, color: C.acc, marginTop: 2 }}>+ {DAY_NAMES_SHORT[dayIdx]} tasks</div>}
       </div>
       <div style={dateNavStyle}>
@@ -249,11 +249,11 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const renderTemplateChecklist = () => (
     <div>
       {/* Progress */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
-        <div style={{ flex: 1, height: 8, background: C.surfaceHover, borderRadius: 4, overflow: "hidden" }}>
-          <div style={{ width: `${pctDone}%`, height: "100%", background: pctDone === 100 ? C.suc : C.pri, borderRadius: 4, transition: "width 0.3s" }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+        <div style={{ flex: 1, height: 6, background: C.borderLight, borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ width: `${pctDone}%`, height: "100%", background: pctDone === 100 ? C.suc : `linear-gradient(90deg, ${C.pri}, ${C.priL})`, borderRadius: 3, transition: "width 0.4s cubic-bezier(0.4,0,0.2,1)" }} />
         </div>
-        <span style={{ fontSize: 13, fontWeight: 600, color: pctDone === 100 ? C.suc : C.text }}>{checkedCount}/{totalCount}</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: pctDone === 100 ? C.suc : C.text, minWidth: 42, textAlign: "right" }}>{checkedCount}/{totalCount}</span>
       </div>
       {/* Items */}
       <Card>
@@ -1166,8 +1166,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
           )}
         </Card>
         {total === 0 ? (
-          <Card style={{ padding: 32, textAlign: "center" }}>
-            <div style={{ fontSize: 14, color: C.textMut }}>No dogs with {svcName} today</div>
+          <Card style={{ padding: "48px 24px", textAlign: "center" }}>
+            <div style={{ fontSize: 28, marginBottom: 12, opacity: 0.4 }}>&#128054;</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 4 }}>No dogs scheduled</div>
+            <div style={{ fontSize: 13, color: C.textMut }}>No dogs with {svcName} today</div>
           </Card>
         ) : (
           <Card style={{ padding: 0, overflow: "hidden" }}>

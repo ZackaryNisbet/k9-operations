@@ -913,16 +913,18 @@ function LeanAppInner() {
                   border: "none",
                   borderRadius: 10,
                   background: act ? "rgba(132,204,22,0.15)" : "transparent",
-                  color: act ? C.acc : "rgba(255,255,255,0.85)",
+                  color: act ? C.acc : "rgba(255,255,255,0.7)",
                   fontSize: 13,
-                  fontWeight: act ? 600 : 500,
+                  fontWeight: act ? 700 : 500,
                   cursor: "pointer",
                   marginBottom: 3,
                   fontFamily: "inherit",
-                  transition: "background 0.12s, color 0.12s",
+                  transition: "background 0.15s, color 0.15s",
                   whiteSpace: "nowrap",
                   position: "relative",
                   boxSizing: "border-box",
+                  borderLeft: act ? "3px solid " + C.acc : "3px solid transparent",
+                  letterSpacing: act ? "0.01em" : "0",
                 }}
               >
                 <div style={{ flexShrink: 0, width: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>

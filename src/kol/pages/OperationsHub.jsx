@@ -446,10 +446,10 @@ function OperationsHub({ data, save, nav, profile }) {
   ];
 
   const statusConfig = {
-    not_started: { label: "Not Started", bg: "#F3F4F6", color: "#6B7280", barColor: "#E5E7EB" },
-    in_progress: { label: "In Progress", bg: "#FEF3C7", color: "#D97706", barColor: "#F59E0B" },
-    completed: { label: "Completed", bg: "#D1FAE5", color: "#059669", barColor: "#10B981" },
-    coming_soon: { label: "Coming Soon", bg: "#F3F4F6", color: "#9CA3AF", barColor: "#E5E7EB" },
+    not_started: { label: "Not Started", bg: C.surfaceHover, color: C.textMut, barColor: C.borderLight },
+    in_progress: { label: "In Progress", bg: C.warnLt, color: C.warn, barColor: "#F59E0B" },
+    completed: { label: "Completed", bg: C.sucLt, color: C.suc, barColor: "#10B981" },
+    coming_soon: { label: "Coming Soon", bg: C.surfaceHover, color: C.textMut, barColor: C.borderLight },
     none: { label: "", bg: "transparent", color: "transparent", barColor: "transparent" },
   };
 
@@ -466,7 +466,7 @@ function OperationsHub({ data, save, nav, profile }) {
       {/* Header with date nav */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <h2 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Operations</h2>
+          <h2 style={{ fontSize: 24, fontWeight: 800, color: C.text, margin: 0, letterSpacing: "-0.02em" }}>Operations</h2>
           <button onClick={() => setShowTodayProgress(v => !v)} style={{ border: "none", borderRadius: 10, padding: "7px 16px", cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12, background: showTodayProgress ? C.pri : C.accLt, color: showTodayProgress ? "#fff" : C.accDk, transition: "all 0.2s", letterSpacing: "0.02em" }}>
             {showTodayProgress ? "✕ Close" : "Today's Progress"}
           </button>
@@ -706,16 +706,17 @@ function OperationsHub({ data, save, nav, profile }) {
                 return (
                   <div key={item.id}
                     style={{
-                      background: C.surface, borderRadius: 14,
-                      border: `1.5px solid ${isEod ? C.border : status === "completed" ? "#10B981" : status === "in_progress" ? "#F59E0B" : C.border}`,
+                      background: C.surface, borderRadius: 16,
+                      border: `1.5px solid ${isEod ? C.border : status === "completed" ? C.suc : status === "in_progress" ? C.warn : C.border}`,
                       cursor: isComingSoon ? "default" : "pointer",
                       opacity: isComingSoon ? 0.55 : 1,
-                      transition: "all 0.2s",
+                      transition: "all 0.2s cubic-bezier(0.4,0,0.2,1)",
                       position: "relative",
                       gridColumn: isExpanded ? "1 / -1" : undefined,
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",
                     }}
-                    onMouseEnter={e => { if (!isComingSoon && !isExpanded) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)"; }}}
-                    onMouseLeave={e => { if (!isExpanded) { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; } }}
+                    onMouseEnter={e => { if (!isComingSoon && !isExpanded) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04)"; }}}
+                    onMouseLeave={e => { if (!isExpanded) { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)"; } }}
                   >
                     {/* Card header */}
                     <div style={{ padding: "18px 20px" }} onClick={() => {
@@ -744,8 +745,8 @@ function OperationsHub({ data, save, nav, profile }) {
                       </div>
                       )}
                       {!isComingSoon && !isEod && (
-                        <div style={{ marginTop: 8, height: 5, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
-                          <div style={{ width: `${progress}%`, height: "100%", borderRadius: 3, background: sc.barColor, transition: "width 0.3s" }} />
+                        <div style={{ marginTop: 8, height: 4, borderRadius: 2, background: C.borderLight, overflow: "hidden" }}>
+                          <div style={{ width: `${progress}%`, height: "100%", borderRadius: 2, background: sc.barColor, transition: "width 0.4s cubic-bezier(0.4,0,0.2,1)" }} />
                         </div>
                       )}
                     </div>

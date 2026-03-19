@@ -48,14 +48,15 @@ const ENT_CSS = `
 }
 .ent-card {
   background: ${C.surface};
-  border-radius: 15px;
+  border-radius: 16px;
   border: 1.5px solid ${C.border};
   padding: 22px;
   animation: entSlideIn 0.45s cubic-bezier(0.22,1,0.36,1) both;
   transition: box-shadow 0.22s, transform 0.22s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
 }
 .ent-card:hover {
-  box-shadow: 0 8px 28px rgba(20,83,45,0.10);
+  box-shadow: 0 8px 28px rgba(20,83,45,0.10), 0 2px 6px rgba(0,0,0,0.04);
   transform: translateY(-2px);
 }
 .ent-hero-num {

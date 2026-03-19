@@ -1,6 +1,15 @@
 // ============================================================================
 // Stripe Checkout Edge Function — K9 Operations
 // Creates Stripe Checkout Sessions for subscription plans.
+//
+// Required Supabase secrets:
+//   STRIPE_SECRET_KEY       — sk_live_... or sk_test_...
+//   STRIPE_PRICE_SINGLE     — price_... (Starter $149/mo)
+//   STRIPE_PRICE_MULTI_3    — price_... (Growth $349/mo)
+//   STRIPE_PRICE_MULTI_10   — price_... (Scale $799/mo)
+//   STRIPE_PRICE_ENTERPRISE — price_... (Enterprise custom)
+//
+// Set via: supabase secrets set STRIPE_SECRET_KEY=sk_live_...
 // ============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
