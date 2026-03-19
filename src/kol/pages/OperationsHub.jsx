@@ -124,35 +124,47 @@ function OperationsHub({ data, save, nav, profile }) {
   const hp = (k) => hasPermission(profile, data, k);
 
   // ─── Inventory snapshot status for weekly-inventory card ────────────────────
+  // Reads from lite_settings (same source as mobile app)
   const [invStatus, setInvStatus] = useState(null); // { status, itemsCounted, totalItems }
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        const locId = profile?.location_id;
+        if (!locId) { setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0 }); return; }
+
+        // Compute Monday of the viewed week
         const d = new Date(viewDate + "T12:00:00");
         const day = d.getDay();
-        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-        const mon = new Date(d.getFullYear(), d.getMonth(), diff);
-        const weekStart = mon.toISOString().split("T")[0];
-        const locId = data.locationId || profile?.locationId || "cherry-hill";
-        const { data: snaps } = await supabase
-          .from("inventory_snapshots")
-          .select("id, status, completed_at")
-          .eq("location_id", locId)
-          .eq("week_start", weekStart)
-          .limit(1);
+        const diff = day === 0 ? 6 : day - 1;
+        const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff);
+        const monday = `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, "0")}-${String(mon.getDate()).padStart(2, "0")}`;
+
+        const [catalogRes, snapshotRes] = await Promise.all([
+          supabase.from("inventory_catalog").select("id").eq("location_id", locId).eq("is_active", true),
+          supabase.from("lite_settings").select("setting_key, setting_value")
+            .eq("location_id", locId)
+            .like("setting_key", "inventory_snapshot_%")
+            .gte("setting_key", `inventory_snapshot_${monday}`)
+            .lte("setting_key", `inventory_snapshot_${viewDate}`)
+            .order("setting_key", { ascending: false })
+            .limit(1),
+        ]);
         if (cancelled) return;
-        if (!snaps || snaps.length === 0) { setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0 }); return; }
-        const snap = snaps[0];
-        if (snap.status === "completed") { setInvStatus({ status: "completed", itemsCounted: 0, totalItems: 0 }); return; }
-        // Count items
-        const { count: counted } = await supabase.from("inventory_counts").select("id", { count: "exact", head: true }).eq("snapshot_id", snap.id).gt("stock_count", 0);
-        const { count: total } = await supabase.from("inventory_counts").select("id", { count: "exact", head: true }).eq("snapshot_id", snap.id);
-        if (!cancelled) setInvStatus({ status: snap.status === "in_progress" ? "in_progress" : "not_started", itemsCounted: counted || 0, totalItems: total || 0 });
+
+        const totalItems = catalogRes.data?.length || 0;
+        if (snapshotRes.data && snapshotRes.data.length > 0) {
+          const snapshot = snapshotRes.data[0].setting_value || [];
+          const counted = snapshot.filter(e => e.count > 0).length;
+          const status = counted >= totalItems && totalItems > 0 ? "completed" : counted > 0 ? "in_progress" : "not_started";
+          if (!cancelled) setInvStatus({ status, itemsCounted: counted, totalItems });
+        } else {
+          if (!cancelled) setInvStatus({ status: "not_started", itemsCounted: 0, totalItems });
+        }
       } catch { if (!cancelled) setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0 }); }
     })();
     return () => { cancelled = true; };
-  }, [viewDate, data.locationId]);
+  }, [viewDate, profile?.location_id]);
 
   // Calendar popup
   const [showCalendar, setShowCalendar] = useState(false);
