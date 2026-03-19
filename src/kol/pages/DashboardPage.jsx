@@ -1022,6 +1022,22 @@ function DashboardContent({
 
   // L1: When range is "today", show past week as chart with today as highlighted final point
   const isToday = range === "today";
+
+  // ─── Live Snapshot: 10-second polling for real-time snapshot counts ───
+  const [liveSnap, setLiveSnap] = useState(null);
+  useEffect(() => {
+    if (!isToday || !locationId) { setLiveSnap(null); return; }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const { data } = await supabase.rpc("snapshot_live", { p_location_id: locationId });
+        if (!cancelled && data) setLiveSnap(data);
+      } catch {}
+    };
+    poll();
+    const iv = setInterval(poll, 10000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [isToday, locationId]);
   // Overlay today's live cash data on trailing week rows too
   const correctedTrailingWeekRows = useMemo(() => buildCashChartRows(trailingWeekRows, todayCashData), [trailingWeekRows, todayCashData]);
   const cashChartData = useMemo(() => {
@@ -1447,40 +1463,44 @@ function DashboardContent({
         </div>
 
         {/* ═══ ROW 1: Gingr Data ═══ */}
-        {/* BOH live overlay: when on Today view and BOH has data, use real-time counts */}
         <MetricCell
           label="Expected"
-          value={m.dogsExpected}
+          value={liveSnap ? liveSnap.expected : m.dogsExpected}
           hero
           onClick={navTo["checkout-tv"]}
-          sub={`${m.dogsArriving} scheduled · ${m.dogsExpected} pending`}
-          trend={showPriorPeriod ? pctChange(m.dogsExpected, pm.dogsExpected) : null}
+          sub={liveSnap ? `${liveSnap.expected} pending` : `${m.dogsExpected} pending`}
+          trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.expected : m.dogsExpected, pm.dogsExpected) : null}
           skeleton={showSkeleton}
+          live={!!liveSnap}
         />
         <MetricCell
           label="In House"
-          value={m.dogsInHouse}
+          value={liveSnap ? liveSnap.in_house : m.dogsInHouse}
           hero
-          sub={`${m.boardingInHouse}B · ${m.daycareInHouse}D`}
+          sub={liveSnap
+            ? `${liveSnap.boarding}B · ${liveSnap.daycare}D`
+            : `${m.boardingInHouse}B · ${m.daycareInHouse}D`}
           onClick={navTo["checkout-tv"]}
-          trend={showPriorPeriod ? pctChange(m.dogsInHouse, pm.dogsInHouse) : null}
+          trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.in_house : m.dogsInHouse, pm.dogsInHouse) : null}
           skeleton={showSkeleton}
+          live={!!liveSnap}
         />
         {days > 1
-          ? <CanceledCell key={animEpoch} value={Math.max(0, (m.dogsExpected || 0) - (isToday && bohStats?.total != null ? bohStats.total : m.dogsInHouse || 0))} onClick={navTo["ops-bathing"]} animKey={animEpoch} />
+          ? <CanceledCell key={animEpoch} value={Math.max(0, (m.dogsExpected || 0) - (m.dogsInHouse || 0))} onClick={navTo["ops-bathing"]} animKey={animEpoch} />
           : <MetricCell
               label="Going Home"
-              value={m.dogsGoingHome}
+              value={liveSnap ? liveSnap.going_home : m.dogsGoingHome}
               hero
               onClick={navTo["ops-bathing"]}
-              trend={showPriorPeriod ? pctChange(m.dogsGoingHome, pm.dogsGoingHome) : null}
+              trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.going_home : m.dogsGoingHome, pm.dogsGoingHome) : null}
               skeleton={showSkeleton}
+              live={!!liveSnap}
             />
         }
-        <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0)}%`} hero onClick={navTo["occupancy-report"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (m.occupancyPct || 0), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} skeleton={showSkeleton} />
-        <MetricCell label="Bookings" value={m.bookingsToday} hero skeleton={showSkeleton} />
-        <MetricCell label="Tours" value={m.toursToday} hero onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(m.toursToday, pm.toursToday) : null} skeleton={showSkeleton} />
-        <MetricCell label="Evals" value={m.evalsToday} hero onClick={navTo["lifecycle"]} skeleton={showSkeleton} />
+        <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0))}%`} hero onClick={navTo["occupancy-report"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0)), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} skeleton={showSkeleton} live={!!liveSnap} />
+        <MetricCell label="New Bookings" value={liveSnap ? liveSnap.new_bookings : m.bookingsToday} hero skeleton={showSkeleton} />
+        <MetricCell label="Tours" value={liveSnap ? liveSnap.tours : m.toursToday} hero onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.tours : m.toursToday, pm.toursToday) : null} skeleton={showSkeleton} />
+        <MetricCell label="Evals" value={liveSnap ? liveSnap.evals : m.evalsToday} hero onClick={navTo["lifecycle"]} skeleton={showSkeleton} />
         <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={navTo["ops-opening"]} />
         <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={navTo["ops-bathing"]} />
 
