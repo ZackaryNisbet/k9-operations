@@ -321,7 +321,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   // ── One-time backfill: add system explanations for ALL leads with 0 updates (P3) ──
   const igniteBackfillDoneRef = useRef(false);
   useEffect(() => {
-    if (igniteBackfillDoneRef.current || !save) return;
+    if (igniteBackfillDoneRef.current || !save || !clientTabMap || !Object.keys(clientTabMap).length) return;
     igniteBackfillDoneRef.current = true;
     let changed = false;
     const updatedClients = data.clients.map(c => {
@@ -356,14 +356,19 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         };
       }
       // Gingr-sourced leads with no bookings
-      if (c.gingrId && !clientTabMap[c.id]?.isActive && !clientTabMap[c.id]?.isRetention && !c.lifecycle?.cold) {
+      if (c.gingrId && !clientTabMap[c.id]?.isActive && !clientTabMap[c.id]?.isRetention && !c.lifecycle?.cold && !clientTabMap[c.id]?.isReclassified) {
         const s = clientStats[c.id] || {};
         const createdLabel = c.createdAt ? fmtDate(c.createdAt.split("T")[0]) : "unknown date";
+        // Check if they had an eval or tour booked
+        const hasEvalOrTour = (s.evalCount || 0) > 0 || (s.tourCount || 0) > 0;
+        const noteText = hasEvalOrTour
+          ? `Eval/Tour booked${s.lastRes?.checkIn ? " on " + fmtDate(s.lastRes.checkIn) : ""}, no follow-up booking yet`
+          : `Imported from Gingr on ${createdLabel}`;
         changed = true;
         return {
           ...c,
           lifecycle: { ...(c.lifecycle || {}), conversion: { ...(c.lifecycle?.conversion || { notes:"",followUpDate:"",updates:[],source:"",sourceDate:"",sourceReservationId:"" }), updates: [{
-            id: gid(), notes: `Imported from Gingr on ${createdLabel} \u2014 ${s.totalRes || 0} reservations, $${(s.totalSpent || 0).toLocaleString()} spent`,
+            id: gid(), notes: noteText,
             previousFollowUp: "", newFollowUp: c.lifecycle?.conversion?.followUpDate || "",
             loggedBy: "System", loggedAt: c.createdAt || new Date().toISOString(),
           }] } },
@@ -402,7 +407,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         ...c,
         lifecycle: { ...(c.lifecycle || {}), retention: { ...(c.lifecycle?.retention || { notes:"",followUpDate:"",updates:[] }), updates: [{
           id: gid(),
-          notes: `No activity detected since ${lastVisitFmt} (${daysSince} days ago). Threshold: ${thresh} days (${threshLabel}-heavy, ${boardingCount} boarding / ${daycareCount} daycare of ${totalRes} total). $${(s.totalSpent || 0).toLocaleString()} lifetime spend.`,
+          notes: `No activity detected since ${lastVisitFmt} \u2014 crossed ${thresh}-day retention threshold (${threshLabel}-heavy). ${totalRes} reservation${totalRes !== 1 ? "s" : ""}, $${(s.totalSpent || 0).toLocaleString()} lifetime spend.`,
           previousFollowUp: "", newFollowUp: c.lifecycle?.retention?.followUpDate || "",
           loggedBy: "System", loggedAt: new Date().toISOString(),
         }] } },
@@ -429,7 +434,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       const totalSpent = s.totalSpent || 0;
       const nextRes = s.nextRes?.checkIn ? fmtDate(s.nextRes.checkIn) : null;
       const lastRes = s.lastRes?.checkIn ? fmtDate(s.lastRes.checkIn) : null;
-      let detail = `Customer has active reservations/spending in Gingr \u2014 ${totalRes} reservations, $${totalSpent.toLocaleString()} lifetime spend.`;
+      let detail = `Active customer \u2014 ${totalRes} reservation${totalRes !== 1 ? "s" : ""}, $${totalSpent.toLocaleString()} lifetime spend.`;
       if (nextRes) detail += ` Next reservation: ${nextRes}.`;
       else if (lastRes) detail += ` Last visit: ${lastRes}.`;
       changed = true;
@@ -445,6 +450,39 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     });
     if (changed) save({ ...data, clients: updatedClients });
   }, [data.clients, clientTabMap, clientStats]);
+
+  // ── One-time backfill: add system explanations for reclassified clients with 0 updates ──
+  const reclassifiedBackfillDoneRef = useRef(false);
+  useEffect(() => {
+    if (reclassifiedBackfillDoneRef.current || !save || !clientTabMap || !Object.keys(clientTabMap).length) return;
+    reclassifiedBackfillDoneRef.current = true;
+    let changed = false;
+    const updatedClients = data.clients.map(c => {
+      if (!clientTabMap[c.id]?.isReclassified) return c;
+      // Reclassified clients should already have a lifecycleEvent from the reclassify action.
+      // Check the relevant tab's updates array — if empty, generate from lifecycleEvents.
+      const fromTab = (c.lifecycle?.reclassifiedFrom === "lapsed" || c.lifecycle?.reclassifiedFrom === "retention" || c.lifecycle?.coldFrom === "lapsed") ? "retention" : "conversion";
+      const tabUpdates = c.lifecycle?.[fromTab]?.updates || [];
+      if (tabUpdates.length > 0) return c;
+      // Build note from lifecycleEvents or reclassified metadata
+      const reason = c.lifecycle?.reclassifiedReason || "Other";
+      const reclassDate = c.lifecycle?.reclassifiedDate || c.lifecycle?.coldDate || "";
+      const reclassFrom = c.lifecycle?.reclassifiedFrom || c.lifecycle?.coldFrom || "leads";
+      const dateLabel = reclassDate ? fmtDate(reclassDate) : "unknown date";
+      const noteText = `Reclassified from ${reclassFrom} on ${dateLabel} \u2014 Reason: ${reason}`;
+      changed = true;
+      return {
+        ...c,
+        lifecycle: { ...(c.lifecycle || {}), [fromTab]: { ...(c.lifecycle?.[fromTab] || { notes:"",followUpDate:"",updates:[] }), updates: [{
+          id: gid(),
+          notes: noteText,
+          previousFollowUp: "", newFollowUp: "",
+          loggedBy: "System", loggedAt: c.lifecycle?.reclassifiedDate || c.lifecycle?.coldDate || new Date().toISOString(),
+        }] } },
+      };
+    });
+    if (changed) save({ ...data, clients: updatedClients });
+  }, [data.clients, clientTabMap]);
 
   // ── Source lookup helpers ──
   const getClientSource = useCallback((client) => {
@@ -496,6 +534,10 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         return false;
       });
     }
+    // Reclassified reason filter
+    if (activeTab === "reclassified" && reclassifyReasonFilter.size > 0) {
+      list = list.filter(c => reclassifyReasonFilter.has(c.lifecycle?.reclassifiedReason || "Other"));
+    }
     // Overdue toggle
     if (showOverdueOnly) {
       const today = todayStr();
@@ -535,10 +577,10 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       });
     }
     return list;
-  }, [tabLists, activeTab, sourceFilter, showOverdueOnly, sortCol, sortDir, clientStats, getClientSource, lcFilters, activeFilterCount, clientTabMap]);
+  }, [tabLists, activeTab, sourceFilter, showOverdueOnly, sortCol, sortDir, clientStats, getClientSource, lcFilters, activeFilterCount, clientTabMap, reclassifyReasonFilter]);
 
   // ── Reset display limit when tab/search/filters change ──
-  useEffect(() => { setDisplayLimit(100); }, [activeTab, search, sourceFilter, showOverdueOnly, sortCol, sortDir, lcFilters]);
+  useEffect(() => { setDisplayLimit(100); }, [activeTab, search, sourceFilter, showOverdueOnly, sortCol, sortDir, lcFilters, reclassifyReasonFilter]);
   const displayedList = activeList.slice(0, displayLimit);
   const hasMore = activeList.length > displayLimit;
 
@@ -879,7 +921,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   // ── Reclassify button cell ──
   const renderReclassifyBtn = (client) => (
     <button onClick={(e) => { e.stopPropagation(); openReclassifyModal(client.id); }}
-      style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${C.dan}30`,background:`${C.dan}08`,color:C.dan,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+      style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surfaceHover||"#f5f5f5",color:C.textSec,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
       Reclassify
     </button>
   );
@@ -1408,6 +1450,16 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
                   {showExtraCols ? "Less Columns" : "More Columns"}
                 </button>
               )}
+              {activeTab === "reclassified" && <>
+                {["Unresponsive", "Uninterested", "Spam", "Other"].map(reason => {
+                  const colors = { "Unresponsive": C.warn, "Uninterested": C.dan, "Spam": "#9333EA", "Other": C.textSec };
+                  const color = colors[reason] || C.textSec;
+                  const on = reclassifyReasonFilter.has(reason);
+                  return <button key={reason} onClick={() => setReclassifyReasonFilter(prev => { const n = new Set(prev); if (n.has(reason)) n.delete(reason); else n.add(reason); return n; })}
+                    style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on ? color : C.border}`,background:on ? color : "transparent",color:on ? "#fff" : C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{reason}</button>;
+                })}
+                {reclassifyReasonFilter.size > 0 && <button onClick={() => setReclassifyReasonFilter(new Set())} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:"0 2px",display:"flex",alignItems:"center"}} title="Clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
+              </>}
             </div>
           </div>
           {/* Active structured filter summary */}
@@ -1977,23 +2029,7 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
         {activeTab === "reclassified" && (() => {
           const grid = getGrid();
-          const RECLASSIFY_REASONS = ["Unresponsive", "Uninterested", "Spam", "Other"];
-          const filteredReclassified = reclassifyReasonFilter.size > 0
-            ? displayedList.filter(c => reclassifyReasonFilter.has(c.lifecycle?.reclassifiedReason || "Other"))
-            : displayedList;
           return <>
-            {/* Reason filter pills */}
-            <div style={{display:"flex",gap:6,padding:"10px 14px",borderBottom:`1px solid ${C.borderLight}`,flexWrap:"wrap",alignItems:"center"}}>
-              <span style={{fontSize:11,fontWeight:700,color:C.textMut,marginRight:4}}>Filter:</span>
-              {RECLASSIFY_REASONS.map(reason => {
-                const colors = { "Unresponsive": C.warn, "Uninterested": C.dan, "Spam": "#9333EA", "Other": C.textSec };
-                const color = colors[reason] || C.textSec;
-                const on = reclassifyReasonFilter.has(reason);
-                return <button key={reason} onClick={() => setReclassifyReasonFilter(prev => { const n = new Set(prev); if (n.has(reason)) n.delete(reason); else n.add(reason); return n; })}
-                  style={{padding:"4px 10px",borderRadius:8,border:`1.5px solid ${on ? color : C.border}`,background:on ? color : "transparent",color:on ? "#fff" : C.textMut,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",whiteSpace:"nowrap"}}>{reason}</button>;
-              })}
-              {reclassifyReasonFilter.size > 0 && <button onClick={() => setReclassifyReasonFilter(new Set())} style={{border:"none",background:"none",cursor:"pointer",color:C.textMut,padding:"0 2px",display:"flex",alignItems:"center"}} title="Clear"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>}
-            </div>
             <div style={{display:"grid",gridTemplateColumns:grid,padding:"10px 14px",background:C.bg,borderBottom:`1px solid ${C.border}`,fontSize:10,fontWeight:700,color:C.textMut,textTransform:"uppercase",letterSpacing:"0.06em",alignItems:"center"}}>
               <div style={colHeaderStyle("name")} onClick={()=>handleSort("name")}>Client <SortIcon col="name"/></div>
               <div style={colHeaderStyle("phone")} onClick={()=>handleSort("phone")}>Phone <SortIcon col="phone"/></div>
@@ -2005,9 +2041,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
               <div>Last Notes</div>
               <div></div>
             </div>
-            {filteredReclassified.length === 0 ? (
+            {displayedList.length === 0 ? (
               <div style={{padding:"48px 12px",textAlign:"center"}}><div style={{fontSize:15,fontWeight:600,color:C.textSec}}>No reclassified clients{search || reclassifyReasonFilter.size > 0?" matching filters":""}</div></div>
-            ) : filteredReclassified.map(c => {
+            ) : displayedList.map(c => {
               const rawFrom = c.lifecycle?.reclassifiedFrom || c.lifecycle?.coldFrom || "Leads";
               const fromTab = (rawFrom === "lapsed" || rawFrom === "retention" || rawFrom === "Lapsed") ? "retention" : "conversion";
               const lastUpdate = c.lifecycle?.[fromTab]?.updates?.[0];
