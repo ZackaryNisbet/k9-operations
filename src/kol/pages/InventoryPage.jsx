@@ -165,7 +165,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
         {item.par_level != null ? item.par_level : <span style={{ color: C.textMut }}>—</span>}
       </div>
 
-      {/* Stock Count — highlighted yellow */}
+      {/* Stock Count — yellow when empty, neutral when filled */}
       <div>
         <input
           ref={inputRef}
@@ -182,8 +182,8 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
             width: "100%",
             padding: "6px 8px",
             borderRadius: 8,
-            border: `2px solid ${isReadOnly ? C.border : "#E6C200"}`,
-            background: isReadOnly ? C.bg : "#FFFDE0",
+            border: `2px solid ${isReadOnly ? C.border : stockCount > 0 ? C.border : "#E6C200"}`,
+            background: isReadOnly ? C.bg : stockCount > 0 ? C.surface : "#FFFDE0",
             fontSize: 13,
             fontWeight: 600,
             color: C.text,
@@ -192,8 +192,8 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
             cursor: isReadOnly ? "default" : "text",
             boxSizing: "border-box",
           }}
-          onFocus={e => { if (!isReadOnly) e.target.style.borderColor = "#C4A400"; }}
-          onBlur={e => { if (!isReadOnly) e.target.style.borderColor = "#E6C200"; }}
+          onFocus={e => { if (!isReadOnly) e.target.style.borderColor = C.pri; }}
+          onBlur={e => { if (!isReadOnly) e.target.style.borderColor = stockCount > 0 ? C.border : "#E6C200"; }}
         />
       </div>
 
@@ -1227,9 +1227,16 @@ function DepletionRateModal({ locationId, reservations, currentWeekStart, onClos
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function InventoryPage({ data, save, nav, profile, addGlobalToast }) {
-  // ── Week navigation ──
+  // ── Week + Day navigation ──
   const [currentWeekStart, setCurrentWeekStart] = useState(() => getWeekStart(todayStr()));
   const thisWeekStart = getWeekStart(todayStr());
+  const [countedDate, setCountedDate] = useState(todayStr());
+
+  // Reset countedDate when week changes
+  useEffect(() => {
+    if (currentWeekStart === thisWeekStart) setCountedDate(todayStr());
+    else setCountedDate(currentWeekStart); // default to Monday for past weeks
+  }, [currentWeekStart]);
 
   // ── Data state ──
   const [catalogItems, setCatalogItems] = useState([]);
@@ -1802,6 +1809,42 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
               <Btn variant="secondary" size="sm" onClick={() => setCurrentWeekStart(thisWeekStart)}>
                 This Week
               </Btn>
+            )}
+          </div>
+
+          {/* Day picker — Mon through today (or full week for past weeks) */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: C.textMut, marginRight: 4 }}>Counted on:</span>
+            {(() => {
+              const days = [];
+              const start = new Date(currentWeekStart + "T12:00:00");
+              const endDate = currentWeekStart === thisWeekStart ? new Date(todayStr() + "T12:00:00") : new Date(start);
+              if (currentWeekStart !== thisWeekStart) endDate.setDate(endDate.getDate() + 6);
+              const d = new Date(start);
+              while (d <= endDate) {
+                const ds = d.toISOString().split("T")[0];
+                days.push(ds);
+                d.setDate(d.getDate() + 1);
+              }
+              return days.map(ds => {
+                const dayLabel = new Date(ds + "T12:00:00").toLocaleDateString("en-US", { weekday: "short" });
+                const isSelected = ds === countedDate;
+                return (
+                  <button key={ds} onClick={() => setCountedDate(ds)}
+                    style={{
+                      padding: "4px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                      border: `1.5px solid ${isSelected ? C.pri : C.border}`,
+                      background: isSelected ? C.pri : C.surface, color: isSelected ? "#fff" : C.textSec,
+                      transition: "all 0.15s",
+                    }}
+                    onMouseEnter={e => { if (!isSelected) { e.currentTarget.style.borderColor = C.pri; e.currentTarget.style.background = C.surfaceHover; }}}
+                    onMouseLeave={e => { if (!isSelected) { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.background = C.surface; }}}
+                  >{dayLabel}</button>
+                );
+              });
+            })()}
+            {countedDate !== todayStr() && (
+              <span style={{ fontSize: 10, fontWeight: 600, color: C.warn, marginLeft: 4 }}>backdated</span>
             )}
           </div>
 
