@@ -943,104 +943,62 @@ export default function LandingPage() {
             The operating system your resort deserves
           </h2>
           <p style={{ fontSize: 17, color: C.textSec, maxWidth: 500, margin: '0 auto 48px' }}>
-            Start with one location. Scale to many. Every plan includes a 14-day free trial.
+            One simple price. Everything included. 14-day free trial.
           </p>
 
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-            gap: 20, maxWidth: 1200, margin: '0 auto',
-          }}>
-            {[
-              {
-                name: 'Starter', subtitle: 'Single Location', price: 149,
-                features: ['1 resort location', 'Unlimited team members', 'Operations Hub + checklists', 'Customer Lifecycle CRM', 'Gingr integration', 'Revenue dashboard', 'EOD reports'],
-                popular: false,
-              },
-              {
-                name: 'Growth', subtitle: 'Up to 3 Locations', price: 349,
-                features: ['Up to 3 resort locations', 'Everything in Starter', 'Enterprise dashboard', 'Cross-location reporting', 'Centralized user management', 'Priority support'],
-                popular: true,
-              },
-              {
-                name: 'Scale', subtitle: 'Up to 10 Locations', price: 799,
-                features: ['Up to 10 resort locations', 'Everything in Growth', 'Operations matrix', 'Multi-location attendance', 'Advanced analytics', 'Dedicated account manager'],
-                popular: false,
-              },
-              {
-                name: 'Enterprise', subtitle: 'Unlimited Locations', price: null,
-                features: ['Unlimited locations', 'Everything in Scale', 'Custom integrations', 'SSO / SAML', 'SLA guarantee', 'Dedicated success team', 'Custom onboarding'],
-                popular: false,
-              },
-            ].map((plan, i) => (
-              <div key={i} style={{
-                background: '#fff',
-                border: plan.popular ? `2px solid ${C.acc}` : `1px solid ${C.border}`,
-                borderRadius: 20, padding: '32px 28px',
-                display: 'flex', flexDirection: 'column',
-                position: 'relative', textAlign: 'left',
-                transition: 'transform 0.2s, box-shadow 0.2s',
-              }}
-                onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 12px 40px rgba(0,0,0,0.08)'; }}
-                onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
-              >
-                {plan.popular && (
-                  <div style={{
-                    position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
-                    background: C.acc, color: C.pri, fontSize: 12, fontWeight: 800,
-                    padding: '4px 16px', borderRadius: 12, letterSpacing: '0.05em',
-                  }}>MOST POPULAR</div>
-                )}
-
-                <div style={{ fontSize: 13, fontWeight: 600, color: C.accDk, letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: 4 }}>
-                  {plan.subtitle}
-                </div>
-                <div style={{ fontSize: 28, fontWeight: 900, color: C.text, marginBottom: 12 }}>
-                  {plan.name}
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 24 }}>
-                  {plan.price ? (
-                    <>
-                      <span style={{ fontSize: 48, fontWeight: 900, color: C.text, lineHeight: 1 }}>${plan.price}</span>
-                      <span style={{ fontSize: 16, color: C.textMut, fontWeight: 500 }}>/mo</span>
-                    </>
-                  ) : (
-                    <span style={{ fontSize: 28, fontWeight: 700, color: C.textMut }}>Custom pricing</span>
-                  )}
-                </div>
-
-                <div style={{ flex: 1, marginBottom: 24 }}>
-                  {plan.features.map((f, fi) => (
-                    <div key={fi} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '6px 0' }}>
-                      <div style={{
-                        width: 20, height: 20, borderRadius: 6,
-                        background: C.acc + '20', display: 'flex',
-                        alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1,
-                      }}>
-                        <Icon name="check" size={12} color={C.accDk} />
-                      </div>
-                      <span style={{ fontSize: 14, color: C.textSec, lineHeight: 1.4 }}>{f}</span>
-                    </div>
-                  ))}
-                </div>
-
-                <a
-                  href={plan.price ? '/signup' : 'mailto:sales@k9operations.com?subject=Enterprise%20Plan%20Inquiry'}
-                  style={{
-                    display: 'block', width: '100%', padding: '14px 0', textAlign: 'center',
-                    background: plan.popular ? C.pri : 'transparent',
-                    color: plan.popular ? '#fff' : C.pri,
-                    border: plan.popular ? 'none' : `1.5px solid ${C.border}`,
-                    borderRadius: 12, fontSize: 15, fontWeight: 700,
-                    cursor: 'pointer', textDecoration: 'none',
-                    transition: 'opacity 0.2s, background 0.2s',
-                  }}
-                >
-                  {plan.price ? 'Start Free Trial' : 'Contact Sales'}
-                </a>
+          <div style={{ display: 'flex', justifyContent: 'center', maxWidth: 440, margin: '0 auto' }}>
+            <div style={{
+              background: '#fff',
+              border: `2px solid ${C.acc}`,
+              borderRadius: 20, padding: '32px 28px', width: '100%',
+              display: 'flex', flexDirection: 'column',
+              position: 'relative', textAlign: 'left',
+              transition: 'transform 0.2s, box-shadow 0.2s',
+            }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 12px 40px rgba(0,0,0,0.08)'; }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = 'none'; }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.accDk, letterSpacing: '0.05em', textTransform: 'uppercase', marginBottom: 4 }}>
+                Everything You Need
               </div>
-            ))}
+              <div style={{ fontSize: 28, fontWeight: 900, color: C.text, marginBottom: 12 }}>
+                K9 Operations
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 24 }}>
+                <span style={{ fontSize: 48, fontWeight: 900, color: C.text, lineHeight: 1 }}>$50</span>
+                <span style={{ fontSize: 16, color: C.textMut, fontWeight: 500 }}>/mo</span>
+              </div>
+
+              <div style={{ flex: 1, marginBottom: 24 }}>
+                {['Unlimited locations', 'Unlimited team members', 'Operations Hub + checklists', 'Customer Lifecycle CRM', 'Gingr integration', 'Revenue dashboard', 'Enterprise reporting', 'EOD reports', 'Priority support'].map((f, fi) => (
+                  <div key={fi} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '6px 0' }}>
+                    <div style={{
+                      width: 20, height: 20, borderRadius: 6,
+                      background: C.acc + '20', display: 'flex',
+                      alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1,
+                    }}>
+                      <Icon name="check" size={12} color={C.accDk} />
+                    </div>
+                    <span style={{ fontSize: 14, color: C.textSec, lineHeight: 1.4 }}>{f}</span>
+                  </div>
+                ))}
+              </div>
+
+              <a
+                href="/signup"
+                style={{
+                  display: 'block', width: '100%', padding: '14px 0', textAlign: 'center',
+                  background: C.pri, color: '#fff',
+                  border: 'none',
+                  borderRadius: 12, fontSize: 15, fontWeight: 700,
+                  cursor: 'pointer', textDecoration: 'none',
+                  transition: 'opacity 0.2s, background 0.2s',
+                }}
+              >
+                Start Free Trial
+              </a>
+            </div>
           </div>
 
           <div style={{ textAlign: 'center', maxWidth: 500, margin: '40px auto 0', color: C.textMut, fontSize: 14, lineHeight: 1.6 }}>
