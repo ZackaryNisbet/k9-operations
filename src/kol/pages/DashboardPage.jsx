@@ -234,17 +234,6 @@ const DASH_CSS = `
   box-shadow: 0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
   transform: translateY(-1px);
 }
-.manager-badge {
-  font-size: 8px;
-  font-weight: 600;
-  color: #9CA3AF;
-  background: rgba(0,0,0,0.04);
-  padding: 2px 6px;
-  border-radius: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  line-height: 1.3;
-}
 .dash-link-icon {
   width: 10px;
   height: 10px;
@@ -1591,10 +1580,7 @@ function DashboardContent({
         <div ref={financialRef} style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
           <span className="dash-section-label">Financial Reporting</span>
         </div>
-        <div style={{ gridColumn: "8" }} />
-        <div style={{ gridColumn: "9", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 2px" }}>
-          <span className="manager-badge">Manager Only</span>
-        </div>
+        <div style={{ gridColumn: "8 / 10" }} />
 
         {/* ═══ ROW 4: Reporting/Financial ═══ */}
         <MetricCell label="Transactions" value={m.cashTransactionCount} trend={showPriorPeriod ? bookingsTrend : null} skeleton={showSkeleton} />
@@ -1680,12 +1666,12 @@ function DashboardContent({
                 style={{
                   cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center",
                   width: 18, height: 18, borderRadius: 4,
-                  background: "rgba(132,204,22,0.12)", color: C.acc,
+                  background: "rgba(20,83,45,0.08)", color: C.pri,
                   transition: "all 0.2s cubic-bezier(0.22,1,0.36,1)",
                   flexShrink: 0,
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(132,204,22,0.25)"; e.currentTarget.style.transform = "scale(1.15)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(132,204,22,0.12)"; e.currentTarget.style.transform = "scale(1)"; }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.18)"; e.currentTarget.style.transform = "scale(1.15)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.08)"; e.currentTarget.style.transform = "scale(1)"; }}
                 title="View accrual breakdown"
               >
                 <I.FileText style={{ width: 11, height: 11 }} />
@@ -2313,7 +2299,7 @@ const MetricCell = memo(function MetricCell({ label, value, sub, color, trend, o
       {onClick && <LinkIcon />}
       {/* Live indicator dot — shown when BOH is feeding real-time data */}
       {live && (
-        <div style={{ position: "absolute", top: 4, right: 4, width: 5, height: 5, borderRadius: "50%", background: "#22C55E", animation: "dashPulse 1.5s infinite" }} />
+        <div style={{ position: "absolute", bottom: 4, right: 4, width: 5, height: 5, borderRadius: "50%", background: "#22C55E", animation: "dashPulse 1.5s infinite" }} />
       )}
       {skeleton ? (
         <>

@@ -663,7 +663,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                   return (
                     <tr key={r.id} style={{ borderBottom: ri < dogs.length - 1 ? `1px solid ${C.border}` : "none" }}>
                       <td style={{ padding: "8px 12px", fontWeight: 700, color: C.text }}>{d ? d.fields.name : "?"}</td>
-                      <td style={{ padding: "8px 12px", color: C.pri, fontWeight: 700, fontSize: 11 }}>{r.room ? (r.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || r.room : "—"}</td>
+                      <td style={{ padding: "8px 12px", color: C.pri, fontWeight: 700, fontSize: 11 }}>{resolveRoomDisplay(r.room).display}</td>
                       <td style={{ padding: "8px 12px", fontSize: 10, fontWeight: 600, color: r._ppSource === "Day Boarding" ? C.acc : r._ppSource === "Day Boarding + Add-On" ? C.warn : C.pri }}>
                         <span style={{ padding: "2px 7px", borderRadius: 6, background: r._ppSource === "Day Boarding" ? C.acc + "18" : r._ppSource === "Day Boarding + Add-On" ? C.warn + "18" : C.priLt, whiteSpace: "nowrap" }}>{r._ppSource}</span>
                       </td>
@@ -706,6 +706,30 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
 
 
+
+  // ─── Room Display Helper: resolve room_assignment to a clean display label ──
+  // Handles room names like "DC1", "SC5", "Luxury Suite 101", "Double Compartment DC1", etc.
+  // Returns { display: "DC1", roomType: "Double Compartment" } or { display: "101", roomType: "Luxury Suite" }
+  const resolveRoomDisplay = (room) => {
+    if (!room) return { display: "—", roomType: null };
+    const r = room.trim();
+    // If room is a short code like "DC1", "SC5", keep it as-is
+    if (/^[A-Z]{1,3}\d+[A-Za-z]?$/.test(r)) return { display: r, roomType: r.startsWith("DC") ? "Double Compartment" : r.startsWith("SC") ? "Single Compartment" : null };
+    // If room is a full name like "Double Compartment DC1" or "Luxury Suite 101", extract the identifier
+    const match = r.match(/(?:Luxury Suite|Executive Room|Double Compartment|Single Compartment)\s+(.+)/i);
+    if (match) {
+      const id = match[1].trim();
+      const roomType = r.toLowerCase().includes("luxury") ? "Luxury Suite"
+        : r.toLowerCase().includes("executive") ? "Executive Room"
+        : r.toLowerCase().includes("double") ? "Double Compartment"
+        : r.toLowerCase().includes("single") ? "Single Compartment" : null;
+      return { display: id, roomType };
+    }
+    // If room is a number-like value (e.g. "101", "5A"), return as-is
+    if (/^\d+[A-Za-z]?$/.test(r)) return { display: r, roomType: null };
+    // Fallback: return the whole room name
+    return { display: r, roomType: null };
+  };
 
   // ─── Service Helper: extract service names from _services (handles both formats) ──
   const getSvcNames = (svcs) => {
@@ -837,7 +861,17 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     withBathToday.forEach(res => {
       const dog = dogs.find(d => d.id === res.dogId);
       const dogName = dog?.fields?.name || res._animalName || "Unknown";
-      const roomNum = res.room ? (res.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || res.room : "—";
+      const roomInfo = resolveRoomDisplay(res.room);
+      let roomNum = roomInfo.display;
+      let roomType = roomInfo.roomType;
+      // Fallback: if no room assigned, derive room type from reservation type name
+      if (roomNum === "—" && res._resTypeName) {
+        const rtn = res._resTypeName.toLowerCase();
+        if (rtn.includes("luxury")) { roomNum = "LS"; roomType = "Luxury Suite"; }
+        else if (rtn.includes("executive")) { roomNum = "ER"; roomType = "Executive Room"; }
+        else if (rtn.includes("double")) { roomNum = "DC"; roomType = "Double Compartment"; }
+        else if (rtn.includes("single")) { roomNum = "SC"; roomType = "Single Compartment"; }
+      }
       const bathType = bathTypeMap[res.id] || (bathTypeLoading ? "Loading…" : "Premium");
       const rawCoTime = res.scheduledCheckOutTime || res.checkOutTime || "";
       const coTime = rawCoTime ? formatTime12hr(rawCoTime) : "—";
@@ -849,7 +883,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       const bathSvc = svcs.find(s => typeof s === "object" && s?.name?.toLowerCase().includes("bath") && (s.scheduled_at || "").includes(viewDate));
       const schedAt = bathSvc?.scheduled_at || "";
       const schedTime = schedAt ? formatTime12hr(schedAt.split("T")[1]?.slice(0, 5) || "") : "—";
-      bathRows.push({ resId: res.id, dogName, roomNum, bathType, coTime, isDone, completedInfo, resType: res.type, isDeparted, schedTime });
+      bathRows.push({ resId: res.id, dogName, roomNum, bathType, coTime, isDone, completedInfo, resType: res.type, isDeparted, schedTime, roomType });
     });
     bathRows.sort((a, b) => (a.roomNum || "").localeCompare(b.roomNum || "", undefined, { numeric: true }));
 
@@ -939,11 +973,13 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                         <td style={{ padding: "12px 14px", fontWeight: 600, color: C.text, fontFamily: "inherit" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             {row.dogName}
-                            {row.resType === "daycare" && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEF3C7", color: "#D97706" }}>DC</span>}
                             {row.isDeparted && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEE2E2", color: "#DC2626" }}>Departed</span>}
                           </div>
                         </td>
-                        <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri, fontFamily: "inherit" }}>{row.roomNum}</td>
+                        <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri, fontFamily: "inherit" }}>
+                          {row.roomNum}
+                          {row.roomType === "Double Compartment" && <div style={{ fontSize: 9, fontWeight: 600, color: C.textMut, marginTop: 1 }}>Double</div>}
+                        </td>
                         <td style={{ padding: "12px 14px", color: C.text }}>
                           <span style={{
                             display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "inherit",
@@ -1033,12 +1069,22 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
       const dog = dogs.find(d => d.id === res.dogId);
       const dogName = dog?.fields?.name || res._animalName || "Unknown";
-      const roomNum = res.room ? (res.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || res.room : "—";
+      const roomInfo = resolveRoomDisplay(res.room);
+      let roomNum = roomInfo.display;
+      let roomType = roomInfo.roomType;
+      // Fallback: if no room assigned, derive room type from reservation type name
+      if (roomNum === "—" && res._resTypeName) {
+        const rtn = res._resTypeName.toLowerCase();
+        if (rtn.includes("luxury")) { roomNum = "LS"; roomType = "Luxury Suite"; }
+        else if (rtn.includes("executive")) { roomNum = "ER"; roomType = "Executive Room"; }
+        else if (rtn.includes("double")) { roomNum = "DC"; roomType = "Double Compartment"; }
+        else if (rtn.includes("single")) { roomNum = "SC"; roomType = "Single Compartment"; }
+      }
       const ownerName = res._ownerName || "Unknown";
       const source = isLuxurySuite ? (hasPPAddon ? "Luxury Suite + Add-On" : "Luxury Suite") : "Add-On";
       const completedInfo = pamperCompleted[res.id];
       const isDone = !!completedInfo;
-      pamperRows.push({ resId: res.id, dogName, roomNum, ownerName, source, isDone, completedInfo });
+      pamperRows.push({ resId: res.id, dogName, roomNum, ownerName, source, isDone, completedInfo, roomType });
     });
     pamperRows.sort((a, b) => (a.roomNum || "").localeCompare(b.roomNum || "", undefined, { numeric: true }));
 
@@ -1102,7 +1148,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                       }}>
                         <td style={{ padding: "12px 14px", fontWeight: 600, color: C.text }}>{row.dogName}</td>
                         <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri }}>
-                          {ri === 0 ? roomNum : ""}
+                          {ri === 0 ? row.roomNum : ""}
+                          {ri === 0 && row.roomType === "Double Compartment" && <div style={{ fontSize: 9, fontWeight: 600, color: C.textMut, marginTop: 1 }}>Double</div>}
                         </td>
                         <td style={{ padding: "12px 14px", color: C.textSec }}>{row.ownerName}</td>
                         <td style={{ padding: "12px 14px", textAlign: "center" }}>
@@ -1191,11 +1238,21 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
       const dog = dogs.find(d => d.id === res.dogId);
       const dogName = dog?.fields?.name || res._animalName || "Unknown";
-      const roomNum = res.room ? (res.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || res.room : "—";
+      const roomInfo = resolveRoomDisplay(res.room);
+      let roomNum = roomInfo.display;
+      let roomType = roomInfo.roomType;
+      // Fallback: if no room assigned, derive room type from reservation type name
+      if (roomNum === "—" && res._resTypeName) {
+        const rtn = res._resTypeName.toLowerCase();
+        if (rtn.includes("luxury")) { roomNum = "LS"; roomType = "Luxury Suite"; }
+        else if (rtn.includes("executive")) { roomNum = "ER"; roomType = "Executive Room"; }
+        else if (rtn.includes("double")) { roomNum = "DC"; roomType = "Double Compartment"; }
+        else if (rtn.includes("single")) { roomNum = "SC"; roomType = "Single Compartment"; }
+      }
       const ownerName = res._ownerName || "Unknown";
       const completedInfo = genericSvcCompleted[res.id];
       const isDone = !!completedInfo;
-      svcRows.push({ resId: res.id, dogName, roomNum, ownerName, isDone, completedInfo, matchCount, resType: res.type });
+      svcRows.push({ resId: res.id, dogName, roomNum, ownerName, isDone, completedInfo, matchCount, resType: res.type, roomType, checkIn: res.checkIn, checkOut: res.checkOut });
     });
     svcRows.sort((a, b) => (a.roomNum || "").localeCompare(b.roomNum || "", undefined, { numeric: true }));
 
@@ -1208,6 +1265,13 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       else { newCompleted[resId] = { by: profile?.name || profile?.email || "Staff", at: new Date().toISOString() }; }
       saveGenericSvcCompleted(newCompleted);
     };
+
+    // Determine service-specific column visibility
+    const svcLower = svcName.toLowerCase();
+    const isEnrichment = svcLower.includes("enrichment");
+    const isIceCream = svcLower.includes("ice cream") || svcLower.includes("gourmet");
+    const showQty = !isEnrichment; // Enrichment doesn't need quantity
+    const showDates = isIceCream; // Ice cream needs check-in/check-out dates
 
     return (
       <div>
@@ -1237,7 +1301,9 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                     <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>DOG</th>
                     <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>ROOM</th>
                     <th style={{ textAlign: "left", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>OWNER</th>
-                    <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>QTY</th>
+                    {showDates && <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>CHECK-IN</th>}
+                    {showDates && <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>CHECK-OUT</th>}
+                    {showQty && <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>QTY</th>}
                     <th style={{ textAlign: "center", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em" }}>COMPLETED</th>
                   </tr>
                 </thead>
@@ -1250,11 +1316,15 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                     }}>
                       <td style={{ padding: "12px 14px", fontWeight: 600, color: C.text }}>
                         {row.dogName}
-                        {row.resType === "daycare" && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEF3C7", color: "#D97706" }}>DC</span>}
                       </td>
-                      <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri }}>{row.roomNum}</td>
+                      <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri }}>
+                        {row.roomNum}
+                        {row.roomType === "Double Compartment" && <div style={{ fontSize: 9, fontWeight: 600, color: C.textMut, marginTop: 1 }}>Double</div>}
+                      </td>
                       <td style={{ padding: "12px 14px", color: C.textSec }}>{row.ownerName}</td>
-                      <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.text }}>{row.matchCount > 1 ? `×${row.matchCount}` : "—"}</td>
+                      {showDates && <td style={{ padding: "12px 14px", textAlign: "center", fontSize: 12, color: C.textSec }}>{row.checkIn ? fmtDateShort(row.checkIn) : "—"}</td>}
+                      {showDates && <td style={{ padding: "12px 14px", textAlign: "center", fontSize: 12, color: C.textSec }}>{row.checkOut ? fmtDateShort(row.checkOut) : "—"}</td>}
+                      {showQty && <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.text }}>{row.matchCount > 1 ? `×${row.matchCount}` : "—"}</td>}
                       <td style={{ padding: "12px 14px", textAlign: "center" }}>
                         <button onClick={() => toggleSvc(row.resId)} style={{
                           width: 28, height: 28, borderRadius: 8,

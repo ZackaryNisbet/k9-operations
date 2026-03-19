@@ -68,6 +68,10 @@ const LEAN_PERMISSION_AREAS = [
   "Checklist Templates",
   "Enterprise View",
   "Inventory Management",
+  "Dashboard",
+  "Financial Reporting",
+  "Occupancy Reports",
+  "Services Management",
 ];
 
 const LEAN_PERMISSION_MATRIX = {
@@ -83,6 +87,10 @@ const LEAN_PERMISSION_MATRIX = {
     "Checklist Templates": false,
     "Enterprise View": false,
     "Inventory Management": false,
+    "Dashboard": true,
+    "Financial Reporting": false,
+    "Occupancy Reports": false,
+    "Services Management": false,
   },
   csr: {
     "Operations Hub": true,
@@ -96,6 +104,10 @@ const LEAN_PERMISSION_MATRIX = {
     "Checklist Templates": false,
     "Enterprise View": false,
     "Inventory Management": false,
+    "Dashboard": true,
+    "Financial Reporting": false,
+    "Occupancy Reports": false,
+    "Services Management": true,
   },
   supervisor: {
     "Operations Hub": true,
@@ -109,6 +121,10 @@ const LEAN_PERMISSION_MATRIX = {
     "Checklist Templates": false,
     "Enterprise View": false,
     "Inventory Management": true,
+    "Dashboard": true,
+    "Financial Reporting": false,
+    "Occupancy Reports": false,
+    "Services Management": true,
   },
   manager: {
     "Operations Hub": true,
@@ -122,6 +138,10 @@ const LEAN_PERMISSION_MATRIX = {
     "Checklist Templates": true,
     "Enterprise View": false,
     "Inventory Management": true,
+    "Dashboard": true,
+    "Financial Reporting": true,
+    "Occupancy Reports": true,
+    "Services Management": true,
   },
   location_admin: {
     "Operations Hub": true,
@@ -135,6 +155,10 @@ const LEAN_PERMISSION_MATRIX = {
     "Checklist Templates": true,
     "Enterprise View": false,
     "Inventory Management": true,
+    "Dashboard": true,
+    "Financial Reporting": true,
+    "Occupancy Reports": true,
+    "Services Management": true,
   },
   multi_location_admin: {
     "Operations Hub": true,
@@ -148,6 +172,10 @@ const LEAN_PERMISSION_MATRIX = {
     "Checklist Templates": true,
     "Enterprise View": true,
     "Inventory Management": true,
+    "Dashboard": true,
+    "Financial Reporting": true,
+    "Occupancy Reports": true,
+    "Services Management": true,
   },
   enterprise_admin: {
     "Operations Hub": true,
@@ -161,6 +189,10 @@ const LEAN_PERMISSION_MATRIX = {
     "Checklist Templates": true,
     "Enterprise View": true,
     "Inventory Management": true,
+    "Dashboard": true,
+    "Financial Reporting": true,
+    "Occupancy Reports": true,
+    "Services Management": true,
   },
 };
 

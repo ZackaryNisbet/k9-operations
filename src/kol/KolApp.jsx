@@ -629,10 +629,16 @@ function LeanAppInner() {
 
   // Toast notification system
   const [toasts, setToasts] = useState([]);
-  const addGlobalToast = useCallback((msg, type = "info") => {
+  const addGlobalToast = useCallback((msgOrObj, type = "info") => {
     const id = Date.now() + Math.random();
-    setToasts(prev => [...prev, { id, msg, type }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3500);
+    // Support both string and object forms: addGlobalToast("msg") or addGlobalToast({ message, type, actionLabel, onAction })
+    const isObj = typeof msgOrObj === "object" && msgOrObj !== null && !React.isValidElement(msgOrObj);
+    const msg = isObj ? (msgOrObj.message || "") : msgOrObj;
+    const resolvedType = isObj ? (msgOrObj.type || type) : type;
+    const actionLabel = isObj ? msgOrObj.actionLabel : null;
+    const onAction = isObj ? msgOrObj.onAction : null;
+    setToasts(prev => [...prev, { id, msg, type: resolvedType, actionLabel, onAction }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), actionLabel ? 6000 : 3500);
   }, []);
 
   // Load fonts
@@ -700,6 +706,7 @@ function LeanAppInner() {
       "settings": null, // settings handles its own per-tab permissions
       "inventory": "Inventory Management",
       "inventory-report": "Inventory Management",
+      "occupancy-report": "Occupancy Reports",
       "cash-tips": null,
       "test-health": null,
       "enterprise-ops": "Enterprise View",
@@ -713,22 +720,21 @@ function LeanAppInner() {
 
     switch (page) {
       case "dashboard": {
-        // DASH-002: Permission-based dashboard views
-        const role = (profile.role || "pct").toLowerCase();
-        const isOwnerOrManager = role === "owner" || role === "manager" || role === "admin" || role === "enterprise_admin" || role === "multi_location_admin" || role === "regional" || role === "developer";
-        const isCSR = role === "csr" || role === "supervisor";
+        // DASH-002: Permission-based dashboard views — driven by permission matrix, not hardcoded roles
+        const hasFinancial = hasLeanPermission(profile, "Financial Reporting");
+        const hasOpsHub = hasLeanPermission(profile, "Operations Hub");
         const dashboardPermissions = {
           showSnapshot: true,
-          showRevenue: isOwnerOrManager,
-          showFunnel: isOwnerOrManager,
-          showLTV: isOwnerOrManager,
-          showRevenueComposition: isOwnerOrManager,
-          showRevenueByCategory: isOwnerOrManager,
-          showDiscountAnalysis: isOwnerOrManager,
-          showTopClients: isOwnerOrManager,
-          showOps: isOwnerOrManager || isCSR,
-          showFunnelMetrics: isOwnerOrManager,
-          showHeroKPIs: isOwnerOrManager,
+          showRevenue: hasFinancial,
+          showFunnel: hasFinancial,
+          showLTV: hasFinancial,
+          showRevenueComposition: hasFinancial,
+          showRevenueByCategory: hasFinancial,
+          showDiscountAnalysis: hasFinancial,
+          showTopClients: hasFinancial,
+          showOps: hasOpsHub,
+          showFunnelMetrics: hasFinancial,
+          showHeroKPIs: hasFinancial,
         };
         return <DashboardPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} refreshOptions={refreshOptions} bohStats={bohStats} bohLastFetch={bohLastFetch} {...dashboardPermissions} />;
       }
@@ -1018,7 +1024,13 @@ function LeanAppInner() {
               display: "flex", alignItems: "center", gap: 8, maxWidth: 380,
             }}>
               <span>{t.type === "success" ? "\u2713" : t.type === "error" ? "\u2717" : t.type === "warning" ? "\u26A0" : "\u2139"}</span>
-              {t.msg}
+              <span style={{flex:1}}>{t.msg}</span>
+              {t.actionLabel && t.onAction && (
+                <button onClick={() => { t.onAction(); setToasts(prev => prev.filter(x => x.id !== t.id)); }}
+                  style={{marginLeft:8,padding:"4px 10px",borderRadius:6,border:"1.5px solid rgba(255,255,255,0.5)",background:"rgba(255,255,255,0.15)",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                  {t.actionLabel}
+                </button>
+              )}
             </div>
           ))}
         </div>

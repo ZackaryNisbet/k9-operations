@@ -40,21 +40,28 @@ function PermissionsTab() {
   }, []);
 
   const LITE_PERM_CATEGORIES = [
-    { key: "pages", label: "Page Access", permissions: [
+    { key: "dashboard", label: "Dashboard & Reporting", permissions: [
+      { key: "Dashboard", label: "Dashboard", desc: "View the main dashboard with today's metrics" },
+      { key: "Financial Reporting", label: "Financial Reporting", desc: "View revenue, transactions, refunds, and financial charts" },
+      { key: "Occupancy Reports", label: "Occupancy Reports", desc: "View occupancy trends and reports" },
+    ]},
+    { key: "pages", label: "Module Access", permissions: [
       { key: "Customer Lifecycle", label: "Customer Lifecycle", desc: "View and manage customer lifecycle stages" },
       { key: "Operations Hub", label: "Operations Hub", desc: "Access daily operations checklists" },
       { key: "Photos Module", label: "Photos", desc: "View and manage pet photos" },
+      { key: "Services Management", label: "Services", desc: "View and manage bathing, enrichment, pamper, and ice cream services" },
+      { key: "Inventory Management", label: "Inventory", desc: "Manage inventory counts and orders" },
     ]},
-    { key: "settings", label: "Settings & Admin", permissions: [
-      { key: "Gingr Integration", label: "Gingr Integration", desc: "Configure Gingr API connection" },
-      { key: "User Management", label: "User Management", desc: "Manage team members and invites" },
-      { key: "Permissions Management", label: "Permissions", desc: "View and edit roles permissions" },
-    ]},
-    { key: "ops", label: "Operations", permissions: [
+    { key: "ops", label: "Operations & Tools", permissions: [
       { key: "EOD Reports", label: "EOD Reports", desc: "View end-of-day financial reports" },
       { key: "Attendance Tracker", label: "Attendance", desc: "Track team attendance and records" },
       { key: "Checklist Templates", label: "Checklist Templates", desc: "Customize operation checklists" },
       { key: "Enterprise View", label: "Enterprise View", desc: "Access cross-location enterprise dashboard" },
+    ]},
+    { key: "settings", label: "Settings & Admin", permissions: [
+      { key: "Gingr Integration", label: "Gingr Integration", desc: "Configure Gingr API connection" },
+      { key: "User Management", label: "User Management", desc: "Manage team members and invites" },
+      { key: "Permissions Management", label: "Permissions", desc: "View and edit role permissions" },
     ]},
   ];
 
@@ -66,6 +73,7 @@ function PermissionsTab() {
     supervisor: { bg: "#FEF3C7", text: "#D97706" },
     manager: { bg: "#DBEAFE", text: "#2563EB" },
     location_admin: { bg: "#E0E7FF", text: "#4F46E5" },
+    multi_location_admin: { bg: "#FCE7F3", text: "#DB2777" },
     enterprise_admin: { bg: "#F5F3FF", text: "#7C3AED" },
   };
 
