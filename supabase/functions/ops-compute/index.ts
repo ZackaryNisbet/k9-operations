@@ -272,6 +272,15 @@ function suggestBowlSize(weight: number | null): string {
 }
 
 async function computeRoomCleaning(supabase: any, bohData: any, locationId: string, today: string): Promise<any> {
+  // ─── Step 0: Load room_names config to include ALL rooms ────────────
+  const { data: roomNamesSetting } = await supabase
+    .from("lite_settings")
+    .select("setting_value")
+    .eq("location_id", locationId)
+    .eq("setting_key", "room_names")
+    .maybeSingle();
+  const roomNamesConfig: Record<string, string[]> = roomNamesSetting?.setting_value || {};
+
   // ─── Step 1: Build room name lookup from BOH ─────────────────────────
   // BOH checking_out = dogs HERE now, leaving today (has run_name = actual room)
   // BOH checking_in = dogs arriving today, not yet checked in (may have run_name)
@@ -286,22 +295,69 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     }
   }
 
+  // ─── Step 1b: Persist BOH room assignments to reservations ──────────
+  // BOH is the only reliable source for day boarding room assignments.
+  // We must save these BEFORE the dog checks out, otherwise the room is lost.
+  if (Object.keys(bohRoomMap).length > 0) {
+    const animalIds = Object.keys(bohRoomMap);
+    // Look up reservations by animal_gingr_id to persist room_assignment
+    const { data: bohReservations } = await supabase
+      .from("gingr_reservations")
+      .select("gingr_id, animal_gingr_id, room_assignment")
+      .eq("location_id", locationId)
+      .not("check_in_date", "is", null)
+      .is("cancelled_date", null)
+      .in("animal_gingr_id", animalIds);
+
+    const updates: Array<{ gingr_id: string; room: string }> = [];
+    for (const res of bohReservations || []) {
+      const aid = String(res.animal_gingr_id);
+      const boh = bohRoomMap[aid];
+      if (boh?.runName && res.room_assignment !== boh.runName) {
+        updates.push({ gingr_id: res.gingr_id, room: boh.runName });
+      }
+    }
+
+    // Batch update — persist room assignments discovered from BOH
+    for (const { gingr_id, room } of updates) {
+      await supabase
+        .from("gingr_reservations")
+        .update({ room_assignment: room })
+        .eq("gingr_id", gingr_id)
+        .eq("location_id", locationId);
+    }
+  }
+
   // ─── Step 2: Get ALL active boarding reservations from Supabase ──────
   // These are dogs currently checked in (have check_in_date, no check_out_date, not cancelled)
   // This captures mid-stay dogs that BOH misses.
-  const { data: activeReservations } = await supabase
-    .from("gingr_reservations")
-    .select("gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, raw_data, room_assignment")
-    .eq("location_id", locationId)
-    .not("check_in_date", "is", null)
-    .is("check_out_date", null)
-    .is("cancelled_date", null);
+  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, raw_data, room_assignment";
+  const [{ data: activeReservations }, { data: checkedOutToday }] = await Promise.all([
+    supabase
+      .from("gingr_reservations")
+      .select(resSelect)
+      .eq("location_id", locationId)
+      .not("check_in_date", "is", null)
+      .is("check_out_date", null)
+      .is("cancelled_date", null),
+    // Also fetch dogs checked out TODAY — they still need disinfect
+    supabase
+      .from("gingr_reservations")
+      .select(resSelect)
+      .eq("location_id", locationId)
+      .not("check_in_date", "is", null)
+      .not("check_out_date", "is", null)
+      .gte("check_out_date", today + "T00:00:00")
+      .lt("check_out_date", addDays(today, 1) + "T00:00:00")
+      .is("cancelled_date", null),
+  ]);
+  const allReservations = [...(activeReservations || []), ...(checkedOutToday || [])];
 
   const rooms: RoomEntry[] = [];
   const seenAnimals = new Set<string>();
 
-  // ─── Step 3: Process all active reservations ────────────────────────
-  for (const res of activeReservations || []) {
+  // ─── Step 3: Process all active reservations + today's checkouts ────
+  for (const res of allReservations) {
     const typeName = res.reservation_type_name || "";
     const tLower = typeName.toLowerCase();
 
@@ -313,6 +369,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     if (animalId) seenAnimals.add(animalId);
 
     const isDayBoarding = tLower.includes("day boarding");
+    const isCheckedOut = !!res.check_out_date;
     const roomType = parseRoomType(typeName);
 
     // Get dates — Supabase stores as TIMESTAMPTZ
@@ -329,7 +386,8 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     let needsDisinfect = false;
     let needsRefresh = false;
 
-    if (isDayBoarding) {
+    if (isCheckedOut || isDayBoarding) {
+      // Checked out today or day boarding → full disinfect
       cleaningType = "disinfect";
       needsDisinfect = true;
     } else if (endDate === today) {
@@ -546,6 +604,35 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     });
   }
 
+  // ─── Step 6: Merge in ALL configured rooms (vacant ones too) ────────
+  // Build a set of room names already in the list (occupied)
+  const occupiedRoomNames = new Set(rooms.map((r) => r.room));
+  for (const [roomType, roomList] of Object.entries(roomNamesConfig)) {
+    if (!Array.isArray(roomList)) continue;
+    for (const roomName of roomList) {
+      if (occupiedRoomNames.has(roomName)) continue;
+      rooms.push({
+        room: roomName,
+        roomType,
+        areaName: "",
+        dogName: "",
+        ownerLastName: "",
+        reservationType: "",
+        checkIn: "",
+        checkOut: "",
+        dayNumber: 0,
+        totalNights: 0,
+        cleaningType: "none",
+        needsDisinfect: false,
+        needsRefresh: false,
+        needsSetup: false,
+        setupReason: null,
+        suggestedBowlSize: null,
+        dogWeight: null,
+      });
+    }
+  }
+
   // Sort by room type, then room name
   rooms.sort((a, b) => {
     if (a.roomType !== b.roomType) return a.roomType.localeCompare(b.roomType);
@@ -555,11 +642,13 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
   const totalRefresh = rooms.filter((r) => r.needsRefresh).length;
   const totalDisinfect = rooms.filter((r) => r.needsDisinfect).length;
   const totalSetups = rooms.filter((r) => r.needsSetup).length;
+  const totalRooms = rooms.length;
 
   return {
     rooms,
     summary: {
       totalOccupied: rooms.filter((r) => r.cleaningType !== "none").length,
+      totalRooms,
       totalRefresh,
       totalDisinfect,
       totalSetups,
