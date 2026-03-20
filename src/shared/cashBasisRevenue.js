@@ -36,7 +36,7 @@ export async function fetchCashBasisForDate(locationId, targetDate) {
     .select("id, invoice_id, payment_method_type, total_balance, transaction_time")
     .eq("location_id", locationId)
     .eq("transaction_date", targetDate)
-    .in("payment_method_type", ["Cash", "Credit Card"])
+    .in("payment_method_type", ["Cash", "Check", "Credit Card"])
     .eq("is_zero_payment", false)
     .eq("is_admin_comp", false)
     .order("transaction_time", { ascending: true });
