@@ -67,7 +67,7 @@ function injectOccCSS() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Timeframe config (no "Today" or "WTD" or "Lifetime")
+   Timeframe config
    ═══════════════════════════════════════════════════════════════════════════ */
 const RANGES = [
   { key: "past-week", label: "Past Week" },
@@ -93,7 +93,7 @@ const fmtDateFull = (d) => {
 };
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   AnimatedPillSelector — identical to DashboardPage pattern
+   AnimatedPillSelector
    ═══════════════════════════════════════════════════════════════════════════ */
 function AnimatedPillSelector({ ranges, activeKey, onChange }) {
   const trackRef = useRef(null);
@@ -226,9 +226,9 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
       </div>
       {/* Month nav */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <button onClick={prevMonth} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14, color: C.textMut, padding: "2px 6px" }}>‹</button>
+        <button onClick={prevMonth} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14, color: C.textMut, padding: "2px 6px" }}>&#8249;</button>
         <span style={{ fontSize: 11, fontWeight: 700, color: C.text }}>{MONTH_NAMES[viewMonth]} {viewYear}</span>
-        <button onClick={nextMonth} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14, color: C.textMut, padding: "2px 6px" }}>›</button>
+        <button onClick={nextMonth} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14, color: C.textMut, padding: "2px 6px" }}>&#8250;</button>
       </div>
       {/* Day-of-week headers */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 0, marginBottom: 2 }}>
@@ -266,7 +266,7 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
             {customFrom ? fmtDateLabel(customFrom) : "Start"}
           </div>
         </div>
-        <span style={{ fontSize: 9, color: C.textMut }}>→</span>
+        <span style={{ fontSize: 9, color: C.textMut }}>&rarr;</span>
         <div style={{ flex: 1 }}>
           <div style={labelStyle}>To</div>
           <div style={{ padding: "3px 6px", borderRadius: 5, border: `1px solid ${customTo ? C.pri : C.border}`, background: customTo ? `${C.pri}08` : C.bg, fontSize: 10, fontWeight: 600, color: customTo ? C.text : C.textMut, textAlign: "center" }}>
@@ -279,50 +279,9 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Custom Occupancy Chart — wraps InteractiveLineChart with %-based y-axis
+   Format helper for chart
    ═══════════════════════════════════════════════════════════════════════════ */
 const _fmtPct = (v) => `${Math.round(v)}%`;
-
-function OccupancyChart({ chartData, dateLabels, animEpoch, height = 160 }) {
-  return (
-    <InteractiveLineChart
-      chartData={chartData}
-      color={C.pri}
-      height={height}
-      id="occupancy-chart"
-      animationEpoch={animEpoch}
-      dateLabels={dateLabels}
-      useRawPoints={true}
-      lineType="linear"
-      solidFill={true}
-      fillColor={C.pri}
-      fillOpacity={0.10}
-      showDots={true}
-      dotRadius={2}
-      formatYLabel={_fmtPct}
-      formatHoverValue={_fmtPct}
-      fixedMax={100}
-    />
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   StatCard — summary stat with optional subtext
-   ═══════════════════════════════════════════════════════════════════════════ */
-function StatCard({ label, value, sub, color = C.text }) {
-  return (
-    <div style={{
-      background: "#FFFFFF", borderRadius: 8, border: "1px solid rgba(0,0,0,0.06)",
-      padding: "10px 14px", flex: 1, minWidth: 100,
-      boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-      animation: "occFadeIn 0.3s ease-out",
-    }}>
-      <div style={{ fontSize: 9, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{label}</div>
-      <div style={{ fontSize: 20, fontWeight: 800, color, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-      {sub && <div style={{ fontSize: 9, fontWeight: 500, color: C.textMut, marginTop: 2 }}>{sub}</div>}
-    </div>
-  );
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    OccupancyReportPage
@@ -411,99 +370,102 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
   }, [dailyRows]);
 
   return (
-    <div style={{
-      background: "#FAFAF9",
-      fontFamily: "'Outfit', sans-serif",
-    }}>
-      {/* ── Header ── */}
+    <div style={{ background: "white", fontFamily: "'Outfit', sans-serif" }}>
+      {/* ── Single compact toolbar: back + title + pills + date ── */}
       <div style={{
-        padding: "10px 20px 8px",
-        display: "flex", alignItems: "center", gap: 10,
+        padding: "8px 20px",
+        display: "flex", alignItems: "center", gap: 12,
         borderBottom: `1px solid ${C.border}`,
-        background: "white",
+        flexWrap: "wrap",
       }}>
         <button onClick={() => nav && nav("dashboard")} style={{
-          border: "none", background: "none", cursor: "pointer", padding: "4px 8px",
-          display: "flex", alignItems: "center", gap: 4,
-          color: C.textMut, fontSize: 12, fontWeight: 600, fontFamily: "inherit",
-          borderRadius: 6, transition: "background 0.15s",
-        }}
-          onMouseEnter={e => e.currentTarget.style.background = "rgba(0,0,0,0.04)"}
-          onMouseLeave={e => e.currentTarget.style.background = "none"}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          border: "none", background: "none", cursor: "pointer", padding: 0,
+          display: "flex", alignItems: "center",
+          color: C.textMut, fontSize: 12, fontFamily: "inherit",
+        }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M19 12H5" /><path d="M12 19l-7-7 7-7" />
           </svg>
-          Dashboard
         </button>
-        <div style={{ flex: 1 }}>
-          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: C.text, lineHeight: 1.2 }}>Occupancy Report</h1>
-        </div>
-      </div>
-
-      {/* ── Timeframe selector ── */}
-      <div style={{
-        padding: "10px 20px",
-        display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-        background: "white", borderBottom: `1px solid ${C.border}`,
-      }}>
-        <AnimatedPillSelector ranges={RANGES} activeKey={range} onChange={handleRangeChange} />
-        <span style={{ fontSize: 10, color: C.textMut, fontWeight: 500 }}>
-          {fmtDateLabel(dateFrom)} — {fmtDateLabel(dateTo)} · {days} day{days !== 1 ? "s" : ""}
-        </span>
-        {/* Custom calendar dropdown */}
-        {range === "custom" && (
-          <div ref={calRef} style={{ position: "relative" }}>
-            <button onClick={() => setShowCalendar(s => !s)} style={{
-              padding: "3px 8px", fontSize: 9, fontWeight: 600, borderRadius: 4,
-              border: `1px solid ${C.border}`, background: C.bg, color: C.pri,
-              cursor: "pointer", fontFamily: "inherit",
-            }}>
-              {showCalendar ? "Close" : "Pick Dates"}
-            </button>
-            {showCalendar && (
-              <div style={{ position: "absolute", top: "100%", left: 0, zIndex: 100, marginTop: 4 }}>
-                <DateRangePicker customFrom={customFrom} customTo={customTo} setCustomFrom={setCustomFrom} setCustomTo={setCustomTo} />
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* ── Content ── */}
-      <div style={{ padding: "12px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
-        {/* Summary stat cards */}
-        <div style={{ display: "flex", gap: 8 }}>
-          <StatCard label="Average Occupancy" value={`${avgOcc}%`} />
-          <StatCard label="Peak Occupancy" value={`${peakOcc}%`} sub={peakDate ? fmtDateFull(peakDate) : "—"} color={C.pri} />
-          <StatCard label="Low Occupancy" value={`${lowOcc}%`} sub={lowDate ? fmtDateFull(lowDate) : "—"} />
-        </div>
-
-        {/* Chart */}
-        <div style={{
-          background: "white", borderRadius: 8, border: "1px solid rgba(0,0,0,0.06)",
-          boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-          padding: "12px 16px",
-          animation: "occFadeIn 0.3s ease-out",
-        }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 4 }}>Occupancy Trend</div>
-          {loading && chartData.length === 0 ? (
-            <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: "#8B95A5", fontSize: 12 }}>
-              Loading occupancy data...
+        <span style={{ fontSize: 14, fontWeight: 800, color: C.text }}>Occupancy</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", position: "relative" }}>
+          <AnimatedPillSelector ranges={RANGES} activeKey={range} onChange={handleRangeChange} />
+          <span style={{ fontSize: 9, color: C.textMut, fontWeight: 500, whiteSpace: "nowrap" }}>
+            {fmtDateLabel(dateFrom)} — {fmtDateLabel(dateTo)} · {days}d
+          </span>
+          {range === "custom" && (
+            <div ref={calRef} style={{ position: "relative" }}>
+              <button onClick={() => setShowCalendar(s => !s)} style={{
+                padding: "3px 8px", fontSize: 9, fontWeight: 600, borderRadius: 4,
+                border: `1px solid ${C.border}`, background: C.bg, color: C.pri,
+                cursor: "pointer", fontFamily: "inherit",
+              }}>
+                {showCalendar ? "Close" : "Pick Dates"}
+              </button>
+              {showCalendar && (
+                <div style={{ position: "absolute", top: "100%", right: 0, zIndex: 100, marginTop: 4 }}>
+                  <DateRangePicker customFrom={customFrom} customTo={customTo} setCustomFrom={setCustomFrom} setCustomTo={setCustomTo} />
+                </div>
+              )}
             </div>
-          ) : chartData.length === 0 ? (
-            <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: "#8B95A5", fontSize: 12 }}>
-              No data for this period
-            </div>
-          ) : (
-            <OccupancyChart
-              chartData={chartData}
-              dateLabels={dateLabelsArr}
-              animEpoch={animEpoch}
-              height={160}
-            />
           )}
         </div>
+      </div>
+
+      {/* ── Inline stats row — no cards, just clean numbers ── */}
+      <div style={{
+        display: "flex", gap: 0,
+        borderBottom: `1px solid ${C.border}`,
+        animation: "occFadeIn 0.3s ease-out",
+      }}>
+        {[
+          { label: "Avg", value: `${avgOcc}%`, sub: null, accent: false },
+          { label: "Peak", value: `${peakOcc}%`, sub: peakDate ? fmtDateLabel(peakDate) : null, accent: true },
+          { label: "Low", value: `${lowOcc}%`, sub: lowDate ? fmtDateLabel(lowDate) : null, accent: false },
+        ].map((s, i) => (
+          <div key={i} style={{
+            flex: 1, padding: "10px 20px",
+            borderRight: i < 2 ? `1px solid ${C.border}` : "none",
+          }}>
+            <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>{s.label}</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+              <span style={{ fontSize: 22, fontWeight: 800, color: s.accent ? C.pri : C.text, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{s.value}</span>
+              {s.sub && <span style={{ fontSize: 9, fontWeight: 500, color: C.textMut }}>{s.sub}</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Chart — flush, no card wrapper ── */}
+      <div style={{ padding: "8px 12px 4px" }}>
+        {loading && chartData.length === 0 ? (
+          <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center", color: "#8B95A5", fontSize: 12 }}>
+            Loading...
+          </div>
+        ) : chartData.length === 0 ? (
+          <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center", color: "#8B95A5", fontSize: 12 }}>
+            No data for this period
+          </div>
+        ) : (
+          <InteractiveLineChart
+            chartData={chartData}
+            color={C.pri}
+            height={140}
+            id="occupancy-chart"
+            animationEpoch={animEpoch}
+            dateLabels={dateLabelsArr}
+            useRawPoints={true}
+            lineType="linear"
+            solidFill={true}
+            fillColor={C.pri}
+            fillOpacity={0.08}
+            showDots={true}
+            dotRadius={2}
+            formatYLabel={_fmtPct}
+            formatHoverValue={_fmtPct}
+            fixedMax={100}
+          />
+        )}
       </div>
     </div>
   );
