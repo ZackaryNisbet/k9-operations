@@ -605,13 +605,13 @@ async function syncInvoicePayments(
   apiKey: string,
   locationId: string
 ) {
-  // Two sets of invoices need transaction details:
-  // 1. Recent invoices (last 7 days) — catches new payments
+  // Three sets of invoices need transaction details:
+  // 1. Recent invoices (last 2 days) — catches most same-day payments
   // 2. ALL returned invoices (lifetime) — catches refunds on any invoice
-  // This is efficient: set 1 is small, set 2 is small (few refunds), and
-  // together they guarantee we never miss a refund regardless of invoice age.
+  // 3. Paid invoices missing payment records — catches payments on OLD invoices
+  //    (e.g., boarding invoice created weeks ago, paid at checkout today)
   const now = new Date();
-  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+  const twoDaysAgo = new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000)
     .toISOString()
     .split("T")[0];
 
@@ -620,7 +620,7 @@ async function syncInvoicePayments(
       .from("gingr_invoices")
       .select("id")
       .eq("location_id", locationId)
-      .gte("created_at", `${sevenDaysAgo}T00:00:00`),
+      .gte("created_at", `${twoDaysAgo}T00:00:00`),
     // ALL returned invoices — no date limit. Refunds can hit any invoice.
     supabase
       .from("gingr_invoices")
@@ -636,14 +636,33 @@ async function syncInvoicePayments(
   for (const inv of (recentRes.data || [])) allIds.add(inv.id);
   for (const inv of (returnedRes.data || [])) allIds.add(inv.id);
 
+  // Set 3: Invoice IDs from today's reservations (via Gingr API).
+  // Catches payments on OLD invoices — e.g., a boarding invoice created weeks ago
+  // that gets paid at checkout today. One API call, extracts pos_transaction_id.
+  try {
+    const todayStr = now.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const todayRes = await gingrFetch(subdomain, "reservations", apiKey, "POST", {
+      start_date: todayStr,
+      end_date: todayStr,
+    });
+    const todayResMap = todayRes.data || {};
+    for (const res of Object.values(todayResMap) as any[]) {
+      const txnId = res.transaction?.pos_transaction_id;
+      if (txnId) allIds.add(Number(txnId));
+    }
+  } catch (err) {
+    // Non-fatal — we still have sets 1 and 2
+    console.error("Failed to fetch today's reservations for invoice IDs:", err);
+  }
+
   const invoicesToFetch = [...allIds].map(id => ({ id }));
   if (invoicesToFetch.length === 0) return { synced: 0 };
 
   let total = 0;
 
-  // Process in batches of 5 concurrent API calls
-  for (let i = 0; i < invoicesToFetch.length; i += 5) {
-    const batch = invoicesToFetch.slice(i, i + 5);
+  // Process in batches of 10 concurrent API calls
+  for (let i = 0; i < invoicesToFetch.length; i += 10) {
+    const batch = invoicesToFetch.slice(i, i + 10);
     const results = await Promise.all(
       batch.map(async (inv: any) => {
         try {
@@ -733,10 +752,31 @@ async function syncDeposits(
   const todayStr = now.toISOString().split("T")[0];
   let total = 0;
 
-  // Sweep 30-day chunks from today-7 to today+180 days.
-  // Starting from -7 ensures deposits paid in the last week for already-started
-  // reservations are captured (not just future reservations).
-  for (let offset = -7; offset < 180; offset += 30) {
+  // Two-phase deposit sweep:
+  //   Phase 1 (always): -7 to +90 days — covers most active/upcoming deposits
+  //   Phase 2 (daily): +90 to +365 days — catches far-future bookings
+  // Phase 2 only runs if it hasn't run in the last 6 hours (tracked via sync state).
+  let maxOffset = 90; // Default: fast sweep only
+
+  try {
+    const { data: syncState } = await supabase
+      .from("gingr_sync_state")
+      .select("last_deep_sweep")
+      .eq("location_id", locationId)
+      .eq("entity_type", "deposits")
+      .limit(1);
+
+    const lastDeep = syncState?.[0]?.last_deep_sweep;
+    const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000).toISOString();
+
+    if (!lastDeep || lastDeep < sixHoursAgo) {
+      maxOffset = 365; // Do the full sweep
+    }
+  } catch (_) {
+    // If sync state check fails, just do fast sweep
+  }
+
+  for (let offset = -7; offset < maxOffset; offset += 30) {
     const chunkStart = new Date(now.getTime() + offset * 24 * 60 * 60 * 1000)
       .toISOString().split("T")[0];
     const chunkEnd = new Date(now.getTime() + (offset + 30) * 24 * 60 * 60 * 1000)
@@ -794,6 +834,108 @@ async function syncDeposits(
     }
 
     total += rows.length;
+  }
+
+  // Record deep sweep timestamp if we did the full range
+  if (maxOffset > 90) {
+    try {
+      await supabase.from("gingr_sync_state").upsert(
+        {
+          location_id: locationId,
+          entity_type: "deposits",
+          last_deep_sweep: new Date().toISOString(),
+        },
+        { onConflict: "location_id,entity_type" }
+      );
+    } catch (_) {}
+  }
+
+  // Targeted catch: find deposits paid today that we missed because the
+  // reservation starts beyond our sweep window. Cross-reference invoice
+  // payments flagged as deposit payments — their raw_data.description
+  // contains "Deposit for Reservation #<id>" which gives us the reservation ID.
+  try {
+    const { data: todayDepPayments } = await supabase
+      .from("gingr_invoice_payments")
+      .select("raw_data")
+      .eq("location_id", locationId)
+      .eq("transaction_date", todayStr)
+      .eq("is_deposit_payment", true);
+
+    if (todayDepPayments && todayDepPayments.length > 0) {
+      // Extract reservation IDs from descriptions like "Deposit for Reservation #12345"
+      const missingResIds: number[] = [];
+      for (const p of todayDepPayments) {
+        const desc = p.raw_data?.description || "";
+        const match = desc.match(/Reservation\s*#?\s*(\d+)/i);
+        if (match) missingResIds.push(Number(match[1]));
+      }
+
+      if (missingResIds.length > 0) {
+        // Check which ones we already have in gingr_deposits
+        const { data: existing } = await supabase
+          .from("gingr_deposits")
+          .select("reservation_gingr_id")
+          .eq("location_id", locationId)
+          .in("reservation_gingr_id", missingResIds);
+
+        const existingSet = new Set((existing || []).map((e: any) => e.reservation_gingr_id));
+        const toFetch = missingResIds.filter(id => !existingSet.has(id));
+
+        // Fetch missing reservations individually from Gingr
+        for (const resId of toFetch) {
+          try {
+            const result = await gingrFetch(subdomain, "existing_reservation_estimate", apiKey, "GET", {
+              id: String(resId),
+            });
+            const res = result.data;
+            if (!res) continue;
+
+            const dep = res.deposit || (res.deposits && res.deposits[0]);
+            if (!dep || typeof dep !== "object" || Array.isArray(dep)) continue;
+
+            const paidAmount = parseFloat(dep.paid_amount || dep.amount_paid) || 0;
+            if (paidAmount <= 0) continue;
+
+            const ownerName = [res.owner?.first_name, res.owner?.last_name]
+              .filter(Boolean)
+              .join(" ") || null;
+
+            const row = {
+              reservation_gingr_id: Number(resId),
+              location_id: locationId,
+              owner_id: res.owner?.id ? Number(res.owner.id) : null,
+              owner_name: ownerName,
+              animal_name: res.animal?.name || null,
+              deposit_amount: dep.amount ? parseFloat(dep.amount) : null,
+              paid_amount: paidAmount,
+              last_payment: dep.last_payment || null,
+              consumed_at: dep.consumed_at || null,
+              forfeited_at: dep.forfeited_at || null,
+              refunded_at: dep.refunded_at || null,
+              last_email_sent: dep.last_email_sent || null,
+              reservation_start: res.start_date || null,
+              reservation_end: res.end_date || null,
+              payment_method: dep.payment_method || null,
+              payment_method_id: dep.payment_method_id ? Number(dep.payment_method_id) : null,
+              deposit_gingr_id: dep.id ? Number(dep.id) : null,
+              synced_at: new Date().toISOString(),
+            };
+
+            const { error } = await supabase
+              .from("gingr_deposits")
+              .upsert(row, { onConflict: "location_id,reservation_gingr_id" });
+
+            if (!error) total++;
+          } catch (err) {
+            console.error(`Failed to fetch deposit for reservation ${resId}:`, err);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    // Non-fatal — the sweep already got most deposits
+    console.error("Targeted deposit catch failed:", err);
   }
 
   return { synced: total };
@@ -1350,11 +1492,14 @@ Deno.serve(async (req: Request) => {
     const startTime = Date.now();
 
     // Determine which entities to sync
+    // Full sync: all entities. Incremental: only fast entities that fit within
+    // the edge function timeout (~150s). Reservations and owners/animals are too
+    // heavy for incremental — they run only on full sync.
     const toSync =
       entities ||
       (sync_type === "full"
         ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "invoices", "invoice_payments", "deposits"]
-        : ["owners", "animals", "reservations", "invoices", "invoice_payments", "deposits"]);
+        : ["invoices", "invoice_payments", "deposits"]);
 
     for (const entity of toSync) {
       await updateSyncState(supabase, location_id, entity, {
