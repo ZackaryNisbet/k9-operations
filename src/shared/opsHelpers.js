@@ -87,7 +87,14 @@ function getRoomCleaningStats(data, date) {
       if (rm.needsDisinfect) { totalNeeded++; if (state.disinfect) totalDone++; }
       if (rm.needsSetup) { totalSetups++; if (state.setupDone) doneSetups++; }
     });
-    return { totalNeeded, totalDone, total: totalNeeded, cleaned: totalDone, totalSetups, doneSetups };
+    // Count "as needed" items from user data (any room can be flagged)
+    let asNeededCount = 0, asNeededDone = 0;
+    Object.values(ei).forEach(state => {
+      if (state && state.asNeeded) { asNeededCount++; if (state.asNeededDone) asNeededDone++; }
+    });
+    totalNeeded += asNeededCount;
+    totalDone += asNeededDone;
+    return { totalNeeded, totalDone, total: totalNeeded, cleaned: totalDone, totalSetups, doneSetups, asNeededCount, asNeededDone };
   }
 
   // Fallback: client-side computation from reservations
@@ -322,8 +329,11 @@ function getOpsCountLabel(data, item, date) {
   if (item.typeSub === "room_cleaning") {
     const stats = getRoomCleaningStats(data, td);
     const parts = [];
-    if (stats.totalNeeded > 0) parts.push(`${stats.totalDone}/${stats.totalNeeded} cleans`);
+    const schedCleans = stats.totalNeeded - (stats.asNeededCount || 0);
+    const schedDone = stats.totalDone - (stats.asNeededDone || 0);
+    if (schedCleans > 0) parts.push(`${schedDone}/${schedCleans} cleans`);
     if (stats.totalSetups > 0) parts.push(`${stats.doneSetups}/${stats.totalSetups} setups`);
+    if (stats.asNeededCount > 0) parts.push(`${stats.asNeededDone}/${stats.asNeededCount} as needed`);
     return parts.length > 0 ? parts.join(" · ") : "No rooms";
   }
   if (item.typeSub === "pp") {
