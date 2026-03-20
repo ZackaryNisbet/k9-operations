@@ -1448,7 +1448,7 @@ export default function EnterpriseDashboard({ data, save, nav, profile, addGloba
 
                   const categories = [
                     { label: "Bathing", ...aggOps.bathing, icon: "🛁" },
-                    { label: "Room Cleaning", ...aggOps.cleaning, icon: "🧹" },
+                    { label: "Room Cleaning & Setups", ...aggOps.cleaning, icon: "🧹" },
                     { label: "Private Play", ...aggOps.play, icon: "🎾" },
                   ];
 
