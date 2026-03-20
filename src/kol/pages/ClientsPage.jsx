@@ -40,8 +40,9 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   const [showBulkUpdate, setShowBulkUpdate] = useState(false);
   const [bulkReason, setBulkReason] = useState("");
   const [bulkProcessing, setBulkProcessing] = useState(false);
-  const [reclassifyModal, setReclassifyModal] = useState(null); // { clientId } when open
+  const [reclassifyPopover, setReclassifyPopover] = useState(null); // { clientId, x, y }
   const [reclassifyReason, setReclassifyReason] = useState("");
+  const [reclassifyNotes, setReclassifyNotes] = useState("");
   const [reclassifyReasonFilter, setReclassifyReasonFilter] = useState(new Set());
   const [activeViewId, setActiveViewId] = useState(null);
   const [showSaveView, setShowSaveView] = useState(false);
@@ -619,14 +620,16 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
     addGlobalToast?.({ message: isRevive ? "Client revived" : "Log saved" });
   };
 
-  const openReclassifyModal = (clientId) => {
-    setReclassifyModal({ clientId });
+  const openReclassifyPopover = (clientId, e) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setReclassifyPopover({ clientId, x: rect.left, y: rect.bottom + 4 });
     setReclassifyReason("");
+    setReclassifyNotes("");
   };
 
   const confirmReclassify = async () => {
-    if (!reclassifyModal || !reclassifyReason) return;
-    const clientId = reclassifyModal.clientId;
+    if (!reclassifyPopover || !reclassifyReason || !reclassifyNotes.trim()) return;
+    const clientId = reclassifyPopover.clientId;
     const reason = reclassifyReason;
     const prevClient = data.clients.find(c => c.id === clientId);
     const prevLifecycle = prevClient ? JSON.parse(JSON.stringify(prevClient.lifecycle || {})) : {};
@@ -637,12 +640,13 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
       return {
         ...c,
         lifecycle: { ...(c.lifecycle||{}), cold: true, coldDate: today, coldFrom: activeTab === "lapsed" ? "lapsed" : "leads", reclassifiedReason: reason, reclassifiedDate: today, reclassifiedFrom: fromTab },
-        lifecycleEvents: [...(c.lifecycleEvents||[]), { event: "reclassified", date: today, details: `Reclassified from ${fromTab} — Reason: ${reason}` }]
+        lifecycleEvents: [...(c.lifecycleEvents||[]), { event: "reclassified", date: today, details: `Reclassified from ${fromTab} — Reason: ${reason}. Notes: ${reclassifyNotes.trim()}` }]
       };
     });
     await save({ ...data, clients: newClients });
-    setReclassifyModal(null);
+    setReclassifyPopover(null);
     setReclassifyReason("");
+    setReclassifyNotes("");
     addGlobalToast?.({
       message: `Client reclassified as "${reason}"`,
       actionLabel: "Undo",
@@ -920,8 +924,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Reclassify button cell ──
   const renderReclassifyBtn = (client) => (
-    <button onClick={(e) => { e.stopPropagation(); openReclassifyModal(client.id); }}
-      style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surfaceHover||"#f5f5f5",color:C.textSec,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+    <button onClick={(e) => { e.stopPropagation(); openReclassifyPopover(client.id, e); }}
+      style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${C.pri}30`,background:`${C.pri}08`,color:C.pri,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
       Reclassify
     </button>
   );
@@ -2168,35 +2172,28 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
         </div>
       )}
 
-      {/* Reclassify Modal */}
-      {reclassifyModal && (
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.4)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)"}}
-          onClick={() => { setReclassifyModal(null); setReclassifyReason(""); }}>
-          <div onClick={e => e.stopPropagation()} style={{background:C.surface,borderRadius:16,padding:"28px 32px",maxWidth:420,width:"90%",boxShadow:"0 20px 60px rgba(0,0,0,0.2)"}}>
-            <h3 style={{margin:"0 0 4px",fontSize:18,fontWeight:800,color:C.text}}>Reclassify Client</h3>
-            <p style={{margin:"0 0 20px",fontSize:13,color:C.textSec}}>Select a reason for reclassifying this client.</p>
-            <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:24}}>
+      {/* Reclassify Popover */}
+      {reclassifyPopover && (
+        <div style={{position:"fixed",top:0,left:0,width:"100%",height:"100%",zIndex:9998}} onClick={()=>{setReclassifyPopover(null);setReclassifyReason("");setReclassifyNotes("");}}>
+          <div onClick={e=>e.stopPropagation()} style={{position:"fixed",left:Math.min(reclassifyPopover.x||300,window.innerWidth-340),top:reclassifyPopover.y||200,zIndex:9999,background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:12,padding:"16px 20px",width:310,boxShadow:"0 8px 32px rgba(0,0,0,0.15)"}}>
+            <div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:10}}>Reclassify Client</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:10}}>
               {["Unresponsive", "Uninterested", "Spam", "Other"].map(reason => {
-                const colors = { "Unresponsive": C.warn, "Uninterested": C.dan, "Spam": "#9333EA", "Other": C.textSec };
-                const color = colors[reason];
                 const on = reclassifyReason === reason;
                 return (
                   <button key={reason} onClick={() => setReclassifyReason(reason)}
-                    style={{padding:"8px 18px",borderRadius:10,border:`2px solid ${on ? color : C.border}`,background:on ? color : "transparent",color:on ? "#fff" : C.text,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s",minWidth:100}}>
+                    style={{padding:"4px 10px",borderRadius:6,border:`1.5px solid ${on ? C.pri : C.border}`,background:on ? `${C.pri}12` : "transparent",color:on ? C.pri : C.textSec,fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",transition:"all 0.12s"}}>
                     {reason}
                   </button>
                 );
               })}
             </div>
-            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
-              <button onClick={() => { setReclassifyModal(null); setReclassifyReason(""); }}
-                style={{padding:"10px 20px",borderRadius:8,border:`1.5px solid ${C.border}`,background:"transparent",color:C.textSec,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>
-                Cancel
-              </button>
-              <button onClick={confirmReclassify} disabled={!reclassifyReason}
-                style={{padding:"10px 20px",borderRadius:8,border:"none",background:reclassifyReason ? C.dan : "#ccc",color:"#fff",fontSize:13,fontWeight:700,cursor:reclassifyReason ? "pointer" : "not-allowed",fontFamily:"inherit",transition:"all 0.15s"}}>
-                Reclassify
-              </button>
+            <textarea value={reclassifyNotes} onChange={e=>setReclassifyNotes(e.target.value)} placeholder="Notes (required)..." rows={3}
+              style={{width:"100%",padding:"10px 12px",borderRadius:8,border:`1.5px solid ${C.border}`,fontSize:12,fontFamily:"inherit",resize:"vertical",outline:"none",background:C.bg,boxSizing:"border-box",marginBottom:10}}
+              onFocus={e=>e.target.style.borderColor=C.pri} onBlur={e=>e.target.style.borderColor=C.border} autoFocus />
+            <div style={{display:"flex",justifyContent:"flex-end",gap:8}}>
+              <Btn size="sm" variant="ghost" onClick={()=>{setReclassifyPopover(null);setReclassifyReason("");setReclassifyNotes("");}}>Cancel</Btn>
+              <Btn size="sm" onClick={confirmReclassify} disabled={!reclassifyReason || !reclassifyNotes.trim()}>Reclassify</Btn>
             </div>
           </div>
         </div>
