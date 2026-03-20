@@ -144,25 +144,33 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const toggleItem = (key, field, val) => {
     if (isLocked) return;
     const userName = profile?.full_name || "";
-    // Auto-fill name when checking a checkbox
+    const initials = userName.split(" ").map(w => w[0]).join("").toUpperCase() || "??";
+    const now = new Date().toISOString();
+    // Auto-fill name + timestamp when checking a checkbox (write both web and mobile field names for cross-app compat)
     if (field === "checked" && val === true) {
       setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, initials: userName } }));
     } else if (field === "refresh" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, refreshBy: userName } }));
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, refreshBy: userName, refreshInitials: initials, refreshAt: now } }));
     } else if (field === "disinfect" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, disinfectBy: userName } }));
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, disinfectBy: userName, disinfectInitials: initials, disinfectAt: now } }));
     } else if (field === "setupDone" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, setupDoneBy: userName } }));
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, setupDoneBy: userName, setupInitials: initials, setupAt: now } }));
     } else if (field === "asNeeded" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededBy: userName } }));
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededBy: userName, asNeededAt: now } }));
     } else if (field === "asNeededDone" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededDoneBy: userName } }));
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededDoneBy: userName, asNeededDoneAt: now } }));
     } else if (field === "setupBowl") {
       setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val } }));
     } else {
       setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val } }));
     }
     setDirty(true);
+  };
+
+  const formatTime = (iso) => {
+    if (!iso) return "";
+    try { return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }); }
+    catch { return ""; }
   };
 
   const saveEntry = async () => {
@@ -429,7 +437,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                 <input type="checkbox" checked={!!ri.refresh} disabled={isLocked} onChange={e => toggleItem(rm, "refresh", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.suc }} />
                 <span style={{ fontSize: 11, fontWeight: 700, color: ri.refresh ? C.suc : C.pri }}>{ri.refresh ? "Done" : "Required"}</span>
               </div>
-              {ri.refresh && ri.refreshBy && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.refreshBy}</div>}
+              {ri.refresh && (ri.refreshBy || ri.refreshInitials) && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.refreshInitials || ri.refreshBy}{ri.refreshAt ? ` · ${formatTime(ri.refreshAt)}` : ""}</div>}
             </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
           </div>
           <div style={{ textAlign: "center" }}>
@@ -438,7 +446,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                 <input type="checkbox" checked={!!ri.disinfect} disabled={isLocked} onChange={e => toggleItem(rm, "disinfect", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.dan }} />
                 <span style={{ fontSize: 11, fontWeight: 700, color: ri.disinfect ? C.suc : C.dan }}>{ri.disinfect ? "Done" : "Required"}</span>
               </div>
-              {ri.disinfect && ri.disinfectBy && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.disinfectBy}</div>}
+              {ri.disinfect && (ri.disinfectBy || ri.disinfectInitials) && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.disinfectInitials || ri.disinfectBy}{ri.disinfectAt ? ` · ${formatTime(ri.disinfectAt)}` : ""}</div>}
             </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
           </div>
           <div style={{ textAlign: "center" }}>
@@ -460,7 +468,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                 <input type="checkbox" checked={!!ri.setupDone} disabled={isLocked} onChange={e => toggleItem(rm, "setupDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: "#84CC16" }} />
                 <span style={{ fontSize: 10, fontWeight: 700, color: ri.setupDone ? "#84CC16" : C.textMut }}>{ri.setupDone ? "Complete" : "Mark done"}</span>
               </div>
-              {ri.setupDone && ri.setupDoneBy && <div style={{ fontSize: 9, color: C.textMut, marginTop: 2 }}>{ri.setupDoneBy}</div>}
+              {ri.setupDone && (ri.setupDoneBy || ri.setupInitials) && <div style={{ fontSize: 9, color: C.textMut, marginTop: 2 }}>{ri.setupInitials || ri.setupDoneBy}{ri.setupAt ? ` · ${formatTime(ri.setupAt)}` : ""}</div>}
             </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
           </div>
           <div style={{ textAlign: "center" }}>
@@ -469,7 +477,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                 <input type="checkbox" checked={!!ri.asNeeded} disabled={isLocked} onChange={e => toggleItem(rm, "asNeeded", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.acc }} />
                 {ri.asNeeded && <input type="checkbox" checked={!!ri.asNeededDone} disabled={isLocked} onChange={e => toggleItem(rm, "asNeededDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.suc }} title="Mark done" />}
               </div>
-              {ri.asNeeded && ri.asNeededBy && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.asNeededBy}</div>}
+              {ri.asNeeded && (ri.asNeededBy) && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.asNeededBy}{ri.asNeededAt ? ` · ${formatTime(ri.asNeededAt)}` : ""}</div>}
             </div>
           </div>
         </div>
