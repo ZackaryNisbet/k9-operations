@@ -245,7 +245,7 @@ const InteractiveLineChart = React.memo(({
             <circle cx={x(lastIdx)} cy={y(mainVals[lastIdx])} r="4" fill="white" stroke={color} strokeWidth="2.5" />
             {/* Value badge */}
             {todayValue !== null && (() => {
-              const label = _chartFmt$k(todayValue);
+              const label = formatHoverValue ? formatHoverValue(todayValue) : _chartFmt$k(todayValue);
               const bx = x(lastIdx);
               const by = y(mainVals[lastIdx]) - 14;
               const bw = label.length * 6.5 + 12;
