@@ -924,10 +924,12 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
 
   // ── Reclassify button cell ──
   const renderReclassifyBtn = (client) => (
-    <button onClick={(e) => { e.stopPropagation(); openReclassifyPopover(client.id, e); }}
-      style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${C.pri}30`,background:`${C.pri}08`,color:C.pri,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
-      Reclassify
-    </button>
+    <div style={{display:"flex",justifyContent:"center"}}>
+      <button onClick={(e) => { e.stopPropagation(); openReclassifyPopover(client.id, e); }}
+        style={{padding:"3px 8px",borderRadius:6,border:`1px solid ${C.pri}30`,background:`${C.pri}08`,color:C.pri,fontSize:10,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+        Reclassify
+      </button>
+    </div>
   );
 
   // ── Revive button cell ──
@@ -969,8 +971,8 @@ function ClientsPage({ data, save, nav, profile, addGlobalToast, lcFilters, setL
   // ── Grid templates per tab ──
   const getGrid = () => {
     // Consistent base: Client(1.4fr), Phone(1fr), Dogs(45px), Created(75px) — then tab-specific data columns
-    if (activeTab === "leads" || activeTab === "oldGingrSync") return "minmax(110px,1.4fr) minmax(75px,1fr) 45px 75px minmax(55px,0.7fr) minmax(60px,0.7fr) minmax(70px,0.8fr) minmax(80px,1fr) minmax(80px,1fr) minmax(70px,0.8fr) 50px";
-    if (activeTab === "lapsed") return "minmax(100px,1.3fr) minmax(75px,1fr) 45px 75px minmax(70px,0.8fr) minmax(70px,0.8fr) minmax(80px,1fr) minmax(70px,0.8fr) minmax(60px,0.7fr) minmax(55px,0.6fr) 50px 50px";
+    if (activeTab === "leads" || activeTab === "oldGingrSync") return "minmax(110px,1.4fr) minmax(75px,1fr) 45px 75px minmax(55px,0.7fr) minmax(60px,0.7fr) minmax(70px,0.8fr) minmax(80px,1fr) minmax(80px,1fr) minmax(70px,0.8fr) minmax(70px,0.8fr)";
+    if (activeTab === "lapsed") return "minmax(100px,1.3fr) minmax(75px,1fr) 45px 75px minmax(70px,0.8fr) minmax(70px,0.8fr) minmax(80px,1fr) minmax(70px,0.8fr) minmax(60px,0.7fr) minmax(55px,0.6fr) 50px minmax(70px,0.8fr)";
     if (activeTab === "reclassified") return "minmax(110px,1.4fr) minmax(75px,1fr) 45px 75px minmax(70px,0.8fr) minmax(80px,1fr) minmax(80px,1fr) minmax(100px,1.2fr) 60px";
     // Active / All — Client, Phone, Dogs, Created
     const base = "minmax(120px,1.4fr) minmax(80px,1fr) 45px 75px";
