@@ -138,8 +138,13 @@ async function gingrFetch(
 
 // ─── Date helpers ──────────────────────────────────────────────────────────
 
+// Edge functions run in UTC. All date-sensitive operations must use ET.
+function nowET(): Date {
+  return new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+}
+
 function todayStr(): string {
-  const d = new Date();
+  const d = nowET();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
