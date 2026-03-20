@@ -39,6 +39,7 @@ export async function fetchCashBasisForDate(locationId, targetDate) {
     .in("payment_method_type", ["Cash", "Check", "Credit Card"])
     .eq("is_zero_payment", false)
     .eq("is_admin_comp", false)
+    .eq("is_deposit_payment", false)
     .order("transaction_time", { ascending: true });
 
   if (payErr) {
