@@ -1157,15 +1157,13 @@ function DashboardContent({
      ═══════════════════════════════════════════════════════════════════════════ */
   const bookingsTrend = pctChange(m.cashTransactionCount, pm.cashTransactionCount);
 
-  // Cash basis: for "Today" view show trailing week total (matches chart), else sum the range
+  // Cash basis: for "Today" show today's live value; for multi-day ranges sum the period
   const cashTotalDisplay = useMemo(() => {
     if (isToday) {
-      // Sum the trailing week (what the chart shows), overlaying today's live data
-      return (correctedTrailingWeekRows || []).reduce((s, r) => s + (Number(r.cash_net_revenue) || 0), 0);
+      return todayCashData ? todayCashData.netRevenue : 0;
     }
-    // For multi-day ranges, sum corrected daily rows
     return correctedDailyRows.reduce((s, r) => s + (Number(r.cash_net_revenue) || 0), 0);
-  }, [isToday, correctedTrailingWeekRows, correctedDailyRows]);
+  }, [isToday, todayCashData, correctedDailyRows]);
 
   // Revenue values from server metrics
   // Accrual revenue from the receipt-methodology engine (not from dashboard_metrics_daily)
@@ -1509,7 +1507,7 @@ function DashboardContent({
           value={liveSnap ? liveSnap.expected : m.dogsExpected}
           hero
           onClick={navTo["checkout-tv"]}
-          sub={liveSnap ? `${liveSnap.expected} pending` : `${m.dogsExpected} pending`}
+          sub={null}
           trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.expected : m.dogsExpected, pm.dogsExpected) : null}
           skeleton={showSkeleton}
           live={!!liveSnap}
