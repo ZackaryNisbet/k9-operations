@@ -1591,7 +1591,7 @@ function DashboardContent({
         <MetricCell label="$ Refunded" value={`$${fmt$k(m.refundTotal)}`} color={m.refundTotal > 0 ? C.dan : undefined} skeleton={showSkeleton} />
         <MetricCell label="Discounted" value={m.discountedCount} color={m.discountedCount > 0 ? C.warn : undefined} skeleton={showSkeleton} />
         <MetricCell label="$ Discounted" value={`$${fmt$k(m.discountTotal)}`} color={m.discountTotal > 0 ? C.warn : undefined} skeleton={showSkeleton} />
-        <ChecklistCell label="Room Clean" progress={getChecklistProgress("ops-rooms")} count={getChecklistCount("ops-rooms")} onClick={navTo["ops-rooms"]} />
+        <ChecklistCell label="Room Cleaning & Setups" progress={getChecklistProgress("ops-rooms")} count={getChecklistCount("ops-rooms")} onClick={navTo["ops-rooms"]} />
         <MetricCell label="Outstanding Invoices" value={m.outstandingInvoiceCount || 0} sub={`$${fmt$k(m.outstandingInvoiceTotal || 0)}`} color={(m.outstandingInvoiceCount || 0) > 0 ? C.warn : undefined} skeleton={showSkeleton} />
 
         {/* ═══ ROWS 5-7: Charts ═══ */}
