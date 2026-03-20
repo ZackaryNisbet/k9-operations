@@ -12,6 +12,16 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// ─── Eastern Time helper ─────────────────────────────────────────────────────
+// Edge functions run in UTC. All date-sensitive operations must use ET.
+function nowET(): Date {
+  return new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+}
+function dateStrET(d?: Date): string {
+  const dt = d || nowET();
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
 // ─── Gingr API helper ──────────────────────────────────────────────────────
 async function gingrFetch(
   subdomain: string,
@@ -688,14 +698,14 @@ async function computeCashBasisMetrics(
   subdomain: string,
   apiKey: string
 ) {
-  const now = new Date();
-  const today = now.toISOString().split("T")[0];
+  const now = nowET();
+  const today = dateStrET(now);
 
   // Compute cash basis metrics for the last 7 days (not just yesterday+today).
   // This fills in gaps from any days where the sync didn't run.
   const datesToCompute: string[] = [];
   for (let i = 6; i >= 0; i--) {
-    datesToCompute.push(new Date(now.getTime() - i * 86400000).toISOString().split("T")[0]);
+    datesToCompute.push(dateStrET(new Date(now.getTime() - i * 86400000)));
   }
 
   for (const dateStr of datesToCompute) {
@@ -1351,10 +1361,11 @@ Deno.serve(async (req: Request) => {
     // Recomputes today + yesterday (catches late checkouts) in pure Postgres.
     // Adds ~100-200ms — negligible compared to the sync itself.
     try {
+      const etNow = nowET();
       await supabase.rpc('compute_dashboard_metrics', {
         p_location_id: location_id,
-        p_date_from: new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0],
-        p_date_to: new Date().toISOString().split('T')[0],
+        p_date_from: dateStrET(new Date(etNow.getTime() - 7 * 86400000)),
+        p_date_to: dateStrET(etNow),
       });
     } catch (metricsErr: any) {
       // Non-fatal — dashboard metrics recompute is best-effort
