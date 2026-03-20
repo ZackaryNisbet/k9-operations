@@ -44,7 +44,7 @@ export async function fetchCashBasisForDate(locationId, targetDate) {
 
   if (payErr) {
     console.error("Error fetching payment entries:", payErr.message);
-    return emptyResult();
+    // Don't return early — still try deposits below
   }
 
   // NOTE: Store credit from forfeited deposits is excluded server-side only

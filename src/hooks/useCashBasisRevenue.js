@@ -17,7 +17,10 @@ const POLL_INTERVAL = 60000; // 60 seconds
 /**
  * useCashBasisLive(locationId)
  *
- * Polls Gingr API every 60s for today's cash basis revenue.
+ * Polls Supabase every 60s for today's cash basis revenue.
+ * Reads from gingr_invoice_payments + gingr_deposits tables
+ * (populated by the server-side gingr-sync edge function).
+ *
  * Returns:
  *   todayCashData — { netRevenue, grossPayments, depositCollections, refunds, payments }
  *   ready — true after first fetch
