@@ -31,6 +31,10 @@ const InteractiveLineChart = React.memo(({
   priorData,              // array of { date, label, value } for prior period
   showPriorLine = false,  // whether to render the prior period line
   priorLineColor,         // color for prior period line (defaults to color at 40% opacity)
+  // Custom formatting
+  formatYLabel,           // (value) => string — custom y-axis label formatter (default: $)
+  formatHoverValue,       // (value) => string — custom hover tooltip value formatter (default: $)
+  fixedMax,               // number — fixed maximum for y-axis (e.g. 100 for percentage charts)
 }) => {
   const svgRef = React.useRef(null);
   const [display, setDisplay] = React.useState(null);
@@ -62,9 +66,10 @@ const InteractiveLineChart = React.memo(({
   }, [priorData, n]);
 
   const targetMax = React.useMemo(() => {
+    if (fixedMax != null) return fixedMax;
     const priorVals = showPriorLine ? targetPrior : [0];
     return Math.max(...targetMain, ...(showCompare ? targetComp : [0]), ...priorVals, 1);
-  }, [targetMain, targetComp, targetPrior, showCompare, showPriorLine]);
+  }, [targetMain, targetComp, targetPrior, showCompare, showPriorLine, fixedMax]);
 
   React.useEffect(() => {
     const prev = display || { main: Array(n).fill(0), comp: Array(n).fill(0), prior: Array(n).fill(0), max: targetMax };
@@ -187,7 +192,7 @@ const InteractiveLineChart = React.memo(({
           return (
             <g key={i}>
               <line x1={pad.left} y1={yPos} x2={w - pad.right} y2={yPos} stroke="#E5E7EB" strokeWidth="0.5" />
-              <text x={pad.left - 6} y={yPos + 3} textAnchor="end" fill="#8B95A5" fontSize="9" fontFamily="'Outfit', sans-serif">{_chartFmt$k(val)}</text>
+              <text x={pad.left - 6} y={yPos + 3} textAnchor="end" fill="#8B95A5" fontSize="9" fontFamily="'Outfit', sans-serif">{formatYLabel ? formatYLabel(val) : _chartFmt$k(val)}</text>
             </g>
           );
         })}
@@ -303,7 +308,7 @@ const InteractiveLineChart = React.memo(({
           padding: "6px 10px", boxShadow: "0 2px 8px rgba(0,0,0,0.08)", fontSize: 11, pointerEvents: "none", zIndex: 10,
         }}>
           <div style={{ fontWeight: 700, color: "#1A2233", marginBottom: 2 }}>{hoverData.label}</div>
-          <div style={{ color, fontWeight: 600 }}>{_chartFmt$(hoverData.value)}</div>
+          <div style={{ color, fontWeight: 600 }}>{formatHoverValue ? formatHoverValue(hoverData.value) : _chartFmt$(hoverData.value)}</div>
           {showPriorLine && hoverPriorValue !== null && <div style={{ color: priorLineColor || color, fontSize: 10, opacity: priorLineColor ? 0.9 : 0.5 }}>Prior: {_chartFmt$(hoverPriorValue)}</div>}
           {showCompare && hoverData.prevValue !== undefined && <div style={{ color: compareColor, fontSize: 10 }}>Prev: {_chartFmt$(hoverData.prevValue)}</div>}
         </div>
