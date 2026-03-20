@@ -397,6 +397,34 @@ async function syncReservations(
     // Non-fatal — reconciliation is best-effort
   }
 
+  // ── Catch cancellations: re-fetch recent window without checked_in filter ──
+  // The checked_in:"false" query above excludes cancelled reservations.
+  // Re-fetch the recent 7-day window with NO checked_in filter so we get
+  // ALL reservation states including cancelled (which have cancelled_date set).
+  try {
+    const recentStart = dateStrET();
+    const recentEnd = dateStrET();
+    const allResult = await gingrFetch(subdomain, "reservations", apiKey, "POST", {
+      start_date: recentStart,
+      end_date: recentEnd,
+    });
+    const allMap = allResult.data || {};
+    const allReservations = Object.values(allMap) as any[];
+
+    if (allReservations.length > 0) {
+      const rows = allReservations.map((r: any) => mapReservationRow(r, locationId));
+      for (let i = 0; i < rows.length; i += 500) {
+        const chunk = rows.slice(i, i + 500);
+        await supabase
+          .from("gingr_reservations")
+          .upsert(chunk, { onConflict: "location_id,gingr_id" });
+      }
+      console.log(`Re-synced ${allReservations.length} reservations (all states) for ${recentStart} to ${recentEnd}`);
+    }
+  } catch (allErr: any) {
+    console.error("All-states reservation re-sync error:", allErr.message);
+  }
+
   return {
     synced: total,
     backfill_complete: isBackfillComplete,
