@@ -156,7 +156,9 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     } else if (field === "setupDone" && val === true) {
       setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, setupDoneBy: userName, setupInitials: initials, setupAt: now } }));
     } else if (field === "asNeeded" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededBy: userName, asNeededAt: now } }));
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededBy: userName, asNeededAt: now, asNeededNote: "" } }));
+    } else if (field === "asNeeded" && val === false) {
+      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededBy: "", asNeededAt: "", asNeededNote: "", asNeededDone: false, asNeededDoneBy: "", asNeededDoneAt: "" } }));
     } else if (field === "asNeededDone" && val === true) {
       setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededDoneBy: userName, asNeededDoneAt: now } }));
     } else if (field === "setupBowl") {
@@ -164,6 +166,12 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     } else {
       setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val } }));
     }
+    setDirty(true);
+  };
+
+  const setNoteForItem = (key, note) => {
+    if (isLocked) return;
+    setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), asNeededNote: note } }));
     setDirty(true);
   };
 
@@ -355,11 +363,12 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
     // ─── Compute stats from server data or client-side fallback ───
     let totalOccupied = 0, totalRefresh = 0, totalDisinfect = 0, doneRefresh = 0, doneDisinfect = 0;
-    let totalSetups = 0, doneSetups = 0;
+    let totalSetups = 0, doneSetups = 0, totalRooms = 0;
 
     if (hasComputedData) {
       // Use server-computed data
-      totalOccupied = rcEntry?.computed_items?.summary?.totalOccupied || computedRooms.length;
+      totalOccupied = rcEntry?.computed_items?.summary?.totalOccupied || computedRooms.filter(r => r.cleaningType !== "none").length;
+      totalRooms = rcEntry?.computed_items?.summary?.totalRooms || computedRooms.length;
       computedRooms.forEach(cr => {
         const key = sanitizeRoomKey(cr.room);
         const ri = roomItems[key] || roomItems[cr.room] || {};
@@ -371,6 +380,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       // Fallback: client-side computation
       Object.keys(allRooms).forEach(rt => {
         (allRooms[rt] || []).forEach(rm => {
+          totalRooms++;
           const ri = roomItems[rm] || {};
           const activeRes = boardingToday.find(r => r.room === rm);
           const coRes = boardingCheckedOut.find(r => r.room === rm);
@@ -407,7 +417,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       const needsRefresh = crData ? crData.needsRefresh : false;
       const needsDisinfect = crData ? crData.needsDisinfect : false;
       const hasSetup = crData ? crData.needsSetup : false;
-      const isOccupied = !!crData;
+      const isOccupied = !!crData && crData.cleaningType !== "none";
       const aDog = crData ? crData.dogName : null;
       const aOwner = crData ? crData.ownerLastName : null;
       const selectedBowl = ri.setupBowl || (crData?.suggestedBowlSize) || "";
@@ -478,6 +488,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                 {ri.asNeeded && <input type="checkbox" checked={!!ri.asNeededDone} disabled={isLocked} onChange={e => toggleItem(rm, "asNeededDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.suc }} title="Mark done" />}
               </div>
               {ri.asNeeded && (ri.asNeededBy) && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.asNeededBy}{ri.asNeededAt ? ` · ${formatTime(ri.asNeededAt)}` : ""}</div>}
+              {ri.asNeeded && <input type="text" value={ri.asNeededNote || ""} disabled={isLocked} onChange={e => setNoteForItem(rm, e.target.value.slice(0, 200))} placeholder="Note..." style={{ width: "100%", fontSize: 10, padding: "2px 4px", marginTop: 3, border: `1px solid ${C.border}`, borderRadius: 4, background: C.surface, color: C.text }} />}
             </div>
           </div>
         </div>
@@ -499,7 +510,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         {/* Summary bar */}
         <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
-            <span style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>{totalOccupied}</span>
+            <span style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>{totalRooms ? `${totalOccupied}/${totalRooms}` : totalOccupied}</span>
             <span style={{ fontSize: 12, color: C.textSec }}>Rooms Occupied</span>
           </div>
           {totalRefresh > 0 && <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
@@ -532,7 +543,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
           const rooms = groupedRooms[rt];
           return (
             <div key={rt} style={{ marginBottom: 20 }}>
-              <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>{rt} <Badge color="default" size="sm">{rooms.length} rooms</Badge></h3>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>{rt} <Badge color="default" size="sm">{rooms.filter(r => r.cleaningType !== "none").length}/{rooms.length} occupied</Badge></h3>
               <Card>
                 <div style={{ display: "grid", gridTemplateColumns: gridCols, borderBottom: `2px solid ${C.border}`, padding: "8px 12px", background: C.surfaceHover }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>ROOM</div>
@@ -575,7 +586,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
           );
         })}
         {!hasComputedData && !Object.values(allRooms).some(r => r.length > 0) && <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No rooms configured. Add rooms in Settings → Rooms.</div></Card>}
-        {hasComputedData && computedRooms.length === 0 && <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No occupied rooms today.</div></Card>}
+        {hasComputedData && computedRooms.length === 0 && <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No rooms configured. Add rooms in Settings → Gingr Integration.</div></Card>}
       </div>
     );
   };

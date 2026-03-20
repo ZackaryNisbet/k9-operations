@@ -1196,7 +1196,7 @@ async function assignRoomsServerSide(
   while (true) {
     const { data: pageData, error: resErr } = await supabase
       .from("gingr_reservations")
-      .select("gingr_id, reservation_type_name, start_date, end_date")
+      .select("gingr_id, reservation_type_name, start_date, end_date, room_assignment")
       .eq("location_id", locationId)
       .gte("start_date", windowStart + "T00:00:00")
       .lte("start_date", windowEnd + "T23:59:59")
@@ -1231,6 +1231,13 @@ async function assignRoomsServerSide(
       const checkIn = r.start_date ? r.start_date.split("T")[0] : "";
       const checkOut = r.end_date ? r.end_date.split("T")[0] : checkIn;
       boarding.push({ gingr_id: r.gingr_id, roomType, checkIn, checkOut });
+    } else if (type === "dayboarding" && roomsMap["Temporary Lodging"]) {
+      // Day boarding dogs get assigned to Temporary Lodging rooms as fallback.
+      // Skip if ops-compute already persisted the actual Gingr room from BOH.
+      if (r.room_assignment) continue;
+      const checkIn = r.start_date ? r.start_date.split("T")[0] : "";
+      const checkOut = r.end_date ? r.end_date.split("T")[0] : checkIn;
+      boarding.push({ gingr_id: r.gingr_id, roomType: "Temporary Lodging", checkIn, checkOut });
     }
   }
 
@@ -1262,8 +1269,14 @@ async function assignRoomsServerSide(
     for (const r of group) {
       let picked: string | null = null;
       for (const rm of rooms) {
+        const isSameDay = r.checkIn === r.checkOut;
         const overlap = occ[rm].some(
-          (o) => o.checkIn < r.checkOut && r.checkIn < o.checkOut
+          (o) => {
+            // Same-day reservations (day boarding) on the same date = overlap
+            if (isSameDay && o.checkIn === o.checkOut && o.checkIn === r.checkIn) return true;
+            // Standard interval overlap (exclusive endpoints — checkout day is available)
+            return o.checkIn < r.checkOut && r.checkIn < o.checkOut;
+          }
         );
         if (!overlap) {
           picked = rm;
