@@ -281,45 +281,28 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
 /* ═══════════════════════════════════════════════════════════════════════════
    Custom Occupancy Chart — wraps InteractiveLineChart with %-based y-axis
    ═══════════════════════════════════════════════════════════════════════════ */
-function OccupancyChart({ chartData, dateLabels, animEpoch, height = 300 }) {
-  const containerRef = useRef(null);
+const _fmtPct = (v) => `${Math.round(v)}%`;
 
-  // Scale values: InteractiveLineChart shows $ on y-axis.
-  // We render a custom y-axis overlay and hide the chart's built-in one.
-  // The chart max will be driven by data — we pass data as-is (0-100 values).
+function OccupancyChart({ chartData, dateLabels, animEpoch, height = 160 }) {
   return (
-    <div ref={containerRef} style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden" }}>
-      {/* Percentage Y-axis overlay */}
-      <div style={{
-        position: "absolute", top: 0, left: 0, bottom: 28, width: 50, zIndex: 2,
-        display: "flex", flexDirection: "column", justifyContent: "space-between",
-        padding: "20px 0 0 0", background: "white",
-      }}>
-        {[100, 75, 50, 25, 0].map(v => (
-          <span key={v} style={{
-            fontSize: 9, fontWeight: 500, color: "#8B95A5",
-            fontFamily: "'Outfit', sans-serif", textAlign: "right",
-            paddingRight: 6, lineHeight: 1,
-          }}>{v}%</span>
-        ))}
-      </div>
-      <InteractiveLineChart
-        chartData={chartData}
-        color={C.pri}
-        height={height}
-        id="occupancy-chart"
-        animationEpoch={animEpoch}
-        dateLabels={dateLabels}
-        useRawPoints={true}
-        lineType="linear"
-        solidFill={true}
-        fillColor={C.pri}
-        fillOpacity={0.10}
-        showDots={true}
-        dotRadius={2}
-      />
-      {/* Custom hover tooltip overlay — percentage-aware */}
-    </div>
+    <InteractiveLineChart
+      chartData={chartData}
+      color={C.pri}
+      height={height}
+      id="occupancy-chart"
+      animationEpoch={animEpoch}
+      dateLabels={dateLabels}
+      useRawPoints={true}
+      lineType="linear"
+      solidFill={true}
+      fillColor={C.pri}
+      fillOpacity={0.10}
+      showDots={true}
+      dotRadius={2}
+      formatYLabel={_fmtPct}
+      formatHoverValue={_fmtPct}
+      fixedMax={100}
+    />
   );
 }
 
@@ -329,14 +312,14 @@ function OccupancyChart({ chartData, dateLabels, animEpoch, height = 300 }) {
 function StatCard({ label, value, sub, color = C.text }) {
   return (
     <div style={{
-      background: "#FFFFFF", borderRadius: 10, border: "1px solid rgba(0,0,0,0.06)",
-      padding: "14px 16px", flex: 1, minWidth: 120,
-      boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.03)",
+      background: "#FFFFFF", borderRadius: 8, border: "1px solid rgba(0,0,0,0.06)",
+      padding: "10px 14px", flex: 1, minWidth: 100,
+      boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
       animation: "occFadeIn 0.3s ease-out",
     }}>
-      <div style={{ fontSize: 9, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 800, color, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-      {sub && <div style={{ fontSize: 10, fontWeight: 500, color: C.textMut, marginTop: 4 }}>{sub}</div>}
+      <div style={{ fontSize: 9, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{label}</div>
+      <div style={{ fontSize: 20, fontWeight: 800, color, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      {sub && <div style={{ fontSize: 9, fontWeight: 500, color: C.textMut, marginTop: 2 }}>{sub}</div>}
     </div>
   );
 }
@@ -429,14 +412,13 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
 
   return (
     <div style={{
-      minHeight: "100vh", background: "#FAFAF9",
+      background: "#FAFAF9",
       fontFamily: "'Outfit', sans-serif",
-      display: "flex", flexDirection: "column",
     }}>
       {/* ── Header ── */}
       <div style={{
-        padding: "16px 20px 12px",
-        display: "flex", alignItems: "center", gap: 12,
+        padding: "10px 20px 8px",
+        display: "flex", alignItems: "center", gap: 10,
         borderBottom: `1px solid ${C.border}`,
         background: "white",
       }}>
@@ -489,9 +471,9 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
       </div>
 
       {/* ── Content ── */}
-      <div style={{ flex: 1, padding: "16px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ padding: "12px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
         {/* Summary stat cards */}
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8 }}>
           <StatCard label="Average Occupancy" value={`${avgOcc}%`} />
           <StatCard label="Peak Occupancy" value={`${peakOcc}%`} sub={peakDate ? fmtDateFull(peakDate) : "—"} color={C.pri} />
           <StatCard label="Low Occupancy" value={`${lowOcc}%`} sub={lowDate ? fmtDateFull(lowDate) : "—"} />
@@ -499,18 +481,18 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
 
         {/* Chart */}
         <div style={{
-          background: "white", borderRadius: 10, border: "1px solid rgba(0,0,0,0.06)",
-          boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.03)",
-          padding: "16px", flex: 1, minHeight: 300, display: "flex", flexDirection: "column",
+          background: "white", borderRadius: 8, border: "1px solid rgba(0,0,0,0.06)",
+          boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+          padding: "12px 16px",
           animation: "occFadeIn 0.3s ease-out",
         }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 8 }}>Occupancy Trend</div>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.text, marginBottom: 4 }}>Occupancy Trend</div>
           {loading && chartData.length === 0 ? (
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#8B95A5", fontSize: 12 }}>
+            <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: "#8B95A5", fontSize: 12 }}>
               Loading occupancy data...
             </div>
           ) : chartData.length === 0 ? (
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#8B95A5", fontSize: 12 }}>
+            <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: "#8B95A5", fontSize: 12 }}>
               No data for this period
             </div>
           ) : (
@@ -518,6 +500,7 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
               chartData={chartData}
               dateLabels={dateLabelsArr}
               animEpoch={animEpoch}
+              height={160}
             />
           )}
         </div>
