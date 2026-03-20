@@ -119,26 +119,32 @@ BEGIN
   FOR d IN SELECT generate_series(p_date_from, p_date_to, '1 day'::interval)::DATE
   LOOP
     -- ═══ Snapshot metrics ═══
+    -- FIX: Use (check_out_date IS NULL OR check_out_date::DATE > d) so historical
+    -- dates count dogs that were in-house then but have since checked out.
     SELECT
       COUNT(*) FILTER (WHERE
-        r.check_in_date IS NOT NULL AND r.check_out_date IS NULL
+        r.check_in_date IS NOT NULL
+        AND (r.check_out_date IS NULL OR r.check_out_date::DATE > d)
         AND r.start_date::DATE <= d AND r.end_date::DATE >= d
         AND LOWER(r.reservation_type_name) NOT LIKE '%tour%'
       ),
       COUNT(*) FILTER (WHERE
-        r.check_in_date IS NOT NULL AND r.check_out_date IS NULL
+        r.check_in_date IS NOT NULL
+        AND (r.check_out_date IS NULL OR r.check_out_date::DATE > d)
         AND r.start_date::DATE <= d AND r.end_date::DATE >= d
         AND (LOWER(r.reservation_type_name) LIKE '%boarding%' OR LOWER(r.reservation_type_name) LIKE '%lodging%'
              OR LOWER(r.reservation_type_name) LIKE '%overnight%' OR LOWER(r.reservation_type_name) LIKE '%suite%')
       ),
       COUNT(*) FILTER (WHERE
-        r.check_in_date IS NOT NULL AND r.check_out_date IS NULL
+        r.check_in_date IS NOT NULL
+        AND (r.check_out_date IS NULL OR r.check_out_date::DATE > d)
         AND r.start_date::DATE <= d AND r.end_date::DATE >= d
         AND (LOWER(r.reservation_type_name) LIKE '%daycare%' OR LOWER(r.reservation_type_name) LIKE '%day care%'
              OR LOWER(r.reservation_type_name) LIKE '%day boarding%')
       ),
       COUNT(*) FILTER (WHERE
-        r.check_in_date IS NOT NULL AND r.check_out_date IS NULL
+        r.check_in_date IS NOT NULL
+        AND (r.check_out_date IS NULL OR r.check_out_date::DATE > d)
         AND r.end_date::DATE = d
       ),
       COUNT(*) FILTER (WHERE
@@ -148,14 +154,14 @@ BEGIN
         r.start_date::DATE = d AND r.cancelled_date IS NULL
         AND LOWER(r.reservation_type_name) NOT LIKE '%tour%'
       ),
-      -- PENDING: dogs scheduled for today that have NOT yet checked in
       COUNT(*) FILTER (WHERE
         r.start_date::DATE = d AND r.cancelled_date IS NULL
         AND r.check_in_date IS NULL
         AND LOWER(r.reservation_type_name) NOT LIKE '%tour%'
       ),
       COUNT(*) FILTER (WHERE
-        r.check_in_date IS NOT NULL AND r.check_out_date IS NULL
+        r.check_in_date IS NOT NULL
+        AND (r.check_out_date IS NULL OR r.check_out_date::DATE > d)
         AND r.start_date::DATE <= d AND r.end_date::DATE > d
         AND (LOWER(r.reservation_type_name) LIKE '%boarding%' OR LOWER(r.reservation_type_name) LIKE '%lodging%'
              OR LOWER(r.reservation_type_name) LIKE '%overnight%' OR LOWER(r.reservation_type_name) LIKE '%suite%')
