@@ -596,7 +596,7 @@ function LeanAppInner() {
       case "ops-opening": return "Opening Checklist";
       case "ops-fe": return "FE Checklist";
       case "ops-be": return "BE Checklist";
-      case "ops-rooms": return "Room Cleaning";
+      case "ops-rooms": return "Room Cleaning & Setups";
       case "ops-pictures": return "Pictures";
       case "ops-pp": return "Private Play";
       case "ops-closing": return "Closing Checklist";

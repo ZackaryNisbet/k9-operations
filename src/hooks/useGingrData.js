@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef, startTransition } from "react";
 import { supabase } from "../supabaseClient";
-import { C, OPERATIONS_CATALOG, idbGet, idbSet, IDB_VERSION, todayStr, addDays, LITE_DEF_PRICING, DEF_CLOSING_TEMPLATE, LEAN_ROLES, ROOM_TYPES } from "../shared/theme";
+import { C, OPERATIONS_CATALOG, idbGet, idbSet, IDB_VERSION, todayStr, addDays, LITE_DEF_PRICING, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, LEAN_ROLES, ROOM_TYPES } from "../shared/theme";
 import { classifyReservationType, classifyReservationStatus, extractRoomFromType } from "../shared/opsHelpers";
 
 function useGingrData(locationId, refreshOptions = {}) {
@@ -719,6 +719,23 @@ function useGingrData(locationId, refreshOptions = {}) {
     });
   }, [locationId, td]);
 
+  // Fetch checklist templates from DB (single source of truth for both web and mobile)
+  const [checklistTemplates, setChecklistTemplates] = useState({});
+  useEffect(() => {
+    if (!locationId) return;
+    supabase.from("lite_checklist_templates").select("template_type, items").eq("location_id", locationId).then(({ data: rows }) => {
+      if (rows && rows.length > 0) {
+        const map = {};
+        for (const r of rows) {
+          if (r.items && Array.isArray(r.items) && r.items.length > 0) {
+            map[r.template_type] = r.items;
+          }
+        }
+        setChecklistTemplates(map);
+      }
+    });
+  }, [locationId]);
+
   // ── Stable static arrays (created once, never change) ──
   const EMPTY = useRef([]).current;
   const EMPTY_OBJ = useRef({}).current;
@@ -745,7 +762,10 @@ function useGingrData(locationId, refreshOptions = {}) {
     resortPolicies: STATIC_POLICIES,
     lifecycleExplainers: EMPTY_OBJ,
     lifecycleViews: EMPTY,
-    closingTemplate: DEF_CLOSING_TEMPLATE,
+    openingTemplate: checklistTemplates.opening || DEF_OPENING_TEMPLATE,
+    feTemplate: checklistTemplates.fe_checklist || DEF_FE_TEMPLATE,
+    beTemplate: checklistTemplates.be_checklist || DEF_BE_TEMPLATE,
+    closingTemplate: checklistTemplates.closing || DEF_CLOSING_TEMPLATE,
     evaluations: EMPTY,
     gingr_api_key: "",
     gingr_location_id: "",
