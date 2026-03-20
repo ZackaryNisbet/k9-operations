@@ -484,10 +484,8 @@ async function syncInvoices(
 ) {
   const now = new Date();
   const toDate = now.toISOString().split("T")[0];
-  // Incremental: last 7 days to catch late-closing invoices. Full: from 2015-01-01.
-  const fromDate = fullSync
-    ? "2015-01-01"
-    : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  // Always pull full history — refunds can hit any invoice regardless of age.
+  const fromDate = "2015-01-01";
 
   let total = 0;
   let page = 1;
@@ -556,26 +554,45 @@ async function syncInvoicePayments(
   apiKey: string,
   locationId: string
 ) {
-  // Get recent invoices (last 7 days) from gingr_invoices
+  // Two sets of invoices need transaction details:
+  // 1. Recent invoices (last 7 days) — catches new payments
+  // 2. ALL returned invoices (lifetime) — catches refunds on any invoice
+  // This is efficient: set 1 is small, set 2 is small (few refunds), and
+  // together they guarantee we never miss a refund regardless of invoice age.
   const now = new Date();
   const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
     .toISOString()
     .split("T")[0];
 
-  const { data: recentInvoices, error: invErr } = await supabase
-    .from("gingr_invoices")
-    .select("id")
-    .eq("location_id", locationId)
-    .gte("created_at", `${sevenDaysAgo}T00:00:00`);
+  const [recentRes, returnedRes] = await Promise.all([
+    supabase
+      .from("gingr_invoices")
+      .select("id")
+      .eq("location_id", locationId)
+      .gte("created_at", `${sevenDaysAgo}T00:00:00`),
+    // ALL returned invoices — no date limit. Refunds can hit any invoice.
+    supabase
+      .from("gingr_invoices")
+      .select("id")
+      .eq("location_id", locationId)
+      .eq("is_returned", true),
+  ]);
 
-  if (invErr) throw new Error(`Invoice payments query error: ${invErr.message}`);
-  if (!recentInvoices || recentInvoices.length === 0) return { synced: 0 };
+  if (recentRes.error) throw new Error(`Invoice payments query error: ${recentRes.error.message}`);
+
+  // Merge and deduplicate
+  const allIds = new Set<number>();
+  for (const inv of (recentRes.data || [])) allIds.add(inv.id);
+  for (const inv of (returnedRes.data || [])) allIds.add(inv.id);
+
+  const invoicesToFetch = [...allIds].map(id => ({ id }));
+  if (invoicesToFetch.length === 0) return { synced: 0 };
 
   let total = 0;
 
   // Process in batches of 5 concurrent API calls
-  for (let i = 0; i < recentInvoices.length; i += 5) {
-    const batch = recentInvoices.slice(i, i + 5);
+  for (let i = 0; i < invoicesToFetch.length; i += 5) {
+    const batch = invoicesToFetch.slice(i, i + 5);
     const results = await Promise.all(
       batch.map(async (inv: any) => {
         try {
@@ -608,7 +625,16 @@ async function syncInvoicePayments(
         const txTime = entry.transaction_time
           ? new Date(Number(entry.transaction_time) * 1000).toISOString()
           : null;
-        const txDate = txTime ? txTime.split("T")[0] : null;
+        // Use Eastern Time for date assignment (Gingr reports use ET)
+        const txDate = entry.transaction_time
+          ? new Date(Number(entry.transaction_time) * 1000)
+              .toLocaleDateString("en-CA", { timeZone: "America/New_York" })
+          : null;
+
+        // Detect deposit payments — these are also counted in gingr_deposits
+        // so they must be excluded from invoice payment totals to avoid double-counting
+        const description = entry.description || "";
+        const isDepositPayment = description.startsWith("Deposit for Reservation");
 
         rows.push({
           id: paymentId,
@@ -621,6 +647,7 @@ async function syncInvoicePayments(
           is_zero_payment:
             entry.zero_payment === "1" || entry.zero_payment === 1,
           is_admin_comp: (entry.payment_method_type || "").includes("ADMIN"),
+          is_deposit_payment: isDepositPayment,
           raw_data: entry,
           synced_at: new Date().toISOString(),
         });
@@ -740,6 +767,7 @@ async function computeCashBasisMetrics(
 
   for (const dateStr of datesToCompute) {
     // 1) Invoice payments — already have payment_method_type
+    // Exclude is_deposit_payment to avoid double-counting with gingr_deposits
     const { data: paymentData } = await supabase
       .from("gingr_invoice_payments")
       .select("total_balance")
@@ -747,7 +775,8 @@ async function computeCashBasisMetrics(
       .eq("transaction_date", dateStr)
       .in("payment_method_type", CASH_METHODS)
       .eq("is_zero_payment", false)
-      .eq("is_admin_comp", false);
+      .eq("is_admin_comp", false)
+      .eq("is_deposit_payment", false);
 
     const entries = paymentData || [];
     const collectedPayments = entries
