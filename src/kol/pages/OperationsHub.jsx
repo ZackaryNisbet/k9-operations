@@ -574,6 +574,7 @@ function OperationsHub({ data, save, nav, profile }) {
                   <div style={{ fontSize: 13, fontWeight: 700, color: C.pri, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 10, paddingBottom: 6, borderBottom: `2px solid ${C.pri}` }}>Cleaning & Baths</div>
 
                   {progressRow("Room Cleaning", tp.roomStats.totalDone, tp.roomStats.totalNeeded, C.pri)}
+                  {tp.roomStats.totalSetups > 0 && progressRow("Room Setups", tp.roomStats.doneSetups || 0, tp.roomStats.totalSetups, C.pri)}
                   {tp.roomsAwaitingCheckout > 0 && (
                     <div style={{ padding: "4px 0 6px", fontSize: 11, color: C.warn, fontWeight: 600 }}>
                       {tp.roomsAwaitingCheckout} room{tp.roomsAwaitingCheckout !== 1 ? "s" : ""} awaiting checkout for disinfect

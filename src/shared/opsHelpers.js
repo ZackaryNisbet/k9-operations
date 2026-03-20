@@ -76,13 +76,16 @@ function getRoomCleaningStats(data, date) {
 
   // Use computed_items if available (server-generated room list)
   const ci = entry?.computed_items;
+  const sanitizeKey = (name) => (name || '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
   if (ci && ci.rooms && ci.rooms.length > 0) {
     let totalNeeded = 0, totalDone = 0;
     let totalSetups = 0, doneSetups = 0;
     ci.rooms.forEach(rm => {
-      if (rm.needsRefresh) { totalNeeded++; if (ei[rm.room]?.refresh) totalDone++; }
-      if (rm.needsDisinfect) { totalNeeded++; if (ei[rm.room]?.disinfect) totalDone++; }
-      if (rm.needsSetup) { totalSetups++; if (ei[rm.room]?.setupDone) doneSetups++; }
+      const key = sanitizeKey(rm.room);
+      const state = ei[key] || ei[rm.room] || {};
+      if (rm.needsRefresh) { totalNeeded++; if (state.refresh) totalDone++; }
+      if (rm.needsDisinfect) { totalNeeded++; if (state.disinfect) totalDone++; }
+      if (rm.needsSetup) { totalSetups++; if (state.setupDone) doneSetups++; }
     });
     return { totalNeeded, totalDone, total: totalNeeded, cleaned: totalDone, totalSetups, doneSetups };
   }
@@ -197,16 +200,20 @@ function getOpsCardStatus(data, item, date) {
     const template = data[meta.key] || meta.def;
     const dayIdx = new Date(td + "T12:00:00").getDay();
     const todayItems = template.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
-    const total = todayItems.length;
     const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : Array.isArray(ei) ? ei.filter(i => i.checked).length : 0;
+    // Use items count as total when it exceeds template (mobile has more items)
+    const itemCount = !Array.isArray(ei) ? Object.keys(ei).length : ei.length;
+    const total = Math.max(todayItems.length, itemCount);
     if (total > 0 && checked >= total) return "completed";
     return checked > 0 ? "in_progress" : "not_started";
   }
   if (item.typeSub === "room_cleaning") {
     const stats = getRoomCleaningStats(data, td);
-    if (stats.totalNeeded === 0) return "not_started";
-    if (stats.totalDone >= stats.totalNeeded) return "completed";
-    return stats.totalDone > 0 ? "in_progress" : "not_started";
+    const allTotal = stats.totalNeeded + (stats.totalSetups || 0);
+    const allDone = stats.totalDone + (stats.doneSetups || 0);
+    if (allTotal === 0) return "not_started";
+    if (allDone >= allTotal) return "completed";
+    return allDone > 0 ? "in_progress" : "not_started";
   }
   if (item.typeSub === "pp") {
     const ppStats = getPPStats(data, td);
@@ -251,17 +258,20 @@ function getOpsProgress(data, item, date) {
     const template = data[meta.key] || meta.def;
     const dayIdx = new Date(td + "T12:00:00").getDay();
     const todayItems = template.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
-    const total = todayItems.length;
-    if (total === 0) return 0;
     const ei = entry.items || {};
     const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : Array.isArray(ei) ? ei.filter(i => i.checked).length : 0;
+    const itemCount = !Array.isArray(ei) ? Object.keys(ei).length : ei.length;
+    const total = Math.max(todayItems.length, itemCount);
+    if (total === 0) return 0;
     return Math.round((checked / total) * 100);
   }
   const ei = entry.items;
   if (!ei) return 0;
   if (item.typeSub === "room_cleaning") {
     const stats = getRoomCleaningStats(data, td);
-    return stats.totalNeeded > 0 ? Math.round((stats.totalDone / stats.totalNeeded) * 100) : 0;
+    const allTotal = stats.totalNeeded + (stats.totalSetups || 0);
+    const allDone = stats.totalDone + (stats.doneSetups || 0);
+    return allTotal > 0 ? Math.round((allDone / allTotal) * 100) : 0;
   }
   if (item.typeSub === "pp") {
     const ppStats = getPPStats(data, td);
@@ -302,16 +312,19 @@ function getOpsCountLabel(data, item, date) {
     const template = data[meta.key] || meta.def;
     const dayIdx = new Date(td + "T12:00:00").getDay();
     const todayItems = template.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
-    const total = todayItems.length;
-    if (!entry) return `0/${total} tasks`;
+    if (!entry) return `0/${todayItems.length} tasks`;
     const ei = entry.items || {};
     const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : Array.isArray(ei) ? ei.filter(i => i.checked).length : 0;
+    const itemCount = !Array.isArray(ei) ? Object.keys(ei).length : ei.length;
+    const total = Math.max(todayItems.length, itemCount);
     return `${checked}/${total} tasks`;
   }
   if (item.typeSub === "room_cleaning") {
     const stats = getRoomCleaningStats(data, td);
-    if (stats.totalNeeded === 0) return "No rooms to clean";
-    return `${stats.totalDone}/${stats.totalNeeded} rooms`;
+    const parts = [];
+    if (stats.totalNeeded > 0) parts.push(`${stats.totalDone}/${stats.totalNeeded} cleans`);
+    if (stats.totalSetups > 0) parts.push(`${stats.doneSetups}/${stats.totalSetups} setups`);
+    return parts.length > 0 ? parts.join(" · ") : "No rooms";
   }
   if (item.typeSub === "pp") {
     const ppStats = getPPStats(data, td);

@@ -299,6 +299,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const hr = parseInt(h);
     return `${hr > 12 ? hr - 12 : hr || 12}:${m} ${hr >= 12 ? "PM" : "AM"}`;
   };
+  const sanitizeRoomKey = (name) => (name || '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
   const renderRoomCleaning = () => {
     const roomItems = items;
 
@@ -315,7 +316,9 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const missedMap = {};
     if (prevComputedRooms.length > 0) {
       prevComputedRooms.forEach(cr => {
-        if (cr.needsDisinfect && !(prevItems[cr.room]?.disinfect)) {
+        const prevKey = sanitizeRoomKey(cr.room);
+        if (cr.needsDisinfect && !(prevItems[prevKey]?.disinfect) && !(prevItems[cr.room]?.disinfect)) {
+          missedMap[prevKey] = { missedDisinfect: true };
           missedMap[cr.room] = { missedDisinfect: true };
         }
       });
@@ -350,7 +353,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       // Use server-computed data
       totalOccupied = rcEntry?.computed_items?.summary?.totalOccupied || computedRooms.length;
       computedRooms.forEach(cr => {
-        const ri = roomItems[cr.room] || {};
+        const key = sanitizeRoomKey(cr.room);
+        const ri = roomItems[key] || roomItems[cr.room] || {};
         if (cr.needsRefresh) { totalRefresh++; if (ri.refresh) doneRefresh++; }
         if (cr.needsDisinfect) { totalDisinfect++; if (ri.disinfect) doneDisinfect++; }
         if (cr.needsSetup) { totalSetups++; if (ri.setupDone) doneSetups++; }
@@ -391,7 +395,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const gridCols = "minmax(140px, 1.2fr) 1fr 1fr minmax(120px, 1fr) minmax(100px, auto)";
 
     // ─── Render a single room row (shared by both computed and fallback paths) ───
-    const renderRoomRow = (rm, ri, crData, i, totalRows) => {
+    const renderRoomRow = (rm, ri, crData, i, totalRows, displayName) => {
       const needsRefresh = crData ? crData.needsRefresh : false;
       const needsDisinfect = crData ? crData.needsDisinfect : false;
       const hasSetup = crData ? crData.needsSetup : false;
@@ -403,7 +407,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       return (
         <div key={rm} style={{ display: "grid", gridTemplateColumns: gridCols, padding: "8px 12px", borderBottom: i < totalRows - 1 ? `1px solid ${C.border}` : "none", alignItems: "center" }}>
           <div>
-            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{rm}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{displayName || rm}</span>
             {isOccupied ? <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: C.pri, marginTop: 1 }}>{aDog}</div>
               {aOwner && <div style={{ fontSize: 10, color: C.textMut }}>{aOwner}</div>}
@@ -530,8 +534,9 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, textAlign: "center" }}>AS NEEDED</div>
                 </div>
                 {rooms.map((cr, i) => {
-                  const ri = roomItems[cr.room] || {};
-                  return renderRoomRow(cr.room, ri, cr, i, rooms.length);
+                  const key = sanitizeRoomKey(cr.room);
+                  const ri = roomItems[key] || roomItems[cr.room] || {};
+                  return renderRoomRow(key, ri, cr, i, rooms.length, cr.room);
                 })}
               </Card>
             </div>
@@ -553,8 +558,9 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, textAlign: "center" }}>AS NEEDED</div>
                 </div>
                 {rooms.map((rm, i) => {
-                  const ri = roomItems[rm] || {};
-                  return renderRoomRow(rm, ri, null, i, rooms.length);
+                  const key = sanitizeRoomKey(rm);
+                  const ri = roomItems[key] || roomItems[rm] || {};
+                  return renderRoomRow(key, ri, null, i, rooms.length, rm);
                 })}
               </Card>
             </div>
