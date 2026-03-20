@@ -1,9 +1,8 @@
 // K9 Operations — Occupancy Report Page
-// Detailed occupancy trends with timeframe selector and interactive chart.
+// World-class occupancy analytics matching dashboard design language.
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, startTransition } from "react";
 import { C, todayStr, addDays } from "../../shared/theme";
-import { I } from "../../shared/icons";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import { useDashboardMetrics } from "../../hooks/useDashboardMetrics";
 
@@ -86,14 +85,16 @@ const fmtDateLabel = (d) => {
   const dt = new Date(d + "T00:00:00");
   return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 };
-const fmtDateFull = (d) => {
-  if (!d) return "";
-  const dt = new Date(d + "T00:00:00");
-  return dt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+const _fmtPct = (v) => `${Math.round(v)}%`;
+
+const pctChange = (cur, prev) => {
+  if (!prev || prev === 0) return cur > 0 ? 100 : null;
+  return Math.round(((cur - prev) / Math.abs(prev)) * 100);
 };
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   AnimatedPillSelector
+   AnimatedPillSelector — matches dashboard
    ═══════════════════════════════════════════════════════════════════════════ */
 function AnimatedPillSelector({ ranges, activeKey, onChange }) {
   const trackRef = useRef(null);
@@ -214,7 +215,6 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
       boxShadow: "0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06)",
       padding: 12, width: 260,
     }}>
-      {/* Presets */}
       <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
         {presets.map(p => (
           <button key={p.label} onClick={p.fn} style={{
@@ -224,17 +224,14 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
           }}>{p.label}</button>
         ))}
       </div>
-      {/* Month nav */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
         <button onClick={prevMonth} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14, color: C.textMut, padding: "2px 6px" }}>&#8249;</button>
         <span style={{ fontSize: 11, fontWeight: 700, color: C.text }}>{MONTH_NAMES[viewMonth]} {viewYear}</span>
         <button onClick={nextMonth} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 14, color: C.textMut, padding: "2px 6px" }}>&#8250;</button>
       </div>
-      {/* Day-of-week headers */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 0, marginBottom: 2 }}>
         {DOW.map(d => <div key={d} style={{ textAlign: "center", fontSize: 8, fontWeight: 700, color: C.textMut, padding: "2px 0" }}>{d}</div>)}
       </div>
-      {/* Calendar grid */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 0 }}>
         {cells.map((day, i) => {
           if (!day) return <div key={i} />;
@@ -258,7 +255,6 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
           );
         })}
       </div>
-      {/* Selected range display */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
         <div style={{ flex: 1 }}>
           <div style={labelStyle}>From</div>
@@ -279,9 +275,25 @@ function DateRangePicker({ customFrom, customTo, setCustomFrom, setCustomTo }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Format helper for chart
+   Trend Badge — matches dashboard MetricCell trend display
    ═══════════════════════════════════════════════════════════════════════════ */
-const _fmtPct = (v) => `${Math.round(v)}%`;
+function TrendBadge({ value }) {
+  if (value == null) return null;
+  const up = value > 0;
+  const flat = value === 0;
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 2,
+      fontSize: 9, fontWeight: 700, lineHeight: 1,
+      color: flat ? C.textMut : up ? C.suc : C.dan,
+      background: flat ? "rgba(100,116,139,0.08)" : up ? C.sucLt : C.danLt,
+      padding: "2px 5px", borderRadius: 4,
+    }}>
+      {!flat && <span style={{ fontSize: 8 }}>{up ? "\u25B2" : "\u25BC"}</span>}
+      {Math.abs(value)}%
+    </span>
+  );
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    OccupancyReportPage
@@ -293,6 +305,7 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [showCalendar, setShowCalendar] = useState(false);
+  const [showPrior, setShowPrior] = useState(false);
   const [animEpoch, setAnimEpoch] = useState(0);
   const today = todayStr();
   const calRef = useRef(null);
@@ -312,15 +325,15 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
     else setShowCalendar(false);
   };
 
-  /* ─── Date range computation ──────────────────────────────────────── */
-  const { dateFrom, dateTo, days } = useMemo(() => {
+  /* ─── Date range computation (matches dashboard logic) ──────────── */
+  const { dateFrom, dateTo, days, prevFrom, prevTo } = useMemo(() => {
     const now = new Date();
     const end = today;
     let start;
     switch (range) {
       case "past-week": start = addDays(today, -6); break;
-      case "mtd": start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`; break;
       case "past-30": start = addDays(today, -30); break;
+      case "mtd": start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`; break;
       case "qtd": { const qm = Math.floor(now.getMonth() / 3) * 3; start = `${now.getFullYear()}-${String(qm + 1).padStart(2, "0")}-01`; break; }
       case "ytd": start = `${now.getFullYear()}-01-01`; break;
       case "custom": start = customFrom || today; break;
@@ -330,33 +343,49 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
     const d1 = new Date(start + "T00:00:00");
     const d2 = new Date(to + "T00:00:00");
     const dayCount = Math.max(1, Math.round((d2 - d1) / 86400000) + 1);
-    return { dateFrom: start, dateTo: to, days: dayCount };
+    const pTo = addDays(start, -1);
+    const pFrom = addDays(pTo, -(dayCount - 1));
+    return { dateFrom: start, dateTo: to, days: dayCount, prevFrom: pFrom, prevTo: pTo };
   }, [range, today, customFrom, customTo]);
 
-  /* ─── Fetch daily metrics ────────────────────────────────────────── */
-  const { dailyRows, loading } = useDashboardMetrics(
-    locationId, dateFrom, dateTo, null, null, refreshOptions
+  /* ─── Fetch daily metrics (current + prior) ─────────────────────── */
+  const { dailyRows, prevDailyRows, loading } = useDashboardMetrics(
+    locationId, dateFrom, dateTo,
+    showPrior ? prevFrom : null,
+    showPrior ? prevTo : null,
+    refreshOptions
   );
 
   /* ─── Chart data from daily rows ─── */
-  const { chartData, dateLabelsArr, avgOcc, peakOcc, peakDate, lowOcc, lowDate } = useMemo(() => {
-    if (!dailyRows || dailyRows.length === 0) return {
+  const { chartData, dateLabelsArr, avgOcc, peakOcc, peakDate, lowOcc, lowDate, todayOcc, prevAvgOcc, priorChartData } = useMemo(() => {
+    const empty = {
       chartData: [], dateLabelsArr: [],
       avgOcc: 0, peakOcc: 0, peakDate: "", lowOcc: 0, lowDate: "",
+      todayOcc: null, prevAvgOcc: 0, priorChartData: [],
     };
+    if (!dailyRows || dailyRows.length === 0) return empty;
 
     let sum = 0, peak = -1, low = 101, peakD = "", lowD = "";
+    let todayVal = null;
     const cd = dailyRows.map(r => {
       const val = Math.min(100, Math.max(0, Number(r.occupancy_pct) || 0));
       sum += val;
       if (val > peak) { peak = val; peakD = r.metric_date; }
       if (val < low) { low = val; lowD = r.metric_date; }
-      return {
-        date: r.metric_date,
-        label: fmtDateLabel(r.metric_date),
-        value: val,
-      };
+      if (r.metric_date === today) todayVal = val;
+      return { date: r.metric_date, label: fmtDateLabel(r.metric_date), value: val };
     });
+
+    // Prior period chart data
+    let pcd = [];
+    let pSum = 0;
+    if (prevDailyRows && prevDailyRows.length > 0) {
+      pcd = prevDailyRows.map(r => {
+        const val = Math.min(100, Math.max(0, Number(r.occupancy_pct) || 0));
+        pSum += val;
+        return { date: r.metric_date, label: fmtDateLabel(r.metric_date), value: val };
+      });
+    }
 
     return {
       chartData: cd,
@@ -366,12 +395,20 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
       peakDate: peakD,
       lowOcc: low <= 100 ? low : 0,
       lowDate: lowD,
+      todayOcc: todayVal,
+      prevAvgOcc: pcd.length > 0 ? Math.round(pSum / pcd.length) : 0,
+      priorChartData: pcd,
     };
-  }, [dailyRows]);
+  }, [dailyRows, prevDailyRows, today]);
+
+  // Is the last data point today?
+  const isToday = chartData.length > 0 && chartData[chartData.length - 1].date === today;
+
+  const PRIOR_COLOR = "#D4A017";
 
   return (
-    <div style={{ background: "white", fontFamily: "'Outfit', sans-serif" }}>
-      {/* ── Single compact toolbar: back + title + pills + date ── */}
+    <div style={{ background: "white", fontFamily: "'Outfit', sans-serif", minHeight: "100vh" }}>
+      {/* ── Toolbar: back + title + pills + vs Prior + date ── */}
       <div style={{
         padding: "8px 20px",
         display: "flex", alignItems: "center", gap: 12,
@@ -388,13 +425,30 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
           </svg>
         </button>
         <span style={{ fontSize: 14, fontWeight: 800, color: C.text }}>Occupancy</span>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", position: "relative" }}>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", position: "relative" }} ref={calRef}>
           <AnimatedPillSelector ranges={RANGES} activeKey={range} onChange={handleRangeChange} />
+
+          <button
+            onClick={() => setShowPrior(p => !p)}
+            style={{
+              padding: "3px 8px", borderRadius: 4,
+              border: `1px solid ${showPrior ? C.acc : "rgba(20,83,45,0.1)"}`,
+              background: showPrior ? C.accLt : "rgba(255,255,255,0.7)",
+              color: showPrior ? C.accDk : C.textMut,
+              fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+              transition: "all 0.12s", whiteSpace: "nowrap",
+            }}
+          >
+            vs Prior
+          </button>
+
           <span style={{ fontSize: 9, color: C.textMut, fontWeight: 500, whiteSpace: "nowrap" }}>
             {fmtDateLabel(dateFrom)} — {fmtDateLabel(dateTo)} · {days}d
           </span>
+
           {range === "custom" && (
-            <div ref={calRef} style={{ position: "relative" }}>
+            <div style={{ position: "relative" }}>
               <button onClick={() => setShowCalendar(s => !s)} style={{
                 padding: "3px 8px", fontSize: 9, fontWeight: 600, borderRadius: 4,
                 border: `1px solid ${C.border}`, background: C.bg, color: C.pri,
@@ -412,16 +466,29 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
         </div>
       </div>
 
-      {/* ── Inline stats row — no cards, just clean numbers ── */}
+      {/* ── Stats strip — compact inline numbers matching dashboard density ── */}
       <div style={{
         display: "flex", gap: 0,
         borderBottom: `1px solid ${C.border}`,
         animation: "occFadeIn 0.3s ease-out",
       }}>
+        {/* Today's occupancy — hero stat */}
+        {todayOcc !== null && (
+          <div style={{
+            padding: "10px 20px",
+            borderRight: `1px solid ${C.border}`,
+            display: "flex", flexDirection: "column", justifyContent: "center",
+          }}>
+            <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Today</div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+              <span style={{ fontSize: 26, fontWeight: 800, color: C.pri, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{todayOcc}%</span>
+            </div>
+          </div>
+        )}
         {[
-          { label: "Avg", value: `${avgOcc}%`, sub: null, accent: false },
-          { label: "Peak", value: `${peakOcc}%`, sub: peakDate ? fmtDateLabel(peakDate) : null, accent: true },
-          { label: "Low", value: `${lowOcc}%`, sub: lowDate ? fmtDateLabel(lowDate) : null, accent: false },
+          { label: "Avg", value: `${avgOcc}%`, trend: showPrior ? pctChange(avgOcc, prevAvgOcc) : null },
+          { label: "Peak", value: `${peakOcc}%`, sub: peakDate ? fmtDateLabel(peakDate) : null },
+          { label: "Low", value: `${lowOcc}%`, sub: lowDate ? fmtDateLabel(lowDate) : null },
         ].map((s, i) => (
           <div key={i} style={{
             flex: 1, padding: "10px 20px",
@@ -429,28 +496,29 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
           }}>
             <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>{s.label}</div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-              <span style={{ fontSize: 22, fontWeight: 800, color: s.accent ? C.pri : C.text, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{s.value}</span>
+              <span style={{ fontSize: 22, fontWeight: 800, color: C.text, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{s.value}</span>
               {s.sub && <span style={{ fontSize: 9, fontWeight: 500, color: C.textMut }}>{s.sub}</span>}
+              {s.trend != null && <TrendBadge value={s.trend} />}
             </div>
           </div>
         ))}
       </div>
 
-      {/* ── Chart — flush, no card wrapper ── */}
+      {/* ── Chart — flush, matching dashboard chart cells ── */}
       <div style={{ padding: "8px 12px 4px" }}>
         {loading && chartData.length === 0 ? (
-          <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center", color: "#8B95A5", fontSize: 12 }}>
+          <div style={{ height: 180, display: "flex", alignItems: "center", justifyContent: "center", color: "#8B95A5", fontSize: 12 }}>
             Loading...
           </div>
         ) : chartData.length === 0 ? (
-          <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center", color: "#8B95A5", fontSize: 12 }}>
+          <div style={{ height: 180, display: "flex", alignItems: "center", justifyContent: "center", color: "#8B95A5", fontSize: 12 }}>
             No data for this period
           </div>
         ) : (
           <InteractiveLineChart
             chartData={chartData}
             color={C.pri}
-            height={140}
+            height={180}
             id="occupancy-chart"
             animationEpoch={animEpoch}
             dateLabels={dateLabelsArr}
@@ -459,14 +527,31 @@ export default function OccupancyReportPage({ nav, locationId, refreshOptions })
             solidFill={true}
             fillColor={C.pri}
             fillOpacity={0.08}
-            showDots={true}
-            dotRadius={2}
+            showDots={false}
             formatYLabel={_fmtPct}
             formatHoverValue={_fmtPct}
             fixedMax={100}
+            todayHighlight={isToday}
+            priorData={showPrior ? priorChartData : undefined}
+            showPriorLine={showPrior && priorChartData.length > 0}
+            priorLineColor={PRIOR_COLOR}
+            priorFillColor={PRIOR_COLOR}
+            priorFillOpacity={0.15}
           />
         )}
       </div>
+
+      {/* ── Prior period context line ── */}
+      {showPrior && priorChartData.length > 0 && (
+        <div style={{
+          padding: "4px 20px 8px",
+          fontSize: 9, color: C.textMut, fontWeight: 500,
+          display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <span style={{ width: 14, height: 2, background: PRIOR_COLOR, borderRadius: 1, display: "inline-block" }} />
+          Prior period: {fmtDateLabel(prevFrom)} — {fmtDateLabel(prevTo)} · avg {prevAvgOcc}%
+        </div>
+      )}
     </div>
   );
 }
