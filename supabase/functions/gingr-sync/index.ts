@@ -521,6 +521,7 @@ async function syncInvoices(
       voided_item_count: inv.voided_item_count ? parseInt(inv.voided_item_count) : null,
       username: inv.username || null,
       user_id: inv.user_id ? Number(inv.user_id) : null,
+      payment_method: inv.payment_method || null,
       // convert create_stamp (Unix timestamp) to ISO date
       created_at: inv.create_stamp
         ? new Date(Number(inv.create_stamp) * 1000).toISOString()
@@ -727,25 +728,24 @@ async function computeCashBasisMetrics(
   apiKey: string
 ) {
   const now = nowET();
-  const today = dateStrET(now);
 
-  // Compute cash basis metrics for the last 7 days (not just yesterday+today).
-  // This fills in gaps from any days where the sync didn't run.
+  // Compute cash basis metrics for the last 7 days.
   const datesToCompute: string[] = [];
   for (let i = 6; i >= 0; i--) {
     datesToCompute.push(dateStrET(new Date(now.getTime() - i * 86400000)));
   }
 
+  // Cash basis only counts real money: Cash, Check, Credit Card.
+  const CASH_METHODS = ["Cash", "Check", "Credit Card"];
+
   for (const dateStr of datesToCompute) {
-    // 1) Get Cash + CC payments from invoice_payments table
-    //    Include ALL positive Cash+CC (including deposit-payment entries)
-    //    These don't overlap with gingr_deposits (different reservation sets)
+    // 1) Invoice payments — already have payment_method_type
     const { data: paymentData } = await supabase
       .from("gingr_invoice_payments")
       .select("total_balance")
       .eq("location_id", locationId)
       .eq("transaction_date", dateStr)
-      .in("payment_method_type", ["Cash", "Credit Card"])
+      .in("payment_method_type", CASH_METHODS)
       .eq("is_zero_payment", false)
       .eq("is_admin_comp", false);
 
@@ -757,88 +757,77 @@ async function computeCashBasisMetrics(
       .filter((e: any) => parseFloat(e.total_balance) < 0)
       .reduce((sum: number, e: any) => sum + Math.abs(parseFloat(e.total_balance)), 0);
 
-    // 2) Get deposits paid on this date from gingr_deposits
+    // 2) Deposits — need to check payment_method via existing_reservation_estimate API
     const { data: depositData } = await supabase
       .from("gingr_deposits")
-      .select("paid_amount, owner_id")
+      .select("paid_amount, reservation_gingr_id, payment_method")
       .eq("location_id", locationId)
       .gte("last_payment", `${dateStr}T00:00:00`)
       .lt("last_payment", `${dateStr}T23:59:59`)
       .gt("paid_amount", 0);
 
     const deposits = depositData || [];
-    const allDepositsTotal = deposits
-      .reduce((sum: number, d: any) => sum + parseFloat(d.paid_amount || 0), 0);
 
-    // 3) Detect store credit from forfeited deposits
-    // When a deposit is forfeited, the paid_amount becomes store credit.
-    // We look for deposits forfeited around this date and calculate how much
-    // store credit was used for new deposits.
-    let storeCreditExclusion = 0;
+    // For deposits missing payment_method, fetch from Gingr API
+    const needsLookup = deposits.filter((d: any) => !d.payment_method);
+    if (needsLookup.length > 0 && subdomain && apiKey) {
+      // Batch in groups of 5 concurrent calls
+      for (let i = 0; i < needsLookup.length; i += 5) {
+        const batch = needsLookup.slice(i, i + 5);
+        const results = await Promise.all(
+          batch.map(async (dep: any) => {
+            try {
+              const result = await gingrFetch(
+                subdomain, "existing_reservation_estimate", apiKey, "GET",
+                { id: String(dep.reservation_gingr_id) }
+              );
+              const depInfo = (result.data?.deposits || [])[0];
+              return {
+                reservation_gingr_id: dep.reservation_gingr_id,
+                payment_method: depInfo?.payment_method || null,
+                payment_method_id: depInfo?.payment_method_id ? Number(depInfo.payment_method_id) : null,
+                deposit_gingr_id: depInfo?.id ? Number(depInfo.id) : null,
+              };
+            } catch (err) {
+              console.error(`Deposit lookup failed for res ${dep.reservation_gingr_id}:`, err);
+              return { reservation_gingr_id: dep.reservation_gingr_id, payment_method: null, payment_method_id: null, deposit_gingr_id: null };
+            }
+          })
+        );
 
-    // Check for deposits forfeited on this date (use a wide UTC window to cover timezone)
-    const { data: forfeitedData } = await supabase
-      .from("gingr_deposits")
-      .select("paid_amount, owner_id")
-      .eq("location_id", locationId)
-      .gte("forfeited_at", `${dateStr}T00:00:00`)
-      .lt("forfeited_at", `${dateStr}T23:59:59`)
-      .gt("paid_amount", 0);
+        // Update deposit records with payment method
+        for (const r of results) {
+          if (r.payment_method) {
+            await supabase
+              .from("gingr_deposits")
+              .update({
+                payment_method: r.payment_method,
+                payment_method_id: r.payment_method_id,
+                deposit_gingr_id: r.deposit_gingr_id,
+              })
+              .eq("location_id", locationId)
+              .eq("reservation_gingr_id", r.reservation_gingr_id);
 
-    const forfeitedDeposits = forfeitedData || [];
-
-    if (forfeitedDeposits.length > 0 && subdomain && apiKey) {
-      // For each owner with a forfeited deposit, check how much store credit was used
-      const processedOwners = new Set<number>();
-
-      for (const fd of forfeitedDeposits) {
-        const ownerId = fd.owner_id;
-        if (!ownerId || processedOwners.has(Number(ownerId))) continue;
-        processedOwners.add(Number(ownerId));
-
-        const forfeitedAmount = parseFloat(fd.paid_amount || "0");
-        if (forfeitedAmount <= 0) continue;
-
-        try {
-          // Get owner's current balance from Gingr API
-          const ownerResult = await gingrFetch(subdomain, "owner", apiKey, "GET", { id: String(ownerId) });
-          const ownerData = ownerResult.data;
-          const currentBalance = parseFloat(ownerData?.current_balance || "0");
-
-          let storeCreditUsed = 0;
-          if (currentBalance < 0) {
-            // Owner still has remaining store credit
-            // Store credit used = forfeited amount - remaining credit
-            storeCreditUsed = forfeitedAmount - Math.abs(currentBalance);
-          } else {
-            // All store credit was used up
-            storeCreditUsed = forfeitedAmount;
+            // Update the in-memory deposit object too
+            const dep = deposits.find((d: any) => d.reservation_gingr_id === r.reservation_gingr_id);
+            if (dep) dep.payment_method = r.payment_method;
           }
-
-          // Can't exclude more than was actually forfeited, and can't be negative
-          storeCreditUsed = Math.max(0, Math.min(storeCreditUsed, forfeitedAmount));
-
-          // Also can't exclude more than this owner's deposits on this date
-          const ownerDepositsToday = deposits
-            .filter((d: any) => Number(d.owner_id) === Number(ownerId))
-            .reduce((sum: number, d: any) => sum + parseFloat(d.paid_amount || 0), 0);
-          storeCreditUsed = Math.min(storeCreditUsed, ownerDepositsToday);
-
-          if (storeCreditUsed > 0) {
-            console.log(`Store credit exclusion: owner ${ownerId}, forfeited $${forfeitedAmount}, balance $${currentBalance}, excluding $${storeCreditUsed}`);
-          }
-
-          storeCreditExclusion += storeCreditUsed;
-        } catch (err) {
-          console.error(`Owner lookup failed for ${ownerId}:`, err);
-          // If lookup fails, don't exclude anything (safe default)
         }
       }
     }
 
-    const collectedDeposits = Math.max(0, allDepositsTotal - storeCreditExclusion);
+    // Only count deposits paid via real money (Cash, Check, Credit Card)
+    const collectedDeposits = deposits
+      .filter((d: any) => {
+        const method = d.payment_method;
+        // If we have a payment method, filter strictly
+        if (method) return CASH_METHODS.some(m => method.toLowerCase().includes(m.toLowerCase()));
+        // If lookup failed and no method, include (safe default — matches old behavior)
+        return true;
+      })
+      .reduce((sum: number, d: any) => sum + parseFloat(d.paid_amount || 0), 0);
 
-    // 4) Compute and upsert
+    // 3) Compute and upsert
     const cashNetRevenue = collectedPayments + collectedDeposits - refunds;
 
     await supabase
