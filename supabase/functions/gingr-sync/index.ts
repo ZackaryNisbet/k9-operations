@@ -484,68 +484,119 @@ async function syncInvoices(
 ) {
   const now = new Date();
   const toDate = now.toISOString().split("T")[0];
-  // Always pull full history — refunds can hit any invoice regardless of age.
-  const fromDate = "2015-01-01";
 
-  let total = 0;
-  let page = 1;
-  const perPage = 200;
-
-  while (true) {
-    const result = await gingrFetch(subdomain, "list_invoices", apiKey, "GET", {
-      complete: "true",
-      from_date: fromDate,
-      to_date: toDate,
-      per_page: String(perPage),
-      page: String(page),
-    });
-
-    const invoices = result.data || result;
-    if (!Array.isArray(invoices) || invoices.length === 0) break;
-
-    // Map to rows
-    const rows = invoices.map((inv: any) => ({
-      id: Number(inv.id),
-      location_id: locationId,
-      owner_id: inv.owner_id ? Number(inv.owner_id) : null,
-      first_name: inv.first_name?.trim() || null,
-      last_name: inv.last_name?.trim() || null,
-      email: inv.email || null,
-      subtotal: inv.subtotal ? parseFloat(inv.subtotal) : null,
-      tax_amount: inv.tax_amount ? parseFloat(inv.tax_amount) : null,
-      total: inv.total ? parseFloat(inv.total) : null,
-      is_returned: inv.is_returned === 1 || inv.is_returned === "1" || inv.is_returned === true,
-      item_count: inv.item_count ? parseInt(inv.item_count) : null,
-      voided_item_count: inv.voided_item_count ? parseInt(inv.voided_item_count) : null,
-      username: inv.username || null,
-      user_id: inv.user_id ? Number(inv.user_id) : null,
-      payment_method: inv.payment_method || null,
-      // convert create_stamp (Unix timestamp) to ISO date
-      created_at: inv.create_stamp
-        ? new Date(Number(inv.create_stamp) * 1000).toISOString()
-        : inv.created_at || null,
-      synced_at: new Date().toISOString(),
-    }));
-
-    // Batch upsert in 500-row chunks
-    const chunkSize = 500;
-    for (let i = 0; i < rows.length; i += chunkSize) {
-      const chunk = rows.slice(i, i + chunkSize);
-      const { error } = await supabase
-        .from("gingr_invoices")
-        .upsert(chunk, { onConflict: "location_id,id" });
-
-      if (error) throw new Error(`Invoice upsert error: ${error.message}`);
-    }
-
-    total += invoices.length;
-    if (invoices.length < perPage) break;
-    page++;
-    // Safety cap
-    if (page > 500) break;
+  // Resumable backfill: sync invoices in 90-day chunks from a cursor.
+  // Once backfill reaches today, ongoing syncs just refresh the last 90 days.
+  let fromDate = "2020-01-01"; // Start of business history
+  if (!fullSync) {
+    try {
+      const { data: syncState } = await supabase
+        .from("gingr_sync_state")
+        .select("backfill_cursor")
+        .eq("location_id", locationId)
+        .eq("entity_type", "invoices")
+        .limit(1);
+      const cursor = syncState?.[0]?.backfill_cursor;
+      if (cursor && cursor > "2020-01-01") {
+        fromDate = cursor;
+      }
+    } catch (_) {}
   }
 
-  return { synced: total };
+  // Check if backfill is complete (cursor is within 90 days of today)
+  const fromD = new Date(fromDate);
+  const toD = new Date(toDate);
+  const daysLeft = Math.round((toD.getTime() - fromD.getTime()) / 86400000);
+  const isBackfillComplete = daysLeft <= 90;
+
+  if (isBackfillComplete) {
+    fromDate = new Date(now.getTime() - 90 * 86400000).toISOString().split("T")[0];
+  }
+
+  // Process in 90-day date chunks to stay within edge function limits
+  const chunks = getDateChunks(fromDate, toDate, 90);
+  let total = 0;
+  const MAX_CHUNKS_PER_RUN = 4; // ~4 chunks of 90 days per invocation
+  let chunksProcessed = 0;
+  let lastChunkEnd = fromDate;
+
+  for (const [chunkStart, chunkEnd] of chunks) {
+    if (!isBackfillComplete && chunksProcessed >= MAX_CHUNKS_PER_RUN) break;
+
+    let page = 1;
+    const perPage = 200;
+    const seenIds = new Set<number>();
+
+    while (true) {
+      const result = await gingrFetch(subdomain, "list_invoices", apiKey, "GET", {
+        from_date: chunkStart,
+        to_date: chunkEnd,
+        per_page: String(perPage),
+        page: String(page),
+      });
+
+      const invoices = result.data || result;
+      if (!Array.isArray(invoices) || invoices.length === 0) break;
+
+      // Detect stuck pagination
+      const newIds = invoices.filter((inv: any) => !seenIds.has(Number(inv.id)));
+      if (newIds.length === 0) break;
+      for (const inv of invoices) seenIds.add(Number(inv.id));
+
+      const rows = invoices.map((inv: any) => ({
+        id: Number(inv.id),
+        location_id: locationId,
+        owner_id: inv.owner_id ? Number(inv.owner_id) : null,
+        first_name: inv.first_name?.trim() || null,
+        last_name: inv.last_name?.trim() || null,
+        email: inv.email || null,
+        subtotal: inv.subtotal ? parseFloat(inv.subtotal) : null,
+        tax_amount: inv.tax_amount ? parseFloat(inv.tax_amount) : null,
+        total: inv.total ? parseFloat(inv.total) : null,
+        is_returned: inv.is_returned === 1 || inv.is_returned === "1" || inv.is_returned === true,
+        item_count: inv.item_count ? parseInt(inv.item_count) : null,
+        voided_item_count: inv.voided_item_count ? parseInt(inv.voided_item_count) : null,
+        username: inv.username || null,
+        user_id: inv.user_id ? Number(inv.user_id) : null,
+        payment_method: inv.payment_method || null,
+        created_at: inv.create_stamp
+          ? new Date(Number(inv.create_stamp) * 1000).toISOString()
+          : inv.created_at || null,
+        synced_at: new Date().toISOString(),
+      }));
+
+      const chunkSize = 500;
+      for (let i = 0; i < rows.length; i += chunkSize) {
+        const chunk = rows.slice(i, i + chunkSize);
+        const { error } = await supabase
+          .from("gingr_invoices")
+          .upsert(chunk, { onConflict: "location_id,id" });
+        if (error) throw new Error(`Invoice upsert error: ${error.message}`);
+      }
+
+      total += invoices.length;
+      if (invoices.length < perPage) break;
+      page++;
+      if (page > 100) break; // Per-chunk safety
+    }
+
+    lastChunkEnd = chunkEnd;
+    chunksProcessed++;
+  }
+
+  // Save backfill cursor
+  try {
+    await supabase.from("gingr_sync_state").upsert(
+      {
+        location_id: locationId,
+        entity_type: "invoices",
+        backfill_cursor: isBackfillComplete ? null : lastChunkEnd,
+      },
+      { onConflict: "location_id,entity_type" }
+    );
+  } catch (_) {}
+
+  return { synced: total, backfill_complete: isBackfillComplete, backfill_cursor: isBackfillComplete ? null : lastChunkEnd };
 }
 
 async function syncInvoicePayments(
