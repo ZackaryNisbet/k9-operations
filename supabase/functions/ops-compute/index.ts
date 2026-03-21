@@ -357,12 +357,11 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
   const seenAnimals = new Set<string>();
 
   // ─── Step 2b: Pre-compute placeholder room names for unassigned dogs ──
-  // Dogs from the same owner with the same room type share a room.
-  // Different owners get separate numbered rooms (e.g., "Exec Room #1", "Exec Room #2").
+  // Each unassigned dog gets its own numbered entry (e.g., "Exec Room (unlinked) #1").
+  // We can't reliably determine room-sharing without real room numbers from BOH.
   const unassignedRoomNames: Record<string, string> = {}; // gingr_id → room name
   {
-    const typeCounters: Record<string, number> = {};            // roomType → next number
-    const ownerTypeRoom: Record<string, string> = {};           // "ownerId|roomType" → assigned room name
+    const typeCounters: Record<string, number> = {};
     for (const res of allReservations) {
       const animalId = res.animal_gingr_id ? String(res.animal_gingr_id) : "";
       const bohInfo = animalId ? bohRoomMap[animalId] : null;
@@ -370,15 +369,10 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       if (hasRoom) continue;
       const typeName = res.reservation_type_name || "";
       const tLower = typeName.toLowerCase();
-      if (tLower.startsWith("daycare") || tLower.startsWith("day care")) continue;
+      if (tLower.startsWith("daycare") || tLower.startsWith("day care") || tLower.includes("resort tour")) continue;
       const roomType = parseRoomType(typeName);
-      const ownerId = res.owner_gingr_id || res.owner_last_name || res.gingr_id;
-      const ownerTypeKey = `${ownerId}|${roomType}`;
-      if (!ownerTypeRoom[ownerTypeKey]) {
-        typeCounters[roomType] = (typeCounters[roomType] || 0) + 1;
-        ownerTypeRoom[ownerTypeKey] = `${roomType} (unlinked) #${typeCounters[roomType]}`;
-      }
-      unassignedRoomNames[res.gingr_id] = ownerTypeRoom[ownerTypeKey];
+      typeCounters[roomType] = (typeCounters[roomType] || 0) + 1;
+      unassignedRoomNames[res.gingr_id] = `${roomType} (unlinked) #${typeCounters[roomType]}`;
     }
   }
 
@@ -387,8 +381,8 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     const typeName = res.reservation_type_name || "";
     const tLower = typeName.toLowerCase();
 
-    // Skip pure daycare (no room needed)
-    if (tLower.startsWith("daycare") || tLower.startsWith("day care")) continue;
+    // Skip non-boarding reservation types (no room needed)
+    if (tLower.startsWith("daycare") || tLower.startsWith("day care") || tLower.includes("resort tour")) continue;
 
     const animalId = res.animal_gingr_id ? String(res.animal_gingr_id) : "";
     if (animalId && seenAnimals.has(animalId)) continue;
