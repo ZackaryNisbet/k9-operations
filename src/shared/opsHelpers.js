@@ -78,14 +78,26 @@ function getRoomCleaningStats(data, date) {
   const ci = entry?.computed_items;
   const sanitizeKey = (name) => (name || '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
   if (ci && ci.rooms && ci.rooms.length > 0) {
-    let totalNeeded = 0, totalDone = 0;
-    let totalSetups = 0, doneSetups = 0;
+    // Group by room key — one cleaning task per room
+    const roomMap = {};
     ci.rooms.forEach(rm => {
       const key = sanitizeKey(rm.room);
-      const state = ei[key] || ei[rm.room] || {};
-      if (rm.needsRefresh) { totalNeeded++; if (state.refresh) totalDone++; }
-      if (rm.needsDisinfect) { totalNeeded++; if (state.disinfect) totalDone++; }
-      if (rm.needsSetup) { totalSetups++; if (state.setupDone) doneSetups++; }
+      const ex = roomMap[key];
+      if (ex) {
+        if (rm.needsRefresh) ex.needsRefresh = true;
+        if (rm.needsDisinfect) ex.needsDisinfect = true;
+        if (rm.needsSetup) ex.needsSetup = true;
+      } else {
+        roomMap[key] = { needsRefresh: !!rm.needsRefresh, needsDisinfect: !!rm.needsDisinfect, needsSetup: !!rm.needsSetup, room: rm.room };
+      }
+    });
+    let totalNeeded = 0, totalDone = 0;
+    let totalSetups = 0, doneSetups = 0;
+    Object.entries(roomMap).forEach(([key, flags]) => {
+      const state = ei[key] || ei[flags.room] || {};
+      if (flags.needsRefresh) { totalNeeded++; if (state.refresh) totalDone++; }
+      if (flags.needsDisinfect) { totalNeeded++; if (state.disinfect) totalDone++; }
+      if (flags.needsSetup) { totalSetups++; if (state.setupDone) doneSetups++; }
     });
     // Count "as needed" items from user data (any room can be flagged)
     let asNeededCount = 0, asNeededDone = 0;
