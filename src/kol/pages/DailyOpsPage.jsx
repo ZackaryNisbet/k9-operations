@@ -179,7 +179,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     if (sub === "room_cleaning") {
       const entries = [...allOps];
       const idx = entries.findIndex(e => e.id === entryId);
-      const entry = { id: entryId, type: sub, date: viewDate, locked: false, items: newItems, history: [...(idx >= 0 ? entries[idx].history || [] : []), { ts: now, action: "saved" }] };
+      const existing = idx >= 0 ? entries[idx] : {};
+      const entry = { ...existing, id: entryId, type: sub, date: viewDate, locked: false, items: newItems, history: [...(existing.history || []), { ts: now, action: "saved" }] };
       if (idx >= 0) entries[idx] = entry; else entries.push(entry);
       save({ ...data, dailyOps: entries });
     } else {
@@ -194,7 +195,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     if (sub === "room_cleaning") {
       const entries = [...allOps];
       const idx = entries.findIndex(e => e.id === entryId);
-      const entry = { id: entryId, type: sub, date: viewDate, locked: false, items: newItems, history: [...(idx >= 0 ? entries[idx].history || [] : []), { ts: new Date().toISOString(), action: "saved" }] };
+      const existingNote = idx >= 0 ? entries[idx] : {};
+      const entry = { ...existingNote, id: entryId, type: sub, date: viewDate, locked: false, items: newItems, history: [...(existingNote.history || []), { ts: new Date().toISOString(), action: "saved" }] };
       if (idx >= 0) entries[idx] = entry; else entries.push(entry);
       save({ ...data, dailyOps: entries });
     } else {
