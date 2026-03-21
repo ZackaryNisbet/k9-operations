@@ -76,41 +76,37 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
   document.head.appendChild(style);
 }
 
-/* ── TV-003: Size classification — matches getDogDaycareSize in App.jsx ── */
-const SIZE_THRESHOLD = 35; // lbs
+/* ── Playgroup classification via Gingr Icons ────────────────────────── *
+ * Icons from gingr_animal_icons_live are the source of truth for which
+ * playgroup a dog belongs to. Title-based matching for multi-location
+ * resilience. No fallback to weight — unclassified dogs are surfaced
+ * so staff can fix the missing icon in Gingr.
+ * ──────────────────────────────────────────────────────────────────────── */
+function getPlaygroupFromIcons(animalGingrId, playgroupMap) {
+  if (!animalGingrId || !playgroupMap) return null;
+  return playgroupMap[String(animalGingrId)] || null;
+}
+
+function getDogPlaygroup(dog, res, playgroupMap) {
+  const animalId = dog?.gingrId || res?.animalGingrId;
+  const pg = getPlaygroupFromIcons(animalId, playgroupMap);
+  if (pg) return pg; // 'large', 'small', 'private_play', 'evaluation'
+  // Day boarding always goes to private play regardless of icon
+  if (res?.type === "dayboarding") return "private_play";
+  return null; // unclassified
+}
+
+/* ── Legacy weight-based fallback (kept for getDogSize display only) ── */
+const SIZE_THRESHOLD = 35;
 function getDogSize(dog) {
   if (!dog) return "large";
   if (dog.daycareGroupOverride) return dog.daycareGroupOverride;
   const w = parseInt(dog.fields?.weight);
-  if (!w || isNaN(w)) return "large"; // default if no weight
+  if (!w || isNaN(w)) return "large";
   return w < SIZE_THRESHOLD ? "small" : "large";
 }
 
-/* ── Private Play detection helper ─────────────────────────────────────── *
- * TV-018: Enhanced to also check room/reservation type for private play rooms.
- * Boarding dogs in private play rooms are classified as private play.
- * ──────────────────────────────────────────────────────────────────────── */
-function hasPrivatePlay(res) {
-  // Check services for "private play"
-  const svcs = res._services;
-  if (svcs) {
-    const arr = Array.isArray(svcs) ? svcs : [];
-    const hasPPService = arr.some(s => {
-      const name = typeof s === "string" ? s : (s && s.name ? s.name : "");
-      return name.toLowerCase().includes("private play");
-    });
-    if (hasPPService) return true;
-  }
-  // Check room name for private play room
-  const room = (res.room || "").toLowerCase();
-  if (room.includes("private play")) return true;
-  // Check reservation type name
-  const typeName = (res._resTypeName || "").toLowerCase();
-  if (typeName.includes("private play")) return true;
-  return false;
-}
-
-/* ── TV-003: Size theme colors ────────────────────────────────────────── */
+/* ── Playgroup theme colors ───────────────────────────────────────────── */
 const SIZE_THEME = {
   large: {
     accent: "#84CC16",     // Green (brand accent)
@@ -126,6 +122,27 @@ const SIZE_THEME = {
     badge: "SM",
     icon: "S",
   },
+  private_play: {
+    accent: "#EF4444",     // Red
+    accentRgb: "239,68,68",
+    label: "Private Play",
+    badge: "PP",
+    icon: "P",
+  },
+  evaluation: {
+    accent: "#EAB308",     // Yellow
+    accentRgb: "234,179,8",
+    label: "Evaluation",
+    badge: "EVAL",
+    icon: "E",
+  },
+  unclassified: {
+    accent: "#6B7280",     // Gray
+    accentRgb: "107,114,128",
+    label: "Unclassified",
+    badge: "?",
+    icon: "?",
+  },
 };
 
 /* ── TV-005: Navigation view definitions ──────────────────────────────── *
@@ -139,6 +156,8 @@ const NAV_VIEWS = [
   { id: "small-daycare", label: "Small Daycare",  color: "#0EA5E9",  colorRgb: "14,165,233" },
   { id: "large-daycare", label: "Large Daycare",  color: "#84CC16",  colorRgb: "132,204,22" },
   { id: "private-play",  label: "Private Play",   color: "#EF4444",  colorRgb: "239,68,68" },
+  { id: "evaluation",    label: "Evaluation",     color: "#EAB308",  colorRgb: "234,179,8" },
+  { id: "unclassified",  label: "Unclassified",   color: "#6B7280",  colorRgb: "107,114,128" },
 ];
 
 const AUTO_CYCLE_INTERVAL = 30000; // 30 seconds
@@ -189,9 +208,9 @@ function CountdownCircle({ remaining, total = 60, size = 56, strokeWidth = 4, ac
   );
 }
 
-/* ── TV-003: Size Badge — visible indicator on dog cards ──────────────── */
+/* ── Playgroup Badge — visible indicator on dog cards ─────────────────── */
 function SizeBadge({ size }) {
-  const theme = SIZE_THEME[size] || SIZE_THEME.large;
+  const theme = SIZE_THEME[size] || SIZE_THEME.unclassified;
   return (
     <div style={{
       display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -1025,7 +1044,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     };
   }, [baseReservations, baseDogs, gingrDaycareDogs, gingrActiveDogs, gingrBoardingDogs, gingrDaycareFromRes]);
 
-  /* ── TV-003: Fetch animal icons from Supabase ─────────────────────── */
+  /* ── Fetch animal profile icons (photos) from Supabase ────────────── */
   const [animalIcons, setAnimalIcons] = useState({}); // keyed by animal_gingr_id
 
   useEffect(() => {
@@ -1041,7 +1060,6 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
 
         if (cancelled || error) return;
 
-        // Build lookup: prefer is_primary, then photo type, then any
         const map = {};
         for (const icon of (icons || [])) {
           const existing = map[icon.animal_gingr_id];
@@ -1056,8 +1074,45 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     };
 
     fetchIcons();
-    // Refresh icons every 5 minutes
     const interval = setInterval(fetchIcons, 5 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [locationId]);
+
+  /* ── Fetch playgroup classification from Gingr icons ────────────── *
+   * Uses v_dog_playgroups view (backed by gingr_animal_icons_live).
+   * Title-based matching: resilient to template ID changes across locations.
+   * Returns: { animal_gingr_id → 'large' | 'small' | 'private_play' | 'evaluation' }
+   * ──────────────────────────────────────────────────────────────────── */
+  const [playgroupMap, setPlaygroupMap] = useState({});
+
+  useEffect(() => {
+    if (!locationId) return;
+    let cancelled = false;
+
+    const fetchPlaygroups = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("v_dog_playgroups")
+          .select("animal_gingr_id, playgroup, icon_color")
+          .eq("location_id", locationId);
+
+        if (cancelled || error) return;
+
+        const map = {};
+        for (const row of (data || [])) {
+          if (row.playgroup) {
+            map[String(row.animal_gingr_id)] = row.playgroup;
+          }
+        }
+        setPlaygroupMap(map);
+      } catch (e) {
+        // Silently ignore — classification falls back to unclassified
+      }
+    };
+
+    fetchPlaygroups();
+    // Refresh every 60 seconds (icons rarely change mid-day)
+    const interval = setInterval(fetchPlaygroups, 60 * 1000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [locationId]);
 
@@ -1093,68 +1148,75 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     return (aD?.fields?.name || "").localeCompare(bD?.fields?.name || "");
   });
 
-  /* ── TV-018: Unified classification — no more Boarding section ────────
-   * ALL dogs (daycare, boarding, evaluation, dayboarding) are classified into:
-   *   - Large Daycare: dogs >= SIZE_THRESHOLD lbs (includes boarding without PP)
-   *   - Small Daycare: dogs < SIZE_THRESHOLD lbs (includes boarding without PP)
-   *   - Private Play: dogs with PP services, PP rooms, or dayboarding type
+  /* ── Icon-based classification — Gingr icons are the source of truth ──
+   * ALL dogs are classified by their Gingr play icon into:
+   *   - Large Daycare: dogs with "Large Dog Playgroup" icon
+   *   - Small Daycare: dogs with "Small Dog Playgroup" icon
+   *   - Private Play: dogs with "Private Play" icon OR dayboarding type
+   *   - Evaluation: dogs with "Evaluation" icon
+   *   - Unclassified: dogs with no play icon (surface to staff to fix in Gingr)
    *
-   * Dual-tagged dogs: A dog that belongs to a group (large/small) AND has
-   * private play appears in BOTH sections. Counted as 0.5 in each for
-   * accurate capacity tracking.
-   *
-   * Display: Each dog card still appears in full in both sections — the 0.5
-   * only affects the count badges.
+   * Dual-tagged dogs: A dog in group play (large/small) that ALSO has
+   * private play appears in BOTH sections. Counted as 0.5 in each.
    * ──────────────────────────────────────────────────────────────────────── */
-  const { largeDaycare, smallDaycare, privatePlayDogs, dualTaggedIds } = useMemo(() => {
+  const { largeDaycare, smallDaycare, privatePlayDogs, evaluationDogs, unclassifiedDogs, dualTaggedIds } = useMemo(() => {
     const large = [];
     const small = [];
     const pp = [];
+    const evals = [];
+    const unclassified = [];
     const dualIds = new Set();
 
     for (const res of uniqueDogs) {
       const dog = dogs.find(d => d.id === res.dogId);
-      const size = getDogSize(dog);
-      const isPP = hasPrivatePlay(res) || res.type === "dayboarding";
+      const playgroup = getDogPlaygroup(dog, res, playgroupMap);
 
-      if (isPP) {
+      if (playgroup === "private_play") {
         pp.push(res);
-
-        // Dayboarding-only dogs go ONLY in PP (they're not in group play)
-        if (res.type === "dayboarding" && !DAYCARE_TYPES.has(res.type)) {
-          // dayboarding IS in DAYCARE_TYPES, so this is actually dual-tagged
-        }
-
-        // If the dog is also in group play (daycare or boarding entering group),
-        // it's dual-tagged — appears in both daycare by size AND private play
-        if (res.type !== "dayboarding") {
-          // Boarding dog with PP or daycare dog with PP → dual-tagged
+        // Check if also in a size group (dual-tagged)
+        const animalId = String(dog?.gingrId || res?.animalGingrId || "");
+        const sizeGroup = playgroupMap[animalId];
+        // A PP dog might also have a size icon — check all icons for this animal
+        // For now, PP-only dogs don't appear in size groups
+      } else if (playgroup === "evaluation") {
+        evals.push(res);
+      } else if (playgroup === "large") {
+        large.push(res);
+        // Check if this dog also has a PP service/room (dual-tagged)
+        const svcs = res._services;
+        const hasPPService = Array.isArray(svcs) && svcs.some(s => {
+          const name = typeof s === "string" ? s : (s?.name || "");
+          return name.toLowerCase().includes("private play");
+        });
+        const roomIsPP = (res.room || "").toLowerCase().includes("private play");
+        if (hasPPService || roomIsPP) {
+          pp.push(res);
           dualIds.add(res.dogId);
-          if (size === "small") {
-            small.push(res);
-          } else {
-            large.push(res);
-          }
+        }
+      } else if (playgroup === "small") {
+        small.push(res);
+        // Check for dual-tag with PP service/room
+        const svcs = res._services;
+        const hasPPService = Array.isArray(svcs) && svcs.some(s => {
+          const name = typeof s === "string" ? s : (s?.name || "");
+          return name.toLowerCase().includes("private play");
+        });
+        const roomIsPP = (res.room || "").toLowerCase().includes("private play");
+        if (hasPPService || roomIsPP) {
+          pp.push(res);
+          dualIds.add(res.dogId);
         }
       } else {
-        // No private play — goes into daycare by size (whether daycare or boarding type)
-        if (size === "small") {
-          small.push(res);
-        } else {
-          large.push(res);
-        }
+        // No play icon — unclassified (unless dayboarding, which always = PP)
+        unclassified.push(res);
       }
     }
 
-    return { largeDaycare: large, smallDaycare: small, privatePlayDogs: pp, dualTaggedIds: dualIds };
-  }, [uniqueDogs, dogs]);
+    return { largeDaycare: large, smallDaycare: small, privatePlayDogs: pp, evaluationDogs: evals, unclassifiedDogs: unclassified, dualTaggedIds: dualIds };
+  }, [uniqueDogs, dogs, playgroupMap]);
 
-  /* ── TV-018: Counts with 0.5 logic for dual-tagged dogs ────────────── *
-   * Dual-tagged dogs are counted as 0.5 in their daycare group and 0.5
-   * in private play. The "all" count stays as the true unique dog count.
-   * ──────────────────────────────────────────────────────────────────── */
+  /* ── Counts with 0.5 logic for dual-tagged dogs ─────────────────────── */
   const viewCounts = useMemo(() => {
-    // Count with 0.5 adjustment for dual-tagged dogs
     let largeCount = 0;
     for (const r of largeDaycare) {
       largeCount += dualTaggedIds.has(r.dogId) ? 0.5 : 1;
@@ -1173,8 +1235,10 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
       "small-daycare": smallCount,
       "large-daycare": largeCount,
       "private-play": ppCount,
+      "evaluation": evaluationDogs.length,
+      "unclassified": unclassifiedDogs.length,
     };
-  }, [uniqueDogs, smallDaycare, largeDaycare, privatePlayDogs, dualTaggedIds]);
+  }, [uniqueDogs, smallDaycare, largeDaycare, privatePlayDogs, evaluationDogs, unclassifiedDogs, dualTaggedIds]);
 
   /* ── TV-012/TV-013: Persistent TV notice system ────────────────────── *
    * Notices (check-in / check-out hero cards) are stored with a timestamp
@@ -1246,19 +1310,20 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     if (activeView === "all") return true;
     const entryDogs = entry.dogs || [entry];
     return entryDogs.some(d => {
-      const rType = d.resType || "boarding";
-      const isPP = hasPrivatePlay({ _services: [], room: d.room || "", _resTypeName: "", type: rType }) || rType === "dayboarding";
       const dog = dogs.find(dd => dd.gingrId === Number(d.animalGingrId) || dd.id === `g${d.animalGingrId}`);
-      const size = getDogSize(dog);
+      const rType = d.resType || "boarding";
+      const playgroup = getDogPlaygroup(dog, { ...d, type: rType }, playgroupMap);
 
       switch (activeView) {
-        case "large-daycare":  return size === "large" && rType !== "dayboarding";
-        case "small-daycare":  return size === "small" && rType !== "dayboarding";
-        case "private-play":   return isPP;
+        case "large-daycare":  return playgroup === "large";
+        case "small-daycare":  return playgroup === "small";
+        case "private-play":   return playgroup === "private_play";
+        case "evaluation":     return playgroup === "evaluation";
+        case "unclassified":   return playgroup === null;
         default:               return true;
       }
     });
-  }, [activeView, dogs]);
+  }, [activeView, dogs, playgroupMap]);
 
   /* ── TV-015: All active notices rendered as full cards ────────────────
    * No more "active + queue" split. Every notice gets a full hero card.
@@ -1301,19 +1366,18 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
       ? `${roomInfo.label} ${roomInfo.number}`
       : roomInfo.label || "";
 
-    // TV-003: Get dog photo from animal icons or fall back to _image
+    // Get dog photo from animal icons or fall back to _image
     const iconData = animalIcons[dog?.gingrId];
     const image = iconData?.icon_url || dog?._image;
-    const size = sizeGroup || getDogSize(dog);
-    const theme = SIZE_THEME[size] || SIZE_THEME.large;
+    const playgroup = sizeGroup || getDogPlaygroup(dog, res, playgroupMap) || "unclassified";
+    // Map playgroup to size theme key (large/small stay as-is, others use their own key)
+    const themeKey = playgroup === "large" ? "large" : playgroup === "small" ? "small" : playgroup;
+    const theme = SIZE_THEME[themeKey] || SIZE_THEME.unclassified;
 
-    // TV-006: Dim dogs that are being checked out (they appear in hero card above)
+    // Dim dogs that are being checked out (they appear in hero card above)
     const isCheckingOut = checkingOutDogIds.has(res.dogId);
 
-    // TV-005: Private play badge
-    const isPP = hasPrivatePlay(res) || res.type === "dayboarding";
-
-    // TV-018: Boarding label — distinguishes boarding dogs from day-only dogs
+    // Boarding label — distinguishes boarding dogs from day-only dogs
     const isBoarding = res.type === "boarding";
 
     return (
@@ -1328,15 +1392,15 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
         opacity: isCheckingOut ? 0.35 : 1,
         position: "relative",
       }}>
-        {/* TV-003: Size badge — top-right corner */}
+        {/* Playgroup badge — top-right corner */}
         <div style={{
           position: "absolute", top: 8, right: 8,
         }}>
-          <SizeBadge size={size} />
+          <SizeBadge size={themeKey} />
         </div>
 
-        {/* TV-005: Private Play badge — top-left corner */}
-        {isPP && (
+        {/* Dual-tagged indicator — top-left corner for dogs in both group play + PP */}
+        {dualTaggedIds.has(res.dogId) && themeKey !== "private_play" && (
           <div style={{
             position: "absolute", top: 8, left: 8,
             display: "inline-flex", alignItems: "center", justifyContent: "center",
@@ -1347,7 +1411,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
             borderRadius: 6, padding: "2px 6px",
             lineHeight: 1.4,
           }}>
-            PP
+            +PP
           </div>
         )}
 
@@ -1420,10 +1484,6 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const hasCheckIns = viewCheckingIn.length > 0;
 
   /* ── TV-005 + TV-018: Determine which sections to render ────────────── */
-  const showLargeDaycare = activeView === "all" || activeView === "large-daycare";
-  const showSmallDaycare = activeView === "all" || activeView === "small-daycare";
-  const showPrivatePlay = activeView === "all" || activeView === "private-play";
-
   // For filtered views (not "all"), skip the section header and show a flat grid
   const isFilteredView = activeView !== "all";
 
@@ -1433,9 +1493,11 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
       case "small-daycare": return smallDaycare;
       case "large-daycare": return largeDaycare;
       case "private-play": return privatePlayDogs;
+      case "evaluation": return evaluationDogs;
+      case "unclassified": return unclassifiedDogs;
       default: return null; // "all" uses the sectioned layout
     }
-  }, [activeView, smallDaycare, largeDaycare, privatePlayDogs]);
+  }, [activeView, smallDaycare, largeDaycare, privatePlayDogs, evaluationDogs, unclassifiedDogs]);
 
   // Get accent color & label for filtered view
   const filteredViewMeta = NAV_VIEWS.find(v => v.id === activeView);
@@ -1526,16 +1588,18 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
         </div>
       </div>
 
-      {/* Stats bar — TV-003 + TV-018: Updated with 0.5 counting */}
+      {/* Stats bar — Icon-based classification counts */}
       <div style={{ display: "flex", gap: 24, padding: "10px 0", marginBottom: 8, flexWrap: "wrap" }}>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Total: <span style={{ fontWeight: 800, color: "#fff" }}>{uniqueDogs.length}</span></div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>
-          Large Daycare: <span style={{ fontWeight: 800, color: SIZE_THEME.large.accent }}>{viewCounts["large-daycare"] % 1 === 0 ? viewCounts["large-daycare"] : viewCounts["large-daycare"].toFixed(1)}</span>
+          Large: <span style={{ fontWeight: 800, color: SIZE_THEME.large.accent }}>{viewCounts["large-daycare"] % 1 === 0 ? viewCounts["large-daycare"] : viewCounts["large-daycare"].toFixed(1)}</span>
         </div>
         <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>
-          Small Daycare: <span style={{ fontWeight: 800, color: SIZE_THEME.small.accent }}>{viewCounts["small-daycare"] % 1 === 0 ? viewCounts["small-daycare"] : viewCounts["small-daycare"].toFixed(1)}</span>
+          Small: <span style={{ fontWeight: 800, color: SIZE_THEME.small.accent }}>{viewCounts["small-daycare"] % 1 === 0 ? viewCounts["small-daycare"] : viewCounts["small-daycare"].toFixed(1)}</span>
         </div>
-        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Private Play: <span style={{ fontWeight: 800, color: "#EF4444" }}>{viewCounts["private-play"] % 1 === 0 ? viewCounts["private-play"] : viewCounts["private-play"].toFixed(1)}</span></div>
+        <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>PP: <span style={{ fontWeight: 800, color: "#EF4444" }}>{viewCounts["private-play"] % 1 === 0 ? viewCounts["private-play"] : viewCounts["private-play"].toFixed(1)}</span></div>
+        {viewCounts["evaluation"] > 0 && <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Eval: <span style={{ fontWeight: 800, color: "#EAB308" }}>{viewCounts["evaluation"]}</span></div>}
+        {viewCounts["unclassified"] > 0 && <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)" }}>Unclassified: <span style={{ fontWeight: 800, color: "#6B7280" }}>{viewCounts["unclassified"]}</span></div>}
         {hasCheckIns && (
           <div style={{ fontSize: 14, color: "rgba(255,255,255,0.5)", marginLeft: hasCheckouts ? 0 : "auto" }}>
             Checking in: <span style={{ fontWeight: 800, color: "#38BDF8" }}>{viewCheckingIn.filter(e => !e.fading).length}</span>
@@ -1593,9 +1657,11 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                   count={viewCounts[activeView] != null ? (viewCounts[activeView] % 1 === 0 ? viewCounts[activeView] : viewCounts[activeView].toFixed(1)) : filteredDogList.length}
                   color={filteredViewMeta?.color || "#fff"}
                   subtitle={
-                    activeView === "large-daycare" ? `Dogs ${SIZE_THRESHOLD}+ lbs` :
-                    activeView === "small-daycare" ? `Dogs under ${SIZE_THRESHOLD} lbs` :
-                    activeView === "private-play" ? "Dogs with private play services" :
+                    activeView === "large-daycare" ? "Large Dog Playgroup (Gingr icon)" :
+                    activeView === "small-daycare" ? "Small Dog Playgroup (Gingr icon)" :
+                    activeView === "private-play" ? "Private Play (Gingr icon)" :
+                    activeView === "evaluation" ? "Needs evaluation (Gingr icon)" :
+                    activeView === "unclassified" ? "No play icon in Gingr — please assign" :
                     undefined
                   }
                 />
@@ -1607,6 +1673,9 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                       sizeGroup={
                         activeView === "large-daycare" ? "large" :
                         activeView === "small-daycare" ? "small" :
+                        activeView === "private-play" ? "private_play" :
+                        activeView === "evaluation" ? "evaluation" :
+                        activeView === "unclassified" ? "unclassified" :
                         undefined
                       }
                     />
@@ -1624,14 +1693,13 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
         ) : (
           /* ── "All" view — sectioned layout (original) ─────────────────── */
           <>
-            {/* TV-003 + TV-018: Large Dog Daycare section — includes boarding dogs by size */}
+            {/* Large Dog Daycare — dogs with "Large Dog Playgroup" icon */}
             {largeDaycare.length > 0 && (
               <div>
                 <SectionLabel
                   label="Large Dog Daycare"
                   count={viewCounts["large-daycare"] % 1 === 0 ? viewCounts["large-daycare"] : viewCounts["large-daycare"].toFixed(1)}
                   color={SIZE_THEME.large.accent}
-                  subtitle={`Dogs ${SIZE_THRESHOLD}+ lbs`}
                 />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
                   {largeDaycare.map(r => <DogCard key={r.id} res={r} sizeGroup="large" />)}
@@ -1639,14 +1707,13 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
               </div>
             )}
 
-            {/* TV-003 + TV-018: Small Dog Daycare section — includes boarding dogs by size */}
+            {/* Small Dog Daycare — dogs with "Small Dog Playgroup" icon */}
             {smallDaycare.length > 0 && (
               <div>
                 <SectionLabel
                   label="Small Dog Daycare"
                   count={viewCounts["small-daycare"] % 1 === 0 ? viewCounts["small-daycare"] : viewCounts["small-daycare"].toFixed(1)}
                   color={SIZE_THEME.small.accent}
-                  subtitle={`Dogs under ${SIZE_THRESHOLD} lbs`}
                 />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
                   {smallDaycare.map(r => <DogCard key={r.id} res={r} sizeGroup="small" />)}
@@ -1654,17 +1721,45 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
               </div>
             )}
 
-            {/* Private Play section — TV-018: Now includes boarding dogs with PP services */}
+            {/* Private Play — dogs with "Private Play" icon or dayboarding type */}
             {privatePlayDogs.length > 0 && (
               <div>
                 <SectionLabel
                   label="Private Play"
                   count={viewCounts["private-play"] % 1 === 0 ? viewCounts["private-play"] : viewCounts["private-play"].toFixed(1)}
                   color="#EF4444"
-                  subtitle="Dogs with private play services"
                 />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
-                  {privatePlayDogs.map(r => <DogCard key={r.id} res={r} />)}
+                  {privatePlayDogs.map(r => <DogCard key={r.id} res={r} sizeGroup="private_play" />)}
+                </div>
+              </div>
+            )}
+
+            {/* Evaluation — dogs with "Evaluation" icon */}
+            {evaluationDogs.length > 0 && (
+              <div>
+                <SectionLabel
+                  label="Evaluation"
+                  count={viewCounts["evaluation"]}
+                  color="#EAB308"
+                />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                  {evaluationDogs.map(r => <DogCard key={r.id} res={r} sizeGroup="evaluation" />)}
+                </div>
+              </div>
+            )}
+
+            {/* Unclassified — dogs with no play icon in Gingr */}
+            {unclassifiedDogs.length > 0 && (
+              <div>
+                <SectionLabel
+                  label="Unclassified"
+                  count={viewCounts["unclassified"]}
+                  color="#6B7280"
+                  subtitle="No play icon assigned in Gingr"
+                />
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
+                  {unclassifiedDogs.map(r => <DogCard key={r.id} res={r} sizeGroup="unclassified" />)}
                 </div>
               </div>
             )}
