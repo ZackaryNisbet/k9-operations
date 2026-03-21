@@ -514,15 +514,13 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
               <div style={{ fontSize: 10, color: C.textSec, marginBottom: 4 }}>
                 {crData.dogWeight != null ? `${crData.dogWeight} lbs` : "No weight"} — {crData.suggestedBowlSize}
               </div>
-              <select
-                value={selectedBowl}
-                disabled={isLocked}
-                onChange={e => toggleItem(rm, "setupBowl", e.target.value)}
-                style={{ fontSize: 11, padding: "2px 4px", borderRadius: 4, border: `1px solid ${C.border}`, background: C.surface, color: C.text, fontFamily: "Outfit, sans-serif", marginBottom: 4, width: "100%" }}
-              >
-                <option value="">Bowl size…</option>
-                {bowlSizeOptions.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <div style={{ display: "flex", gap: 3, marginBottom: 4 }}>
+                {bowlSizeOptions.map(s => (
+                  <button key={s} disabled={isLocked} onClick={() => toggleItem(rm, "setupBowl", s)}
+                    style={{ flex: 1, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${selectedBowl === s ? "#14532D" : C.border}`, background: selectedBowl === s ? "#14532D" : "#fff", color: selectedBowl === s ? "#fff" : C.text, fontSize: 10, fontWeight: selectedBowl === s ? 700 : 500, cursor: isLocked ? "default" : "pointer", fontFamily: "Outfit, sans-serif", transition: "all 0.15s ease", opacity: isLocked ? 0.5 : 1 }}
+                  >{s}</button>
+                ))}
+              </div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
                 <input type="checkbox" checked={!!ri.setupDone} disabled={isLocked} onChange={e => toggleItem(rm, "setupDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: "#84CC16" }} />
                 <span style={{ fontSize: 10, fontWeight: 700, color: ri.setupDone ? "#84CC16" : C.textMut }}>{ri.setupDone ? "Complete" : "Mark done"}</span>
