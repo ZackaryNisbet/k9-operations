@@ -249,6 +249,7 @@ interface RoomEntry {
   roomType: string;
   areaName: string;
   dogName: string;
+  dogNames: string[];
   ownerLastName: string;
   reservationType: string;
   checkIn: string;
@@ -282,9 +283,8 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
   const roomNamesConfig: Record<string, string[]> = roomNamesSetting?.setting_value || {};
 
   // ─── Step 1: Build room name lookup from BOH ─────────────────────────
-  // BOH checking_out = dogs HERE now, leaving today (has run_name = actual room)
-  // BOH checking_in = dogs arriving today, not yet checked in (may have run_name)
-  // Neither list includes multi-night dogs staying past today.
+  // BOH with full_day=true returns ALL currently-housed dogs, not just
+  // today's check-ins/outs. Each dog has run_name = actual Gingr room.
   const bohRoomMap: Record<string, { runName: string; areaName: string }> = {};
   const checkingOut = bohData?.data?.checking_out || [];
   const checkingIn = bohData?.data?.checking_in || [];
@@ -295,17 +295,18 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     }
   }
 
-  // ─── Step 1b: Persist BOH room assignments to reservations ──────────
-  // BOH is the only reliable source for day boarding room assignments.
-  // We must save these BEFORE the dog checks out, otherwise the room is lost.
+  // ─── Step 1b: Persist BOH room assignments to ACTIVE reservations ───
+  // BOH is the only reliable source for room assignments.
+  // Filter for active reservations only (checked in, NOT checked out, not cancelled)
+  // to avoid updating old/completed reservations for the same animal.
   if (Object.keys(bohRoomMap).length > 0) {
     const animalIds = Object.keys(bohRoomMap);
-    // Look up reservations by animal_gingr_id to persist room_assignment
     const { data: bohReservations } = await supabase
       .from("gingr_reservations")
       .select("gingr_id, animal_gingr_id, room_assignment")
       .eq("location_id", locationId)
       .not("check_in_date", "is", null)
+      .is("check_out_date", null)
       .is("cancelled_date", null)
       .in("animal_gingr_id", animalIds);
 
@@ -318,7 +319,6 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       }
     }
 
-    // Batch update — persist room assignments discovered from BOH
     for (const { gingr_id, room } of updates) {
       await supabase
         .from("gingr_reservations")
@@ -330,8 +330,8 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
 
   // ─── Step 2: Get ALL active boarding reservations from Supabase ──────
   // These are dogs currently checked in (have check_in_date, no check_out_date, not cancelled)
-  // This captures mid-stay dogs that BOH misses.
-  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, raw_data, room_assignment";
+  // BOH has all in-house dogs, but we also query Supabase for completeness.
+  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_gingr_id, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, raw_data, room_assignment";
   const [{ data: activeReservations }, { data: checkedOutToday }] = await Promise.all([
     supabase
       .from("gingr_reservations")
@@ -355,6 +355,32 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
 
   const rooms: RoomEntry[] = [];
   const seenAnimals = new Set<string>();
+
+  // ─── Step 2b: Pre-compute placeholder room names for unassigned dogs ──
+  // Dogs from the same owner with the same room type share a room.
+  // Different owners get separate numbered rooms (e.g., "Exec Room #1", "Exec Room #2").
+  const unassignedRoomNames: Record<string, string> = {}; // gingr_id → room name
+  {
+    const typeCounters: Record<string, number> = {};            // roomType → next number
+    const ownerTypeRoom: Record<string, string> = {};           // "ownerId|roomType" → assigned room name
+    for (const res of allReservations) {
+      const animalId = res.animal_gingr_id ? String(res.animal_gingr_id) : "";
+      const bohInfo = animalId ? bohRoomMap[animalId] : null;
+      const hasRoom = res.room_assignment || bohInfo?.runName || res.raw_data?.run_name;
+      if (hasRoom) continue;
+      const typeName = res.reservation_type_name || "";
+      const tLower = typeName.toLowerCase();
+      if (tLower.startsWith("daycare") || tLower.startsWith("day care")) continue;
+      const roomType = parseRoomType(typeName);
+      const ownerId = res.owner_gingr_id || res.owner_last_name || res.gingr_id;
+      const ownerTypeKey = `${ownerId}|${roomType}`;
+      if (!ownerTypeRoom[ownerTypeKey]) {
+        typeCounters[roomType] = (typeCounters[roomType] || 0) + 1;
+        ownerTypeRoom[ownerTypeKey] = `${roomType} (unlinked) #${typeCounters[roomType]}`;
+      }
+      unassignedRoomNames[res.gingr_id] = ownerTypeRoom[ownerTypeKey];
+    }
+  }
 
   // ─── Step 3: Process all active reservations + today's checkouts ────
   for (const res of allReservations) {
@@ -412,10 +438,11 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     const totalNights = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
 
     rooms.push({
-      room: runName || `${roomType} (unassigned)`,
+      room: runName || unassignedRoomNames[res.gingr_id] || roomType,
       roomType,
       areaName,
       dogName: res.animal_name || "",
+      dogNames: res.animal_name ? [res.animal_name] : [],
       ownerLastName: res.owner_last_name || "",
       reservationType: typeName,
       checkIn: startDate,
@@ -463,10 +490,11 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     const totalNights = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
 
     rooms.push({
-      room: dog.run_name || `${roomType} (unassigned)`,
+      room: dog.run_name || roomType,
       roomType,
       areaName: dog.area_name || "",
       dogName: dog.a_first || "",
+      dogNames: dog.a_first ? [dog.a_first] : [],
       ownerLastName: dog.o_last || "",
       reservationType: typeName,
       checkIn: startDate,
@@ -588,6 +616,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       roomType: "",
       areaName: "",
       dogName: sd.dogName,
+      dogNames: sd.dogName ? [sd.dogName] : [],
       ownerLastName: sd.ownerLastName,
       reservationType: sd.reason,
       checkIn: today,
@@ -616,6 +645,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
         roomType,
         areaName: "",
         dogName: "",
+        dogNames: [],
         ownerLastName: "",
         reservationType: "",
         checkIn: "",
@@ -633,21 +663,54 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     }
   }
 
+  // ─── Step 7: Merge entries sharing the same room into one row ─────────
+  // Multiple dogs in the same physical room should be one checklist row.
+  const mergedMap: Record<string, RoomEntry> = {};
+  for (const r of rooms) {
+    if (mergedMap[r.room]) {
+      const m = mergedMap[r.room];
+      // Merge dog names
+      for (const name of r.dogNames) {
+        if (name && !m.dogNames.includes(name)) m.dogNames.push(name);
+      }
+      // Escalate cleaning needs
+      if (r.needsRefresh) m.needsRefresh = true;
+      if (r.needsDisinfect) { m.needsDisinfect = true; m.cleaningType = "disinfect"; }
+      if (r.needsSetup) { m.needsSetup = true; m.setupReason = r.setupReason || m.setupReason; }
+      if (r.suggestedBowlSize) m.suggestedBowlSize = r.suggestedBowlSize;
+      if (r.dogWeight) m.dogWeight = r.dogWeight;
+      // Use the longest stay for day/night display
+      if (r.totalNights > m.totalNights) {
+        m.dayNumber = r.dayNumber;
+        m.totalNights = r.totalNights;
+        m.checkIn = r.checkIn;
+        m.checkOut = r.checkOut;
+      }
+    } else {
+      mergedMap[r.room] = { ...r };
+    }
+  }
+  // Update dogName to joined string for backward compat
+  const mergedRooms = Object.values(mergedMap);
+  for (const r of mergedRooms) {
+    r.dogName = r.dogNames.join(", ");
+  }
+
   // Sort by room type, then room name
-  rooms.sort((a, b) => {
+  mergedRooms.sort((a, b) => {
     if (a.roomType !== b.roomType) return a.roomType.localeCompare(b.roomType);
     return a.room.localeCompare(b.room, undefined, { numeric: true });
   });
 
-  const totalRefresh = rooms.filter((r) => r.needsRefresh).length;
-  const totalDisinfect = rooms.filter((r) => r.needsDisinfect).length;
-  const totalSetups = rooms.filter((r) => r.needsSetup).length;
-  const totalRooms = rooms.length;
+  const totalRefresh = mergedRooms.filter((r) => r.needsRefresh).length;
+  const totalDisinfect = mergedRooms.filter((r) => r.needsDisinfect).length;
+  const totalSetups = mergedRooms.filter((r) => r.needsSetup).length;
+  const totalRooms = mergedRooms.length;
 
   return {
-    rooms,
+    rooms: mergedRooms,
     summary: {
-      totalOccupied: rooms.filter((r) => r.cleaningType !== "none").length,
+      totalOccupied: mergedRooms.filter((r) => r.cleaningType !== "none").length,
       totalRooms,
       totalRefresh,
       totalDisinfect,
