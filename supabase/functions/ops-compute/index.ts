@@ -690,9 +690,10 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     r.dogName = r.dogNames.join(", ");
   }
 
-  // Sort by room type, then room name
+  // Sort by room type, then owner (so siblings are adjacent), then room name
   mergedRooms.sort((a, b) => {
     if (a.roomType !== b.roomType) return a.roomType.localeCompare(b.roomType);
+    if (a.ownerLastName !== b.ownerLastName) return a.ownerLastName.localeCompare(b.ownerLastName);
     return a.room.localeCompare(b.room, undefined, { numeric: true });
   });
 

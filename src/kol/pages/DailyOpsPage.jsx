@@ -539,7 +539,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
             <span style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>{totalRooms ? `${totalOccupied}/${totalRooms}` : totalOccupied}</span>
-            <span style={{ fontSize: 12, color: C.textSec }}>Rooms Occupied</span>
+            <span style={{ fontSize: 12, color: C.textSec }}>Total Tasks</span>
           </div>
           {totalRefresh > 0 && <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
             <span style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>{doneRefresh}/{totalRefresh}</span>
