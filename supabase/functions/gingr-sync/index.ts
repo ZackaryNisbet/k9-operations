@@ -1352,6 +1352,127 @@ async function syncAnimalIcons(
   return { synced: iconRows.length, animals: seenAnimalIds.size };
 }
 
+// ─── Sync Animal Photos to Supabase Storage ──────────────────────────────
+// Downloads dog profile photos from Gingr's Google Cloud Storage CDN and
+// uploads them to the `dog-profile-pics` Supabase Storage bucket.
+// Only processes currently checked-in dogs (~50-80 at a time).
+// Change detection: compares image_url to photo_synced_from — when Gingr
+// updates a photo the URL changes (contains unique upload UUID).
+
+async function syncAnimalPhotos(
+  supabase: any,
+  locationId: string
+): Promise<{ synced: number; skipped: number; errors: number }> {
+  // 1. Get checked-in animal IDs
+  const { data: checkedIn } = await supabase
+    .from("gingr_reservations")
+    .select("animal_gingr_id")
+    .eq("location_id", locationId)
+    .not("check_in_date", "is", null)
+    .is("check_out_date", null)
+    .is("cancelled_date", null);
+
+  const animalIds = [
+    ...new Set(
+      (checkedIn || [])
+        .map((r: any) => r.animal_gingr_id)
+        .filter((id: any) => id != null)
+    ),
+  ] as string[];
+
+  if (animalIds.length === 0) return { synced: 0, skipped: 0, errors: 0 };
+
+  // 2. Fetch animals that need photo syncing
+  const { data: animals } = await supabase
+    .from("gingr_animals")
+    .select("gingr_id, image_url, local_photo_url, photo_synced_from")
+    .eq("location_id", locationId)
+    .in("gingr_id", animalIds)
+    .not("image_url", "is", null);
+
+  if (!animals || animals.length === 0) return { synced: 0, skipped: 0, errors: 0 };
+
+  // Filter to only dogs that need syncing (new photo or changed photo)
+  const toSync = animals.filter(
+    (a: any) => !a.local_photo_url || a.image_url !== a.photo_synced_from
+  );
+
+  if (toSync.length === 0) return { synced: 0, skipped: animals.length, errors: 0 };
+
+  let synced = 0;
+  let errors = 0;
+
+  // 3. Process in batches of 10
+  for (let i = 0; i < toSync.length; i += 10) {
+    const batch = toSync.slice(i, i + 10);
+
+    await Promise.all(
+      batch.map(async (animal: any) => {
+        try {
+          const gingrImageUrl = animal.image_url;
+          const imageResp = await fetch(gingrImageUrl);
+          if (!imageResp.ok) {
+            console.warn(`Photo download failed for animal ${animal.gingr_id}: HTTP ${imageResp.status}`);
+            errors++;
+            return;
+          }
+
+          const imageBlob = await imageResp.blob();
+          const contentType = imageResp.headers.get("content-type") || "image/jpeg";
+          const ext = contentType.includes("png")
+            ? "png"
+            : contentType.includes("webp")
+            ? "webp"
+            : "jpg";
+          const storagePath = `${locationId}/${animal.gingr_id}.${ext}`;
+
+          const { error: uploadError } = await supabase.storage
+            .from("dog-profile-pics")
+            .upload(storagePath, imageBlob, {
+              contentType,
+              upsert: true,
+            });
+
+          if (uploadError) {
+            console.warn(`Photo upload failed for animal ${animal.gingr_id}: ${uploadError.message}`);
+            errors++;
+            return;
+          }
+
+          const {
+            data: { publicUrl },
+          } = supabase.storage
+            .from("dog-profile-pics")
+            .getPublicUrl(storagePath);
+
+          const { error: updateError } = await supabase
+            .from("gingr_animals")
+            .update({
+              local_photo_url: publicUrl,
+              photo_synced_from: gingrImageUrl,
+            })
+            .eq("gingr_id", animal.gingr_id)
+            .eq("location_id", locationId);
+
+          if (updateError) {
+            console.warn(`Photo record update failed for animal ${animal.gingr_id}: ${updateError.message}`);
+            errors++;
+            return;
+          }
+
+          synced++;
+        } catch (err: any) {
+          console.warn(`Photo sync error for animal ${animal.gingr_id}: ${err.message}`);
+          errors++;
+        }
+      })
+    );
+  }
+
+  console.log(`Photo sync: ${synced} synced, ${animals.length - toSync.length} skipped (unchanged), ${errors} errors`);
+  return { synced, skipped: animals.length - toSync.length, errors };
+}
+
 // ─── Server-side room assignment via BOH API ─────────────────────────────
 // The back_of_house API with full_day=true returns ALL currently-housed dogs
 // (checking_in + checking_out lists) with their actual run_name (room).
@@ -1634,7 +1755,7 @@ Deno.serve(async (req: Request) => {
     const toSync =
       entities ||
       (sync_type === "full"
-        ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "invoices", "invoice_payments", "deposits", "runs_and_occupancy", "animal_icons"]
+        ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "invoices", "invoice_payments", "deposits", "runs_and_occupancy", "animal_icons", "animal_photos"]
         : ["invoices", "invoice_payments", "deposits"]);
 
     for (const entity of toSync) {
@@ -1714,6 +1835,12 @@ Deno.serve(async (req: Request) => {
               supabase,
               subdomain,
               api_key,
+              location_id
+            );
+            break;
+          case "animal_photos":
+            results.animal_photos = await syncAnimalPhotos(
+              supabase,
               location_id
             );
             break;
