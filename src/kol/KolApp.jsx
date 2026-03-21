@@ -638,7 +638,7 @@ function LeanAppInner() {
     const actionLabel = isObj ? msgOrObj.actionLabel : null;
     const onAction = isObj ? msgOrObj.onAction : null;
     setToasts(prev => [...prev, { id, msg, type: resolvedType, actionLabel, onAction }]);
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), actionLabel ? 6000 : 3500);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), actionLabel ? 7000 : 5500);
   }, []);
 
   // Load fonts
@@ -653,7 +653,9 @@ function LeanAppInner() {
         input:focus,select:focus,textarea:focus{border-color:${C.pri}!important;box-shadow:0 0 0 3px rgba(20,83,45,0.08);}
         h1,h2,h3,h4,h5,h6,.brand-headline{font-family:'Outfit', sans-serif !important;font-weight:700;}
         body { margin: 0; padding: 0; font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif; }
-        @keyframes k9-toast-in { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes k9-toast-in { from { opacity: 0; transform: translateY(-12px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+        @keyframes k9-toast-progress { from { width: 0%; } to { width: 100%; } }
+        @keyframes k9-toast-glow-fade { 0%,85% { opacity: 1; } 100% { opacity: 0; } }
       `;
       document.head.appendChild(style);
     }
@@ -1015,24 +1017,42 @@ function LeanAppInner() {
       {/* Toast Notifications */}
       {toasts.length > 0 && (
         <div style={{ position: "fixed", top: 24, right: 24, zIndex: 9999, display: "flex", flexDirection: "column", gap: 8 }}>
-          {toasts.map(t => (
-            <div key={t.id} style={{
-              padding: "12px 20px", borderRadius: 10, fontSize: 13, fontWeight: 600, fontFamily: "inherit",
-              background: t.type === "success" ? C.suc : t.type === "error" ? C.dan : t.type === "warning" ? C.warn : C.pri,
-              color: "#fff", boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
-              animation: "k9-toast-in 0.25s ease",
-              display: "flex", alignItems: "center", gap: 8, maxWidth: 380,
-            }}>
-              <span>{t.type === "success" ? "\u2713" : t.type === "error" ? "\u2717" : t.type === "warning" ? "\u26A0" : "\u2139"}</span>
-              <span style={{flex:1}}>{t.msg}</span>
-              {t.actionLabel && t.onAction && (
-                <button onClick={() => { t.onAction(); setToasts(prev => prev.filter(x => x.id !== t.id)); }}
-                  style={{marginLeft:8,padding:"4px 10px",borderRadius:6,border:"1.5px solid rgba(255,255,255,0.5)",background:"rgba(255,255,255,0.15)",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
-                  {t.actionLabel}
-                </button>
-              )}
-            </div>
-          ))}
+          {toasts.map(t => {
+            const barColor = t.type === "success" ? "#84CC16" : t.type === "error" ? "#EF4444" : t.type === "warning" ? "#F59E0B" : "#84CC16";
+            const iconColor = t.type === "success" ? "#84CC16" : t.type === "error" ? "#EF4444" : t.type === "warning" ? "#F59E0B" : "#84CC16";
+            const duration = t.actionLabel ? 7 : 5.5;
+            return (
+              <div key={t.id} style={{
+                borderRadius: 12, overflow: "hidden",
+                background: "#1F2937", color: "#F9FAFB",
+                boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+                animation: `k9-toast-in 0.3s ease, k9-toast-glow-fade ${duration}s ease-in forwards`,
+              }}>
+                <div style={{
+                  padding: "12px 20px", fontSize: 13, fontWeight: 600, fontFamily: "inherit",
+                  display: "flex", alignItems: "center", gap: 8, maxWidth: 400,
+                }}>
+                  <span style={{ color: iconColor, fontSize: 15 }}>{t.type === "success" ? "\u2713" : t.type === "error" ? "\u2717" : t.type === "warning" ? "\u26A0" : "\u2139"}</span>
+                  <span style={{ flex: 1 }}>{t.msg}</span>
+                  {t.actionLabel && t.onAction && (
+                    <button onClick={() => { t.onAction(); setToasts(prev => prev.filter(x => x.id !== t.id)); }}
+                      style={{marginLeft:8,padding:"4px 10px",borderRadius:6,border:"1.5px solid rgba(255,255,255,0.25)",background:"rgba(255,255,255,0.08)",color:"#F9FAFB",fontSize:11,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>
+                      {t.actionLabel}
+                    </button>
+                  )}
+                </div>
+                {/* Progress bar — grows left to right over 5s */}
+                <div style={{ height: 3, background: "rgba(255,255,255,0.06)" }}>
+                  <div style={{
+                    height: "100%", borderRadius: "0 3px 3px 0",
+                    background: `linear-gradient(90deg, ${barColor}99, ${barColor})`,
+                    boxShadow: `0 0 8px ${barColor}60`,
+                    animation: "k9-toast-progress 5s linear forwards",
+                  }} />
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

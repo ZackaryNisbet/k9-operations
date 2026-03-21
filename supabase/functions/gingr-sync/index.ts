@@ -1098,6 +1098,260 @@ async function syncImmunizationTypes(
   return { synced: types.length };
 }
 
+// ─── Sync Runs & Occupancy via get_runs_and_reservations ──────────────────
+// Discovers all rooms/runs and their current occupancy from Gingr.
+// Replaces the manually-configured room_names setting.
+
+async function syncRunsAndOccupancy(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  gingrLocationId: string,
+  locationId: string
+): Promise<{ runs: number; occupancy: number; areas: number }> {
+  // Format dates as MM-DD-YYYY (required by this endpoint)
+  const now = nowET();
+  const tomorrow = new Date(now.getTime() + 86400000);
+  const fmt = (d: Date) =>
+    `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}-${d.getFullYear()}`;
+
+  // Build form-encoded body — reservation_dates must be form-encoded arrays, NOT JSON
+  const params = new URLSearchParams();
+  params.append("key", apiKey);
+  params.append("location_id", gingrLocationId);
+  params.append("type_id", "5"); // any boarding type — returns ALL areas regardless
+  params.append("reservation_dates[0][startDate]", fmt(now));
+  params.append("reservation_dates[0][endDate]", fmt(tomorrow));
+
+  const url = `https://${subdomain}.gingrapp.com/api/v1/get_runs_and_reservations`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+    body: params.toString(),
+  });
+
+  if (!resp.ok) {
+    throw new Error(`get_runs_and_reservations error ${resp.status}: ${await resp.text()}`);
+  }
+
+  const areas = await resp.json();
+  if (!Array.isArray(areas)) {
+    throw new Error(`get_runs_and_reservations unexpected response: ${JSON.stringify(areas).slice(0, 200)}`);
+  }
+
+  const todayStr = dateStrET(now);
+  const runRows: any[] = [];
+  const occupancyRows: any[] = [];
+  const snapshotRows: any[] = [];
+
+  for (const area of areas) {
+    const areaId = String(area.id || "");
+    const areaName = area.name || "";
+
+    // Area-level occupancy snapshot
+    const occ = area.occupancy?.[todayStr];
+    if (occ) {
+      snapshotRows.push({
+        location_id: locationId,
+        snapshot_date: todayStr,
+        area_id: areaId,
+        area_name: areaName,
+        percent_occupied: occ.percent_occupied || "0%",
+        number_occupied: parseInt(occ.number_occupied) || 0,
+        number_available: parseInt(occ.number_available) || 0,
+        total_runs: parseInt(occ.total_runs) || 0,
+        synced_at: new Date().toISOString(),
+      });
+    }
+
+    // Individual runs
+    for (const run of area.runs || []) {
+      const runId = String(run.id || "");
+      const runName = run.name || "";
+      const isPP = runName.toLowerCase().includes("private play") || runName.toLowerCase().includes(" pp");
+      const isIso = runName.toLowerCase().includes("iso");
+
+      runRows.push({
+        location_id: locationId,
+        gingr_run_id: runId,
+        run_name: runName,
+        area_id: areaId,
+        area_name: areaName,
+        run_type: run.type || null,
+        max_animals: run.max_animals ? parseInt(run.max_animals) : null,
+        max_weight: run.max_weight ? parseInt(run.max_weight) : null,
+        is_private_play: isPP,
+        is_isolation: isIso,
+        synced_at: new Date().toISOString(),
+      });
+
+      // Room-level occupancy for each queried date
+      for (const resDate of run.reservation_date || []) {
+        if (!resDate.occupied) continue;
+        occupancyRows.push({
+          location_id: locationId,
+          gingr_run_id: runId,
+          run_name: runName,
+          area_name: areaName,
+          occupancy_date: resDate.date,
+          animal_names: resDate.animal_name || null,
+          current_animals: parseInt(resDate.current_animals) || 0,
+          current_weight: parseInt(resDate.current_weight) || 0,
+          occupied: true,
+          end_date: resDate.end_date || null,
+          synced_at: new Date().toISOString(),
+        });
+      }
+    }
+  }
+
+  // Upsert runs
+  if (runRows.length > 0) {
+    const { error } = await supabase
+      .from("gingr_runs")
+      .upsert(runRows, { onConflict: "location_id,gingr_run_id" });
+    if (error) throw new Error(`gingr_runs upsert error: ${error.message}`);
+  }
+
+  // Upsert occupancy (clear today's stale data first, then insert fresh)
+  await supabase
+    .from("gingr_room_occupancy")
+    .delete()
+    .eq("location_id", locationId)
+    .eq("occupancy_date", todayStr);
+
+  if (occupancyRows.length > 0) {
+    for (let i = 0; i < occupancyRows.length; i += 500) {
+      const chunk = occupancyRows.slice(i, i + 500);
+      const { error } = await supabase
+        .from("gingr_room_occupancy")
+        .upsert(chunk, { onConflict: "location_id,gingr_run_id,occupancy_date" });
+      if (error) throw new Error(`gingr_room_occupancy upsert error: ${error.message}`);
+    }
+  }
+
+  // Upsert area-level snapshots
+  if (snapshotRows.length > 0) {
+    const { error } = await supabase
+      .from("gingr_occupancy_snapshot")
+      .upsert(snapshotRows, { onConflict: "location_id,snapshot_date,area_id" });
+    if (error) throw new Error(`gingr_occupancy_snapshot upsert error: ${error.message}`);
+  }
+
+  console.log(`Runs sync: ${runRows.length} runs, ${occupancyRows.length} occupied rooms, ${snapshotRows.length} area snapshots`);
+  return { runs: runRows.length, occupancy: occupancyRows.length, areas: snapshotRows.length };
+}
+
+// ─── Sync Animal Icons via get_icons ──────────────────────────────────────
+// Fetches icon assignments for all checked-in dogs and upserts to
+// gingr_animal_icons_live. Uses title-based matching for playgroup detection
+// to support multi-location setups where template IDs may differ.
+
+async function syncAnimalIcons(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string
+): Promise<{ synced: number; animals: number }> {
+  // 1. Get all checked-in animal IDs from gingr_reservations
+  const { data: checkedIn } = await supabase
+    .from("gingr_reservations")
+    .select("animal_gingr_id")
+    .eq("location_id", locationId)
+    .not("check_in_date", "is", null)
+    .is("check_out_date", null)
+    .is("cancelled_date", null);
+
+  const animalIds = [
+    ...new Set(
+      (checkedIn || [])
+        .map((r: any) => r.animal_gingr_id)
+        .filter((id: any) => id != null)
+    ),
+  ] as string[];
+
+  if (animalIds.length === 0) {
+    // Clear stale icons when no dogs are checked in
+    await supabase
+      .from("gingr_animal_icons_live")
+      .delete()
+      .eq("location_id", locationId);
+    return { synced: 0, animals: 0 };
+  }
+
+  // 2. Call get_icons — animal_ids must be JSON-stringified, NOT form-encoded arrays
+  const params = new URLSearchParams();
+  params.append("key", apiKey);
+  params.append("animal_ids", JSON.stringify(animalIds.map(Number)));
+  params.append("owner_ids", "null");
+
+  const url = `https://${subdomain}.gingrapp.com/api/v1/get_icons`;
+  const resp = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+    body: params.toString(),
+  });
+
+  if (!resp.ok) {
+    throw new Error(`get_icons error ${resp.status}: ${await resp.text()}`);
+  }
+
+  const result = await resp.json();
+  if (!result.success || result.error) {
+    throw new Error(`get_icons failed: ${JSON.stringify(result).slice(0, 200)}`);
+  }
+
+  const animalsData = result.data?.animals || {};
+  const iconRows: any[] = [];
+  const seenAnimalIds = new Set<string>();
+
+  for (const [animalId, animalEntry] of Object.entries(animalsData) as [string, any][]) {
+    seenAnimalIds.add(animalId);
+    const icons = animalEntry?.icons || [];
+    for (const icon of icons) {
+      iconRows.push({
+        location_id: locationId,
+        animal_gingr_id: animalId,
+        icon_template_id: String(icon.color_label_template_id || icon.id || ""),
+        icon_title: icon.title || null,
+        icon_group: icon.name || null,
+        icon_color: icon.color || null,
+        icon_class: icon.class || null,
+        icon_comment: icon.comment || null,
+        synced_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  // 3. Clear icons for dogs no longer checked in, then upsert fresh data
+  await supabase
+    .from("gingr_animal_icons_live")
+    .delete()
+    .eq("location_id", locationId)
+    .not("animal_gingr_id", "in", `(${animalIds.join(",")})`);
+
+  // Dedup: same animal can have duplicate icon entries from API
+  const deduped = new Map<string, any>();
+  for (const row of iconRows) {
+    const key = `${row.location_id}|${row.animal_gingr_id}|${row.icon_template_id}`;
+    deduped.set(key, row);
+  }
+  const dedupedRows = [...deduped.values()];
+
+  if (dedupedRows.length > 0) {
+    for (let i = 0; i < dedupedRows.length; i += 500) {
+      const chunk = dedupedRows.slice(i, i + 500);
+      const { error } = await supabase
+        .from("gingr_animal_icons_live")
+        .upsert(chunk, { onConflict: "location_id,animal_gingr_id,icon_template_id" });
+      if (error) throw new Error(`gingr_animal_icons_live upsert error: ${error.message}`);
+    }
+  }
+
+  console.log(`Icons sync: ${iconRows.length} icons for ${seenAnimalIds.size} animals`);
+  return { synced: iconRows.length, animals: seenAnimalIds.size };
+}
+
 // ─── Server-side room assignment via BOH API ─────────────────────────────
 // The back_of_house API with full_day=true returns ALL currently-housed dogs
 // (checking_in + checking_out lists) with their actual run_name (room).
@@ -1347,6 +1601,14 @@ Deno.serve(async (req: Request) => {
         console.error("BOH room sync error (tv-poll):", roomErr.message);
       }
 
+      // Sync animal icons (for Checkout TV classification)
+      let iconsResult = { synced: 0, animals: 0 };
+      try {
+        iconsResult = await syncAnimalIcons(supabase, subdomain, api_key, location_id);
+      } catch (iconsErr: any) {
+        console.error("Icons sync error (tv-poll):", iconsErr.message);
+      }
+
       return new Response(
         JSON.stringify({
           success: true,
@@ -1355,6 +1617,7 @@ Deno.serve(async (req: Request) => {
           checked_out_count: checkedOutCount,
           rooms_assigned: roomResult.assigned,
           boh_dogs_in_house: roomResult.bohDogs,
+          icons_synced: iconsResult.synced,
           duration_ms: Date.now() - startTime,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -1371,7 +1634,7 @@ Deno.serve(async (req: Request) => {
     const toSync =
       entities ||
       (sync_type === "full"
-        ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "invoices", "invoice_payments", "deposits"]
+        ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "invoices", "invoice_payments", "deposits", "runs_and_occupancy", "animal_icons"]
         : ["invoices", "invoice_payments", "deposits"]);
 
     for (const entity of toSync) {
@@ -1431,6 +1694,23 @@ Deno.serve(async (req: Request) => {
             break;
           case "deposits":
             results.deposits = await syncDeposits(
+              supabase,
+              subdomain,
+              api_key,
+              location_id
+            );
+            break;
+          case "runs_and_occupancy":
+            results.runs_and_occupancy = await syncRunsAndOccupancy(
+              supabase,
+              subdomain,
+              api_key,
+              gingr_location_id || "1",
+              location_id
+            );
+            break;
+          case "animal_icons":
+            results.animal_icons = await syncAnimalIcons(
               supabase,
               subdomain,
               api_key,
