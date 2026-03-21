@@ -53,7 +53,8 @@ async function gingrFetch(
         params.append(k, v);
       }
     }
-    resp = await fetch(`${url}?${params.toString()}`);
+    const sep = url.includes("?") ? "&" : "?";
+    resp = await fetch(`${url}${sep}${params.toString()}`);
   }
 
   if (!resp.ok) {
@@ -1097,220 +1098,78 @@ async function syncImmunizationTypes(
   return { synced: types.length };
 }
 
-// ─── Server-side room assignment ─────────────────────────────────────────
+// ─── Server-side room assignment via BOH API ─────────────────────────────
+// The back_of_house API with full_day=true returns ALL currently-housed dogs
+// (checking_in + checking_out lists) with their actual run_name (room).
+// This is the ONLY Gingr API endpoint that provides room assignments.
+// The reservations API does NOT include room data.
 
-const ROOM_TYPES_ASSIGN = ["Luxury Suite", "Executive Room", "Double Compartment", "Single Compartment"];
-
-function classifyResType(typeName: string | null): string {
-  if (!typeName) return "other";
-  const t = typeName.toLowerCase();
-  if (t.includes("evaluation") || t.includes("eval")) return "evaluation";
-  if (t.includes("tour")) return "tour";
-  if (t.includes("day boarding") || t === "day boarding") return "dayboarding";
-  if (t.includes("daycare") || t.includes("day care")) return "daycare";
-  if (t.includes("boarding")) return "boarding";
-  if (t.includes("groom") || t.includes("bath")) return "grooming";
-  return "other";
-}
-
-function extractRoomType(typeName: string | null): string | null {
-  if (!typeName) return null;
-  for (const rt of ROOM_TYPES_ASSIGN) {
-    if (typeName.toLowerCase().includes(rt.toLowerCase())) return rt;
-  }
-  return null;
-}
-
-async function assignRoomsServerSide(
+async function persistBohRoomAssignments(
   supabase: any,
+  subdomain: string,
+  apiKey: string,
+  gingrLocationId: string,
   locationId: string
-) {
-  // 1. Load room names config from lite_settings
-  const { data: roomNamesRow } = await supabase
-    .from("lite_settings")
-    .select("setting_value")
+): Promise<{ assigned: number; bohDogs: number }> {
+  // 1. Fetch BOH data — contains ALL dogs currently in-house with run_name
+  const bohResult = await gingrFetch(
+    subdomain,
+    "back_of_house",
+    apiKey,
+    "GET",
+    { location_id: gingrLocationId, full_day: "true", include_daycare: "true" }
+  );
+
+  // BOH response: { data: { checking_out: [...], checking_in: [...] } }
+  const checkingOut = bohResult?.data?.checking_out || bohResult?.checking_out || [];
+  const checkingIn = bohResult?.data?.checking_in || bohResult?.checking_in || [];
+  const allBohDogs = [...checkingOut, ...checkingIn];
+
+  if (allBohDogs.length === 0) {
+    return { assigned: 0, bohDogs: 0 };
+  }
+
+  // 2. Build animal_id → run_name map from BOH
+  const bohRoomMap: Record<string, { runName: string; areaName: string }> = {};
+  for (const dog of allBohDogs) {
+    const animalId = String(dog.animal_id || dog.id || "");
+    if (animalId && dog.run_name) {
+      bohRoomMap[animalId] = { runName: dog.run_name, areaName: dog.area_name || "" };
+    }
+  }
+
+  const animalIds = Object.keys(bohRoomMap);
+  if (animalIds.length === 0) {
+    return { assigned: 0, bohDogs: allBohDogs.length };
+  }
+
+  // 3. Find ACTIVE reservations (checked in, not checked out, not cancelled)
+  //    for these animals and update their room_assignment
+  const { data: activeReservations } = await supabase
+    .from("gingr_reservations")
+    .select("gingr_id, animal_gingr_id, room_assignment")
     .eq("location_id", locationId)
-    .eq("setting_key", "room_names")
-    .maybeSingle();
+    .not("check_in_date", "is", null)
+    .is("check_out_date", null)
+    .is("cancelled_date", null)
+    .in("animal_gingr_id", animalIds);
 
-  let roomsMap: Record<string, string[]> = {};
-
-  if (roomNamesRow?.setting_value && typeof roomNamesRow.setting_value === "object") {
-    const names = roomNamesRow.setting_value as Record<string, string[]>;
-    for (const [typeName, nameList] of Object.entries(names)) {
-      if (Array.isArray(nameList) && nameList.length > 0) {
-        roomsMap[typeName] = [...nameList];
-      }
-    }
-  }
-
-  // Fallback: generate numbered rooms from reservation types
-  if (Object.keys(roomsMap).length === 0) {
-    const { data: resTypes } = await supabase
-      .from("gingr_reservation_types")
-      .select("name, type_label, raw_data")
-      .eq("location_id", locationId);
-
-    const defaultCounts: Record<string, number> = {
-      "Luxury Suite": 4, "Executive Room": 6,
-      "Double Compartment": 8, "Single Compartment": 10,
-    };
-
-    const boardingTypes = (resTypes || []).filter((rt: any) => {
-      const raw = rt.raw_data || {};
-      const hasLodging = raw.capacity_by_lodging === "1" || raw.capacity_by_lodging === 1;
-      const isSingleDay = raw.single_day === "1" || raw.single_day === 1;
-      return hasLodging && !isSingleDay;
-    });
-
-    if (boardingTypes.length > 0) {
-      for (const bt of boardingTypes) {
-        const name = bt.name || bt.type_label || "";
-        const clean = name.replace(/^Boarding\s*\|\s*/i, "").replace(/\s*\(All Inclusive\)\s*$/i, "").trim();
-        if (!clean) continue;
-        const count = defaultCounts[clean] ?? 6;
-        roomsMap[clean] = [];
-        for (let i = 1; i <= count; i++) {
-          roomsMap[clean].push(`${clean} ${i}`);
-        }
-      }
-    } else {
-      for (const rt of ROOM_TYPES_ASSIGN) {
-        const count = defaultCounts[rt] ?? 6;
-        roomsMap[rt] = [];
-        for (let i = 1; i <= count; i++) {
-          roomsMap[rt].push(`${rt} ${i}`);
-        }
-      }
-    }
-  }
-
-  // 2. Query boarding reservations in the assignment window (-30 to +90 days)
-  const now = new Date();
-  const windowStart = new Date(now.getTime() - 30 * 86400000).toISOString().split("T")[0];
-  const windowEnd = new Date(now.getTime() + 90 * 86400000).toISOString().split("T")[0];
-
-  let reservations: any[] = [];
-  let page = 0;
-  const PAGE_SIZE = 1000;
-  while (true) {
-    const { data: pageData, error: resErr } = await supabase
-      .from("gingr_reservations")
-      .select("gingr_id, reservation_type_name, start_date, end_date, room_assignment")
-      .eq("location_id", locationId)
-      .gte("start_date", windowStart + "T00:00:00")
-      .lte("start_date", windowEnd + "T23:59:59")
-      .is("cancelled_date", null)
-      .ilike("reservation_type_name", "%boarding%")
-      .order("start_date", { ascending: true })
-      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
-
-    if (resErr) {
-      console.error("Room assignment query error:", resErr.message);
-      return { assigned: 0 };
-    }
-    if (!pageData || pageData.length === 0) break;
-    reservations = reservations.concat(pageData);
-    if (pageData.length < PAGE_SIZE) break;
-    page++;
-  }
-
-  // 3. Classify and filter for assignable boarding reservations
-  const boarding: Array<{
-    gingr_id: string;
-    roomType: string;
-    checkIn: string;
-    checkOut: string;
-  }> = [];
-
-  for (const r of reservations) {
-    const type = classifyResType(r.reservation_type_name);
-    const roomType = extractRoomType(r.reservation_type_name);
-
-    if (type === "boarding" && roomType) {
-      const checkIn = r.start_date ? r.start_date.split("T")[0] : "";
-      const checkOut = r.end_date ? r.end_date.split("T")[0] : checkIn;
-      boarding.push({ gingr_id: r.gingr_id, roomType, checkIn, checkOut });
-    } else if (type === "dayboarding" && roomsMap["Temporary Lodging"]) {
-      // Day boarding dogs get assigned to Temporary Lodging rooms as fallback.
-      // Skip if ops-compute already persisted the actual Gingr room from BOH.
-      if (r.room_assignment) continue;
-      const checkIn = r.start_date ? r.start_date.split("T")[0] : "";
-      const checkOut = r.end_date ? r.end_date.split("T")[0] : checkIn;
-      boarding.push({ gingr_id: r.gingr_id, roomType: "Temporary Lodging", checkIn, checkOut });
-    }
-  }
-
-  // 4. Group by room type
-  const byType: Record<string, typeof boarding> = {};
-  for (const r of boarding) {
-    if (!byType[r.roomType]) byType[r.roomType] = [];
-    byType[r.roomType].push(r);
-  }
-
-  // 5. Greedy interval scheduling per room type
-  const assignments: Array<{ gingr_id: string; room: string }> = [];
-
-  for (const [roomType, group] of Object.entries(byType)) {
-    const rooms = roomsMap[roomType] || [];
-    if (rooms.length === 0) continue;
-
-    // Sort by start_date ASC, then gingr_id ASC for determinism
-    group.sort((a, b) =>
-      a.checkIn.localeCompare(b.checkIn) || a.gingr_id.localeCompare(b.gingr_id)
-    );
-
-    // Track occupancy per room
-    const occ: Record<string, Array<{ checkIn: string; checkOut: string }>> = {};
-    for (const rm of rooms) {
-      occ[rm] = [];
-    }
-
-    for (const r of group) {
-      let picked: string | null = null;
-      for (const rm of rooms) {
-        const isSameDay = r.checkIn === r.checkOut;
-        const overlap = occ[rm].some(
-          (o) => {
-            // Same-day reservations (day boarding) on the same date = overlap
-            if (isSameDay && o.checkIn === o.checkOut && o.checkIn === r.checkIn) return true;
-            // Standard interval overlap (exclusive endpoints — checkout day is available)
-            return o.checkIn < r.checkOut && r.checkIn < o.checkOut;
-          }
-        );
-        if (!overlap) {
-          picked = rm;
-          break;
-        }
-      }
-      if (!picked) picked = rooms[0]; // overflow fallback
-      occ[picked].push({ checkIn: r.checkIn, checkOut: r.checkOut });
-      assignments.push({ gingr_id: r.gingr_id, room: picked });
-    }
-  }
-
-  // 6. Batch update room assignments — group by room name for efficiency
   let updated = 0;
-
-  const byRoom: Record<string, string[]> = {};
-  for (const { gingr_id, room } of assignments) {
-    if (!byRoom[room]) byRoom[room] = [];
-    byRoom[room].push(gingr_id);
-  }
-
-  for (const [room, ids] of Object.entries(byRoom)) {
-    for (let i = 0; i < ids.length; i += 100) {
-      const chunk = ids.slice(i, i + 100);
+  for (const res of activeReservations || []) {
+    const aid = String(res.animal_gingr_id);
+    const boh = bohRoomMap[aid];
+    if (boh?.runName && res.room_assignment !== boh.runName) {
       const { error } = await supabase
         .from("gingr_reservations")
-        .update({ room_assignment: room })
-        .eq("location_id", locationId)
-        .in("gingr_id", chunk);
-      if (!error) updated += chunk.length;
+        .update({ room_assignment: boh.runName })
+        .eq("gingr_id", res.gingr_id)
+        .eq("location_id", locationId);
+      if (!error) updated++;
     }
   }
 
-  return { assigned: updated };
+  console.log(`BOH room sync: ${allBohDogs.length} dogs in-house, ${animalIds.length} with rooms, ${updated} reservations updated`);
+  return { assigned: updated, bohDogs: allBohDogs.length };
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -1480,12 +1339,12 @@ Deno.serve(async (req: Request) => {
         // Non-fatal — reconciliation is best-effort
       }
 
-      // Run room assignment after tv-poll reservation sync
-      let roomResult = { assigned: 0 };
+      // Persist actual room assignments from BOH API
+      let roomResult = { assigned: 0, bohDogs: 0 };
       try {
-        roomResult = await assignRoomsServerSide(supabase, location_id);
+        roomResult = await persistBohRoomAssignments(supabase, subdomain, api_key, gingr_location_id || "1", location_id);
       } catch (roomErr: any) {
-        console.error("Room assignment error (tv-poll):", roomErr.message);
+        console.error("BOH room sync error (tv-poll):", roomErr.message);
       }
 
       return new Response(
@@ -1495,6 +1354,7 @@ Deno.serve(async (req: Request) => {
           checked_in_count: checkedIn.length,
           checked_out_count: checkedOutCount,
           rooms_assigned: roomResult.assigned,
+          boh_dogs_in_house: roomResult.bohDogs,
           duration_ms: Date.now() - startTime,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -1603,12 +1463,12 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // ── Assign rooms server-side after all entities are synced ─────────────
+    // ── Persist actual room assignments from BOH API after sync ─────────────
     try {
-      const roomResult = await assignRoomsServerSide(supabase, location_id);
+      const roomResult = await persistBohRoomAssignments(supabase, subdomain, api_key, gingr_location_id || "1", location_id);
       results["room_assignment"] = roomResult;
     } catch (roomErr: any) {
-      console.error("Room assignment error:", roomErr.message);
+      console.error("BOH room sync error:", roomErr.message);
       results["room_assignment"] = { error: roomErr.message };
     }
 

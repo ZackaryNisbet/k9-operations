@@ -22,9 +22,17 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const isTemplate = !!meta.key;
 
   // Date nav helpers
-  const shiftDate = (d) => { const dt = new Date(viewDate + "T12:00:00"); dt.setDate(dt.getDate() + d); setViewDate(dt.toISOString().slice(0,10)); };
+  // Room cleaning cannot go past today — BOH API only provides room data for currently in-house dogs
+  const shiftDate = (d) => {
+    const dt = new Date(viewDate + "T12:00:00");
+    dt.setDate(dt.getDate() + d);
+    const newDate = dt.toISOString().slice(0,10);
+    if (sub === "room_cleaning" && newDate > td) return;
+    setViewDate(newDate);
+  };
   const isToday = viewDate === td;
   const isPast = viewDate < td;
+  const canGoForward = sub !== "room_cleaning" || viewDate < td;
   const dateLbl = (() => { const d = new Date(viewDate + "T12:00:00"); return d.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric" }); })();
 
   // Get or create entry
@@ -252,7 +260,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       <div style={dateNavStyle}>
         <button onClick={() => shiftDate(-1)} style={{ ...nbtn, background: C.surfaceHover, color: C.text }}>‹</button>
         <span style={{ fontSize: 14, fontWeight: 600, color: C.text, minWidth: 200, textAlign: "center" }}>{dateLbl}</span>
-        <button onClick={() => shiftDate(1)} style={{ ...nbtn, background: C.surfaceHover, color: C.text }}>›</button>
+        <button onClick={() => shiftDate(1)} disabled={!canGoForward} style={{ ...nbtn, background: C.surfaceHover, color: canGoForward ? C.text : C.textMut, opacity: canGoForward ? 1 : 0.4, cursor: canGoForward ? "pointer" : "not-allowed" }}>›</button>
         {!isToday && <button onClick={() => setViewDate(td)} style={{ ...nbtn, background: C.pri, color: "#fff" }}>Today</button>}
       </div>
       <div style={{ display: "flex", gap: 6 }}>
@@ -361,15 +369,34 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const computedRooms = rcEntry?.computed_items?.rooms || [];
     const hasComputedData = computedRooms.length > 0;
 
+    // ─── Merge computed rooms by room key (one entry per room, multiple dogs merged) ───
+    const mergedRoomMap = {};
+    if (hasComputedData) {
+      computedRooms.forEach(cr => {
+        const rk = sanitizeRoomKey(cr.room);
+        if (mergedRoomMap[rk]) {
+          const m = mergedRoomMap[rk];
+          if (cr.dogName && !m.dogNames.includes(cr.dogName)) m.dogNames.push(cr.dogName);
+          if (cr.needsRefresh) m.needsRefresh = true;
+          if (cr.needsDisinfect) m.needsDisinfect = true;
+          if (cr.needsSetup) { m.needsSetup = true; m.setupReason = cr.setupReason; }
+          if (cr.suggestedBowlSize) m.suggestedBowlSize = cr.suggestedBowlSize;
+          if (cr.dogWeight) m.dogWeight = cr.dogWeight;
+        } else {
+          mergedRoomMap[rk] = { ...cr, dogNames: cr.dogName ? [cr.dogName] : [] };
+        }
+      });
+    }
+    const mergedRooms = Object.values(mergedRoomMap);
+
     // ─── Compute stats from server data or client-side fallback ───
     let totalOccupied = 0, totalRefresh = 0, totalDisinfect = 0, doneRefresh = 0, doneDisinfect = 0;
     let totalSetups = 0, doneSetups = 0, totalRooms = 0;
 
     if (hasComputedData) {
-      // Use server-computed data
-      totalOccupied = rcEntry?.computed_items?.summary?.totalOccupied || computedRooms.filter(r => r.cleaningType !== "none").length;
-      totalRooms = rcEntry?.computed_items?.summary?.totalRooms || computedRooms.length;
-      computedRooms.forEach(cr => {
+      totalOccupied = mergedRooms.filter(r => r.cleaningType !== "none").length;
+      totalRooms = mergedRooms.length;
+      mergedRooms.forEach(cr => {
         const key = sanitizeRoomKey(cr.room);
         const ri = roomItems[key] || roomItems[cr.room] || {};
         if (cr.needsRefresh) { totalRefresh++; if (ri.refresh) doneRefresh++; }
@@ -377,7 +404,6 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         if (cr.needsSetup) { totalSetups++; if (ri.setupDone) doneSetups++; }
       });
     } else {
-      // Fallback: client-side computation
       Object.keys(allRooms).forEach(rt => {
         (allRooms[rt] || []).forEach(rm => {
           totalRooms++;
@@ -395,10 +421,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const totalNeeded = totalRefresh + totalDisinfect;
     const totalDone = doneRefresh + doneDisinfect;
 
-    // ─── Group computed rooms by roomType for display ───
+    // ─── Group merged rooms by roomType for display ───
     const groupedRooms = {};
     if (hasComputedData) {
-      computedRooms.forEach(cr => {
+      mergedRooms.forEach(cr => {
         const key = cr.roomType || cr.areaName || "Other";
         if (!groupedRooms[key]) groupedRooms[key] = [];
         groupedRooms[key].push(cr);
@@ -418,7 +444,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       const needsDisinfect = crData ? crData.needsDisinfect : false;
       const hasSetup = crData ? crData.needsSetup : false;
       const isOccupied = !!crData && crData.cleaningType !== "none";
-      const aDog = crData ? crData.dogName : null;
+      const aDog = crData ? (crData.dogNames ? crData.dogNames.join(', ') : crData.dogName) : null;
       const aOwner = crData ? crData.ownerLastName : null;
       const selectedBowl = ri.setupBowl || (crData?.suggestedBowlSize) || "";
 
