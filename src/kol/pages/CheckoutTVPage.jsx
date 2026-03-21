@@ -221,7 +221,7 @@ function SizeBadge({ size }) {
 }
 
 /* ── TV-006 + TV-008b + TV-015: Hero Checkout Card — compact mode for multi-notice ── */
-function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, compact, playgroupMap }) {
+function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, dogPhotoMap = {}, compact, playgroupMap }) {
   const entryDogs = entry.dogs || [entry];
   const resolvedDogs = entryDogs.map(d => {
     const dog = allDogs.find(dd => dd.gingrId === Number(d.animalGingrId) || dd.id === `g${d.animalGingrId}`);
@@ -231,7 +231,7 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, 
       ...d, dog,
       name: dog?.fields?.name || d.animalName || "Unknown",
       breed: dog?.fields?.breed || "",
-      image: iconData?.icon_url || dog?._image,
+      image: dogPhotoMap[dog?.gingrId] || iconData?.icon_url || dog?._image,
       size: playgroupMap[animalId] || "unclassified",
     };
   });
@@ -368,7 +368,7 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, 
 }
 
 /* ── TV-008d + TV-015: Hero Check-In Card — compact mode for multi-notice ── */
-function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading, compact, playgroupMap }) {
+function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, dogPhotoMap = {}, fading, compact, playgroupMap }) {
   const entryDogs = entry.dogs || [entry];
   const resolvedDogs = entryDogs.map(d => {
     const dog = allDogs.find(dd => dd.gingrId === Number(d.animalGingrId) || dd.id === `g${d.animalGingrId}`);
@@ -378,7 +378,7 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading, compact, p
       ...d, dog,
       name: dog?.fields?.name || d.animalName || "Unknown",
       breed: dog?.fields?.breed || "",
-      image: iconData?.icon_url || dog?._image,
+      image: dogPhotoMap[dog?.gingrId] || iconData?.icon_url || dog?._image,
       size: playgroupMap[animalId] || "unclassified",
     };
   });
@@ -860,6 +860,38 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     return () => { cancelled = true; clearInterval(interval); };
   }, [locationId]);
 
+  /* ── Fetch dog profile photos from Supabase Storage ────────────── */
+  const [dogPhotoMap, setDogPhotoMap] = useState({});
+
+  useEffect(() => {
+    if (!locationId) return;
+    let cancelled = false;
+
+    const fetchPhotos = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("gingr_animals")
+          .select("gingr_id, local_photo_url")
+          .eq("location_id", locationId)
+          .not("local_photo_url", "is", null);
+
+        if (cancelled || error) return;
+
+        const map = {};
+        for (const a of (data || [])) {
+          map[a.gingr_id] = a.local_photo_url;
+        }
+        setDogPhotoMap(map);
+      } catch (e) {
+        // Silently ignore — photos are a progressive enhancement
+      }
+    };
+
+    fetchPhotos();
+    const interval = setInterval(fetchPhotos, 5 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [locationId]);
+
   /* ── Fetch playgroup classification from Gingr icons ────────────── *
    * Uses v_dog_playgroups view (backed by gingr_animal_icons_live).
    * Title-based matching: resilient to template ID changes across locations.
@@ -1206,9 +1238,10 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
       ? `${roomInfo.label} ${roomInfo.number}`
       : roomInfo.label || "";
 
-    // Get dog photo from animal icons or fall back to _image
+    // Get dog photo: prefer Supabase Storage (local_photo_url) → icon → Gingr CDN
     const iconData = animalIcons[dog?.gingrId];
-    const image = iconData?.icon_url || dog?._image;
+    const localPhoto = dogPhotoMap[dog?.gingrId];
+    const image = localPhoto || iconData?.icon_url || dog?._image;
     const playgroup = sizeGroup || getDogPlaygroup(dog, res, playgroupMap) || "unclassified";
     // Map playgroup to size theme key (large/small stay as-is, others use their own key)
     const themeKey = playgroup === "large" ? "large" : playgroup === "small" ? "small" : playgroup;
@@ -1462,6 +1495,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
               entry={entry}
               dogs={dogs}
               animalIcons={animalIcons}
+              dogPhotoMap={dogPhotoMap}
               fading={entry.fading}
               compact={compactNotices}
               playgroupMap={playgroupMap}
@@ -1476,6 +1510,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
               clients={clients}
               fading={entry.fading}
               animalIcons={animalIcons}
+              dogPhotoMap={dogPhotoMap}
               compact={compactNotices}
               playgroupMap={playgroupMap}
             />
