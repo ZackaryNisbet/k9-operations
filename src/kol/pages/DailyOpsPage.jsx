@@ -393,9 +393,11 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     let totalOccupied = 0, totalRefresh = 0, totalDisinfect = 0, doneRefresh = 0, doneDisinfect = 0;
     let totalSetups = 0, doneSetups = 0, totalRooms = 0;
 
+    const isLinkedRoom = (r) => !r.room?.includes("(unlinked)");
+
     if (hasComputedData) {
       totalOccupied = mergedRooms.filter(r => r.cleaningType !== "none").length;
-      totalRooms = mergedRooms.length;
+      totalRooms = mergedRooms.filter(isLinkedRoom).length;
       mergedRooms.forEach(cr => {
         const key = sanitizeRoomKey(cr.room);
         const ri = roomItems[key] || roomItems[cr.room] || {};
