@@ -20,6 +20,10 @@ if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
   const style = document.createElement("style");
   style.id = STYLE_ID;
   style.textContent = `
+    @keyframes dogCardSkeleton {
+      0%, 100% { opacity: 0.4; }
+      50% { opacity: 1; }
+    }
     @keyframes checkoutPulse {
       0%, 100% { box-shadow: 0 0 20px 4px rgba(132,204,22,0.4), 0 0 60px 8px rgba(132,204,22,0.15); }
       50% { box-shadow: 0 0 30px 8px rgba(132,204,22,0.7), 0 0 80px 16px rgba(132,204,22,0.3); }
@@ -94,16 +98,6 @@ function getDogPlaygroup(dog, res, playgroupMap) {
   // Day boarding always goes to private play regardless of icon
   if (res?.type === "dayboarding") return "private_play";
   return null; // unclassified
-}
-
-/* ── Legacy weight-based fallback (kept for getDogSize display only) ── */
-const SIZE_THRESHOLD = 35;
-function getDogSize(dog) {
-  if (!dog) return "large";
-  if (dog.daycareGroupOverride) return dog.daycareGroupOverride;
-  const w = parseInt(dog.fields?.weight);
-  if (!w || isNaN(w)) return "large";
-  return w < SIZE_THRESHOLD ? "small" : "large";
 }
 
 /* ── Playgroup theme colors ───────────────────────────────────────────── */
@@ -227,17 +221,18 @@ function SizeBadge({ size }) {
 }
 
 /* ── TV-006 + TV-008b + TV-015: Hero Checkout Card — compact mode for multi-notice ── */
-function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, compact }) {
+function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, compact, playgroupMap }) {
   const entryDogs = entry.dogs || [entry];
   const resolvedDogs = entryDogs.map(d => {
     const dog = allDogs.find(dd => dd.gingrId === Number(d.animalGingrId) || dd.id === `g${d.animalGingrId}`);
     const iconData = animalIcons[dog?.gingrId];
+    const animalId = String(dog?.gingrId || d.animalGingrId);
     return {
       ...d, dog,
       name: dog?.fields?.name || d.animalName || "Unknown",
       breed: dog?.fields?.breed || "",
       image: iconData?.icon_url || dog?._image,
-      size: getDogSize(dog),
+      size: playgroupMap[animalId] || "unclassified",
     };
   });
   const ownerLast = entry.ownerLastName || "";
@@ -280,7 +275,7 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, 
       <div style={{ display: "flex", gap: compact ? 8 : 12, flexShrink: 0, position: "relative", zIndex: 1 }}>
         {resolvedDogs.map((rd, i) => (
           rd.image ? (
-            <img key={rd.id || i} src={rd.image} alt={rd.name} style={{
+            <img key={rd.id || i} src={rd.image} alt={rd.name} loading="eager" decoding="async" style={{
               width: imgSize, height: imgSize,
               borderRadius: compact ? 16 : 24, objectFit: "cover",
               border: `${compact ? 3 : 4}px solid ${isUrgent ? "rgba(239,68,68,0.5)" : "rgba(132,204,22,0.6)"}`,
@@ -373,34 +368,27 @@ function HeroCheckoutCard({ entry, dogs: allDogs, clients, fading, animalIcons, 
 }
 
 /* ── TV-008d + TV-015: Hero Check-In Card — compact mode for multi-notice ── */
-function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading, compact }) {
+function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading, compact, playgroupMap }) {
   const entryDogs = entry.dogs || [entry];
   const resolvedDogs = entryDogs.map(d => {
     const dog = allDogs.find(dd => dd.gingrId === Number(d.animalGingrId) || dd.id === `g${d.animalGingrId}`);
     const iconData = animalIcons[dog?.gingrId];
+    const animalId = String(dog?.gingrId || d.animalGingrId);
     return {
       ...d, dog,
       name: dog?.fields?.name || d.animalName || "Unknown",
       breed: dog?.fields?.breed || "",
       image: iconData?.icon_url || dog?._image,
-      size: getDogSize(dog),
+      size: playgroupMap[animalId] || "unclassified",
     };
   });
   const ownerLast = entry.ownerLastName || "";
   const allNames = resolvedDogs.map(d => d.name).join(" & ");
   const firstDog = resolvedDogs[0];
-  const theme = SIZE_THEME[firstDog.size];
+  const theme = SIZE_THEME[firstDog.size] || SIZE_THEME.unclassified;
 
-  // TV-018: Boarding dogs now labeled by their play category, not "BOARDING"
-  const resType = (entry.dogs?.[0]?.resType || entry.resType || "");
-  const entryHasPP = (entry.dogs || [entry]).some(d => {
-    const tempRes = { _services: d._services || [], room: d.room || "", _resTypeName: "", type: d.resType || "" };
-    return hasPrivatePlay(tempRes) || d.resType === "dayboarding";
-  });
-  const groupLabel = (resType === "dayboarding" || (resType === "boarding" && entryHasPP)) ? "PRIVATE PLAY"
-    : firstDog.size === "small" ? "SMALL DAYCARE" : "LARGE DAYCARE";
-  const groupColor = (resType === "dayboarding" || (resType === "boarding" && entryHasPP)) ? "#EF4444"
-    : theme?.accent || "#84CC16";
+  const groupLabel = (theme.label || "Unclassified").toUpperCase();
+  const groupColor = theme.accent;
 
   // TV-015: Compact sizing
   const imgSize = compact ? 72 : (resolvedDogs.length > 1 ? 96 : 120);
@@ -435,7 +423,7 @@ function HeroCheckInCard({ entry, dogs: allDogs, animalIcons, fading, compact })
       <div style={{ display: "flex", gap: compact ? 8 : 12, flexShrink: 0, position: "relative", zIndex: 1 }}>
         {resolvedDogs.map((rd, i) => (
           rd.image ? (
-            <img key={rd.id || i} src={rd.image} alt={rd.name} style={{
+            <img key={rd.id || i} src={rd.image} alt={rd.name} loading="eager" decoding="async" style={{
               width: imgSize, height: imgSize,
               borderRadius: compact ? 16 : 24, objectFit: "cover",
               border: `${compact ? 3 : 4}px solid rgba(56,189,248,0.6)`,
@@ -650,14 +638,11 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const clients = data.clients || [];
 
   /* ── TV-010 + TV-012: Direct Gingr back_of_house polling ────────────
-   * Single source of truth for ALL active dogs (boarding + daycare).
-   * Polls every 10s, compares previous → current state, and fires
-   * TV notices (check-in / check-out hero cards) on transitions.
-   * Also provides daycare dogs for the grid (Supabase doesn't sync them).
+   * Event-detection-only: polls every 10s, compares previous → current
+   * state, and fires TV notices (hero cards) on transitions. Triggers
+   * an immediate Supabase sync so the grid refreshes from Supabase data.
    * ──────────────────────────────────────────────────────────────────── */
-  const [gingrActiveDogs, setGingrActiveDogs] = useState([]);   // all checked-in dogs from BOH
-  const [gingrDaycareDogs, setGingrDaycareDogs] = useState([]); // daycare subset for grid merge
-  const [gingrBoardingDogs, setGingrBoardingDogs] = useState([]); // boarding dogs from Gingr reservations API
+  const [gingrActiveDogCount, setGingrActiveDogCount] = useState(0); // BOH count for footer debug
   const prevBohIdsRef = useRef(null);     // Map<id, dogRecord> from previous poll
   const bohPollCountRef = useRef(0);
 
@@ -681,6 +666,27 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
         }
       });
   }, [tvLocationId]);
+
+  /* ── TV-POLL: Supabase reconciliation sync ──────────────────────────
+   * Calls the gingr-sync edge function in tv-poll mode to reconcile
+   * stale Supabase records. Called on an interval AND on BOH transitions.
+   * ──────────────────────────────────────────────────────────────────── */
+  const triggerTvPoll = useCallback(async () => {
+    if (!tvLocationId) return;
+    try {
+      await supabase.functions.invoke("gingr-sync", {
+        body: { location_id: tvLocationId, sync_type: "tv-poll" },
+      });
+    } catch (e) {
+      // Silently ignore — sync will retry on next interval
+    }
+  }, [tvLocationId]);
+
+  useEffect(() => {
+    const initTimer = setTimeout(triggerTvPoll, 5000);
+    const interval = setInterval(triggerTvPoll, 60_000);
+    return () => { clearTimeout(initTimer); clearInterval(interval); };
+  }, [triggerTvPoll]);
 
   useEffect(() => {
     if (!gingrCreds) return;
@@ -792,15 +798,15 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           }
         }
 
+        // Trigger immediate Supabase sync on transitions so grid refreshes
+        if (arrivals.length > 0 || departed.length > 0) {
+          triggerTvPoll();
+        }
+
         // Store current state for next comparison
         prevBohIdsRef.current = currentMap;
         bohPollCountRef.current += 1;
-
-        // Update display state
-        if (!cancelled) {
-          setGingrActiveDogs(active);
-          setGingrDaycareDogs(active.filter(dog => isDaycareType(dog.type)));
-        }
+        if (!cancelled) setGingrActiveDogCount(active.length);
       } catch (e) {
         // Silently ignore — Supabase boarding data still works as fallback
       }
@@ -811,238 +817,14 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     return () => { cancelled = true; clearInterval(interval); };
   }, [gingrCreds]);
 
-  /* ── TV-014: Direct Gingr reservations poll for ALL checked-in dogs ───
-   * Polls the Gingr reservations API directly for ALL checked-in
-   * reservations (boarding + daycare + evaluation + day boarding).
-   * This is the SINGLE authoritative source for who is in-house.
-   *
-   * Returns boarding dogs in gingrBoardingDogs (used by merge as primary
-   * boarding source) and daycare dogs in gingrDaycareFromRes (used to
-   * replace stale Supabase/BOH daycare data).
-   * ──────────────────────────────────────────────────────────────────── */
-  const [gingrDaycareFromRes, setGingrDaycareFromRes] = useState([]);
-  useEffect(() => {
-    if (!gingrCreds) return;
-    let cancelled = false;
-    const GINGR_RES_URL = `https://${gingrCreds.subdomain}.gingrapp.com/api/v1/reservations`;
-
-    const classifyType = (typeStr) => {
-      const t = (typeStr || "").toLowerCase();
-      if (t.includes("evaluation")) return "evaluation";
-      if (t.includes("day boarding") && !t.includes("daycare")) return "dayboarding";
-      if (t.includes("daycare")) return "daycare";
-      if (t.includes("boarding")) return "boarding";
-      return "boarding";
-    };
-
-    const fetchAllCheckedIn = async () => {
-      try {
-        const resp = await fetch(GINGR_RES_URL, {
-          method: "POST",
-          body: new URLSearchParams({ key: gingrCreds.apiKey, checked_in: "true" }),
-        });
-        if (!resp.ok || cancelled) return;
-        const json = await resp.json();
-        const resData = json.data || {};
-
-        // resData is an object keyed by reservation_id
-        const allDogs = Object.values(resData).map(r => ({
-          reservation_id: String(r.reservation_id),
-          animal_id: String(r.animal?.id || ""),
-          animal_name: (r.animal?.name || "Unknown").trim(),
-          breed: r.animal?.breed || "",
-          owner_id: String(r.owner?.id || ""),
-          owner_first: (r.owner?.first_name || "").trim(),
-          owner_last: (r.owner?.last_name || "").trim(),
-          start_date: r.start_date || "",
-          end_date: r.end_date || "",
-          check_in_date: r.check_in_date || "",
-          check_out_date: r.check_out_date || null,
-          run_name: r.run?.name || "",
-          services: r.services || [],
-          resType: classifyType(r.reservation_type?.type),
-        }));
-
-        const boarding = allDogs.filter(d => d.resType === "boarding");
-        const daycare = allDogs.filter(d => d.resType !== "boarding");
-
-        if (!cancelled) {
-          console.log('[TV-014] Gingr poll:', allDogs.length, 'total,', boarding.length, 'boarding,', daycare.length, 'daycare/eval/db');
-          setGingrBoardingDogs(boarding);
-          setGingrDaycareFromRes(daycare);
-        }
-      } catch (e) {
-        console.error('[TV-014] Gingr reservations poll error:', e.message || e);
-      }
-    };
-
-    fetchAllCheckedIn();
-    const interval = setInterval(fetchAllCheckedIn, 60000); // 60s poll
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [gingrCreds]);
-
-  /* ── TV-POLL: Supabase reconciliation sync (every 60s) ──────────────
-   * Calls the gingr-sync edge function in tv-poll mode to reconcile
-   * stale Supabase records (e.g. dogs that checked out but Supabase
-   * didn't update due to sync lag). Runs alongside BOH polling.
-   * Uses the existing supabase client (imported at top) so it picks
-   * up VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY automatically.
-   * ──────────────────────────────────────────────────────────────────── */
-  useEffect(() => {
-    let cancelled = false;
-    const TV_POLL_INTERVAL = 60_000; // 60 seconds
-
-    const triggerTvPoll = async () => {
-      if (cancelled) return;
-      try {
-        await supabase.functions.invoke("gingr-sync", {
-          body: {
-            location_id: tvLocationId,
-            sync_type: "tv-poll",
-          },
-        });
-      } catch (e) {
-        // Silently ignore — sync will retry on next interval
-      }
-    };
-
-    // Initial sync after 5s delay (let BOH fetch settle first)
-    const initTimer = setTimeout(triggerTvPoll, 5000);
-    const interval = setInterval(triggerTvPoll, TV_POLL_INTERVAL);
-    return () => { cancelled = true; clearTimeout(initTimer); clearInterval(interval); };
-  }, [tvLocationId]);
-
-  /* ── Merge BOH live data + Gingr reservations with Supabase ─────────── *
-   * This is the SINGLE source-of-truth computation for all checked-in dogs.
-   * It combines:
-   *   1. Supabase boarding reservations (fallback, may be stale)
-   *   2. BOH daycare/eval/dayboarding dogs (live from Gingr back_of_house)
-   *   3. Gingr reservations API boarding dogs (TV-014 — primary boarding source)
-   *
-   * TV-014: gingrBoardingDogs (from the reservations API with checked_in=true)
-   * is now the PRIMARY source for boarding dogs. It returns ALL checked-in
-   * boarding reservations directly from Gingr, unlike BOH which only has
-   * dogs in checking_out (going home today). This ensures multi-night boarders
-   * and newly checked-in dogs always appear on the TV.
+  /* ── Grid data: Supabase is the sole source of truth ─────────────── *
+   * All checked-in dog data comes from Supabase tables (synced by the
+   * gingr-sync edge function). BOH polling only detects transitions
+   * for hero card notifications and triggers immediate Supabase syncs.
    * ──────────────────────────────────────────────────────────────────── */
   const { reservations, dogs } = useMemo(() => {
-    const today = todayStr();
-    const hasGingrRes = gingrBoardingDogs.length > 0 || gingrDaycareFromRes.length > 0;
-    console.log('[TV-MERGE] gingrBoarding:', gingrBoardingDogs.length, 'gingrDaycare:', gingrDaycareFromRes.length, 'baseRes:', baseReservations.length);
-
-    // Build the complete set of Gingr-confirmed animal IDs
-    const gingrAllAnimalIds = new Set([
-      ...gingrBoardingDogs.map(d => d.animal_id),
-      ...gingrDaycareFromRes.map(d => d.animal_id),
-    ]);
-
-    // ── Step 1: Filter Supabase reservations ────────────────────────
-    // When Gingr reservations API is available, it's the authoritative
-    // source for who's checked in. Drop Supabase checked-in records whose
-    // animal isn't confirmed by Gingr. Keep non-checked-in records (history).
-    const filteredBaseRes = baseReservations.filter(r => {
-      if (r.status !== "checked-in") return true;
-      if (r._fromGingrApi) return true;
-      if (!hasGingrRes) return true; // Gingr API not loaded yet, keep everything
-      const animalId = r.dogId?.startsWith("g") ? r.dogId.slice(1) : null;
-      return animalId && gingrAllAnimalIds.has(animalId);
-    });
-
-    // ── Step 2: Build synthetic reservations from Gingr API ───────────
-    // Build reservation objects for boarding dogs from Gingr API
-    const gingrBoardingRes = gingrBoardingDogs.map(gd => ({
-      id: `gingr-res-${gd.reservation_id}`,
-      gingrId: Number(gd.reservation_id),
-      dogId: `g${gd.animal_id}`,
-      clientId: `g${gd.owner_id}`,
-      type: "boarding",
-      status: "checked-in",
-      _animalName: gd.animal_name,
-      _ownerName: gd.owner_last,
-      _services: gd.services || [],
-      room: gd.run_name || "",
-      checkIn: gd.start_date ? gd.start_date.slice(0, 10) : today,
-      checkOut: gd.end_date ? gd.end_date.slice(0, 10) : today,
-      _fromGingrApi: true,
-    }));
-
-    // Build reservation objects for daycare/eval/dayboarding dogs from Gingr API
-    const gingrDaycareRes = gingrDaycareFromRes.map(gd => ({
-      id: `gingr-res-${gd.reservation_id}`,
-      gingrId: Number(gd.reservation_id),
-      dogId: `g${gd.animal_id}`,
-      clientId: `g${gd.owner_id}`,
-      type: gd.resType || "daycare",
-      status: "checked-in",
-      _animalName: gd.animal_name,
-      _ownerName: gd.owner_last,
-      _services: gd.services || [],
-      room: gd.run_name || "",
-      checkIn: gd.start_date ? gd.start_date.slice(0, 10) : today,
-      checkOut: gd.end_date ? gd.end_date.slice(0, 10) : today,
-      _fromGingrApi: true,
-    }));
-
-    // ── Step 3: Build synthetic dog objects for display ───────────────
-    const syntheticDogSources = [
-      ...gingrBoardingDogs.map(gd => ({
-        animal_id: gd.animal_id,
-        name: gd.animal_name,
-        breed: gd.breed || "",
-      })),
-      ...gingrDaycareFromRes.map(gd => ({
-        animal_id: gd.animal_id,
-        name: gd.animal_name,
-        breed: gd.breed || "",
-      })),
-      ...(gingrDaycareDogs || []).map(gd => ({
-        animal_id: gd.animal_id,
-        name: (gd.a_first || "Unknown").trim(),
-        breed: gd.breed_name || "",
-      })),
-    ];
-    const seenAnimalIds = new Set();
-    const syntheticDogs = syntheticDogSources
-      .filter(gd => {
-        if (seenAnimalIds.has(gd.animal_id)) return false;
-        seenAnimalIds.add(gd.animal_id);
-        const existing = baseDogs.find(d => d.gingrId === Number(gd.animal_id) || d.id === `g${gd.animal_id}`);
-        return !existing;
-      })
-      .map(gd => ({
-        id: `g${gd.animal_id}`,
-        gingrId: Number(gd.animal_id),
-        fields: {
-          name: gd.name,
-          breed: gd.breed,
-          weight: null,
-        },
-        _image: null,
-      }));
-
-    // ── Step 4: Merge — deduplicate against checked-in Supabase records ──
-    // Only deduplicate against CHECKED-IN reservations from Supabase.
-    // Historical (checked-out) records must not block new check-ins.
-    const checkedInBaseRes = filteredBaseRes.filter(r => r.status === 'checked-in');
-    const existingGingrIds = new Set(checkedInBaseRes.map(r => r.gingrId).filter(Boolean));
-    const existingDogIds = new Set(checkedInBaseRes.map(r => r.dogId).filter(Boolean));
-
-    const newBoardingRes = gingrBoardingRes.filter(r =>
-      !existingGingrIds.has(r.gingrId) && !existingDogIds.has(r.dogId)
-    );
-    const newDaycareRes = gingrDaycareRes.filter(r =>
-      !existingGingrIds.has(r.gingrId) && !existingDogIds.has(r.dogId)
-    );
-
-    const allRes = [...filteredBaseRes, ...newBoardingRes, ...newDaycareRes];
-    const allDogs = [...baseDogs, ...syntheticDogs];
-
-    console.log('[TV-MERGE] filteredBase:', filteredBaseRes.length, 'newBoarding:', newBoardingRes.length, 'newDaycare:', newDaycareRes.length, 'total:', allRes.length);
-    return {
-      reservations: allRes,
-      dogs: allDogs,
-    };
-  }, [baseReservations, baseDogs, gingrDaycareDogs, gingrActiveDogs, gingrBoardingDogs, gingrDaycareFromRes]);
+    return { reservations: baseReservations, dogs: baseDogs };
+  }, [baseReservations, baseDogs]);
 
   /* ── Fetch animal profile icons (photos) from Supabase ────────────── */
   const [animalIcons, setAnimalIcons] = useState({}); // keyed by animal_gingr_id
@@ -1240,6 +1022,24 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     };
   }, [uniqueDogs, smallDaycare, largeDaycare, privatePlayDogs, evaluationDogs, unclassifiedDogs, dualTaggedIds]);
 
+  /* ── Dual-tag subtitle strings for section headers ─────────────────── */
+  const dualTagSubtitles = useMemo(() => {
+    const dualInLarge = largeDaycare.filter(r => dualTaggedIds.has(r.dogId)).length;
+    const dualInSmall = smallDaycare.filter(r => dualTaggedIds.has(r.dogId)).length;
+    const fmt = (v) => v % 1 === 0 ? v : v.toFixed(1);
+    return {
+      "large-daycare": dualInLarge > 0
+        ? `${largeDaycare.length} dogs, ${dualInLarge} also PP → ${fmt(viewCounts["large-daycare"])} effective`
+        : `${largeDaycare.length} dogs`,
+      "small-daycare": dualInSmall > 0
+        ? `${smallDaycare.length} dogs, ${dualInSmall} also PP → ${fmt(viewCounts["small-daycare"])} effective`
+        : `${smallDaycare.length} dogs`,
+      "private-play": (dualInLarge + dualInSmall) > 0
+        ? `${privatePlayDogs.length} dogs, ${dualInLarge} from large + ${dualInSmall} from small → ${fmt(viewCounts["private-play"])} effective`
+        : `${privatePlayDogs.length} dogs`,
+    };
+  }, [largeDaycare, smallDaycare, privatePlayDogs, dualTaggedIds, viewCounts]);
+
   /* ── TV-012/TV-013: Persistent TV notice system ────────────────────── *
    * Notices (check-in / check-out hero cards) are stored with a timestamp
    * (`firedAt`) and a fixed duration. A single 1-second interval drives
@@ -1354,6 +1154,46 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const timeStr = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" });
   const dateStr = now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
+  /* ── Image preloader: prefetch all dog photos when the list changes ── */
+  useEffect(() => {
+    const urls = new Set();
+    for (const r of uniqueDogs) {
+      const d = dogs.find(dd => dd.id === r.dogId);
+      const icon = animalIcons[d?.gingrId];
+      const url = icon?.icon_url || d?._image;
+      if (url) urls.add(url);
+    }
+    urls.forEach(u => { const img = new Image(); img.src = u; });
+  }, [uniqueDogs, dogs, animalIcons]);
+
+  /* ── DogCardImage: skeleton placeholder while loading, then fade in ── */
+  const DogCardImage = ({ src, name, accentRgb, accent }) => {
+    const [loaded, setLoaded] = useState(false);
+    return (
+      <div style={{ width: 64, height: 64, borderRadius: 14, marginBottom: 8, position: "relative", overflow: "hidden", border: `2px solid rgba(${accentRgb},0.4)` }}>
+        {!loaded && (
+          <div style={{
+            position: "absolute", inset: 0, borderRadius: 12,
+            background: `rgba(${accentRgb},0.15)`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 24, fontWeight: 800, color: accent,
+            animation: "dogCardSkeleton 1.5s ease-in-out infinite",
+          }}>
+            {name[0]}
+          </div>
+        )}
+        <img
+          src={src} alt={name} loading="eager" decoding="async"
+          onLoad={() => setLoaded(true)}
+          style={{
+            width: "100%", height: "100%", objectFit: "cover", borderRadius: 12,
+            opacity: loaded ? 1 : 0, transition: "opacity 0.3s ease-in",
+          }}
+        />
+      </div>
+    );
+  };
+
   /* ── TV-003 + TV-004: DogCard with size differentiation + fixed room parsing */
   const DogCard = ({ res, sizeGroup }) => {
     const dog = dogs.find(d => d.id === res.dogId);
@@ -1415,10 +1255,10 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           </div>
         )}
 
-        {/* TV-018: Boarding label — bottom-center of card */}
+        {/* TV-018: Boarding label — top-left chip (below +PP if dual-tagged) */}
         {isBoarding && (
           <div style={{
-            position: "absolute", bottom: 8, left: "50%", transform: "translateX(-50%)",
+            position: "absolute", top: dualTaggedIds.has(res.dogId) && themeKey !== "private_play" ? 30 : 8, left: 8,
             display: "inline-flex", alignItems: "center", justifyContent: "center",
             fontSize: 9, fontWeight: 900, letterSpacing: "0.08em",
             color: "#60A5FA",
@@ -1427,17 +1267,13 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
             borderRadius: 6, padding: "2px 5px",
             lineHeight: 1.4,
           }}>
-            BOARDING
+            BRD
           </div>
         )}
 
-        {/* Dog photo/icon from gingr_animal_icons or fallback */}
+        {/* Dog photo/icon from gingr_animal_icons or fallback — skeleton + fade-in */}
         {image ? (
-          <img src={image} alt={name} style={{
-            width: 64, height: 64, borderRadius: 14, objectFit: "cover",
-            border: `2px solid rgba(${theme.accentRgb},0.4)`,
-            marginBottom: 8,
-          }} />
+          <DogCardImage src={image} name={name} accentRgb={theme.accentRgb} accent={theme.accent} />
         ) : (
           <div style={{
             width: 64, height: 64, borderRadius: 14,
@@ -1518,7 +1354,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           </svg>
           <div>
             <div style={{ fontSize: 28, fontWeight: 900, color: "#fff", letterSpacing: "-0.02em" }}>K9 Operations</div>
-            <div style={{ fontSize: 12, color: "rgba(132,204,22,0.6)", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginTop: 1 }}>The Operating System for Pet Resorts</div>
+            <div style={{ fontSize: 12, color: "rgba(132,204,22,0.6)", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginTop: 1 }}>The Operating System for Pet Care Facilities</div>
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
@@ -1628,6 +1464,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
               animalIcons={animalIcons}
               fading={entry.fading}
               compact={compactNotices}
+              playgroupMap={playgroupMap}
             />
           ))}
           {/* Then check-out cards */}
@@ -1640,6 +1477,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
               fading={entry.fading}
               animalIcons={animalIcons}
               compact={compactNotices}
+              playgroupMap={playgroupMap}
             />
           ))}
         </div>
@@ -1657,9 +1495,9 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                   count={viewCounts[activeView] != null ? (viewCounts[activeView] % 1 === 0 ? viewCounts[activeView] : viewCounts[activeView].toFixed(1)) : filteredDogList.length}
                   color={filteredViewMeta?.color || "#fff"}
                   subtitle={
-                    activeView === "large-daycare" ? "Large Dog Playgroup (Gingr icon)" :
-                    activeView === "small-daycare" ? "Small Dog Playgroup (Gingr icon)" :
-                    activeView === "private-play" ? "Private Play (Gingr icon)" :
+                    activeView === "large-daycare" ? dualTagSubtitles["large-daycare"] :
+                    activeView === "small-daycare" ? dualTagSubtitles["small-daycare"] :
+                    activeView === "private-play" ? dualTagSubtitles["private-play"] :
                     activeView === "evaluation" ? "Needs evaluation (Gingr icon)" :
                     activeView === "unclassified" ? "No play icon in Gingr — please assign" :
                     undefined
@@ -1700,6 +1538,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                   label="Large Dog Daycare"
                   count={viewCounts["large-daycare"] % 1 === 0 ? viewCounts["large-daycare"] : viewCounts["large-daycare"].toFixed(1)}
                   color={SIZE_THEME.large.accent}
+                  subtitle={dualTagSubtitles["large-daycare"]}
                 />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
                   {largeDaycare.map(r => <DogCard key={r.id} res={r} sizeGroup="large" />)}
@@ -1714,6 +1553,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                   label="Small Dog Daycare"
                   count={viewCounts["small-daycare"] % 1 === 0 ? viewCounts["small-daycare"] : viewCounts["small-daycare"].toFixed(1)}
                   color={SIZE_THEME.small.accent}
+                  subtitle={dualTagSubtitles["small-daycare"]}
                 />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
                   {smallDaycare.map(r => <DogCard key={r.id} res={r} sizeGroup="small" />)}
@@ -1728,6 +1568,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
                   label="Private Play"
                   count={viewCounts["private-play"] % 1 === 0 ? viewCounts["private-play"] : viewCounts["private-play"].toFixed(1)}
                   color="#EF4444"
+                  subtitle={dualTagSubtitles["private-play"]}
                 />
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 12 }}>
                   {privatePlayDogs.map(r => <DogCard key={r.id} res={r} sizeGroup="private_play" />)}
@@ -1775,7 +1616,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
 
       {/* Footer */}
       <div style={{ textAlign: "center", marginTop: 40, padding: "16px 0", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time · Gingr: {gingrBoardingDogs.length + gingrDaycareFromRes.length} in-house ({gingrBoardingDogs.length}B + {gingrDaycareFromRes.length}D)</div>
+        <div style={{ fontSize: 11, color: "rgba(255,255,255,0.15)" }}>K9 Operations · Auto-refreshes in real-time · BOH: {gingrActiveDogCount} active · Supabase: {reservations.filter(r => r.status === "checked-in").length} in-house</div>
       </div>
 
       {/* Floating Exit Button — subtle, top-left corner */}

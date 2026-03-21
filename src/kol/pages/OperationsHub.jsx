@@ -282,17 +282,11 @@ function OperationsHub({ data, save, nav, profile }) {
 
     // Room cleaning stats + awaiting checkout count
     const roomStats = getRoomCleaningStats(data, viewDate);
-    const allRooms = data.rooms || {};
     const boardingCheckedOut = reservations.filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-out");
-    let roomsAwaitingCheckout = 0;
-    Object.keys(allRooms).forEach(rt => {
-      (allRooms[rt] || []).forEach(rm => {
-        const activeRes = inHouseBoarding.find(r => r.room === rm);
-        const coRes = boardingCheckedOut.find(r => r.room === rm);
-        // Needs disinfect (scheduled or actual checkOut === viewDate) but dog hasn't checked out yet
-        if (activeRes && (activeRes.checkOut === viewDate || activeRes.scheduledCheckOut === viewDate) && !coRes) roomsAwaitingCheckout++;
-      });
-    });
+    const roomsAwaitingCheckout = inHouseBoarding.filter(r =>
+      (r.checkOut === viewDate || r.scheduledCheckOut === viewDate) &&
+      !boardingCheckedOut.find(co => co.room === r.room)
+    ).length;
 
     // Baths: checked-in dogs checking out today that have a bath type (includes departure time)
     const bathRows = [];

@@ -290,7 +290,6 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const pctDone = totalCount ? Math.round((checkedCount / totalCount) * 100) : 0;
 
   // ─── Dynamic data queries ───
-  const allRooms = data.rooms || {};
   const boardingToday = (data.reservations || []).filter(r => r.type === "boarding" && r.checkIn <= viewDate && r.checkOut >= viewDate && (r.status === "checked-in" || r.status === "upcoming"));
   const boardingCheckedOut = (data.reservations || []).filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-out");
 
@@ -437,34 +436,26 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const prevEntry = allOps.find(e => e.id === prevEntryId);
     const prevItems = prevEntry ? (prevEntry.items || {}) : {};
 
-    // Previous-day missed disinfect from computed_items
+    // Previous-day missed cleaning detection (disinfects + as-needed)
     const prevComputedRooms = prevEntry?.computed_items?.rooms || [];
     const missedMap = {};
     if (prevComputedRooms.length > 0) {
       prevComputedRooms.forEach(cr => {
         const prevKey = sanitizeRoomKey(cr.room);
         if (cr.needsDisinfect && !(prevItems[prevKey]?.disinfect) && !(prevItems[cr.room]?.disinfect)) {
-          missedMap[prevKey] = { missedDisinfect: true };
-          missedMap[cr.room] = { missedDisinfect: true };
+          missedMap[prevKey] = { ...(missedMap[prevKey] || {}), missedDisinfect: true };
+          missedMap[cr.room] = { ...(missedMap[cr.room] || {}), missedDisinfect: true };
         }
       });
-    } else {
-      // Fallback: client-side missed detection
-      const prevBoardingCheckedOut = (data.reservations || []).filter(r => r.type === "boarding" && r.checkOut === prevDate && r.status === "checked-out");
-      const prevBoardingToday = (data.reservations || []).filter(r => r.type === "boarding" && r.checkIn <= prevDate && r.checkOut >= prevDate && (r.status === "checked-in" || r.status === "upcoming" || r.status === "checked-out"));
-      Object.keys(allRooms).forEach(rt => {
-        (allRooms[rt] || []).forEach(rm => {
-          const prevRi = prevItems[rm] || {};
-          const prevCoRes = prevBoardingCheckedOut.find(r => r.room === rm);
-          const prevActiveRes = prevBoardingToday.find(r => r.room === rm);
-          const prevIsLastDay = prevActiveRes && prevActiveRes.checkOut === prevDate;
-          const prevNeededDisinfect = !!prevCoRes || !!(prevActiveRes && prevIsLastDay);
-          if (prevNeededDisinfect && !prevRi.disinfect) {
-            missedMap[rm] = { missedDisinfect: true };
-          }
-        });
-      });
     }
+    // Also detect missed as-needed tasks from previous day
+    Object.entries(prevItems).forEach(([key, ri]) => {
+      if (ri.asNeeded && !ri.asNeededDone) {
+        const sk = sanitizeRoomKey(key);
+        missedMap[sk] = { ...(missedMap[sk] || {}), missedAsNeeded: true, asNeededNote: ri.asNeededNote };
+        if (sk !== key) missedMap[key] = { ...(missedMap[key] || {}), missedAsNeeded: true, asNeededNote: ri.asNeededNote };
+      }
+    });
 
     // ─── Server-computed room data (primary source) ───
     const rcEntry = allOps.find(e => e.id === `ops_room_cleaning_${viewDate}`);
@@ -506,20 +497,6 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         if (cr.needsRefresh) { totalRefresh++; if (ri.refresh) doneRefresh++; }
         if (cr.needsDisinfect) { totalDisinfect++; if (ri.disinfect) doneDisinfect++; }
         if (cr.needsSetup) { totalSetups++; if (ri.setupDone) doneSetups++; }
-      });
-    } else {
-      Object.keys(allRooms).forEach(rt => {
-        (allRooms[rt] || []).forEach(rm => {
-          totalRooms++;
-          const ri = roomItems[rm] || {};
-          const activeRes = boardingToday.find(r => r.room === rm);
-          const coRes = boardingCheckedOut.find(r => r.room === rm);
-          if (activeRes || coRes) totalOccupied++;
-          const notFirst = activeRes && activeRes.checkIn < viewDate;
-          const notLast = activeRes && activeRes.checkOut > viewDate;
-          if (activeRes && notFirst && notLast) { totalRefresh++; if (ri.refresh) doneRefresh++; }
-          if (coRes) { totalDisinfect++; if (ri.disinfect) doneDisinfect++; }
-        });
       });
     }
     const totalClean = totalRefresh + totalDisinfect;
@@ -563,11 +540,13 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
               {crData && crData.checkOut === viewDate && crData.cleaningType !== "disinfect" && <div style={{ fontSize: 9, color: "#F59E0B", fontWeight: 600, marginTop: 1 }}>Checkout day</div>}
               {crData && crData.cleaningType === "disinfect" && <div style={{ fontSize: 9, color: C.dan, fontWeight: 600, marginTop: 1 }}>Checked out</div>}
               {needsRefresh && crData && <div style={{ fontSize: 9, color: C.textMut, marginTop: 1 }}>Day {crData.dayNumber} of {crData.totalNights}</div>}
-              {missedMap[rm]?.missedDisinfect && <div style={{ fontSize: 10, fontWeight: 700, color: "#DC2626", marginTop: 2 }}>⚠ Full disinfect missed</div>}
+              {missedMap[rm]?.missedDisinfect && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 4, marginTop: 2, display: "inline-block" }}>⚠ Disinfect missed</div>}
+              {missedMap[rm]?.missedAsNeeded && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 4, marginTop: 2, display: "inline-block" }}>⚠ As-needed missed{missedMap[rm]?.asNeededNote ? `: ${missedMap[rm].asNeededNote}` : ""}</div>}
             </div> : <div>
-              {missedMap[rm]?.missedDisinfect ? <div>
+              {(missedMap[rm]?.missedDisinfect || missedMap[rm]?.missedAsNeeded) ? <div>
                 <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic", marginTop: 1 }}>Vacant</div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#DC2626", marginTop: 2 }}>⚠ Full disinfect missed</div>
+                {missedMap[rm]?.missedDisinfect && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 4, marginTop: 2, display: "inline-block" }}>⚠ Disinfect missed</div>}
+                {missedMap[rm]?.missedAsNeeded && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 4, marginTop: 2, display: "inline-block" }}>⚠ As-needed missed</div>}
               </div> : <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic", marginTop: 1 }}>Vacant</div>}
             </div>}
           </div>
@@ -625,13 +604,20 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
     return (
       <div>
-        {/* Missed cleaning alert banner */}
-        {Object.keys(missedMap).length > 0 && <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "rgba(220, 38, 38, 0.08)", border: "1.5px solid rgba(220, 38, 38, 0.25)", borderRadius: 10, marginBottom: 16 }}>
+        {/* Missed cleaning alert banner — amber styling */}
+        {Object.keys(missedMap).length > 0 && <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", background: "#FEF3C7", border: "1.5px solid #F59E0B", borderRadius: 10, marginBottom: 16 }}>
           <span style={{ fontSize: 18 }}>⚠️</span>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#DC2626" }}>Missed Cleaning from {new Date(prevDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</div>
-            <div style={{ fontSize: 11, color: "#DC2626", opacity: 0.8 }}>
-              {Object.values(missedMap).filter(m => m.missedDisinfect).length > 0 && `${Object.values(missedMap).filter(m => m.missedDisinfect).length} full disinfect${Object.values(missedMap).filter(m => m.missedDisinfect).length > 1 ? "s" : ""} missed`}
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#92400E" }}>Missed Cleaning from {new Date(prevDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</div>
+            <div style={{ fontSize: 11, color: "#92400E", opacity: 0.8 }}>
+              {(() => {
+                const parts = [];
+                const missedDisinfects = new Set(Object.entries(missedMap).filter(([, m]) => m.missedDisinfect).map(([k]) => sanitizeRoomKey(k))).size;
+                const missedAsNeeded = new Set(Object.entries(missedMap).filter(([, m]) => m.missedAsNeeded).map(([k]) => sanitizeRoomKey(k))).size;
+                if (missedDisinfects > 0) parts.push(`${missedDisinfects} disinfect${missedDisinfects > 1 ? "s" : ""}`);
+                if (missedAsNeeded > 0) parts.push(`${missedAsNeeded} as-needed task${missedAsNeeded > 1 ? "s" : ""}`);
+                return parts.join(", ") + " missed";
+              })()}
             </div>
           </div>
         </div>}
@@ -723,52 +709,13 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
               </Card>
             </div>
           );
-        }) : /* ─── Fallback: client-side room data ─── */
-        Object.keys(allRooms).map(rt => {
-          const rooms = allRooms[rt] || [];
-          if (!rooms.length) return null;
-          const filteredRooms = rooms.filter(rm => {
-            const key = sanitizeRoomKey(rm);
-            const ri = roomItems[key] || roomItems[rm] || {};
-            const activeRes = boardingToday.find(r => r.room === rm);
-            const coRes = boardingCheckedOut.find(r => r.room === rm);
-            const notFirst = activeRes && activeRes.checkIn < viewDate;
-            const notLast = activeRes && activeRes.checkOut > viewDate;
-            const hasRefresh = activeRes && notFirst && notLast;
-            const hasDisinfect = !!coRes;
-            if (rcFilter === "incomplete") {
-              return (hasRefresh && !ri.refresh) || (hasDisinfect && !ri.disinfect) || recentlyCompleted.has(key);
-            }
-            if (rcFilter === "setup") return false; // no setup data in fallback
-            if (rcFilter === "refresh") return hasRefresh;
-            if (rcFilter === "disinfect") return hasDisinfect;
-            if (rcFilter === "asNeeded") return ri.asNeeded;
-            return true;
-          });
-          if (filteredRooms.length === 0) return null;
-          const occupiedCount = filteredRooms.filter(rm => boardingToday.find(r => r.room === rm) || boardingCheckedOut.find(r => r.room === rm)).length;
-          return (
-            <div key={rt} style={{ marginBottom: 20 }}>
-              <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>{rt} <Badge color="default" size="sm">{occupiedCount}/{filteredRooms.length} occupied</Badge></h3>
-              <Card>
-                <div style={{ display: "grid", gridTemplateColumns: gridCols, borderBottom: `2px solid ${C.border}`, padding: "8px 12px", background: C.surfaceHover }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>ROOM</div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>ROOM REFRESH</div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textAlign: "center" }}>FULL DISINFECT</div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#14532D", textAlign: "center" }}>SETUPS</div>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, textAlign: "center" }}>AS NEEDED</div>
-                </div>
-                {filteredRooms.map((rm, i) => {
-                  const key = sanitizeRoomKey(rm);
-                  const ri = roomItems[key] || roomItems[rm] || {};
-                  return renderRoomRow(key, ri, null, i, filteredRooms.length, rm);
-                })}
-              </Card>
-            </div>
-          );
-        })}
-        {!hasComputedData && !Object.values(allRooms).some(r => r.length > 0) && <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No rooms configured. Add rooms in Settings → Rooms.</div></Card>}
-        {hasComputedData && computedRooms.length === 0 && <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec, fontSize: 14 }}>No rooms configured. Add rooms in Settings → Gingr Integration.</div></Card>}
+        }) : /* ─── No computed data yet — syncing state ─── */
+        <Card style={{ padding: 32, textAlign: "center" }}>
+          <div style={{ color: C.textSec, fontSize: 14 }}>
+            <K9LoadingAnimation size={32} style={{ marginBottom: 8 }} />
+            <div>Room data is syncing from Gingr. This updates automatically every 15 minutes.</div>
+          </div>
+        </Card>}
       </div>
     );
   };
@@ -969,11 +916,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       });
   }, [sub, viewDate, profile?.location_id]);
 
-  // Auto-fetch bath types from Gingr existing_reservation_estimate
+  // Bath types from gingr_animal_icons_live (icon_group = 'Bath')
   useEffect(() => {
     if (sub !== "bathing") return;
     const reservations = data.reservations || [];
-    // Only show dogs whose reservation END DATE equals the view date
     const endingToday = reservations.filter(r =>
       (r.status === "checked-in" || r.status === "upcoming") &&
       r.checkOut === viewDate
@@ -988,48 +934,23 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const locationId = profile?.location_id;
     if (!locationId) { setBathTypeLoading(false); return; }
 
-    supabase.from("lite_settings").select("setting_value")
-      .eq("location_id", locationId)
-      .eq("setting_key", "gingr_config")
-      .limit(1)
-      .then(async ({ data: cfgRows }) => {
-        if (!cfgRows || cfgRows.length === 0) { setBathTypeLoading(false); return; }
-        const cfg = cfgRows[0].setting_value;
-        const subdomain = cfg.subdomain;
-        const apiKey = cfg.api_key;
-        if (!subdomain || !apiKey) { setBathTypeLoading(false); return; }
+    const animalIds = needsFetch.map(r => String(r.gingrId || "").replace(/^g/, "")).filter(Boolean);
+    if (animalIds.length === 0) { setBathTypeLoading(false); return; }
 
-        const BATH_ADDON_MAP = {
-          38: "Premium", 39: "Hypoallergenic - NO SPRAY",
-          79: "Hypoallergenic - WITH SPRAY", 40: "Medicated",
-          75: "Whitening", 76: "Shampoo From Home",
-        };
+    supabase.from("gingr_animal_icons_live")
+      .select("animal_gingr_id, icon_title")
+      .eq("location_id", locationId)
+      .eq("icon_group", "Bath")
+      .in("animal_gingr_id", animalIds)
+      .then(({ data: iconRows }) => {
+        const iconMap = {};
+        (iconRows || []).forEach(r => { iconMap[r.animal_gingr_id] = r.icon_title; });
 
         const newMap = { ...bathTypeMap };
-        for (let i = 0; i < needsFetch.length; i += 5) {
-          const batch = needsFetch.slice(i, i + 5);
-          await Promise.all(batch.map(async (res) => {
-            try {
-              const gingrId = String(res.gingrId || "").replace(/^g/, "");
-              if (!gingrId) { newMap[res.id] = "Premium"; return; }
-              const resp = await fetch(
-                `https://${subdomain}.gingrapp.com/api/v1/existing_reservation_estimate?key=${apiKey}&id=${gingrId}`
-              );
-              const json = await resp.json();
-              if (json.error) { newMap[res.id] = "Premium"; return; }
-              const resSvcs = json.data?.reservations?.[0]?.reservation_services || [];
-              let foundBathType = null;
-              for (const svc of resSvcs) {
-                const sid = parseInt(svc.s_id);
-                if (BATH_ADDON_MAP[sid]) { foundBathType = BATH_ADDON_MAP[sid]; break; }
-              }
-              newMap[res.id] = foundBathType || "Premium";
-            } catch (err) {
-              console.error("Failed to fetch bath type for", res.id, err);
-              newMap[res.id] = "Premium";
-            }
-          }));
-        }
+        needsFetch.forEach(res => {
+          const gingrId = String(res.gingrId || "").replace(/^g/, "");
+          newMap[res.id] = iconMap[gingrId] || "Premium";
+        });
         setBathTypeMap(newMap);
         setBathTypeLoading(false);
       });
