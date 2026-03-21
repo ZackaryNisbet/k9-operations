@@ -1382,15 +1382,20 @@ async function syncAnimalPhotos(
 
   if (animalIds.length === 0) return { synced: 0, skipped: 0, errors: 0 };
 
-  // 2. Fetch animals that need photo syncing
-  const { data: animals } = await supabase
+  // 2. Fetch ALL animals (with and without photos) for accurate logging
+  const { data: allAnimals } = await supabase
     .from("gingr_animals")
     .select("gingr_id, image_url, local_photo_url, photo_synced_from")
     .eq("location_id", locationId)
-    .in("gingr_id", animalIds)
-    .not("image_url", "is", null);
+    .in("gingr_id", animalIds);
 
-  if (!animals || animals.length === 0) return { synced: 0, skipped: 0, errors: 0 };
+  const animals = (allAnimals || []).filter((a: any) => a.image_url);
+  const noPhotoCount = (allAnimals || []).length - animals.length;
+
+  if (animals.length === 0) {
+    console.log(`Photo sync: 0 to sync, ${noPhotoCount} have no photo in Gingr`);
+    return { synced: 0, skipped: 0, errors: 0 };
+  }
 
   // Filter to only dogs that need syncing (new photo or changed photo)
   const toSync = animals.filter(
@@ -1410,7 +1415,18 @@ async function syncAnimalPhotos(
       batch.map(async (animal: any) => {
         try {
           const gingrImageUrl = animal.image_url;
-          const imageResp = await fetch(gingrImageUrl);
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 10000);
+          let imageResp: Response;
+          try {
+            imageResp = await fetch(gingrImageUrl, { signal: controller.signal });
+          } catch (e: any) {
+            clearTimeout(timeout);
+            console.warn(`Photo download timeout/error for animal ${animal.gingr_id}: ${e.message}`);
+            errors++;
+            return;
+          }
+          clearTimeout(timeout);
           if (!imageResp.ok) {
             console.warn(`Photo download failed for animal ${animal.gingr_id}: HTTP ${imageResp.status}`);
             errors++;
@@ -1418,6 +1434,11 @@ async function syncAnimalPhotos(
           }
 
           const imageBlob = await imageResp.blob();
+          if (imageBlob.size > 5 * 1024 * 1024) {
+            console.warn(`Photo too large for animal ${animal.gingr_id}: ${(imageBlob.size / 1024 / 1024).toFixed(1)}MB (max 5MB), skipping`);
+            errors++;
+            return;
+          }
           const contentType = imageResp.headers.get("content-type") || "image/jpeg";
           const ext = contentType.includes("png")
             ? "png"
@@ -1469,7 +1490,7 @@ async function syncAnimalPhotos(
     );
   }
 
-  console.log(`Photo sync: ${synced} synced, ${animals.length - toSync.length} skipped (unchanged), ${errors} errors`);
+  console.log(`Photo sync: ${synced} downloaded, ${animals.length - toSync.length} already cached, ${errors} failed, ${noPhotoCount} no photo in Gingr`);
   return { synced, skipped: animals.length - toSync.length, errors };
 }
 
