@@ -155,32 +155,51 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const initials = userName.split(" ").map(w => w[0]).join("").toUpperCase() || "??";
     const now = new Date().toISOString();
     // Auto-fill name + timestamp when checking a checkbox (write both web and mobile field names for cross-app compat)
+    let newItems;
     if (field === "checked" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, initials: userName } }));
+      newItems = { ...items, [key]: { ...(items[key] || {}), [field]: val, initials: userName } };
     } else if (field === "refresh" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, refreshBy: userName, refreshInitials: initials, refreshAt: now } }));
+      newItems = { ...items, [key]: { ...(items[key] || {}), [field]: val, refreshBy: userName, refreshInitials: initials, refreshAt: now } };
     } else if (field === "disinfect" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, disinfectBy: userName, disinfectInitials: initials, disinfectAt: now } }));
+      newItems = { ...items, [key]: { ...(items[key] || {}), [field]: val, disinfectBy: userName, disinfectInitials: initials, disinfectAt: now } };
     } else if (field === "setupDone" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, setupDoneBy: userName, setupInitials: initials, setupAt: now } }));
+      newItems = { ...items, [key]: { ...(items[key] || {}), [field]: val, setupDoneBy: userName, setupInitials: initials, setupAt: now } };
     } else if (field === "asNeeded" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededBy: userName, asNeededAt: now, asNeededNote: "" } }));
+      newItems = { ...items, [key]: { ...(items[key] || {}), [field]: val, asNeededBy: userName, asNeededAt: now, asNeededNote: "" } };
     } else if (field === "asNeeded" && val === false) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededBy: "", asNeededAt: "", asNeededNote: "", asNeededDone: false, asNeededDoneBy: "", asNeededDoneAt: "" } }));
+      newItems = { ...items, [key]: { ...(items[key] || {}), [field]: val, asNeededBy: "", asNeededAt: "", asNeededNote: "", asNeededDone: false, asNeededDoneBy: "", asNeededDoneAt: "" } };
     } else if (field === "asNeededDone" && val === true) {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val, asNeededDoneBy: userName, asNeededDoneAt: now } }));
-    } else if (field === "setupBowl") {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val } }));
+      newItems = { ...items, [key]: { ...(items[key] || {}), [field]: val, asNeededDoneBy: userName, asNeededDoneAt: now } };
     } else {
-      setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: val } }));
+      newItems = { ...items, [key]: { ...(items[key] || {}), [field]: val } };
     }
-    setDirty(true);
+    setItems(newItems);
+
+    // Auto-save for room cleaning (no Save button needed)
+    if (sub === "room_cleaning") {
+      const entries = [...allOps];
+      const idx = entries.findIndex(e => e.id === entryId);
+      const entry = { id: entryId, type: sub, date: viewDate, locked: false, items: newItems, history: [...(idx >= 0 ? entries[idx].history || [] : []), { ts: now, action: "saved" }] };
+      if (idx >= 0) entries[idx] = entry; else entries.push(entry);
+      save({ ...data, dailyOps: entries });
+    } else {
+      setDirty(true);
+    }
   };
 
   const setNoteForItem = (key, note) => {
     if (isLocked) return;
-    setItems(prev => ({ ...prev, [key]: { ...(prev[key] || {}), asNeededNote: note } }));
-    setDirty(true);
+    const newItems = { ...items, [key]: { ...(items[key] || {}), asNeededNote: note } };
+    setItems(newItems);
+    if (sub === "room_cleaning") {
+      const entries = [...allOps];
+      const idx = entries.findIndex(e => e.id === entryId);
+      const entry = { id: entryId, type: sub, date: viewDate, locked: false, items: newItems, history: [...(idx >= 0 ? entries[idx].history || [] : []), { ts: new Date().toISOString(), action: "saved" }] };
+      if (idx >= 0) entries[idx] = entry; else entries.push(entry);
+      save({ ...data, dailyOps: entries });
+    } else {
+      setDirty(true);
+    }
   };
 
   const formatTime = (iso) => {
@@ -264,7 +283,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         {!isToday && <button onClick={() => setViewDate(td)} style={{ ...nbtn, background: C.pri, color: "#fff" }}>Today</button>}
       </div>
       <div style={{ display: "flex", gap: 6 }}>
-        {dirty && !isLocked && <Btn onClick={saveEntry}>Save</Btn>}
+        {dirty && !isLocked && sub !== "room_cleaning" && <Btn onClick={saveEntry}>Save</Btn>}
         {isTemplate && <Btn variant="secondary" size="sm" onClick={openTemplateEditor}>Customize</Btn>}
         {existing && (isPast && isLocked ? <Btn variant="secondary" size="sm" disabled style={{opacity:0.5,cursor:"not-allowed"}}>🔒 Locked</Btn> : <Btn variant={isLocked ? "secondary" : "accent"} onClick={toggleLock} size="sm">{isLocked ? "🔒 Locked" : "🔓 Lock"}</Btn>)}
         {existing && <button onClick={() => setShowHistory(v => !v)} style={{ padding: "4px 12px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: C.surface, color: C.textSec, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>{showHistory ? "Hide History" : "History"}</button>}
@@ -1436,7 +1455,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         : sub === "pamper" ? renderPamper()
         : sub === "svc" ? renderGenericService()
         : <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec }}>Unknown checklist type</div></Card>}
-      {dirty && !isLocked && <div style={{ position: "sticky", bottom: 16, display: "flex", justifyContent: "center", marginTop: 20 }}>
+      {dirty && !isLocked && sub !== "room_cleaning" && <div style={{ position: "sticky", bottom: 16, display: "flex", justifyContent: "center", marginTop: 20 }}>
         <Btn onClick={saveEntry} style={{ padding: "10px 40px", fontSize: 14 }}>Save Changes</Btn>
       </div>}
 
