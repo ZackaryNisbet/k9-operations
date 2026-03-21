@@ -110,6 +110,72 @@ function SubscriptionTab({ profile, addGlobalToast }) {
   );
 }
 
+// ── Room Cleaning Settings Tab ─────────────────────────────────────────────
+function RoomCleaningSettingsTab({ profile, addGlobalToast }) {
+  const [carryOverEnabled, setCarryOverEnabled] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const locationId = profile?.location_id;
+  const SETTING_KEY = "room_cleaning_missed_carry_over";
+
+  useEffect(() => {
+    if (!locationId) { setLoading(false); return; }
+    supabase.from("lite_settings").select("setting_value")
+      .eq("location_id", locationId)
+      .eq("setting_key", SETTING_KEY)
+      .limit(1)
+      .maybeSingle()
+      .then(({ data: row }) => {
+        if (row?.setting_value?.enabled) setCarryOverEnabled(true);
+        setLoading(false);
+      });
+  }, [locationId]);
+
+  const toggleCarryOver = async (val) => {
+    setCarryOverEnabled(val);
+    if (!locationId) return;
+    await supabase.from("lite_settings").upsert({
+      location_id: locationId,
+      setting_key: SETTING_KEY,
+      setting_value: { enabled: val },
+    }, { onConflict: "location_id,setting_key" });
+    addGlobalToast?.(`Missed cleaning carry-over ${val ? "enabled" : "disabled"}.`, "success");
+  };
+
+  if (loading) return <div style={{ padding: 20, color: C.textSec }}>Loading...</div>;
+
+  return (
+    <div>
+      <h3 style={{ margin: "0 0 20px", fontSize: 18, fontWeight: 700, color: C.text }}>Room Cleaning</h3>
+      <div style={{ background: C.surface, borderRadius: 12, padding: "20px 24px", border: `1.5px solid ${C.border}` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 4 }}>Missed Cleaning Carry-Over</div>
+            <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.5 }}>
+              When enabled, missed disinfects and as-needed tasks from the previous day appear as actionable checkboxes (in amber) on today's room cleaning list. Refreshes and setups do not carry over.
+            </div>
+          </div>
+          <button
+            onClick={() => toggleCarryOver(!carryOverEnabled)}
+            style={{
+              width: 48, height: 26, borderRadius: 13, border: "none", cursor: "pointer",
+              background: carryOverEnabled ? C.pri : C.border,
+              position: "relative", transition: "background 0.2s", flexShrink: 0,
+            }}
+          >
+            <div style={{
+              width: 20, height: 20, borderRadius: 10, background: "#fff",
+              position: "absolute", top: 3,
+              left: carryOverEnabled ? 25 : 3,
+              transition: "left 0.2s",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+            }} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsPage({ profile: parentProfile, addGlobalToast }) {
   const [tab, setTab] = useState(null); // null = show grid, set = show detail
   const [searchQuery, setSearchQuery] = useState("");
@@ -149,6 +215,13 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       cards: [
         { id: "team", label: "Team Management", desc: "Manage team members and roles" },
         { id: "permissions", label: "Permissions", desc: "Configure access controls" },
+      ],
+    },
+    {
+      id: "operations",
+      label: "Operations",
+      cards: [
+        { id: "room-cleaning", label: "Room Cleaning", desc: "Configure missed cleaning carry-over behavior and display settings" },
       ],
     },
     {
@@ -211,6 +284,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
         return <ApiDashboardTab />;
       case "subscription":
         return <SubscriptionTab profile={profile} addGlobalToast={addGlobalToast} />;
+      case "room-cleaning":
+        return <RoomCleaningSettingsTab profile={profile} addGlobalToast={addGlobalToast} />;
       default:
         return null;
     }

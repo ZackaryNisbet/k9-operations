@@ -1,3 +1,8 @@
+// TODO: Remove this file once gingr-sync frequency is sufficient (target: <5 min).
+// This calls the Gingr API directly from the browser, which violates the
+// architecture rule (client should only read Supabase). It's kept as a
+// best-effort merge layer for same-day reservations that haven't synced yet.
+//
 // Fetches today's reservations directly from Gingr API and converts
 // them to the same row shape as gingr_reservations in Supabase.
 // Used to supplement Supabase data when the sync hasn't run yet today,

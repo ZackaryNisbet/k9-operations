@@ -747,9 +747,9 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       for (const name of r.dogNames) {
         if (name && !m.dogNames.includes(name)) m.dogNames.push(name);
       }
-      // Escalate cleaning needs
-      if (r.needsRefresh) m.needsRefresh = true;
-      if (r.needsDisinfect) { m.needsDisinfect = true; m.cleaningType = "disinfect"; }
+      // Escalate cleaning needs — disinfect supersedes refresh
+      if (r.needsDisinfect) { m.needsDisinfect = true; m.needsRefresh = false; m.cleaningType = "disinfect"; }
+      else if (r.needsRefresh && !m.needsDisinfect) m.needsRefresh = true;
       if (r.needsSetup) { m.needsSetup = true; m.setupReason = r.setupReason || m.setupReason; }
       if (r.suggestedBowlSize) m.suggestedBowlSize = r.suggestedBowlSize;
       if (r.dogWeight) m.dogWeight = r.dogWeight;

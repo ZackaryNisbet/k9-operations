@@ -36,6 +36,22 @@ function LiteReportsPage({ data, nav }) {
 
   const changeTimeRange = (range) => { setTimeRange(range); setAnimEpoch(e => e + 1); };
 
+  // Room data from gingr_runs (replaces data.rooms)
+  const [gingrRoomCount, setGingrRoomCount] = useState(0);
+  const [gingrRoomsByType, setGingrRoomsByType] = useState({});
+  useEffect(() => {
+    supabase.from("gingr_runs").select("area_name").then(({ data: rows }) => {
+      if (!rows) return;
+      setGingrRoomCount(rows.length);
+      const byType = {};
+      rows.forEach(r => {
+        const t = r.area_name || "Other";
+        byType[t] = (byType[t] || 0) + 1;
+      });
+      setGingrRoomsByType(byType);
+    });
+  }, []);
+
   const nlpSuggestionsBank = [
     { cat: "Revenue", q: "Revenue by suite type" },
     { cat: "Revenue", q: "Revenue by category" },
@@ -194,13 +210,11 @@ function LiteReportsPage({ data, nav }) {
     };
     const current = processDateRange(dateFrom, dateTo);
     const previous = compareMode ? processDateRange(prevFrom, prevTo) : { dayData: {}, totals: { totalRevenue: 0, discounts: 0 }, days: [] };
-    const allRooms = data.rooms || {};
-    const totalRoomCount = Object.values(allRooms).reduce((sum, arr) => sum + arr.length, 0);
     const revenueTrend = previous.totals.totalRevenue > 0 ? ((current.totals.totalRevenue - previous.totals.totalRevenue) / previous.totals.totalRevenue) * 100 : 0;
-    const occupancyRate = totalRoomCount > 0 && current.days.length > 0 ? (current.totals.roomsOccupied / (totalRoomCount * current.days.length)) * 100 : 0;
-    const revPAR = totalRoomCount > 0 && current.days.length > 0 ? current.totals.boardingRevenue / (totalRoomCount * current.days.length) : 0;
+    const occupancyRate = gingrRoomCount > 0 && current.days.length > 0 ? (current.totals.roomsOccupied / (gingrRoomCount * current.days.length)) * 100 : 0;
+    const revPAR = gingrRoomCount > 0 && current.days.length > 0 ? current.totals.boardingRevenue / (gingrRoomCount * current.days.length) : 0;
     return { current, previous, revenueTrend, occupancyRate, revPAR, days: current.days };
-  }, [data.reservations, data.rooms, dateFrom, dateTo, prevFrom, prevTo, compareMode]);
+  }, [data.reservations, gingrRoomCount, dateFrom, dateTo, prevFrom, prevTo, compareMode]);
 
   const discountBreakdown = useMemo(() => {
     // Estimate discounts by comparing actual price to rack rate × nights
@@ -319,8 +333,7 @@ function LiteReportsPage({ data, nav }) {
     const clients = data.clients || [];
     const pricing = LITE_DEF_PRICING;
     const br = LITE_DEF_PRICING.boardingRates;
-    const allRooms = data.rooms || {};
-    const totalRoomCount = Object.values(allRooms).reduce((sum, arr) => sum + arr.length, 0);
+    const totalRoomCount = gingrRoomCount;
     return {
       revBySuite: () => {
         const byType = {};
@@ -487,10 +500,10 @@ function LiteReportsPage({ data, nav }) {
           followUps: ["Occupancy rate by room type", "RevPAR analysis", "Revenue by suite type"] };
       },
       occupancyByRoom: () => {
-        const roomTypes = Object.keys(allRooms);
+        const roomTypes = Object.keys(gingrRoomsByType);
         const dayCount = accrualData.days.length || 1;
         const byType = {};
-        roomTypes.forEach(rt => { byType[rt] = { count: allRooms[rt]?.length || 0, occupied: 0 }; });
+        roomTypes.forEach(rt => { byType[rt] = { count: gingrRoomsByType[rt] || 0, occupied: 0 }; });
         reservations.forEach(res => {
           const segments = res.roomSegments || [{ startDate: res.checkIn, endDate: res.checkOut, roomType: res.roomType }];
           segments.forEach(seg => {
@@ -657,7 +670,7 @@ function LiteReportsPage({ data, nav }) {
           followUps: ["Revenue by category", "Add-on attach rate", "Revenue trend over time"] };
       },
     };
-  }, [data, cashBasisData, accrualData, discountBreakdown, dateFrom, dateTo, days]);
+  }, [data, cashBasisData, accrualData, discountBreakdown, dateFrom, dateTo, days, gingrRoomCount, gingrRoomsByType]);
 
   const processNLPQuery = useCallback((query) => {
     const q = query.toLowerCase().trim();
