@@ -545,6 +545,9 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       if (count === 0) {
         reason = "First Daycare";
       }
+    } else if (!t.includes("resort tour")) {
+      // All other boarding check-ins get a setup
+      reason = "Check-In";
     }
 
     if (reason) {
