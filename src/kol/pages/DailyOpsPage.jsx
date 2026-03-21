@@ -14,9 +14,26 @@ import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
 import { applyStructuredFilters } from "../../hooks/useFilters";
 
+const K9Check = ({ checked, disabled, onChange, color = C.pri, size = 18 }) => (
+  <div onClick={disabled ? undefined : () => onChange({ target: { checked: !checked } })}
+    style={{
+      width: size, height: size, borderRadius: 5, cursor: disabled ? "default" : "pointer",
+      border: `2px solid ${checked ? color : C.border}`,
+      background: checked ? color : "#fff",
+      display: "flex", alignItems: "center", justifyContent: "center",
+      transition: "all 0.15s ease", opacity: disabled ? 0.5 : 1,
+      boxShadow: checked ? `0 0 0 2px ${color}25` : "none",
+      flexShrink: 0,
+    }}>
+    {checked && <svg width={size - 6} height={size - 6} viewBox="0 0 12 12" fill="none"><path d="M2.5 6L5 8.5L9.5 3.5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+  </div>
+);
+
 function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params }) {
   const td = todayStr();
   const [viewDate, setViewDate] = useState(td);
+  const [rcFilter, setRcFilter] = useState("all"); // all | incomplete | setup | refresh | disinfect | asNeeded
+  const [recentlyCompleted, setRecentlyCompleted] = useState(new Set()); // room keys with grace period
   const dayIdx = new Date(viewDate + "T12:00:00").getDay();
   const meta = OPS_TYPES[sub] || OPS_TYPES.opening;
   const isTemplate = !!meta.key;
@@ -173,6 +190,38 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     } else {
       newItems = { ...items, [key]: { ...(items[key] || {}), [field]: val } };
     }
+
+    // Toast with undo for completion actions
+    const isCompletion = val === true && ["checked", "refresh", "disinfect", "setupDone", "asNeededDone"].includes(field);
+    if (isCompletion && addGlobalToast) {
+      const prevItemState = items[key] ? { ...items[key] } : {};
+      const labels = { checked: "Task", refresh: "Refresh", disinfect: "Disinfect", setupDone: "Setup", asNeededDone: "As Needed" };
+      addGlobalToast({
+        message: `${labels[field] || "Task"} marked done`,
+        type: "success",
+        actionLabel: "Undo",
+        onAction: () => {
+          const undoneItems = { ...items, [key]: prevItemState };
+          setItems(undoneItems);
+          if (sub === "room_cleaning") {
+            const entries = [...(data.dailyOps || [])];
+            const idx = entries.findIndex(e => e.id === entryId);
+            const existing = idx >= 0 ? entries[idx] : {};
+            const entry = { ...existing, id: entryId, type: sub, date: viewDate, locked: false, items: undoneItems, history: [...(existing.history || []), { ts: new Date().toISOString(), action: "undo" }] };
+            if (idx >= 0) entries[idx] = entry; else entries.push(entry);
+            save({ ...data, dailyOps: entries });
+          } else {
+            setDirty(true);
+          }
+        },
+      });
+      // Grace period: keep row visible in "incomplete" filter for 3s
+      if (rcFilter === "incomplete") {
+        setRecentlyCompleted(prev => new Set(prev).add(key));
+        setTimeout(() => setRecentlyCompleted(prev => { const next = new Set(prev); next.delete(key); return next; }), 3000);
+      }
+    }
+
     setItems(newItems);
 
     // Auto-save for room cleaning (no Save button needed)
@@ -245,18 +294,50 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const boardingToday = (data.reservations || []).filter(r => r.type === "boarding" && r.checkIn <= viewDate && r.checkOut >= viewDate && (r.status === "checked-in" || r.status === "upcoming"));
   const boardingCheckedOut = (data.reservations || []).filter(r => r.type === "boarding" && r.checkOut === viewDate && r.status === "checked-out");
 
-  // PP checklist: checked-in dogs with Private Play add-on OR day boarding dogs
-  const ppReservations = (data.reservations || []).filter(r =>
-    (r.type === "boarding" || r.type === "daycare" || r.type === "dayboarding") &&
-    r.status === "checked-in" &&
-    r.checkIn <= viewDate && r.checkOut >= viewDate &&
-    (resSvcIncludes(r, "Private Play") || r.type === "dayboarding")
-  ).map(r => ({
-    ...r,
-    _ppSource: r.type === "dayboarding"
-      ? (resSvcIncludes(r, "Private Play") ? "Day Boarding + Add-On" : "Day Boarding")
-      : "Private Play Add-On"
-  })).sort((a, b) => {
+  // PP checklist: dogs with Private Play Gingr icon OR PP add-on OR day boarding
+  // Uses gingr_animal_icons_live (via v_dog_playgroups) as the source of truth
+  const ppLocationId = profile?.location_id || "cherry-hill";
+  const [ppIconDogIds, setPpIconDogIds] = React.useState(new Set());
+  React.useEffect(() => {
+    if (!ppLocationId) return;
+    let cancelled = false;
+    supabase
+      .from("v_dog_playgroups")
+      .select("animal_gingr_id")
+      .eq("location_id", ppLocationId)
+      .eq("playgroup", "private_play")
+      .then(({ data: rows }) => {
+        if (!cancelled && rows) {
+          setPpIconDogIds(new Set(rows.map(r => String(r.animal_gingr_id))));
+        }
+      });
+    return () => { cancelled = true; };
+  }, [ppLocationId, viewDate]);
+
+  const ppReservations = (data.reservations || []).filter(r => {
+    if (r.status === "cancelled") return false;
+    if (r.checkIn > viewDate || r.checkOut < viewDate) return false;
+    // Day boarding always included
+    if (r.type === "dayboarding") return true;
+    // Check Gingr icon (authoritative)
+    const animalId = String(r.animalGingrId || r.dogId || "").replace(/^g/, "");
+    if (ppIconDogIds.has(animalId)) return true;
+    // Also check PP service add-on as supplementary signal
+    if (resSvcIncludes(r, "Private Play")) return true;
+    return false;
+  }).map(r => {
+    const animalId = String(r.animalGingrId || r.dogId || "").replace(/^g/, "");
+    const hasIcon = ppIconDogIds.has(animalId);
+    const hasSvc = resSvcIncludes(r, "Private Play");
+    return {
+      ...r,
+      _ppSource: r.type === "dayboarding"
+        ? (hasIcon ? "Day Boarding + Icon" : hasSvc ? "Day Boarding + Add-On" : "Day Boarding")
+        : hasIcon
+          ? (hasSvc ? "Gingr Icon + Add-On" : "Gingr Icon")
+          : "Private Play Add-On"
+    };
+  }).sort((a, b) => {
     const aNum = a.room ? (a.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || "" : "";
     const bNum = b.room ? (b.room.match(/(\d+[A-Za-z]*)$/) || [])[1] || "" : "";
     return aNum.localeCompare(bNum, undefined, { numeric: true });
@@ -319,7 +400,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
             return (
               <div key={t.id} style={{ display: "flex", alignItems: "center", padding: "8px 14px", borderBottom: i < todayItems.length - 1 ? `1px solid ${C.border}` : "none", background: isWeekly ? "rgba(132,204,22,0.04)" : it.checked ? "rgba(34,139,34,0.03)" : "transparent", opacity: isLocked ? 0.7 : 1 }}>
                 <div style={{ width: 36 }}>
-                  <input type="checkbox" checked={!!it.checked} disabled={isLocked} onChange={e => toggleItem(t.id, "checked", e.target.checked)} style={{ width: 18, height: 18, cursor: isLocked ? "default" : "pointer", accentColor: C.pri }} />
+                  <K9Check checked={!!it.checked} disabled={isLocked} onChange={e => toggleItem(t.id, "checked", e.target.checked)} />
                 </div>
                 {meta.showTime && <div style={{ width: 70, fontSize: 12, fontWeight: 600, color: t.time ? C.pri : C.textMut, fontVariantNumeric: "tabular-nums" }}>{t.time ? formatTime12hr(t.time) : (isWeekly ? DAY_NAMES_SHORT[t.dayOfWeek] : "")}</div>}
                 <div style={{ flex: 1, fontSize: 13, color: it.checked ? C.textMut : C.text, textDecoration: it.checked ? "line-through" : "none", lineHeight: 1.4 }}>
@@ -441,8 +522,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         });
       });
     }
-    const totalNeeded = totalRefresh + totalDisinfect;
-    const totalDone = doneRefresh + doneDisinfect;
+    const totalClean = totalRefresh + totalDisinfect;
+    const doneClean = doneRefresh + doneDisinfect;
 
     // ─── Group merged rooms by roomType for display ───
     const groupedRooms = {};
@@ -493,7 +574,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
           <div style={{ textAlign: "center" }}>
             {needsRefresh ? <div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                <input type="checkbox" checked={!!ri.refresh} disabled={isLocked} onChange={e => toggleItem(rm, "refresh", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.suc }} />
+                <K9Check checked={!!ri.refresh} disabled={isLocked} onChange={e => toggleItem(rm, "refresh", e.target.checked)} color="#F59E0B" />
                 <span style={{ fontSize: 11, fontWeight: 700, color: ri.refresh ? C.suc : C.pri }}>{ri.refresh ? "Done" : "Required"}</span>
               </div>
               {ri.refresh && (ri.refreshBy || ri.refreshInitials) && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.refreshInitials || ri.refreshBy}{ri.refreshAt ? ` · ${formatTime(ri.refreshAt)}` : ""}</div>}
@@ -502,7 +583,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
           <div style={{ textAlign: "center" }}>
             {needsDisinfect ? <div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                <input type="checkbox" checked={!!ri.disinfect} disabled={isLocked} onChange={e => toggleItem(rm, "disinfect", e.target.checked)} style={{ width: 18, height: 18, accentColor: C.dan }} />
+                <K9Check checked={!!ri.disinfect} disabled={isLocked} onChange={e => toggleItem(rm, "disinfect", e.target.checked)} color={C.dan} />
                 <span style={{ fontSize: 11, fontWeight: 700, color: ri.disinfect ? C.suc : C.dan }}>{ri.disinfect ? "Done" : "Required"}</span>
               </div>
               {ri.disinfect && (ri.disinfectBy || ri.disinfectInitials) && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.disinfectInitials || ri.disinfectBy}{ri.disinfectAt ? ` · ${formatTime(ri.disinfectAt)}` : ""}</div>}
@@ -522,7 +603,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                 ))}
               </div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                <input type="checkbox" checked={!!ri.setupDone} disabled={isLocked} onChange={e => toggleItem(rm, "setupDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: "#84CC16" }} />
+                <K9Check checked={!!ri.setupDone} disabled={isLocked} onChange={e => toggleItem(rm, "setupDone", e.target.checked)} color="#14532D" size={16} />
                 <span style={{ fontSize: 10, fontWeight: 700, color: ri.setupDone ? "#84CC16" : C.textMut }}>{ri.setupDone ? "Complete" : "Mark done"}</span>
               </div>
               {ri.setupDone && (ri.setupDoneBy || ri.setupInitials) && <div style={{ fontSize: 9, color: C.textMut, marginTop: 2 }}>{ri.setupInitials || ri.setupDoneBy}{ri.setupAt ? ` · ${formatTime(ri.setupAt)}` : ""}</div>}
@@ -531,8 +612,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
           <div style={{ textAlign: "center" }}>
             <div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                <input type="checkbox" checked={!!ri.asNeeded} disabled={isLocked} onChange={e => toggleItem(rm, "asNeeded", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.acc }} />
-                {ri.asNeeded && <input type="checkbox" checked={!!ri.asNeededDone} disabled={isLocked} onChange={e => toggleItem(rm, "asNeededDone", e.target.checked)} style={{ width: 16, height: 16, accentColor: C.suc }} title="Mark done" />}
+                <K9Check checked={!!ri.asNeeded} disabled={isLocked} onChange={e => toggleItem(rm, "asNeeded", e.target.checked)} color={C.acc} size={16} />
+                {ri.asNeeded && <K9Check checked={!!ri.asNeededDone} disabled={isLocked} onChange={e => toggleItem(rm, "asNeededDone", e.target.checked)} color={C.pri} size={16} />}
               </div>
               {ri.asNeeded && (ri.asNeededBy) && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>{ri.asNeededBy}{ri.asNeededAt ? ` · ${formatTime(ri.asNeededAt)}` : ""}</div>}
               {ri.asNeeded && <input type="text" value={ri.asNeededNote || ""} disabled={isLocked} onChange={e => setNoteForItem(rm, e.target.value.slice(0, 200))} placeholder="Note..." style={{ width: "100%", fontSize: 10, padding: "2px 4px", marginTop: 3, border: `1px solid ${C.border}`, borderRadius: 4, background: C.surface, color: C.text }} />}
@@ -557,7 +638,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         {/* Summary bar */}
         <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
-            <span style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>{totalRooms ? `${totalOccupied}/${totalRooms}` : totalOccupied}</span>
+            <span style={{ fontSize: 20, fontWeight: 800, color: C.pri }}>{doneClean + doneSetups + asNeededDoneCount}/{totalClean + totalSetups + asNeededCount}</span>
             <span style={{ fontSize: 12, color: C.textSec }}>Total Tasks</span>
           </div>
           {totalRefresh > 0 && <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", background: C.surfaceHover, borderRadius: 8 }}>
@@ -577,17 +658,52 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
             <span style={{ fontSize: 12, color: C.textSec }}>As Needed Done</span>
           </div>}
         </div>
-        {totalNeeded > 0 && <div style={{ marginBottom: 16 }}>
+        {(() => { const allTotal = totalClean + totalSetups + asNeededCount; const allDone = doneClean + doneSetups + asNeededDoneCount; return allTotal > 0 && <div style={{ marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ flex: 1, height: 8, background: C.surfaceHover, borderRadius: 4, overflow: "hidden" }}>
-              <div style={{ width: totalNeeded ? `${(totalDone / totalNeeded) * 100}%` : "0%", height: "100%", background: totalDone === totalNeeded ? C.suc : C.pri, borderRadius: 4, transition: "width 0.3s" }} />
+              <div style={{ width: `${(allDone / allTotal) * 100}%`, height: "100%", background: allDone === allTotal ? C.suc : C.pri, borderRadius: 4, transition: "width 0.3s" }} />
             </div>
-            <span style={{ fontSize: 13, fontWeight: 600, color: totalDone === totalNeeded ? C.suc : C.text }}>{totalDone}/{totalNeeded}</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: allDone === allTotal ? C.suc : C.text }}>{allDone}/{allTotal}</span>
           </div>
-        </div>}
+        </div>; })()}
+        {/* ─── Filter pills ─── */}
+        <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+          {[
+            { key: "all", label: "All" },
+            { key: "incomplete", label: "Incomplete", count: (totalClean - doneClean) + (totalSetups - doneSetups) + (asNeededCount - asNeededDoneCount) },
+            { key: "setup", label: "Setups", count: totalSetups },
+            { key: "refresh", label: "Refreshes", count: totalRefresh },
+            { key: "disinfect", label: "Disinfects", count: totalDisinfect },
+            { key: "asNeeded", label: "As Needed", count: asNeededCount },
+          ].map(f => (
+            <button key={f.key} onClick={() => setRcFilter(f.key)} style={{
+              padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: rcFilter === f.key ? 700 : 500,
+              fontFamily: "Outfit, sans-serif", cursor: "pointer", transition: "all 0.15s ease",
+              border: `1.5px solid ${rcFilter === f.key ? "#14532D" : C.border}`,
+              background: rcFilter === f.key ? "#14532D" : "#fff",
+              color: rcFilter === f.key ? "#fff" : C.text,
+            }}>
+              {f.label}{f.count != null ? ` (${f.count})` : ""}
+            </button>
+          ))}
+        </div>
         {/* ─── Server-computed room data (primary path) ─── */}
         {hasComputedData ? Object.keys(groupedRooms).map(rt => {
-          const rooms = groupedRooms[rt];
+          const allRoomsInGroup = groupedRooms[rt];
+          const rooms = allRoomsInGroup.filter(cr => {
+            const key = sanitizeRoomKey(cr.room);
+            const ri = roomItems[key] || roomItems[cr.room] || {};
+            if (rcFilter === "incomplete") {
+              const hasUndone = (cr.needsRefresh && !ri.refresh) || (cr.needsDisinfect && !ri.disinfect) || (cr.needsSetup && !ri.setupDone) || (ri.asNeeded && !ri.asNeededDone);
+              return hasUndone || recentlyCompleted.has(key);
+            }
+            if (rcFilter === "setup") return cr.needsSetup;
+            if (rcFilter === "refresh") return cr.needsRefresh;
+            if (rcFilter === "disinfect") return cr.needsDisinfect;
+            if (rcFilter === "asNeeded") return ri.asNeeded;
+            return true;
+          });
+          if (rooms.length === 0) return null;
           return (
             <div key={rt} style={{ marginBottom: 20 }}>
               <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>{rt} <Badge color="default" size="sm">{rooms.filter(r => r.cleaningType !== "none").length}/{rooms.length} occupied</Badge></h3>
@@ -611,10 +727,29 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         Object.keys(allRooms).map(rt => {
           const rooms = allRooms[rt] || [];
           if (!rooms.length) return null;
-          const occupiedCount = rooms.filter(rm => boardingToday.find(r => r.room === rm) || boardingCheckedOut.find(r => r.room === rm)).length;
+          const filteredRooms = rooms.filter(rm => {
+            const key = sanitizeRoomKey(rm);
+            const ri = roomItems[key] || roomItems[rm] || {};
+            const activeRes = boardingToday.find(r => r.room === rm);
+            const coRes = boardingCheckedOut.find(r => r.room === rm);
+            const notFirst = activeRes && activeRes.checkIn < viewDate;
+            const notLast = activeRes && activeRes.checkOut > viewDate;
+            const hasRefresh = activeRes && notFirst && notLast;
+            const hasDisinfect = !!coRes;
+            if (rcFilter === "incomplete") {
+              return (hasRefresh && !ri.refresh) || (hasDisinfect && !ri.disinfect) || recentlyCompleted.has(key);
+            }
+            if (rcFilter === "setup") return false; // no setup data in fallback
+            if (rcFilter === "refresh") return hasRefresh;
+            if (rcFilter === "disinfect") return hasDisinfect;
+            if (rcFilter === "asNeeded") return ri.asNeeded;
+            return true;
+          });
+          if (filteredRooms.length === 0) return null;
+          const occupiedCount = filteredRooms.filter(rm => boardingToday.find(r => r.room === rm) || boardingCheckedOut.find(r => r.room === rm)).length;
           return (
             <div key={rt} style={{ marginBottom: 20 }}>
-              <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>{rt} <Badge color="default" size="sm">{occupiedCount}/{rooms.length} occupied</Badge></h3>
+              <h3 style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>{rt} <Badge color="default" size="sm">{occupiedCount}/{filteredRooms.length} occupied</Badge></h3>
               <Card>
                 <div style={{ display: "grid", gridTemplateColumns: gridCols, borderBottom: `2px solid ${C.border}`, padding: "8px 12px", background: C.surfaceHover }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut }}>ROOM</div>
@@ -623,10 +758,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#14532D", textAlign: "center" }}>SETUPS</div>
                   <div style={{ fontSize: 11, fontWeight: 700, color: C.acc, textAlign: "center" }}>AS NEEDED</div>
                 </div>
-                {rooms.map((rm, i) => {
+                {filteredRooms.map((rm, i) => {
                   const key = sanitizeRoomKey(rm);
                   const ri = roomItems[key] || roomItems[rm] || {};
-                  return renderRoomRow(key, ri, null, i, rooms.length, rm);
+                  return renderRoomRow(key, ri, null, i, filteredRooms.length, rm);
                 })}
               </Card>
             </div>
@@ -757,10 +892,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                             {s.completedBy && s.time && s.timeEdited && <div style={{ fontSize: 9, color: C.textMut, textAlign: "center" }}>{s.completedBy}</div>}
                           </td>
                           <td style={{ padding: "4px 2px", textAlign: "center", background: isRequired(si) ? C.priLt + "80" : "transparent" }}>
-                            <input type="checkbox" checked={!!s.urinate} disabled={isLocked} onChange={e => ppToggleUD(r.dogId, si, "urinate", e.target.checked, ses)} style={{ width: 16, height: 16, accentColor: C.pri }} />
+                            <K9Check checked={!!s.urinate} disabled={isLocked} onChange={e => ppToggleUD(r.dogId, si, "urinate", e.target.checked, ses)} size={16} />
                           </td>
                           <td style={{ padding: "4px 2px", textAlign: "center", background: isRequired(si) ? C.priLt + "80" : "transparent" }}>
-                            <input type="checkbox" checked={!!s.defecate} disabled={isLocked} onChange={e => ppToggleUD(r.dogId, si, "defecate", e.target.checked, ses)} style={{ width: 16, height: 16, accentColor: C.acc }} />
+                            <K9Check checked={!!s.defecate} disabled={isLocked} onChange={e => ppToggleUD(r.dogId, si, "defecate", e.target.checked, ses)} color={C.acc} size={16} />
                           </td>
                         </React.Fragment>
                         );

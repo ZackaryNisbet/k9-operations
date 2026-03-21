@@ -273,14 +273,59 @@ function suggestBowlSize(weight: number | null): string {
 }
 
 async function computeRoomCleaning(supabase: any, bohData: any, locationId: string, today: string): Promise<any> {
-  // ─── Step 0: Load room_names config to include ALL rooms ────────────
-  const { data: roomNamesSetting } = await supabase
-    .from("lite_settings")
-    .select("setting_value")
+  // ─── Step 0: Load ALL rooms from gingr_runs (authoritative) ─────────
+  // Falls back to lite_settings.room_names if gingr_runs hasn't synced yet
+  const { data: gingrRuns } = await supabase
+    .from("gingr_runs")
+    .select("gingr_run_id, run_name, area_name, run_type")
+    .eq("location_id", locationId);
+
+  let allRoomNames: Array<{ runName: string; areaName: string; runType: string }> = [];
+  if (gingrRuns && gingrRuns.length > 0) {
+    allRoomNames = gingrRuns.map((r: any) => ({
+      runName: r.run_name,
+      areaName: r.area_name || "",
+      runType: r.run_type || "",
+    }));
+  } else {
+    // Fallback: old lite_settings room_names
+    const { data: roomNamesSetting } = await supabase
+      .from("lite_settings")
+      .select("setting_value")
+      .eq("location_id", locationId)
+      .eq("setting_key", "room_names")
+      .maybeSingle();
+    const roomNamesConfig: Record<string, string[]> = roomNamesSetting?.setting_value || {};
+    for (const [roomType, roomList] of Object.entries(roomNamesConfig)) {
+      if (!Array.isArray(roomList)) continue;
+      for (const roomName of roomList) {
+        allRoomNames.push({ runName: roomName, areaName: "", runType: roomType });
+      }
+    }
+  }
+
+  // ─── Step 0b: Load authoritative room occupancy from gingr_room_occupancy ──
+  const { data: roomOccupancy } = await supabase
+    .from("gingr_room_occupancy")
+    .select("gingr_run_id, run_name, area_name, animal_names, occupied")
     .eq("location_id", locationId)
-    .eq("setting_key", "room_names")
-    .maybeSingle();
-  const roomNamesConfig: Record<string, string[]> = roomNamesSetting?.setting_value || {};
+    .eq("occupancy_date", today);
+
+  // Build occupancy lookup: animal name → room info (from gingr_room_occupancy)
+  // animal_names format: "Bauer (Jill Levine)<br>Watson (Chris Wright)"
+  const occupancyRoomMap: Record<string, { runName: string; areaName: string }> = {};
+  for (const occ of roomOccupancy || []) {
+    if (occ.occupied && occ.animal_names) {
+      const entries = occ.animal_names.split(/<br\s*\/?>/i);
+      for (const entry of entries) {
+        // Extract dog name before the parenthesized owner name
+        const dogName = entry.replace(/\s*\(.*\)\s*$/, "").trim().toLowerCase();
+        if (dogName) {
+          occupancyRoomMap[dogName] = { runName: occ.run_name, areaName: occ.area_name || "" };
+        }
+      }
+    }
+  }
 
   // ─── Step 1: Build room name lookup from BOH ─────────────────────────
   // BOH with full_day=true returns ALL currently-housed dogs, not just
@@ -328,6 +373,36 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     }
   }
 
+  // ─── Step 1c: Persist occupancy-based room assignments ──────────────
+  // For dogs with no room_assignment and no BOH match, use gingr_room_occupancy
+  if (Object.keys(occupancyRoomMap).length > 0) {
+    const { data: unassignedRes } = await supabase
+      .from("gingr_reservations")
+      .select("gingr_id, animal_name, room_assignment")
+      .eq("location_id", locationId)
+      .not("check_in_date", "is", null)
+      .is("check_out_date", null)
+      .is("cancelled_date", null)
+      .is("room_assignment", null);
+
+    const occUpdates: Array<{ gingr_id: string; room: string }> = [];
+    for (const res of unassignedRes || []) {
+      const nameLower = (res.animal_name || "").trim().toLowerCase();
+      const occ = nameLower ? occupancyRoomMap[nameLower] : null;
+      if (occ?.runName) {
+        occUpdates.push({ gingr_id: res.gingr_id, room: occ.runName });
+      }
+    }
+
+    for (const { gingr_id, room } of occUpdates) {
+      await supabase
+        .from("gingr_reservations")
+        .update({ room_assignment: room })
+        .eq("gingr_id", gingr_id)
+        .eq("location_id", locationId);
+    }
+  }
+
   // ─── Step 2: Get ALL active boarding reservations from Supabase ──────
   // These are dogs currently checked in (have check_in_date, no check_out_date, not cancelled)
   // BOH has all in-house dogs, but we also query Supabase for completeness.
@@ -357,15 +432,16 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
   const seenAnimals = new Set<string>();
 
   // ─── Step 2b: Pre-compute placeholder room names for unassigned dogs ──
-  // Each unassigned dog gets its own numbered entry (e.g., "Exec Room (unlinked) #1").
-  // We can't reliably determine room-sharing without real room numbers from BOH.
+  // Check occupancy map (from gingr_room_occupancy) before falling back to "(unlinked)".
   const unassignedRoomNames: Record<string, string> = {}; // gingr_id → room name
   {
     const typeCounters: Record<string, number> = {};
     for (const res of allReservations) {
       const animalId = res.animal_gingr_id ? String(res.animal_gingr_id) : "";
       const bohInfo = animalId ? bohRoomMap[animalId] : null;
-      const hasRoom = res.room_assignment || bohInfo?.runName || res.raw_data?.run_name;
+      const resNameLower = (res.animal_name || "").trim().toLowerCase();
+      const occInfo = resNameLower ? occupancyRoomMap[resNameLower] : null;
+      const hasRoom = res.room_assignment || bohInfo?.runName || occInfo?.runName || res.raw_data?.run_name;
       if (hasRoom) continue;
       const typeName = res.reservation_type_name || "";
       const tLower = typeName.toLowerCase();
@@ -396,10 +472,12 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     const startDate = res.start_date ? res.start_date.split("T")[0] : today;
     const endDate = res.end_date ? res.end_date.split("T")[0] : today;
 
-    // Room name: room_assignment (server-side) → BOH lookup → raw_data → generate from type
+    // Room name: room_assignment (server-side) → BOH lookup → occupancy lookup → raw_data → generate from type
     const bohInfo = animalId ? bohRoomMap[animalId] : null;
-    const runName = res.room_assignment || bohInfo?.runName || res.raw_data?.run_name || "";
-    const areaName = bohInfo?.areaName || res.raw_data?.area_name || "";
+    const dogNameLower = (res.animal_name || "").trim().toLowerCase();
+    const occInfo = dogNameLower ? occupancyRoomMap[dogNameLower] : null;
+    const runName = res.room_assignment || bohInfo?.runName || occInfo?.runName || res.raw_data?.run_name || "";
+    const areaName = bohInfo?.areaName || occInfo?.areaName || res.raw_data?.area_name || "";
 
     // Determine cleaning type
     let cleaningType = "refresh";
@@ -553,7 +631,9 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     if (reason) {
       const animalId = res.animal_gingr_id ? String(res.animal_gingr_id) : "";
       const bohInfo = animalId ? bohRoomMap[animalId] : null;
-      const runName = bohInfo?.runName || res.raw_data?.run_name || null;
+      const setupDogNameLower = (res.animal_name || "").trim().toLowerCase();
+      const setupOccInfo = setupDogNameLower ? occupancyRoomMap[setupDogNameLower] : null;
+      const runName = bohInfo?.runName || setupOccInfo?.runName || res.raw_data?.run_name || null;
       setupDogs.push({
         animalGingrId: res.animal_gingr_id,
         dogName: res.animal_name || "",
@@ -630,34 +710,31 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     });
   }
 
-  // ─── Step 6: Merge in ALL configured rooms (vacant ones too) ────────
+  // ─── Step 6: Merge in ALL known rooms (vacant ones too) ─────────────
   // Build a set of room names already in the list (occupied)
   const occupiedRoomNames = new Set(rooms.map((r) => r.room));
-  for (const [roomType, roomList] of Object.entries(roomNamesConfig)) {
-    if (!Array.isArray(roomList)) continue;
-    for (const roomName of roomList) {
-      if (occupiedRoomNames.has(roomName)) continue;
-      rooms.push({
-        room: roomName,
-        roomType,
-        areaName: "",
-        dogName: "",
-        dogNames: [],
-        ownerLastName: "",
-        reservationType: "",
-        checkIn: "",
-        checkOut: "",
-        dayNumber: 0,
-        totalNights: 0,
-        cleaningType: "none",
-        needsDisinfect: false,
-        needsRefresh: false,
-        needsSetup: false,
-        setupReason: null,
-        suggestedBowlSize: null,
-        dogWeight: null,
-      });
-    }
+  for (const rn of allRoomNames) {
+    if (occupiedRoomNames.has(rn.runName)) continue;
+    rooms.push({
+      room: rn.runName,
+      roomType: rn.runType || rn.areaName,
+      areaName: rn.areaName,
+      dogName: "",
+      dogNames: [],
+      ownerLastName: "",
+      reservationType: "",
+      checkIn: "",
+      checkOut: "",
+      dayNumber: 0,
+      totalNights: 0,
+      cleaningType: "none",
+      needsDisinfect: false,
+      needsRefresh: false,
+      needsSetup: false,
+      setupReason: null,
+      suggestedBowlSize: null,
+      dogWeight: null,
+    });
   }
 
   // ─── Step 7: Merge entries sharing the same room into one row ─────────
