@@ -955,11 +955,13 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   useEffect(() => {
     if (sub !== "bathing") return;
     const reservations = data.reservations || [];
-    const endingToday = reservations.filter(r =>
-      (r.status === "checked-in" || r.status === "upcoming") &&
-      r.checkOut === viewDate
-    );
-    const bathRes = endingToday.filter(r => hasSvc(r._services, "Bath"));
+    // Fetch icons for ALL dogs with bath scheduled today (including departed)
+    const bathRes = reservations.filter(r => {
+      if (r.status === "cancelled") return false;
+      if (!hasSvc(r._services, "Bath")) return false;
+      const svcs = Array.isArray(r._services) ? r._services : [];
+      return svcs.some(s => typeof s === "object" && s?.name?.toLowerCase().includes("bath") && (s.scheduled_at || "").includes(viewDate));
+    });
     if (bathRes.length === 0) return;
 
     const needsFetch = bathRes.filter(r => !bathTypeMap[r.id]);
