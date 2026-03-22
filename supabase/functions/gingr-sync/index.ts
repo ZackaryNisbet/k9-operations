@@ -1368,22 +1368,9 @@ async function syncAnimalIcons(
   }
 
   // 3. Icons for departed dogs are KEPT (permanent storage).
-  // Only checked-in dogs get a full refresh to detect icon removals in Gingr.
 
-  // 4. Delete icons for checked-in dogs only, then re-insert fresh ones.
-  // This ensures removed icons in Gingr are reflected immediately
-  // (e.g., Eval icon removed after dog completes evaluation).
-  // Departed dogs' icons are preserved.
-  for (let i = 0; i < animalIds.length; i += 500) {
-    const chunk = animalIds.slice(i, i + 500);
-    await supabase
-      .from("gingr_animal_icons_live")
-      .delete()
-      .eq("location_id", locationId)
-      .in("animal_gingr_id", chunk);
-  }
-
-  // 5. Dedup and upsert fresh icon data
+  // 4. Upsert fresh icons first (no delete — avoids race condition where
+  // checkout TV sees empty icons between delete and re-insert).
   const deduped = new Map<string, any>();
   for (const row of iconRows) {
     const key = `${row.location_id}|${row.animal_gingr_id}|${row.icon_template_id}`;
@@ -1398,6 +1385,27 @@ async function syncAnimalIcons(
         .from("gingr_animal_icons_live")
         .upsert(chunk, { onConflict: "location_id,animal_gingr_id,icon_template_id" });
       if (error) throw new Error(`gingr_animal_icons_live upsert error: ${error.message}`);
+    }
+  }
+
+  // 5. Remove stale icons for checked-in dogs — icons in DB but NOT in
+  // the Gingr API response (icon was removed in Gingr).
+  // Runs AFTER upsert so icons are never temporarily missing (no race condition).
+  const freshKeys = new Set(dedupedRows.map(r => `${r.animal_gingr_id}|${r.icon_template_id}`));
+  for (let i = 0; i < animalIds.length; i += 500) {
+    const chunk = animalIds.slice(i, i + 500);
+    const { data: existing } = await supabase
+      .from("gingr_animal_icons_live")
+      .select("id, animal_gingr_id, icon_template_id")
+      .eq("location_id", locationId)
+      .in("animal_gingr_id", chunk);
+    const staleIds = (existing || [])
+      .filter(e => !freshKeys.has(`${e.animal_gingr_id}|${e.icon_template_id}`))
+      .map(e => e.id);
+    if (staleIds.length > 0) {
+      for (let j = 0; j < staleIds.length; j += 500) {
+        await supabase.from("gingr_animal_icons_live").delete().in("id", staleIds.slice(j, j + 500));
+      }
     }
   }
 
