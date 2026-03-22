@@ -782,6 +782,7 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const baseReservations = data.reservations || [];
   const baseDogs = data.dogs || [];
   const clients = data.clients || [];
+  const refreshData = data.refresh;
 
   /* ── TV-010 + TV-012: Direct Gingr back_of_house polling ────────────
    * Event-detection-only: polls every 10s, compares previous → current
@@ -823,10 +824,11 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
       await supabase.functions.invoke("gingr-sync", {
         body: { location_id: tvLocationId, sync_type: "tv-poll" },
       });
+      if (refreshData) refreshData();
     } catch (e) {
       // Silently ignore — sync will retry on next interval
     }
-  }, [tvLocationId]);
+  }, [tvLocationId, refreshData]);
 
   useEffect(() => {
     const initTimer = setTimeout(triggerTvPoll, 5000);
@@ -868,9 +870,11 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
 
         // Detect transitions (skip first poll — no previous state)
         const prev = prevBohIdsRef.current;
+        let arrivals = [];
+        let departed = [];
+
         if (prev !== null && !cancelled) {
           // Arrivals: in current but not in prev
-          const arrivals = [];
           for (const [id, dog] of currentMap) {
             if (!prev.has(id)) {
               arrivals.push({
@@ -885,7 +889,6 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
           }
 
           // Departures: in prev but not in current
-          const departed = [];
           for (const [id, dog] of prev) {
             if (!currentMap.has(id)) {
               departed.push({

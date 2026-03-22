@@ -352,9 +352,10 @@ async function syncReservations(
     const rows = checkedIn.map((r: any) => mapReservationRow(r, locationId));
     for (let i = 0; i < rows.length; i += 500) {
       const chunk = rows.slice(i, i + 500);
-      await supabase
+      const { error } = await supabase
         .from("gingr_reservations")
         .upsert(chunk, { onConflict: "location_id,gingr_id" });
+      if (error) console.error("syncReservations: failed to upsert checked-in:", error.message);
     }
     total += checkedIn.length;
   }
@@ -387,11 +388,12 @@ async function syncReservations(
       const nowIso = new Date().toISOString();
       for (let i = 0; i < staleIds.length; i += 100) {
         const chunk = staleIds.slice(i, i + 100);
-        await supabase
+        const { error } = await supabase
           .from("gingr_reservations")
           .update({ check_out_date: nowIso, synced_at: nowIso })
           .eq("location_id", locationId)
           .in("gingr_id", chunk);
+        if (error) console.error("syncReservations: failed to mark checkout:", error.message);
       }
     }
   } catch (_) {
@@ -1847,9 +1849,10 @@ Deno.serve(async (req: Request) => {
         const rows = checkedIn.map((r: any) => mapReservationRow(r, location_id));
         for (let i = 0; i < rows.length; i += 500) {
           const chunk = rows.slice(i, i + 500);
-          await supabase
+          const { error } = await supabase
             .from("gingr_reservations")
             .upsert(chunk, { onConflict: "location_id,gingr_id" });
+          if (error) console.error("tv-poll: failed to upsert checked-in:", error.message);
         }
       }
 
@@ -1878,11 +1881,12 @@ Deno.serve(async (req: Request) => {
           const nowIso = new Date().toISOString();
           for (let i = 0; i < staleIds.length; i += 100) {
             const chunk = staleIds.slice(i, i + 100);
-            await supabase
+            const { error } = await supabase
               .from("gingr_reservations")
               .update({ check_out_date: nowIso, synced_at: nowIso })
               .eq("location_id", location_id)
               .in("gingr_id", chunk);
+            if (error) console.error("tv-poll: failed to mark checkout:", error.message);
           }
           checkedOutCount = staleIds.length;
         }
