@@ -1022,46 +1022,162 @@ async function computeWeeklyMaintenance(
 
 // ─── 8. Bathing Report ────────────────────────────────────────────────────
 
-interface BathDog {
-  animalId: string;
-  animalName: string;
-  ownerName: string;
-  bathType: string;
-  services: string[];
+// Known bath type add-ons from reservation services
+const BATH_TYPE_ADDONS = new Set([
+  "Premium", "Medicated", "Whitening", "Shampoo From Home",
+  "Hypoallergenic - NO SPRAY", "Hypoallergenic - WITH SPRAY",
+]);
+// Known bath modifier add-ons (instructions, not a type)
+const BATH_MODIFIER_ADDONS = new Set([
+  "NO CRATE DRYER", "NO VELOCITY DRYER", "TOWEL DRY ONLY", "*See account notes*",
+]);
+
+function extractBathTypeFromName(svcName: string): string | null {
+  if (!svcName) return null;
+  const l = svcName.toLowerCase();
+  if (l.includes("premium")) return "Premium";
+  if (l.includes("medicated")) return "Medicated";
+  if (l.includes("whitening")) return "Whitening";
+  if (l.includes("shampoo from home")) return "Shampoo From Home";
+  if (l.includes("fresh n clean") || l.includes("fresh & clean")) return "Fresh N Clean";
+  if (l.includes("water rinse")) return "Water Rinse";
+  if (l.includes("hypo") && l.includes("no spray")) return "Hypoallergenic - NO SPRAY";
+  if (l.includes("hypo") && l.includes("with spray")) return "Hypoallergenic - WITH SPRAY";
+  if (l.includes("hypo")) return "Hypoallergenic";
+  return null;
 }
 
-function computeBathingReport(reservations: Record<string, any>): any {
-  const dogs: BathDog[] = [];
-  const seen = new Set<string>();
+function parseBathAddonsFromServices(svcs: any[]): { addonType: string | null; modifiers: string[] } {
+  let addonType: string | null = null;
+  const modifiers: string[] = [];
+  for (const svc of svcs) {
+    const n = typeof svc === "string" ? svc : svc?.name || "";
+    if (!n) continue;
+    if (BATH_TYPE_ADDONS.has(n)) { if (!addonType) addonType = n; }
+    else if (BATH_MODIFIER_ADDONS.has(n)) { modifiers.push(n); }
+    else {
+      // Case-insensitive fallback
+      for (const t of BATH_TYPE_ADDONS) { if (n.toLowerCase() === t.toLowerCase()) { if (!addonType) addonType = t; break; } }
+      for (const m of BATH_MODIFIER_ADDONS) { if (n.toLowerCase() === m.toLowerCase()) { modifiers.push(m); break; } }
+    }
+  }
+  return { addonType, modifiers };
+}
 
-  for (const res of Object.values(reservations)) {
-    const services = res.services || [];
-    const bathServices = services.filter((s: any) =>
-      (s.name || s.service_name || "").toLowerCase().includes("bath"),
-    );
+function formatTimeHuman(isoStr: string): string {
+  if (!isoStr) return "—";
+  try {
+    const d = new Date(isoStr);
+    if (isNaN(d.getTime())) return "—";
+    const h = d.getHours();
+    const m = d.getMinutes();
+    const ampm = h >= 12 ? "PM" : "AM";
+    const h12 = h % 12 || 12;
+    return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+  } catch { return "—"; }
+}
 
-    if (bathServices.length === 0) continue;
+async function computeBathingReport(supabase: any, locationId: string, today: string): Promise<any> {
+  // Fetch all reservations with bath services for today (active + checked out today)
+  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_out_date, raw_data, room_assignment, services";
+  const [{ data: activeRes }, { data: coRes }] = await Promise.all([
+    supabase.from("gingr_reservations").select(resSelect)
+      .eq("location_id", locationId)
+      .not("check_in_date", "is", null).is("check_out_date", null).is("cancelled_date", null)
+      .lte("start_date", `${today}T23:59:59`).gte("end_date", `${today}T00:00:00`),
+    supabase.from("gingr_reservations").select(resSelect)
+      .eq("location_id", locationId)
+      .not("check_out_date", "is", null).is("cancelled_date", null)
+      .gte("check_out_date", today + "T00:00:00").lt("check_out_date", addDays(today, 1) + "T00:00:00"),
+  ]);
+  const allRes = [...(activeRes || []), ...(coRes || [])];
 
-    const animalId = String(res.animal?.id || "");
-    if (!animalId || seen.has(animalId)) continue;
-    seen.add(animalId);
+  // Filter to dogs with bath scheduled today
+  const bathDogs: any[] = [];
+  const animalIds: string[] = [];
+  for (const r of allRes) {
+    const rd = r.raw_data || {};
+    const rawSvcs = rd.services || [];
+    const bathSvc = rawSvcs.find((s: any) => typeof s === "object" && s?.name?.toLowerCase().includes("bath"));
+    const topSvcs = Array.isArray(r.services) ? r.services : [];
+    const hasBathTop = topSvcs.some((s: any) => { const n = typeof s === "string" ? s : s?.name || ""; return n.toLowerCase().includes("bath"); });
+    if (!bathSvc && !hasBathTop) continue;
 
-    const ownerFirst = res.owner?.first_name || "";
-    const ownerLast = res.owner?.last_name || "";
-    const serviceNames = bathServices.map(
-      (s: any) => s.name || s.service_name || "Bath",
-    );
+    const scheduledAt = bathSvc?.scheduled_at || "";
+    const isScheduledToday = scheduledAt.includes(today);
+    const endDate = r.end_date || "";
+    const isDepartingToday = endDate.includes(today);
+    if (!isScheduledToday && !isDepartingToday) continue;
 
-    dogs.push({
-      animalId,
-      animalName: res.animal?.name || "",
-      ownerName: `${ownerFirst} ${ownerLast}`.trim(),
-      bathType: serviceNames[0],
-      services: serviceNames,
+    const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
+    if (animalGingrId) animalIds.push(animalGingrId);
+
+    const { addonType, modifiers } = parseBathAddonsFromServices(rawSvcs);
+    const resType = rd.reservation_type || {};
+    const roomLabel = r.room_assignment || rd.run?.name || "";
+
+    bathDogs.push({
+      animalGingrId,
+      gingrReservationId: String(r.gingr_id || ""),
+      animalName: r.animal_name || rd.animal?.name || "Unknown",
+      ownerName: [r.owner_first_name || rd.owner?.first_name || "", r.owner_last_name || rd.owner?.last_name || ""].filter(Boolean).join(" "),
+      breed: rd.animal?.breed || "",
+      roomLabel,
+      suiteType: resType.type || r.reservation_type_name || "",
+      addonType,
+      bathServiceName: bathSvc?.name || "",
+      bathModifiers: modifiers,
+      scheduledAt,
+      scheduledTime: formatTimeHuman(scheduledAt),
+      departureTime: formatTimeHuman(endDate),
+      departureTimeRaw: endDate,
+      isCheckedOut: !!r.check_out_date,
+      isDone: !!bathSvc?.completed_at,
     });
   }
 
-  dogs.sort((a, b) => a.animalName.localeCompare(b.animalName));
+  // Fetch bath icons for all dogs
+  let iconMap: Record<string, { title: string; comment: string }> = {};
+  if (animalIds.length > 0) {
+    const { data: icons } = await supabase
+      .from("gingr_animal_icons_live")
+      .select("animal_gingr_id, icon_title, icon_comment")
+      .eq("location_id", locationId)
+      .eq("icon_group", "Bath")
+      .in("animal_gingr_id", animalIds);
+    (icons || []).forEach((r: any) => {
+      iconMap[r.animal_gingr_id] = { title: r.icon_title || "", comment: r.icon_comment || "" };
+    });
+  }
+
+  // Resolve bath type: icon → add-on → service name → Standard
+  const dogs = bathDogs.map(d => {
+    const icon = iconMap[d.animalGingrId];
+    const bathType = icon?.title
+      || d.addonType
+      || extractBathTypeFromName(d.bathServiceName)
+      || "Standard";
+    return {
+      animalGingrId: d.animalGingrId,
+      gingrReservationId: d.gingrReservationId,
+      animalName: d.animalName,
+      ownerName: d.ownerName,
+      breed: d.breed,
+      roomLabel: d.roomLabel,
+      suiteType: d.suiteType,
+      bathType,
+      bathModifiers: d.bathModifiers,
+      bathNotes: icon?.comment || "",
+      scheduledAt: d.scheduledAt,
+      scheduledTime: d.scheduledTime,
+      departureTime: d.departureTime,
+      departureTimeRaw: d.departureTimeRaw,
+      isCheckedOut: d.isCheckedOut,
+      isDone: d.isDone,
+    };
+  });
+
+  dogs.sort((a, b) => (a.scheduledAt || "").localeCompare(b.scheduledAt || ""));
 
   return { dogs };
 }
@@ -1236,8 +1352,8 @@ Deno.serve(async (req: Request) => {
       today,
     );
 
-    // 8. Bathing Report
-    const bathingReport = computeBathingReport(reservations);
+    // 8. Bathing Report (server-side bath type resolution)
+    const bathingReport = await computeBathingReport(supabase, locationId, today);
 
     // 9. Service Reports
     const pamperReport = computeServiceReport(reservations, "pamper");
