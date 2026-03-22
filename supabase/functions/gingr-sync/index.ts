@@ -1925,7 +1925,7 @@ Deno.serve(async (req: Request) => {
       entities ||
       (sync_type === "full"
         ? ["reservation_types", "immunization_types", "owners", "animals", "reservations", "invoices", "invoice_payments", "deposits", "runs_and_occupancy", "animal_icons", "animal_icons_all", "animal_photos"]
-        : ["reservations", "invoices", "invoice_payments", "deposits"]);
+        : ["invoices", "invoice_payments", "deposits"]);
 
     for (const entity of toSync) {
       await updateSyncState(supabase, location_id, entity, {
