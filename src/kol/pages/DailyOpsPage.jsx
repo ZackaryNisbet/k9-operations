@@ -969,7 +969,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const locationId = profile?.location_id;
     if (!locationId) { setBathTypeLoading(false); return; }
 
-    const animalIds = needsFetch.map(r => String(r.gingrId || "").replace(/^g/, "")).filter(Boolean);
+    const animalIds = needsFetch.map(r => String(r.dogId || "").replace(/^g/, "")).filter(Boolean);
     if (animalIds.length === 0) { setBathTypeLoading(false); return; }
 
     supabase.from("gingr_animal_icons_live")
@@ -981,10 +981,25 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         const iconMap = {};
         (iconRows || []).forEach(r => { iconMap[r.animal_gingr_id] = r.icon_title; });
 
+        const extractBathType = (svcName) => {
+          if (!svcName) return null;
+          const l = svcName.toLowerCase();
+          if (l.includes("premium")) return "Premium";
+          if (l.includes("medicated")) return "Medicated";
+          if (l.includes("hypoallergenic") || l.includes("hypo")) return l.includes("no spray") ? "Hypoallergenic - NO SPRAY" : "Hypoallergenic";
+          if (l.includes("whitening")) return "Whitening";
+          if (l.includes("shampoo from home")) return "Shampoo From Home";
+          if (l.includes("no spray")) return "Hypoallergenic - NO SPRAY";
+          if (l.includes("no dryer")) return "No Dryer";
+          return null;
+        };
+
         const newMap = { ...bathTypeMap };
         needsFetch.forEach(res => {
-          const gingrId = String(res.gingrId || "").replace(/^g/, "");
-          newMap[res.id] = iconMap[gingrId] || "Premium";
+          const animalId = String(res.dogId || "").replace(/^g/, "");
+          const svcs = Array.isArray(res._services) ? res._services : [];
+          const bathSvc = svcs.find(s => typeof s === "object" && s?.name?.toLowerCase().includes("bath"));
+          newMap[res.id] = iconMap[animalId] || extractBathType(bathSvc?.name) || "Standard";
         });
         setBathTypeMap(newMap);
         setBathTypeLoading(false);
@@ -1035,7 +1050,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         else if (rtn.includes("double")) { roomNum = "DC"; roomType = "Double Compartment"; }
         else if (rtn.includes("single")) { roomNum = "SC"; roomType = "Single Compartment"; }
       }
-      const bathType = bathTypeMap[res.id] || (bathTypeLoading ? "Loading…" : "Premium");
+      const bathType = bathTypeMap[res.id] || (bathTypeLoading ? "Loading…" : "Standard");
       const rawCoTime = res.scheduledCheckOutTime || res.checkOutTime || "";
       const coTime = rawCoTime ? formatTime12hr(rawCoTime) : "—";
       const completedInfo = bathCompleted[res.id];
@@ -1046,9 +1061,9 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       const bathSvc = svcs.find(s => typeof s === "object" && s?.name?.toLowerCase().includes("bath") && (s.scheduled_at || "").includes(viewDate));
       const schedAt = bathSvc?.scheduled_at || "";
       const schedTime = schedAt ? formatTime12hr(schedAt.split("T")[1]?.slice(0, 5) || "") : "—";
-      bathRows.push({ resId: res.id, dogName, roomNum, bathType, coTime, isDone, completedInfo, resType: res.type, isDeparted, schedTime, roomType });
+      bathRows.push({ resId: res.id, dogName, roomNum, bathType, coTime, isDone, completedInfo, resType: res.type, isDeparted, schedTime, schedAtRaw: schedAt, roomType });
     });
-    bathRows.sort((a, b) => (a.roomNum || "").localeCompare(b.roomNum || "", undefined, { numeric: true }));
+    bathRows.sort((a, b) => (a.schedAtRaw || "").localeCompare(b.schedAtRaw || ""));
 
     const totalBaths = bathRows.length;
     const doneBaths = bathRows.filter(r => r.isDone).length;
