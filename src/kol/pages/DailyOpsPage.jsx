@@ -929,9 +929,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const hasSvc = (svcs, name) => getSvcNames(svcs).some(n => n.toLowerCase() === name.toLowerCase());
   const hasSvcIncludes = (svcs, partial) => getSvcNames(svcs).some(n => n.toLowerCase().includes(partial.toLowerCase()));
 
-  // ─── Bathing Report (auto-pulled from Gingr) ───────────────────────────────
-  const [bathTypeMap, setBathTypeMap] = useState({});
-  const [bathTypeLoading, setBathTypeLoading] = useState(false);
+  // ─── Bathing Report (server-computed via ops-compute) ────────────────────────
   const [bathCompleted, setBathCompleted] = useState({});
 
   // Load bath completions from Supabase
@@ -951,81 +949,6 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       });
   }, [sub, viewDate, profile?.location_id]);
 
-  // Bath types from gingr_animal_icons_live (icon_group = 'Bath')
-  useEffect(() => {
-    if (sub !== "bathing") return;
-    const reservations = data.reservations || [];
-    // Fetch icons for ALL dogs with bath scheduled today (including departed)
-    const bathRes = reservations.filter(r => {
-      if (r.status === "cancelled") return false;
-      if (!hasSvc(r._services, "Bath")) return false;
-      const svcs = Array.isArray(r._services) ? r._services : [];
-      return svcs.some(s => typeof s === "object" && s?.name?.toLowerCase().includes("bath") && (s.scheduled_at || "").includes(viewDate));
-    });
-    if (bathRes.length === 0) return;
-
-    const needsFetch = bathRes.filter(r => !bathTypeMap[r.id]);
-    if (needsFetch.length === 0) return;
-
-    setBathTypeLoading(true);
-    const locationId = profile?.location_id;
-    if (!locationId) { setBathTypeLoading(false); return; }
-
-    const animalIds = needsFetch.map(r => String(r.dogId || "").replace(/^g/, "")).filter(Boolean);
-    if (animalIds.length === 0) { setBathTypeLoading(false); return; }
-
-    supabase.from("gingr_animal_icons_live")
-      .select("animal_gingr_id, icon_title, icon_comment")
-      .eq("location_id", locationId)
-      .eq("icon_group", "Bath")
-      .in("animal_gingr_id", animalIds)
-      .then(({ data: iconRows }) => {
-        const iconMap = {};
-        const commentMap = {};
-        (iconRows || []).forEach(r => { iconMap[r.animal_gingr_id] = r.icon_title; commentMap[r.animal_gingr_id] = r.icon_comment || ""; });
-
-        // Same constants and logic as mobile ServicesPage.tsx parseBathAddons + extractBathType
-        const BATH_TYPE_ADDONS = ["Premium", "Medicated", "Whitening", "Shampoo From Home", "Hypoallergenic - NO SPRAY", "Hypoallergenic - WITH SPRAY"];
-        const extractBathType = (svcName) => {
-          if (!svcName) return null;
-          const l = svcName.toLowerCase();
-          if (l.includes("premium")) return "Premium";
-          if (l.includes("medicated")) return "Medicated";
-          if (l.includes("whitening")) return "Whitening";
-          if (l.includes("shampoo from home")) return "Shampoo From Home";
-          if (l.includes("fresh n clean") || l.includes("fresh & clean")) return "Fresh N Clean";
-          if (l.includes("water rinse")) return "Water Rinse";
-          if (l.includes("hypo") && l.includes("no spray")) return "Hypoallergenic - NO SPRAY";
-          if (l.includes("hypo") && l.includes("with spray")) return "Hypoallergenic - WITH SPRAY";
-          if (l.includes("hypo")) return "Hypoallergenic";
-          return null;
-        };
-        const parseBathAddons = (svcs) => {
-          let addonType = null;
-          svcs.forEach(s => {
-            const n = typeof s === "string" ? s : s?.name || "";
-            if (!n) return;
-            // Exact match first, then case-insensitive (mirrors mobile parseBathAddons)
-            if (BATH_TYPE_ADDONS.includes(n)) { if (!addonType) addonType = n; }
-            else { for (const t of BATH_TYPE_ADDONS) { if (n.toLowerCase() === t.toLowerCase()) { if (!addonType) addonType = t; break; } } }
-          });
-          return addonType;
-        };
-
-        const newMap = { ...bathTypeMap };
-        needsFetch.forEach(res => {
-          const animalId = String(res.dogId || "").replace(/^g/, "");
-          const svcs = Array.isArray(res._services) ? res._services : [];
-          const bathSvc = svcs.find(s => typeof s === "object" && s?.name?.toLowerCase().includes("bath"));
-          const addonType = parseBathAddons(svcs);
-          newMap[res.id] = iconMap[animalId] || addonType || extractBathType(bathSvc?.name) || "Standard";
-          newMap[res.id + "_notes"] = commentMap[animalId] || "";
-        });
-        setBathTypeMap(newMap);
-        setBathTypeLoading(false);
-      });
-  }, [sub, viewDate, data.reservations, profile?.location_id]);
-
   const saveBathCompleted = async (newCompleted) => {
     setBathCompleted(newCompleted);
     if (!profile?.location_id) return;
@@ -1038,62 +961,30 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   };
 
   const renderBathing = () => {
-    const reservations = data.reservations || [];
-    const dogs = data.dogs || [];
-    // Show ALL dogs with bath service SCHEDULED for the view date (matches mobile "Scheduled At" view).
-    // This includes dogs who have already departed — they appear dimmed with a "Departed" label.
-    // Previously filtered by checkOut date + checked-in status, which dropped dogs after checkout.
-    const withBathToday = reservations.filter(res => {
-      if (res.status === "cancelled") return false;
-      if (!hasSvc(res._services, "Bath")) return false;
-      // Check if any bath service has scheduled_at on the view date
-      const svcs = Array.isArray(res._services) ? res._services : [];
-      return svcs.some(s => {
-        const name = typeof s === "string" ? s : (s?.name || "");
-        if (!name.toLowerCase().includes("bath")) return false;
-        const schedAt = s?.scheduled_at || "";
-        return schedAt.includes(viewDate);
-      });
+    // Read server-computed bathing data from ops-compute (single source of truth)
+    const bathingEntry = allOps.find(e => e.id === `ops_bathing_${viewDate}`);
+    const computedDogs = bathingEntry?.computed_items?.dogs || [];
+
+    const bathRows = computedDogs.map(d => {
+      const resId = `g${d.gingrReservationId}`;
+      const completedInfo = bathCompleted[resId] || null;
+      return {
+        resId,
+        dogName: d.animalName || "Unknown",
+        roomNum: d.roomLabel || "—",
+        roomType: d.suiteType || "",
+        bathType: d.bathType || "Standard",
+        bathModifiers: d.bathModifiers || [],
+        bathNotes: d.bathNotes || "",
+        schedTime: d.scheduledTime || "—",
+        schedAtRaw: d.scheduledAt || "",
+        coTime: d.departureTime || "—",
+        isDone: !!completedInfo || d.isDone,
+        completedInfo,
+        isDeparted: !!d.isCheckedOut,
+        resType: "boarding",
+      };
     });
-    const bathRows = [];
-    withBathToday.forEach(res => {
-      const dog = dogs.find(d => d.id === res.dogId);
-      const dogName = dog?.fields?.name || res._animalName || "Unknown";
-      const roomInfo = resolveRoomDisplay(res.room);
-      let roomNum = roomInfo.display;
-      let roomType = roomInfo.roomType;
-      // Fallback: if no room assigned, derive room type from reservation type name
-      if (roomNum === "—" && res._resTypeName) {
-        const rtn = res._resTypeName.toLowerCase();
-        if (rtn.includes("luxury")) { roomNum = "LS"; roomType = "Luxury Suite"; }
-        else if (rtn.includes("executive")) { roomNum = "ER"; roomType = "Executive Room"; }
-        else if (rtn.includes("double")) { roomNum = "DC"; roomType = "Double Compartment"; }
-        else if (rtn.includes("single")) { roomNum = "SC"; roomType = "Single Compartment"; }
-      }
-      const bathTypeResolved = bathTypeMap[res.id] || (bathTypeLoading ? "Loading…" : "Standard");
-      const rawCoTime = res.scheduledCheckOutTime || res.checkOutTime || "";
-      const coTime = rawCoTime ? formatTime12hr(rawCoTime) : "—";
-      const completedInfo = bathCompleted[res.id];
-      const isDone = !!completedInfo;
-      const isDeparted = res.status === "checked-out";
-      // Get the bath scheduled time
-      const svcs = Array.isArray(res._services) ? res._services : [];
-      const bathSvc = svcs.find(s => typeof s === "object" && s?.name?.toLowerCase().includes("bath") && (s.scheduled_at || "").includes(viewDate));
-      const schedAt = bathSvc?.scheduled_at || "";
-      const schedTime = schedAt ? formatTime12hr(schedAt.split("T")[1]?.slice(0, 5) || "") : "—";
-      // Parse add-on services for bath modifiers (same list as mobile BATH_MODIFIER_ADDONS)
-      const BATH_MODIFIER_ADDONS = ["NO CRATE DRYER", "NO VELOCITY DRYER", "TOWEL DRY ONLY", "*See account notes*"];
-      const bathModifiers = [];
-      svcs.forEach(s => {
-        const n = typeof s === "string" ? s : s?.name || "";
-        if (!n) return;
-        if (BATH_MODIFIER_ADDONS.includes(n)) bathModifiers.push(n);
-        else { for (const m of BATH_MODIFIER_ADDONS) { if (n.toLowerCase() === m.toLowerCase()) { bathModifiers.push(m); break; } } }
-      });
-      const bathNotes = bathTypeMap[res.id + "_notes"] || "";
-      bathRows.push({ resId: res.id, dogName, roomNum, bathType: bathTypeResolved, coTime, isDone, completedInfo, resType: res.type, isDeparted, schedTime, schedAtRaw: schedAt, roomType, bathModifiers, bathNotes });
-    });
-    bathRows.sort((a, b) => (a.schedAtRaw || "").localeCompare(b.schedAtRaw || ""));
 
     const totalBaths = bathRows.length;
     const doneBaths = bathRows.filter(r => r.isDone).length;
