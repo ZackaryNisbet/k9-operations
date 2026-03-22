@@ -436,6 +436,39 @@ async function syncReservations(
   };
 }
 
+async function syncTodayReservations(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string
+): Promise<{ synced: number }> {
+  const today = dateStrET();
+
+  const result = await gingrFetch(subdomain, "reservations", apiKey, "POST", {
+    start_date: today,
+    end_date: today,
+  });
+
+  const resMap = result.data || {};
+  const reservations = Object.values(resMap);
+  if (reservations.length === 0) return { synced: 0 };
+
+  const rows = reservations.map((r: any) => mapReservationRow(r, locationId));
+
+  for (let i = 0; i < rows.length; i += 500) {
+    const chunk = rows.slice(i, i + 500);
+    const { error } = await supabase
+      .from("gingr_reservations")
+      .upsert(chunk, { onConflict: "location_id,gingr_id" });
+    if (error) {
+      console.error("syncTodayReservations upsert error:", error.message);
+    }
+  }
+
+  console.log(`Today reservations sync: ${reservations.length} upserted for ${today}`);
+  return { synced: reservations.length };
+}
+
 async function syncReservationTypes(
   supabase: any,
   subdomain: string,
@@ -1680,6 +1713,14 @@ Deno.serve(async (req: Request) => {
       const startTime = Date.now();
       let checkedOutCount = 0;
 
+      // 0. Sync ALL of today's reservations (catches new bookings, walk-ins, same-day adds)
+      let todayResResult = { synced: 0 };
+      try {
+        todayResResult = await syncTodayReservations(supabase, subdomain, api_key, location_id);
+      } catch (todayErr: any) {
+        console.error("Today reservations sync error (tv-poll):", todayErr.message);
+      }
+
       // 1. Fetch currently checked-in from Gingr (single API call)
       const checkedInResult = await gingrFetch(subdomain, "reservations", api_key, "POST", {
         checked_in: "true",
@@ -1755,6 +1796,7 @@ Deno.serve(async (req: Request) => {
         JSON.stringify({
           success: true,
           sync_type: "tv-poll",
+          today_reservations_synced: todayResResult.synced,
           checked_in_count: checkedIn.length,
           checked_out_count: checkedOutCount,
           rooms_assigned: roomResult.assigned,
