@@ -1368,14 +1368,26 @@ async function syncAnimalIcons(
     }
   }
 
-  // 3. Clear icons for dogs no longer checked in, then upsert fresh data
+  // 3. Clear icons for dogs no longer checked in
   await supabase
     .from("gingr_animal_icons_live")
     .delete()
     .eq("location_id", locationId)
     .not("animal_gingr_id", "in", `(${animalIds.join(",")})`);
 
-  // Dedup: same animal can have duplicate icon entries from API
+  // 4. Delete ALL icons for checked-in dogs, then re-insert fresh ones.
+  // This ensures removed icons in Gingr are reflected immediately
+  // (e.g., Eval icon removed after dog completes evaluation).
+  for (let i = 0; i < animalIds.length; i += 500) {
+    const chunk = animalIds.slice(i, i + 500);
+    await supabase
+      .from("gingr_animal_icons_live")
+      .delete()
+      .eq("location_id", locationId)
+      .in("animal_gingr_id", chunk);
+  }
+
+  // 5. Dedup and insert fresh icon data
   const deduped = new Map<string, any>();
   for (const row of iconRows) {
     const key = `${row.location_id}|${row.animal_gingr_id}|${row.icon_template_id}`;
@@ -1388,8 +1400,8 @@ async function syncAnimalIcons(
       const chunk = dedupedRows.slice(i, i + 500);
       const { error } = await supabase
         .from("gingr_animal_icons_live")
-        .upsert(chunk, { onConflict: "location_id,animal_gingr_id,icon_template_id" });
-      if (error) throw new Error(`gingr_animal_icons_live upsert error: ${error.message}`);
+        .insert(chunk);
+      if (error) throw new Error(`gingr_animal_icons_live insert error: ${error.message}`);
     }
   }
 
