@@ -1316,11 +1316,7 @@ async function syncAnimalIcons(
   ] as string[];
 
   if (animalIds.length === 0) {
-    // Clear stale icons when no dogs are checked in
-    await supabase
-      .from("gingr_animal_icons_live")
-      .delete()
-      .eq("location_id", locationId);
+    // No dogs checked in — skip icon sync but keep existing icons (permanent storage)
     return { synced: 0, animals: 0 };
   }
 
@@ -1354,6 +1350,7 @@ async function syncAnimalIcons(
     seenAnimalIds.add(animalId);
     const icons = animalEntry?.icons || [];
     for (const icon of icons) {
+      const now = new Date().toISOString();
       iconRows.push({
         location_id: locationId,
         animal_gingr_id: animalId,
@@ -1363,21 +1360,20 @@ async function syncAnimalIcons(
         icon_color: icon.color || null,
         icon_class: icon.class || null,
         icon_comment: icon.comment || null,
-        synced_at: new Date().toISOString(),
+        synced_at: now,
+        first_seen_at: now,
+        last_seen_at: now,
       });
     }
   }
 
-  // 3. Clear icons for dogs no longer checked in
-  await supabase
-    .from("gingr_animal_icons_live")
-    .delete()
-    .eq("location_id", locationId)
-    .not("animal_gingr_id", "in", `(${animalIds.join(",")})`);
+  // 3. Icons for departed dogs are KEPT (permanent storage).
+  // Only checked-in dogs get a full refresh to detect icon removals in Gingr.
 
-  // 4. Delete ALL icons for checked-in dogs, then re-insert fresh ones.
+  // 4. Delete icons for checked-in dogs only, then re-insert fresh ones.
   // This ensures removed icons in Gingr are reflected immediately
   // (e.g., Eval icon removed after dog completes evaluation).
+  // Departed dogs' icons are preserved.
   for (let i = 0; i < animalIds.length; i += 500) {
     const chunk = animalIds.slice(i, i + 500);
     await supabase
@@ -1387,7 +1383,7 @@ async function syncAnimalIcons(
       .in("animal_gingr_id", chunk);
   }
 
-  // 5. Dedup and insert fresh icon data
+  // 5. Dedup and upsert fresh icon data
   const deduped = new Map<string, any>();
   for (const row of iconRows) {
     const key = `${row.location_id}|${row.animal_gingr_id}|${row.icon_template_id}`;
@@ -1400,8 +1396,8 @@ async function syncAnimalIcons(
       const chunk = dedupedRows.slice(i, i + 500);
       const { error } = await supabase
         .from("gingr_animal_icons_live")
-        .insert(chunk);
-      if (error) throw new Error(`gingr_animal_icons_live insert error: ${error.message}`);
+        .upsert(chunk, { onConflict: "location_id,animal_gingr_id,icon_template_id" });
+      if (error) throw new Error(`gingr_animal_icons_live upsert error: ${error.message}`);
     }
   }
 
