@@ -1405,6 +1405,92 @@ async function syncAnimalIcons(
   return { synced: iconRows.length, animals: seenAnimalIds.size };
 }
 
+// ─── Mass Icon Pull — ALL animals in gingr_animals ───────────────────────
+// Used for location initialization or backfill. Fetches icons for every
+// animal in the database, not just checked-in dogs. Gingr's get_icons API
+// accepts batches of animal IDs, so we chunk in groups of 200.
+async function syncAllAnimalIcons(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  locationId: string
+): Promise<{ synced: number; animals: number }> {
+  const { data: allAnimals } = await supabase
+    .from("gingr_animals")
+    .select("gingr_id")
+    .eq("location_id", locationId);
+
+  const allIds = [...new Set(
+    (allAnimals || []).map((a: any) => String(a.gingr_id)).filter(Boolean)
+  )] as string[];
+
+  if (allIds.length === 0) return { synced: 0, animals: 0 };
+
+  let totalIcons = 0;
+  let totalAnimals = 0;
+
+  // Chunk into batches of 200 to avoid API limits
+  for (let i = 0; i < allIds.length; i += 200) {
+    const batch = allIds.slice(i, i + 200);
+    const params = new URLSearchParams();
+    params.append("key", apiKey);
+    params.append("animal_ids", JSON.stringify(batch.map(Number)));
+    params.append("owner_ids", "null");
+
+    const url = `https://${subdomain}.gingrapp.com/api/v1/get_icons`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+      body: params.toString(),
+    });
+    if (!resp.ok) { console.error(`get_icons batch error: ${resp.status}`); continue; }
+    const result = await resp.json();
+    if (!result.success) { console.error(`get_icons batch failed`); continue; }
+
+    const animalsData = result.data?.animals || {};
+    const iconRows: any[] = [];
+    const now = new Date().toISOString();
+
+    for (const [animalId, animalEntry] of Object.entries(animalsData) as [string, any][]) {
+      totalAnimals++;
+      const icons = animalEntry?.icons || [];
+      for (const icon of icons) {
+        iconRows.push({
+          location_id: locationId,
+          animal_gingr_id: animalId,
+          icon_template_id: String(icon.color_label_template_id || icon.id || ""),
+          icon_title: icon.title || null,
+          icon_group: icon.name || null,
+          icon_color: icon.color || null,
+          icon_class: icon.class || null,
+          icon_comment: icon.comment || null,
+          synced_at: now,
+          first_seen_at: now,
+          last_seen_at: now,
+        });
+      }
+    }
+
+    if (iconRows.length > 0) {
+      const deduped = new Map<string, any>();
+      for (const row of iconRows) {
+        deduped.set(`${row.location_id}|${row.animal_gingr_id}|${row.icon_template_id}`, row);
+      }
+      for (let j = 0; j < [...deduped.values()].length; j += 500) {
+        const chunk = [...deduped.values()].slice(j, j + 500);
+        await supabase.from("gingr_animal_icons_live")
+          .upsert(chunk, { onConflict: "location_id,animal_gingr_id,icon_template_id" });
+      }
+      totalIcons += deduped.size;
+    }
+
+    console.log(`Icons mass pull batch ${Math.floor(i / 200) + 1}: ${iconRows.length} icons from ${Object.keys(animalsData).length} animals`);
+  }
+
+  console.log(`Icons mass pull complete: ${totalIcons} icons for ${totalAnimals} animals (from ${allIds.length} total)`);
+  return { synced: totalIcons, animals: totalAnimals };
+}
+
 // ─── Sync Animal Photos to Supabase Storage ──────────────────────────────
 // Downloads dog profile photos from Gingr's Google Cloud Storage CDN and
 // uploads them to the `dog-profile-pics` Supabase Storage bucket.
@@ -1915,6 +2001,14 @@ Deno.serve(async (req: Request) => {
             break;
           case "animal_icons":
             results.animal_icons = await syncAnimalIcons(
+              supabase,
+              subdomain,
+              api_key,
+              location_id
+            );
+            break;
+          case "animal_icons_all":
+            results.animal_icons_all = await syncAllAnimalIcons(
               supabase,
               subdomain,
               api_key,
