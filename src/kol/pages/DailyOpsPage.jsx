@@ -973,24 +973,28 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     if (animalIds.length === 0) { setBathTypeLoading(false); return; }
 
     supabase.from("gingr_animal_icons_live")
-      .select("animal_gingr_id, icon_title")
+      .select("animal_gingr_id, icon_title, icon_comment")
       .eq("location_id", locationId)
       .eq("icon_group", "Bath")
       .in("animal_gingr_id", animalIds)
       .then(({ data: iconRows }) => {
         const iconMap = {};
-        (iconRows || []).forEach(r => { iconMap[r.animal_gingr_id] = r.icon_title; });
+        const commentMap = {};
+        (iconRows || []).forEach(r => { iconMap[r.animal_gingr_id] = r.icon_title; commentMap[r.animal_gingr_id] = r.icon_comment || ""; });
 
+        const BATH_TYPE_ADDONS = new Set(["Premium", "Medicated", "Whitening", "Shampoo From Home", "Hypoallergenic - NO SPRAY", "Hypoallergenic - WITH SPRAY"]);
         const extractBathType = (svcName) => {
           if (!svcName) return null;
           const l = svcName.toLowerCase();
           if (l.includes("premium")) return "Premium";
           if (l.includes("medicated")) return "Medicated";
-          if (l.includes("hypoallergenic") || l.includes("hypo")) return l.includes("no spray") ? "Hypoallergenic - NO SPRAY" : "Hypoallergenic";
           if (l.includes("whitening")) return "Whitening";
           if (l.includes("shampoo from home")) return "Shampoo From Home";
-          if (l.includes("no spray")) return "Hypoallergenic - NO SPRAY";
-          if (l.includes("no dryer")) return "No Dryer";
+          if (l.includes("fresh n clean") || l.includes("fresh & clean")) return "Fresh N Clean";
+          if (l.includes("water rinse")) return "Water Rinse";
+          if (l.includes("hypo") && l.includes("no spray")) return "Hypoallergenic - NO SPRAY";
+          if (l.includes("hypo") && l.includes("with spray")) return "Hypoallergenic - WITH SPRAY";
+          if (l.includes("hypo")) return "Hypoallergenic";
           return null;
         };
 
@@ -999,7 +1003,11 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
           const animalId = String(res.dogId || "").replace(/^g/, "");
           const svcs = Array.isArray(res._services) ? res._services : [];
           const bathSvc = svcs.find(s => typeof s === "object" && s?.name?.toLowerCase().includes("bath"));
-          newMap[res.id] = iconMap[animalId] || extractBathType(bathSvc?.name) || "Standard";
+          // Parse reservation add-on services for bath type
+          let addonType = null;
+          svcs.forEach(s => { const n = typeof s === "string" ? s : s?.name || ""; if (n && BATH_TYPE_ADDONS.has(n)) { if (!addonType) addonType = n; } });
+          newMap[res.id] = iconMap[animalId] || addonType || extractBathType(bathSvc?.name) || "Standard";
+          newMap[res.id + "_notes"] = commentMap[animalId] || "";
         });
         setBathTypeMap(newMap);
         setBathTypeLoading(false);
@@ -1050,7 +1058,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         else if (rtn.includes("double")) { roomNum = "DC"; roomType = "Double Compartment"; }
         else if (rtn.includes("single")) { roomNum = "SC"; roomType = "Single Compartment"; }
       }
-      const bathType = bathTypeMap[res.id] || (bathTypeLoading ? "Loading…" : "Standard");
+      const bathTypeResolved = bathTypeMap[res.id] || (bathTypeLoading ? "Loading…" : "Standard");
       const rawCoTime = res.scheduledCheckOutTime || res.checkOutTime || "";
       const coTime = rawCoTime ? formatTime12hr(rawCoTime) : "—";
       const completedInfo = bathCompleted[res.id];
@@ -1061,7 +1069,12 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       const bathSvc = svcs.find(s => typeof s === "object" && s?.name?.toLowerCase().includes("bath") && (s.scheduled_at || "").includes(viewDate));
       const schedAt = bathSvc?.scheduled_at || "";
       const schedTime = schedAt ? formatTime12hr(schedAt.split("T")[1]?.slice(0, 5) || "") : "—";
-      bathRows.push({ resId: res.id, dogName, roomNum, bathType, coTime, isDone, completedInfo, resType: res.type, isDeparted, schedTime, schedAtRaw: schedAt, roomType });
+      // Parse add-on services for bath modifiers
+      const BATH_MOD_NAMES = ["NO CRATE DRYER", "NO VELOCITY DRYER", "TOWEL DRY ONLY", "*See account notes*"];
+      const bathModifiers = [];
+      svcs.forEach(s => { const n = typeof s === "string" ? s : s?.name || ""; if (n && BATH_MOD_NAMES.some(m => n.toUpperCase().includes(m.toUpperCase()))) bathModifiers.push(n); });
+      const bathNotes = bathTypeMap[res.id + "_notes"] || "";
+      bathRows.push({ resId: res.id, dogName, roomNum, bathType: bathTypeResolved, coTime, isDone, completedInfo, resType: res.type, isDeparted, schedTime, schedAtRaw: schedAt, roomType, bathModifiers, bathNotes });
     });
     bathRows.sort((a, b) => (a.schedAtRaw || "").localeCompare(b.schedAtRaw || ""));
 
@@ -1093,11 +1106,14 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       const styles = {
         "Loading…": { background: "#F3F4F6", color: "#9CA3AF" },
         "Premium": { background: "#DBEAFE", color: "#1D4ED8" },
+        "Standard": { background: "#DBEAFE", color: "#1D4ED8" },
         "Medicated": { background: "#FEE2E2", color: "#DC2626" },
         "Whitening": { background: "#F3E8FF", color: "#7C3AED" },
         "Shampoo From Home": { background: "#ECFDF5", color: "#059669" },
+        "Fresh N Clean": { background: "#ECFDF5", color: "#059669" },
+        "Water Rinse": { background: "#E0F2FE", color: "#0369A1" },
       };
-      if (type.includes("Hypoallergenic")) return { background: "#FEF3C7", color: "#D97706" };
+      if (type.includes("Hypo")) return { background: "#FEF3C7", color: "#D97706" };
       return styles[type] || { background: "#F3F4F6", color: "#6B7280" };
     };
 
@@ -1165,6 +1181,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                           }}>
                             {row.bathType}
                           </span>
+                          {row.bathModifiers && row.bathModifiers.length > 0 && <div style={{ marginTop: 3, display: "flex", flexWrap: "wrap", gap: 3 }}>
+                            {row.bathModifiers.map(m => <span key={m} style={{ fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "#FEE2E2", color: "#DC2626" }}>{m}</span>)}
+                          </div>}
+                          {row.bathNotes && <div style={{ fontSize: 10, fontStyle: "italic", color: "#D97706", marginTop: 2 }}>{row.bathNotes}</div>}
                         </td>
                         <td style={{ padding: "12px 14px", textAlign: "center", color: C.pri, fontSize: 12, fontWeight: 600, fontFamily: "inherit" }}>{row.schedTime}</td>
                         <td style={{ padding: "12px 14px", textAlign: "center", color: C.textSec, fontSize: 12, fontFamily: "inherit" }}>{row.coTime}</td>
