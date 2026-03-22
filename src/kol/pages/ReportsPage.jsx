@@ -141,7 +141,7 @@ function LiteReportsPage({ data, nav }) {
   const prevTo = addDays(dateFrom, -1);
 
   const fmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}`;
-  const fmt$k = (v) => v >= 10000 ? `$${(v / 1000).toFixed(1)}k` : v >= 1000 ? `$${(v / 1000).toFixed(2)}k` : fmt$(v);
+  const fmt$k = (v) => fmt$(v);
   const fmtPercent = (v) => `${typeof v === "number" ? v.toFixed(1) : "0.0"}%`;
   const fmtDateLabel = (d) => { if (!d) return ""; const dt = new Date(d + "T00:00:00"); return `${dt.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`; };
 

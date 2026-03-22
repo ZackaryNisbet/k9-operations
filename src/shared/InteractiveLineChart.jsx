@@ -4,7 +4,7 @@ import React, { useState, useRef, useMemo, useCallback, memo } from "react";
 import { C, CHART_PTS } from "./theme";
 
 const _chartFmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}`;
-const _chartFmt$k = (v) => v >= 10000 ? `$${(v / 1000).toFixed(1)}k` : v >= 1000 ? `$${(v / 1000).toFixed(2)}k` : _chartFmt$(v);
+const _chartFmt$k = (v) => _chartFmt$(v);
 
 const DAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 

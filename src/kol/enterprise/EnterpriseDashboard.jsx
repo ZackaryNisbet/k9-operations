@@ -175,7 +175,7 @@ function AnimatedNumber({ value, prefix = "", suffix = "", decimals = 0, duratio
    Tiny helpers
    ═══════════════════════════════════════════════════════════════════════════ */
 const fmt$ = (v) => typeof v === "number" ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00";
-const fmt$k = (v) => v >= 10000 ? `${(v / 1000).toFixed(1)}k` : v >= 1000 ? `${(v / 1000).toFixed(2)}k` : fmt$(v);
+const fmt$k = (v) => "$" + fmt$(v);
 const fmtMoney = (n) => "$" + Math.round(n).toLocaleString();
 const fmtDateLabel = (d) => {
   if (!d) return "";
