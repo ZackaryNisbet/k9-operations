@@ -1067,10 +1067,14 @@ function parseBathAddonsFromServices(svcs: any[]): { addonType: string | null; m
 function formatTimeHuman(isoStr: string): string {
   if (!isoStr) return "—";
   try {
-    const d = new Date(isoStr);
-    if (isNaN(d.getTime())) return "—";
-    const h = d.getHours();
-    const m = d.getMinutes();
+    // Parse local time directly from ISO string to avoid UTC conversion
+    // e.g., "2026-03-22T15:00:00-04:00" → extract "15:00" (3 PM local)
+    const tPart = isoStr.split("T")[1];
+    if (!tPart) return "—";
+    const [hStr, mStr] = tPart.split(":");
+    const h = parseInt(hStr, 10);
+    const m = parseInt(mStr, 10);
+    if (isNaN(h) || isNaN(m)) return "—";
     const ampm = h >= 12 ? "PM" : "AM";
     const h12 = h % 12 || 12;
     return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
