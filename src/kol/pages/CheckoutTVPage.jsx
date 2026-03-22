@@ -93,17 +93,8 @@ function getDogPlaygroup(dog, res, playgroupMap, allDogTags) {
   const animalId = String(dog?.gingrId || res?.animalGingrId || "");
   const tags = allDogTags?.[animalId];
 
-  // If dog has PP tag, PP wins over any group play
+  // PP determined by Gingr icon ONLY — not room names, services, or reservation type
   if (tags && tags.has('private_play')) return 'private_play';
-
-  // Check if dog has PP service or PP room (even without PP icon)
-  const svcs = res?._services;
-  const hasPPService = Array.isArray(svcs) && svcs.some(s => {
-    const name = typeof s === "string" ? s : (s?.name || "");
-    return name.toLowerCase().includes("private play");
-  });
-  const roomIsPP = (res?.room || "").toLowerCase().includes("private play");
-  if (hasPPService || roomIsPP) return 'private_play';
 
   // Priority among group play tags: large > small
   if (tags) {
@@ -115,7 +106,6 @@ function getDogPlaygroup(dog, res, playgroupMap, allDogTags) {
   // Fallback to single-tag playgroupMap
   const pg = playgroupMap?.[animalId];
   if (pg) return pg;
-  if (res?.type === "dayboarding") return "private_play";
   return null; // unclassified
 }
 
