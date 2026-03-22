@@ -69,6 +69,18 @@ export async function fetchCashBasisForDate(locationId, targetDate) {
     return emptyResult();
   }
 
+  // Fetch deposits REFUNDED on this date
+  const { data: refundedDeposits, error: refDepErr } = await supabase
+    .from("gingr_deposits")
+    .select("reservation_gingr_id, owner_name, animal_name, paid_amount, refunded_at")
+    .eq("location_id", locationId)
+    .gte("refunded_at", `${targetDate}T00:00:00`)
+    .lt("refunded_at", `${targetDate}T23:59:59`);
+
+  if (refDepErr) {
+    console.error("Error fetching deposit refunds:", refDepErr.message);
+  }
+
   // Also fetch invoice details for owner names
   const invoiceIds = [...new Set((paymentEntries || []).map(p => p.invoice_id))];
   let invoiceMap = {};
@@ -131,6 +143,31 @@ export async function fetchCashBasisForDate(locationId, targetDate) {
       reservationId: dep.reservation_gingr_id,
       animalName: dep.animal_name,
       source: "deposit",
+    });
+  }
+
+  // Map deposit refunds
+  for (const dep of (refundedDeposits || [])) {
+    const amount = parseFloat(dep.paid_amount) || 0;
+    if (amount <= 0) continue;
+
+    const refundedTime = new Date(dep.refunded_at);
+    const timeStr = refundedTime.toLocaleTimeString("en-US", {
+      timeZone: TZ,
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    payments.push({
+      amount: -amount,
+      ownerName: dep.owner_name || "Unknown",
+      paymentMethod: "Deposit Refund",
+      time: refundedTime.getTime() / 1000,
+      timeStr,
+      isRefund: true,
+      reservationId: dep.reservation_gingr_id,
+      animalName: dep.animal_name,
+      source: "deposit_refund",
     });
   }
 
