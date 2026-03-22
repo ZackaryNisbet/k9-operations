@@ -1083,8 +1083,20 @@ async function computeCashBasisMetrics(
       })
       .reduce((sum: number, d: any) => sum + parseFloat(d.paid_amount || 0), 0);
 
+    // 2b) Deposit refunds — deposits refunded on this date
+    const { data: depositRefundData } = await supabase
+      .from("gingr_deposits")
+      .select("paid_amount")
+      .eq("location_id", locationId)
+      .gte("refunded_at", `${dateStr}T00:00:00`)
+      .lt("refunded_at", `${dateStr}T23:59:59`);
+
+    const depositRefunds = (depositRefundData || [])
+      .reduce((sum: number, d: any) => sum + Math.abs(parseFloat(d.paid_amount || 0)), 0);
+
     // 3) Compute and upsert
-    const cashNetRevenue = collectedPayments + collectedDeposits - refunds;
+    const totalRefunds = refunds + depositRefunds;
+    const cashNetRevenue = collectedPayments + collectedDeposits - totalRefunds;
 
     await supabase
       .from("dashboard_metrics_daily")
@@ -1094,7 +1106,7 @@ async function computeCashBasisMetrics(
           metric_date: dateStr,
           cash_collected_payments: collectedPayments,
           cash_collected_deposits: collectedDeposits,
-          cash_refunds: refunds,
+          cash_refunds: totalRefunds,
           cash_net_revenue: cashNetRevenue,
           computed_at: new Date().toISOString(),
         },
