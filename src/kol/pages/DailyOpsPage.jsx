@@ -150,6 +150,30 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const [dirty, setDirty] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
 
+  // Carry-over setting
+  const [carryOverEnabled, setCarryOverEnabled] = useState(false);
+  useEffect(() => {
+    if (sub !== "room_cleaning") return;
+    const locationId = profile?.location_id || "cherry-hill";
+    supabase.from("lite_settings").select("setting_value").eq("location_id", locationId).eq("setting_key", "room_cleaning_missed_carry_over").maybeSingle().then(({ data: row }) => {
+      setCarryOverEnabled(!!row?.setting_value?.enabled);
+    });
+  }, [sub, profile?.location_id]);
+
+  // Near-instant checkout detection via realtime subscription on gingr_reservations
+  const [realtimeCheckedOutNames, setRealtimeCheckedOutNames] = useState(new Set());
+  useEffect(() => {
+    if (sub !== "room_cleaning") return;
+    const locationId = profile?.location_id || "cherry-hill";
+    const channel = supabase.channel("checkout-realtime").on("postgres_changes", { event: "UPDATE", schema: "public", table: "gingr_reservations", filter: `location_id=eq.${locationId}` }, (payload) => {
+      const newRec = payload.new;
+      if (newRec?.check_out_date && !payload.old?.check_out_date && newRec.animal_name) {
+        setRealtimeCheckedOutNames(prev => { const next = new Set(prev); next.add(newRec.animal_name); return next; });
+      }
+    }).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [sub, profile?.location_id]);
+
   useEffect(() => {
     if (existing) {
       setItems(existing.items || {});
@@ -428,18 +452,17 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const renderRoomCleaning = () => {
     const roomItems = items;
 
-    // ─── Previous-day missed cleaning detection ───
+    // ─── Previous-day missed cleaning detection (only when carry-over enabled) ───
+    const missedMap = {};
     const prevDateObj = new Date(viewDate + "T12:00:00");
     prevDateObj.setDate(prevDateObj.getDate() - 1);
     const prevDate = prevDateObj.toISOString().slice(0, 10);
     const prevEntryId = `ops_room_cleaning_${prevDate}`;
-    const prevEntry = allOps.find(e => e.id === prevEntryId);
+    const prevEntry = carryOverEnabled ? allOps.find(e => e.id === prevEntryId) : null;
     const prevItems = prevEntry ? (prevEntry.items || {}) : {};
 
-    // Previous-day missed cleaning detection (disinfects + as-needed)
     const prevComputedRooms = prevEntry?.computed_items?.rooms || [];
-    const missedMap = {};
-    if (prevComputedRooms.length > 0) {
+    if (carryOverEnabled && prevComputedRooms.length > 0) {
       prevComputedRooms.forEach(cr => {
         const prevKey = sanitizeRoomKey(cr.room);
         if (cr.needsDisinfect && !(prevItems[prevKey]?.disinfect) && !(prevItems[cr.room]?.disinfect)) {
@@ -517,6 +540,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const asNeededDoneCount = Object.values(roomItems).filter(ri => ri.asNeeded && ri.asNeededDone).length;
 
     const bowlSizeOptions = ["Small", "Medium", "Large"];
+    const bowlTypeOptions = ["Regular", "Raised Feeder", "Non-Flip"];
     const gridCols = "minmax(140px, 1.2fr) 1fr 1fr minmax(120px, 1fr) minmax(100px, auto)";
 
     // ─── Render a single room row (shared by both computed and fallback paths) ───
@@ -528,6 +552,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       const aDog = crData ? (crData.dogNames ? crData.dogNames.join(', ') : crData.dogName) : null;
       const aOwner = crData ? crData.ownerLastName : null;
       const selectedBowl = ri.setupBowl || (crData?.suggestedBowlSize) || "";
+      const selectedBowlType = ri.setupBowlType || "Regular";
 
       return (
         <div key={rm} style={{ display: "grid", gridTemplateColumns: gridCols, padding: "8px 12px", borderBottom: i < totalRows - 1 ? `1px solid ${C.border}` : "none", alignItems: "center" }}>
@@ -538,7 +563,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
               {aOwner && <div style={{ fontSize: 10, color: C.textMut }}>{aOwner}</div>}
               {crData && crData.checkIn === viewDate && crData.checkOut !== viewDate && <div style={{ fontSize: 9, color: C.acc, fontWeight: 600, marginTop: 1 }}>Check-in day</div>}
               {crData && crData.checkOut === viewDate && crData.cleaningType !== "disinfect" && <div style={{ fontSize: 9, color: "#F59E0B", fontWeight: 600, marginTop: 1 }}>Checkout day</div>}
-              {crData && crData.cleaningType === "disinfect" && <div style={{ fontSize: 9, color: C.dan, fontWeight: 600, marginTop: 1 }}>Checked out</div>}
+              {crData && crData.cleaningType === "disinfect" && (() => {
+                const checkedOut = crData.isCheckedOut || (crData.dogNames || []).some(n => realtimeCheckedOutNames.has(n));
+                return <div style={{ fontSize: 9, color: checkedOut ? C.dan : "#F59E0B", fontWeight: 600, marginTop: 1 }}>{checkedOut ? "Checked out" : "Checking out"}</div>;
+              })()}
               {needsRefresh && crData && <div style={{ fontSize: 9, color: C.textMut, marginTop: 1 }}>Day {crData.dayNumber} of {crData.totalNights}</div>}
               {missedMap[rm]?.missedDisinfect && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 4, marginTop: 2, display: "inline-block" }}>⚠ Disinfect missed</div>}
               {missedMap[rm]?.missedAsNeeded && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 4, marginTop: 2, display: "inline-block" }}>⚠ As-needed missed{missedMap[rm]?.asNeededNote ? `: ${missedMap[rm].asNeededNote}` : ""}</div>}
@@ -574,11 +602,18 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
               <div style={{ fontSize: 10, color: C.textSec, marginBottom: 4 }}>
                 {crData.dogWeight != null ? `${crData.dogWeight} lbs` : "No weight"} — {crData.suggestedBowlSize}
               </div>
-              <div style={{ display: "flex", gap: 3, marginBottom: 4 }}>
+              <div style={{ display: "flex", gap: 3, marginBottom: 3 }}>
                 {bowlSizeOptions.map(s => (
                   <button key={s} disabled={isLocked} onClick={() => toggleItem(rm, "setupBowl", s)}
                     style={{ flex: 1, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${selectedBowl === s ? "#14532D" : C.border}`, background: selectedBowl === s ? "#14532D" : "#fff", color: selectedBowl === s ? "#fff" : C.text, fontSize: 10, fontWeight: selectedBowl === s ? 700 : 500, cursor: isLocked ? "default" : "pointer", fontFamily: "Outfit, sans-serif", transition: "all 0.15s ease", opacity: isLocked ? 0.5 : 1 }}
                   >{s}</button>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 3, marginBottom: 4 }}>
+                {bowlTypeOptions.map(t => (
+                  <button key={t} disabled={isLocked} onClick={() => toggleItem(rm, "setupBowlType", t)}
+                    style={{ flex: 1, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${selectedBowlType === t ? "#14532D" : C.border}`, background: selectedBowlType === t ? "#14532D" : "#fff", color: selectedBowlType === t ? "#fff" : C.text, fontSize: 9, fontWeight: selectedBowlType === t ? 700 : 500, cursor: isLocked ? "default" : "pointer", fontFamily: "Outfit, sans-serif", transition: "all 0.15s ease", opacity: isLocked ? 0.5 : 1 }}
+                  >{t}</button>
                 ))}
               </div>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>

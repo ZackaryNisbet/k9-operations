@@ -263,6 +263,7 @@ interface RoomEntry {
   setupReason: string | null;
   suggestedBowlSize: string | null;
   dogWeight: number | null;
+  isCheckedOut: boolean;
 }
 
 function suggestBowlSize(weight: number | null): string {
@@ -302,6 +303,12 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
         allRoomNames.push({ runName: roomName, areaName: "", runType: roomType });
       }
     }
+  }
+
+  // Build reverse lookup: room name → physical room type
+  const roomNameToType: Record<string, string> = {};
+  for (const rn of allRoomNames) {
+    if (rn.runName) roomNameToType[rn.runName] = rn.runType || rn.areaName || "";
   }
 
   // ─── Step 0b: Load authoritative room occupancy from gingr_room_occupancy ──
@@ -466,7 +473,6 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
 
     const isDayBoarding = tLower.includes("day boarding");
     const isCheckedOut = !!res.check_out_date;
-    const roomType = parseRoomType(typeName);
 
     // Get dates — Supabase stores as TIMESTAMPTZ
     const startDate = res.start_date ? res.start_date.split("T")[0] : today;
@@ -478,6 +484,8 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     const occInfo = dogNameLower ? occupancyRoomMap[dogNameLower] : null;
     const runName = res.room_assignment || bohInfo?.runName || occInfo?.runName || res.raw_data?.run_name || "";
     const areaName = bohInfo?.areaName || occInfo?.areaName || res.raw_data?.area_name || "";
+    // Use physical room type when room is known, fall back to reservation type
+    const roomType = (runName && roomNameToType[runName]) || parseRoomType(typeName);
 
     // Determine cleaning type
     let cleaningType = "refresh";
@@ -528,6 +536,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       setupReason: null,
       suggestedBowlSize: null,
       dogWeight: null,
+      isCheckedOut,
     });
   }
 
@@ -542,7 +551,8 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     if (typeName.toLowerCase().startsWith("daycare")) continue;
 
     const isDayBoarding = typeName.toLowerCase().startsWith("day boarding");
-    const roomType = parseRoomType(typeName);
+    const runName = dog.run_name || "";
+    const roomType = (runName && roomNameToType[runName]) || parseRoomType(typeName);
     const startDate = (dog.start_date || "").split(" ")[0];
     const endDate = (dog.end_date || "").split(" ")[0];
 
@@ -562,7 +572,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
     const totalNights = Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
 
     rooms.push({
-      room: dog.run_name || roomType,
+      room: runName || roomType,
       roomType,
       areaName: dog.area_name || "",
       dogName: dog.a_first || "",
@@ -580,6 +590,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       setupReason: null,
       suggestedBowlSize: null,
       dogWeight: null,
+      isCheckedOut: false,
     });
   }
 
@@ -707,6 +718,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       setupReason: sd.reason,
       suggestedBowlSize: suggestBowlSize(weight),
       dogWeight: weight,
+      isCheckedOut: false,
     });
   }
 
@@ -734,6 +746,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       setupReason: null,
       suggestedBowlSize: null,
       dogWeight: null,
+      isCheckedOut: false,
     });
   }
 
@@ -753,6 +766,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       if (r.needsSetup) { m.needsSetup = true; m.setupReason = r.setupReason || m.setupReason; }
       if (r.suggestedBowlSize) m.suggestedBowlSize = r.suggestedBowlSize;
       if (r.dogWeight) m.dogWeight = r.dogWeight;
+      if (r.isCheckedOut) m.isCheckedOut = true;
       // Use the longest stay for day/night display
       if (r.totalNights > m.totalNights) {
         m.dayNumber = r.dayNumber;
