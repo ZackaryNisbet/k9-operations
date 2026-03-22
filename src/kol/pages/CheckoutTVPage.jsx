@@ -603,13 +603,13 @@ function TVNavButton({ view, isActive, count, onClick }) {
 const DogCardImage = React.memo(({ src, name, accentRgb, accent }) => {
   const [loaded, setLoaded] = useState(false);
   return (
-    <div style={{ width: 64, height: 64, borderRadius: 14, marginBottom: 8, position: "relative", overflow: "hidden", border: `2px solid rgba(${accentRgb},0.4)` }}>
+    <div style={{ width: "calc(100% - 8px)", maxWidth: 120, maxHeight: 120, aspectRatio: "1/1", borderRadius: 14, position: "relative", overflow: "hidden", border: `2px solid rgba(${accentRgb},0.4)` }}>
       {!loaded && (
         <div style={{
           position: "absolute", inset: 0, borderRadius: 12,
           background: `rgba(${accentRgb},0.15)`,
           display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 24, fontWeight: 800, color: accent,
+          fontSize: 28, fontWeight: 800, color: accent,
           animation: "dogCardSkeleton 1.5s ease-in-out infinite",
         }}>
           {name[0]}
@@ -631,7 +631,7 @@ const DogCardImage = React.memo(({ src, name, accentRgb, accent }) => {
  * Extracted outside component body + React.memo to prevent remounting.
  * All previously-closed-over variables are now explicit props.
  * ──────────────────────────────────────────────────────────────────────── */
-const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds }) => {
+const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds }) => {
   const dog = dogs.find(d => d.id === res.dogId);
   const client = clients.find(c => c.id === res.clientId);
   const name = dog?.fields?.name || res._animalName || "Unknown";
@@ -661,9 +661,12 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
   const dogTags = allDogTags?.[animalId];
   const tagList = dogTags ? PLAYGROUP_PRIORITY.filter(p => dogTags.has(p)) : [themeKey];
 
+  // First-day detection
+  const isFirstDay = firstDayDogIds?.has(animalId);
+
   return (
     <div style={{
-      display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 12px",
+      display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 8px 12px",
       background: isCheckingOut ? "rgba(132,204,22,0.08)" : "rgba(255,255,255,0.06)",
       borderRadius: 16,
       border: isCheckingOut
@@ -671,45 +674,57 @@ const DogCard = React.memo(({ res, sizeGroup, dogs, clients, animalIcons, dogPho
         : `2px solid rgba(${theme.accentRgb},0.25)`,
       minWidth: 140, transition: "transform 0.2s, opacity 0.5s, background 0.3s",
       opacity: isCheckingOut ? 0.35 : 1,
-      position: "relative",
+      overflow: "hidden",
     }}>
-      {/* All Gingr-assigned playgroup badges — top-right */}
-      <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>
-        {tagList.map(tag => <SizeBadge key={tag} size={tag} />)}
-      </div>
-
-      {/* Boarding label — top-left chip */}
-      {isBoarding && (
+      {/* FIRST DAY banner — safety/operational signal, top priority */}
+      {isFirstDay && (
         <div style={{
-          position: "absolute", top: 8, left: 8,
-          display: "inline-flex", alignItems: "center", justifyContent: "center",
-          fontSize: 9, fontWeight: 900, letterSpacing: "0.08em",
-          color: "#60A5FA",
-          background: "rgba(96,165,250,0.15)",
-          border: "1.5px solid rgba(96,165,250,0.35)",
-          borderRadius: 6, padding: "2px 5px",
-          lineHeight: 1.4,
+          width: "calc(100% + 16px)", margin: "-8px -8px 6px",
+          padding: "4px 0", textAlign: "center",
+          background: "rgba(234,179,8,0.2)",
+          borderBottom: "1.5px solid rgba(234,179,8,0.4)",
+          fontSize: 11, fontWeight: 900, letterSpacing: "0.1em",
+          color: "#EAB308",
         }}>
-          BRD
+          FIRST DAY
         </div>
       )}
 
-      {/* Dog photo/icon — skeleton + fade-in */}
+      {/* Dog photo/icon — larger, scales with card width */}
       {image ? (
         <DogCardImage src={image} name={name} accentRgb={theme.accentRgb} accent={theme.accent} />
       ) : (
         <div style={{
-          width: 64, height: 64, borderRadius: 14,
+          width: "calc(100% - 8px)", maxWidth: 120, maxHeight: 120, aspectRatio: "1/1",
+          borderRadius: 14,
           background: `rgba(${theme.accentRgb},0.15)`,
           display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 24, fontWeight: 800,
+          fontSize: 28, fontWeight: 800,
           color: theme.accent,
-          marginBottom: 8,
           border: `2px solid rgba(${theme.accentRgb},0.3)`,
         }}>
           {name[0]}
         </div>
       )}
+
+      {/* Badge row — in-flow, between photo and name */}
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", justifyContent: "center", marginTop: 6, marginBottom: 4 }}>
+        {isBoarding && (
+          <div style={{
+            display: "inline-flex", alignItems: "center", justifyContent: "center",
+            fontSize: 9, fontWeight: 900, letterSpacing: "0.08em",
+            color: "#60A5FA",
+            background: "rgba(96,165,250,0.15)",
+            border: "1.5px solid rgba(96,165,250,0.35)",
+            borderRadius: 6, padding: "2px 5px",
+            lineHeight: 1.4,
+          }}>
+            BRD
+          </div>
+        )}
+        {tagList.map(tag => <SizeBadge key={tag} size={tag} />)}
+      </div>
+
       <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", textAlign: "center", lineHeight: 1.2 }}>{name}</div>
       {breed && <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2, textAlign: "center" }}>{breed}</div>}
       <div style={{ fontSize: 11, color: `rgba(${theme.accentRgb},0.8)`, marginTop: 4, fontWeight: 600 }}>{ownerLast}</div>
@@ -1083,6 +1098,69 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     return () => { cancelled = true; clearInterval(interval); };
   }, [locationId]);
 
+  /* ── First-day dogs: first-ever non-tour visit at this location ────── *
+   * Own 60-second interval — NOT tied to the 10-15s BOH poll cycle.
+   * First-day status doesn't change intra-day.
+   * ──────────────────────────────────────────────────────────────────── */
+  const [firstDayDogIds, setFirstDayDogIds] = useState(new Set());
+
+  useEffect(() => {
+    if (!locationId) return;
+    let cancelled = false;
+
+    const fetchFirstDayDogs = async () => {
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        // Dogs with a non-tour reservation starting today...
+        const { data: todayDogs, error: e1 } = await supabase
+          .from("gingr_reservations")
+          .select("animal_gingr_id")
+          .eq("location_id", locationId)
+          .is("cancelled_date", null)
+          .gte("start_date", `${today}T00:00:00`)
+          .lt("start_date", `${today}T23:59:59`)
+          .not("reservation_type_name", "ilike", "%tour%");
+
+        if (cancelled || e1) return;
+
+        const candidates = [...new Set((todayDogs || []).map(r => r.animal_gingr_id).filter(Boolean))];
+        if (candidates.length === 0) {
+          setFirstDayDogIds(new Set());
+          return;
+        }
+
+        // ...who have NO prior non-tour reservations before today
+        const firstDaySet = new Set();
+        for (let i = 0; i < candidates.length; i += 100) {
+          const chunk = candidates.slice(i, i + 100);
+          const { data: priors, error: e2 } = await supabase
+            .from("gingr_reservations")
+            .select("animal_gingr_id")
+            .eq("location_id", locationId)
+            .is("cancelled_date", null)
+            .lt("start_date", `${today}T00:00:00`)
+            .not("reservation_type_name", "ilike", "%tour%")
+            .in("animal_gingr_id", chunk);
+
+          if (cancelled || e2) return;
+
+          const hadPrior = new Set((priors || []).map(r => r.animal_gingr_id));
+          for (const id of chunk) {
+            if (!hadPrior.has(id)) firstDaySet.add(String(id));
+          }
+        }
+
+        setFirstDayDogIds(firstDaySet);
+      } catch (e) {
+        // Silently ignore — first-day banner is a progressive enhancement
+      }
+    };
+
+    fetchFirstDayDogs();
+    const interval = setInterval(fetchFirstDayDogs, 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [locationId]);
+
   /* ── TV-001: Fix daycare count ──────────────────────────────────────── *
    * The old filter checked (type === "daycare" || type === "boarding") AND
    * date range r.checkIn <= today && r.checkOut >= today.
@@ -1281,8 +1359,8 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   /* DogCard is now extracted outside the component body — see above */
   // Shared props for all DogCard instances (avoids repeating in 6+ places)
   const dogCardProps = useMemo(() => ({
-    dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds,
-  }), [dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds]);
+    dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds,
+  }), [dogs, clients, animalIcons, dogPhotoMap, playgroupMap, allDogTags, checkingOutDogIds, firstDayDogIds]);
 
   /* ── TV-003: Enhanced Section Label with dog count and colored accent ── */
   const SectionLabel = ({ label, count, color, subtitle }) => (
