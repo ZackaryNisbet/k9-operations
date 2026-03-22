@@ -16,8 +16,7 @@ const fmtCurrency = (v) => {
 const fmtCurrencyShort = (v) => {
   if (v == null || isNaN(v)) return "$0";
   const n = Number(v);
-  if (n >= 1000) return "$" + (n / 1000).toFixed(1) + "k";
-  return "$" + n.toFixed(0);
+  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 };
 
 const getStartOfWeek = (dateStr) => {

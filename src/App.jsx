@@ -28003,8 +28003,7 @@ function SVGLineChart({ data, width = 600, height = 200, color = C.pri, yPrefix 
   const yScale = chartHeight / yRange;
 
   const formatYValue = (val) => {
-    if (val >= 1000) return (val / 1000).toFixed(1) + 'k';
-    return Math.round(val);
+    return '$' + Math.round(val).toLocaleString();
   };
 
   // Generate path for line
@@ -28576,7 +28575,7 @@ function SVGFunnel({ stages, width = 400, height = 280 }) {
 // ══════════════════════════════════════════════════════════════════════════
 const CHART_PTS = 30;
 const _chartFmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}`;
-const _chartFmt$k = (v) => v >= 10000 ? `$${(v / 1000).toFixed(1)}k` : v >= 1000 ? `$${(v / 1000).toFixed(2)}k` : _chartFmt$(v);
+const _chartFmt$k = (v) => _chartFmt$(v);
 
 const InteractiveLineChart = ({ chartData, color = C.pri, compareColor = C.acc, showCompare, height = 240, id = "chart", animationEpoch = 0 }) => {
   const [hoverIdx, setHoverIdx] = useState(null);
@@ -28846,7 +28845,7 @@ function ReportsPage({ data, save, nav, profile, rptFilterOpen, setRptFilterOpen
 
   // ─── FORMATTING HELPERS ───
   const fmt$ = (v) => `$${typeof v === "number" ? Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0.00"}`;
-  const fmt$k = (v) => v >= 10000 ? `$${(v / 1000).toFixed(1)}k` : v >= 1000 ? `$${(v / 1000).toFixed(2)}k` : fmt$(v);
+  const fmt$k = (v) => fmt$(v);
   const fmtPercent = (v) => `${typeof v === "number" ? v.toFixed(1) : "0.0"}%`;
   const fmtDateLabel = (d) => { if (!d) return ""; const dt = new Date(d + "T00:00:00"); return `${dt.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`; };
 
