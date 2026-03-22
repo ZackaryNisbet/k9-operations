@@ -984,7 +984,8 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         const commentMap = {};
         (iconRows || []).forEach(r => { iconMap[r.animal_gingr_id] = r.icon_title; commentMap[r.animal_gingr_id] = r.icon_comment || ""; });
 
-        const BATH_TYPE_ADDONS = new Set(["Premium", "Medicated", "Whitening", "Shampoo From Home", "Hypoallergenic - NO SPRAY", "Hypoallergenic - WITH SPRAY"]);
+        // Same constants and logic as mobile ServicesPage.tsx parseBathAddons + extractBathType
+        const BATH_TYPE_ADDONS = ["Premium", "Medicated", "Whitening", "Shampoo From Home", "Hypoallergenic - NO SPRAY", "Hypoallergenic - WITH SPRAY"];
         const extractBathType = (svcName) => {
           if (!svcName) return null;
           const l = svcName.toLowerCase();
@@ -999,15 +1000,24 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
           if (l.includes("hypo")) return "Hypoallergenic";
           return null;
         };
+        const parseBathAddons = (svcs) => {
+          let addonType = null;
+          svcs.forEach(s => {
+            const n = typeof s === "string" ? s : s?.name || "";
+            if (!n) return;
+            // Exact match first, then case-insensitive (mirrors mobile parseBathAddons)
+            if (BATH_TYPE_ADDONS.includes(n)) { if (!addonType) addonType = n; }
+            else { for (const t of BATH_TYPE_ADDONS) { if (n.toLowerCase() === t.toLowerCase()) { if (!addonType) addonType = t; break; } } }
+          });
+          return addonType;
+        };
 
         const newMap = { ...bathTypeMap };
         needsFetch.forEach(res => {
           const animalId = String(res.dogId || "").replace(/^g/, "");
           const svcs = Array.isArray(res._services) ? res._services : [];
           const bathSvc = svcs.find(s => typeof s === "object" && s?.name?.toLowerCase().includes("bath"));
-          // Parse reservation add-on services for bath type
-          let addonType = null;
-          svcs.forEach(s => { const n = typeof s === "string" ? s : s?.name || ""; if (n && BATH_TYPE_ADDONS.has(n)) { if (!addonType) addonType = n; } });
+          const addonType = parseBathAddons(svcs);
           newMap[res.id] = iconMap[animalId] || addonType || extractBathType(bathSvc?.name) || "Standard";
           newMap[res.id + "_notes"] = commentMap[animalId] || "";
         });
@@ -1071,10 +1081,15 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       const bathSvc = svcs.find(s => typeof s === "object" && s?.name?.toLowerCase().includes("bath") && (s.scheduled_at || "").includes(viewDate));
       const schedAt = bathSvc?.scheduled_at || "";
       const schedTime = schedAt ? formatTime12hr(schedAt.split("T")[1]?.slice(0, 5) || "") : "—";
-      // Parse add-on services for bath modifiers
-      const BATH_MOD_NAMES = ["NO CRATE DRYER", "NO VELOCITY DRYER", "TOWEL DRY ONLY", "*See account notes*"];
+      // Parse add-on services for bath modifiers (same list as mobile BATH_MODIFIER_ADDONS)
+      const BATH_MODIFIER_ADDONS = ["NO CRATE DRYER", "NO VELOCITY DRYER", "TOWEL DRY ONLY", "*See account notes*"];
       const bathModifiers = [];
-      svcs.forEach(s => { const n = typeof s === "string" ? s : s?.name || ""; if (n && BATH_MOD_NAMES.some(m => n.toUpperCase().includes(m.toUpperCase()))) bathModifiers.push(n); });
+      svcs.forEach(s => {
+        const n = typeof s === "string" ? s : s?.name || "";
+        if (!n) return;
+        if (BATH_MODIFIER_ADDONS.includes(n)) bathModifiers.push(n);
+        else { for (const m of BATH_MODIFIER_ADDONS) { if (n.toLowerCase() === m.toLowerCase()) { bathModifiers.push(m); break; } } }
+      });
       const bathNotes = bathTypeMap[res.id + "_notes"] || "";
       bathRows.push({ resId: res.id, dogName, roomNum, bathType: bathTypeResolved, coTime, isDone, completedInfo, resType: res.type, isDeparted, schedTime, schedAtRaw: schedAt, roomType, bathModifiers, bathNotes });
     });
