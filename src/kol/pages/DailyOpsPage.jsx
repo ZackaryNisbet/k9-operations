@@ -996,15 +996,15 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       saveBathCompleted(newCompleted);
     };
 
-    // Show pulsing dog logo loading state while fetching bath types
-    if (bathTypeLoading && totalBaths === 0) {
+    // Show loading state while computed data hasn't arrived yet
+    if (totalBaths === 0 && !bathingEntry) {
       return (
         <div>
           <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
             <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "inherit" }}>Bathing Report</span>
           </Card>
           <Card style={{ padding: "48px 20px", textAlign: "center" }}>
-            <K9LoadingAnimation size={64} message="Loading bathing report…" subMessage="Fetching bath types from Gingr" />
+            <K9LoadingAnimation size={64} message="Loading bathing report…" subMessage="Waiting for server data" />
           </Card>
         </div>
       );
@@ -1036,7 +1036,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
               <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "inherit" }}>Bathing Report</span>
               <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec, fontFamily: "inherit" }}>{doneBaths}/{totalBaths} complete</span>
             </div>
-            {bathTypeLoading && <span style={{ fontSize: 12, color: C.pri, fontWeight: 600, fontFamily: "inherit" }}>Fetching bath types…</span>}
+            {!bathingEntry && <span style={{ fontSize: 12, color: C.pri, fontWeight: 600, fontFamily: "inherit" }}>Loading bath data…</span>}
           </div>
           {totalBaths > 0 && (
             <div style={{ marginTop: 10, height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
