@@ -748,8 +748,6 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     return () => clearInterval(id);
   }, []);
 
-  // ── Dynamic Gingr credentials (loaded via k9_gingr_credentials) ────
-
   /* ── TV-005: Navigation state ──────────────────────────────────────── */
   const [activeView, setActiveView] = useState("all");
   const [autoCycle, setAutoCycle] = useState(false);
@@ -784,42 +782,28 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
   const clients = data.clients || [];
   const refreshData = data.refresh;
 
-  /* ── TV-010 + TV-012: Direct Gingr back_of_house polling ────────────
-   * Event-detection-only: polls every 10s, compares previous → current
-   * state, and fires TV notices (hero cards) on transitions. Triggers
-   * an immediate Supabase sync so the grid refreshes from Supabase data.
+  /* ── Server-side BOH transition detection ──────────────────────────
+   * Polls the gingr-sync edge function in boh-diff mode every 10s.
+   * The server fetches BOH from Gingr, diffs against a boh_snapshot
+   * table, and returns arrivals/departures grouped by owner.
+   * Replaces direct browser→Gingr polling (which was unreliable due
+   * to CORS, browser tab throttling, and missing timeouts).
    * ──────────────────────────────────────────────────────────────────── */
-  const [gingrActiveDogCount, setGingrActiveDogCount] = useState(0); // BOH count for footer debug
-  const prevBohIdsRef = useRef(null);     // Map<id, dogRecord> from previous poll
-  const bohPollCountRef = useRef(0);
-
-  // ── Dynamic Gingr credentials from k9_gingr_credentials ────────────────
+  const [gingrActiveDogCount, setGingrActiveDogCount] = useState(0);
   const tvLocationId = propLocationId || profile?.location_id;
-  const [gingrCreds, setGingrCreds] = useState(null);
-  useEffect(() => {
-    if (!tvLocationId) return;
-    supabase
-      .from("k9_gingr_credentials")
-      .select("gingr_subdomain, gingr_api_key, gingr_location_id")
-      .eq("location_id", tvLocationId)
-      .maybeSingle()
-      .then(({ data: row }) => {
-        if (row) {
-          setGingrCreds({
-            subdomain: row.gingr_subdomain,
-            apiKey: row.gingr_api_key,
-            gingrLocationId: row.gingr_location_id || "1",
-          });
-        }
-      });
-  }, [tvLocationId]);
+  const bohInFlightRef = useRef(false);
+  const lastTvPollRef = useRef(0);
 
   /* ── TV-POLL: Supabase reconciliation sync ──────────────────────────
    * Calls the gingr-sync edge function in tv-poll mode to reconcile
-   * stale Supabase records. Called on an interval AND on BOH transitions.
+   * stale Supabase records. Called on an interval AND on BOH transitions
+   * (with 10s dedup guard to prevent stacking).
    * ──────────────────────────────────────────────────────────────────── */
   const triggerTvPoll = useCallback(async () => {
     if (!tvLocationId) return;
+    const now = Date.now();
+    if (now - lastTvPollRef.current < 10_000) return;
+    lastTvPollRef.current = now;
     try {
       await supabase.functions.invoke("gingr-sync", {
         body: { location_id: tvLocationId, sync_type: "tv-poll" },
@@ -836,135 +820,84 @@ function CheckoutTVContent({ data, nav, profile, locationId: propLocationId }) {
     return () => { clearTimeout(initTimer); clearInterval(interval); };
   }, [triggerTvPoll]);
 
+  /* ── BOH-DIFF: Server-side transition detection ────────────────────── */
   useEffect(() => {
-    if (!gingrCreds) return;
+    if (!tvLocationId) return;
     let cancelled = false;
-    const BOH_URL = `https://${gingrCreds.subdomain}.gingrapp.com/api/v1/back_of_house?key=${gingrCreds.apiKey}&location_id=${gingrCreds.gingrLocationId}&full_day=true&include_daycare=true`;
 
-    const classifyBohType = (typeStr) => {
-      const t = (typeStr || "").toLowerCase();
-      if (t.includes("evaluation")) return "evaluation";
-      if (t.includes("day boarding") && !t.includes("daycare")) return "dayboarding";
-      if (t.includes("daycare")) return "daycare";
-      if (t.includes("boarding")) return "boarding";
-      return "boarding";
-    };
+    const pollBohDiff = async () => {
+      if (bohInFlightRef.current || cancelled) return;
+      bohInFlightRef.current = true;
 
-    const isDaycareType = (typeStr) => {
-      const t = (typeStr || "").toLowerCase();
-      return t.includes("daycare") || t.includes("day boarding") || t.includes("evaluation");
-    };
-
-    const fetchBoh = async () => {
       try {
-        const resp = await fetch(BOH_URL);
-        if (!resp.ok || cancelled) return;
-        const json = await resp.json();
-        const d = json.data || {};
-        // checking_out = dogs that ARE checked in (here now)
-        const active = d.checking_out || [];
+        const invokePromise = supabase.functions.invoke("gingr-sync", {
+          body: { location_id: tvLocationId, sync_type: "boh-diff" },
+        });
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("boh-diff timeout")), 8000)
+        );
+        const { data: resp, error } = await Promise.race([invokePromise, timeoutPromise]);
+        if (cancelled || error || !resp?.success) return;
 
-        // Build current state map: id → dog record
-        const currentMap = new Map();
-        for (const dog of active) currentMap.set(dog.id, dog);
+        setGingrActiveDogCount(resp.dog_count || 0);
 
-        // Detect transitions (skip first poll — no previous state)
-        const prev = prevBohIdsRef.current;
-        let arrivals = [];
-        let departed = [];
+        const arrivals = resp.arrivals || [];
+        const departures = resp.departures || [];
 
-        if (prev !== null && !cancelled) {
-          // Arrivals: in current but not in prev
-          for (const [id, dog] of currentMap) {
-            if (!prev.has(id)) {
-              arrivals.push({
-                id: Number(id),
-                animalGingrId: dog.animal_id || "",
-                animalName: (dog.a_first || "Unknown").trim(),
-                ownerLastName: (dog.o_last || "").trim(),
-                room: dog.run_name || "",
-                resType: classifyBohType(dog.type),
-              });
-            }
-          }
-
-          // Departures: in prev but not in current
-          for (const [id, dog] of prev) {
-            if (!currentMap.has(id)) {
-              departed.push({
-                id: Number(id),
-                animalGingrId: dog.animal_id || "",
-                animalName: (dog.a_first || "Unknown").trim(),
-                ownerLastName: (dog.o_last || "").trim(),
-                room: dog.run_name || "",
-                resType: classifyBohType(dog.type),
-              });
-            }
-          }
-
-          // Fire check-in TV notices (TV-013: timestamp-based, persistent)
-          if (arrivals.length > 0) {
-            const byOwner = {};
-            for (const a of arrivals) {
-              const key = a.ownerLastName || a.id;
-              if (!byOwner[key]) byOwner[key] = [];
-              byOwner[key].push(a);
-            }
-            const firedAt = Date.now();
-            const grouped = Object.values(byOwner).map(group => ({
-              id: group.map(a => a.id).join('+'),
-              dogs: group,
-              ownerLastName: group[0].ownerLastName,
-              firedAt,
-              durationMs: 60_000,
-            }));
-            setCheckingInRaw(p => {
-              const existing = new Set(p.map(e => e.id));
-              return [...p, ...grouped.filter(g => !existing.has(g.id))];
-            });
-          }
-
-          // Fire check-out TV notices (TV-013: timestamp-based, persistent)
-          if (departed.length > 0) {
-            const byOwner = {};
-            for (const d of departed) {
-              const key = d.ownerLastName || d.id;
-              if (!byOwner[key]) byOwner[key] = [];
-              byOwner[key].push(d);
-            }
-            const firedAt = Date.now();
-            const grouped = Object.values(byOwner).map(group => ({
-              id: group.map(d => d.id).join('+'),
-              dogs: group,
-              ownerLastName: group[0].ownerLastName,
-              firedAt,
-              durationMs: 60_000,
-            }));
-            setCheckingOutRaw(p => {
-              const existing = new Set(p.map(e => e.id));
-              return [...p, ...grouped.filter(g => !existing.has(g.id))];
-            });
-          }
+        if (arrivals.length > 0) {
+          const firedAt = Date.now();
+          const grouped = arrivals.map(g => ({
+            ...g,
+            id: String(g.id),
+            firedAt,
+            durationMs: 60_000,
+          }));
+          setCheckingInRaw(p => {
+            const existing = new Set(p.map(e => e.id));
+            return [...p, ...grouped.filter(g => !existing.has(g.id))];
+          });
         }
 
-        // Trigger immediate Supabase sync on transitions so grid refreshes
-        if (arrivals.length > 0 || departed.length > 0) {
+        if (departures.length > 0) {
+          const firedAt = Date.now();
+          const grouped = departures.map(g => ({
+            ...g,
+            id: String(g.id),
+            firedAt,
+            durationMs: 60_000,
+          }));
+          setCheckingOutRaw(p => {
+            const existing = new Set(p.map(e => e.id));
+            return [...p, ...grouped.filter(g => !existing.has(g.id))];
+          });
+        }
+
+        // Trigger Supabase reconciliation on transitions (fire-and-forget)
+        if (arrivals.length > 0 || departures.length > 0) {
           triggerTvPoll();
         }
-
-        // Store current state for next comparison
-        prevBohIdsRef.current = currentMap;
-        bohPollCountRef.current += 1;
-        if (!cancelled) setGingrActiveDogCount(active.length);
       } catch (e) {
-        // Silently ignore — Supabase boarding data still works as fallback
+        // Silently ignore — next poll will catch up
+      } finally {
+        bohInFlightRef.current = false;
       }
     };
 
-    fetchBoh();
-    const interval = setInterval(fetchBoh, 10000); // 10s poll
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [gingrCreds]);
+    pollBohDiff();
+    const interval = setInterval(pollBohDiff, 10_000);
+
+    // Fire immediate poll when tab regains focus (Chrome throttles background tabs)
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") pollBohDiff();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [tvLocationId]);
 
   /* ── Grid data: Supabase is the sole source of truth ─────────────── *
    * All checked-in dog data comes from Supabase tables (synced by the

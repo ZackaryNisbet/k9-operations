@@ -1822,6 +1822,134 @@ Deno.serve(async (req: Request) => {
 
     const { api_key, subdomain, gingr_location_id } = gingrConfig;
 
+    // ── BOH-DIFF: Ultra-lean server-side BOH transition detection ──────────
+    // Single Gingr API call, diffs against boh_snapshot table, returns
+    // arrivals/departures grouped by owner. Called every ~10s from the TV page.
+    // Replaces direct browser→Gingr polling (which was unreliable due to
+    // CORS, browser tab throttling, and missing timeouts).
+    if (sync_type === "boh-diff") {
+      const startTime = Date.now();
+
+      // 1. Fetch BOH from Gingr (single server-side API call)
+      let bohResult: any;
+      try {
+        bohResult = await gingrFetch(
+          subdomain, "back_of_house", api_key, "GET",
+          { location_id: gingr_location_id || "1", full_day: "true", include_daycare: "true" }
+        );
+      } catch (err: any) {
+        return new Response(
+          JSON.stringify({ success: false, error: "gingr_unavailable", arrivals: [], departures: [], dog_count: 0 }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const active = bohResult?.data?.checking_out || bohResult?.checking_out || [];
+
+      // 2. Build current state map and hash
+      const currentMap: Record<string, any> = {};
+      const currentIds: string[] = [];
+      for (const dog of active) {
+        const id = String(dog.id);
+        currentMap[id] = dog;
+        currentIds.push(id);
+      }
+      currentIds.sort();
+      const currentHash = currentIds.join(",");
+
+      // 3. Read previous snapshot
+      const { data: snap } = await supabase
+        .from("boh_snapshot")
+        .select("snapshot, snapshot_hash")
+        .eq("location_id", location_id)
+        .maybeSingle();
+
+      const prevHash = snap?.snapshot_hash || "";
+      const prevSnapshot: Record<string, any> = snap?.snapshot || {};
+
+      // 4. Fast path: no change
+      if (currentHash === prevHash) {
+        await supabase
+          .from("boh_snapshot")
+          .upsert({ location_id, snapshot: currentMap, snapshot_hash: currentHash, dog_count: active.length, updated_at: new Date().toISOString() },
+                   { onConflict: "location_id" });
+
+        return new Response(
+          JSON.stringify({ success: true, arrivals: [], departures: [], dog_count: active.length, changed: false, duration_ms: Date.now() - startTime }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // 5. Diff: compute arrivals and departures
+      const classifyType = (t: string) => {
+        const s = (t || "").toLowerCase();
+        if (s.includes("evaluation")) return "evaluation";
+        if (s.includes("day boarding") && !s.includes("daycare")) return "dayboarding";
+        if (s.includes("daycare")) return "daycare";
+        if (s.includes("boarding")) return "boarding";
+        return "boarding";
+      };
+
+      const mapDog = (dog: any) => ({
+        id: Number(dog.id),
+        animalGingrId: String(dog.animal_id || ""),
+        animalName: (dog.a_first || "Unknown").trim(),
+        ownerLastName: (dog.o_last || "").trim(),
+        room: dog.run_name || "",
+        resType: classifyType(dog.type),
+      });
+
+      const groupByOwner = (dogs: any[]) => {
+        const byOwner: Record<string, any[]> = {};
+        for (const d of dogs) {
+          const key = d.ownerLastName || String(d.id);
+          if (!byOwner[key]) byOwner[key] = [];
+          byOwner[key].push(d);
+        }
+        return Object.values(byOwner).map(group => ({
+          id: group.map((d: any) => d.id).join("+"),
+          dogs: group,
+          ownerLastName: group[0].ownerLastName,
+        }));
+      };
+
+      // Skip diff on first poll (no previous snapshot)
+      let arrivals: any[] = [];
+      let departures: any[] = [];
+
+      if (prevHash !== "") {
+        // Arrivals: in current but not in prev
+        for (const id of currentIds) {
+          if (!prevSnapshot[id]) arrivals.push(mapDog(currentMap[id]));
+        }
+        // Departures: in prev but not in current
+        for (const id of Object.keys(prevSnapshot)) {
+          if (!currentMap[id]) departures.push(mapDog(prevSnapshot[id]));
+        }
+      }
+
+      const groupedArrivals = groupByOwner(arrivals);
+      const groupedDepartures = groupByOwner(departures);
+
+      // 6. Update snapshot
+      await supabase
+        .from("boh_snapshot")
+        .upsert({ location_id, snapshot: currentMap, snapshot_hash: currentHash, dog_count: active.length, updated_at: new Date().toISOString() },
+                 { onConflict: "location_id" });
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          arrivals: groupedArrivals,
+          departures: groupedDepartures,
+          dog_count: active.length,
+          changed: true,
+          duration_ms: Date.now() - startTime,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // ── TV-007: Lightweight tv-poll mode ────────────────────────────────────
     // Only fetches checked_in: "true" from Gingr and reconciles checkouts.
     // Called every 60s from the TV page for near-real-time checkout detection.
