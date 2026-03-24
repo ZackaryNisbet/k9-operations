@@ -100,17 +100,21 @@ function SkeletonSection() {
 
 const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange, onKeyDown, inputRef }) {
   const [hovered, setHovered] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
 
   const stockCount = count?.stock_count ?? "";
   const inTransit = count?.in_transit ?? "";
-  const toOrder = (item.par_level != null && stockCount !== "")
+  const notes = count?.notes ?? "";
+  const hasFilled = stockCount !== "";
+  const toOrder = (item.par_level != null && hasFilled)
     ? Math.max(0, (item.par_level || 0) - (parseInt(stockCount, 10) || 0) - (parseInt(inTransit, 10) || 0))
     : "";
-  const stockValue = (stockCount !== "" && item.unit_price != null)
+  const stockValue = (hasFilled && item.unit_price != null)
     ? (parseInt(stockCount, 10) || 0) * parseFloat(item.unit_price || 0)
     : null;
 
   return (
+    <>
     <div
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -120,12 +124,12 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
         gap: 8,
         alignItems: "center",
         padding: "8px 16px",
-        borderBottom: `1px solid ${C.borderLight}`,
+        borderBottom: showNotes ? "none" : `1px solid ${C.borderLight}`,
         background: hovered ? C.surfaceHover : C.surface,
         transition: "background 0.15s",
       }}
     >
-      {/* Item Name + Vendor Link */}
+      {/* Item Name + Vendor Link + Notes Icon */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -142,6 +146,25 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
                 <I.Link />
               </a>
             )}
+            <button
+              onClick={e => { e.stopPropagation(); setShowNotes(!showNotes); }}
+              title={notes ? "Edit note" : "Add note"}
+              style={{
+                marginLeft: 6,
+                color: notes ? C.pri : C.textMut,
+                opacity: notes ? 1 : (hovered ? 0.6 : 0),
+                display: "inline-flex",
+                alignItems: "center",
+                verticalAlign: "middle",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: 0,
+                transition: "opacity 0.15s",
+              }}
+            >
+              <I.MessageSquare />
+            </button>
           </div>
           {item.size && (
             <div style={{ fontSize: 11, color: C.textMut, marginTop: 1 }}>{item.size}</div>
@@ -182,8 +205,8 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
             width: "100%",
             padding: "6px 8px",
             borderRadius: 8,
-            border: `2px solid ${isReadOnly ? C.border : stockCount > 0 ? C.border : "#E6C200"}`,
-            background: isReadOnly ? C.bg : stockCount > 0 ? C.surface : "#FFFDE0",
+            border: `2px solid ${isReadOnly ? C.border : hasFilled ? C.border : "#E6C200"}`,
+            background: isReadOnly ? C.bg : hasFilled ? C.surface : "#FFFDE0",
             fontSize: 13,
             fontWeight: 600,
             color: C.text,
@@ -193,7 +216,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
             boxSizing: "border-box",
           }}
           onFocus={e => { if (!isReadOnly) e.target.style.borderColor = C.pri; }}
-          onBlur={e => { if (!isReadOnly) e.target.style.borderColor = stockCount > 0 ? C.border : "#E6C200"; }}
+          onBlur={e => { if (!isReadOnly) e.target.style.borderColor = hasFilled ? C.border : "#E6C200"; }}
         />
       </div>
 
@@ -253,6 +276,33 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
         {stockValue != null ? fmtCurrency(stockValue) : <span style={{ color: C.textMut }}>—</span>}
       </div>
     </div>
+    {showNotes && (
+      <div style={{ padding: "4px 16px 8px", background: C.surface, borderBottom: `1px solid ${C.borderLight}` }}>
+        <textarea
+          value={notes}
+          readOnly={isReadOnly}
+          onChange={e => !isReadOnly && onChange("notes", e.target.value)}
+          placeholder="Add a note for this item..."
+          rows={2}
+          style={{
+            width: "100%",
+            padding: "8px 10px",
+            borderRadius: 8,
+            border: `1.5px solid ${C.border}`,
+            background: isReadOnly ? C.bg : C.surface,
+            fontSize: 12,
+            fontFamily: "inherit",
+            color: C.text,
+            resize: "none",
+            outline: "none",
+            boxSizing: "border-box",
+          }}
+          onFocus={e => { if (!isReadOnly) e.target.style.borderColor = C.pri; }}
+          onBlur={e => { if (!isReadOnly) e.target.style.borderColor = C.border; }}
+        />
+      </div>
+    )}
+    </>
   );
 });
 
