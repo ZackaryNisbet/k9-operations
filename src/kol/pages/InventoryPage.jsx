@@ -105,6 +105,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
   const stockCount = count?.stock_count ?? "";
   const inTransit = count?.in_transit ?? "";
   const notes = count?.notes ?? "";
+  const ordered = count?.ordered ?? false;
   const hasFilled = stockCount !== "";
   const toOrder = (item.par_level != null && hasFilled)
     ? Math.max(0, (item.par_level || 0) - (parseInt(stockCount, 10) || 0) - (parseInt(inTransit, 10) || 0))
@@ -112,6 +113,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
   const stockValue = (hasFilled && item.unit_price != null)
     ? (parseInt(stockCount, 10) || 0) * parseFloat(item.unit_price || 0)
     : null;
+  const needsOrder = toOrder !== "" && toOrder > 0;
 
   return (
     <>
@@ -120,7 +122,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
       onMouseLeave={() => setHovered(false)}
       style={{
         display: "grid",
-        gridTemplateColumns: "2fr 80px 70px 70px 90px 80px 80px 80px",
+        gridTemplateColumns: "2fr 80px 70px 70px 90px 80px 60px 80px 80px",
         gap: 8,
         alignItems: "center",
         padding: "8px 16px",
@@ -266,6 +268,28 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
         )}
       </div>
 
+      {/* Ordered checkbox — only shown when item needs reordering */}
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+        {needsOrder ? (
+          <label style={{ display: "flex", alignItems: "center", cursor: isReadOnly ? "default" : "pointer" }}>
+            <input
+              type="checkbox"
+              checked={ordered}
+              disabled={isReadOnly}
+              onChange={e => !isReadOnly && onChange("ordered", e.target.checked)}
+              style={{
+                width: 18,
+                height: 18,
+                accentColor: C.suc,
+                cursor: isReadOnly ? "default" : "pointer",
+              }}
+            />
+          </label>
+        ) : (
+          <span style={{ color: C.textMut, fontSize: 11 }}>{toOrder === "" ? "" : "—"}</span>
+        )}
+      </div>
+
       {/* Unit Cost */}
       <div style={{ fontSize: 12, color: C.textSec, textAlign: "right" }}>
         {item.unit_price != null ? fmtCurrency(item.unit_price) : <span style={{ color: C.textMut }}>—</span>}
@@ -339,9 +363,302 @@ function AdhocItemRow({ item, isReadOnly }) {
   );
 }
 
+// ─── Item Detail Drawer (Edit Mode) ──────────────────────────────────────────
+
+const ItemDetailDrawer = React.memo(function ItemDetailDrawer({ item, onChange, onToggleActive }) {
+  const fieldStyle = {
+    fontSize: 12,
+    padding: "6px 8px",
+    borderRadius: 7,
+    border: `1.5px solid ${C.border}`,
+    background: C.surface,
+    fontFamily: "inherit",
+    color: C.text,
+    outline: "none",
+    width: "100%",
+    boxSizing: "border-box",
+  };
+
+  return (
+    <div style={{
+      padding: "12px 16px 12px 46px",
+      background: C.bg,
+      borderBottom: `1px solid ${C.borderLight}`,
+      animation: "invFadeIn 0.2s ease-out",
+    }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.5fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Size</div>
+          <input value={item.size || ""} onChange={e => onChange("size", e.target.value)} placeholder="Size" style={fieldStyle} />
+        </div>
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Vendor</div>
+          <input value={item.vendor || ""} onChange={e => onChange("vendor", e.target.value)} placeholder="Vendor" style={fieldStyle} />
+        </div>
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Vendor Link</div>
+          <input value={item.vendor_link || ""} onChange={e => onChange("vendor_link", e.target.value)} placeholder="https://..." style={{ ...fieldStyle, fontSize: 11 }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Category</div>
+          <input value={item.category || ""} onChange={e => onChange("category", e.target.value)} placeholder="Category" style={fieldStyle} />
+        </div>
+        <div>
+          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Subcategory</div>
+          <input value={item.subcategory || ""} onChange={e => onChange("subcategory", e.target.value)} placeholder="Subcategory" style={fieldStyle} />
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ width: 100 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Min Reorder</div>
+          <input type="number" min="0" value={item.min_reorder ?? ""} onChange={e => onChange("min_reorder", e.target.value === "" ? null : parseInt(e.target.value, 10))} style={{ ...fieldStyle, textAlign: "center" }} />
+        </div>
+        <div style={{ width: 80 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", marginBottom: 3 }}>Sort Order</div>
+          <input type="number" min="0" value={item.sort_order ?? ""} onChange={e => onChange("sort_order", e.target.value === "" ? null : parseInt(e.target.value, 10))} style={{ ...fieldStyle, textAlign: "center" }} />
+        </div>
+        <div style={{ marginLeft: "auto" }}>
+          <button
+            onClick={onToggleActive}
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "6px 14px", borderRadius: 8,
+              border: `1.5px solid ${item.is_active ? C.dan + "40" : C.suc + "40"}`,
+              background: item.is_active ? C.danLt : C.sucLt,
+              color: item.is_active ? C.dan : C.suc,
+              fontSize: 12, fontWeight: 600, fontFamily: "inherit",
+              cursor: "pointer", transition: "all 0.15s",
+            }}
+          >
+            {item.is_active ? <><I.X /> Deactivate</> : <><I.Check /> Activate</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// ─── Edit Mode Item Row ──────────────────────────────────────────────────────
+
+const EditModeItemRow = React.memo(function EditModeItemRow({
+  item, count, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
+  onDragStart, onDragOver, onDrop, onDragEnd, dragOverIdx, itemIdx, onToggleActive,
+}) {
+  const [hovered, setHovered] = useState(false);
+  const editRef = useRef(null);
+  const isExpanded = expandedEditId === item.id;
+
+  // Focus input when entering edit mode
+  useEffect(() => {
+    if (editingField?.itemId === item.id && editRef.current) {
+      editRef.current.focus();
+      editRef.current.select();
+    }
+  }, [editingField, item.id]);
+
+  const isEditing = (field) => editingField?.itemId === item.id && editingField?.field === field;
+
+  const renderEditableCell = (field, value, style = {}) => {
+    if (isEditing(field)) {
+      const isNumber = field === "par_level" || field === "unit_price";
+      return (
+        <input
+          ref={editRef}
+          type={isNumber ? "number" : "text"}
+          min={isNumber ? "0" : undefined}
+          step={field === "unit_price" ? "0.01" : undefined}
+          value={value ?? ""}
+          onChange={e => {
+            const v = isNumber
+              ? (e.target.value === "" ? null : field === "unit_price" ? parseFloat(e.target.value) : parseInt(e.target.value, 10))
+              : e.target.value;
+            onCatalogChange(item.id, field, v);
+          }}
+          onBlur={() => onEditField(null)}
+          onKeyDown={e => {
+            if (e.key === "Enter") onEditField(null);
+            if (e.key === "Escape") onEditField(null);
+          }}
+          style={{
+            width: "100%",
+            padding: "4px 6px",
+            borderRadius: 6,
+            border: `2px solid ${C.pri}`,
+            background: C.surface,
+            fontSize: 13,
+            fontWeight: 600,
+            color: C.text,
+            outline: "none",
+            boxSizing: "border-box",
+            ...style,
+          }}
+        />
+      );
+    }
+    return (
+      <div
+        onClick={() => onEditField({ itemId: item.id, field })}
+        style={{
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          minHeight: 28,
+          padding: "2px 4px",
+          borderRadius: 6,
+          transition: "background 0.15s",
+          background: hovered ? C.bg : "transparent",
+        }}
+      >
+        <span style={{ fontSize: 13, fontWeight: 600, color: value ? C.text : C.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, ...style }}>
+          {value || "\u2014"}
+        </span>
+        {hovered && (
+          <span style={{ color: C.textMut, opacity: 0.5, flexShrink: 0 }}>
+            <I.Pencil />
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  const stockCount = count?.stock_count ?? "";
+  const inTransit = count?.in_transit ?? "";
+  const hasFilled = stockCount !== "";
+  const toOrder = (item.par_level != null && hasFilled)
+    ? Math.max(0, (item.par_level || 0) - (parseInt(stockCount, 10) || 0) - (parseInt(inTransit, 10) || 0))
+    : "";
+
+  return (
+    <>
+      <div
+        draggable
+        onDragStart={e => onDragStart(e, item.id)}
+        onDragOver={e => onDragOver(e, itemIdx)}
+        onDrop={e => onDrop(e)}
+        onDragEnd={onDragEnd}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "30px 2fr 80px 70px 70px 90px 80px 60px 80px 80px 30px",
+          gap: 8,
+          alignItems: "center",
+          padding: "8px 16px",
+          borderTop: dragOverIdx === itemIdx ? `2px solid ${C.pri}` : "none",
+          borderBottom: `1px solid ${C.borderLight}`,
+          background: hovered ? C.surfaceHover : !item.is_active ? C.bg + "80" : C.surface,
+          opacity: item.is_active ? 1 : 0.5,
+          transition: "background 0.15s, opacity 0.15s",
+          cursor: "grab",
+        }}
+      >
+        {/* Drag handle */}
+        <div style={{ color: C.textMut, cursor: "grab", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <I.GripVertical />
+        </div>
+
+        {/* Item Name — editable */}
+        <div style={{ minWidth: 0 }}>
+          {renderEditableCell("item_name", item.item_name)}
+          {!item.is_active && (
+            <span style={{ fontSize: 10, color: C.dan, fontWeight: 600 }}>INACTIVE</span>
+          )}
+        </div>
+
+        {/* GL Account — editable */}
+        <div>{renderEditableCell("gl_account", item.gl_account, { fontSize: 11 })}</div>
+
+        {/* Par Level — editable */}
+        <div>{renderEditableCell("par_level", item.par_level, { textAlign: "center" })}</div>
+
+        {/* On Hand — muted in edit mode */}
+        <div style={{ fontSize: 12, color: C.textMut, textAlign: "center", opacity: 0.4 }}>
+          {hasFilled ? stockCount : "\u2014"}
+        </div>
+
+        {/* In Transit — muted */}
+        <div style={{ fontSize: 12, color: C.textMut, textAlign: "center", opacity: 0.4 }}>
+          {inTransit || "\u2014"}
+        </div>
+
+        {/* To Order — muted */}
+        <div style={{ fontSize: 12, color: C.textMut, textAlign: "center", opacity: 0.4 }}>
+          {toOrder !== "" ? toOrder : "\u2014"}
+        </div>
+
+        {/* Ordered — muted */}
+        <div style={{ opacity: 0.4 }} />
+
+        {/* Unit Price — editable */}
+        <div>{renderEditableCell("unit_price", item.unit_price != null ? item.unit_price : null, { textAlign: "right", fontSize: 12 })}</div>
+
+        {/* Value — muted */}
+        <div style={{ fontSize: 12, color: C.textMut, textAlign: "right", opacity: 0.4 }}>
+          {"\u2014"}
+        </div>
+
+        {/* Expand arrow */}
+        <button
+          onClick={() => onToggleExpand(isExpanded ? null : item.id)}
+          style={{
+            background: "none", border: "none", cursor: "pointer", padding: 2,
+            color: isExpanded ? C.pri : C.textMut, transition: "color 0.15s, transform 0.2s",
+            transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}
+        >
+          <I.ChevronDown />
+        </button>
+      </div>
+      {isExpanded && (
+        <ItemDetailDrawer
+          item={item}
+          onChange={(field, val) => onCatalogChange(item.id, field, val)}
+          onToggleActive={() => onToggleActive(item.id, item.is_active)}
+        />
+      )}
+    </>
+  );
+});
+
+// ─── Add Item Row (Edit Mode) ────────────────────────────────────────────────
+
+function AddItemRow({ category, subcategory, onAdd }) {
+  return (
+    <button
+      onClick={() => onAdd(category, subcategory)}
+      style={{
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 8,
+        padding: "10px 16px",
+        border: `1.5px dashed ${C.border}`,
+        borderRadius: 0,
+        background: "transparent",
+        color: C.textMut,
+        fontSize: 12,
+        fontWeight: 500,
+        fontFamily: "inherit",
+        cursor: "pointer",
+        transition: "all 0.15s",
+      }}
+      onMouseEnter={e => { e.currentTarget.style.background = C.surfaceHover; e.currentTarget.style.color = C.pri; e.currentTarget.style.borderColor = C.pri + "40"; }}
+      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = C.textMut; e.currentTarget.style.borderColor = C.border; }}
+    >
+      <I.Plus /> Add item
+    </button>
+  );
+}
+
 // ─── Category Section ─────────────────────────────────────────────────────────
 
-function CategorySection({ category, subcategories, counts, isReadOnly, onCountChange, onKeyDown, inputRefs, searchQuery }) {
+function CategorySection({ category, subcategories, counts, isReadOnly, onCountChange, onKeyDown, inputRefs, searchQuery,
+  catalogEditMode, editingField, onEditField, onCatalogChange, expandedEditId, onToggleExpand,
+  onDragStart, onDragOver, onDrop, onDragEnd, dragState, onToggleCatalogActive, onAddCatalogItem,
+}) {
   const [collapsed, setCollapsed] = useState(false);
 
   const totalItems = subcategories.reduce((sum, sub) => sum + sub.items.length, 0);
@@ -354,6 +671,11 @@ function CategorySection({ category, subcategories, counts, isReadOnly, onCountC
       }
       return s;
     }, 0), 0);
+
+  const editCols = "30px 2fr 80px 70px 70px 90px 80px 60px 80px 80px 30px";
+  const viewCols = "2fr 80px 70px 70px 90px 80px 60px 80px 80px";
+  const editHeaders = ["", "Item", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value", ""];
+  const viewHeaders = ["Item", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Ordered", "Unit Cost", "Value"];
 
   return (
     <div style={{ marginBottom: 12, borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
@@ -385,7 +707,7 @@ function CategorySection({ category, subcategories, counts, isReadOnly, onCountC
             {totalItems} item{totalItems !== 1 ? "s" : ""}
           </span>
         </div>
-        {categoryValue > 0 && (
+        {categoryValue > 0 && !catalogEditMode && (
           <span style={{ fontSize: 12, fontWeight: 700, color: C.suc }}>
             {fmtCurrency(categoryValue)}
           </span>
@@ -396,14 +718,19 @@ function CategorySection({ category, subcategories, counts, isReadOnly, onCountC
       {!collapsed && (
         <div style={{
           display: "grid",
-          gridTemplateColumns: "2fr 80px 70px 70px 90px 80px 80px 80px",
+          gridTemplateColumns: catalogEditMode ? editCols : viewCols,
           gap: 8,
           padding: "6px 16px",
           background: C.bg,
           borderBottom: `1px solid ${C.borderLight}`,
         }}>
-          {["Item", "GL Code", "Par", "On Hand", "In Transit", "To Order", "Unit Cost", "Value"].map((h, i) => (
-            <div key={i} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", textAlign: i >= 5 ? "right" : i >= 2 ? "center" : "left" }}>
+          {(catalogEditMode ? editHeaders : viewHeaders).map((h, i) => (
+            <div key={i} style={{
+              fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em",
+              textAlign: catalogEditMode
+                ? (i === 0 || i === 10 ? "center" : i >= 8 ? "right" : i >= 3 ? "center" : "left")
+                : (i === 6 ? "center" : i >= 7 ? "right" : i >= 2 ? "center" : "left"),
+            }}>
               {h}
             </div>
           ))}
@@ -420,17 +747,42 @@ function CategorySection({ category, subcategories, counts, isReadOnly, onCountC
               </span>
             </div>
           )}
-          {sub.items.map(item => (
-            <ItemRow
-              key={item.id}
-              item={item}
-              count={counts[item.id]}
-              isReadOnly={isReadOnly}
-              onChange={(field, val) => onCountChange(item.id, field, val)}
-              onKeyDown={(e) => onKeyDown(e, item.id)}
-              inputRef={el => { if (el) inputRefs.current[item.id] = el; }}
-            />
-          ))}
+          {catalogEditMode ? (
+            <>
+              {sub.items.map((item, idx) => (
+                <EditModeItemRow
+                  key={item.id}
+                  item={item}
+                  count={counts[item.id]}
+                  editingField={editingField}
+                  onEditField={onEditField}
+                  onCatalogChange={onCatalogChange}
+                  expandedEditId={expandedEditId}
+                  onToggleExpand={onToggleExpand}
+                  onDragStart={onDragStart}
+                  onDragOver={onDragOver}
+                  onDrop={(e) => onDrop(e, sub.items)}
+                  onDragEnd={onDragEnd}
+                  dragOverIdx={dragState.overIdx}
+                  itemIdx={idx}
+                  onToggleActive={onToggleCatalogActive}
+                />
+              ))}
+              <AddItemRow category={category} subcategory={sub.name} onAdd={onAddCatalogItem} />
+            </>
+          ) : (
+            sub.items.map(item => (
+              <ItemRow
+                key={item.id}
+                item={item}
+                count={counts[item.id]}
+                isReadOnly={isReadOnly}
+                onChange={(field, val) => onCountChange(item.id, field, val)}
+                onKeyDown={(e) => onKeyDown(e, item.id)}
+                inputRef={el => { if (el) inputRefs.current[item.id] = el; }}
+              />
+            ))
+          )}
         </div>
       ))}
     </div>
@@ -558,420 +910,6 @@ function SubmitModal({ onClose, onConfirm, saving }) {
           <Btn variant="success" onClick={onConfirm} disabled={saving}>
             {saving ? "Submitting..." : "Submit Count"}
           </Btn>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-// ─── Catalog Editor Row ───────────────────────────────────────────────────────
-
-const CatalogEditorRow = React.memo(function CatalogEditorRow({ item, onChange, onToggleActive }) {
-  const [hovered, setHovered] = useState(false);
-
-  const cellStyle = (width, align = "left") => ({
-    fontSize: 12,
-    padding: "4px 6px",
-    borderRadius: 6,
-    border: `1px solid ${C.border}`,
-    background: C.surface,
-    fontFamily: "inherit",
-    color: C.text,
-    outline: "none",
-    width: width || "100%",
-    textAlign: align,
-    boxSizing: "border-box",
-  });
-
-  return (
-    <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "1.8fr 0.7fr 0.8fr 0.8fr 0.8fr 0.7fr 0.5fr 0.6fr 0.6fr 0.6fr 0.5fr 50px",
-        gap: 6,
-        alignItems: "center",
-        padding: "6px 12px",
-        borderBottom: `1px solid ${C.borderLight}`,
-        background: !item.is_active ? (C.bg + "80") : hovered ? C.surfaceHover : C.surface,
-        opacity: item.is_active ? 1 : 0.6,
-        transition: "background 0.15s",
-      }}
-    >
-      <input
-        value={item.item_name || ""}
-        onChange={e => onChange("item_name", e.target.value)}
-        placeholder="Item name"
-        style={{ ...cellStyle(), fontWeight: 600 }}
-      />
-      <input
-        value={item.size || ""}
-        onChange={e => onChange("size", e.target.value)}
-        placeholder="Size"
-        style={cellStyle()}
-      />
-      <input
-        value={item.vendor || ""}
-        onChange={e => onChange("vendor", e.target.value)}
-        placeholder="Vendor"
-        style={cellStyle()}
-      />
-      <input
-        value={item.vendor_link || ""}
-        onChange={e => onChange("vendor_link", e.target.value)}
-        placeholder="URL"
-        style={{ ...cellStyle(), fontSize: 11 }}
-      />
-      <input
-        value={item.category || ""}
-        onChange={e => onChange("category", e.target.value)}
-        placeholder="Category"
-        style={cellStyle()}
-      />
-      <input
-        value={item.subcategory || ""}
-        onChange={e => onChange("subcategory", e.target.value)}
-        placeholder="Subcat"
-        style={cellStyle()}
-      />
-      <input
-        value={item.gl_account || ""}
-        onChange={e => onChange("gl_account", e.target.value)}
-        placeholder="GL"
-        style={cellStyle()}
-      />
-      <input
-        type="number"
-        min="0"
-        value={item.par_level ?? ""}
-        onChange={e => onChange("par_level", e.target.value === "" ? null : parseInt(e.target.value, 10))}
-        placeholder="Par"
-        style={cellStyle("100%", "center")}
-      />
-      <input
-        type="number"
-        min="0"
-        value={item.min_reorder_qty ?? ""}
-        onChange={e => onChange("min_reorder_qty", e.target.value === "" ? null : parseInt(e.target.value, 10))}
-        placeholder="Min"
-        style={cellStyle("100%", "center")}
-      />
-      <input
-        type="number"
-        min="0"
-        step="0.01"
-        value={item.unit_price ?? ""}
-        onChange={e => onChange("unit_price", e.target.value === "" ? null : parseFloat(e.target.value))}
-        placeholder="$0.00"
-        style={cellStyle("100%", "right")}
-      />
-      <input
-        type="number"
-        min="0"
-        value={item.sort_order ?? ""}
-        onChange={e => onChange("sort_order", e.target.value === "" ? null : parseInt(e.target.value, 10))}
-        placeholder="#"
-        style={cellStyle("100%", "center")}
-      />
-      <div style={{ display: "flex", justifyContent: "center" }}>
-        <button
-          onClick={onToggleActive}
-          title={item.is_active ? "Deactivate" : "Activate"}
-          style={{
-            width: 28,
-            height: 28,
-            borderRadius: 7,
-            border: `1.5px solid ${item.is_active ? C.suc + "60" : C.dan + "60"}`,
-            background: item.is_active ? C.sucLt : C.danLt,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: item.is_active ? C.suc : C.dan,
-            transition: "all 0.15s",
-          }}
-        >
-          {item.is_active ? <I.Check /> : <I.X />}
-        </button>
-      </div>
-    </div>
-  );
-});
-
-// ─── Catalog Editor Component ─────────────────────────────────────────────────
-
-function CatalogEditor({ locationId, onClose, addGlobalToast, onCatalogChange }) {
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [searchFilter, setSearchFilter] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("");
-  const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
-  const saveTimers = useRef({});
-
-  // Load all catalog items (including inactive)
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const { data, error } = await supabase
-          .from("inventory_catalog")
-          .select("*")
-          .eq("location_id", locationId)
-          .order("category", { ascending: true })
-          .order("subcategory", { ascending: true })
-          .order("sort_order", { ascending: true });
-        if (error) throw error;
-        setItems(data || []);
-      } catch (err) {
-        console.error("Catalog load error:", err);
-        if (addGlobalToast) addGlobalToast({ type: "error", message: "Failed to load catalog." });
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [locationId, addGlobalToast]);
-
-  // Cleanup timers on unmount
-  useEffect(() => {
-    return () => {
-      Object.values(saveTimers.current).forEach(t => clearTimeout(t));
-    };
-  }, []);
-
-  // Unique categories for filter
-  const categories = useMemo(() =>
-    Array.from(new Set(items.map(i => i.category).filter(Boolean))).sort(),
-    [items]
-  );
-
-  // Filtered items
-  const filteredItems = useMemo(() => {
-    let result = items;
-    if (categoryFilter) {
-      result = result.filter(i => i.category === categoryFilter);
-    }
-    if (searchFilter.trim()) {
-      const q = searchFilter.toLowerCase().trim();
-      result = result.filter(i =>
-        (i.item_name || "").toLowerCase().includes(q) ||
-        (i.vendor || "").toLowerCase().includes(q) ||
-        (i.category || "").toLowerCase().includes(q) ||
-        (i.subcategory || "").toLowerCase().includes(q)
-      );
-    }
-    return result;
-  }, [items, searchFilter, categoryFilter]);
-
-  // Save a single item change with debounce
-  const saveItemField = useCallback((itemId, updates) => {
-    if (saveTimers.current[itemId]) clearTimeout(saveTimers.current[itemId]);
-
-    setSaveStatus("saving");
-    saveTimers.current[itemId] = setTimeout(async () => {
-      try {
-        const { error } = await supabase
-          .from("inventory_catalog")
-          .update({ ...updates, updated_at: new Date().toISOString() })
-          .eq("id", itemId);
-        if (error) throw error;
-        setSaveStatus("saved");
-        setTimeout(() => setSaveStatus("idle"), 2200);
-        if (onCatalogChange) onCatalogChange();
-      } catch (err) {
-        console.error("Catalog save error:", err);
-        setSaveStatus("error");
-        setTimeout(() => setSaveStatus("idle"), 3000);
-      }
-    }, 1500);
-  }, [onCatalogChange]);
-
-  // Handle field change on a row
-  const handleChange = useCallback((itemId, field, value) => {
-    setItems(prev => prev.map(i => i.id === itemId ? { ...i, [field]: value } : i));
-    saveItemField(itemId, { [field]: value });
-  }, [saveItemField]);
-
-  // Toggle is_active
-  const handleToggleActive = useCallback((itemId, currentActive) => {
-    const newActive = !currentActive;
-    setItems(prev => prev.map(i => i.id === itemId ? { ...i, is_active: newActive } : i));
-    // Save immediately (no debounce for toggle)
-    (async () => {
-      setSaveStatus("saving");
-      try {
-        const { error } = await supabase
-          .from("inventory_catalog")
-          .update({ is_active: newActive, updated_at: new Date().toISOString() })
-          .eq("id", itemId);
-        if (error) throw error;
-        setSaveStatus("saved");
-        setTimeout(() => setSaveStatus("idle"), 2200);
-        if (onCatalogChange) onCatalogChange();
-        if (addGlobalToast) addGlobalToast({ type: "success", message: newActive ? "Item activated." : "Item deactivated." });
-      } catch (err) {
-        console.error("Toggle active error:", err);
-        setSaveStatus("error");
-        setTimeout(() => setSaveStatus("idle"), 3000);
-      }
-    })();
-  }, [onCatalogChange, addGlobalToast]);
-
-  // Add new blank item
-  const handleAddNew = useCallback(async () => {
-    setSaveStatus("saving");
-    try {
-      const maxSort = items.reduce((max, i) => Math.max(max, i.sort_order || 0), 0);
-      const { data: newItem, error } = await supabase
-        .from("inventory_catalog")
-        .insert({
-          location_id: locationId,
-          item_name: "",
-          category: "",
-          subcategory: "",
-          vendor: "",
-          vendor_link: "",
-          gl_account: "",
-          size: "",
-          par_level: null,
-          min_reorder_qty: null,
-          unit_price: null,
-          sort_order: maxSort + 10,
-          is_active: true,
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      setItems(prev => [newItem, ...prev]);
-      setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 2200);
-      if (addGlobalToast) addGlobalToast({ type: "success", message: "New item added. Fill in the details." });
-    } catch (err) {
-      console.error("Add catalog item error:", err);
-      setSaveStatus("error");
-      setTimeout(() => setSaveStatus("idle"), 3000);
-      if (addGlobalToast) addGlobalToast({ type: "error", message: "Failed to add new item." });
-    }
-  }, [locationId, items, addGlobalToast]);
-
-  return (
-    <Modal title="Catalog Management" onClose={onClose} fullWidth>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, minHeight: 400 }}>
-        {/* Toolbar */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          {/* Search */}
-          <div style={{ position: "relative", flex: "1 1 200px", minWidth: 180 }}>
-            <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.textMut, pointerEvents: "none" }}>
-              <I.Search />
-            </div>
-            <input
-              type="text"
-              placeholder="Search catalog..."
-              value={searchFilter}
-              onChange={e => setSearchFilter(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "8px 12px 8px 36px",
-                borderRadius: 9,
-                border: `1.5px solid ${C.border}`,
-                fontSize: 13,
-                fontFamily: "inherit",
-                color: C.text,
-                background: C.surface,
-                outline: "none",
-                boxSizing: "border-box",
-              }}
-            />
-          </div>
-
-          {/* Category filter */}
-          <select
-            value={categoryFilter}
-            onChange={e => setCategoryFilter(e.target.value)}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 9,
-              border: `1.5px solid ${C.border}`,
-              fontSize: 13,
-              fontFamily: "inherit",
-              color: categoryFilter ? C.text : C.textMut,
-              background: C.surface,
-              outline: "none",
-              minWidth: 140,
-            }}
-          >
-            <option value="">All Categories</option>
-            {categories.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-
-          {/* Add New */}
-          <Btn variant="accent" size="sm" icon={<I.Plus />} onClick={handleAddNew}>
-            Add New Item
-          </Btn>
-
-          {/* Save indicator */}
-          <span style={{
-            fontSize: 11,
-            fontWeight: 600,
-            color: saveStatus === "saving" ? C.info : saveStatus === "saved" ? C.suc : saveStatus === "error" ? C.dan : C.textMut,
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-            transition: "color 0.3s",
-            marginLeft: "auto",
-          }}>
-            {saveStatus === "saving" && <><I.RefreshCw /> Saving...</>}
-            {saveStatus === "saved" && <><I.CheckCircle /> Saved</>}
-            {saveStatus === "error" && <><I.XCircle /> Save failed</>}
-          </span>
-        </div>
-
-        {/* Column headers */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "1.8fr 0.7fr 0.8fr 0.8fr 0.8fr 0.7fr 0.5fr 0.6fr 0.6fr 0.6fr 0.5fr 50px",
-          gap: 6,
-          padding: "6px 12px",
-          background: C.bg,
-          borderRadius: 8,
-          borderBottom: `1px solid ${C.borderLight}`,
-        }}>
-          {["Name", "Size", "Vendor", "Link", "Category", "Subcat", "GL", "Par", "Min Qty", "Price", "Sort", "Active"].map((h, i) => (
-            <div key={i} style={{ fontSize: 9, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-              {h}
-            </div>
-          ))}
-        </div>
-
-        {/* Items list */}
-        <div style={{ maxHeight: "calc(100vh - 320px)", overflowY: "auto", borderRadius: 8, border: `1px solid ${C.border}` }}>
-          {loading ? (
-            <div style={{ padding: 32, textAlign: "center", color: C.textMut }}>Loading catalog...</div>
-          ) : filteredItems.length === 0 ? (
-            <div style={{ padding: 32, textAlign: "center", color: C.textMut }}>
-              {searchFilter || categoryFilter ? "No items match your filter." : "No catalog items. Click 'Add New Item' to start."}
-            </div>
-          ) : (
-            filteredItems.map(item => (
-              <CatalogEditorRow
-                key={item.id}
-                item={item}
-                onChange={(field, value) => handleChange(item.id, field, value)}
-                onToggleActive={() => handleToggleActive(item.id, item.is_active)}
-              />
-            ))
-          )}
-        </div>
-
-        {/* Footer */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 8 }}>
-          <div style={{ fontSize: 12, color: C.textMut }}>
-            {filteredItems.length} item{filteredItems.length !== 1 ? "s" : ""} shown
-            {items.filter(i => !i.is_active).length > 0 && (
-              <span> ({items.filter(i => !i.is_active).length} inactive)</span>
-            )}
-          </div>
-          <Btn variant="secondary" onClick={onClose}>Done</Btn>
         </div>
       </div>
     </Modal>
@@ -1302,14 +1240,19 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [saveStatus, setSaveStatus] = useState("idle"); // idle | saving | saved | error
   const [submitSaving, setSubmitSaving] = useState(false);
-  const [showCatalog, setShowCatalog] = useState(false);
   const [showDepletionModal, setShowDepletionModal] = useState(false);
+  const [catalogEditMode, setCatalogEditMode] = useState(false);
+  const [editingField, setEditingField] = useState(null); // { itemId, field }
+  const [expandedEditId, setExpandedEditId] = useState(null);
+  const [catalogSaveStatus, setCatalogSaveStatus] = useState("idle");
+  const [dragState, setDragState] = useState({ draggingId: null, overIdx: null });
 
   // ── Refs ──
   const saveTimer = useRef(null);
   const inputRefs = useRef({});
   const pendingSave = useRef({}); // accumulated dirty counts to save
   const snapshotRef = useRef(null); // always-current snapshot for async ops
+  const catalogSaveTimers = useRef({});
 
   const locationId = profile?.location_id;
   const isReadOnly = snapshot?.status === "completed";
@@ -1351,11 +1294,13 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     setLoadError(null);
     try {
       // 1. Load catalog items (sorted: category → subcategory → sort_order)
-      const { data: catalog, error: catErr } = await supabase
+      // Only filter active items when not in catalog edit mode
+      const catQuery = supabase
         .from("inventory_catalog")
         .select("*")
-        .eq("location_id", locationId)
-        .eq("is_active", true)
+        .eq("location_id", locationId);
+      if (!catalogEditMode) catQuery.eq("is_active", true);
+      const { data: catalog, error: catErr } = await catQuery
         .order("category", { ascending: true })
         .order("subcategory", { ascending: true })
         .order("sort_order", { ascending: true });
@@ -1422,6 +1367,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             stock_count: row.stock_count,
             in_transit: row.in_transit ?? "",
             notes: row.notes ?? "",
+            ordered: row.ordered ?? false,
           };
         });
       }
@@ -1445,7 +1391,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     } finally {
       setLoading(false);
     }
-  }, [locationId, currentWeekStart, thisWeekStart]);
+  }, [locationId, currentWeekStart, thisWeekStart, catalogEditMode]);
 
   useEffect(() => {
     loadData();
@@ -1473,6 +1419,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           stock_count: merged.stock_count != null && merged.stock_count !== "" ? parseInt(merged.stock_count, 10) : null,
           in_transit: merged.in_transit != null && merged.in_transit !== "" ? parseInt(merged.in_transit, 10) : null,
           notes: merged.notes || null,
+          ordered: merged.ordered ?? false,
         };
       });
 
@@ -1491,6 +1438,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             stock_count: row.stock_count,
             in_transit: row.in_transit ?? "",
             notes: row.notes ?? "",
+            ordered: row.ordered ?? false,
           };
         });
         return next;
@@ -1536,6 +1484,137 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     };
     scheduleAutoSave();
   }, [scheduleAutoSave]);
+
+  // ── Catalog edit: debounced save ──
+  const saveCatalogField = useCallback((itemId, updates) => {
+    if (catalogSaveTimers.current[itemId]) clearTimeout(catalogSaveTimers.current[itemId]);
+    setCatalogSaveStatus("saving");
+    catalogSaveTimers.current[itemId] = setTimeout(async () => {
+      try {
+        const { error } = await supabase
+          .from("inventory_catalog")
+          .update({ ...updates, updated_at: new Date().toISOString() })
+          .eq("id", itemId);
+        if (error) throw error;
+        setCatalogSaveStatus("saved");
+        setTimeout(() => setCatalogSaveStatus("idle"), 2200);
+      } catch (err) {
+        console.error("Catalog save error:", err);
+        setCatalogSaveStatus("error");
+        setTimeout(() => setCatalogSaveStatus("idle"), 3000);
+      }
+    }, 1500);
+  }, []);
+
+  const handleCatalogFieldChange = useCallback((itemId, field, value) => {
+    setCatalogItems(prev => prev.map(i => i.id === itemId ? { ...i, [field]: value } : i));
+    saveCatalogField(itemId, { [field]: value });
+  }, [saveCatalogField]);
+
+  const handleToggleCatalogActive = useCallback(async (itemId, currentActive) => {
+    const newActive = !currentActive;
+    setCatalogItems(prev => prev.map(i => i.id === itemId ? { ...i, is_active: newActive } : i));
+    setCatalogSaveStatus("saving");
+    try {
+      const { error } = await supabase
+        .from("inventory_catalog")
+        .update({ is_active: newActive, updated_at: new Date().toISOString() })
+        .eq("id", itemId);
+      if (error) throw error;
+      setCatalogSaveStatus("saved");
+      setTimeout(() => setCatalogSaveStatus("idle"), 2200);
+      if (addGlobalToast) addGlobalToast({ type: "success", message: newActive ? "Item activated." : "Item deactivated." });
+    } catch (err) {
+      console.error("Toggle active error:", err);
+      setCatalogSaveStatus("error");
+      setTimeout(() => setCatalogSaveStatus("idle"), 3000);
+    }
+  }, [addGlobalToast]);
+
+  const handleAddCatalogItem = useCallback(async (category, subcategory) => {
+    setCatalogSaveStatus("saving");
+    try {
+      const maxSort = catalogItems.reduce((max, i) => Math.max(max, i.sort_order || 0), 0);
+      const { data: newItem, error } = await supabase
+        .from("inventory_catalog")
+        .insert({
+          location_id: locationId,
+          item_name: "",
+          category: category || "",
+          subcategory: subcategory || "",
+          vendor: "",
+          vendor_link: "",
+          gl_account: "",
+          size: "",
+          par_level: null,
+          min_reorder_qty: null,
+          unit_price: null,
+          sort_order: maxSort + 10,
+          is_active: true,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      setCatalogItems(prev => [...prev, newItem]);
+      setCatalogSaveStatus("saved");
+      setTimeout(() => setCatalogSaveStatus("idle"), 2200);
+      // Auto-focus the name field
+      setEditingField({ itemId: newItem.id, field: "item_name" });
+    } catch (err) {
+      console.error("Add catalog item error:", err);
+      setCatalogSaveStatus("error");
+      setTimeout(() => setCatalogSaveStatus("idle"), 3000);
+    }
+  }, [locationId, catalogItems]);
+
+  // ── Drag and drop reorder ──
+  const handleDragStart = useCallback((e, itemId) => {
+    e.dataTransfer.effectAllowed = "move";
+    setDragState(prev => ({ ...prev, draggingId: itemId }));
+  }, []);
+
+  const handleDragOver = useCallback((e, idx) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragState(prev => ({ ...prev, overIdx: idx }));
+  }, []);
+
+  const handleDrop = useCallback(async (e, subcatItems) => {
+    e.preventDefault();
+    const { draggingId, overIdx } = dragState;
+    if (!draggingId || overIdx == null) { setDragState({ draggingId: null, overIdx: null }); return; }
+
+    const fromIdx = subcatItems.findIndex(i => i.id === draggingId);
+    if (fromIdx === -1 || fromIdx === overIdx) { setDragState({ draggingId: null, overIdx: null }); return; }
+
+    const reordered = [...subcatItems];
+    const [moved] = reordered.splice(fromIdx, 1);
+    reordered.splice(overIdx, 0, moved);
+
+    // Update sort_order for all items in this group
+    const updates = reordered.map((item, i) => ({ id: item.id, sort_order: (i + 1) * 10 }));
+
+    // Optimistic update
+    setCatalogItems(prev => {
+      const next = [...prev];
+      updates.forEach(u => {
+        const idx = next.findIndex(i => i.id === u.id);
+        if (idx !== -1) next[idx] = { ...next[idx], sort_order: u.sort_order };
+      });
+      return next;
+    });
+
+    setDragState({ draggingId: null, overIdx: null });
+
+    // Persist to DB
+    for (const u of updates) {
+      await supabase.from("inventory_catalog").update({ sort_order: u.sort_order }).eq("id", u.id);
+    }
+  }, [dragState]);
+
+  const handleDragEnd = useCallback(() => {
+    setDragState({ draggingId: null, overIdx: null });
+  }, []);
 
   // ── Keyboard navigation ──
   const handleKeyDown = useCallback((e, itemId) => {
@@ -1718,6 +1797,33 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     return total;
   }, [catalogItems, counts, adhocItems]);
 
+  // ── Ordering progress (two-phase completion) ──
+  const orderingStatus = useMemo(() => {
+    let itemsNeedingOrder = 0;
+    let itemsOrdered = 0;
+    catalogItems.forEach(item => {
+      const count = counts[item.id];
+      const sc = count?.stock_count;
+      if (sc == null || sc === "") return; // not yet counted
+      const toOrder = Math.max(0, (item.par_level || 0) - (parseInt(sc, 10) || 0) - (parseInt(count?.in_transit, 10) || 0));
+      if (toOrder > 0) {
+        itemsNeedingOrder++;
+        if (count?.ordered) itemsOrdered++;
+      }
+    });
+    return { itemsNeedingOrder, itemsOrdered, allOrdered: itemsNeedingOrder === 0 || itemsOrdered >= itemsNeedingOrder };
+  }, [catalogItems, counts]);
+
+  const countingComplete = useMemo(() => {
+    if (catalogItems.length === 0) return false;
+    return catalogItems.every(item => {
+      const sc = counts[item.id]?.stock_count;
+      return sc != null && sc !== "";
+    });
+  }, [catalogItems, counts]);
+
+  const canComplete = countingComplete && orderingStatus.allOrdered;
+
   // ── Unique categories for adhoc dropdown ──
   const allCategories = useMemo(() =>
     Array.from(new Set(catalogItems.map(i => i.category).filter(Boolean))).sort(),
@@ -1749,9 +1855,17 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
           {/* Status badge + Manage Catalog */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-            <Btn variant="secondary" size="sm" icon={<I.Edit />} onClick={() => setShowCatalog(true)}>
-              Manage Catalog
-            </Btn>
+            {!isReadOnly && (
+              catalogEditMode ? (
+                <Btn variant="success" size="sm" icon={<I.Check />} onClick={() => { setCatalogEditMode(false); loadData(); }}>
+                  Done Editing
+                </Btn>
+              ) : (
+                <Btn variant="secondary" size="sm" icon={<I.Edit />} onClick={() => setCatalogEditMode(true)}>
+                  Edit Catalog
+                </Btn>
+              )
+            )}
 
             {snapshot && (
               <span style={{
@@ -1997,6 +2111,23 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             </div>
           )}
 
+          {/* Catalog edit mode banner */}
+          {catalogEditMode && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "10px 16px", borderRadius: 10, marginBottom: 12,
+              background: C.infoLt, border: `1.5px solid ${C.info}20`,
+            }}>
+              <I.Edit />
+              <span style={{ fontSize: 13, color: C.info, fontWeight: 500 }}>
+                Editing catalog — drag to reorder, click fields to edit. Changes auto-save.
+              </span>
+              {catalogSaveStatus === "saving" && <span style={{ marginLeft: "auto", fontSize: 11, color: C.info, fontWeight: 600 }}>Saving...</span>}
+              {catalogSaveStatus === "saved" && <span style={{ marginLeft: "auto", fontSize: 11, color: C.suc, fontWeight: 600 }}>Saved</span>}
+              {catalogSaveStatus === "error" && <span style={{ marginLeft: "auto", fontSize: 11, color: C.dan, fontWeight: 600 }}>Save failed</span>}
+            </div>
+          )}
+
           {/* No snapshot for historical week */}
           {!snapshot && currentWeekStart !== thisWeekStart && !loading && (
             <Card style={{ padding: 32, textAlign: "center", marginBottom: 16 }}>
@@ -2030,6 +2161,19 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                 onKeyDown={handleKeyDown}
                 inputRefs={inputRefs}
                 searchQuery={search}
+                catalogEditMode={catalogEditMode}
+                editingField={editingField}
+                onEditField={setEditingField}
+                onCatalogChange={handleCatalogFieldChange}
+                expandedEditId={expandedEditId}
+                onToggleExpand={setExpandedEditId}
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                onDragEnd={handleDragEnd}
+                dragState={dragState}
+                onToggleCatalogActive={handleToggleCatalogActive}
+                onAddCatalogItem={handleAddCatalogItem}
               />
             ))
           )}
@@ -2155,12 +2299,21 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
           {/* ── Submit Button ── */}
           {snapshot && !isReadOnly && (
-            <div style={{ marginTop: 20, display: "flex", justifyContent: "flex-end" }}>
+            <div style={{ marginTop: 20, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+              {!canComplete && (
+                <div style={{ fontSize: 12, color: C.warn, fontWeight: 500 }}>
+                  {!countingComplete
+                    ? `${catalogItems.filter(i => counts[i.id]?.stock_count == null || counts[i.id]?.stock_count === "").length} item${catalogItems.filter(i => counts[i.id]?.stock_count == null || counts[i.id]?.stock_count === "").length !== 1 ? "s" : ""} still need counting`
+                    : `${orderingStatus.itemsNeedingOrder - orderingStatus.itemsOrdered} item${(orderingStatus.itemsNeedingOrder - orderingStatus.itemsOrdered) !== 1 ? "s" : ""} still need to be ordered`
+                  }
+                </div>
+              )}
               <Btn
                 variant="success"
                 size="lg"
                 icon={<I.CheckCircle />}
                 onClick={() => setShowSubmitModal(true)}
+                disabled={!canComplete}
               >
                 Complete Inventory Count
               </Btn>
@@ -2186,14 +2339,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         />
       )}
 
-      {showCatalog && (
-        <CatalogEditor
-          locationId={locationId}
-          onClose={() => setShowCatalog(false)}
-          addGlobalToast={addGlobalToast}
-          onCatalogChange={loadData}
-        />
-      )}
+
 
       {showDepletionModal && (
         <DepletionRateModal
