@@ -806,7 +806,7 @@ function DashboardContent({
   }, [nav]);
 
   // ─── Inventory snapshot status (reads from inventory_snapshots + inventory_counts) ──
-  const [invStatus, setInvStatus] = useState({ itemsCounted: 0, totalItems: 0, overdue: false, daysOverdue: 0 });
+  const [invStatus, setInvStatus] = useState({ itemsCounted: 0, totalItems: 0, overdue: false, daysOverdue: 0, phase: "counting", needsOrder: 0, ordered: 0 });
   const [invTick, setInvTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
@@ -820,23 +820,41 @@ function DashboardContent({
         const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff);
         const monday = `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, "0")}-${String(mon.getDate()).padStart(2, "0")}`;
         const [catalogRes, snapRes] = await Promise.all([
-          supabase.from("inventory_catalog").select("id").eq("location_id", locId).eq("is_active", true),
+          supabase.from("inventory_catalog").select("id, par_level").eq("location_id", locId).eq("is_active", true),
           supabase.from("inventory_snapshots").select("id").eq("location_id", locId).eq("week_start", monday).maybeSingle(),
         ]);
         if (cancelled) return;
-        const totalItems = catalogRes.data?.length || 0;
+        const catalogItems = catalogRes.data || [];
+        const totalItems = catalogItems.length;
         const now = new Date();
         const dow = now.getDay();
         const isPastMonday = dow !== 1;
         const daysSinceMonday = dow === 0 ? 6 : dow - 1;
         if (snapRes.data?.id) {
-          const { data: countRows } = await supabase.from("inventory_counts").select("stock_count").eq("snapshot_id", snapRes.data.id);
+          const { data: countRows } = await supabase.from("inventory_counts")
+            .select("stock_count, in_transit, ordered, catalog_item_id").eq("snapshot_id", snapRes.data.id);
           if (cancelled) return;
-          const counted = (countRows || []).filter(r => r.stock_count > 0).length;
-          const allDone = counted >= totalItems && totalItems > 0;
-          if (!cancelled) setInvStatus({ itemsCounted: counted, totalItems, overdue: isPastMonday && !allDone, daysOverdue: daysSinceMonday });
+          const rows = countRows || [];
+          const counted = rows.filter(r => r.stock_count != null).length;
+          const countingDone = counted >= totalItems && totalItems > 0;
+
+          // Compute ordering progress
+          const countMap = {};
+          rows.forEach(r => { countMap[r.catalog_item_id] = r; });
+          let needsOrder = 0, orderedCount = 0;
+          catalogItems.forEach(item => {
+            const c = countMap[item.id];
+            if (!c || c.stock_count == null) return;
+            const toOrder = Math.max(0, (item.par_level || 0) - (parseInt(c.stock_count, 10) || 0) - (parseInt(c.in_transit, 10) || 0));
+            if (toOrder > 0) { needsOrder++; if (c.ordered) orderedCount++; }
+          });
+          const orderingDone = needsOrder === 0 || orderedCount >= needsOrder;
+          const allDone = countingDone && orderingDone;
+          const phase = allDone ? "done" : countingDone ? "ordering" : "counting";
+
+          if (!cancelled) setInvStatus({ itemsCounted: counted, totalItems, overdue: isPastMonday && !allDone, daysOverdue: daysSinceMonday, phase, needsOrder, ordered: orderedCount });
         } else {
-          if (!cancelled) setInvStatus({ itemsCounted: 0, totalItems, overdue: isPastMonday && totalItems > 0, daysOverdue: daysSinceMonday });
+          if (!cancelled) setInvStatus({ itemsCounted: 0, totalItems, overdue: isPastMonday && totalItems > 0, daysOverdue: daysSinceMonday, phase: "counting", needsOrder: 0, ordered: 0 });
         }
       } catch { /* silent */ }
     })();
@@ -1689,7 +1707,7 @@ function DashboardContent({
         <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={navTo["ops-pp"]} />
 
         {/* Col 9: Inventory (row 5) */}
-        <InventoryCell done={invStatus.itemsCounted} total={invStatus.totalItems} overdue={invStatus.overdue} daysOverdue={invStatus.daysOverdue} onClick={navTo["inventory"]} />
+        <InventoryCell done={invStatus.itemsCounted} total={invStatus.totalItems} overdue={invStatus.overdue} daysOverdue={invStatus.daysOverdue} phase={invStatus.phase} needsOrder={invStatus.needsOrder} ordered={invStatus.ordered} onClick={navTo["inventory"]} />
 
         {/* Col 8: Closing (row 6) */}
         <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={navTo["ops-closing"]} />
@@ -2396,12 +2414,15 @@ const QuickLinkCell = memo(function QuickLinkCell({ label, icon, onClick }) {
 });
 
 /* InventoryCell — icon + progress bar + overdue badge + due day */
-const InventoryCell = memo(function InventoryCell({ done, total, overdue, daysOverdue, onClick }) {
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
-  const allDone = total > 0 && done >= total;
+const InventoryCell = memo(function InventoryCell({ done, total, overdue, daysOverdue, phase, needsOrder, ordered, onClick }) {
+  const isOrdering = phase === "ordering";
+  const allDone = phase === "done";
+  const displayDone = isOrdering ? (ordered || 0) : done;
+  const displayTotal = isOrdering ? (needsOrder || 0) : total;
+  const pct = displayTotal > 0 ? Math.round((displayDone / displayTotal) * 100) : 0;
   const barColor = allDone ? C.suc : overdue ? "#EF4444" : C.acc;
   const isMonday = new Date().getDay() === 1;
-  const statusLabel = allDone ? "Complete" : overdue ? `${daysOverdue}d overdue` : total > 0 && done > 0 ? "In Progress" : isMonday ? "Due Today" : "Due Monday";
+  const statusLabel = allDone ? "Complete" : overdue ? `${daysOverdue}d overdue` : isOrdering ? "Ordering" : total > 0 && done > 0 ? "Counting" : isMonday ? "Due Today" : "Due Monday";
   const statusBg = allDone ? "rgba(16,185,129,0.1)" : overdue ? "rgba(239,68,68,0.1)" : "rgba(20,83,45,0.06)";
   const statusColor = allDone ? C.suc : overdue ? "#EF4444" : C.textMut;
   return (
@@ -2415,7 +2436,7 @@ const InventoryCell = memo(function InventoryCell({ done, total, overdue, daysOv
       <div style={{ fontSize: 9, fontWeight: 700, color: allDone ? C.suc : C.text, lineHeight: 1, marginBottom: 4, textAlign: "center" }}>
         Inventory
       </div>
-      {total > 0 && (
+      {displayTotal > 0 && (
         <>
           <div style={{ width: "80%", height: 5, background: "rgba(20,83,45,0.06)", borderRadius: 3, overflow: "hidden", marginBottom: 3 }}>
             <div style={{
@@ -2424,7 +2445,7 @@ const InventoryCell = memo(function InventoryCell({ done, total, overdue, daysOv
             }} />
           </div>
           <div style={{ fontSize: 12, fontWeight: 800, color: barColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", marginBottom: 4 }}>
-            {done}/{total}
+            {displayDone}/{displayTotal}
           </div>
         </>
       )}
