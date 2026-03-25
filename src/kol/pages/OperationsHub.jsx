@@ -125,13 +125,13 @@ function OperationsHub({ data, save, nav, profile }) {
 
   // ─── Inventory snapshot status for weekly-inventory card ────────────────────
   // Reads from inventory_snapshots + inventory_counts (consolidated source of truth)
-  const [invStatus, setInvStatus] = useState(null); // { status, itemsCounted, totalItems }
+  const [invStatus, setInvStatus] = useState(null); // { status, itemsCounted, totalItems, phase, phaseLabel }
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const locId = profile?.location_id;
-        if (!locId) { setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0 }); return; }
+        if (!locId) { setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0, phase: "counting", phaseLabel: "" }); return; }
 
         // Compute Monday of the viewed week
         const d = new Date(viewDate + "T12:00:00");
@@ -141,24 +141,50 @@ function OperationsHub({ data, save, nav, profile }) {
         const monday = `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, "0")}-${String(mon.getDate()).padStart(2, "0")}`;
 
         const [catalogRes, snapRes] = await Promise.all([
-          supabase.from("inventory_catalog").select("id").eq("location_id", locId).eq("is_active", true),
+          supabase.from("inventory_catalog").select("id, par_level").eq("location_id", locId).eq("is_active", true),
           supabase.from("inventory_snapshots").select("id, status")
             .eq("location_id", locId).eq("week_start", monday).maybeSingle(),
         ]);
         if (cancelled) return;
 
-        const totalItems = catalogRes.data?.length || 0;
+        const catalogItems = catalogRes.data || [];
+        const totalItems = catalogItems.length;
         if (snapRes.data?.id) {
           const { data: countRows } = await supabase.from("inventory_counts")
-            .select("stock_count").eq("snapshot_id", snapRes.data.id);
+            .select("stock_count, in_transit, ordered, catalog_item_id").eq("snapshot_id", snapRes.data.id);
           if (cancelled) return;
-          const counted = (countRows || []).filter(r => r.stock_count > 0).length;
-          const status = counted >= totalItems && totalItems > 0 ? "completed" : counted > 0 ? "in_progress" : "not_started";
-          if (!cancelled) setInvStatus({ status, itemsCounted: counted, totalItems });
+          const rows = countRows || [];
+          const counted = rows.filter(r => r.stock_count != null).length;
+          const countingDone = counted >= totalItems && totalItems > 0;
+
+          // Compute ordering progress
+          const countMap = {};
+          rows.forEach(r => { countMap[r.catalog_item_id] = r; });
+          let needsOrder = 0, ordered = 0;
+          catalogItems.forEach(item => {
+            const c = countMap[item.id];
+            if (!c || c.stock_count == null) return;
+            const toOrder = Math.max(0, (item.par_level || 0) - (parseInt(c.stock_count, 10) || 0) - (parseInt(c.in_transit, 10) || 0));
+            if (toOrder > 0) { needsOrder++; if (c.ordered) ordered++; }
+          });
+          const orderingDone = needsOrder === 0 || ordered >= needsOrder;
+          const allDone = countingDone && orderingDone;
+
+          let status, phase, phaseLabel;
+          if (allDone) {
+            status = "completed"; phase = "done"; phaseLabel = "Completed this week";
+          } else if (countingDone) {
+            status = "in_progress"; phase = "ordering"; phaseLabel = `${ordered}/${needsOrder} items ordered`;
+          } else if (counted > 0) {
+            status = "in_progress"; phase = "counting"; phaseLabel = `${counted}/${totalItems} items counted`;
+          } else {
+            status = "not_started"; phase = "counting"; phaseLabel = "Not started this week";
+          }
+          if (!cancelled) setInvStatus({ status, itemsCounted: counted, totalItems, phase, phaseLabel, needsOrder, ordered });
         } else {
-          if (!cancelled) setInvStatus({ status: "not_started", itemsCounted: 0, totalItems });
+          if (!cancelled) setInvStatus({ status: "not_started", itemsCounted: 0, totalItems, phase: "counting", phaseLabel: totalItems > 0 ? "Not started this week" : "" });
         }
-      } catch { if (!cancelled) setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0 }); }
+      } catch { if (!cancelled) setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0, phase: "counting", phaseLabel: "" }); }
     })();
     return () => { cancelled = true; };
   }, [viewDate, profile?.location_id]);
@@ -704,8 +730,12 @@ function OperationsHub({ data, save, nav, profile }) {
                 // Inventory card: override status from Supabase snapshot
                 const isInv = item.id === "weekly-inventory";
                 const status = isInv && invStatus ? invStatus.status : getOpsCardStatus(data, item, viewDate);
-                const progress = isInv && invStatus ? (invStatus.status === "completed" ? 100 : invStatus.totalItems > 0 ? Math.round((invStatus.itemsCounted / invStatus.totalItems) * 100) : 0) : getOpsProgress(data, item, viewDate);
-                const countLabel = isInv && invStatus ? (invStatus.status === "completed" ? "Completed this week" : invStatus.totalItems > 0 ? `${invStatus.itemsCounted}/${invStatus.totalItems} items counted` : "Not started this week") : getOpsCountLabel(data, item, viewDate);
+                const progress = isInv && invStatus ? (
+                  invStatus.status === "completed" ? 100
+                  : invStatus.phase === "ordering" ? (invStatus.needsOrder > 0 ? Math.round((invStatus.ordered / invStatus.needsOrder) * 100) : 100)
+                  : invStatus.totalItems > 0 ? Math.round((invStatus.itemsCounted / invStatus.totalItems) * 100) : 0
+                ) : getOpsProgress(data, item, viewDate);
+                const countLabel = isInv && invStatus ? invStatus.phaseLabel : getOpsCountLabel(data, item, viewDate);
                 const sc = statusConfig[status];
                 const isComingSoon = item.comingSoon;
                 const isEod = item.dataKey === "eodEntries";
