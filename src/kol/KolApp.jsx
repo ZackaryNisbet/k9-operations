@@ -179,6 +179,7 @@ function parseLiteUrl(pathname, dataRef) {
 }
 
 // ─── Navigation Config ───────────────────────────────────────────────────
+// Default: ops-only nav (K9 Operations core)
 const LEAN_NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "ops-hub", label: "Operations", icon: "Clipboard" },
@@ -189,6 +190,22 @@ const LEAN_NAV_ITEMS = [
   { id: "test-health", label: "Test Health", icon: "CheckCircle" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
+
+// Full nav when ?mode=analytics is active (K9 Operations + Analytics)
+const ANALYTICS_NAV_ITEMS = [
+  { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
+  { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
+  { id: "ops-hub", label: "Operations", icon: "Clipboard" },
+  { id: "inventory", label: "Inventory", icon: "Package" },
+  { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
+  { id: "photos", label: "Photos", icon: "Image" },
+  { id: "checkout-tv", label: "TV", icon: "Monitor" },
+  { id: "test-health", label: "Test Health", icon: "CheckCircle" },
+  { id: "settings", label: "Settings", icon: "Settings" },
+];
+
+// Detect analytics mode from URL query param
+const IS_ANALYTICS_MODE = new URLSearchParams(window.location.search).get("mode") === "analytics";
 
 const LEAN_ENTERPRISE_NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
@@ -202,8 +219,8 @@ const LEAN_ENTERPRISE_NAV_ITEMS = [
 // Adair Forsythe is the seed location; additional locations are added by the onboarding flow.
 const STATIC_LOCATIONS = [
   { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
-  { id: "demo-kol", name: "Launch KOL (Full)", slug: "kol-demo", isDemoLink: true, demoUrl: "/lite/cherry-hill/dashboard" },
-  { id: "demo-kop", name: "Launch KOP (POS)", slug: "kop-demo", isDemoLink: true, demoUrl: "/pos/demo/dashboard" },
+  { id: "demo-analytics", name: "K9 Operations + Analytics", slug: "analytics-demo", isDemoLink: true, demoUrl: "/lite/cherry-hill/dashboard?mode=analytics" },
+  { id: "demo-pos", name: "K9 Operations POS", slug: "pos-demo", isDemoLink: true, demoUrl: "/pos/demo/dashboard" },
 ];
 
 // ─── Main App Component ───────────────────────────────────────────────────
@@ -727,8 +744,10 @@ function LeanAppInner() {
     switch (page) {
       case "dashboard": {
         // DASH-002: Permission-based dashboard views — driven by permission matrix, not hardcoded roles
-        const hasFinancial = hasLeanPermission(profile, "Financial Reporting");
-        const hasOpsHub = hasLeanPermission(profile, "Operations Hub");
+        // When ?mode=analytics is active, show the full K9 Operations + Analytics dashboard
+        const analyticsMode = IS_ANALYTICS_MODE;
+        const hasFinancial = analyticsMode || hasLeanPermission(profile, "Financial Reporting");
+        const hasOpsHub = analyticsMode || hasLeanPermission(profile, "Operations Hub");
         const dashboardPermissions = {
           showSnapshot: true,
           showRevenue: hasFinancial,
@@ -742,7 +761,7 @@ function LeanAppInner() {
           showFunnelMetrics: hasFinancial,
           showHeroKPIs: hasFinancial,
         };
-        return <DashboardPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} refreshOptions={refreshOptions} bohStats={bohStats} bohLastFetch={bohLastFetch} {...dashboardPermissions} />;
+        return <DashboardPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} refreshOptions={refreshOptions} bohStats={bohStats} bohLastFetch={bohLastFetch} analyticsMode={analyticsMode} {...dashboardPermissions} />;
       }
       case "lifecycle":
         return currentLocation === "enterprise" ? <div style={{ padding: 40, textAlign: "center" }}>Customer Lifecycle not available on Enterprise view</div> : (
@@ -906,7 +925,7 @@ function LeanAppInner() {
 
         {/* Navigation */}
         <nav style={{ flex: 1, padding: "0 10px", overflowY: "auto" }}>
-          {(currentLocation === "enterprise" ? LEAN_ENTERPRISE_NAV_ITEMS : LEAN_NAV_ITEMS).map(item => {
+          {(currentLocation === "enterprise" ? LEAN_ENTERPRISE_NAV_ITEMS : IS_ANALYTICS_MODE ? ANALYTICS_NAV_ITEMS : LEAN_NAV_ITEMS).map(item => {
             const act = page === item.id;
             const IconComp = I[item.icon];
             return (

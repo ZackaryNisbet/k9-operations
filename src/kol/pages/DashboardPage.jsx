@@ -665,15 +665,18 @@ function Sparkline({ data, width = 200, height = 32, color = C.pri }) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   DashGrid — viewport-filling grid, ops-focused layout
+   DashGrid — viewport-filling grid, adapts for ops-only or full analytics layout
    ═══════════════════════════════════════════════════════════════════════════ */
-function DashGrid({ children }) {
+function DashGrid({ children, analyticsMode }) {
   const COL_GAP = 6;
   const ROW_GAP = 5;
   const LABEL_H = 16;
   const COLS = 9;
-  // Layout: snapshot-label, snapshot-row, daily-tasks-label, daily-tasks-row, ops-label, ops-row x3, cash-chart-row x2
-  const templateRows = `${LABEL_H}px 1fr ${LABEL_H}px 1fr ${LABEL_H}px 1fr 1fr 1fr 1fr 1fr`;
+  // Analytics: snapshot-label, snapshot-row, lifecycle-label, lifecycle-row, daily-tasks-label, daily-tasks-row, financial-label, financial-row, chart-rows x3 (11 rows)
+  // Ops-only: snapshot-label, snapshot-row, daily-tasks-label, daily-tasks-row, ops-label, ops-rows x3, cash-chart x2 (10 rows)
+  const templateRows = analyticsMode
+    ? `${LABEL_H}px 1fr ${LABEL_H}px 1fr ${LABEL_H}px 1fr ${LABEL_H}px 1fr 1fr 1fr 1fr`
+    : `${LABEL_H}px 1fr ${LABEL_H}px 1fr ${LABEL_H}px 1fr 1fr 1fr 1fr 1fr`;
 
   return (
     <div
@@ -774,7 +777,7 @@ export default function DashboardPage(props) {
 
 function DashboardContent({
   data, save, nav, profile, addGlobalToast, locationId, refreshOptions,
-  bohStats, bohLastFetch,
+  bohStats, bohLastFetch, analyticsMode,
   showSnapshot, showRevenue, showFunnel, showLTV,
   showRevenueComposition, showRevenueByCategory, showDiscountAnalysis,
   showTopClients, showOps, showFunnelMetrics, showHeroKPIs,
@@ -1497,9 +1500,9 @@ function DashboardContent({
       </div>
 
       {/* ═══ MAIN GRID ═══ */}
-      <DashGrid>
+      <DashGrid analyticsMode={analyticsMode}>
         {/* ─── Section Label: Snapshot ─── */}
-        <div style={{ gridColumn: "1 / 10", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
+        <div style={{ gridColumn: analyticsMode ? "1 / 8" : "1 / 10", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
           <span className="dash-section-label">{
             range === "today" ? "Today's Snapshot" :
             range === "wtd" ? "WTD Snapshot" :
@@ -1513,8 +1516,18 @@ function DashboardContent({
             "Today's Snapshot"
           }</span>
         </div>
+        {analyticsMode && (
+          <>
+            <div ref={opsVisRef} style={{ gridColumn: "8", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 2px" }}>
+              <span className="dash-section-label">Checklists</span>
+            </div>
+            <div style={{ gridColumn: "9", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 2px" }}>
+              <span className="dash-section-label">Services</span>
+            </div>
+          </>
+        )}
 
-        {/* ═══ ROW 1: Gingr Snapshot (all 9 cols) ═══ */}
+        {/* ═══ ROW 1: Gingr Snapshot ═══ */}
         <MetricCell
           label="Expected"
           value={liveSnap ? liveSnap.expected : m.dogsExpected}
@@ -1551,100 +1564,264 @@ function DashboardContent({
         }
         <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0))}%`} hero onClick={navTo["occupancy-report"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0)), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} skeleton={showSkeleton} live={!!liveSnap} />
         <MetricCell label="New Bookings" value={liveSnap ? liveSnap.new_bookings : m.bookingsToday} hero skeleton={showSkeleton} />
-        <MetricCell label="Tours" value={liveSnap ? liveSnap.tours : m.toursToday} hero trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.tours : m.toursToday, pm.toursToday) : null} skeleton={showSkeleton} />
-        <MetricCell label="Evals" value={liveSnap ? liveSnap.evals : m.evalsToday} hero skeleton={showSkeleton} />
-        <MetricCell label="Transactions" value={m.cashTransactionCount} hero trend={showPriorPeriod ? bookingsTrend : null} skeleton={showSkeleton} />
-        <MetricCell label="Avg Transaction" value={`$${Math.round(m.cashAvgTransaction || 0).toLocaleString("en-US")}`} hero trend={showPriorPeriod ? pctChange(m.cashAvgTransaction, pm.cashAvgTransaction) : null} skeleton={showSkeleton} />
+        <MetricCell label="Tours" value={liveSnap ? liveSnap.tours : m.toursToday} hero onClick={analyticsMode ? navTo["lifecycle"] : undefined} trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.tours : m.toursToday, pm.toursToday) : null} skeleton={showSkeleton} />
+        <MetricCell label="Evals" value={liveSnap ? liveSnap.evals : m.evalsToday} hero onClick={analyticsMode ? navTo["lifecycle"] : undefined} skeleton={showSkeleton} />
+        {analyticsMode ? (
+          <>
+            <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={navTo["ops-opening"]} />
+            <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={navTo["ops-bathing"]} />
+          </>
+        ) : (
+          <>
+            <MetricCell label="Transactions" value={m.cashTransactionCount} hero trend={showPriorPeriod ? bookingsTrend : null} skeleton={showSkeleton} />
+            <MetricCell label="Avg Transaction" value={`$${Math.round(m.cashAvgTransaction || 0).toLocaleString("en-US")}`} hero trend={showPriorPeriod ? pctChange(m.cashAvgTransaction, pm.cashAvgTransaction) : null} skeleton={showSkeleton} />
+          </>
+        )}
+
+        {/* ═══ ANALYTICS: Customer Lifecycle row ═══ */}
+        {analyticsMode && (
+          <>
+            <div style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
+              <span className="dash-section-label">Customer Lifecycle</span>
+            </div>
+            <div style={{ gridColumn: "8 / 10" }} />
+
+            <MetricCell label="Remaining Leads" value={funnelMetrics.remainingLeads} onClick={navTo["funnel"]} trend={showPriorPeriod ? pctChange(funnelMetrics.remainingLeads, prevFunnelMetrics.remainingLeads) : null} />
+            <MetricCell label="Lapsed" value={funnelMetrics.remainingAtRisk} onClick={navTo["lifecycle"]} />
+            <MetricCell label="Outreaches" value={funnelMetrics.todayOutreaches} onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(funnelMetrics.todayOutreaches, prevFunnelMetrics.todayOutreaches) : null} />
+            <MetricCell label="Converted" value={funnelMetrics.todayConversions} color={funnelMetrics.todayConversions > 0 ? C.suc : undefined} onClick={navTo["lifecycle"]} trend={showPriorPeriod ? pctChange(funnelMetrics.todayConversions, prevFunnelMetrics.todayConversions) : null} />
+            <MetricCell label="First-Time Spenders" value={funnelMetrics.firstTimePayers} onClick={navTo["lifecycle"]} />
+            <MetricCell label="Conversion Rate" value={`${funnelMetrics.conversionRate.toFixed(1)}%`} onClick={navTo["funnel"]} trend={showPriorPeriod ? pctChange(funnelMetrics.conversionRate, prevFunnelMetrics.conversionRate) : null} />
+            <MetricCell label="New Leads" value={funnelMetrics.todayNewLeads} onClick={navTo["funnel"]} trend={showPriorPeriod ? pctChange(funnelMetrics.todayNewLeads, prevFunnelMetrics.todayNewLeads) : null} />
+            <ChecklistCell label="Front-End" progress={getChecklistProgress("ops-fe")} count={getChecklistCount("ops-fe")} onClick={navTo["ops-fe"]} />
+            <ServiceCell label="Pamper" done={svcData.pamperDone} total={svcData.pamperTotal} onClick={navTo["ops-pamper"]} />
+          </>
+        )}
 
         {/* ─── Section Label: Daily Tasks ─── */}
-        <div style={{ gridColumn: "1 / 10", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
+        <div style={{ gridColumn: analyticsMode ? "1 / 8" : "1 / 10", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
           <span className="dash-section-label">Daily Tasks</span>
         </div>
+        {analyticsMode && <div style={{ gridColumn: "8 / 10" }} />}
 
-        {/* ═══ ROW 2: Daily Tasks (quick-link nav shortcuts) ═══ */}
+        {/* ═══ Daily Tasks row ═══ */}
         <QuickLinkCell label="EOD Report" icon={<I.FileText />} onClick={navTo["eod"]} />
         <QuickLinkCell label="Checkout TV" icon={<I.Monitor />} onClick={navTo["checkout-tv"]} />
         <QuickLinkCell label="Photos" icon={<I.Camera />} onClick={navTo["photos"]} />
         <QuickLinkCell label="Cash Tips" icon={<I.DollarSign />} onClick={navTo["cash-tips"]} />
         <QuickLinkCell label="Checkout Notes" icon={<I.Clipboard />} onClick={navTo["checkout-notes"]} />
-        <QuickLinkCell label="Inventory" icon={<I.Package />} onClick={navTo["inventory"]} />
-        <QuickLinkCell label="Operations Hub" icon={<I.Clipboard />} onClick={navTo["ops-opening"]} />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
+        {analyticsMode ? (
+          <>
+            <MetricCell label="LTV" value={`$${Math.round(funnelMetrics.avgLTV).toLocaleString("en-US")}`} onClick={navTo["lifecycle"]} />
+            <MetricCell label="Total Clients" value={funnelMetrics.spendingClientsCount} onClick={navTo["lifecycle"]} />
+            <ChecklistCell label="Back-End" progress={getChecklistProgress("ops-be")} count={getChecklistCount("ops-be")} onClick={navTo["ops-be"]} />
+            <ServiceCell label="Ice Cream" done={svcData.iceCreamDone} total={svcData.iceCreamTotal} onClick={navTo["ops-svc"]} />
+          </>
+        ) : (
+          <>
+            <QuickLinkCell label="Inventory" icon={<I.Package />} onClick={navTo["inventory"]} />
+            <QuickLinkCell label="Operations Hub" icon={<I.Clipboard />} onClick={navTo["ops-opening"]} />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+          </>
+        )}
 
-        {/* ─── Section Label: Operations ─── */}
-        <div ref={opsVisRef} style={{ gridColumn: "1 / 10", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
-          <span className="dash-section-label">Checklists & Services</span>
-        </div>
+        {/* ═══ ANALYTICS: Financial Reporting row + Charts ═══ */}
+        {analyticsMode ? (
+          <>
+            {/* Financial Reporting label */}
+            <div ref={financialRef} style={{ gridColumn: "1 / 8", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
+              <span className="dash-section-label">Financial Reporting</span>
+            </div>
+            <div style={{ gridColumn: "8 / 10" }} />
 
-        {/* ═══ ROW 3: Checklists (full width hero) ═══ */}
-        <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={navTo["ops-opening"]} />
-        <ChecklistCell label="Front-End" progress={getChecklistProgress("ops-fe")} count={getChecklistCount("ops-fe")} onClick={navTo["ops-fe"]} />
-        <ChecklistCell label="Back-End" progress={getChecklistProgress("ops-be")} count={getChecklistCount("ops-be")} onClick={navTo["ops-be"]} />
-        <ChecklistCell label="Room Cleaning" progress={getChecklistProgress("ops-rooms")} count={getChecklistCount("ops-rooms")} onClick={navTo["ops-rooms"]} />
-        <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={navTo["ops-closing"]} />
-        <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={navTo["ops-bathing"]} />
-        <ServiceCell label="Pamper" done={svcData.pamperDone} total={svcData.pamperTotal} onClick={navTo["ops-pamper"]} />
-        <ServiceCell label="Ice Cream" done={svcData.iceCreamDone} total={svcData.iceCreamTotal} onClick={navTo["ops-svc"]} />
-        <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={navTo["ops-pp"]} />
+            {/* Financial Reporting row */}
+            <MetricCell label="Transactions" value={m.cashTransactionCount} trend={showPriorPeriod ? bookingsTrend : null} skeleton={showSkeleton} />
+            <MetricCell label="Average Transaction Price" value={`$${Math.round(m.cashAvgTransaction || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(m.cashAvgTransaction, pm.cashAvgTransaction) : null} skeleton={showSkeleton} />
+            <MetricCell label="Rev/PAR" value={`$${Math.round(accrualRevPAR || 0).toLocaleString("en-US")}`} trend={showPriorPeriod ? pctChange(accrualRevPAR, prevAccrualRevPAR) : null} skeleton={showSkeleton} />
+            <MetricCell label="Refunds" value={m.refundCount} color={m.refundCount > 0 ? C.dan : undefined} trend={showPriorPeriod ? pctChange(m.refundCount, pm.refundCount) : null} skeleton={showSkeleton} />
+            <MetricCell label="$ Refunded" value={`$${fmt$k(m.refundTotal)}`} color={m.refundTotal > 0 ? C.dan : undefined} skeleton={showSkeleton} />
+            <MetricCell label="Discounted" value={m.discountedCount} color={m.discountedCount > 0 ? C.warn : undefined} skeleton={showSkeleton} />
+            <MetricCell label="$ Discounted" value={`$${fmt$k(m.discountTotal)}`} color={m.discountTotal > 0 ? C.warn : undefined} skeleton={showSkeleton} />
+            <ChecklistCell label="Room Cleaning & Setups" progress={getChecklistProgress("ops-rooms")} count={getChecklistCount("ops-rooms")} onClick={navTo["ops-rooms"]} />
+            <MetricCell label="Outstanding Invoices" value={m.outstandingInvoiceCount || 0} sub={`$${fmt$k(m.outstandingInvoiceTotal || 0)}`} color={(m.outstandingInvoiceCount || 0) > 0 ? C.warn : undefined} skeleton={showSkeleton} />
 
-        {/* ═══ ROW 4: Second ops row — Inventory + Test Health + empty ═══ */}
-        <InventoryCell done={invStatus.itemsCounted} total={invStatus.totalItems} overdue={invStatus.overdue} daysOverdue={invStatus.daysOverdue} phase={invStatus.phase} needsOrder={invStatus.needsOrder} ordered={invStatus.ordered} onClick={navTo["inventory"]} />
-        <MetricCell label="Test Health" value="172" sub="100% pass" onClick={navTo["test-health"]} color={C.suc} />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
+            {/* Charts: Cash Basis (cols 1-3), Revenue Split toggle (col 4), Accrual (cols 5-7), ops cols 8-9 */}
+            <div className="dash-chart-cell" style={{ gridColumn: "1 / 4", gridRow: "span 3" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cash Basis Revenue</span>
+                  <Tip text="Cash basis = money collected on each day (payments + deposits - refunds). Today is live from Gingr API."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
+                </span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(cashTotalDisplay)}</span>
+                  <span
+                    ref={cashReceiptTriggerRef}
+                    onClick={() => setShowCashReceipt(true)}
+                    style={{
+                      cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                      width: 18, height: 18, borderRadius: 4,
+                      background: "rgba(20,83,45,0.08)", color: C.pri,
+                      transition: "all 0.2s cubic-bezier(0.22,1,0.36,1)",
+                      flexShrink: 0,
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.18)"; e.currentTarget.style.transform = "scale(1.15)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.08)"; e.currentTarget.style.transform = "scale(1)"; }}
+                    title="View cash basis breakdown"
+                  >
+                    <I.FileText style={{ width: 11, height: 11 }} />
+                  </span>
+                </span>
+              </div>
+              <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" dateLabels={cashChartData.map(d => d.date)}
+                useRawPoints lineType="linear" solidFill fillOpacity={0.35} showGuideLines
+                todayHighlight={isToday} priorData={cashPriorChartData} showPriorLine={showPriorPeriod}
+                priorLineColor="#D4A017" priorFillColor="#D4A017" priorFillOpacity={0.25} />
+            </div>
 
-        {/* ═══ ROW 5: second ops row empty / spacer ═══ */}
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
-        <div className="dash-grid-cell empty-cell" />
+            {/* Revenue Split toggle (col 4) */}
+            <div style={{
+              gridColumn: "4", gridRow: "span 3",
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              gap: 8, padding: "6px 4px",
+              background: "#FFFFFF", borderRadius: 8, border: "1px solid rgba(20,83,45,0.08)",
+              boxShadow: "0 1px 3px rgba(20,83,45,0.06), 0 1px 2px rgba(20,83,45,0.04)",
+            }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, width: "100%" }}>
+                <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em" }}>Revenue Split</div>
+                <div style={{ width: "80%", height: 5, borderRadius: 3, overflow: "hidden", display: "flex" }}>
+                  <div style={{ width: `${boardingPct}%`, height: "100%", background: C.pri }} />
+                  <div style={{ width: `${daycarePct}%`, height: "100%", background: C.acc }} />
+                </div>
+                <div style={{ fontSize: 8, color: C.textMut, textAlign: "center", lineHeight: 1.4 }}>
+                  <div><span style={{ color: C.pri, fontWeight: 700 }}>{boardingPct.toFixed(0)}%</span> Board</div>
+                  <div><span style={{ color: C.acc, fontWeight: 700 }}>{daycarePct.toFixed(0)}%</span> Day</div>
+                </div>
+              </div>
+              <div style={{ width: "60%", height: 1, background: "rgba(20,83,45,0.08)" }} />
+              <div style={{ fontSize: 8, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.08em" }}>Accrual Total</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.text, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</div>
+              {showPriorPeriod && <TrendBadge value={revenueTrend} size="xs" />}
+            </div>
 
-        {/* ═══ ROWS 6-7: Cash Basis Revenue Chart (wide) ═══ */}
-        <div className="dash-chart-cell" style={{ gridColumn: "1 / 6", gridRow: "span 2" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-              <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cash Basis Revenue</span>
-              <Tip text="Cash basis = money collected on each day (payments + deposits - refunds). Today is live from Gingr API."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
-            </span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(cashTotalDisplay)}</span>
-              <span
-                ref={cashReceiptTriggerRef}
-                onClick={() => setShowCashReceipt(true)}
-                style={{
-                  cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center",
-                  width: 18, height: 18, borderRadius: 4,
-                  background: "rgba(20,83,45,0.08)", color: C.pri,
-                  transition: "all 0.2s cubic-bezier(0.22,1,0.36,1)",
-                  flexShrink: 0,
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.18)"; e.currentTarget.style.transform = "scale(1.15)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.08)"; e.currentTarget.style.transform = "scale(1)"; }}
-                title="View cash basis breakdown"
-              >
-                <I.FileText style={{ width: 11, height: 11 }} />
-              </span>
-            </span>
-          </div>
-          <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" dateLabels={cashChartData.map(d => d.date)}
-            useRawPoints lineType="linear" solidFill fillOpacity={0.35} showGuideLines
-            todayHighlight={isToday} priorData={cashPriorChartData} showPriorLine={showPriorPeriod}
-            priorLineColor="#D4A017" priorFillColor="#D4A017" priorFillOpacity={0.25} />
-        </div>
+            {/* Accrual Revenue chart (cols 5-7) */}
+            <div className="dash-chart-cell" style={{ gridColumn: "5 / 8", gridRow: "span 3" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em" }}>Accrual Revenue</span>
+                  <Tip text="Accrual revenue recognizes the full reservation cost divided evenly by the number of nights in the stay."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
+                </span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(revenue)}</span>
+                  <span
+                    ref={receiptTriggerRef}
+                    onClick={() => setShowReceipt(true)}
+                    style={{
+                      cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                      width: 18, height: 18, borderRadius: 4,
+                      background: "rgba(20,83,45,0.08)", color: C.pri,
+                      transition: "all 0.2s cubic-bezier(0.22,1,0.36,1)",
+                      flexShrink: 0,
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.18)"; e.currentTarget.style.transform = "scale(1.15)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.08)"; e.currentTarget.style.transform = "scale(1)"; }}
+                    title="View accrual breakdown"
+                  >
+                    <I.FileText style={{ width: 11, height: 11 }} />
+                  </span>
+                </span>
+              </div>
+              <ChartFill chartData={accrualChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="accrual-main" dateLabels={accrualChartData.map(d => d.date)}
+                useRawPoints lineType="linear" solidFill fillOpacity={0.35} showGuideLines
+                todayHighlight={isToday} priorData={accrualPriorChartData} showPriorLine={showPriorPeriod}
+                priorLineColor="#D4A017" priorFillColor="#D4A017" priorFillOpacity={0.25} />
+            </div>
 
-        {/* Rows 6-7 cols 6-9: empty */}
-        <div className="dash-grid-cell empty-cell" style={{ gridColumn: "6 / 10", gridRow: "span 2" }} />
+            {/* Ops sidebar: Private Play, Inventory, Closing, Test Health, empty x2 */}
+            <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={navTo["ops-pp"]} />
+            <InventoryCell done={invStatus.itemsCounted} total={invStatus.totalItems} overdue={invStatus.overdue} daysOverdue={invStatus.daysOverdue} phase={invStatus.phase} needsOrder={invStatus.needsOrder} ordered={invStatus.ordered} onClick={navTo["inventory"]} />
+            <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={navTo["ops-closing"]} />
+            <MetricCell label="Test Health" value="172" sub="100% pass" onClick={navTo["test-health"]} color={C.suc} />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+          </>
+        ) : (
+          <>
+            {/* ─── OPS-ONLY: Checklists & Services section ─── */}
+            <div ref={opsVisRef} style={{ gridColumn: "1 / 10", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
+              <span className="dash-section-label">Checklists & Services</span>
+            </div>
+
+            {/* Checklists (full width hero) */}
+            <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={navTo["ops-opening"]} />
+            <ChecklistCell label="Front-End" progress={getChecklistProgress("ops-fe")} count={getChecklistCount("ops-fe")} onClick={navTo["ops-fe"]} />
+            <ChecklistCell label="Back-End" progress={getChecklistProgress("ops-be")} count={getChecklistCount("ops-be")} onClick={navTo["ops-be"]} />
+            <ChecklistCell label="Room Cleaning" progress={getChecklistProgress("ops-rooms")} count={getChecklistCount("ops-rooms")} onClick={navTo["ops-rooms"]} />
+            <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={navTo["ops-closing"]} />
+            <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={navTo["ops-bathing"]} />
+            <ServiceCell label="Pamper" done={svcData.pamperDone} total={svcData.pamperTotal} onClick={navTo["ops-pamper"]} />
+            <ServiceCell label="Ice Cream" done={svcData.iceCreamDone} total={svcData.iceCreamTotal} onClick={navTo["ops-svc"]} />
+            <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={navTo["ops-pp"]} />
+
+            {/* Second ops row — Inventory + Test Health */}
+            <InventoryCell done={invStatus.itemsCounted} total={invStatus.totalItems} overdue={invStatus.overdue} daysOverdue={invStatus.daysOverdue} phase={invStatus.phase} needsOrder={invStatus.needsOrder} ordered={invStatus.ordered} onClick={navTo["inventory"]} />
+            <MetricCell label="Test Health" value="172" sub="100% pass" onClick={navTo["test-health"]} color={C.suc} />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+
+            {/* Spacer row */}
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+            <div className="dash-grid-cell empty-cell" />
+
+            {/* Cash Basis Revenue Chart (wide) */}
+            <div className="dash-chart-cell" style={{ gridColumn: "1 / 6", gridRow: "span 2" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cash Basis Revenue</span>
+                  <Tip text="Cash basis = money collected on each day (payments + deposits - refunds). Today is live from Gingr API."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
+                </span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(cashTotalDisplay)}</span>
+                  <span
+                    ref={cashReceiptTriggerRef}
+                    onClick={() => setShowCashReceipt(true)}
+                    style={{
+                      cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center",
+                      width: 18, height: 18, borderRadius: 4,
+                      background: "rgba(20,83,45,0.08)", color: C.pri,
+                      transition: "all 0.2s cubic-bezier(0.22,1,0.36,1)",
+                      flexShrink: 0,
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.18)"; e.currentTarget.style.transform = "scale(1.15)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.08)"; e.currentTarget.style.transform = "scale(1)"; }}
+                    title="View cash basis breakdown"
+                  >
+                    <I.FileText style={{ width: 11, height: 11 }} />
+                  </span>
+                </span>
+              </div>
+              <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" dateLabels={cashChartData.map(d => d.date)}
+                useRawPoints lineType="linear" solidFill fillOpacity={0.35} showGuideLines
+                todayHighlight={isToday} priorData={cashPriorChartData} showPriorLine={showPriorPeriod}
+                priorLineColor="#D4A017" priorFillColor="#D4A017" priorFillOpacity={0.25} />
+            </div>
+
+            {/* Rows 6-7 cols 6-9: empty */}
+            <div className="dash-grid-cell empty-cell" style={{ gridColumn: "6 / 10", gridRow: "span 2" }} />
+          </>
+        )}
 
       </DashGrid>
 
