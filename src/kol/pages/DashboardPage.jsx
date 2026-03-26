@@ -1670,7 +1670,7 @@ function DashboardContent({
 
   return (
     <div style={{
-      height: "calc(100vh - 64px)", overflow: "hidden",
+      height: "100%", minHeight: 0, overflow: "hidden",
       display: "flex", flexDirection: "column",
       fontFamily: "inherit", padding: "0",
       background: "#FAFAF9",
