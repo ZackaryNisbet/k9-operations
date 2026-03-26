@@ -27,8 +27,9 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
 
   const current = locs.find(l => l.id === currentLocation) || locs[1] || locs[0];
   const isEnterprise = current?.isEnterprise;
-  const locations = locs.filter(l => !l.isEnterprise && !l.isPOS);
+  const locations = locs.filter(l => !l.isEnterprise && !l.isPOS && !l.isDemoLink);
   const posLocations = locs.filter(l => l.isPOS);
+  const demoLinks = locs.filter(l => l.isDemoLink);
 
   if (collapsed) {
     return (
@@ -110,6 +111,26 @@ function LocationSelector({ currentLocation, onLocationChange, collapsed, allLoc
                   <div style={{ textAlign: "left", flex: 1 }}>
                     <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(100,180,255,0.9)" }}>{loc.name}</div>
                     <div style={{ fontSize: 9, color: "rgba(100,180,255,0.5)", textTransform: "uppercase" }}>Full POS App</div>
+                  </div>
+                </button>
+              ))}
+            </>}
+
+            {/* Demo launch links — opens in new tab */}
+            {demoLinks.length > 0 && <>
+              <div style={{ margin: "4px 10px", height: 1, background: "rgba(132,204,22,0.12)" }}/>
+              <div style={{ padding: "4px 10px 2px", fontSize: 8, fontWeight: 700, color: "rgba(255,255,255,0.3)", textTransform: "uppercase", letterSpacing: "0.1em" }}>Demo Versions</div>
+              {demoLinks.map(loc => (
+                <button key={loc.id} onClick={() => { onLocationChange(loc.id); setOpen(false); }}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderRadius: 8, border: "none", background: "transparent", cursor: "pointer", fontFamily: "inherit", transition: "background 0.1s", marginTop: 2 }}
+                  onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                  <div style={{ width: 26, height: 26, borderRadius: 6, background: "rgba(168,85,247,0.15)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(168,85,247,0.8)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                  </div>
+                  <div style={{ textAlign: "left", flex: 1 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(168,85,247,0.9)" }}>{loc.name}</div>
+                    <div style={{ fontSize: 9, color: "rgba(168,85,247,0.5)", textTransform: "uppercase" }}>Opens in New Tab</div>
                   </div>
                 </button>
               ))}
