@@ -268,7 +268,7 @@ const DEF_CLOSING_TEMPLATE = [
 // ─── Icons Object (from POS App) ────────────────────────────────────────────
 const K9_LOCATIONS = [
   { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
-  { id: "demo", name: "Demo", slug: "demo" },
+  { id: "demo", name: "Cherry Hill", slug: "cherry-hill" },
 ];
 
 // ─── POS Base Path ──────────────────────────────────────────────────────────

@@ -273,7 +273,7 @@ function LeanAppInner() {
       });
   }, []);
   const allLocations = useMemo(() => {
-    const base = STATIC_LOCATIONS.filter(l => l.isEnterprise || l.isPOS);
+    const base = STATIC_LOCATIONS.filter(l => l.isEnterprise || l.isPOS || l.isDemoLink);
     const dbMapped = dbLocations.map(l => ({ id: l.id, name: l.name, slug: l.slug }));
     return [...base, ...dbMapped];
   }, [dbLocations]);
@@ -358,16 +358,16 @@ function LeanAppInner() {
   // Filter K9_LOCATIONS to only locations the user can access
   const filteredLocations = useMemo(() => {
     // null means "all locations" (enterprise_admin, developer, owner)
-    if (userLocationIds === null) return K9_LOCATIONS;
-    return K9_LOCATIONS.filter(loc => {
+    if (userLocationIds === null) return allLocations;
+    return allLocations.filter(loc => {
       // Always include enterprise view for multi_location_admin
       if (loc.isEnterprise) return profile.role === "multi_location_admin" || profile.role === "enterprise_admin" || profile.role === "owner" || profile.role === "developer";
-      // Include POS locations for everyone who had access
-      if (loc.isPOS) return true;
+      // Include POS locations and demo links for everyone
+      if (loc.isPOS || loc.isDemoLink) return true;
       // Filter regular locations by user's assigned location_ids
       return userLocationIds.includes(loc.id);
     });
-  }, [userLocationIds, profile.role]);
+  }, [userLocationIds, profile.role, allLocations]);
 
   // Load ops data from Supabase on mount & location change
   useEffect(() => {
