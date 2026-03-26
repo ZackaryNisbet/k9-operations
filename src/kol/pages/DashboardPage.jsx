@@ -677,8 +677,8 @@ function DashGrid({ children, analyticsMode }) {
   const templateRows = analyticsMode
     // Analytics: snapshot-label, snapshot-row, lifecycle-label, lifecycle-row, daily-tasks-label, daily-tasks-row, financial-label, financial-row, chart-rows x3 (11 rows)
     ? `${LABEL_H}px 1fr ${LABEL_H}px 1fr ${LABEL_H}px 1fr ${LABEL_H}px 1fr 1fr 1fr 1fr`
-    // Ops: snapshot-label, snapshot-row x2, ops-label, ops-row(checklists+services), ops-row(tasks+utility), chart-label, chart (8 rows)
-    : `${LABEL_H}px 1fr 1fr ${LABEL_H}px 1fr 1fr ${LABEL_H}px 2fr`;
+    // Ops: snapshot-label, snapshot-row, ops-label, ops-row(checklists), ops-row(services+inventory) (5 rows — pure ops, no revenue)
+    : `${LABEL_H}px 1fr ${LABEL_H}px 1fr 1fr`;
 
   return (
     <div
@@ -1650,14 +1650,14 @@ function DashboardContent({
         ) : (
           <>
             {/* ═══════════════════════════════════════════════════════════════════
-               OPS-ONLY MODE — 5-col layout, bigger cells, zero whitespace
+               OPS-ONLY MODE — 5-col layout, pure operations, no revenue
                ═══════════════════════════════════════════════════════════════════ */}
             {/* Snapshot label */}
             <div style={{ gridColumn: "1 / 6", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
               <span className="dash-section-label">{snapshotLabel}</span>
             </div>
 
-            {/* Snapshot Row 1: 5 key metrics */}
+            {/* Snapshot: 5 core ops metrics */}
             <MetricCell label="Expected" value={liveSnap ? liveSnap.expected : m.dogsExpected} hero onClick={navTo["checkout-tv"]} sub={null} trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.expected : m.dogsExpected, pm.dogsExpected) : null} skeleton={showSkeleton} live={!!liveSnap} />
             <MetricCell label="In House" value={liveSnap ? liveSnap.in_house : m.dogsInHouse} hero sub={liveSnap ? `${liveSnap.boarding}B · ${liveSnap.daycare}D` : `${m.boardingInHouse}B · ${m.daycareInHouse}D`} onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.in_house : m.dogsInHouse, pm.dogsInHouse) : null} skeleton={showSkeleton} live={!!liveSnap} />
             {days > 1
@@ -1666,13 +1666,6 @@ function DashboardContent({
             }
             <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0))}%`} hero onClick={navTo["occupancy-report"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0)), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} skeleton={showSkeleton} live={!!liveSnap} />
             <MetricCell label="New Bookings" value={liveSnap ? liveSnap.new_bookings : m.bookingsToday} hero skeleton={showSkeleton} />
-
-            {/* Snapshot Row 2: 4 more metrics + 1 empty */}
-            <MetricCell label="Tours" value={liveSnap ? liveSnap.tours : m.toursToday} hero trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.tours : m.toursToday, pm.toursToday) : null} skeleton={showSkeleton} />
-            <MetricCell label="Evals" value={liveSnap ? liveSnap.evals : m.evalsToday} hero skeleton={showSkeleton} />
-            <MetricCell label="Transactions" value={m.cashTransactionCount} hero trend={showPriorPeriod ? bookingsTrend : null} skeleton={showSkeleton} />
-            <MetricCell label="Avg Transaction" value={`$${Math.round(m.cashAvgTransaction || 0).toLocaleString("en-US")}`} hero trend={showPriorPeriod ? pctChange(m.cashAvgTransaction, pm.cashAvgTransaction) : null} skeleton={showSkeleton} />
-            <MetricCell label="Cash Revenue" value={`$${fmt$k(cashTotalDisplay)}`} hero skeleton={showSkeleton} />
 
             {/* Checklists & Services label */}
             <div ref={opsVisRef} style={{ gridColumn: "1 / 6", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
@@ -1692,26 +1685,6 @@ function DashboardContent({
             <ServiceCell label="Ice Cream" done={svcData.iceCreamDone} total={svcData.iceCreamTotal} onClick={navTo["ops-svc"]} />
             <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={navTo["ops-pp"]} />
             <InventoryCell done={invStatus.itemsCounted} total={invStatus.totalItems} overdue={invStatus.overdue} daysOverdue={invStatus.daysOverdue} phase={invStatus.phase} needsOrder={invStatus.needsOrder} ordered={invStatus.ordered} onClick={navTo["inventory"]} />
-
-            {/* Revenue label */}
-            <div style={{ gridColumn: "1 / 6", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
-              <span className="dash-section-label">Revenue</span>
-            </div>
-
-            {/* Cash Basis Revenue Chart — full width */}
-            <div className="dash-chart-cell" style={{ gridColumn: "1 / 6" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexShrink: 0 }}>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ fontSize: 10, fontWeight: 800, color: C.pri, textTransform: "uppercase", letterSpacing: "0.06em" }}>Cash Basis Revenue</span>
-                  <Tip text="Cash basis = money collected on each day (payments + deposits - refunds). Today is live from Gingr API."><I.InfoCircle width="12" height="12" style={{ opacity: 0.4, cursor: "help" }} /></Tip>
-                </span>
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, color: C.pri, fontVariantNumeric: "tabular-nums" }}>${fmt$k(cashTotalDisplay)}</span>
-                  <span ref={cashReceiptTriggerRef} onClick={() => setShowCashReceipt(true)} style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 4, background: "rgba(20,83,45,0.08)", color: C.pri, transition: "all 0.2s cubic-bezier(0.22,1,0.36,1)", flexShrink: 0 }} onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.18)"; e.currentTarget.style.transform = "scale(1.15)"; }} onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(20,83,45,0.08)"; e.currentTarget.style.transform = "scale(1)"; }} title="View cash basis breakdown"><I.FileText style={{ width: 11, height: 11 }} /></span>
-                </span>
-              </div>
-              <ChartFill chartData={cashChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="cash-main" dateLabels={cashChartData.map(d => d.date)} useRawPoints lineType="linear" solidFill fillOpacity={0.35} showGuideLines todayHighlight={isToday} priorData={cashPriorChartData} showPriorLine={showPriorPeriod} priorLineColor="#D4A017" priorFillColor="#D4A017" priorFillOpacity={0.25} />
-            </div>
           </>
         )}
       </DashGrid>
