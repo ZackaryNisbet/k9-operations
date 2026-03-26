@@ -181,7 +181,6 @@ function parseLiteUrl(pathname, dataRef) {
 // ─── Navigation Config ───────────────────────────────────────────────────
 const LEAN_NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
-  { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
   { id: "ops-hub", label: "Operations", icon: "Clipboard" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
@@ -203,7 +202,8 @@ const LEAN_ENTERPRISE_NAV_ITEMS = [
 // Adair Forsythe is the seed location; additional locations are added by the onboarding flow.
 const STATIC_LOCATIONS = [
   { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
-  { id: "demo-pos", name: "Demo POS", slug: "demo", isPOS: true },
+  { id: "demo-kol", name: "Launch KOL (Full)", slug: "kol-demo", isDemoLink: true, demoUrl: "/lite/cherry-hill/dashboard" },
+  { id: "demo-kop", name: "Launch KOP (POS)", slug: "kop-demo", isDemoLink: true, demoUrl: "/pos/demo/dashboard" },
 ];
 
 // ─── Main App Component ───────────────────────────────────────────────────
@@ -663,15 +663,19 @@ function LeanAppInner() {
 
   // Handle location change
   const handleLocationChange = useCallback((locId) => {
-    // Demo POS redirects to the full POS app
+    // Demo links open in new tab to preserve current session
     const loc = allLocations.find(l => l.id === locId);
+    if (loc?.isDemoLink) {
+      window.open(loc.demoUrl, "_blank");
+      return;
+    }
     if (loc?.isPOS) {
       window.location.href = "/pos/" + (loc.slug || "demo");
       return;
     }
     setCurrentLocation(locId);
     try { localStorage.setItem("k9_lite_location", locId); } catch {}
-  }, []);
+  }, [allLocations]);
 
   // Fetch team accounts for quick-switch
   useEffect(() => {
