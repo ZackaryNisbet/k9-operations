@@ -365,6 +365,237 @@ const DASH_CSS = `
 .receipt-trigger:hover::after {
   opacity: 1;
 }
+/* ── Ops Dashboard (section-based flex layout) ── */
+.ops-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 0 8px 24px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.ops-section-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: #14532D;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-bottom: 8px;
+}
+.ops-hero {
+  background: #F7FEE7;
+  border: 1px solid rgba(20,83,45,0.10);
+  border-radius: 12px;
+  padding: 20px 16px;
+  display: flex;
+  gap: 16px;
+}
+.ops-hero-card {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  padding: 12px 16px;
+  border-radius: 10px;
+  transition: all 0.18s ease;
+  background: rgba(255,255,255,0.5);
+}
+.ops-hero-card:hover {
+  background: rgba(255,255,255,0.85);
+  box-shadow: 0 2px 8px rgba(20,83,45,0.08);
+  transform: translateY(-1px);
+}
+.ops-hero-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(20,83,45,0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 4px;
+}
+.ops-hero-value {
+  font-size: 36px;
+  font-weight: 800;
+  color: #14532D;
+  line-height: 1;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.ops-hero-sub {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(20,83,45,0.5);
+  margin-top: 4px;
+}
+.ops-two-col {
+  display: flex;
+  gap: 16px;
+}
+.ops-two-col > div {
+  flex: 1;
+  min-width: 0;
+}
+.ops-card {
+  background: #FFFFFF;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.06);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  padding: 16px;
+}
+.ops-card-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #14532D;
+  margin-bottom: 12px;
+}
+.ops-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.ops-progress-row:hover {
+  background: rgba(20,83,45,0.03);
+}
+.ops-progress-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: ${C.text};
+  min-width: 110px;
+  white-space: nowrap;
+}
+.ops-progress-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: #F3F4F6;
+  overflow: hidden;
+  min-width: 0;
+}
+.ops-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: #84CC16;
+  transition: width 0.5s cubic-bezier(0.22,1,0.36,1);
+  transform-origin: left;
+}
+.ops-progress-count {
+  font-size: 13px;
+  font-weight: 700;
+  color: ${C.text};
+  font-variant-numeric: tabular-nums;
+  min-width: 40px;
+  text-align: right;
+  white-space: nowrap;
+}
+.ops-progress-pct {
+  font-size: 11px;
+  color: ${C.textMut};
+  min-width: 32px;
+  text-align: right;
+}
+.ops-overall-bar {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(0,0,0,0.06);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ops-quick-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ops-quick-action {
+  flex: 1;
+  min-width: 100px;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: #FFFFFF;
+  border: 1.5px dashed rgba(0,0,0,0.10);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  padding: 12px 8px;
+}
+.ops-quick-action:hover {
+  background: rgba(255,255,255,0.95);
+  border-color: rgba(20,83,45,0.25);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  transform: translateY(-1px);
+}
+.ops-quick-action-icon {
+  color: #14532D;
+  opacity: 0.55;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ops-quick-action-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #14532D;
+  opacity: 0.7;
+  text-align: center;
+  white-space: nowrap;
+}
+.ops-facility-row {
+  display: flex;
+  gap: 16px;
+}
+.ops-facility-card {
+  flex: 1;
+  min-width: 0;
+  background: #FFFFFF;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,0.06);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  padding: 16px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.ops-facility-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04);
+  transform: translateY(-1px);
+}
+.ops-facility-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(20,83,45,0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+.ops-facility-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: #14532D;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.ops-facility-sub {
+  font-size: 12px;
+  font-weight: 500;
+  color: ${C.textMut};
+  margin-top: 4px;
+}
+.ops-overdue-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(239,68,68,0.1);
+  color: #EF4444;
+  margin-top: 4px;
+}
 `;
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1513,10 +1744,9 @@ function DashboardContent({
         </div>
       </div>
 
-      {/* ═══ MAIN GRID ═══ */}
+      {/* ═══ MAIN CONTENT ═══ */}
+      {analyticsMode ? (
       <DashGrid analyticsMode={analyticsMode}>
-        {analyticsMode ? (
-          <>
             {/* ═══════════════════════════════════════════════════════════════════
                ANALYTICS MODE — 9-col original dense layout
                ═══════════════════════════════════════════════════════════════════ */}
@@ -1646,48 +1876,164 @@ function DashboardContent({
             <MetricCell label="Test Health" value="172" sub="100% pass" onClick={navTo["test-health"]} color={C.suc} />
             <div className="dash-grid-cell empty-cell" />
             <div className="dash-grid-cell empty-cell" />
-          </>
-        ) : (
-          <>
-            {/* ═══════════════════════════════════════════════════════════════════
-               OPS-ONLY MODE — 5-col layout, pure operations, no revenue
-               ═══════════════════════════════════════════════════════════════════ */}
-            {/* Snapshot label */}
-            <div style={{ gridColumn: "1 / 6", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
-              <span className="dash-section-label">{snapshotLabel}</span>
-            </div>
-
-            {/* Snapshot: 5 core ops metrics */}
-            <MetricCell label="Expected" value={liveSnap ? liveSnap.expected : m.dogsExpected} hero onClick={navTo["checkout-tv"]} sub={null} trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.expected : m.dogsExpected, pm.dogsExpected) : null} skeleton={showSkeleton} live={!!liveSnap} />
-            <MetricCell label="In House" value={liveSnap ? liveSnap.in_house : m.dogsInHouse} hero sub={liveSnap ? `${liveSnap.boarding}B · ${liveSnap.daycare}D` : `${m.boardingInHouse}B · ${m.daycareInHouse}D`} onClick={navTo["checkout-tv"]} trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.in_house : m.dogsInHouse, pm.dogsInHouse) : null} skeleton={showSkeleton} live={!!liveSnap} />
-            {days > 1
-              ? <CanceledCell key={animEpoch} value={Math.max(0, (m.dogsExpected || 0) - (m.dogsInHouse || 0))} onClick={navTo["ops-bathing"]} animKey={animEpoch} />
-              : <MetricCell label="Going Home" value={liveSnap ? liveSnap.going_home : m.dogsGoingHome} hero onClick={navTo["ops-bathing"]} trend={showPriorPeriod ? pctChange(liveSnap ? liveSnap.going_home : m.dogsGoingHome, pm.dogsGoingHome) : null} skeleton={showSkeleton} live={!!liveSnap} />
-            }
-            <MetricCell label="Occupancy" value={`${days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0))}%`} hero onClick={navTo["occupancy-report"]} trend={showPriorPeriod ? pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0)), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0)) : null} skeleton={showSkeleton} live={!!liveSnap} />
-            <MetricCell label="New Bookings" value={liveSnap ? liveSnap.new_bookings : m.bookingsToday} hero skeleton={showSkeleton} />
-
-            {/* Checklists & Services label */}
-            <div ref={opsVisRef} style={{ gridColumn: "1 / 6", display: "flex", alignItems: "flex-end", padding: "0 2px" }}>
-              <span className="dash-section-label">Checklists & Services</span>
-            </div>
-
-            {/* Ops Row 1: 5 checklists */}
-            <ChecklistCell label="Opening" progress={getChecklistProgress("ops-opening")} count={getChecklistCount("ops-opening")} onClick={navTo["ops-opening"]} />
-            <ChecklistCell label="Front-End" progress={getChecklistProgress("ops-fe")} count={getChecklistCount("ops-fe")} onClick={navTo["ops-fe"]} />
-            <ChecklistCell label="Back-End" progress={getChecklistProgress("ops-be")} count={getChecklistCount("ops-be")} onClick={navTo["ops-be"]} />
-            <ChecklistCell label="Room Cleaning" progress={getChecklistProgress("ops-rooms")} count={getChecklistCount("ops-rooms")} onClick={navTo["ops-rooms"]} />
-            <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={navTo["ops-closing"]} />
-
-            {/* Ops Row 2: 4 services + Inventory */}
-            <ServiceCell label="Baths" done={svcData.bathsDone} total={svcData.bathsTotal} onClick={navTo["ops-bathing"]} />
-            <ServiceCell label="Pamper" done={svcData.pamperDone} total={svcData.pamperTotal} onClick={navTo["ops-pamper"]} />
-            <ServiceCell label="Ice Cream" done={svcData.iceCreamDone} total={svcData.iceCreamTotal} onClick={navTo["ops-svc"]} />
-            <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={navTo["ops-pp"]} />
-            <InventoryCell done={invStatus.itemsCounted} total={invStatus.totalItems} overdue={invStatus.overdue} daysOverdue={invStatus.daysOverdue} phase={invStatus.phase} needsOrder={invStatus.needsOrder} ordered={invStatus.ordered} onClick={navTo["inventory"]} />
-          </>
-        )}
       </DashGrid>
+      ) : (
+      <div className="ops-dashboard">
+        {/* ═══════════════════════════════════════════════════════════════════
+           OPS-ONLY MODE — Section-based flex layout
+           ═══════════════════════════════════════════════════════════════════ */}
+
+        {/* ── Section 1: Hero Stats Banner ── */}
+        <div>
+          <div className="ops-section-header">{snapshotLabel}</div>
+          <div className="ops-hero">
+            <div className="ops-hero-card" onClick={navTo["checkout-tv"]}>
+              <div className="ops-hero-label">Dogs In House</div>
+              <div className="ops-hero-value">{liveSnap ? liveSnap.in_house : m.dogsInHouse}</div>
+              <div className="ops-hero-sub">
+                {liveSnap ? `${liveSnap.boarding}B · ${liveSnap.daycare}D` : `${m.boardingInHouse || 0}B · ${m.daycareInHouse || 0}D`}
+              </div>
+              {showPriorPeriod && <TrendBadge value={pctChange(liveSnap ? liveSnap.in_house : m.dogsInHouse, pm.dogsInHouse)} size="xs" />}
+            </div>
+            <div className="ops-hero-card" onClick={navTo["checkout-tv"]}>
+              <div className="ops-hero-label">Expected</div>
+              <div className="ops-hero-value">{liveSnap ? liveSnap.expected : m.dogsExpected}</div>
+              {showPriorPeriod && <TrendBadge value={pctChange(liveSnap ? liveSnap.expected : m.dogsExpected, pm.dogsExpected)} size="xs" />}
+            </div>
+            <div className="ops-hero-card" onClick={navTo["ops-bathing"]}>
+              <div className="ops-hero-label">{days > 1 ? "Canceled" : "Going Home"}</div>
+              <div className="ops-hero-value">
+                {days > 1
+                  ? Math.max(0, (m.dogsExpected || 0) - (m.dogsInHouse || 0))
+                  : (liveSnap ? liveSnap.going_home : m.dogsGoingHome)}
+              </div>
+              {showPriorPeriod && days <= 1 && <TrendBadge value={pctChange(liveSnap ? liveSnap.going_home : m.dogsGoingHome, pm.dogsGoingHome)} size="xs" />}
+            </div>
+            <div className="ops-hero-card" onClick={navTo["occupancy-report"]}>
+              <div className="ops-hero-label">Occupancy</div>
+              <div className="ops-hero-value">
+                {days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0))}%
+              </div>
+              {showPriorPeriod && <TrendBadge value={pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0)), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0))} size="xs" />}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Section 2: Operations Progress (Two-Column) ── */}
+        <div>
+          <div className="ops-section-header">Daily Operations</div>
+          <div className="ops-two-col">
+            {/* Left: Cleaning & Services */}
+            <div className="ops-card">
+              <div className="ops-card-title">Cleaning & Services</div>
+              {[
+                { label: "Room Cleaning", pct: getChecklistProgress("ops-rooms"), count: getChecklistCount("ops-rooms"), click: navTo["ops-rooms"] },
+                { label: "Baths", pct: svcData.bathsTotal > 0 ? Math.round((svcData.bathsDone / svcData.bathsTotal) * 100) : 0, count: `${svcData.bathsDone}/${svcData.bathsTotal}`, click: navTo["ops-bathing"] },
+                { label: "Pamper", pct: svcData.pamperTotal > 0 ? Math.round((svcData.pamperDone / svcData.pamperTotal) * 100) : 0, count: `${svcData.pamperDone}/${svcData.pamperTotal}`, click: navTo["ops-pamper"] },
+                { label: "Ice Cream", pct: svcData.iceCreamTotal > 0 ? Math.round((svcData.iceCreamDone / svcData.iceCreamTotal) * 100) : 0, count: `${svcData.iceCreamDone}/${svcData.iceCreamTotal}`, click: navTo["ops-svc"] },
+                { label: "Private Play", pct: svcData.ppTotal > 0 ? Math.round((svcData.ppCompleted / svcData.ppTotal) * 100) : 0, count: `${svcData.ppCompleted}/${svcData.ppTotal}`, click: navTo["ops-pp"] },
+              ].map((item) => (
+                <div key={item.label} className="ops-progress-row" onClick={item.click}>
+                  <span className="ops-progress-label">{item.label}</span>
+                  <div className="ops-progress-track">
+                    <div className="ops-progress-fill" style={{ width: `${Math.min(item.pct, 100)}%` }} />
+                  </div>
+                  <span className="ops-progress-count">{item.count}</span>
+                  <span className="ops-progress-pct">{item.pct}%</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Right: Checklists */}
+            <div className="ops-card">
+              <div className="ops-card-title">Checklists</div>
+              {[
+                { label: "Opening", id: "ops-opening", click: navTo["ops-opening"] },
+                { label: "Front-End", id: "ops-fe", click: navTo["ops-fe"] },
+                { label: "Back-End", id: "ops-be", click: navTo["ops-be"] },
+                { label: "Room Cleaning & Setups", id: "ops-rooms", click: navTo["ops-rooms"] },
+                { label: "Closing", id: "ops-closing", click: navTo["ops-closing"] },
+              ].map((item) => {
+                const pct = getChecklistProgress(item.id);
+                const count = getChecklistCount(item.id);
+                return (
+                  <div key={item.id} className="ops-progress-row" onClick={item.click}>
+                    <span className="ops-progress-label">{item.label}</span>
+                    <div className="ops-progress-track">
+                      <div className="ops-progress-fill" style={{ width: `${Math.min(pct, 100)}%` }} />
+                    </div>
+                    <span className="ops-progress-count">{count}</span>
+                    <span className="ops-progress-pct">{pct}%</span>
+                  </div>
+                );
+              })}
+              {/* Overall summary bar */}
+              {(() => {
+                const ids = ["ops-opening", "ops-fe", "ops-be", "ops-rooms", "ops-closing"];
+                const total = ids.reduce((s, id) => s + getChecklistProgress(id), 0);
+                const avg = Math.round(total / ids.length);
+                return (
+                  <div className="ops-overall-bar">
+                    <span className="ops-progress-label" style={{ fontWeight: 700 }}>Overall</span>
+                    <div className="ops-progress-track">
+                      <div className="ops-progress-fill" style={{ width: `${avg}%` }} />
+                    </div>
+                    <span className="ops-progress-count" style={{ fontWeight: 800 }}>{avg}%</span>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Section 3: Quick Actions ── */}
+        <div>
+          <div className="ops-section-header">Quick Actions</div>
+          <div className="ops-quick-actions">
+            {[
+              { label: "EOD Report", icon: <I.FileText />, click: navTo["eod"] },
+              { label: "Checkout TV", icon: <I.Monitor />, click: navTo["checkout-tv"] },
+              { label: "Photos", icon: <I.Camera />, click: navTo["photos"] },
+              { label: "Cash Tips", icon: <I.DollarSign />, click: navTo["cash-tips"] },
+              { label: "Checkout Notes", icon: <I.Clipboard />, click: navTo["checkout-notes"] },
+              { label: "Inventory", icon: <I.Package />, click: navTo["inventory"] },
+              { label: "Operations Hub", icon: <I.ClipboardCheck />, click: navTo["enterprise-ops"] },
+            ].map((item) => (
+              <div key={item.label} className="ops-quick-action" onClick={item.click}>
+                <div className="ops-quick-action-icon">{item.icon}</div>
+                <div className="ops-quick-action-label">{item.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Section 4: Facility Status ── */}
+        <div ref={opsVisRef}>
+          <div className="ops-section-header">Facility Status</div>
+          <div className="ops-facility-row">
+            <div className="ops-facility-card" onClick={navTo["inventory"]}>
+              <div className="ops-facility-label">Inventory</div>
+              <div className="ops-facility-value">{invStatus.itemsCounted}/{invStatus.totalItems}</div>
+              <div className="ops-facility-sub">
+                {invStatus.phase === "done" ? "Complete" : invStatus.phase === "ordering" ? `Ordering — ${invStatus.ordered || 0}/${invStatus.needsOrder || 0}` : "Counting"}
+              </div>
+              {invStatus.overdue && <span className="ops-overdue-badge">{invStatus.daysOverdue}d overdue</span>}
+            </div>
+            <div className="ops-facility-card" onClick={navTo["checkout-tv"]}>
+              <div className="ops-facility-label">New Bookings</div>
+              <div className="ops-facility-value">{liveSnap ? liveSnap.new_bookings : m.bookingsToday}</div>
+            </div>
+            <div className="ops-facility-card" onClick={navTo["checkout-tv"]}>
+              <div className="ops-facility-label">Tours & Evals</div>
+              <div className="ops-facility-value">{(liveSnap ? liveSnap.tours : (m.toursToday || 0)) + (liveSnap ? liveSnap.evals : (m.evalsToday || 0))}</div>
+              <div className="ops-facility-sub">
+                {liveSnap ? liveSnap.tours : (m.toursToday || 0)} tours · {liveSnap ? liveSnap.evals : (m.evalsToday || 0)} evals
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      )}
 
       {/* Accrual Revenue Receipt Modal */}
       <AccrualReceiptModal
