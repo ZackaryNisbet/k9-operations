@@ -339,7 +339,7 @@ function CheckoutNotesPage({ data, save, nav, profile, addGlobalToast }) {
                       />
                     </div>
                     <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
-                      <Btn size="sm" variant="default" onClick={() => copyDogNotes(entry)} icon={<I.Copy />}>Copy All</Btn>
+                      <Btn size="sm" variant="secondary" onClick={() => copyDogNotes(entry)} icon={<I.Clipboard />}>Copy All</Btn>
                       {(checkoutNoteDrafts[dogId] || "").trim() && (
                         <Btn size="sm" variant="primary" onClick={() => handleSaveCheckoutNote(dogId)} disabled={savingNote === dogId}>
                           {savingNote === dogId ? "Saving..." : "Save Note"}
