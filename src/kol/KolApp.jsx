@@ -45,6 +45,8 @@ import OccupancyReportPage from "./pages/OccupancyReportPage";
 import WeeklyMaintenancePage from "./pages/WeeklyMaintenancePage";
 import OnboardingPage from "./pages/OnboardingPage";
 import PricingPage from "./pages/PricingPage";
+import CheckoutNotesPage from "./pages/CheckoutNotesPage";
+import DogProfilePage from "./pages/DogProfilePage";
 import SubscriptionGate from "../shared/SubscriptionGate";
 import useSubscription from "../hooks/useSubscription";
 
@@ -720,7 +722,8 @@ function LeanAppInner() {
       "dashboard": null, // dashboard handles its own per-section permissions via props
       "lifecycle": "Customer Lifecycle",
       "client-detail": "Customer Lifecycle",
-      "dog-detail": "Customer Lifecycle",
+      "dog-detail": null,
+      "checkout-notes": null,
       "ops-hub": "Operations Hub",
       "daily-ops": "Operations Hub",
       "attendance": "Attendance Tracker",
@@ -834,7 +837,12 @@ function LeanAppInner() {
       case "attendance":
         return <AttendanceTrackerPage data={data} save={save} nav={nav} profile={profile} />;
       case "dog-detail":
+        if (params.dogId && !params.clientId) {
+          return <DogProfilePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} dogId={params.dogId} />;
+        }
         return <DogDetailPage data={data} clientId={params.clientId} dogId={params.dogId} nav={nav} />;
+      case "checkout-notes":
+        return <CheckoutNotesPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "checkout-tv":
         return <CheckoutTVPage data={data} nav={nav} profile={profile} locationId={currentLocation} />;
       case "client-detail":
