@@ -374,6 +374,7 @@ const DASH_CSS = `
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  background: #FAFAF9;
 }
 .ops-section-header {
   font-size: 11px;
@@ -1720,28 +1721,30 @@ function DashboardContent({
           </button>
         </div>
 
-        {/* Right: Timeframe pills + prior period toggle */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }} ref={calRef}>
-          <AnimatedPillSelector ranges={RANGES} activeKey={range} onChange={handleRangeChange} />
+        {/* Right: Timeframe pills + prior period toggle (analytics mode only) */}
+        {analyticsMode && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }} ref={calRef}>
+            <AnimatedPillSelector ranges={RANGES} activeKey={range} onChange={handleRangeChange} />
 
-          <button
-            onClick={() => setShowPriorPeriod(!showPriorPeriod)}
-            style={{
-              padding: "3px 8px", borderRadius: 4,
-              border: `1px solid ${showPriorPeriod ? C.acc : "rgba(20,83,45,0.1)"}`,
-              background: showPriorPeriod ? C.accLt : "rgba(255,255,255,0.7)",
-              color: showPriorPeriod ? C.accDk : C.textMut,
-              fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-              transition: "all 0.12s", whiteSpace: "nowrap",
-            }}
-          >
-            vs Prior
-          </button>
+            <button
+              onClick={() => setShowPriorPeriod(!showPriorPeriod)}
+              style={{
+                padding: "3px 8px", borderRadius: 4,
+                border: `1px solid ${showPriorPeriod ? C.acc : "rgba(20,83,45,0.1)"}`,
+                background: showPriorPeriod ? C.accLt : "rgba(255,255,255,0.7)",
+                color: showPriorPeriod ? C.accDk : C.textMut,
+                fontSize: 9, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+                transition: "all 0.12s", whiteSpace: "nowrap",
+              }}
+            >
+              vs Prior
+            </button>
 
-          {showCalendar && range === "custom" && (
-            <DateRangePicker customFrom={customFrom} customTo={customTo} setCustomFrom={setCustomFrom} setCustomTo={setCustomTo} />
-          )}
-        </div>
+            {showCalendar && range === "custom" && (
+              <DateRangePicker customFrom={customFrom} customTo={customTo} setCustomFrom={setCustomFrom} setCustomTo={setCustomTo} />
+            )}
+          </div>
+        )}
       </div>
 
       {/* ═══ MAIN CONTENT ═══ */}
@@ -1916,6 +1919,15 @@ function DashboardContent({
               </div>
               {showPriorPeriod && <TrendBadge value={pctChange(days > 1 ? Math.round(m.occupancyRate || 0) : (liveSnap ? liveSnap.occupancy_pct : (m.occupancyPct || 0)), days > 1 ? Math.round(pm.occupancyRate || 0) : (pm.occupancyPct || 0))} size="xs" />}
             </div>
+            <div className="ops-hero-card">
+              <div className="ops-hero-label">Tours & Evals</div>
+              <div className="ops-hero-value">
+                {(liveSnap ? liveSnap.tours : (m.toursToday || 0)) + (liveSnap ? liveSnap.evals : (m.evalsToday || 0))}
+              </div>
+              <div className="ops-hero-sub">
+                {liveSnap ? liveSnap.tours : (m.toursToday || 0)} tours · {liveSnap ? liveSnap.evals : (m.evalsToday || 0)} evals
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1951,7 +1963,6 @@ function DashboardContent({
                 { label: "Opening", id: "ops-opening", click: navTo["ops-opening"] },
                 { label: "Front-End", id: "ops-fe", click: navTo["ops-fe"] },
                 { label: "Back-End", id: "ops-be", click: navTo["ops-be"] },
-                { label: "Room Cleaning & Setups", id: "ops-rooms", click: navTo["ops-rooms"] },
                 { label: "Closing", id: "ops-closing", click: navTo["ops-closing"] },
               ].map((item) => {
                 const pct = getChecklistProgress(item.id);
@@ -1969,7 +1980,7 @@ function DashboardContent({
               })}
               {/* Overall summary bar */}
               {(() => {
-                const ids = ["ops-opening", "ops-fe", "ops-be", "ops-rooms", "ops-closing"];
+                const ids = ["ops-opening", "ops-fe", "ops-be", "ops-closing"];
                 const total = ids.reduce((s, id) => s + getChecklistProgress(id), 0);
                 const avg = Math.round(total / ids.length);
                 return (
@@ -2007,31 +2018,8 @@ function DashboardContent({
           </div>
         </div>
 
-        {/* ── Section 4: Facility Status ── */}
-        <div ref={opsVisRef}>
-          <div className="ops-section-header">Facility Status</div>
-          <div className="ops-facility-row">
-            <div className="ops-facility-card" onClick={navTo["inventory"]}>
-              <div className="ops-facility-label">Inventory</div>
-              <div className="ops-facility-value">{invStatus.itemsCounted}/{invStatus.totalItems}</div>
-              <div className="ops-facility-sub">
-                {invStatus.phase === "done" ? "Complete" : invStatus.phase === "ordering" ? `Ordering — ${invStatus.ordered || 0}/${invStatus.needsOrder || 0}` : "Counting"}
-              </div>
-              {invStatus.overdue && <span className="ops-overdue-badge">{invStatus.daysOverdue}d overdue</span>}
-            </div>
-            <div className="ops-facility-card" onClick={navTo["checkout-tv"]}>
-              <div className="ops-facility-label">New Bookings</div>
-              <div className="ops-facility-value">{liveSnap ? liveSnap.new_bookings : m.bookingsToday}</div>
-            </div>
-            <div className="ops-facility-card" onClick={navTo["checkout-tv"]}>
-              <div className="ops-facility-label">Tours & Evals</div>
-              <div className="ops-facility-value">{(liveSnap ? liveSnap.tours : (m.toursToday || 0)) + (liveSnap ? liveSnap.evals : (m.evalsToday || 0))}</div>
-              <div className="ops-facility-sub">
-                {liveSnap ? liveSnap.tours : (m.toursToday || 0)} tours · {liveSnap ? liveSnap.evals : (m.evalsToday || 0)} evals
-              </div>
-            </div>
-          </div>
-        </div>
+        {/* opsVisRef needed for lazy-compute of checklist data */}
+        <div ref={opsVisRef} />
       </div>
       )}
 
