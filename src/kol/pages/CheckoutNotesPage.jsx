@@ -2,10 +2,39 @@
 // Shows aggregated EOD notes for all dogs checking out today.
 // Designed for the front-desk checkout experience.
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { supabase } from "../../supabaseClient";
 import { C, todayStr, fmtDate, fmtPhone, titleCase, gid } from "../../shared/theme";
 import { I } from "../../shared/icons";
 import { Card, Badge, Btn } from "../../shared/ui";
+
+// Render @mentions as blue clickable spans
+function renderMentionContent(text, dogs, nav) {
+  if (!text) return null;
+  const parts = [];
+  const regex = /@(\w+(?:\s+\w+)*)/g;
+  let lastIdx = 0;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIdx) parts.push(text.slice(lastIdx, match.index));
+    const mentionName = match[1];
+    const dog = (dogs || []).find(d => {
+      const dName = d.fields?.name || "";
+      return dName === mentionName || mentionName.startsWith(dName);
+    });
+    if (dog) {
+      parts.push(
+        <span key={match.index} style={{ color: "#2563EB", fontWeight: 600, cursor: "pointer", textDecoration: "underline", textDecorationStyle: "dotted" }}
+          onClick={() => nav && nav("dog-detail", { dogId: dog.id })}>@{mentionName}</span>
+      );
+    } else {
+      parts.push("@" + mentionName);
+    }
+    lastIdx = match.index + match[0].length;
+  }
+  if (lastIdx < text.length) parts.push(text.slice(lastIdx));
+  return parts;
+}
 
 function CheckoutNotesPage({ data, save, nav, profile, addGlobalToast }) {
   const today = todayStr();
@@ -14,31 +43,63 @@ function CheckoutNotesPage({ data, save, nav, profile, addGlobalToast }) {
   const [checkoutNoteDrafts, setCheckoutNoteDrafts] = useState({});
   const [savingNote, setSavingNote] = useState(null);
 
-  // Dogs checking out today: reservations with checkOut === today, status in [checked-in, upcoming]
-  const checkoutData = useMemo(() => {
-    const reservations = data.reservations || [];
-    const dogs = data.dogs || [];
-    const clients = data.clients || [];
-    const eodEntries = data.eodEntries || [];
+  // Direct Supabase query for EOD entries (ensures long stays have all notes)
+  const [supabaseEodEntries, setSupabaseEodEntries] = useState([]);
+  const locationId = profile?.location_id || "cherry-hill";
 
-    const checkoutRes = reservations.filter(r =>
+  // Compute earliest check-in from checkout dogs to scope the query
+  const checkoutReservations = useMemo(() => {
+    return (data.reservations || []).filter(r =>
       r.checkOut === today &&
       (r.status === "checked-in" || r.status === "upcoming")
     );
+  }, [data.reservations, today]);
 
-    // Group by dog
+  const earliestCheckIn = useMemo(() => {
+    if (checkoutReservations.length === 0) return today;
+    return checkoutReservations.reduce((min, r) => r.checkIn < min ? r.checkIn : min, checkoutReservations[0].checkIn);
+  }, [checkoutReservations, today]);
+
+  useEffect(() => {
+    if (checkoutReservations.length === 0) return;
+    supabase
+      .from("lite_daily_ops")
+      .select("*")
+      .eq("location_id", locationId)
+      .eq("type", "eod")
+      .gte("date", earliestCheckIn)
+      .lte("date", today)
+      .then(({ data: rows }) => {
+        if (rows) setSupabaseEodEntries(rows);
+      });
+  }, [locationId, earliestCheckIn, today, checkoutReservations.length]);
+
+  // Merge in-memory + supabase EOD entries (dedup by date, prefer supabase for completeness)
+  const allEodEntries = useMemo(() => {
+    const byDate = {};
+    (data.eodEntries || []).forEach(e => { byDate[e.date] = e; });
+    supabaseEodEntries.forEach(r => {
+      if (!byDate[r.date]) {
+        byDate[r.date] = {
+          date: r.date, sections: r.sections || [], mentions: r.mentions || [],
+        };
+      }
+    });
+    return Object.values(byDate);
+  }, [data.eodEntries, supabaseEodEntries]);
+
+  // Dogs checking out today with enriched data
+  const checkoutData = useMemo(() => {
+    const dogs = data.dogs || [];
+    const clients = data.clients || [];
+
     const dogMap = {};
-    checkoutRes.forEach(res => {
+    checkoutReservations.forEach(res => {
       const dog = dogs.find(d => d.id === res.dogId);
       if (!dog) return;
       const client = clients.find(c => c.id === dog.clientId);
       if (!dogMap[dog.id]) {
-        dogMap[dog.id] = {
-          dog,
-          client,
-          reservations: [],
-          notes: [],
-        };
+        dogMap[dog.id] = { dog, client, reservations: [], notes: [] };
       }
       dogMap[dog.id].reservations.push(res);
     });
@@ -51,46 +112,33 @@ function CheckoutNotesPage({ data, save, nav, profile, addGlobalToast }) {
       const clientLastName = entry.client?.fields?.last_name || "";
       const fullMentionName = `${dogName} ${clientLastName}`.trim();
 
-      // Scan EOD entries during the stay period
-      eodEntries.forEach(eod => {
+      allEodEntries.forEach(eod => {
         if (eod.date < stayStart || eod.date > stayEnd) return;
-        const sections = eod.sections || [];
-
-        sections.forEach(sec => {
+        (eod.sections || []).forEach(sec => {
           const content = sec.content || "";
           if (!content.trim()) return;
-
-          // Check for @mentions of this dog
           const hasMention = content.includes(`@${dogName}`) ||
             content.includes(`@${fullMentionName}`) ||
             (eod.mentions || []).some(m => m.entityId === entry.dog.id);
-
-          // Also include boarding_notes, daycare sections (relevant to all dogs)
           const isRelevantSection = ["boarding_notes", "small_daycare_notes", "large_daycare_notes", "meds", "evaluations", "baths"].includes(sec.id);
-
           if (hasMention || isRelevantSection) {
             entry.notes.push({
               date: eod.date,
               sectionId: sec.id,
               sectionTitle: sec.title || titleCase(sec.id.replace(/_/g, " ")),
-              content: content,
-              hasMention,
-              isRelevantSection,
+              content, hasMention, isRelevantSection,
             });
           }
         });
       });
-
-      // Sort notes chronologically (oldest first — read the story of the stay)
       entry.notes.sort((a, b) => a.date.localeCompare(b.date));
     });
 
     return Object.values(dogMap).sort((a, b) =>
       (a.dog.fields?.name || "").localeCompare(b.dog.fields?.name || "")
     );
-  }, [data.reservations, data.dogs, data.clients, data.eodEntries, today]);
+  }, [checkoutReservations, data.dogs, data.clients, allEodEntries, today]);
 
-  const totalDogsWithNotes = checkoutData.filter(d => d.notes.length > 0).length;
   const totalNotes = checkoutData.reduce((sum, d) => sum + d.notes.length, 0);
   const allReviewed = checkoutData.length > 0 && checkoutData.every(d => reviewedDogs.has(d.dog.id));
 
@@ -114,7 +162,6 @@ function CheckoutNotesPage({ data, save, nav, profile, addGlobalToast }) {
     const entry = checkoutData.find(d => d.dog.id === dogId);
     if (!entry) { setSavingNote(null); return; }
 
-    // Save to client's checkout notes
     const clientId = entry.client?.id;
     if (clientId) {
       const updatedClients = (data.clients || []).map(c => {
@@ -195,7 +242,10 @@ function CheckoutNotesPage({ data, save, nav, profile, addGlobalToast }) {
           const clientName = `${entry.client?.fields?.first_name || ""} ${entry.client?.fields?.last_name || ""}`.trim();
           const clientPhone = entry.client?.fields?.phone || "";
           const stayStart = entry.reservations.reduce((min, r) => r.checkIn < min ? r.checkIn : min, entry.reservations[0]?.checkIn || today);
-          const isExpanded = expandedDogs.has(dogId) || entry.notes.length > 0; // Auto-expand if has notes
+          const nights = Math.max(1, Math.round((new Date(today + "T12:00:00") - new Date(stayStart + "T12:00:00")) / 86400000));
+          const resType = entry.reservations[0]?.reservationType || entry.reservations[0]?.type || "";
+          const roomType = entry.reservations.map(r => r.roomType).filter(Boolean).join(", ");
+          const isExpanded = expandedDogs.has(dogId) || entry.notes.length > 0;
           const isReviewed = reviewedDogs.has(dogId);
 
           return (
@@ -204,13 +254,8 @@ function CheckoutNotesPage({ data, save, nav, profile, addGlobalToast }) {
               <div
                 onClick={() => toggleExpand(dogId)}
                 style={{
-                  padding: "14px 18px",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 14,
-                  background: isReviewed ? `${C.suc}06` : "transparent",
-                  transition: "background 0.15s",
+                  padding: "14px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14,
+                  background: isReviewed ? `${C.suc}06` : "transparent", transition: "background 0.15s",
                 }}
               >
                 <div style={{ flex: 1 }}>
@@ -224,16 +269,26 @@ function CheckoutNotesPage({ data, save, nav, profile, addGlobalToast }) {
                   <div style={{ fontSize: 12, color: C.textSec, marginTop: 4 }}>
                     <span style={{ fontWeight: 600 }}>{clientName}</span>
                     {clientPhone && <> · {fmtPhone(clientPhone)}</>}
-                    <> · Stay: {fmtDate(stayStart)} → {fmtDate(today)}</>
-                    {entry.reservations.map(r => r.roomType).filter(Boolean).length > 0 && (
-                      <> · Room: {entry.reservations.map(r => r.roomType).filter(Boolean).join(", ")}</>
-                    )}
+                  </div>
+                  {/* Reservation details */}
+                  <div style={{ fontSize: 11, color: C.textMut, marginTop: 3, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <span>Check-in: {fmtDate(stayStart)}</span>
+                    <span>Check-out: {fmtDate(today)}</span>
+                    {resType && <span>Type: {titleCase(resType)}</span>}
+                    <span>{nights} night{nights !== 1 ? "s" : ""}</span>
+                    {roomType && <span>Room: {roomType}</span>}
                   </div>
                 </div>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                  style={{ transition: "transform 0.2s", transform: isExpanded ? "rotate(180deg)" : "rotate(0)" }}>
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span
+                    onClick={(e) => { e.stopPropagation(); nav && nav("dog-detail", { dogId }); }}
+                    style={{ fontSize: 11, fontWeight: 600, color: "#2563EB", cursor: "pointer", textDecoration: "underline", whiteSpace: "nowrap" }}
+                  >View Profile</span>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.textMut} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                    style={{ transition: "transform 0.2s", transform: isExpanded ? "rotate(180deg)" : "rotate(0)" }}>
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                </div>
               </div>
 
               {/* Notes timeline */}
@@ -247,8 +302,7 @@ function CheckoutNotesPage({ data, save, nav, profile, addGlobalToast }) {
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {entry.notes.map((note, idx) => (
                         <div key={`${note.date}-${note.sectionId}-${idx}`} style={{
-                          padding: "10px 14px",
-                          borderRadius: 8,
+                          padding: "10px 14px", borderRadius: 8,
                           background: note.hasMention ? `${C.pri}06` : C.bg,
                           border: `1px solid ${note.hasMention ? C.pri + "20" : C.borderLight}`,
                         }}>
@@ -258,7 +312,7 @@ function CheckoutNotesPage({ data, save, nav, profile, addGlobalToast }) {
                             {note.hasMention && <Badge color="primary" size="sm">@mentioned</Badge>}
                           </div>
                           <div style={{ fontSize: 12, color: C.text, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                            {note.content}
+                            {renderMentionContent(note.content, data.dogs || [], nav)}
                           </div>
                         </div>
                       ))}
