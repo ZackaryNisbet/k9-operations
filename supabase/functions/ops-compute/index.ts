@@ -1183,7 +1183,31 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
 
   dogs.sort((a, b) => (a.scheduledAt || "").localeCompare(b.scheduledAt || ""));
 
-  return { dogs };
+  // Fetch bath completions from lite_settings (written by Bathing Report page)
+  const completionKey = `ops_bathing_${today}`;
+  const { data: completionRows } = await supabase
+    .from("lite_settings")
+    .select("setting_value")
+    .eq("location_id", locationId)
+    .eq("setting_key", completionKey)
+    .limit(1);
+  const completions: Record<string, { by: string; at: string }> = (completionRows && completionRows.length > 0 && completionRows[0].setting_value) ? completionRows[0].setting_value : {};
+
+  // Merge completion status into each dog
+  for (const dog of dogs) {
+    const resId = `g${dog.gingrReservationId}`;
+    const completedInfo = completions[resId] || null;
+    if (completedInfo) {
+      dog.isDone = true;
+      (dog as any).completedBy = completedInfo.by || "";
+      (dog as any).completedAt = completedInfo.at || "";
+    }
+  }
+
+  const totalCount = dogs.length;
+  const completedCount = dogs.filter(d => d.isDone).length;
+
+  return { dogs, completions, totalCount, completedCount };
 }
 
 // ─── 9. Service Reports (pamper, enrichment, etc.) ────────────────────────
