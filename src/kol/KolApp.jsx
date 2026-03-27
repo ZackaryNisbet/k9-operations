@@ -927,7 +927,7 @@ function LeanAppInner() {
           </div>
           <div style={{ overflow: "hidden", opacity: sbExpanded ? 1 : 0, transition: "opacity 0.1s", whiteSpace: "nowrap" }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: C.acc, fontFamily: "'Outfit', sans-serif", letterSpacing: "0.02em" }}>K9 Operations</div>
-            <div style={{ fontSize: 9, color: "rgba(132,204,22,0.6)", fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis" }}>The Operating System for Pet Care</div>
+
           </div>
         </div>
 
