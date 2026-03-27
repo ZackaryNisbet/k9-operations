@@ -953,11 +953,27 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     setBathCompleted(newCompleted);
     if (!profile?.location_id) return;
     const entryId = `ops_bathing_${viewDate}`;
+    // Write to lite_settings (persists completions for ops-compute to pick up)
     await supabase.from("lite_settings").upsert({
       location_id: profile.location_id,
       setting_key: entryId,
       setting_value: newCompleted,
     }, { onConflict: "location_id,setting_key" });
+    // Also update lite_daily_ops computed_items directly so the dashboard
+    // reflects the change instantly via realtime subscription (no polling needed)
+    const bathingEntry = allOps.find(e => e.id === entryId);
+    if (bathingEntry?.computed_items) {
+      const dogs = (bathingEntry.computed_items.dogs || []).map(d => {
+        const resId = `g${d.gingrReservationId}`;
+        const info = newCompleted[resId] || null;
+        return { ...d, isDone: !!info || !!d.isDone, completedBy: info?.by || d.completedBy || "", completedAt: info?.at || d.completedAt || "" };
+      });
+      const completedCount = dogs.filter(d => d.isDone).length;
+      await supabase.from("lite_daily_ops").update({
+        computed_items: { ...bathingEntry.computed_items, dogs, completions: newCompleted, completedCount, totalCount: dogs.length },
+        computed_at: new Date().toISOString(),
+      }).eq("id", entryId).eq("location_id", profile.location_id);
+    }
   };
 
   const renderBathing = () => {
