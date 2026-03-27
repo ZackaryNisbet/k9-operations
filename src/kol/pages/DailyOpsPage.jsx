@@ -992,6 +992,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         bathType: d.bathType || "Standard",
         bathModifiers: d.bathModifiers || [],
         bathNotes: d.bathNotes || "",
+        reservationNotes: d.reservationNotes || "",
+        sizeCategory: d.sizeCategory || null,
+        hasPrivatePlay: !!d.hasPrivatePlay,
+        weight: d.weight || null,
         schedTime: d.scheduledTime || "—",
         schedAtRaw: d.scheduledAt || "",
         coTime: d.departureTime || "—",
@@ -1073,6 +1077,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                     <th style={thStyle}>DOG</th>
                     <th style={thCenterStyle}>ROOM</th>
                     <th style={thStyle}>BATH TYPE</th>
+                    <th style={thStyle}>NOTES</th>
                     <th style={thCenterStyle}>SCHEDULED</th>
                     <th style={thCenterStyle}>CHECKOUT</th>
                     <th style={thCenterStyle}>DONE</th>
@@ -1089,9 +1094,12 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                         transition: "background 0.2s",
                       }}>
                         <td style={{ padding: "12px 14px", fontWeight: 600, color: C.text, fontFamily: "inherit" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                             {row.dogName}
                             {row.isDeparted && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEE2E2", color: "#DC2626" }}>Departed</span>}
+                            {row.hasPrivatePlay && <span title="Private Play" style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#EDE9FE", color: "#7C3AED" }}>PP</span>}
+                            {row.sizeCategory === "large" && <span title={row.weight ? `${row.weight} lbs` : "Large dog"} style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEF3C7", color: "#D97706" }}>LG</span>}
+                            {row.sizeCategory === "small" && <span title={row.weight ? `${row.weight} lbs` : "Small dog"} style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#DBEAFE", color: "#2563EB" }}>SM</span>}
                           </div>
                         </td>
                         <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri, fontFamily: "inherit" }}>
@@ -1109,6 +1117,9 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                             {row.bathModifiers.map(m => <span key={m} style={{ fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "#FEE2E2", color: "#DC2626" }}>{m}</span>)}
                           </div>}
                           {row.bathNotes && <div style={{ fontSize: 10, fontStyle: "italic", color: "#D97706", marginTop: 2 }}>{row.bathNotes}</div>}
+                        </td>
+                        <td style={{ padding: "12px 14px", color: C.textSec, fontSize: 12, fontFamily: "inherit", maxWidth: 200 }}>
+                          {row.reservationNotes ? <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.3 }}>{row.reservationNotes}</div> : <span style={{ color: C.textMut }}>—</span>}
                         </td>
                         <td style={{ padding: "12px 14px", textAlign: "center", color: C.pri, fontSize: 12, fontWeight: 600, fontFamily: "inherit" }}>{row.schedTime}</td>
                         <td style={{ padding: "12px 14px", textAlign: "center", color: C.textSec, fontSize: 12, fontFamily: "inherit" }}>{row.coTime}</td>
