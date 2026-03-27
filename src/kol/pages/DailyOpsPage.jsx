@@ -493,13 +493,17 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         if (mergedRoomMap[rk]) {
           const m = mergedRoomMap[rk];
           if (cr.dogName && !m.dogNames.includes(cr.dogName)) m.dogNames.push(cr.dogName);
+          // Merge per-dog detail arrays
+          for (const dog of (cr.dogs || [])) {
+            if (dog.name && !m.dogs.some(d => d.name === dog.name)) m.dogs.push(dog);
+          }
           if (cr.needsRefresh) m.needsRefresh = true;
           if (cr.needsDisinfect) m.needsDisinfect = true;
           if (cr.needsSetup) { m.needsSetup = true; m.setupReason = cr.setupReason; }
           if (cr.suggestedBowlSize) m.suggestedBowlSize = cr.suggestedBowlSize;
           if (cr.dogWeight) m.dogWeight = cr.dogWeight;
         } else {
-          mergedRoomMap[rk] = { ...cr, dogNames: cr.dogName ? [cr.dogName] : [] };
+          mergedRoomMap[rk] = { ...cr, dogNames: cr.dogName ? [cr.dogName] : [], dogs: [...(cr.dogs || [])] };
         }
       });
     }
@@ -551,16 +555,40 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       const isOccupied = !!crData && crData.cleaningType !== "none";
       const aDog = crData ? (crData.dogNames ? crData.dogNames.join(', ') : crData.dogName) : null;
       const aOwner = crData ? crData.ownerLastName : null;
-      const selectedBowl = ri.setupBowl || (crData?.suggestedBowlSize) || "";
-      const selectedBowlType = ri.setupBowlType || "Regular";
+
+      // Per-dog details for sibling support
+      const dogs = crData?.dogs || [];
+      const setupDogs = dogs.filter(d => d.needsSetup);
+      const hasSiblingSetup = setupDogs.length > 1;
+
+      // For single-dog rooms, use legacy keys for backward compat
+      const getSetupBowl = (dogIdx) => {
+        if (!hasSiblingSetup) return ri.setupBowl || (crData?.suggestedBowlSize) || "";
+        return ri[`setupBowl_${dogIdx}`] || (setupDogs[dogIdx]?.suggestedBowlSize) || "";
+      };
+      const getSetupBowlType = (dogIdx) => {
+        if (!hasSiblingSetup) return ri.setupBowlType || "Regular";
+        return ri[`setupBowlType_${dogIdx}`] || "Regular";
+      };
+      const setBowlForDog = (dogIdx, field, val) => {
+        if (!hasSiblingSetup) { toggleItem(rm, field, val); return; }
+        toggleItem(rm, `${field}_${dogIdx}`, val);
+      };
 
       return (
         <div key={rm} style={{ display: "grid", gridTemplateColumns: gridCols, padding: "8px 12px", borderBottom: i < totalRows - 1 ? `1px solid ${C.border}` : "none", alignItems: "center" }}>
           <div>
             <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{displayName || rm}</span>
             {isOccupied ? <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: C.pri, marginTop: 1 }}>{aDog}</div>
-              {aOwner && <div style={{ fontSize: 10, color: C.textMut }}>{aOwner}</div>}
+              {dogs.length > 1 ? dogs.map((d, di) => (
+                <div key={di} style={{ marginTop: di === 0 ? 1 : 3 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: C.pri }}>{d.name}</div>
+                  {d.ownerLastName && <div style={{ fontSize: 10, color: C.textMut }}>{d.ownerLastName}</div>}
+                </div>
+              )) : <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.pri, marginTop: 1 }}>{aDog}</div>
+                {aOwner && <div style={{ fontSize: 10, color: C.textMut }}>{aOwner}</div>}
+              </div>}
               {crData && crData.checkIn === viewDate && crData.checkOut !== viewDate && <div style={{ fontSize: 9, color: C.acc, fontWeight: 600, marginTop: 1 }}>Check-in day</div>}
               {crData && crData.checkOut === viewDate && crData.cleaningType !== "disinfect" && <div style={{ fontSize: 9, color: "#F59E0B", fontWeight: 600, marginTop: 1 }}>Checkout day</div>}
               {crData && crData.cleaningType === "disinfect" && (() => {
@@ -572,8 +600,15 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
               {missedMap[rm]?.missedAsNeeded && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 4, marginTop: 2, display: "inline-block" }}>⚠ As-needed missed{missedMap[rm]?.asNeededNote ? `: ${missedMap[rm].asNeededNote}` : ""}</div>}
             </div> : <div>
               {hasSetup && aDog ? <div>
-                <div style={{ fontSize: 11, fontWeight: 600, color: C.pri, marginTop: 1 }}>{aDog}</div>
-                {aOwner && <div style={{ fontSize: 10, color: C.textMut }}>{aOwner}</div>}
+                {dogs.length > 1 ? dogs.map((d, di) => (
+                  <div key={di} style={{ marginTop: di === 0 ? 1 : 3 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: C.pri }}>{d.name}</div>
+                    {d.ownerLastName && <div style={{ fontSize: 10, color: C.textMut }}>{d.ownerLastName}</div>}
+                  </div>
+                )) : <div>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: C.pri, marginTop: 1 }}>{aDog}</div>
+                  {aOwner && <div style={{ fontSize: 10, color: C.textMut }}>{aOwner}</div>}
+                </div>}
               </div> : (missedMap[rm]?.missedDisinfect || missedMap[rm]?.missedAsNeeded) ? <div>
                 <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic", marginTop: 1 }}>Vacant</div>
                 {missedMap[rm]?.missedDisinfect && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 4, marginTop: 2, display: "inline-block" }}>⚠ Disinfect missed</div>}
@@ -601,29 +636,78 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
           </div>
           <div style={{ textAlign: "center" }}>
             {hasSetup ? <div>
-              <div style={{ display: "inline-block", padding: "2px 6px", borderRadius: 4, background: "#14532D", color: "#fff", fontSize: 10, fontWeight: 700, fontFamily: "Outfit, sans-serif", marginBottom: 4 }}>{crData.setupReason}</div>
-              <div style={{ fontSize: 10, color: C.textSec, marginBottom: 4 }}>
-                {crData.dogWeight != null ? `${crData.dogWeight} lbs` : "No weight"} — {crData.suggestedBowlSize}
-              </div>
-              <div style={{ display: "flex", gap: 3, marginBottom: 3 }}>
-                {bowlSizeOptions.map(s => (
-                  <button key={s} disabled={isLocked} onClick={() => toggleItem(rm, "setupBowl", s)}
-                    style={{ flex: 1, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${selectedBowl === s ? "#14532D" : C.border}`, background: selectedBowl === s ? "#14532D" : "#fff", color: selectedBowl === s ? "#fff" : C.text, fontSize: 10, fontWeight: selectedBowl === s ? 700 : 500, cursor: isLocked ? "default" : "pointer", fontFamily: "Outfit, sans-serif", transition: "all 0.15s ease", opacity: isLocked ? 0.5 : 1 }}
-                  >{s}</button>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 3, marginBottom: 4 }}>
-                {bowlTypeOptions.map(t => (
-                  <button key={t} disabled={isLocked} onClick={() => toggleItem(rm, "setupBowlType", t)}
-                    style={{ flex: 1, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${selectedBowlType === t ? "#14532D" : C.border}`, background: selectedBowlType === t ? "#14532D" : "#fff", color: selectedBowlType === t ? "#fff" : C.text, fontSize: 9, fontWeight: selectedBowlType === t ? 700 : 500, cursor: isLocked ? "default" : "pointer", fontFamily: "Outfit, sans-serif", transition: "all 0.15s ease", opacity: isLocked ? 0.5 : 1 }}
-                  >{t}</button>
-                ))}
-              </div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                <K9Check checked={!!ri.setupDone} disabled={isLocked} onChange={e => toggleItem(rm, "setupDone", e.target.checked)} color="#14532D" size={16} />
-                <span style={{ fontSize: 10, fontWeight: 700, color: ri.setupDone ? "#84CC16" : C.textMut }}>{ri.setupDone ? "Complete" : "Mark done"}</span>
-              </div>
-              {ri.setupDone && (ri.setupDoneBy || ri.setupInitials) && <div style={{ fontSize: 9, color: C.textMut, marginTop: 2 }}>{ri.setupInitials || ri.setupDoneBy}{ri.setupAt ? ` · ${formatTime(ri.setupAt)}` : ""}</div>}
+              {/* Per-dog setup controls for siblings, single controls for solo dogs */}
+              {hasSiblingSetup ? (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", marginBottom: 4 }}>
+                    <div style={{ display: "inline-block", padding: "2px 6px", borderRadius: 4, background: "#14532D", color: "#fff", fontSize: 10, fontWeight: 700, fontFamily: "Outfit, sans-serif" }}>{crData.setupReason}</div>
+                    <span style={{ fontSize: 10, color: C.textSec }}>{setupDogs.length} bowls</span>
+                  </div>
+                  {setupDogs.map((dog, di) => {
+                    const selBowl = getSetupBowl(di);
+                    const selType = getSetupBowlType(di);
+                    return (
+                      <div key={di} style={{ borderTop: di > 0 ? `1px dashed ${C.border}` : "none", paddingTop: di > 0 ? 4 : 0, marginTop: di > 0 ? 4 : 0 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, color: C.pri, marginBottom: 2 }}>{dog.name}</div>
+                        <div style={{ fontSize: 9, color: C.textSec, marginBottom: 3 }}>
+                          {dog.weight != null ? `${dog.weight} lbs` : "No weight"} — {dog.suggestedBowlSize || "Unknown"}
+                        </div>
+                        <div style={{ display: "flex", gap: 2, marginBottom: 2 }}>
+                          {bowlSizeOptions.map(s => (
+                            <button key={s} disabled={isLocked} onClick={() => setBowlForDog(di, "setupBowl", s)}
+                              style={{ flex: 1, padding: "2px 4px", borderRadius: 5, border: `1.5px solid ${selBowl === s ? "#14532D" : C.border}`, background: selBowl === s ? "#14532D" : "#fff", color: selBowl === s ? "#fff" : C.text, fontSize: 9, fontWeight: selBowl === s ? 700 : 500, cursor: isLocked ? "default" : "pointer", fontFamily: "Outfit, sans-serif", transition: "all 0.15s ease", opacity: isLocked ? 0.5 : 1 }}
+                            >{s}</button>
+                          ))}
+                        </div>
+                        <div style={{ display: "flex", gap: 2, marginBottom: 2 }}>
+                          {bowlTypeOptions.map(t => (
+                            <button key={t} disabled={isLocked} onClick={() => setBowlForDog(di, "setupBowlType", t)}
+                              style={{ flex: 1, padding: "2px 4px", borderRadius: 5, border: `1.5px solid ${selType === t ? "#14532D" : C.border}`, background: selType === t ? "#14532D" : "#fff", color: selType === t ? "#fff" : C.text, fontSize: 8, fontWeight: selType === t ? 700 : 500, cursor: isLocked ? "default" : "pointer", fontFamily: "Outfit, sans-serif", transition: "all 0.15s ease", opacity: isLocked ? 0.5 : 1 }}
+                            >{t}</button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4, marginTop: 4 }}>
+                    <K9Check checked={!!ri.setupDone} disabled={isLocked} onChange={e => toggleItem(rm, "setupDone", e.target.checked)} color="#14532D" size={16} />
+                    <span style={{ fontSize: 10, fontWeight: 700, color: ri.setupDone ? "#84CC16" : C.textMut }}>{ri.setupDone ? "Complete" : "Mark done"}</span>
+                  </div>
+                  {ri.setupDone && (ri.setupDoneBy || ri.setupInitials) && <div style={{ fontSize: 9, color: C.textMut, marginTop: 2 }}>{ri.setupInitials || ri.setupDoneBy}{ri.setupAt ? ` · ${formatTime(ri.setupAt)}` : ""}</div>}
+                </div>
+              ) : (
+                <div>
+                  <div style={{ display: "inline-block", padding: "2px 6px", borderRadius: 4, background: "#14532D", color: "#fff", fontSize: 10, fontWeight: 700, fontFamily: "Outfit, sans-serif", marginBottom: 4 }}>{crData.setupReason}</div>
+                  <div style={{ fontSize: 10, color: C.textSec, marginBottom: 4 }}>
+                    {crData.dogWeight != null ? `${crData.dogWeight} lbs` : "No weight"} — {crData.suggestedBowlSize}
+                  </div>
+                  <div style={{ display: "flex", gap: 3, marginBottom: 3 }}>
+                    {bowlSizeOptions.map(s => {
+                      const selBowl = getSetupBowl(0);
+                      return (
+                        <button key={s} disabled={isLocked} onClick={() => toggleItem(rm, "setupBowl", s)}
+                          style={{ flex: 1, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${selBowl === s ? "#14532D" : C.border}`, background: selBowl === s ? "#14532D" : "#fff", color: selBowl === s ? "#fff" : C.text, fontSize: 10, fontWeight: selBowl === s ? 700 : 500, cursor: isLocked ? "default" : "pointer", fontFamily: "Outfit, sans-serif", transition: "all 0.15s ease", opacity: isLocked ? 0.5 : 1 }}
+                        >{s}</button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", gap: 3, marginBottom: 4 }}>
+                    {bowlTypeOptions.map(t => {
+                      const selType = getSetupBowlType(0);
+                      return (
+                        <button key={t} disabled={isLocked} onClick={() => toggleItem(rm, "setupBowlType", t)}
+                          style={{ flex: 1, padding: "3px 6px", borderRadius: 6, border: `1.5px solid ${selType === t ? "#14532D" : C.border}`, background: selType === t ? "#14532D" : "#fff", color: selType === t ? "#fff" : C.text, fontSize: 9, fontWeight: selType === t ? 700 : 500, cursor: isLocked ? "default" : "pointer", fontFamily: "Outfit, sans-serif", transition: "all 0.15s ease", opacity: isLocked ? 0.5 : 1 }}
+                        >{t}</button>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                    <K9Check checked={!!ri.setupDone} disabled={isLocked} onChange={e => toggleItem(rm, "setupDone", e.target.checked)} color="#14532D" size={16} />
+                    <span style={{ fontSize: 10, fontWeight: 700, color: ri.setupDone ? "#84CC16" : C.textMut }}>{ri.setupDone ? "Complete" : "Mark done"}</span>
+                  </div>
+                  {ri.setupDone && (ri.setupDoneBy || ri.setupInitials) && <div style={{ fontSize: 9, color: C.textMut, marginTop: 2 }}>{ri.setupInitials || ri.setupDoneBy}{ri.setupAt ? ` · ${formatTime(ri.setupAt)}` : ""}</div>}
+                </div>
+              )}
             </div> : <span style={{ fontSize: 11, color: C.textMut }}>—</span>}
           </div>
           <div style={{ textAlign: "center" }}>

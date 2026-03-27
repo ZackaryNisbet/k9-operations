@@ -244,6 +244,15 @@ function parseRoomType(resType: string): string {
 
 // ─── 1. Room Cleaning ─────────────────────────────────────────────────────
 
+interface DogDetail {
+  name: string;
+  ownerLastName: string;
+  weight: number | null;
+  suggestedBowlSize: string | null;
+  setupReason: string | null;
+  needsSetup: boolean;
+}
+
 interface RoomEntry {
   room: string;
   roomType: string;
@@ -264,6 +273,7 @@ interface RoomEntry {
   suggestedBowlSize: string | null;
   dogWeight: number | null;
   isCheckedOut: boolean;
+  dogs: DogDetail[];
 }
 
 function suggestBowlSize(weight: number | null): string {
@@ -537,6 +547,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       suggestedBowlSize: null,
       dogWeight: null,
       isCheckedOut,
+      dogs: res.animal_name ? [{ name: res.animal_name, ownerLastName: res.owner_last_name || "", weight: null, suggestedBowlSize: null, setupReason: null, needsSetup: false }] : [],
     });
   }
 
@@ -591,6 +602,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       suggestedBowlSize: null,
       dogWeight: null,
       isCheckedOut: false,
+      dogs: dog.a_first ? [{ name: dog.a_first, ownerLastName: dog.o_last || "", weight: null, suggestedBowlSize: null, setupReason: null, needsSetup: false }] : [],
     });
   }
 
@@ -688,6 +700,14 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       rooms[idx].setupReason = sd.reason;
       rooms[idx].suggestedBowlSize = bowlSize;
       rooms[idx].dogWeight = weight;
+      // Update per-dog detail in dogs array
+      const dogDetail = rooms[idx].dogs?.find(d => d.name.toLowerCase() === nameKey);
+      if (dogDetail) {
+        dogDetail.weight = weight;
+        dogDetail.suggestedBowlSize = bowlSize;
+        dogDetail.setupReason = sd.reason;
+        dogDetail.needsSetup = true;
+      }
       matched = true;
     }
 
@@ -719,6 +739,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       suggestedBowlSize: suggestBowlSize(weight),
       dogWeight: weight,
       isCheckedOut: false,
+      dogs: sd.dogName ? [{ name: sd.dogName, ownerLastName: sd.ownerLastName, weight, suggestedBowlSize: suggestBowlSize(weight), setupReason: sd.reason, needsSetup: true }] : [],
     });
   }
 
@@ -747,6 +768,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       suggestedBowlSize: null,
       dogWeight: null,
       isCheckedOut: false,
+      dogs: [],
     });
   }
 
@@ -759,6 +781,10 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       // Merge dog names
       for (const name of r.dogNames) {
         if (name && !m.dogNames.includes(name)) m.dogNames.push(name);
+      }
+      // Merge per-dog detail arrays
+      for (const dog of (r.dogs || [])) {
+        if (dog.name && !m.dogs.some(d => d.name === dog.name)) m.dogs.push(dog);
       }
       // Escalate cleaning needs — disinfect supersedes refresh
       if (r.needsDisinfect) { m.needsDisinfect = true; m.needsRefresh = false; m.cleaningType = "disinfect"; }
@@ -775,7 +801,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
         m.checkOut = r.checkOut;
       }
     } else {
-      mergedMap[r.room] = { ...r };
+      mergedMap[r.room] = { ...r, dogs: [...(r.dogs || [])] };
     }
   }
   // Update dogName to joined string for backward compat
