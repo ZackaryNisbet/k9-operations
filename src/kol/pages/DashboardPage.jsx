@@ -1244,19 +1244,26 @@ function DashboardContent({
   // Fetch bath completions from lite_settings (written by Bathing Report page)
   const [bathCompletedCount, setBathCompletedCount] = useState(0);
   useEffect(() => {
-    if (!locationId || range !== "today") return;
+    if (!locationId) return;
+    let cancelled = false;
     supabase.from("lite_settings").select("setting_value")
       .eq("location_id", locationId)
       .eq("setting_key", `ops_bathing_${today}`)
       .limit(1)
-      .then(({ data: rows }) => {
+      .then(({ data: rows, error }) => {
+        if (cancelled) return;
+        if (error) { console.error("Bath completions fetch error:", error); return; }
         if (rows && rows.length > 0 && rows[0].setting_value) {
-          setBathCompletedCount(Object.keys(rows[0].setting_value).length);
+          const count = Object.keys(rows[0].setting_value).length;
+          console.log("[Dashboard] Bath completions loaded:", count, "from key ops_bathing_" + today, "location:", locationId);
+          setBathCompletedCount(count);
         } else {
+          console.log("[Dashboard] No bath completions found for", today, "location:", locationId);
           setBathCompletedCount(0);
         }
       });
-  }, [locationId, today, range]);
+    return () => { cancelled = true; };
+  }, [locationId, today]);
 
   // Realtime: re-fetch bath completions when lite_settings changes
   useEffect(() => {
