@@ -251,8 +251,8 @@ export default function OnboardingPage({ nav }) {
       const { data, error } = await supabase.functions.invoke("stripe-checkout", {
         body: {
           plan_type: planId,
-          success_url: `${window.location.origin}/lite/onboarding?step=provision`,
-          cancel_url: `${window.location.origin}/lite/onboarding`,
+          success_url: `${window.location.origin}/onboarding?step=provision`,
+          cancel_url: `${window.location.origin}/onboarding`,
         },
       });
 

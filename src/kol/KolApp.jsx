@@ -66,8 +66,8 @@ class LeanAppErrorBoundary extends React.Component {
 }
 
 // ─── Lite URL Routing ────────────────────────────────────────────────────
-// Maps page IDs to URL slugs for the Lite app (lives under /lite/)
-const LITE_BASE = "/lite";
+// Maps page IDs to URL slugs (root-level: /cherry-hill/dashboard)
+const LITE_BASE = "";
 const LITE_PAGE_SLUGS = {
   "dashboard": "dashboard",
   "lifecycle": "lifecycle",
@@ -135,7 +135,9 @@ function buildLiteUrl(locSlug, pg, prms, dataRef) {
 
 function parseLiteUrl(pathname, dataRef) {
   let cleanPath = pathname;
-  if (cleanPath.startsWith(LITE_BASE)) cleanPath = cleanPath.slice(LITE_BASE.length) || "/";
+  // Backward compat: strip old /lite prefix from bookmarks/links
+  if (cleanPath.startsWith("/lite")) cleanPath = cleanPath.slice(5) || "/";
+  if (LITE_BASE && cleanPath.startsWith(LITE_BASE)) cleanPath = cleanPath.slice(LITE_BASE.length) || "/";
   const parts = cleanPath.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
   if (parts.length === 0) return { locSlug: "cherry-hill", page: "dashboard", params: {} };
   // Top-level pages (no location slug): /lite/onboarding, /lite/pricing
@@ -221,7 +223,7 @@ const LEAN_ENTERPRISE_NAV_ITEMS = [
 // Cherry Hill is the seed location; additional locations are added by the onboarding flow.
 const STATIC_LOCATIONS = [
   { id: "enterprise", name: "Enterprise", slug: "enterprise", isEnterprise: true },
-  { id: "demo-analytics", name: "K9 Operations + Analytics", slug: "analytics-demo", isDemoLink: true, demoUrl: "/lite/cherry-hill/dashboard?mode=analytics" },
+  { id: "demo-analytics", name: "K9 Operations + Analytics", slug: "analytics-demo", isDemoLink: true, demoUrl: "/cherry-hill/dashboard?mode=analytics" },
   { id: "demo-pos", name: "K9 Operations POS", slug: "pos-demo", isDemoLink: true, demoUrl: "/pos/demo/dashboard" },
 ];
 
@@ -534,7 +536,7 @@ function LeanAppInner() {
     if (skipUrlPush.current) { skipUrlPush.current = false; return; }
     const url = buildLiteUrl(locSlug, page, params, data);
     if (window.location.pathname !== url) {
-      // Use replaceState for the initial redirect (e.g., / → /lite/cherry-hill/dashboard)
+      // Use replaceState for the initial redirect (e.g., / → /cherry-hill/dashboard)
       // to avoid creating a back-button entry to the bare root URL
       if (!initialUrlSet.current) {
         initialUrlSet.current = true;
