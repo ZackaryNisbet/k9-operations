@@ -1241,16 +1241,48 @@ function DashboardContent({
   };
 
   /* ─── Service data (today only — matches OperationsHub Services section) ─── */
+  // Fetch bath completions from lite_settings (written by Bathing Report page)
+  const [bathCompletedCount, setBathCompletedCount] = useState(0);
+  useEffect(() => {
+    if (!locationId || range !== "today") return;
+    supabase.from("lite_settings").select("setting_value")
+      .eq("location_id", locationId)
+      .eq("setting_key", `ops_bathing_${today}`)
+      .limit(1)
+      .then(({ data: rows }) => {
+        if (rows && rows.length > 0 && rows[0].setting_value) {
+          setBathCompletedCount(Object.keys(rows[0].setting_value).length);
+        } else {
+          setBathCompletedCount(0);
+        }
+      });
+  }, [locationId, today, range]);
+
+  // Realtime: re-fetch bath completions when lite_settings changes
+  useEffect(() => {
+    if (!locationId) return;
+    const channel = supabase.channel("bath-completions")
+      .on("postgres_changes", { event: "*", schema: "public", table: "lite_settings", filter: `location_id=eq.${locationId}` }, (payload) => {
+        const key = payload.new?.setting_key || payload.old?.setting_key;
+        if (key && key.startsWith("ops_bathing_")) {
+          const val = payload.new?.setting_value;
+          setBathCompletedCount(val ? Object.keys(val).length : 0);
+        }
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [locationId]);
+
   const svcData = useMemo(() => {
     if (!stableReservations || stableReservations.length === 0) return { bathsTotal: 0, bathsDone: 0, ppTotal: 0, ppCompleted: 0, pamperTotal: 0, pamperDone: 0, iceCreamTotal: 0, iceCreamDone: 0 };
     const sm = computeServiceMetrics(dataProxy, today);
     return {
-      bathsTotal: sm.bathsTotal, bathsDone: sm.bathsDone,
+      bathsTotal: sm.bathsTotal, bathsDone: bathCompletedCount,
       ppTotal: sm.ppTotal, ppCompleted: sm.ppCompleted,
       pamperTotal: sm.pamperTotal, pamperDone: sm.pamperDone,
       iceCreamTotal: sm.iceCreamTotal, iceCreamDone: sm.iceCreamDone,
     };
-  }, [dataProxy, today]);
+  }, [dataProxy, today, bathCompletedCount]);
 
   /* ─── Chart data from pre-computed daily rows ─── */
   const bucketMode = useMemo(() => {
