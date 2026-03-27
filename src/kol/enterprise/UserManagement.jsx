@@ -32,7 +32,6 @@ function EnterpriseUserManagement({ profile, userLocationIds }) {
 
   const allEnterprises = [
     { id: "ch", name: "Cherry Hill", adminName: "Alice Johnson", adminEmail: "alice@k9operations.com" },
-    { id: "demo", name: "Demo Location", adminName: "Bob Smith", adminEmail: "bob@k9operations.com" },
   ];
   // Filter locations by user's accessible location_ids (null = all)
   const enterprises = userLocationIds ? allEnterprises.filter(l => userLocationIds.includes(l.id)) : allEnterprises;
