@@ -501,9 +501,9 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
       cleaningType = "disinfect";
       needsDisinfect = true;
     } else if (startDate === today) {
-      // First day — refresh
-      cleaningType = "refresh";
-      needsRefresh = true;
+      // First day — room is already fresh from setup, no refresh needed
+      cleaningType = "none";
+      needsRefresh = false;
     } else {
       // Middle of stay — refresh
       cleaningType = "refresh";
@@ -562,7 +562,7 @@ async function computeRoomCleaning(supabase: any, bohData: any, locationId: stri
 
     if (isDayBoarding) { cleaningType = "disinfect"; needsDisinfect = true; }
     else if (endDate === today) { cleaningType = "disinfect"; needsDisinfect = true; }
-    else if (startDate === today) { cleaningType = "refresh"; needsRefresh = true; }
+    else if (startDate === today) { cleaningType = "none"; needsRefresh = false; }
     else { cleaningType = "refresh"; needsRefresh = true; }
 
     const startD = new Date(startDate + "T12:00:00");
@@ -1083,7 +1083,7 @@ function formatTimeHuman(isoStr: string): string {
 
 async function computeBathingReport(supabase: any, locationId: string, today: string): Promise<any> {
   // Fetch all reservations with bath services for today (active + checked out today)
-  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_out_date, raw_data, room_assignment, services";
+  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_out_date, raw_data, room_assignment, services, notes_reservation, notes_animal";
   const [{ data: activeRes }, { data: coRes }] = await Promise.all([
     supabase.from("gingr_reservations").select(resSelect)
       .eq("location_id", locationId)
@@ -1120,6 +1120,10 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     const resType = rd.reservation_type || {};
     const roomLabel = r.room_assignment || rd.run?.name || "";
 
+    // Combine reservation + animal notes
+    const notesParts = [r.notes_reservation, r.notes_animal].filter(Boolean);
+    const reservationNotes = notesParts.join(" | ");
+
     bathDogs.push({
       animalGingrId,
       gingrReservationId: String(r.gingr_id || ""),
@@ -1131,6 +1135,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       addonType,
       bathServiceName: bathSvc?.name || "",
       bathModifiers: modifiers,
+      reservationNotes,
       scheduledAt,
       scheduledTime: formatTimeHuman(scheduledAt),
       departureTime: formatTimeHuman(endDate),
@@ -1140,17 +1145,41 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     });
   }
 
-  // Fetch bath icons for all dogs
+  // Fetch bath icons, play icons, and weights for all dogs
   let iconMap: Record<string, { title: string; comment: string }> = {};
+  let playIconMap: Record<string, string> = {}; // animal_id → play type (e.g. "Private Play")
+  let weightMap: Record<string, number | null> = {};
   if (animalIds.length > 0) {
-    const { data: icons } = await supabase
-      .from("gingr_animal_icons_live")
-      .select("animal_gingr_id, icon_title, icon_comment")
-      .eq("location_id", locationId)
-      .eq("icon_group", "Bath")
-      .in("animal_gingr_id", animalIds);
+    const [{ data: icons }, { data: playIcons }, { data: animals }] = await Promise.all([
+      supabase
+        .from("gingr_animal_icons_live")
+        .select("animal_gingr_id, icon_title, icon_comment")
+        .eq("location_id", locationId)
+        .eq("icon_group", "Bath")
+        .in("animal_gingr_id", animalIds),
+      supabase
+        .from("gingr_animal_icons_live")
+        .select("animal_gingr_id, icon_title")
+        .eq("location_id", locationId)
+        .eq("icon_group", "Play")
+        .in("animal_gingr_id", animalIds),
+      supabase
+        .from("gingr_animals")
+        .select("gingr_id, weight")
+        .in("gingr_id", animalIds),
+    ]);
     (icons || []).forEach((r: any) => {
       iconMap[r.animal_gingr_id] = { title: r.icon_title || "", comment: r.icon_comment || "" };
+    });
+    (playIcons || []).forEach((r: any) => {
+      const title = (r.icon_title || "").toLowerCase();
+      if (title.includes("private") && title.includes("play")) {
+        playIconMap[r.animal_gingr_id] = "private_play";
+      }
+    });
+    (animals || []).forEach((a: any) => {
+      const w = a.weight ? parseFloat(a.weight) : null;
+      weightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
     });
   }
 
@@ -1161,6 +1190,10 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       || d.addonType
       || extractBathTypeFromName(d.bathServiceName)
       || "Standard";
+    const weight = weightMap[d.animalGingrId] ?? null;
+    // Size classification: <30 lbs = small, >=30 lbs = large
+    const sizeCategory = weight != null ? (weight < 30 ? "small" : "large") : null;
+    const hasPrivatePlay = !!playIconMap[d.animalGingrId];
     return {
       animalGingrId: d.animalGingrId,
       gingrReservationId: d.gingrReservationId,
@@ -1172,6 +1205,10 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       bathType,
       bathModifiers: d.bathModifiers,
       bathNotes: icon?.comment || "",
+      reservationNotes: d.reservationNotes || "",
+      weight,
+      sizeCategory,
+      hasPrivatePlay,
       scheduledAt: d.scheduledAt,
       scheduledTime: d.scheduledTime,
       departureTime: d.departureTime,
