@@ -68,7 +68,7 @@ function Root() {
   const isPublicPricing = path === '/pricing';
   const isLandingPage = path === '/' || path === '';
   const isPOS = path.startsWith('/pos');
-  const isLite = path.startsWith('/lite');
+  const isLite = !isPOS; // Base app handles everything except /pos
 
   // Public pages — no auth required
   if (isBookingPage) return <BookingPage />;
