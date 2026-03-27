@@ -1318,11 +1318,15 @@ function DashboardContent({
   const isToday = range === "today";
 
   // ─── Live Snapshot: 10-second polling for real-time snapshot counts ───
+  // Respects business hours setting — pauses outside configured window
   const [liveSnap, setLiveSnap] = useState(null);
+  const bizHoursCheck = refreshOptions?.isWithinBusinessHours;
   useEffect(() => {
     if (!isToday || !locationId) { setLiveSnap(null); return; }
     let cancelled = false;
     const poll = async () => {
+      // Skip poll if outside business hours
+      if (bizHoursCheck && !bizHoursCheck()) { setLiveSnap(null); return; }
       try {
         const { data } = await supabase.rpc("snapshot_live", { p_location_id: locationId });
         if (!cancelled && data) setLiveSnap(data);
@@ -1331,7 +1335,7 @@ function DashboardContent({
     poll();
     const iv = setInterval(poll, 10000);
     return () => { cancelled = true; clearInterval(iv); };
-  }, [isToday, locationId]);
+  }, [isToday, locationId, bizHoursCheck]);
   // Overlay today's live cash data on trailing week rows too
   const correctedTrailingWeekRows = useMemo(() => buildCashChartRows(trailingWeekRows, todayCashData), [trailingWeekRows, todayCashData]);
   const cashChartData = useMemo(() => {
