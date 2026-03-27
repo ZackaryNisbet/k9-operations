@@ -1081,7 +1081,7 @@ function DashboardContent({
         const daysSinceMonday = dow === 0 ? 6 : dow - 1;
         if (snapRes.data?.id) {
           const { data: countRows } = await supabase.from("inventory_counts")
-            .select("stock_count, in_transit, ordered, skipped, catalog_item_id, counted_at, ordered_at, skipped_at").eq("snapshot_id", snapRes.data.id);
+            .select("stock_count, in_transit, ordered, skipped, catalog_item_id, counted_at, ordered_at, skipped_at, created_at").eq("snapshot_id", snapRes.data.id);
           if (cancelled) return;
           const rows = countRows || [];
           const counted = rows.filter(r => r.stock_count != null).length;
@@ -1105,7 +1105,7 @@ function DashboardContent({
           // Find completion dates
           let countingDoneDate = null, orderingDoneDate = null;
           if (countingDone) {
-            const countedDates = rows.filter(r => r.counted_at).map(r => new Date(r.counted_at));
+            const countedDates = rows.filter(r => r.counted_at || r.created_at).map(r => new Date(r.counted_at || r.created_at));
             if (countedDates.length > 0) countingDoneDate = new Date(Math.max(...countedDates));
           }
           if (orderingDone && countingDone) {
