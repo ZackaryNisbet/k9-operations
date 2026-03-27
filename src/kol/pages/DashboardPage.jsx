@@ -1891,7 +1891,10 @@ function DashboardContent({
           <div className="ops-section-header">{snapshotLabel}</div>
           <div className="ops-hero">
             <div className="ops-hero-card" onClick={navTo["checkout-tv"]}>
-              <div className="ops-hero-label">Dogs In House</div>
+              <div className="ops-hero-label" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                Dogs In House
+                {liveSnap && <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.suc, animation: "dashPulse 1.5s infinite", flexShrink: 0 }} />}
+              </div>
               <div className="ops-hero-value">{liveSnap ? liveSnap.in_house : m.dogsInHouse}</div>
               <div className="ops-hero-sub">
                 {liveSnap ? `${liveSnap.boarding}B · ${liveSnap.daycare}D` : `${m.boardingInHouse || 0}B · ${m.daycareInHouse || 0}D`}
