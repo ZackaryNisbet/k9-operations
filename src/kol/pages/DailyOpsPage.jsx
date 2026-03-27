@@ -571,7 +571,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
               {missedMap[rm]?.missedDisinfect && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 4, marginTop: 2, display: "inline-block" }}>⚠ Disinfect missed</div>}
               {missedMap[rm]?.missedAsNeeded && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 4, marginTop: 2, display: "inline-block" }}>⚠ As-needed missed{missedMap[rm]?.asNeededNote ? `: ${missedMap[rm].asNeededNote}` : ""}</div>}
             </div> : <div>
-              {(missedMap[rm]?.missedDisinfect || missedMap[rm]?.missedAsNeeded) ? <div>
+              {hasSetup && aDog ? <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: C.pri, marginTop: 1 }}>{aDog}</div>
+                {aOwner && <div style={{ fontSize: 10, color: C.textMut }}>{aOwner}</div>}
+              </div> : (missedMap[rm]?.missedDisinfect || missedMap[rm]?.missedAsNeeded) ? <div>
                 <div style={{ fontSize: 10, color: C.textMut, fontStyle: "italic", marginTop: 1 }}>Vacant</div>
                 {missedMap[rm]?.missedDisinfect && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 4, marginTop: 2, display: "inline-block" }}>⚠ Disinfect missed</div>}
                 {missedMap[rm]?.missedAsNeeded && <div style={{ fontSize: 10, fontWeight: 700, color: "#92400E", background: "#FEF3C7", padding: "1px 6px", borderRadius: 4, marginTop: 2, display: "inline-block" }}>⚠ As-needed missed</div>}
