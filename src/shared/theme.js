@@ -368,7 +368,7 @@ function formatDogNames(dogs) {
 }
 const titleCase = (s) => (s || "").replace(/\b\w/g, c => c.toUpperCase());
 const fmtPhone = (p) => { const d = (p||"").replace(/\D/g,""); return d.length===10?`(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`:p||""; };
-const _toDateStr = (d) => { if(!d) return null; const s=String(d); if(s.length===10 && /^\d{4}-\d{2}-\d{2}$/.test(s)) return s; const m=s.match(/^(\d{4}-\d{2}-\d{2})/); return m?m[1]:null; };
+const _toDateStr = (d) => { if(!d) return null; if(d instanceof Date) { const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), day=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${day}`; } const s=String(d); if(s.length===10 && /^\d{4}-\d{2}-\d{2}$/.test(s)) return s; const m=s.match(/^(\d{4}-\d{2}-\d{2})/); return m?m[1]:null; };
 const fmtDate = (d) => { const ds=_toDateStr(d); if(!ds) return ""; const dt=new Date(ds+"T00:00:00"); return isNaN(dt.getTime())?"":dt.toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric"}); };
 const fmtDateFull = (d) => { const ds=_toDateStr(d); if(!ds) return ""; const dt=new Date(ds+"T00:00:00"); return isNaN(dt.getTime())?"":`${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${dt.getFullYear()}`; };
 const fmtDateShort = (d) => { const ds=_toDateStr(d); if(!ds) return ""; const dt=new Date(ds+"T00:00:00"); return isNaN(dt.getTime())?"":`${String(dt.getMonth()+1).padStart(2,"0")}/${String(dt.getDate()).padStart(2,"0")}/${String(dt.getFullYear()).slice(2)}`; };
