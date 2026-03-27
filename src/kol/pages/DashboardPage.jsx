@@ -1246,36 +1246,25 @@ function DashboardContent({
   useEffect(() => {
     if (!locationId) return;
     let cancelled = false;
-    supabase.from("lite_settings").select("setting_value")
-      .eq("location_id", locationId)
-      .eq("setting_key", `ops_bathing_${today}`)
-      .limit(1)
-      .then(({ data: rows, error }) => {
-        if (cancelled) return;
-        if (error) { console.error("Bath completions fetch error:", error); return; }
-        if (rows && rows.length > 0 && rows[0].setting_value) {
-          setBathCompletedCount(Object.keys(rows[0].setting_value).length);
-        } else {
-          setBathCompletedCount(0);
-        }
-      });
-    return () => { cancelled = true; };
+    const fetchBathCount = () => {
+      supabase.from("lite_settings").select("setting_value")
+        .eq("location_id", locationId)
+        .eq("setting_key", `ops_bathing_${today}`)
+        .limit(1)
+        .then(({ data: rows }) => {
+          if (cancelled) return;
+          if (rows && rows.length > 0 && rows[0].setting_value) {
+            setBathCompletedCount(Object.keys(rows[0].setting_value).length);
+          } else {
+            setBathCompletedCount(0);
+          }
+        });
+    };
+    fetchBathCount();
+    // Poll every 5s to stay in sync with bathing report (lightweight query)
+    const iv = setInterval(fetchBathCount, 5000);
+    return () => { cancelled = true; clearInterval(iv); };
   }, [locationId, today]);
-
-  // Realtime: re-fetch bath completions when lite_settings changes
-  useEffect(() => {
-    if (!locationId) return;
-    const channel = supabase.channel("bath-completions")
-      .on("postgres_changes", { event: "*", schema: "public", table: "lite_settings", filter: `location_id=eq.${locationId}` }, (payload) => {
-        const key = payload.new?.setting_key || payload.old?.setting_key;
-        if (key && key.startsWith("ops_bathing_")) {
-          const val = payload.new?.setting_value;
-          setBathCompletedCount(val ? Object.keys(val).length : 0);
-        }
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [locationId]);
 
   const svcData = useMemo(() => {
     if (!stableReservations || stableReservations.length === 0) return { bathsTotal: 0, bathsDone: 0, ppTotal: 0, ppCompleted: 0, pamperTotal: 0, pamperDone: 0, iceCreamTotal: 0, iceCreamDone: 0 };
