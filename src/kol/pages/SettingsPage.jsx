@@ -101,7 +101,7 @@ function SubscriptionTab({ profile, addGlobalToast }) {
         <div style={{ background: C.priLt, border: `1.5px solid ${C.pri}40`, borderRadius: 14, padding: 24, textAlign: "center" }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: C.text, marginBottom: 8 }}>No active subscription</div>
           <div style={{ fontSize: 13, color: C.textSec, marginBottom: 16 }}>Choose a plan to unlock all features.</div>
-          <Btn variant="primary" size="sm" onClick={() => { window.location.href = "/lite/pricing"; }}>
+          <Btn variant="primary" size="sm" onClick={() => { window.location.href = "/pricing"; }}>
             View Plans
           </Btn>
         </div>
