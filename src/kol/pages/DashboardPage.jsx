@@ -2007,14 +2007,40 @@ function DashboardContent({
               { label: "Photos", icon: <I.Camera />, click: navTo["photos"] },
               { label: "Cash Tips", icon: <I.DollarSign />, click: navTo["cash-tips"] },
               { label: "Checkout Notes", icon: <I.Clipboard />, click: navTo["checkout-notes"] },
-              { label: "Inventory", icon: <I.Package />, click: navTo["inventory"] },
-              { label: "Operations Hub", icon: <I.ClipboardCheck />, click: navTo["enterprise-ops"] },
+              { label: "Operations Hub", icon: <I.ClipboardCheck />, click: navTo["ops-opening"] },
             ].map((item) => (
               <div key={item.label} className="ops-quick-action" onClick={item.click}>
                 <div className="ops-quick-action-icon">{item.icon}</div>
                 <div className="ops-quick-action-label">{item.label}</div>
               </div>
             ))}
+            {/* Inventory — special card with status indicator */}
+            {(() => {
+              const isOrdering = invStatus.phase === "ordering";
+              const isDone = invStatus.phase === "done";
+              const displayDone = isOrdering ? (invStatus.ordered || 0) : invStatus.itemsCounted;
+              const displayTotal = isOrdering ? (invStatus.needsOrder || 0) : invStatus.totalItems;
+              const pct = displayTotal > 0 ? Math.round((displayDone / displayTotal) * 100) : 0;
+              const barColor = isDone ? C.suc : invStatus.overdue ? "#EF4444" : C.acc;
+              const statusLabel = isDone ? "Complete" : isOrdering ? "Ordering" : `${displayDone}/${displayTotal}`;
+              return (
+                <div className="ops-quick-action" onClick={navTo["inventory"]} style={{ position: "relative" }}>
+                  {invStatus.overdue && (
+                    <span style={{
+                      position: "absolute", top: 6, right: 6,
+                      padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700,
+                      background: "#FEE2E2", color: "#DC2626",
+                    }}>{invStatus.daysOverdue}d overdue</span>
+                  )}
+                  <div className="ops-quick-action-icon" style={{ color: barColor }}><I.Package /></div>
+                  <div className="ops-quick-action-label">Inventory</div>
+                  <div style={{ width: "70%", height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", marginTop: 4, overflow: "hidden" }}>
+                    <div style={{ width: `${pct}%`, height: "100%", borderRadius: 2, background: barColor, transition: "width 0.3s ease" }} />
+                  </div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: isDone ? C.suc : C.textMut, marginTop: 2 }}>{statusLabel}</div>
+                </div>
+              );
+            })()}
           </div>
         </div>
 
