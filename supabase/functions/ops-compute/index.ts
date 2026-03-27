@@ -136,6 +136,112 @@ async function gingrFetch(
   return resp.json();
 }
 
+// ─── Gingr Web Session Auth (for service-level notes) ─────────────────────
+
+/**
+ * Authenticate to Gingr's web interface using the API key as both
+ * username and password. Returns the cookie string for authenticated requests.
+ */
+async function gingrWebLogin(subdomain: string, apiKey: string): Promise<string> {
+  const baseUrl = `https://${subdomain}.gingrapp.com`;
+
+  // Step 1: GET /auth/login to get CSRF token and session cookie
+  const loginPageResp = await fetch(`${baseUrl}/auth/login`, { redirect: "manual" });
+  const loginPageCookies = loginPageResp.headers.get("set-cookie") || "";
+  const loginHtml = await loginPageResp.text();
+
+  // Extract gingr_ci_session cookie
+  const sessionMatch = loginPageCookies.match(/gingr_ci_session=([^;]+)/);
+  const csrfCookieMatch = loginPageCookies.match(/gingr_csrf_cookie_name=([^;]+)/);
+  const sessionCookie = sessionMatch ? `gingr_ci_session=${sessionMatch[1]}` : "";
+  const csrfCookie = csrfCookieMatch ? `gingr_csrf_cookie_name=${csrfCookieMatch[1]}` : "";
+
+  // Extract CSRF token from hidden input
+  const csrfMatch = loginHtml.match(/name="gingr_csrf_token"\s+value="([^"]+)"/);
+  const csrfToken = csrfMatch?.[1] || "";
+
+  if (!csrfToken || !sessionCookie) {
+    throw new Error("Failed to extract CSRF token or session cookie from Gingr login page");
+  }
+
+  // Step 2: POST /auth/login with API key as both identity and password
+  const cookieHeader = [sessionCookie, csrfCookie].filter(Boolean).join("; ");
+  const loginResp = await fetch(`${baseUrl}/auth/login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "Cookie": cookieHeader,
+    },
+    body: `identity=${encodeURIComponent(apiKey)}&password=${encodeURIComponent(apiKey)}&gingr_csrf_token=${encodeURIComponent(csrfToken)}`,
+    redirect: "manual",
+  });
+
+  // Parse authenticated session cookies from response
+  const authCookies = loginResp.headers.get("set-cookie") || "";
+  const authSessionMatch = authCookies.match(/gingr_ci_session=([^;]+)/);
+  const authCsrfMatch = authCookies.match(/gingr_csrf_cookie_name=([^;]+)/);
+
+  const parts: string[] = [];
+  if (authSessionMatch) parts.push(`gingr_ci_session=${authSessionMatch[1]}`);
+  else if (sessionMatch) parts.push(sessionCookie); // fall back to original session
+  if (authCsrfMatch) parts.push(`gingr_csrf_cookie_name=${authCsrfMatch[1]}`);
+  else if (csrfCookieMatch) parts.push(csrfCookie);
+  parts.push(`gingr_subdomain=${subdomain}`);
+
+  return parts.join("; ");
+}
+
+/**
+ * Fetch service-level notes from Gingr web interface for a given service ID.
+ * Parses the `var services = [...]` JS variable from the HTML response.
+ */
+async function fetchServiceNotes(subdomain: string, cookies: string, serviceId: string): Promise<string | null> {
+  try {
+    const resp = await fetch(`https://${subdomain}.gingrapp.com/services/edit/id/${serviceId}`, {
+      headers: { "Cookie": cookies },
+      redirect: "manual",
+    });
+    if (resp.status === 302 || resp.status === 301) {
+      // Redirected — likely session expired
+      return null;
+    }
+    const html = await resp.text();
+    const match = html.match(/var services\s*=\s*(\[.*?\]);/s);
+    if (match) {
+      const services = JSON.parse(match[1]);
+      return services[0]?.notes || null;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch service notes for multiple service IDs in parallel with concurrency limit.
+ */
+async function fetchAllServiceNotes(
+  subdomain: string,
+  cookies: string,
+  serviceIds: Array<{ index: number; serviceId: string }>,
+  concurrency: number = 5,
+): Promise<Record<number, string | null>> {
+  const results: Record<number, string | null> = {};
+  const queue = [...serviceIds];
+
+  async function worker() {
+    while (queue.length > 0) {
+      const item = queue.shift();
+      if (!item) break;
+      results[item.index] = await fetchServiceNotes(subdomain, cookies, item.serviceId);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 // ─── Date helpers ──────────────────────────────────────────────────────────
 
 // Edge functions run in UTC. All date-sensitive operations must use ET.
@@ -1107,7 +1213,7 @@ function formatTimeHuman(isoStr: string): string {
   } catch { return "—"; }
 }
 
-async function computeBathingReport(supabase: any, locationId: string, today: string): Promise<any> {
+async function computeBathingReport(supabase: any, locationId: string, today: string, gingrSubdomain?: string, gingrApiKey?: string): Promise<any> {
   // Fetch all reservations with bath services for today:
   //   1) Checked-in and not yet checked out (boarding dogs in-house)
   //   2) Checked out today (departures)
@@ -1172,6 +1278,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     bathDogs.push({
       animalGingrId,
       gingrReservationId: String(r.gingr_id || ""),
+      bathServiceId: bathSvc?.id ? String(bathSvc.id) : "",
       animalName: r.animal_name || rd.animal?.name || "Unknown",
       ownerName: [r.owner_first_name || rd.owner?.first_name || "", r.owner_last_name || rd.owner?.last_name || ""].filter(Boolean).join(" "),
       breed: rd.animal?.breed || "",
@@ -1228,8 +1335,25 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     });
   }
 
+  // Fetch service-level notes from Gingr web interface (not available via API)
+  let serviceNotesMap: Record<number, string | null> = {};
+  if (gingrSubdomain && gingrApiKey && bathDogs.some(d => d.bathServiceId)) {
+    try {
+      const webCookies = await gingrWebLogin(gingrSubdomain, gingrApiKey);
+      const toFetch = bathDogs
+        .map((d, i) => d.bathServiceId ? { index: i, serviceId: d.bathServiceId } : null)
+        .filter((x): x is { index: number; serviceId: string } => x !== null);
+      if (toFetch.length > 0) {
+        serviceNotesMap = await fetchAllServiceNotes(gingrSubdomain, webCookies, toFetch, 5);
+      }
+    } catch (err) {
+      console.error("Gingr web login/service notes error:", err);
+      // Non-fatal: continue without service notes
+    }
+  }
+
   // Resolve bath type: icon → add-on → service name → Standard
-  const dogs = bathDogs.map(d => {
+  const dogs = bathDogs.map((d, idx) => {
     const icon = iconMap[d.animalGingrId];
     const bathType = icon?.title
       || d.addonType
@@ -1252,6 +1376,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       bathModifiers: d.bathModifiers,
       bathNotes: icon?.comment || "",
       reservationNotes: d.reservationNotes || "",
+      serviceNotes: serviceNotesMap[idx] || "",
       weight,
       sizeCategory,
       hasPrivatePlay,
@@ -1464,7 +1589,7 @@ Deno.serve(async (req: Request) => {
     );
 
     // 8. Bathing Report (server-side bath type resolution)
-    const bathingReport = await computeBathingReport(supabase, locationId, today);
+    const bathingReport = await computeBathingReport(supabase, locationId, today, gingrSubdomain, gingrApiKey);
 
     // 9. Service Reports
     const pamperReport = computeServiceReport(reservations, "pamper");

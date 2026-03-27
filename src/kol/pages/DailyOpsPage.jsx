@@ -1080,6 +1080,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         bathModifiers: d.bathModifiers || [],
         bathNotes: d.bathNotes || "",
         reservationNotes: d.reservationNotes || "",
+        serviceNotes: d.serviceNotes || "",
         sizeCategory: d.sizeCategory || null,
         hasPrivatePlay: !!d.hasPrivatePlay,
         weight: d.weight || null,
@@ -1205,8 +1206,13 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                           </div>}
                           {row.bathNotes && <div style={{ fontSize: 10, fontStyle: "italic", color: "#D97706", marginTop: 2 }}>{row.bathNotes}</div>}
                         </td>
-                        <td style={{ padding: "12px 14px", color: C.textSec, fontSize: 12, fontFamily: "inherit", maxWidth: 200 }}>
-                          {row.reservationNotes ? <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.3 }}>{row.reservationNotes}</div> : <span style={{ color: C.textMut }}>—</span>}
+                        <td style={{ padding: "12px 14px", color: C.textSec, fontSize: 12, fontFamily: "inherit", maxWidth: 240 }}>
+                          {(row.serviceNotes || row.reservationNotes) ? (
+                            <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.3 }}>
+                              {row.serviceNotes && <div style={{ color: C.text, fontWeight: 600, marginBottom: row.reservationNotes ? 4 : 0 }}>{row.serviceNotes}</div>}
+                              {row.reservationNotes && <div style={{ color: C.textMut, fontSize: 11 }}>{row.reservationNotes}</div>}
+                            </div>
+                          ) : <span style={{ color: C.textMut }}>—</span>}
                         </td>
                         <td style={{ padding: "12px 14px", textAlign: "center", color: C.pri, fontSize: 12, fontWeight: 600, fontFamily: "inherit" }}>{row.schedTime}</td>
                         <td style={{ padding: "12px 14px", textAlign: "center", color: C.textSec, fontSize: 12, fontFamily: "inherit" }}>{row.coTime}</td>
