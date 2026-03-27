@@ -17,7 +17,6 @@ import { applyStructuredFilters } from "../../hooks/useFilters";
 function EnterpriseAttendance({ profile, userLocationIds }) {
   const allLocationStats = [
     { id: "ch", name: "Adair Forsythe", activeStaff: 12, tardies: 3, callOuts: 2, perfectAttendance: 83 },
-    { id: "demo", name: "Demo Location", activeStaff: 8, tardies: 1, callOuts: 1, perfectAttendance: 88 },
   ];
   // Filter locations by user's accessible location_ids (null = all)
   const locationStats = userLocationIds ? allLocationStats.filter(l => userLocationIds.includes(l.id)) : allLocationStats;

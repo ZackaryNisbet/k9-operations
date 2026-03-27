@@ -695,8 +695,20 @@ function LeanAppInner() {
       return;
     }
     setCurrentLocation(locId);
+    // Navigate to appropriate default page when switching location type
+    const isEnterprise = locId === "enterprise";
+    const wasEnterprise = currentLocation === "enterprise";
+    if (isEnterprise && !wasEnterprise) {
+      setPage("enterprise-ops");
+      setParams({});
+      setNavStack([{ page: "enterprise-ops", params: {} }]);
+    } else if (!isEnterprise && wasEnterprise) {
+      setPage("dashboard");
+      setParams({});
+      setNavStack([{ page: "dashboard", params: {} }]);
+    }
     try { localStorage.setItem("k9_lite_location", locId); } catch {}
-  }, [allLocations]);
+  }, [allLocations, currentLocation]);
 
   // Fetch team accounts for quick-switch
   useEffect(() => {
@@ -915,7 +927,7 @@ function LeanAppInner() {
           </div>
           <div style={{ overflow: "hidden", opacity: sbExpanded ? 1 : 0, transition: "opacity 0.1s", whiteSpace: "nowrap" }}>
             <div style={{ fontSize: 16, fontWeight: 700, color: C.acc, fontFamily: "'Outfit', sans-serif", letterSpacing: "0.02em" }}>K9 Operations</div>
-            <div style={{ fontSize: 10, color: "rgba(132,204,22,0.6)", fontWeight: 500, letterSpacing: "0.08em", textTransform: "uppercase" }}>The Operating System for Pet Care</div>
+            <div style={{ fontSize: 9, color: "rgba(132,204,22,0.6)", fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis" }}>The Operating System for Pet Care</div>
           </div>
         </div>
 
