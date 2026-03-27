@@ -1985,7 +1985,7 @@ function DashboardContent({
                 { label: "Set-Ups", pct: roomBreakdown.totalSetups > 0 ? Math.round((roomBreakdown.doneSetups / roomBreakdown.totalSetups) * 100) : 0, count: `${roomBreakdown.doneSetups}/${roomBreakdown.totalSetups}`, click: navTo["ops-rooms"] },
                 { label: "Disinfects", pct: roomBreakdown.totalDisinfects > 0 ? Math.round((roomBreakdown.doneDisinfects / roomBreakdown.totalDisinfects) * 100) : 0, count: `${roomBreakdown.doneDisinfects}/${roomBreakdown.totalDisinfects}`, click: navTo["ops-rooms"] },
                 { label: "Refreshes", pct: roomBreakdown.totalRefreshes > 0 ? Math.round((roomBreakdown.doneRefreshes / roomBreakdown.totalRefreshes) * 100) : 0, count: `${roomBreakdown.doneRefreshes}/${roomBreakdown.totalRefreshes}`, click: navTo["ops-rooms"] },
-                { label: "Weekly Inventory", pct: wmStats.total > 0 ? Math.round((wmStats.checked / wmStats.total) * 100) : 0, count: `${wmStats.checked}/${wmStats.total}`, click: navTo["ops-weekly-maintenance"] },
+                { label: "Weekly Maintenance", pct: wmStats.total > 0 ? Math.round((wmStats.checked / wmStats.total) * 100) : 0, count: `${wmStats.checked}/${wmStats.total}`, click: navTo["ops-weekly-maintenance"] },
               ].map((item) => (
                 <div key={item.label} className="ops-progress-row" onClick={item.click}>
                   <span className="ops-progress-label">{item.label}</span>
