@@ -1162,8 +1162,11 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     const resType = rd.reservation_type || {};
     const roomLabel = r.room_assignment || rd.run?.name || "";
 
-    // Combine reservation + animal + owner notes
-    const notesParts = [r.notes_reservation, r.notes_animal, r.notes_owner].filter(Boolean);
+    // Combine reservation + animal + owner notes (strip HTML tags for readability)
+    const notesParts = [r.notes_reservation, r.notes_animal, r.notes_owner]
+      .filter(Boolean)
+      .map((n: string) => n.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
     const reservationNotes = notesParts.join(" | ");
 
     bathDogs.push({
@@ -1187,13 +1190,12 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     });
   }
 
-  // Fetch bath icons, play icons, check-in questions, and weights for all dogs
+  // Fetch bath icons, play icons, and weights for all dogs
   let iconMap: Record<string, { title: string; comment: string }> = {};
   let playIconMap: Record<string, string> = {}; // animal_id → play type (e.g. "Private Play")
-  let checkInMap: Record<string, string> = {}; // animal_id → check-in questions HTML
   let weightMap: Record<string, number | null> = {};
   if (animalIds.length > 0) {
-    const [{ data: icons }, { data: playIcons }, { data: checkInIcons }, { data: animals }] = await Promise.all([
+    const [{ data: icons }, { data: playIcons }, { data: animals }] = await Promise.all([
       supabase
         .from("gingr_animal_icons_live")
         .select("animal_gingr_id, icon_title, icon_comment")
@@ -1205,12 +1207,6 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
         .select("animal_gingr_id, icon_title")
         .eq("location_id", locationId)
         .eq("icon_group", "Play")
-        .in("animal_gingr_id", animalIds),
-      supabase
-        .from("gingr_animal_icons_live")
-        .select("animal_gingr_id, icon_comment")
-        .eq("location_id", locationId)
-        .eq("icon_title", "Check-in Questions")
         .in("animal_gingr_id", animalIds),
       supabase
         .from("gingr_animals")
@@ -1225,9 +1221,6 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       if (title.includes("private") && title.includes("play")) {
         playIconMap[r.animal_gingr_id] = "private_play";
       }
-    });
-    (checkInIcons || []).forEach((r: any) => {
-      if (r.icon_comment) checkInMap[r.animal_gingr_id] = r.icon_comment;
     });
     (animals || []).forEach((a: any) => {
       const w = a.weight ? parseFloat(a.weight) : null;
@@ -1247,17 +1240,6 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     const sizeCategory = weight != null ? (weight < 30 ? "small" : "large") : null;
     const hasPrivatePlay = !!playIconMap[d.animalGingrId];
 
-    // Enrich notes: reservation notes + check-in questions (strip HTML tags for readability)
-    let enrichedNotes = d.reservationNotes || "";
-    const checkInHtml = checkInMap[d.animalGingrId];
-    if (checkInHtml) {
-      // Strip HTML tags and extract plain text for display
-      const plainText = checkInHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-      if (plainText) {
-        enrichedNotes = enrichedNotes ? `${enrichedNotes} | ${plainText}` : plainText;
-      }
-    }
-
     return {
       animalGingrId: d.animalGingrId,
       gingrReservationId: d.gingrReservationId,
@@ -1269,7 +1251,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       bathType,
       bathModifiers: d.bathModifiers,
       bathNotes: icon?.comment || "",
-      reservationNotes: enrichedNotes,
+      reservationNotes: d.reservationNotes || "",
       weight,
       sizeCategory,
       hasPrivatePlay,
