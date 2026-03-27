@@ -2022,7 +2022,7 @@ function DashboardContent({
               const displayTotal = isOrdering ? (invStatus.needsOrder || 0) : invStatus.totalItems;
               const pct = displayTotal > 0 ? Math.round((displayDone / displayTotal) * 100) : 0;
               const barColor = isDone ? C.suc : invStatus.overdue ? "#EF4444" : C.acc;
-              const statusLabel = isDone ? "Complete" : isOrdering ? "Ordering" : `${displayDone}/${displayTotal}`;
+              const statusLabel = isDone ? "Complete" : isOrdering ? `Ordering — ${displayDone}/${displayTotal}` : `${displayDone}/${displayTotal} counted`;
               return (
                 <div className="ops-quick-action" onClick={navTo["inventory"]} style={{ position: "relative" }}>
                   {invStatus.overdue && (
