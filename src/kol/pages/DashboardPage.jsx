@@ -1055,7 +1055,7 @@ function DashboardContent({
   }, [nav]);
 
   // ─── Inventory snapshot status (reads from inventory_snapshots + inventory_counts) ──
-  const [invStatus, setInvStatus] = useState({ itemsCounted: 0, totalItems: 0, overdue: false, daysOverdue: 0, phase: "counting", needsOrder: 0, ordered: 0 });
+  const [invStatus, setInvStatus] = useState({ itemsCounted: 0, totalItems: 0, overdue: false, daysOverdue: 0, phase: "counting", needsOrder: 0, ordered: 0, skipped: 0, countingDoneDate: null, orderingDoneDate: null, daysUntilNext: null });
   const [invTick, setInvTick] = useState(0);
   useEffect(() => {
     let cancelled = false;
@@ -1081,29 +1081,49 @@ function DashboardContent({
         const daysSinceMonday = dow === 0 ? 6 : dow - 1;
         if (snapRes.data?.id) {
           const { data: countRows } = await supabase.from("inventory_counts")
-            .select("stock_count, in_transit, ordered, catalog_item_id").eq("snapshot_id", snapRes.data.id);
+            .select("stock_count, in_transit, ordered, skipped, catalog_item_id, counted_at, ordered_at, skipped_at").eq("snapshot_id", snapRes.data.id);
           if (cancelled) return;
           const rows = countRows || [];
           const counted = rows.filter(r => r.stock_count != null).length;
           const countingDone = counted >= totalItems && totalItems > 0;
 
-          // Compute ordering progress
+          // Compute ordering progress (skipped items count as addressed)
           const countMap = {};
           rows.forEach(r => { countMap[r.catalog_item_id] = r; });
-          let needsOrder = 0, orderedCount = 0;
+          let needsOrder = 0, orderedCount = 0, skippedCount = 0;
           catalogItems.forEach(item => {
             const c = countMap[item.id];
             if (!c || c.stock_count == null) return;
             const toOrder = Math.max(0, (item.par_level || 0) - (parseInt(c.stock_count, 10) || 0) - (parseInt(c.in_transit, 10) || 0));
-            if (toOrder > 0) { needsOrder++; if (c.ordered) orderedCount++; }
+            if (toOrder > 0) { needsOrder++; if (c.ordered) orderedCount++; else if (c.skipped) skippedCount++; }
           });
-          const orderingDone = needsOrder === 0 || orderedCount >= needsOrder;
+          const addressedCount = orderedCount + skippedCount;
+          const orderingDone = needsOrder === 0 || addressedCount >= needsOrder;
           const allDone = countingDone && orderingDone;
           const phase = allDone ? "done" : countingDone ? "ordering" : "counting";
 
-          if (!cancelled) setInvStatus({ itemsCounted: counted, totalItems, overdue: isPastMonday && !allDone, daysOverdue: daysSinceMonday, phase, needsOrder, ordered: orderedCount });
+          // Find completion dates
+          let countingDoneDate = null, orderingDoneDate = null;
+          if (countingDone) {
+            const countedDates = rows.filter(r => r.counted_at).map(r => new Date(r.counted_at));
+            if (countedDates.length > 0) countingDoneDate = new Date(Math.max(...countedDates));
+          }
+          if (orderingDone && countingDone) {
+            const orderDates = rows.filter(r => r.ordered_at || r.skipped_at).map(r => new Date(r.ordered_at || r.skipped_at));
+            const countedDates = rows.filter(r => r.counted_at).map(r => new Date(r.counted_at));
+            const allDates = [...orderDates, ...countedDates];
+            if (allDates.length > 0) orderingDoneDate = new Date(Math.max(...allDates));
+          }
+
+          // Compute days until next Monday (next inventory cycle)
+          const todayDow = now.getDay();
+          const daysUntilNext = todayDow === 1 ? 7 : ((8 - todayDow) % 7);
+
+          if (!cancelled) setInvStatus({ itemsCounted: counted, totalItems, overdue: isPastMonday && !allDone, daysOverdue: daysSinceMonday, phase, needsOrder, ordered: orderedCount, skipped: skippedCount, countingDoneDate, orderingDoneDate, daysUntilNext });
         } else {
-          if (!cancelled) setInvStatus({ itemsCounted: 0, totalItems, overdue: isPastMonday && totalItems > 0, daysOverdue: daysSinceMonday, phase: "counting", needsOrder: 0, ordered: 0 });
+          const todayDow2 = now.getDay();
+          const daysUntilNext2 = todayDow2 === 1 ? 7 : ((8 - todayDow2) % 7);
+          if (!cancelled) setInvStatus({ itemsCounted: 0, totalItems, overdue: isPastMonday && totalItems > 0, daysOverdue: daysSinceMonday, phase: "counting", needsOrder: 0, ordered: 0, skipped: 0, countingDoneDate: null, orderingDoneDate: null, daysUntilNext: daysUntilNext2 });
         }
       } catch { /* silent */ }
     })();
@@ -1914,7 +1934,7 @@ function DashboardContent({
               <ChartFill chartData={accrualChartData} color={C.pri} compareColor={C.acc} animEpoch={animEpoch} id="accrual-main" dateLabels={accrualChartData.map(d => d.date)} useRawPoints lineType="linear" solidFill fillOpacity={0.35} showGuideLines todayHighlight={isToday} priorData={accrualPriorChartData} showPriorLine={showPriorPeriod} priorLineColor="#D4A017" priorFillColor="#D4A017" priorFillOpacity={0.25} />
             </div>
             <ServiceCell label="Private Play" done={svcData.ppCompleted} total={svcData.ppTotal} onClick={navTo["ops-pp"]} />
-            <InventoryCell done={invStatus.itemsCounted} total={invStatus.totalItems} overdue={invStatus.overdue} daysOverdue={invStatus.daysOverdue} phase={invStatus.phase} needsOrder={invStatus.needsOrder} ordered={invStatus.ordered} onClick={navTo["inventory"]} />
+            <InventoryCell done={invStatus.itemsCounted} total={invStatus.totalItems} overdue={invStatus.overdue} daysOverdue={invStatus.daysOverdue} phase={invStatus.phase} needsOrder={invStatus.needsOrder} ordered={invStatus.ordered} skipped={invStatus.skipped} countingDoneDate={invStatus.countingDoneDate} orderingDoneDate={invStatus.orderingDoneDate} daysUntilNext={invStatus.daysUntilNext} onClick={navTo["inventory"]} />
             <ChecklistCell label="Closing" progress={getChecklistProgress("ops-closing")} count={getChecklistCount("ops-closing")} onClick={navTo["ops-closing"]} />
             <MetricCell label="Test Health" value="172" sub="100% pass" onClick={navTo["test-health"]} color={C.suc} />
             <div className="dash-grid-cell empty-cell" />
@@ -2080,12 +2100,13 @@ function DashboardContent({
             {(() => {
               const isOrdering = invStatus.phase === "ordering";
               const isDone = invStatus.phase === "done";
-              const countPct = invStatus.totalItems > 0 ? Math.round((invStatus.itemsCounted / invStatus.totalItems) * 100) : 0;
-              const orderPct = invStatus.needsOrder > 0 ? Math.round(((invStatus.ordered || 0) / invStatus.needsOrder) * 100) : 0;
+              const countingDone = invStatus.itemsCounted >= invStatus.totalItems && invStatus.totalItems > 0;
               const mainColor = isDone ? C.suc : invStatus.overdue ? "#EF4444" : C.acc;
+              const fmtDate = (d) => { if (!d) return ""; const dt = new Date(d); return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
+              const addressedCount = (invStatus.ordered || 0) + (invStatus.skipped || 0);
               return (
                 <div className="ops-quick-action" onClick={navTo["inventory"]} style={{ position: "relative", justifyContent: "flex-start", paddingTop: 10, paddingBottom: 10 }}>
-                  {invStatus.overdue && (
+                  {invStatus.overdue && !isDone && (
                     <span style={{
                       position: "absolute", top: 6, right: 6,
                       padding: "2px 6px", borderRadius: 4, fontSize: 9, fontWeight: 700,
@@ -2094,29 +2115,39 @@ function DashboardContent({
                   )}
                   <div className="ops-quick-action-icon" style={{ color: mainColor }}><I.Package /></div>
                   <div className="ops-quick-action-label">Inventory</div>
-                  {/* Counting row */}
-                  <div style={{ width: "80%", marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, fontWeight: 600, color: countPct >= 100 ? C.suc : C.textMut }}>
-                      <span>Logged</span>
-                      <span>{invStatus.itemsCounted}/{invStatus.totalItems}</span>
-                    </div>
-                    <div style={{ width: "100%", height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
-                      <div style={{ width: `${Math.min(countPct, 100)}%`, height: "100%", borderRadius: 2, background: countPct >= 100 ? C.suc : C.acc, transition: "width 0.3s ease" }} />
-                    </div>
+                  <div style={{ width: "80%", marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
+                    {isDone ? (
+                      <>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, fontWeight: 600, color: C.suc }}>
+                          <span>✓ Done Counting</span>
+                          <span>{fmtDate(invStatus.countingDoneDate)}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, fontWeight: 600, color: C.suc }}>
+                          <span>✓ Done Ordering</span>
+                          <span>{fmtDate(invStatus.orderingDoneDate)}</span>
+                        </div>
+                        <div style={{ fontSize: 9, fontWeight: 500, color: C.textMut, marginTop: 2 }}>
+                          Next due in {invStatus.daysUntilNext} day{invStatus.daysUntilNext !== 1 ? "s" : ""}
+                        </div>
+                      </>
+                    ) : countingDone ? (
+                      <>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, fontWeight: 600, color: C.suc }}>
+                          <span>✓ Done Counting</span>
+                          <span>{fmtDate(invStatus.countingDoneDate)}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, fontWeight: 600, color: C.textMut }}>
+                          <span>Ordered</span>
+                          <span>{addressedCount}/{invStatus.needsOrder}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, fontWeight: 600, color: C.textMut }}>
+                        <span>Logged</span>
+                        <span>{invStatus.itemsCounted}/{invStatus.totalItems}</span>
+                      </div>
+                    )}
                   </div>
-                  {/* Ordering row (only when in ordering or done phase) */}
-                  {(isOrdering || isDone) && invStatus.needsOrder > 0 && (
-                    <div style={{ width: "80%", marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, fontWeight: 600, color: orderPct >= 100 ? C.suc : "#F59E0B" }}>
-                        <span>Ordered</span>
-                        <span>{invStatus.ordered || 0}/{invStatus.needsOrder}</span>
-                      </div>
-                      <div style={{ width: "100%", height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
-                        <div style={{ width: `${Math.min(orderPct, 100)}%`, height: "100%", borderRadius: 2, background: orderPct >= 100 ? C.suc : "#F59E0B", transition: "width 0.3s ease" }} />
-                      </div>
-                    </div>
-                  )}
-                  {isDone && <div style={{ fontSize: 9, fontWeight: 700, color: C.suc, marginTop: 4 }}>Complete</div>}
                 </div>
               );
             })()}
@@ -2821,47 +2852,48 @@ const QuickLinkCell = memo(function QuickLinkCell({ label, icon, onClick }) {
   );
 });
 
-/* InventoryCell — icon + progress bar + overdue badge + due day */
-const InventoryCell = memo(function InventoryCell({ done, total, overdue, daysOverdue, phase, needsOrder, ordered, onClick }) {
-  const isOrdering = phase === "ordering";
+/* InventoryCell — icon + status display + overdue badge */
+const InventoryCell = memo(function InventoryCell({ done, total, overdue, daysOverdue, phase, needsOrder, ordered, skipped, countingDoneDate, orderingDoneDate, daysUntilNext, onClick }) {
   const allDone = phase === "done";
-  const displayDone = isOrdering ? (ordered || 0) : done;
-  const displayTotal = isOrdering ? (needsOrder || 0) : total;
-  const pct = displayTotal > 0 ? Math.round((displayDone / displayTotal) * 100) : 0;
-  const barColor = allDone ? C.suc : overdue ? "#EF4444" : C.acc;
-  const isMonday = new Date().getDay() === 1;
-  const statusLabel = allDone ? "Complete" : overdue ? `${daysOverdue}d overdue` : isOrdering ? "Ordering" : total > 0 && done > 0 ? "Counting" : isMonday ? "Due Today" : "Due Monday";
-  const statusBg = allDone ? "rgba(16,185,129,0.1)" : overdue ? "rgba(239,68,68,0.1)" : "rgba(20,83,45,0.06)";
-  const statusColor = allDone ? C.suc : overdue ? "#EF4444" : C.textMut;
+  const countingDone = done >= total && total > 0;
+  const addressedCount = (ordered || 0) + (skipped || 0);
+  const iconColor = allDone ? C.suc : overdue ? "#EF4444" : C.acc;
+  const fmtDate = (d) => { if (!d) return ""; const dt = new Date(d); return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
   return (
     <div className="dash-checklist-cell" onClick={onClick}
       style={{ animation: "dashSlideIn 0.2s cubic-bezier(0.22,1,0.36,1) both", position: "relative" }}
     >
       {onClick && <LinkIcon />}
-      <div style={{ color: barColor, opacity: 0.6, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 2 }}>
+      {overdue && !allDone && (
+        <span style={{
+          position: "absolute", top: 4, right: 4,
+          padding: "1px 5px", borderRadius: 4, fontSize: 8, fontWeight: 700,
+          background: "#FEE2E2", color: "#DC2626",
+        }}>{daysOverdue}d</span>
+      )}
+      <div style={{ color: iconColor, opacity: 0.6, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 2 }}>
         <I.Package size={18} />
       </div>
       <div style={{ fontSize: 9, fontWeight: 700, color: allDone ? C.suc : C.text, lineHeight: 1, marginBottom: 4, textAlign: "center" }}>
         Inventory
       </div>
-      {displayTotal > 0 && (
-        <>
-          <div style={{ width: "80%", height: 5, background: "rgba(20,83,45,0.06)", borderRadius: 3, overflow: "hidden", marginBottom: 3 }}>
-            <div style={{
-              width: `${pct}%`, height: "100%", background: barColor, borderRadius: 3,
-              transformOrigin: "left", animation: "dashBarGrow 0.4s 0.1s cubic-bezier(0.22,1,0.36,1) both",
-            }} />
-          </div>
-          <div style={{ fontSize: 12, fontWeight: 800, color: barColor, lineHeight: 1, fontVariantNumeric: "tabular-nums", marginBottom: 4 }}>
-            {displayDone}/{displayTotal}
-          </div>
-        </>
-      )}
-      <div style={{
-        fontSize: 8, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em",
-        padding: "2px 6px", borderRadius: 8, background: statusBg, color: statusColor, lineHeight: 1.3,
-      }}>
-        {statusLabel}
+      <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center", width: "100%" }}>
+        {allDone ? (
+          <>
+            <div style={{ fontSize: 8, fontWeight: 600, color: C.suc }}>✓ Counted {fmtDate(countingDoneDate)}</div>
+            <div style={{ fontSize: 8, fontWeight: 600, color: C.suc }}>✓ Ordered {fmtDate(orderingDoneDate)}</div>
+            {daysUntilNext != null && (
+              <div style={{ fontSize: 8, fontWeight: 500, color: C.textMut, marginTop: 1 }}>Next in {daysUntilNext}d</div>
+            )}
+          </>
+        ) : countingDone ? (
+          <>
+            <div style={{ fontSize: 8, fontWeight: 600, color: C.suc }}>✓ Counted</div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut }}>{addressedCount}/{needsOrder}</div>
+          </>
+        ) : (
+          <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut }}>{done}/{total}</div>
+        )}
       </div>
     </div>
   );
