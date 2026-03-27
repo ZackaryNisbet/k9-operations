@@ -138,6 +138,31 @@ async function gingrFetch(
 
 // ─── Gingr Web Session Auth (for service-level notes) ─────────────────────
 
+const GINGR_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+/**
+ * Extract individual Set-Cookie headers from a response.
+ * Uses getSetCookie() in Deno, with fallback for other runtimes.
+ */
+function extractSetCookies(resp: Response): string[] {
+  if (typeof resp.headers.getSetCookie === "function") {
+    return resp.headers.getSetCookie();
+  }
+  const raw = resp.headers.get("set-cookie") || "";
+  return raw ? raw.split(/,\s*(?=[a-zA-Z_]+=)/) : [];
+}
+
+/**
+ * Find a named cookie value from an array of Set-Cookie header strings.
+ */
+function parseCookieValue(cookieHeaders: string[], name: string): string {
+  for (const h of cookieHeaders) {
+    const match = h.match(new RegExp(`${name}=([^;]+)`));
+    if (match) return match[1];
+  }
+  return "";
+}
+
 /**
  * Authenticate to Gingr's web interface using the API key as both
  * username and password. Returns the cookie string for authenticated requests.
@@ -146,46 +171,45 @@ async function gingrWebLogin(subdomain: string, apiKey: string): Promise<string>
   const baseUrl = `https://${subdomain}.gingrapp.com`;
 
   // Step 1: GET /auth/login to get CSRF token and session cookie
-  const loginPageResp = await fetch(`${baseUrl}/auth/login`, { redirect: "manual" });
-  const loginPageCookies = loginPageResp.headers.get("set-cookie") || "";
+  const loginPageResp = await fetch(`${baseUrl}/auth/login`, { redirect: "manual", headers: { "User-Agent": GINGR_UA } });
+  const step1Cookies = extractSetCookies(loginPageResp);
   const loginHtml = await loginPageResp.text();
 
-  // Extract gingr_ci_session cookie
-  const sessionMatch = loginPageCookies.match(/gingr_ci_session=([^;]+)/);
-  const csrfCookieMatch = loginPageCookies.match(/gingr_csrf_cookie_name=([^;]+)/);
-  const sessionCookie = sessionMatch ? `gingr_ci_session=${sessionMatch[1]}` : "";
-  const csrfCookie = csrfCookieMatch ? `gingr_csrf_cookie_name=${csrfCookieMatch[1]}` : "";
-
-  // Extract CSRF token from hidden input
+  const sessionVal = parseCookieValue(step1Cookies, "gingr_ci_session");
+  const csrfCookieVal = parseCookieValue(step1Cookies, "gingr_csrf_cookie_name");
   const csrfMatch = loginHtml.match(/name="gingr_csrf_token"\s+value="([^"]+)"/);
   const csrfToken = csrfMatch?.[1] || "";
 
-  if (!csrfToken || !sessionCookie) {
+  if (!csrfToken || !sessionVal) {
     throw new Error("Failed to extract CSRF token or session cookie from Gingr login page");
   }
 
   // Step 2: POST /auth/login with API key as both identity and password
-  const cookieHeader = [sessionCookie, csrfCookie].filter(Boolean).join("; ");
+  const cookieHeader = [`gingr_ci_session=${sessionVal}`, csrfCookieVal ? `gingr_csrf_cookie_name=${csrfCookieVal}` : ""].filter(Boolean).join("; ");
   const loginResp = await fetch(`${baseUrl}/auth/login`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
       "Cookie": cookieHeader,
+      "User-Agent": GINGR_UA,
     },
     body: `identity=${encodeURIComponent(apiKey)}&password=${encodeURIComponent(apiKey)}&gingr_csrf_token=${encodeURIComponent(csrfToken)}`,
     redirect: "manual",
   });
 
-  // Parse authenticated session cookies from response
-  const authCookies = loginResp.headers.get("set-cookie") || "";
-  const authSessionMatch = authCookies.match(/gingr_ci_session=([^;]+)/);
-  const authCsrfMatch = authCookies.match(/gingr_csrf_cookie_name=([^;]+)/);
+  const step2Cookies = extractSetCookies(loginResp);
+
+  // Use the LAST gingr_ci_session cookie (CodeIgniter sends an empty one first, then the authenticated one)
+  let authSessionVal = "";
+  for (const h of step2Cookies) {
+    const m = h.match(/gingr_ci_session=([^;]+)/);
+    if (m) authSessionVal = m[1];
+  }
+  const authCsrfVal = parseCookieValue(step2Cookies, "gingr_csrf_cookie_name");
 
   const parts: string[] = [];
-  if (authSessionMatch) parts.push(`gingr_ci_session=${authSessionMatch[1]}`);
-  else if (sessionMatch) parts.push(sessionCookie); // fall back to original session
-  if (authCsrfMatch) parts.push(`gingr_csrf_cookie_name=${authCsrfMatch[1]}`);
-  else if (csrfCookieMatch) parts.push(csrfCookie);
+  if (authSessionVal || sessionVal) parts.push(`gingr_ci_session=${authSessionVal || sessionVal}`);
+  if (authCsrfVal || csrfCookieVal) parts.push(`gingr_csrf_cookie_name=${authCsrfVal || csrfCookieVal}`);
   parts.push(`gingr_subdomain=${subdomain}`);
 
   return parts.join("; ");
@@ -198,11 +222,10 @@ async function gingrWebLogin(subdomain: string, apiKey: string): Promise<string>
 async function fetchServiceNotes(subdomain: string, cookies: string, serviceId: string): Promise<string | null> {
   try {
     const resp = await fetch(`https://${subdomain}.gingrapp.com/services/edit/id/${serviceId}`, {
-      headers: { "Cookie": cookies },
+      headers: { "Cookie": cookies, "User-Agent": GINGR_UA },
       redirect: "manual",
     });
     if (resp.status === 302 || resp.status === 301) {
-      // Redirected — likely session expired
       return null;
     }
     const html = await resp.text();
@@ -1250,8 +1273,13 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
   for (const r of allRes) {
     const rd = r.raw_data || {};
     const rawSvcs = rd.services || [];
-    const bathSvc = rawSvcs.find((s: any) => typeof s === "object" && s?.name?.toLowerCase().includes("bath"));
     const topSvcs = Array.isArray(r.services) ? r.services : [];
+
+    // Look for bath service in raw_data.services first, then fall back to top-level services column
+    let bathSvc = rawSvcs.find((s: any) => typeof s === "object" && s?.name?.toLowerCase().includes("bath"));
+    if (!bathSvc) {
+      bathSvc = topSvcs.find((s: any) => typeof s === "object" && s?.name?.toLowerCase().includes("bath"));
+    }
     const hasBathTop = topSvcs.some((s: any) => { const n = typeof s === "string" ? s : s?.name || ""; return n.toLowerCase().includes("bath"); });
     if (!bathSvc && !hasBathTop) continue;
 
@@ -1264,7 +1292,9 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
     if (animalGingrId) animalIds.push(animalGingrId);
 
-    const { addonType, modifiers } = parseBathAddonsFromServices(rawSvcs);
+    // Use whichever services array has data for addon parsing
+    const svcsForAddons = rawSvcs.length > 0 ? rawSvcs : topSvcs;
+    const { addonType, modifiers } = parseBathAddonsFromServices(svcsForAddons);
     const resType = rd.reservation_type || {};
     const roomLabel = r.room_assignment || rd.run?.name || "";
 
