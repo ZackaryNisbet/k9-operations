@@ -118,6 +118,9 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
   const countedAt = count?.counted_at;
   const orderedBy = count?.ordered_by;
   const orderedAt = count?.ordered_at;
+  const skipped = count?.skipped ?? false;
+  const skippedBy = count?.skipped_by;
+  const skippedAt = count?.skipped_at;
   const hasFilled = stockCount !== "";
   const toOrder = (item.par_level != null && hasFilled)
     ? Math.max(0, (item.par_level || 0) - (parseInt(stockCount, 10) || 0) - (parseInt(inTransit, 10) || 0))
@@ -139,8 +142,9 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
         alignItems: "center",
         padding: "8px 16px",
         borderBottom: showNotes ? "none" : `1px solid ${C.borderLight}`,
-        background: hovered ? C.surfaceHover : C.surface,
-        transition: "background 0.15s",
+        background: skipped ? (hovered ? "#FFFCF0" : "#FFFEF7") : (hovered ? C.surfaceHover : C.surface),
+        opacity: skipped ? 0.6 : 1,
+        transition: "background 0.15s, opacity 0.15s",
       }}
     >
       {/* Item Name + Vendor Link + Notes Icon */}
@@ -280,23 +284,97 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
         )}
       </div>
 
-      {/* Ordered checkbox — only shown when item needs reordering */}
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }} title={orderedBy && ordered ? `Ordered by ${orderedBy} · ${fmtAuditTime(orderedAt)}` : ""}>
+      {/* Ordered / Skip / Undo — only shown when item needs reordering */}
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 2 }}>
         {needsOrder ? (
-          <label style={{ display: "flex", alignItems: "center", cursor: isReadOnly ? "default" : "pointer" }}>
-            <input
-              type="checkbox"
-              checked={ordered}
-              disabled={isReadOnly}
-              onChange={e => !isReadOnly && onChange("ordered", e.target.checked)}
-              style={{
-                width: 18,
-                height: 18,
-                accentColor: C.suc,
-                cursor: isReadOnly ? "default" : "pointer",
-              }}
-            />
-          </label>
+          skipped ? (
+            /* State 3: Skipped */
+            <>
+              <span
+                title={skippedBy ? `Skipped by ${skippedBy} · ${fmtAuditTime(skippedAt)}` : ""}
+                style={{
+                  display: "inline-block",
+                  padding: "2px 8px",
+                  borderRadius: 6,
+                  background: "#FFF3CD",
+                  color: "#856404",
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: 0.3,
+                }}
+              >
+                SKIPPED
+              </span>
+              {!isReadOnly && (
+                <button
+                  onClick={() => onChange("skipped", false)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: C.info,
+                    fontSize: 10,
+                    cursor: "pointer",
+                    padding: 0,
+                    textDecoration: "underline",
+                  }}
+                >
+                  Undo
+                </button>
+              )}
+            </>
+          ) : ordered ? (
+            /* State 2: Ordered */
+            <div title={orderedBy ? `Ordered by ${orderedBy} · ${fmtAuditTime(orderedAt)}` : ""}>
+              <label style={{ display: "flex", alignItems: "center", cursor: isReadOnly ? "default" : "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={true}
+                  disabled={isReadOnly}
+                  onChange={e => !isReadOnly && onChange("ordered", e.target.checked)}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    accentColor: C.suc,
+                    cursor: isReadOnly ? "default" : "pointer",
+                  }}
+                />
+              </label>
+            </div>
+          ) : (
+            /* State 1: Needs ordering (not ordered, not skipped) */
+            <>
+              <label style={{ display: "flex", alignItems: "center", cursor: isReadOnly ? "default" : "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={false}
+                  disabled={isReadOnly}
+                  onChange={e => !isReadOnly && onChange("ordered", e.target.checked)}
+                  style={{
+                    width: 18,
+                    height: 18,
+                    accentColor: C.suc,
+                    cursor: isReadOnly ? "default" : "pointer",
+                  }}
+                />
+              </label>
+              {!isReadOnly && (
+                <button
+                  onClick={() => onChange("skipped", true)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: C.textMut,
+                    fontSize: 10,
+                    cursor: "pointer",
+                    padding: 0,
+                    textDecoration: "underline",
+                  }}
+                >
+                  Skip
+                </button>
+              )}
+            </>
+          )
         ) : (
           <span style={{ color: C.textMut, fontSize: 11 }}>{toOrder === "" ? "" : "—"}</span>
         )}
@@ -1384,6 +1462,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             counted_at: row.counted_at || null,
             ordered_by: row.ordered_by || null,
             ordered_at: row.ordered_at || null,
+            skipped: row.skipped ?? false,
+            skipped_by: row.skipped_by || null,
+            skipped_at: row.skipped_at || null,
           };
         });
       }
@@ -1438,6 +1519,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           in_transit: merged.in_transit != null && merged.in_transit !== "" ? parseInt(merged.in_transit, 10) : null,
           notes: merged.notes || null,
           ordered: merged.ordered ?? false,
+          skipped: merged.skipped ?? false,
         };
         // Audit: track who counted / who ordered
         if (pending.stock_count !== undefined || pending.in_transit !== undefined) {
@@ -1447,6 +1529,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         if (pending.ordered !== undefined) {
           row.ordered_by = userName;
           row.ordered_at = now;
+        }
+        if (pending.skipped !== undefined) {
+          row.skipped_by = pending.skipped ? userName : null;
+          row.skipped_at = pending.skipped ? now : null;
         }
         return row;
       });
@@ -1471,6 +1557,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             counted_at: row.counted_at || prev[row.catalog_item_id]?.counted_at || null,
             ordered_by: row.ordered_by || prev[row.catalog_item_id]?.ordered_by || null,
             ordered_at: row.ordered_at || prev[row.catalog_item_id]?.ordered_at || null,
+            skipped: row.skipped ?? false,
+            skipped_by: row.skipped_by || null,
+            skipped_at: row.skipped_at || null,
           };
         });
         return next;
@@ -1506,13 +1595,20 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
   // ── Count change handler ──
   const handleCountChange = useCallback((itemId, field, val) => {
+    const updates = { [field]: val };
+    // Enforce mutual exclusivity: ordered and skipped cannot both be true
+    if (field === "ordered" && val === true) {
+      updates.skipped = false;
+    } else if (field === "skipped" && val === true) {
+      updates.ordered = false;
+    }
     setCounts(prev => ({
       ...prev,
-      [itemId]: { ...(prev[itemId] || {}), [field]: val },
+      [itemId]: { ...(prev[itemId] || {}), ...updates },
     }));
     pendingSave.current[itemId] = {
       ...(pendingSave.current[itemId] || {}),
-      [field]: val,
+      ...updates,
     };
     scheduleAutoSave();
   }, [scheduleAutoSave]);
@@ -1833,6 +1929,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const orderingStatus = useMemo(() => {
     let itemsNeedingOrder = 0;
     let itemsOrdered = 0;
+    let itemsSkipped = 0;
     catalogItems.forEach(item => {
       const count = counts[item.id];
       const sc = count?.stock_count;
@@ -1841,9 +1938,11 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       if (toOrder > 0) {
         itemsNeedingOrder++;
         if (count?.ordered) itemsOrdered++;
+        else if (count?.skipped) itemsSkipped++;
       }
     });
-    return { itemsNeedingOrder, itemsOrdered, allOrdered: itemsNeedingOrder === 0 || itemsOrdered >= itemsNeedingOrder };
+    const itemsAddressed = itemsOrdered + itemsSkipped;
+    return { itemsNeedingOrder, itemsOrdered, itemsSkipped, allOrdered: itemsNeedingOrder === 0 || itemsAddressed >= itemsNeedingOrder };
   }, [catalogItems, counts]);
 
   const countingComplete = useMemo(() => {
