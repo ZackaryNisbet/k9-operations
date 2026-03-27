@@ -1108,19 +1108,35 @@ function formatTimeHuman(isoStr: string): string {
 }
 
 async function computeBathingReport(supabase: any, locationId: string, today: string): Promise<any> {
-  // Fetch all reservations with bath services for today (active + checked out today)
-  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_out_date, raw_data, room_assignment, services, notes_reservation, notes_animal";
-  const [{ data: activeRes }, { data: coRes }] = await Promise.all([
+  // Fetch all reservations with bath services for today:
+  //   1) Checked-in and not yet checked out (boarding dogs in-house)
+  //   2) Checked out today (departures)
+  //   3) NOT yet checked in but starting today (daycare, day-boarding, evaluation — may not be checked in yet)
+  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_out_date, raw_data, room_assignment, services, notes_reservation, notes_animal, notes_owner";
+  const [{ data: activeRes }, { data: coRes }, { data: pendingRes }] = await Promise.all([
+    // 1) Checked in, not checked out, not cancelled, date range includes today
     supabase.from("gingr_reservations").select(resSelect)
       .eq("location_id", locationId)
       .not("check_in_date", "is", null).is("check_out_date", null).is("cancelled_date", null)
       .lte("start_date", `${today}T23:59:59`).gte("end_date", `${today}T00:00:00`),
+    // 2) Checked out today
     supabase.from("gingr_reservations").select(resSelect)
       .eq("location_id", locationId)
       .not("check_out_date", "is", null).is("cancelled_date", null)
       .gte("check_out_date", today + "T00:00:00").lt("check_out_date", addDays(today, 1) + "T00:00:00"),
+    // 3) Not yet checked in, starting today, not cancelled (catches daycare/day-boarding/evaluation)
+    supabase.from("gingr_reservations").select(resSelect)
+      .eq("location_id", locationId)
+      .is("check_in_date", null).is("check_out_date", null).is("cancelled_date", null)
+      .gte("start_date", `${today}T00:00:00`).lt("start_date", addDays(today, 1) + "T00:00:00"),
   ]);
-  const allRes = [...(activeRes || []), ...(coRes || [])];
+  // Deduplicate by gingr_id in case a reservation matches multiple queries
+  const seen = new Set<string>();
+  const allRes: any[] = [];
+  for (const r of [...(activeRes || []), ...(coRes || []), ...(pendingRes || [])]) {
+    const id = String(r.gingr_id);
+    if (!seen.has(id)) { seen.add(id); allRes.push(r); }
+  }
 
   // Filter to dogs with bath scheduled today
   const bathDogs: any[] = [];
@@ -1146,8 +1162,8 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     const resType = rd.reservation_type || {};
     const roomLabel = r.room_assignment || rd.run?.name || "";
 
-    // Combine reservation + animal notes
-    const notesParts = [r.notes_reservation, r.notes_animal].filter(Boolean);
+    // Combine reservation + animal + owner notes
+    const notesParts = [r.notes_reservation, r.notes_animal, r.notes_owner].filter(Boolean);
     const reservationNotes = notesParts.join(" | ");
 
     bathDogs.push({
@@ -1171,12 +1187,13 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     });
   }
 
-  // Fetch bath icons, play icons, and weights for all dogs
+  // Fetch bath icons, play icons, check-in questions, and weights for all dogs
   let iconMap: Record<string, { title: string; comment: string }> = {};
   let playIconMap: Record<string, string> = {}; // animal_id → play type (e.g. "Private Play")
+  let checkInMap: Record<string, string> = {}; // animal_id → check-in questions HTML
   let weightMap: Record<string, number | null> = {};
   if (animalIds.length > 0) {
-    const [{ data: icons }, { data: playIcons }, { data: animals }] = await Promise.all([
+    const [{ data: icons }, { data: playIcons }, { data: checkInIcons }, { data: animals }] = await Promise.all([
       supabase
         .from("gingr_animal_icons_live")
         .select("animal_gingr_id, icon_title, icon_comment")
@@ -1188,6 +1205,12 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
         .select("animal_gingr_id, icon_title")
         .eq("location_id", locationId)
         .eq("icon_group", "Play")
+        .in("animal_gingr_id", animalIds),
+      supabase
+        .from("gingr_animal_icons_live")
+        .select("animal_gingr_id, icon_comment")
+        .eq("location_id", locationId)
+        .eq("icon_title", "Check-in Questions")
         .in("animal_gingr_id", animalIds),
       supabase
         .from("gingr_animals")
@@ -1202,6 +1225,9 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       if (title.includes("private") && title.includes("play")) {
         playIconMap[r.animal_gingr_id] = "private_play";
       }
+    });
+    (checkInIcons || []).forEach((r: any) => {
+      if (r.icon_comment) checkInMap[r.animal_gingr_id] = r.icon_comment;
     });
     (animals || []).forEach((a: any) => {
       const w = a.weight ? parseFloat(a.weight) : null;
@@ -1220,6 +1246,18 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     // Size classification: <30 lbs = small, >=30 lbs = large
     const sizeCategory = weight != null ? (weight < 30 ? "small" : "large") : null;
     const hasPrivatePlay = !!playIconMap[d.animalGingrId];
+
+    // Enrich notes: reservation notes + check-in questions (strip HTML tags for readability)
+    let enrichedNotes = d.reservationNotes || "";
+    const checkInHtml = checkInMap[d.animalGingrId];
+    if (checkInHtml) {
+      // Strip HTML tags and extract plain text for display
+      const plainText = checkInHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      if (plainText) {
+        enrichedNotes = enrichedNotes ? `${enrichedNotes} | ${plainText}` : plainText;
+      }
+    }
+
     return {
       animalGingrId: d.animalGingrId,
       gingrReservationId: d.gingrReservationId,
@@ -1231,7 +1269,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       bathType,
       bathModifiers: d.bathModifiers,
       bathNotes: icon?.comment || "",
-      reservationNotes: d.reservationNotes || "",
+      reservationNotes: enrichedNotes,
       weight,
       sizeCategory,
       hasPrivatePlay,
