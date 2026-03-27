@@ -98,6 +98,14 @@ function SkeletonSection() {
 
 // ─── Item Row Component ───────────────────────────────────────────────────────
 
+const fmtAuditTime = (ts) => {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const day = d.toLocaleDateString("en-US", { weekday: "short", timeZone: "America/New_York" });
+  const time = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
+  return `${day} ${time}`;
+};
+
 const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange, onKeyDown, inputRef }) {
   const [hovered, setHovered] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
@@ -106,6 +114,10 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
   const inTransit = count?.in_transit ?? "";
   const notes = count?.notes ?? "";
   const ordered = count?.ordered ?? false;
+  const countedBy = count?.counted_by;
+  const countedAt = count?.counted_at;
+  const orderedBy = count?.ordered_by;
+  const orderedAt = count?.ordered_at;
   const hasFilled = stockCount !== "";
   const toOrder = (item.par_level != null && hasFilled)
     ? Math.max(0, (item.par_level || 0) - (parseInt(stockCount, 10) || 0) - (parseInt(inTransit, 10) || 0))
@@ -191,7 +203,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
       </div>
 
       {/* Stock Count — yellow when empty, neutral when filled */}
-      <div>
+      <div title={countedBy ? `Counted by ${countedBy} · ${fmtAuditTime(countedAt)}` : ""}>
         <input
           ref={inputRef}
           type="number"
@@ -269,7 +281,7 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
       </div>
 
       {/* Ordered checkbox — only shown when item needs reordering */}
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }}>
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center" }} title={orderedBy && ordered ? `Ordered by ${orderedBy} · ${fmtAuditTime(orderedAt)}` : ""}>
         {needsOrder ? (
           <label style={{ display: "flex", alignItems: "center", cursor: isReadOnly ? "default" : "pointer" }}>
             <input
@@ -1368,6 +1380,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             in_transit: row.in_transit ?? "",
             notes: row.notes ?? "",
             ordered: row.ordered ?? false,
+            counted_by: row.counted_by || null,
+            counted_at: row.counted_at || null,
+            ordered_by: row.ordered_by || null,
+            ordered_at: row.ordered_at || null,
           };
         });
       }
@@ -1408,11 +1424,13 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     try {
       const itemIds = Object.keys(pendingSave.current);
       // Build upserts
+      const userName = profile?.full_name || profile?.email || "Unknown";
+      const now = new Date().toISOString();
       const toUpsert = itemIds.map(itemId => {
         const existing = counts[itemId];
         const pending = pendingSave.current[itemId];
         const merged = { ...(existing || {}), ...pending };
-        return {
+        const row = {
           ...(merged.id ? { id: merged.id } : {}),
           snapshot_id: snapshotId,
           catalog_item_id: itemId,
@@ -1421,6 +1439,16 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           notes: merged.notes || null,
           ordered: merged.ordered ?? false,
         };
+        // Audit: track who counted / who ordered
+        if (pending.stock_count !== undefined || pending.in_transit !== undefined) {
+          row.counted_by = userName;
+          row.counted_at = now;
+        }
+        if (pending.ordered !== undefined) {
+          row.ordered_by = userName;
+          row.ordered_at = now;
+        }
+        return row;
       });
 
       const { data: upserted, error } = await supabase
@@ -1439,6 +1467,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
             in_transit: row.in_transit ?? "",
             notes: row.notes ?? "",
             ordered: row.ordered ?? false,
+            counted_by: row.counted_by || prev[row.catalog_item_id]?.counted_by || null,
+            counted_at: row.counted_at || prev[row.catalog_item_id]?.counted_at || null,
+            ordered_by: row.ordered_by || prev[row.catalog_item_id]?.ordered_by || null,
+            ordered_at: row.ordered_at || prev[row.catalog_item_id]?.ordered_at || null,
           };
         });
         return next;
@@ -1460,7 +1492,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       setSaveStatus("error");
       setTimeout(() => setSaveStatus("idle"), 3000);
     }
-  }, [counts]);
+  }, [counts, profile]);
 
   const scheduleAutoSave = useCallback(() => {
     if (saveTimer.current) clearTimeout(saveTimer.current);
