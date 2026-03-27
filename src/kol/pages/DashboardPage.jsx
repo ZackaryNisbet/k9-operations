@@ -2018,13 +2018,11 @@ function DashboardContent({
             {(() => {
               const isOrdering = invStatus.phase === "ordering";
               const isDone = invStatus.phase === "done";
-              const displayDone = isOrdering ? (invStatus.ordered || 0) : invStatus.itemsCounted;
-              const displayTotal = isOrdering ? (invStatus.needsOrder || 0) : invStatus.totalItems;
-              const pct = displayTotal > 0 ? Math.round((displayDone / displayTotal) * 100) : 0;
-              const barColor = isDone ? C.suc : invStatus.overdue ? "#EF4444" : C.acc;
-              const statusLabel = isDone ? "Complete" : isOrdering ? `Ordering — ${displayDone}/${displayTotal}` : `${displayDone}/${displayTotal} counted`;
+              const countPct = invStatus.totalItems > 0 ? Math.round((invStatus.itemsCounted / invStatus.totalItems) * 100) : 0;
+              const orderPct = invStatus.needsOrder > 0 ? Math.round(((invStatus.ordered || 0) / invStatus.needsOrder) * 100) : 0;
+              const mainColor = isDone ? C.suc : invStatus.overdue ? "#EF4444" : C.acc;
               return (
-                <div className="ops-quick-action" onClick={navTo["inventory"]} style={{ position: "relative" }}>
+                <div className="ops-quick-action" onClick={navTo["inventory"]} style={{ position: "relative", justifyContent: "flex-start", paddingTop: 10, paddingBottom: 10 }}>
                   {invStatus.overdue && (
                     <span style={{
                       position: "absolute", top: 6, right: 6,
@@ -2032,12 +2030,31 @@ function DashboardContent({
                       background: "#FEE2E2", color: "#DC2626",
                     }}>{invStatus.daysOverdue}d overdue</span>
                   )}
-                  <div className="ops-quick-action-icon" style={{ color: barColor }}><I.Package /></div>
+                  <div className="ops-quick-action-icon" style={{ color: mainColor }}><I.Package /></div>
                   <div className="ops-quick-action-label">Inventory</div>
-                  <div style={{ width: "70%", height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", marginTop: 4, overflow: "hidden" }}>
-                    <div style={{ width: `${pct}%`, height: "100%", borderRadius: 2, background: barColor, transition: "width 0.3s ease" }} />
+                  {/* Counting row */}
+                  <div style={{ width: "80%", marginTop: 6, display: "flex", flexDirection: "column", gap: 2 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, fontWeight: 600, color: countPct >= 100 ? C.suc : C.textMut }}>
+                      <span>Logged</span>
+                      <span>{invStatus.itemsCounted}/{invStatus.totalItems}</span>
+                    </div>
+                    <div style={{ width: "100%", height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
+                      <div style={{ width: `${Math.min(countPct, 100)}%`, height: "100%", borderRadius: 2, background: countPct >= 100 ? C.suc : C.acc, transition: "width 0.3s ease" }} />
+                    </div>
                   </div>
-                  <div style={{ fontSize: 10, fontWeight: 600, color: isDone ? C.suc : C.textMut, marginTop: 2 }}>{statusLabel}</div>
+                  {/* Ordering row (only when in ordering or done phase) */}
+                  {(isOrdering || isDone) && invStatus.needsOrder > 0 && (
+                    <div style={{ width: "80%", marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, fontWeight: 600, color: orderPct >= 100 ? C.suc : "#F59E0B" }}>
+                        <span>Ordered</span>
+                        <span>{invStatus.ordered || 0}/{invStatus.needsOrder}</span>
+                      </div>
+                      <div style={{ width: "100%", height: 4, borderRadius: 2, background: "rgba(0,0,0,0.06)", overflow: "hidden" }}>
+                        <div style={{ width: `${Math.min(orderPct, 100)}%`, height: "100%", borderRadius: 2, background: orderPct >= 100 ? C.suc : "#F59E0B", transition: "width 0.3s ease" }} />
+                      </div>
+                    </div>
+                  )}
+                  {isDone && <div style={{ fontSize: 9, fontWeight: 700, color: C.suc, marginTop: 4 }}>Complete</div>}
                 </div>
               );
             })()}
