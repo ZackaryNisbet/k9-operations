@@ -1241,41 +1241,29 @@ function DashboardContent({
   };
 
   /* ─── Service data (today only — matches OperationsHub Services section) ─── */
-  // Fetch bath completions from lite_settings (written by Bathing Report page)
-  const [bathCompletedCount, setBathCompletedCount] = useState(0);
-  useEffect(() => {
-    if (!locationId) return;
-    let cancelled = false;
-    const fetchBathCount = () => {
-      supabase.from("lite_settings").select("setting_value")
-        .eq("location_id", locationId)
-        .eq("setting_key", `ops_bathing_${today}`)
-        .limit(1)
-        .then(({ data: rows }) => {
-          if (cancelled) return;
-          if (rows && rows.length > 0 && rows[0].setting_value) {
-            setBathCompletedCount(Object.keys(rows[0].setting_value).length);
-          } else {
-            setBathCompletedCount(0);
-          }
-        });
-    };
-    fetchBathCount();
-    // Poll every 5s to stay in sync with bathing report (lightweight query)
-    const iv = setInterval(fetchBathCount, 5000);
-    return () => { cancelled = true; clearInterval(iv); };
-  }, [locationId, today]);
+  // Bath data is now fully server-side from lite_daily_ops (computed by ops-compute edge function)
+  // No client-side polling needed — loads instantly with the rest of dailyOps
+  const bathingFromOps = useMemo(() => {
+    const ops = data?.dailyOps || [];
+    const bathingEntry = ops.find(e => e.id === `ops_bathing_${today}`);
+    const ci = bathingEntry?.computed_items;
+    if (ci) {
+      return { bathsTotal: ci.totalCount || ci.dogs?.length || 0, bathsDone: ci.completedCount || 0 };
+    }
+    return null;
+  }, [data?.dailyOps, today]);
 
   const svcData = useMemo(() => {
     if (!stableReservations || stableReservations.length === 0) return { bathsTotal: 0, bathsDone: 0, ppTotal: 0, ppCompleted: 0, pamperTotal: 0, pamperDone: 0, iceCreamTotal: 0, iceCreamDone: 0 };
     const sm = computeServiceMetrics(dataProxy, today);
     return {
-      bathsTotal: sm.bathsTotal, bathsDone: bathCompletedCount,
+      bathsTotal: bathingFromOps?.bathsTotal ?? sm.bathsTotal,
+      bathsDone: bathingFromOps?.bathsDone ?? 0,
       ppTotal: sm.ppTotal, ppCompleted: sm.ppCompleted,
       pamperTotal: sm.pamperTotal, pamperDone: sm.pamperDone,
       iceCreamTotal: sm.iceCreamTotal, iceCreamDone: sm.iceCreamDone,
     };
-  }, [dataProxy, today, bathCompletedCount]);
+  }, [dataProxy, today, bathingFromOps]);
 
   /* ─── Chart data from pre-computed daily rows ─── */
   const bucketMode = useMemo(() => {
