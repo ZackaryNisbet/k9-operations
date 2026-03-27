@@ -17,7 +17,6 @@ import { applyStructuredFilters } from "../../hooks/useFilters";
 function EnterpriseOpsMatrix({ profile, userLocationIds }) {
   const allLocations = [
     { id: "ch", name: "Adair Forsythe", opening: 92, frontend: 88, backend: 95, closing: 85, rooms: 100, pictures: 70, privatePlay: 78 },
-    { id: "demo", name: "Demo Location", opening: 65, frontend: 70, backend: 72, closing: 60, rooms: 80, pictures: 45, privatePlay: 55 },
   ];
   // Filter locations by user's accessible location_ids (null = all)
   const locations = userLocationIds ? allLocations.filter(l => userLocationIds.includes(l.id)) : allLocations;
