@@ -1254,11 +1254,8 @@ function DashboardContent({
         if (cancelled) return;
         if (error) { console.error("Bath completions fetch error:", error); return; }
         if (rows && rows.length > 0 && rows[0].setting_value) {
-          const count = Object.keys(rows[0].setting_value).length;
-          console.log("[Dashboard] Bath completions loaded:", count, "from key ops_bathing_" + today, "location:", locationId);
-          setBathCompletedCount(count);
+          setBathCompletedCount(Object.keys(rows[0].setting_value).length);
         } else {
-          console.log("[Dashboard] No bath completions found for", today, "location:", locationId);
           setBathCompletedCount(0);
         }
       });
