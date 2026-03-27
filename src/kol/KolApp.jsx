@@ -1102,7 +1102,7 @@ function LeanAppInner() {
       )}
 
       {/* Main Content */}
-      <div style={{ flex: 1, overflow: isEdgeToEdgePage ? "hidden" : "auto", background: isFullscreenPage ? "transparent" : C.bg, padding: isEdgeToEdgePage ? 0 : "32px 40px" }}>
+      <div style={{ flex: 1, overflow: page === "dashboard" ? "hidden" : "auto", background: isFullscreenPage ? "transparent" : C.bg, padding: isEdgeToEdgePage ? 0 : "32px 40px" }}>
         <div style={{ maxWidth: isEdgeToEdgePage ? "none" : 1440, margin: "0 auto", height: isEdgeToEdgePage ? "100%" : "auto" }}>
           {navStack.length > 1 && !isFullscreenPage && (
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:16,fontSize:13,flexWrap:"wrap"}}>
