@@ -360,8 +360,51 @@ function getOpsCountLabel(data, item, date) {
   return "";
 }
 
+// ─── Room Cleaning Breakdown (for Dashboard 3-column layout) ──────────────
+// Returns individual counts for set-ups, disinfects, and refreshes
+function getRoomCleaningBreakdown(data, date) {
+  const td = date || todayStr();
+  const entryId = `ops_room_cleaning_${td}`;
+  const entry = (data.dailyOps || []).find(e => e.id === entryId);
+  const ei = entry ? entry.items || {} : {};
+  const ci = entry?.computed_items;
+  const sanitizeKey = (name) => (name || '').replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase();
+
+  if (ci && ci.rooms && ci.rooms.length > 0) {
+    const roomMap = {};
+    ci.rooms.forEach(rm => {
+      const key = sanitizeKey(rm.room);
+      const ex = roomMap[key];
+      if (ex) {
+        if (rm.needsRefresh) ex.needsRefresh = true;
+        if (rm.needsDisinfect) ex.needsDisinfect = true;
+        if (rm.needsSetup) ex.needsSetup = true;
+      } else {
+        roomMap[key] = { needsRefresh: !!rm.needsRefresh, needsDisinfect: !!rm.needsDisinfect, needsSetup: !!rm.needsSetup, room: rm.room };
+      }
+    });
+    let totalSetups = 0, doneSetups = 0;
+    let totalDisinfects = 0, doneDisinfects = 0;
+    let totalRefreshes = 0, doneRefreshes = 0;
+    Object.entries(roomMap).forEach(([key, flags]) => {
+      const state = ei[key] || ei[flags.room] || {};
+      if (flags.needsSetup) { totalSetups++; if (state.setupDone) doneSetups++; }
+      if (flags.needsDisinfect) { totalDisinfects++; if (state.disinfect) doneDisinfects++; }
+      if (flags.needsRefresh) { totalRefreshes++; if (state.refresh) doneRefreshes++; }
+    });
+    return {
+      totalSetups, doneSetups,
+      totalDisinfects, doneDisinfects,
+      totalRefreshes, doneRefreshes,
+    };
+  }
+
+  // Fallback: no computed_items available
+  return { totalSetups: 0, doneSetups: 0, totalDisinfects: 0, doneDisinfects: 0, totalRefreshes: 0, doneRefreshes: 0 };
+}
+
 // ─── Shared UI Components (from POS App) ───────────────────────────────────
 
 // Tip component
 
-export { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, resSvcIncludes, getPPStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel };
+export { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, getRoomCleaningBreakdown, getWeeklyMaintenanceStats, resSvcIncludes, getPPStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel };

@@ -20,6 +20,7 @@ import { supabase } from "../../supabaseClient";
 import { mergeGingrLive } from "../../shared/gingrLive";
 import { useLazyCompute, useSectionVisibility } from "../../hooks/useLazyCompute";
 import { computeOpsProgress, computeServiceMetrics, computeLifecycleMetrics } from "../../shared/metricsHelpers";
+import { getRoomCleaningBreakdown, getWeeklyMaintenanceStats } from "../../shared/opsHelpers";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CSS — injected once
@@ -434,6 +435,16 @@ const DASH_CSS = `
 .ops-two-col > div {
   flex: 1;
   min-width: 0;
+}
+.ops-three-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+}
+@media (max-width: 900px) {
+  .ops-three-col {
+    grid-template-columns: 1fr;
+  }
 }
 .ops-card {
   background: #FFFFFF;
@@ -1265,6 +1276,18 @@ function DashboardContent({
     };
   }, [dataProxy, today, bathingFromOps]);
 
+  /* ─── Room cleaning breakdown (set-ups, disinfects, refreshes) ─── */
+  const roomBreakdown = useMemo(() => {
+    if (!data?.dailyOps) return { totalSetups: 0, doneSetups: 0, totalDisinfects: 0, doneDisinfects: 0, totalRefreshes: 0, doneRefreshes: 0 };
+    return getRoomCleaningBreakdown(dataProxy, today);
+  }, [dataProxy, today]);
+
+  /* ─── Weekly maintenance stats ─── */
+  const wmStats = useMemo(() => {
+    if (!data?.dailyOps) return { total: 0, checked: 0 };
+    return getWeeklyMaintenanceStats(dataProxy, today);
+  }, [dataProxy, today]);
+
   /* ─── Chart data from pre-computed daily rows ─── */
   const bucketMode = useMemo(() => {
     if (range === "ytd" || range === "lifetime" || days > 180) return "monthly";
@@ -1951,15 +1974,34 @@ function DashboardContent({
           </div>
         </div>
 
-        {/* ── Section 2: Operations Progress (Two-Column) ── */}
+        {/* ── Section 2: Operations Progress (Three-Column) ── */}
         <div>
           <div className="ops-section-header">Daily Operations</div>
-          <div className="ops-two-col">
-            {/* Left: Cleaning & Services */}
+          <div className="ops-three-col">
+            {/* Column 1: Resort Upkeep */}
             <div className="ops-card">
-              <div className="ops-card-title">Cleaning & Services</div>
+              <div className="ops-card-title">Resort Upkeep</div>
               {[
-                { label: "Room Cleaning", pct: getChecklistProgress("ops-rooms"), count: getChecklistCount("ops-rooms"), click: navTo["ops-rooms"] },
+                { label: "Set-Ups", pct: roomBreakdown.totalSetups > 0 ? Math.round((roomBreakdown.doneSetups / roomBreakdown.totalSetups) * 100) : 0, count: `${roomBreakdown.doneSetups}/${roomBreakdown.totalSetups}`, click: navTo["ops-rooms"] },
+                { label: "Disinfects", pct: roomBreakdown.totalDisinfects > 0 ? Math.round((roomBreakdown.doneDisinfects / roomBreakdown.totalDisinfects) * 100) : 0, count: `${roomBreakdown.doneDisinfects}/${roomBreakdown.totalDisinfects}`, click: navTo["ops-rooms"] },
+                { label: "Refreshes", pct: roomBreakdown.totalRefreshes > 0 ? Math.round((roomBreakdown.doneRefreshes / roomBreakdown.totalRefreshes) * 100) : 0, count: `${roomBreakdown.doneRefreshes}/${roomBreakdown.totalRefreshes}`, click: navTo["ops-rooms"] },
+                { label: "Weekly Inventory", pct: wmStats.total > 0 ? Math.round((wmStats.checked / wmStats.total) * 100) : 0, count: `${wmStats.checked}/${wmStats.total}`, click: navTo["ops-weekly-maintenance"] },
+              ].map((item) => (
+                <div key={item.label} className="ops-progress-row" onClick={item.click}>
+                  <span className="ops-progress-label">{item.label}</span>
+                  <div className="ops-progress-track">
+                    <div className="ops-progress-fill" style={{ width: `${Math.min(item.pct, 100)}%` }} />
+                  </div>
+                  <span className="ops-progress-count">{item.count}</span>
+                  <span className="ops-progress-pct">{item.pct}%</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Column 2: Services */}
+            <div className="ops-card">
+              <div className="ops-card-title">Services</div>
+              {[
                 { label: "Baths", pct: svcData.bathsTotal > 0 ? Math.round((svcData.bathsDone / svcData.bathsTotal) * 100) : 0, count: `${svcData.bathsDone}/${svcData.bathsTotal}`, click: navTo["ops-bathing"] },
                 { label: "Pamper", pct: svcData.pamperTotal > 0 ? Math.round((svcData.pamperDone / svcData.pamperTotal) * 100) : 0, count: `${svcData.pamperDone}/${svcData.pamperTotal}`, click: navTo["ops-pamper"] },
                 { label: "Ice Cream", pct: svcData.iceCreamTotal > 0 ? Math.round((svcData.iceCreamDone / svcData.iceCreamTotal) * 100) : 0, count: `${svcData.iceCreamDone}/${svcData.iceCreamTotal}`, click: navTo["ops-svc"] },
@@ -1976,7 +2018,7 @@ function DashboardContent({
               ))}
             </div>
 
-            {/* Right: Checklists */}
+            {/* Column 3: Checklists */}
             <div className="ops-card">
               <div className="ops-card-title">Checklists</div>
               {[
