@@ -1682,11 +1682,13 @@ Deno.serve(async (req: Request) => {
       enrichment: any;
     }> = [];
 
-    for (let offset = 1; offset <= 7; offset++) {
+    for (let offset = 1; offset <= 14; offset++) {
       const futureDate = addDays(today, offset);
 
-      // Bathing: pass NO subdomain/apiKey so it skips web login for service notes
-      const bathingFuture = await computeBathingReport(supabase, locationId, futureDate);
+      // Bathing: pull service notes for the next 3 days, skip for days 4-14
+      const bathingFuture = offset <= 3
+        ? await computeBathingReport(supabase, locationId, futureDate, gingrSubdomain, gingrApiKey)
+        : await computeBathingReport(supabase, locationId, futureDate);
 
       // Fetch DB reservations covering this future date
       const reservationsFuture = await fetchReservationsForDate(supabase, locationId, futureDate);
