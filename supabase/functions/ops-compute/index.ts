@@ -1496,6 +1496,53 @@ function computeServiceReport(
   return { dogs };
 }
 
+// ─── Fetch DB reservations for a target date (for service reports) ─────────
+
+async function fetchReservationsForDate(
+  supabase: any,
+  locationId: string,
+  targetDate: string,
+): Promise<Record<string, any>> {
+  const nextDay = addDays(targetDate, 1);
+  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, services";
+
+  const [{ data: activeRes }, { data: pendingRes }] = await Promise.all([
+    // Dogs checked in whose stay spans the target date
+    supabase.from("gingr_reservations").select(resSelect)
+      .eq("location_id", locationId)
+      .not("check_in_date", "is", null).is("check_out_date", null).is("cancelled_date", null)
+      .lte("start_date", `${targetDate}T23:59:59`).gte("end_date", `${targetDate}T00:00:00`),
+    // Dogs with reservations starting on the target date (not yet checked in)
+    supabase.from("gingr_reservations").select(resSelect)
+      .eq("location_id", locationId)
+      .is("check_in_date", null).is("check_out_date", null).is("cancelled_date", null)
+      .gte("start_date", `${targetDate}T00:00:00`).lt("start_date", nextDay + "T00:00:00"),
+  ]);
+
+  // Deduplicate and convert to the format expected by computeServiceReport / computePrivatePlay
+  const seen = new Set<string>();
+  const result: Record<string, any> = {};
+  for (const r of [...(activeRes || []), ...(pendingRes || [])]) {
+    const id = String(r.gingr_id);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const rd = r.raw_data || {};
+    result[id] = {
+      animal: {
+        id: r.animal_gingr_id || rd.animal?.id || "",
+        name: r.animal_name || rd.animal?.name || "",
+      },
+      owner: {
+        first_name: r.owner_first_name || rd.owner?.first_name || "",
+        last_name: r.owner_last_name || rd.owner?.last_name || "",
+      },
+      reservation_type: rd.reservation_type || { type: r.reservation_type_name || "" },
+      services: Array.isArray(r.services) ? r.services : (rd.services || []),
+    };
+  }
+  return result;
+}
+
 // ─── Main handler ──────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -1625,6 +1672,19 @@ Deno.serve(async (req: Request) => {
     const pamperReport = computeServiceReport(reservations, "pamper");
     const enrichmentReport = computeServiceReport(reservations, "enrichment");
 
+    // ─── Compute TOMORROW's service reports ────────────────────────────
+    const tomorrow = addDays(today, 1);
+
+    // Bathing report: computeBathingReport already queries by date internally
+    const bathingReportTomorrow = await computeBathingReport(supabase, locationId, tomorrow, gingrSubdomain, gingrApiKey);
+
+    // Fetch DB reservations covering tomorrow for service reports
+    const reservationsTomorrow = await fetchReservationsForDate(supabase, locationId, tomorrow);
+
+    const privatePlayTomorrow = computePrivatePlay(reservationsTomorrow);
+    const pamperReportTomorrow = computeServiceReport(reservationsTomorrow, "pamper");
+    const enrichmentReportTomorrow = computeServiceReport(reservationsTomorrow, "enrichment");
+
     // ─── Upsert all computed items ─────────────────────────────────────
 
     const upserts = [
@@ -1718,6 +1778,43 @@ Deno.serve(async (req: Request) => {
         today,
         enrichmentReport,
       ),
+      // ─── Tomorrow's upserts ───────────────────────────────────────
+      upsertComputedItems(
+        supabase,
+        `ops_bathing_${tomorrow}`,
+        locationId,
+        "bathing",
+        "bathing",
+        tomorrow,
+        bathingReportTomorrow,
+      ),
+      upsertComputedItems(
+        supabase,
+        `ops_pp_${tomorrow}`,
+        locationId,
+        "pp",
+        "pp",
+        tomorrow,
+        privatePlayTomorrow,
+      ),
+      upsertComputedItems(
+        supabase,
+        `ops_pamper_${tomorrow}`,
+        locationId,
+        "pamper",
+        "pamper",
+        tomorrow,
+        pamperReportTomorrow,
+      ),
+      upsertComputedItems(
+        supabase,
+        `ops_svc_${tomorrow}`,
+        locationId,
+        "svc",
+        "svc",
+        tomorrow,
+        enrichmentReportTomorrow,
+      ),
     ];
 
     const results = await Promise.allSettled(upserts);
@@ -1745,6 +1842,13 @@ Deno.serve(async (req: Request) => {
           bathing: { dogs: bathingReport.dogs.length },
           pamper: { dogs: pamperReport.dogs.length },
           enrichment: { dogs: enrichmentReport.dogs.length },
+        },
+        computed_tomorrow: {
+          date: tomorrow,
+          bathing: { dogs: bathingReportTomorrow.dogs.length },
+          private_play: privatePlayTomorrow.summary,
+          pamper: { dogs: pamperReportTomorrow.dogs.length },
+          enrichment: { dogs: enrichmentReportTomorrow.dogs.length },
         },
         errors: errors.length > 0 ? errors : undefined,
       }),
