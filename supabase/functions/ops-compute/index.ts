@@ -1327,6 +1327,74 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     });
   }
 
+  // ─── Fresh N' Clean auto-detection ─────────────────────────────────────
+  // Dogs boarding exactly 1 night, departing today, with no bath service
+  const bathDogResIds = new Set(bathDogs.map(d => d.gingrReservationId));
+  for (const r of allRes) {
+    const resId = String(r.gingr_id || "");
+    if (bathDogResIds.has(resId)) continue; // already has a bath
+
+    // Must be a boarding reservation
+    const resTypeName = (r.reservation_type_name || "").toLowerCase();
+    if (!resTypeName.includes("boarding")) continue;
+
+    // Must be departing on the target date
+    const endDate = r.end_date || "";
+    if (!endDate.includes(today)) continue;
+
+    // Must be exactly 1 night: start_date's date is 1 day before end_date's date
+    const startDate = r.start_date || "";
+    const startDay = startDate.split("T")[0];
+    const endDay = endDate.split("T")[0];
+    if (!startDay || !endDay) continue;
+    const expectedStart = addDays(endDay, -1);
+    if (startDay !== expectedStart) continue;
+
+    // Confirm no bath service anywhere on the reservation
+    const rd = r.raw_data || {};
+    const rawSvcs = rd.services || [];
+    const topSvcs = Array.isArray(r.services) ? r.services : [];
+    const allSvcs = [...rawSvcs, ...topSvcs];
+    const hasBath = allSvcs.some((s: any) => {
+      const n = typeof s === "string" ? s : s?.name || "";
+      return n.toLowerCase().includes("bath");
+    });
+    if (hasBath) continue;
+
+    const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
+    if (animalGingrId) animalIds.push(animalGingrId);
+
+    const resType = rd.reservation_type || {};
+    const roomLabel = r.room_assignment || rd.run?.name || "";
+    const notesParts = [r.notes_reservation, r.notes_animal, r.notes_owner]
+      .filter(Boolean)
+      .map((n: string) => n.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    const reservationNotes = notesParts.join(" | ");
+
+    bathDogs.push({
+      animalGingrId,
+      gingrReservationId: resId,
+      bathServiceId: "",
+      animalName: r.animal_name || rd.animal?.name || "Unknown",
+      ownerName: [r.owner_first_name || rd.owner?.first_name || "", r.owner_last_name || rd.owner?.last_name || ""].filter(Boolean).join(" "),
+      breed: rd.animal?.breed || "",
+      roomLabel,
+      suiteType: resType.type || r.reservation_type_name || "",
+      addonType: "",
+      bathServiceName: "",
+      bathModifiers: [],
+      reservationNotes,
+      scheduledAt: endDate,
+      scheduledTime: formatTimeHuman(endDate),
+      departureTime: formatTimeHuman(endDate),
+      departureTimeRaw: endDate,
+      isCheckedOut: !!r.check_out_date,
+      isDone: false,
+      isFreshNClean: true,
+    });
+  }
+
   // Fetch bath icons, play icons, and weights for all dogs
   let iconMap: Record<string, { title: string; comment: string }> = {};
   let playIconMap: Record<string, string> = {}; // animal_id → play type (e.g. "Private Play")
@@ -1382,13 +1450,15 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     }
   }
 
-  // Resolve bath type: icon → add-on → service name → Standard
+  // Resolve bath type: Fresh N' Clean for auto-detected, else icon → add-on → service name → Standard
   const dogs = bathDogs.map((d, idx) => {
     const icon = iconMap[d.animalGingrId];
-    const bathType = icon?.title
-      || d.addonType
-      || extractBathTypeFromName(d.bathServiceName)
-      || "Standard";
+    const bathType = d.isFreshNClean
+      ? "Fresh N' Clean"
+      : (icon?.title
+        || d.addonType
+        || extractBathTypeFromName(d.bathServiceName)
+        || "Standard");
     const weight = weightMap[d.animalGingrId] ?? null;
     // Size classification: <30 lbs = small, >=30 lbs = large
     const sizeCategory = weight != null ? (weight < 30 ? "small" : "large") : null;
@@ -1406,7 +1476,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       bathModifiers: d.bathModifiers,
       bathNotes: icon?.comment || "",
       reservationNotes: d.reservationNotes || "",
-      serviceNotes: serviceNotesMap[idx] || "",
+      serviceNotes: d.isFreshNClean ? "" : (serviceNotesMap[idx] || ""),
       weight,
       sizeCategory,
       hasPrivatePlay,
@@ -1416,6 +1486,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       departureTimeRaw: d.departureTimeRaw,
       isCheckedOut: d.isCheckedOut,
       isDone: d.isDone,
+      isFreshNClean: !!d.isFreshNClean,
     };
   });
 
