@@ -1018,6 +1018,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
   // ─── Bathing Report (server-computed via ops-compute) ────────────────────────
   const [bathCompleted, setBathCompleted] = useState({});
+  const [onDemandLoading, setOnDemandLoading] = useState(false);
 
   // Load bath completions from Supabase
   useEffect(() => {
@@ -1035,6 +1036,26 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         }
       });
   }, [sub, viewDate, profile?.location_id]);
+
+  // On-demand fallback: if no bathing entry exists for viewDate, fetch it
+  useEffect(() => {
+    if (sub !== "bathing" || !profile?.location_id) return;
+    const bathingEntry = allOps.find(e => e.id === `ops_bathing_${viewDate}`);
+    if (bathingEntry) return; // Data already exists, no need to fetch
+    let cancelled = false;
+    setOnDemandLoading(true);
+    supabase.functions.invoke('ops-compute-ondemand', {
+      body: { location_id: profile.location_id, date: viewDate }
+    }).then(({ data, error }) => {
+      if (cancelled) return;
+      setOnDemandLoading(false);
+      // The edge function upserts into lite_daily_ops, so the realtime subscription
+      // will pick it up automatically. No manual state update needed.
+    }).catch(() => {
+      if (!cancelled) setOnDemandLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [sub, viewDate, profile?.location_id, allOps.length]);
 
   const saveBathCompleted = async (newCompleted) => {
     setBathCompleted(newCompleted);
@@ -1112,7 +1133,9 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
             <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "inherit" }}>Bathing Report</span>
           </Card>
           <Card style={{ padding: "48px 20px", textAlign: "center" }}>
-            <K9LoadingAnimation size={64} message="Loading bathing report…" subMessage="Waiting for server data" />
+            <K9LoadingAnimation size={64}
+              message={onDemandLoading ? "Loading data from Gingr..." : "Loading bathing report…"}
+              subMessage={onDemandLoading ? "Computing on-demand for " + viewDate : "Waiting for server data"} />
           </Card>
         </div>
       );
