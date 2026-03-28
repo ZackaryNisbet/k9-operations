@@ -972,14 +972,23 @@ interface PPDog {
   reservationType: string;
   requiredSessions: number;
   source: string;
+  isCheckedIn: boolean;
+  startDate: string;
+  startTime: string;
+  roomLabel: string;
+  weight: number | null;
+  sizeCategory: string | null;
+  animalGingrId: string;
+  breed: string;
 }
 
-function computePrivatePlay(reservations: Record<string, any>): any {
+function computePrivatePlay(reservations: Record<string, any>, weightMap: Record<string, number | null>, breedMap: Record<string, string>): any {
   const dogs: PPDog[] = [];
   const seen = new Set<string>();
 
   for (const res of Object.values(reservations)) {
     const animalId = String(res.animal?.id || "");
+    const animalGingrId = String(res.animalGingrId || res.animal?.id || "");
     const animalName = res.animal?.name || "";
     const ownerFirst = res.owner?.first_name || "";
     const ownerLast = res.owner?.last_name || "";
@@ -997,6 +1006,15 @@ function computePrivatePlay(reservations: Record<string, any>): any {
 
     if ((isDayBoarding || hasPP) && animalId && !seen.has(animalId)) {
       seen.add(animalId);
+      // Support both Gingr API format and DB-mapped format
+      const isCheckedIn = (res.checkInDate != null) || (res.check_in_date != null);
+      const startDate = res.startDate || res.start_date || "";
+      const startTime = formatTimeHuman(startDate);
+      const roomLabel = res.roomLabel || res.room?.name || "";
+      const weight = weightMap[animalGingrId] ?? null;
+      const sizeCategory = weight != null ? (weight < 30 ? "SM" : "LG") : null;
+      const breed = breedMap[animalGingrId] || res.breed || res.animal?.breed || "";
+
       dogs.push({
         animalId,
         animalName,
@@ -1004,6 +1022,14 @@ function computePrivatePlay(reservations: Record<string, any>): any {
         reservationType: resType,
         requiredSessions: 3,
         source: isDayBoarding ? "day_boarding" : "private_play_service",
+        isCheckedIn,
+        startDate,
+        startTime,
+        roomLabel,
+        weight,
+        sizeCategory,
+        animalGingrId,
+        breed,
       });
     }
   }
@@ -1461,7 +1487,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
         || "Standard");
     const weight = weightMap[d.animalGingrId] ?? null;
     // Size classification: <30 lbs = small, >=30 lbs = large
-    const sizeCategory = weight != null ? (weight < 30 ? "small" : "large") : null;
+    const sizeCategory = weight != null ? (weight < 30 ? "SM" : "LG") : null;
     const hasPrivatePlay = !!playIconMap[d.animalGingrId];
 
     return {
@@ -1575,7 +1601,7 @@ async function fetchReservationsForDate(
   targetDate: string,
 ): Promise<Record<string, any>> {
   const nextDay = addDays(targetDate, 1);
-  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, services";
+  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, services, room_assignment";
 
   const [{ data: activeRes }, { data: pendingRes }] = await Promise.all([
     // Dogs checked in whose stay spans the target date
@@ -1609,6 +1635,11 @@ async function fetchReservationsForDate(
       },
       reservation_type: rd.reservation_type || { type: r.reservation_type_name || "" },
       services: Array.isArray(r.services) ? r.services : (rd.services || []),
+      animalGingrId: String(r.animal_gingr_id || rd.animal?.id || ""),
+      checkInDate: r.check_in_date || null,
+      startDate: r.start_date || "",
+      roomLabel: r.room_assignment || rd.room?.name || "",
+      breed: rd.animal?.breed || "",
     };
   }
   return result;
@@ -1714,8 +1745,22 @@ Deno.serve(async (req: Request) => {
     // 1. Room Cleaning
     const roomCleaning = await computeRoomCleaning(supabase, bohResult, locationId, today);
 
-    // 2. Private Play
-    const privatePlay = computePrivatePlay(reservations);
+    // 2. Private Play — fetch weight/breed for PP dogs
+    const ppAnimalIds = Object.values(reservations).map((r: any) => String(r.animal?.id || "")).filter(Boolean);
+    let ppWeightMap: Record<string, number | null> = {};
+    let ppBreedMap: Record<string, string> = {};
+    if (ppAnimalIds.length > 0) {
+      const { data: ppAnimals } = await supabase
+        .from("gingr_animals")
+        .select("gingr_id, weight, breed")
+        .in("gingr_id", ppAnimalIds);
+      for (const a of ppAnimals || []) {
+        const w = a.weight ? parseFloat(a.weight) : null;
+        ppWeightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
+        ppBreedMap[a.gingr_id] = a.breed || "";
+      }
+    }
+    const privatePlay = computePrivatePlay(reservations, ppWeightMap, ppBreedMap);
 
     // 3. Opening Checklist
     const openingItems = filterByDayOfWeek(openingTemplate, today);
@@ -1764,7 +1809,22 @@ Deno.serve(async (req: Request) => {
       // Fetch DB reservations covering this future date
       const reservationsFuture = await fetchReservationsForDate(supabase, locationId, futureDate);
 
-      const privatePlayFuture = computePrivatePlay(reservationsFuture);
+      // Fetch weight/breed for future PP dogs
+      const futureAnimalIds = Object.values(reservationsFuture).map((r: any) => String(r.animalGingrId || r.animal?.id || "")).filter(Boolean);
+      let futureWeightMap: Record<string, number | null> = {};
+      let futureBreedMap: Record<string, string> = {};
+      if (futureAnimalIds.length > 0) {
+        const { data: futureAnimals } = await supabase
+          .from("gingr_animals")
+          .select("gingr_id, weight, breed")
+          .in("gingr_id", futureAnimalIds);
+        for (const a of futureAnimals || []) {
+          const w = a.weight ? parseFloat(a.weight) : null;
+          futureWeightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
+          futureBreedMap[a.gingr_id] = a.breed || "";
+        }
+      }
+      const privatePlayFuture = computePrivatePlay(reservationsFuture, futureWeightMap, futureBreedMap);
       const pamperFuture = computeServiceReport(reservationsFuture, "pamper");
       const enrichmentFuture = computeServiceReport(reservationsFuture, "enrichment");
 
