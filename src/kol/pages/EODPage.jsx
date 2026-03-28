@@ -57,11 +57,17 @@ function MentionTextarea({ value, onChange, onFocus, onBlur, placeholder, style,
   const filtered = useMemo(() => {
     if (!mention) return [];
     const q = mention.query.toLowerCase();
-    return (entities || []).filter(d => d.name.toLowerCase().includes(q));
+    return (entities || []).filter(d => {
+      if (d.name.toLowerCase().includes(q)) return true;
+      if (d.breed && d.breed.toLowerCase().includes(q)) return true;
+      if (d.ownerName && d.ownerName.toLowerCase().includes(q)) return true;
+      if (d.ownerLastName && d.ownerLastName.toLowerCase().includes(q)) return true;
+      return false;
+    });
   }, [mention, entities]);
 
-  const filteredDogs = useMemo(() => filtered.filter(e => e.type === "dog"), [filtered]);
-  const filteredOwners = useMemo(() => filtered.filter(e => e.type === "owner"), [filtered]);
+  const filteredDogs = useMemo(() => filtered.filter(e => e.type === "dog").slice(0, 25), [filtered]);
+  const filteredOwners = useMemo(() => filtered.filter(e => e.type === "owner").slice(0, 15), [filtered]);
   const allFiltered = useMemo(() => [...filteredDogs, ...filteredOwners], [filteredDogs, filteredOwners]);
 
   useEffect(() => { setHighlightIdx(0); }, [allFiltered.length, mention?.query]);
@@ -70,10 +76,11 @@ function MentionTextarea({ value, onChange, onFocus, onBlur, placeholder, style,
     if (!mention || !textareaRef.current) return;
     const before = value.slice(0, mention.startIdx);
     const after = value.slice(textareaRef.current.selectionStart);
-    const newValue = before + name + " " + after;
+    // Keep the @ prefix so renderMentionContent can detect it
+    const newValue = before + "@" + name + " " + after;
     onChange(newValue);
     setMention(null);
-    const cursorPos = mention.startIdx + name.length + 1;
+    const cursorPos = mention.startIdx + 1 + name.length + 1;
     requestAnimationFrame(() => {
       if (textareaRef.current) {
         textareaRef.current.focus();
@@ -119,13 +126,50 @@ function MentionTextarea({ value, onChange, onFocus, onBlur, placeholder, style,
     setTimeout(() => { setMention(null); if (onBlur) onBlur(e); }, 150);
   };
 
+  // Build highlighted content for the overlay (shows @mentions in blue while editing)
+  const highlightedParts = useMemo(() => {
+    if (!value) return null;
+    const parts = [];
+    const mentionRegex = /@(\w+(?:\s+\w+)*)/g;
+    let lastIdx = 0;
+    let m;
+    while ((m = mentionRegex.exec(value)) !== null) {
+      if (m.index > lastIdx) parts.push(<span key={`t${m.index}`}>{value.slice(lastIdx, m.index)}</span>);
+      const mentionName = m[1];
+      const isKnown = (entities || []).some(e => {
+        if (e.type === "dog") {
+          const fullName = e.ownerLastName ? `${e.name} ${e.ownerLastName}` : e.name;
+          return fullName === mentionName || e.name === mentionName;
+        }
+        return e.name === mentionName;
+      });
+      parts.push(<span key={`m${m.index}`} style={isKnown ? { color: "#2563EB", fontWeight: 600 } : {}}>{m[0]}</span>);
+      lastIdx = m.index + m[0].length;
+    }
+    if (lastIdx < value.length) parts.push(<span key="end">{value.slice(lastIdx)}</span>);
+    return parts;
+  }, [value, entities]);
+
+  const overlayRef = useRef(null);
+  // Sync scroll between textarea and overlay
+  const handleScroll = () => {
+    if (overlayRef.current && textareaRef.current) {
+      overlayRef.current.scrollTop = textareaRef.current.scrollTop;
+    }
+  };
+
   let globalIdx = 0;
   return (
     <div style={{ position: "relative" }}>
+      {/* Styled overlay that shows @mentions in blue — sits behind transparent textarea */}
+      <div ref={overlayRef} aria-hidden="true" style={{ ...style, position: "absolute", top: 0, left: 0, right: 0, bottom: 0, pointerEvents: "none", whiteSpace: "pre-wrap", wordBreak: "break-word", overflow: "hidden", color: style?.color || C.text, zIndex: 0 }}>
+        {highlightedParts || ""}
+      </div>
       <textarea
         ref={textareaRef} value={value} onChange={handleChange} onKeyDown={handleKeyDown}
         onFocus={onFocus} onBlur={handleBlurWithDelay} placeholder={placeholder}
-        disabled={disabled} style={style}
+        disabled={disabled} onScroll={handleScroll}
+        style={{ ...style, color: "transparent", background: "transparent", position: "relative", zIndex: 1, caretColor: style?.color || C.text || "#111" }}
       />
       {mention && allFiltered.length > 0 && (
         <div ref={dropdownRef} style={{
@@ -151,7 +195,7 @@ function MentionTextarea({ value, onChange, onFocus, onBlur, placeholder, style,
                       {dog.ownerLastName && <><span style={{ fontSize: 11, color: C.textMut }}>·</span><span style={{ fontSize: 12, color: C.textMut }}>{dog.ownerLastName}</span></>}
                     </div>
                     <div style={{ fontSize: 10, color: C.textMut, marginTop: 1 }}>
-                      {dog.breed || "Unknown breed"}{dog.stayCount > 0 ? ` · ${dog.stayCount} stay${dog.stayCount !== 1 ? "s" : ""}` : ""}
+                      {dog.breed || "Unknown breed"}
                     </div>
                   </div>
                 </div>
@@ -441,40 +485,63 @@ function LiteEODPage({ data, save, nav, profile, addGlobalToast }) {
   // Calendar dots for days with saved EOD
   const eodDates = useMemo(() => new Set((data.eodEntries || []).map(e => e.date)), [data.eodEntries]);
 
-  // Entities (dogs + owners) from current day's reservations for @ mention suggest
+  // Search across all EOD entries
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef(null);
+  useEffect(() => { if (!searchOpen) return; const handler = (e) => { if (searchRef.current && !searchRef.current.contains(e.target)) setSearchOpen(false); }; document.addEventListener("mousedown", handler); return () => document.removeEventListener("mousedown", handler); }, [searchOpen]);
+  const searchResults = useMemo(() => {
+    if (!searchQuery || searchQuery.trim().length < 2) return [];
+    const q = searchQuery.toLowerCase().trim();
+    const entries = data.eodEntries || [];
+    const results = [];
+    entries.forEach(entry => {
+      const dateLabel = new Date(entry.date + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+      // Check if date label matches
+      const dateMatch = dateLabel.toLowerCase().includes(q) || entry.date.includes(q);
+      (entry.sections || []).forEach(sec => {
+        const content = sec.content || "";
+        if (!content.trim()) return;
+        const contentMatch = content.toLowerCase().includes(q);
+        if (dateMatch || contentMatch) {
+          const tmpl = activeTemplate.find(t => t.id === sec.id);
+          // Build a snippet around the match
+          let snippet = content;
+          if (contentMatch) {
+            const idx = content.toLowerCase().indexOf(q);
+            const start = Math.max(0, idx - 40);
+            const end = Math.min(content.length, idx + q.length + 60);
+            snippet = (start > 0 ? "..." : "") + content.slice(start, end) + (end < content.length ? "..." : "");
+          } else {
+            snippet = content.slice(0, 100) + (content.length > 100 ? "..." : "");
+          }
+          results.push({ date: entry.date, dateLabel, sectionTitle: tmpl?.title || sec.id, emoji: tmpl?.emoji || "", snippet, contentMatch });
+        }
+      });
+    });
+    return results.slice(0, 20);
+  }, [searchQuery, data.eodEntries, activeTemplate]);
+
+  // Entities (ALL dogs + owners from Gingr) for @ mention suggest
   const mentionEntities = useMemo(() => {
     const dogs = data.dogs || [];
     const clients = data.clients || [];
-    const reservations = data.reservations || [];
-    const today = todayStr();
-    const dayRes = reservations.filter(r =>
-      r.checkIn <= viewDate && r.checkOut >= viewDate &&
-      r.status !== "cancelled"
-    );
-    const dogIds = new Set(dayRes.map(r => r.dogId));
     const ownerIds = new Set();
     const dogEntities = dogs
-      .filter(d => dogIds.has(d.id))
       .map(d => {
         const client = clients.find(c => c.id === d.clientId);
         if (client) ownerIds.add(client.id);
-        const dogRes = reservations.filter(r => r.dogId === d.id);
-        const pastRes = dogRes.filter(r => r.checkOut < today);
-        const lastStay = pastRes.length > 0 ? pastRes.sort((a, b) => b.checkOut.localeCompare(a.checkOut))[0].checkOut : null;
         return {
           id: d.id,
           name: d.fields?.name || "Unknown",
           ownerName: client ? `${client.fields?.first_name || ""} ${client.fields?.last_name || ""}`.trim() : "",
           ownerLastName: client?.fields?.last_name || "",
           breed: d.fields?.breed || d.fields?.breed_name || "",
-          stayCount: dogRes.filter(r => r.status === "checked-out" || r.status === "completed" || r.checkOut <= today).length,
-          lastStay,
           type: "dog",
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
     const ownerEntities = clients
-      .filter(c => ownerIds.has(c.id))
       .map(c => ({
         id: c.id,
         name: `${c.fields?.first_name || ""} ${c.fields?.last_name || ""}`.trim() || "Unknown",
@@ -482,7 +549,7 @@ function LiteEODPage({ data, save, nav, profile, addGlobalToast }) {
       }))
       .sort((a, b) => a.name.localeCompare(b.name));
     return [...dogEntities, ...ownerEntities];
-  }, [data.dogs, data.clients, data.reservations, viewDate]);
+  }, [data.dogs, data.clients]);
 
 
   return (
@@ -499,6 +566,43 @@ function LiteEODPage({ data, save, nav, profile, addGlobalToast }) {
           <Btn variant="secondary" size="sm" onClick={openTemplateEditor}>Customize Template</Btn>
           {isPastDay && isLocked ? <Btn variant="secondary" size="sm" disabled style={{opacity:0.5,cursor:"not-allowed"}}>{"🔒 Locked"}</Btn> : <Btn variant="secondary" onClick={toggleLock} size="sm">{isLocked ? "🔒 Locked" : "🔓 Lock Day"}</Btn>}
         </div>
+      </div>
+
+      {/* Search Bar */}
+      <div ref={searchRef} style={{ position: "relative", marginBottom: 12 }}>
+        <div style={{ position: "relative" }}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={searchOpen ? C.pri : C.textMut} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input
+            type="text" value={searchQuery}
+            onChange={e => { setSearchQuery(e.target.value); setSearchOpen(true); }}
+            onFocus={() => setSearchOpen(true)}
+            placeholder="Search EOD notes by content, dog names, dates..."
+            style={{ width: "100%", padding: "9px 12px 9px 36px", borderRadius: 10, border: `1.5px solid ${searchOpen && searchQuery ? C.pri : C.border}`, background: C.surface, fontSize: 13, color: C.text, fontFamily: "inherit", outline: "none", boxSizing: "border-box", transition: "border-color 0.15s" }}
+          />
+          {searchQuery && <button onClick={() => { setSearchQuery(""); setSearchOpen(false); }} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: C.textMut, fontSize: 16, fontFamily: "inherit", padding: "2px 4px", lineHeight: 1 }}>×</button>}
+        </div>
+        {searchOpen && searchQuery.trim().length >= 2 && (
+          <div style={{ position: "absolute", left: 0, right: 0, top: "100%", marginTop: 4, zIndex: 300, background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 12, boxShadow: "0 8px 24px rgba(0,0,0,0.12)", maxHeight: 340, overflowY: "auto" }}>
+            {searchResults.length === 0 ? (
+              <div style={{ padding: "16px 20px", textAlign: "center", fontSize: 13, color: C.textMut }}>No matching EOD notes found</div>
+            ) : (
+              searchResults.map((r, i) => (
+                <div key={`${r.date}-${r.sectionTitle}-${i}`}
+                  onClick={() => { setViewDate(r.date); setSearchOpen(false); setSearchQuery(""); }}
+                  style={{ padding: "10px 16px", cursor: "pointer", borderBottom: i < searchResults.length - 1 ? `1px solid ${C.borderLight || C.border}` : "none", transition: "background 0.08s" }}
+                  onMouseEnter={e => { e.currentTarget.style.background = C.surfaceHover || "#F8FAFC"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: C.pri }}>{r.dateLabel}</span>
+                    <span style={{ fontSize: 11, color: C.textMut }}>·</span>
+                    <span style={{ fontSize: 11, color: C.textMut }}>{r.emoji} {r.sectionTitle}</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: C.textSec, lineHeight: 1.4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{r.snippet}</div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </div>
 
       {/* New Hire Guide */}
