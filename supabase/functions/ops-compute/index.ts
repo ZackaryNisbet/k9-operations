@@ -1672,18 +1672,37 @@ Deno.serve(async (req: Request) => {
     const pamperReport = computeServiceReport(reservations, "pamper");
     const enrichmentReport = computeServiceReport(reservations, "enrichment");
 
-    // ─── Compute TOMORROW's service reports ────────────────────────────
-    const tomorrow = addDays(today, 1);
+    // ─── Compute FUTURE days (today + 1 through today + 7) ─────────────
+    // Skip Gingr web auth (service notes) for future days — only today gets those.
+    const futureReports: Array<{
+      date: string;
+      bathing: any;
+      privatePlay: any;
+      pamper: any;
+      enrichment: any;
+    }> = [];
 
-    // Bathing report: computeBathingReport already queries by date internally
-    const bathingReportTomorrow = await computeBathingReport(supabase, locationId, tomorrow, gingrSubdomain, gingrApiKey);
+    for (let offset = 1; offset <= 7; offset++) {
+      const futureDate = addDays(today, offset);
 
-    // Fetch DB reservations covering tomorrow for service reports
-    const reservationsTomorrow = await fetchReservationsForDate(supabase, locationId, tomorrow);
+      // Bathing: pass NO subdomain/apiKey so it skips web login for service notes
+      const bathingFuture = await computeBathingReport(supabase, locationId, futureDate);
 
-    const privatePlayTomorrow = computePrivatePlay(reservationsTomorrow);
-    const pamperReportTomorrow = computeServiceReport(reservationsTomorrow, "pamper");
-    const enrichmentReportTomorrow = computeServiceReport(reservationsTomorrow, "enrichment");
+      // Fetch DB reservations covering this future date
+      const reservationsFuture = await fetchReservationsForDate(supabase, locationId, futureDate);
+
+      const privatePlayFuture = computePrivatePlay(reservationsFuture);
+      const pamperFuture = computeServiceReport(reservationsFuture, "pamper");
+      const enrichmentFuture = computeServiceReport(reservationsFuture, "enrichment");
+
+      futureReports.push({
+        date: futureDate,
+        bathing: bathingFuture,
+        privatePlay: privatePlayFuture,
+        pamper: pamperFuture,
+        enrichment: enrichmentFuture,
+      });
+    }
 
     // ─── Upsert all computed items ─────────────────────────────────────
 
@@ -1778,43 +1797,13 @@ Deno.serve(async (req: Request) => {
         today,
         enrichmentReport,
       ),
-      // ─── Tomorrow's upserts ───────────────────────────────────────
-      upsertComputedItems(
-        supabase,
-        `ops_bathing_${tomorrow}`,
-        locationId,
-        "bathing",
-        "bathing",
-        tomorrow,
-        bathingReportTomorrow,
-      ),
-      upsertComputedItems(
-        supabase,
-        `ops_pp_${tomorrow}`,
-        locationId,
-        "pp",
-        "pp",
-        tomorrow,
-        privatePlayTomorrow,
-      ),
-      upsertComputedItems(
-        supabase,
-        `ops_pamper_${tomorrow}`,
-        locationId,
-        "pamper",
-        "pamper",
-        tomorrow,
-        pamperReportTomorrow,
-      ),
-      upsertComputedItems(
-        supabase,
-        `ops_svc_${tomorrow}`,
-        locationId,
-        "svc",
-        "svc",
-        tomorrow,
-        enrichmentReportTomorrow,
-      ),
+      // ─── Future days upserts (7 days) ─────────────────────────────
+      ...futureReports.flatMap(fr => [
+        upsertComputedItems(supabase, `ops_bathing_${fr.date}`, locationId, "bathing", "bathing", fr.date, fr.bathing),
+        upsertComputedItems(supabase, `ops_pp_${fr.date}`, locationId, "pp", "pp", fr.date, fr.privatePlay),
+        upsertComputedItems(supabase, `ops_pamper_${fr.date}`, locationId, "pamper", "pamper", fr.date, fr.pamper),
+        upsertComputedItems(supabase, `ops_svc_${fr.date}`, locationId, "svc", "svc", fr.date, fr.enrichment),
+      ]),
     ];
 
     const results = await Promise.allSettled(upserts);
@@ -1843,13 +1832,13 @@ Deno.serve(async (req: Request) => {
           pamper: { dogs: pamperReport.dogs.length },
           enrichment: { dogs: enrichmentReport.dogs.length },
         },
-        computed_tomorrow: {
-          date: tomorrow,
-          bathing: { dogs: bathingReportTomorrow.dogs.length },
-          private_play: privatePlayTomorrow.summary,
-          pamper: { dogs: pamperReportTomorrow.dogs.length },
-          enrichment: { dogs: enrichmentReportTomorrow.dogs.length },
-        },
+        computed_future: futureReports.map(fr => ({
+          date: fr.date,
+          bathing: { dogs: fr.bathing.dogs.length },
+          private_play: fr.privatePlay.summary,
+          pamper: { dogs: fr.pamper.dogs.length },
+          enrichment: { dogs: fr.enrichment.dogs.length },
+        })),
         errors: errors.length > 0 ? errors : undefined,
       }),
       {
