@@ -247,7 +247,7 @@ async function syncReservations(
   endDate?: string
 ) {
   const now = new Date();
-  const end = endDate || now.toISOString().split("T")[0];
+  const end = endDate || new Date(now.getTime() + 14 * 86400000).toISOString().split("T")[0];
 
   // Resumable: check where we left off from sync state
   let start = startDate || "2015-01-01";
