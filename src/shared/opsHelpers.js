@@ -246,6 +246,12 @@ function getOpsCardStatus(data, item, date) {
     if (wmStats.checked >= wmStats.total) return "completed";
     return wmStats.checked > 0 ? "in_progress" : "not_started";
   }
+  if (item.typeSub === "collars") {
+    const cStats = getCollarsStats(data, td);
+    if (cStats.total === 0) return "not_started";
+    if (cStats.completed >= cStats.total) return "completed";
+    return cStats.completed > 0 ? "in_progress" : "not_started";
+  }
   if (Array.isArray(ei)) {
     return ei.some(i => i.checked) ? "in_progress" : "not_started";
   }
@@ -299,6 +305,10 @@ function getOpsProgress(data, item, date) {
   if (item.typeSub === "weekly_maintenance") {
     const wmStats = getWeeklyMaintenanceStats(data, td);
     return wmStats.total > 0 ? Math.round((wmStats.checked / wmStats.total) * 100) : 0;
+  }
+  if (item.typeSub === "collars") {
+    const cStats = getCollarsStats(data, td);
+    return cStats.total > 0 ? Math.round((cStats.completed / cStats.total) * 100) : 0;
   }
   if (Array.isArray(ei)) {
     const total = ei.length;
@@ -357,6 +367,11 @@ function getOpsCountLabel(data, item, date) {
     const wmStats = getWeeklyMaintenanceStats(data, td);
     return `${wmStats.checked}/${wmStats.total} tasks`;
   }
+  if (item.typeSub === "collars") {
+    const cStats = getCollarsStats(data, td);
+    if (cStats.total === 0) return "No collars";
+    return `${cStats.completed}/${cStats.total} collars`;
+  }
   return "";
 }
 
@@ -403,8 +418,21 @@ function getRoomCleaningBreakdown(data, date) {
   return { totalSetups: 0, doneSetups: 0, totalDisinfects: 0, doneDisinfects: 0, totalRefreshes: 0, doneRefreshes: 0 };
 }
 
+// ─── Collars Stats ──────────────────────────────────────────────────────────
+function getCollarsStats(data, date) {
+  const td = date || todayStr();
+  const entryId = `ops_collars_${td}`;
+  const entry = (data.dailyOps || []).find(e => e.id === entryId);
+  const ci = entry?.computed_items;
+  if (!ci || !ci.dogs) return { total: 0, completed: 0 };
+  const total = ci.dogs.length;
+  const completions = ci.completions || {};
+  const completed = Object.values(completions).filter(c => c && c.status === "complete").length;
+  return { total, completed, summary: ci.summary || {} };
+}
+
 // ─── Shared UI Components (from POS App) ───────────────────────────────────
 
 // Tip component
 
-export { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, getRoomCleaningBreakdown, getWeeklyMaintenanceStats, resSvcIncludes, getPPStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel };
+export { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, getRoomCleaningBreakdown, getWeeklyMaintenanceStats, resSvcIncludes, getPPStats, getCollarsStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel };
