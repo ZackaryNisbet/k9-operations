@@ -1043,6 +1043,85 @@ function OperationsHub({ data, save, nav, profile }) {
         );
       })()}
 
+      {/* Next Day Collars Section */}
+      {hp("view_daily_ops") && (() => {
+        const allOps = data.dailyOps || [];
+        const tomorrow = addDays(viewDate, 1);
+        const collarsEntry = allOps.find(e => e.id === `ops_collars_${tomorrow}`);
+        const collarsDogs = collarsEntry?.computed_items?.dogs || [];
+        const collarsSummary = collarsEntry?.computed_items?.summary || {};
+        const collarsTotal = collarsDogs.length;
+        const collarsCompletions = collarsEntry?.computed_items?.completions || {};
+        const collarsDone = Object.values(collarsCompletions).filter(c => c && c.status === "complete").length;
+        const collarsPct = collarsTotal > 0 ? Math.round((collarsDone / collarsTotal) * 100) : 0;
+        const collarsStatus = collarsTotal === 0 ? "not_started" : collarsDone >= collarsTotal ? "completed" : collarsDone > 0 ? "in_progress" : "not_started";
+        const csc = statusConfig[collarsStatus];
+        const COLLAR_PILL_COLORS = [
+          { key: "pink", bg: "#FCE4EC", text: "#C2185B" },
+          { key: "red", bg: "#FFEBEE", text: "#C62828" },
+          { key: "green", bg: "#E8F5E9", text: "#2E7D32" },
+          { key: "blue", bg: "#E3F2FD", text: "#1565C0" },
+          { key: "yellow", bg: "#FFFDE7", text: "#F9A825" },
+          { key: "halfAndHalf", label: "H&H", bg: "#F3E5F5", text: "#7B1FA2" },
+        ];
+        return (
+          <div style={{ marginBottom: 32 }}>
+            <div style={{ margin: "8px 0 18px", height: 1, background: C.borderLight }} />
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+              Collar Prep
+              <span style={{ fontSize: 12, fontWeight: 500, color: C.textMut, marginLeft: 4 }}>(Tomorrow)</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
+              <div
+                onClick={() => nav("ops-collars")}
+                style={{
+                  background: C.surface, borderRadius: 16,
+                  border: `1.5px solid ${collarsStatus === "completed" ? C.suc : collarsStatus === "in_progress" ? C.warn : C.border}`,
+                  cursor: "pointer", transition: "all 0.2s cubic-bezier(0.4,0,0.2,1)", position: "relative",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04)"; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)"; }}
+              >
+                <div style={{ padding: "18px 20px" }}>
+                  <div style={{ marginBottom: 10, display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Next Day Collars</div>
+                      <div style={{ fontSize: 12, color: C.textSec, marginTop: 3 }}>
+                        {collarsTotal > 0 ? `${collarsDone}/${collarsTotal} collars` : "No dogs tomorrow"}
+                      </div>
+                      {collarsTotal > 0 && (
+                        <div style={{ display: "flex", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
+                          {COLLAR_PILL_COLORS.map(cp => {
+                            const count = cp.key === "halfAndHalf" ? (collarsSummary.halfAndHalf || 0) : (collarsSummary[cp.key] || 0);
+                            if (count === 0) return null;
+                            return (
+                              <span key={cp.key} style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10, background: cp.bg, color: cp.text }}>
+                                {cp.label || cp.key.charAt(0).toUpperCase() + cp.key.slice(1)} {count}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <span style={{ color: C.textMut, fontSize: 16, marginTop: -2 }}>{"›"}</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: csc.bg, color: csc.color, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      {csc.label}
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: csc.color }}>{collarsPct}%</span>
+                  </div>
+                  <div style={{ marginTop: 8, height: 4, borderRadius: 2, background: C.borderLight, overflow: "hidden" }}>
+                    <div style={{ width: `${collarsPct}%`, height: "100%", borderRadius: 2, background: csc.barColor, transition: "width 0.4s cubic-bezier(0.4,0,0.2,1)" }} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Management Section */}
       {(hp("view_management") || hp("view_daily_ops")) && (
         <div style={{ marginBottom: 32 }}>

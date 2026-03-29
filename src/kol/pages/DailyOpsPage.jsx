@@ -8,7 +8,7 @@ import { C, OPERATIONS_CATALOG, OPS_TYPES, LITE_DEF_PRICING, CHART_PTS, DEF_CLIE
 import { I, Icons } from "../../shared/icons";
 import { Tip, Badge, Btn, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, K9Logo, K9LogoMini, isFieldRequired, validateClientFields } from "../../shared/ui";  // formatDogNames, fmtPhoneInput are in theme.js
 import { hasPermission, hasLeanPermission, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP } from "../../shared/permissions";
-import { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, resSvcIncludes, getPPStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel } from "../../shared/opsHelpers";
+import { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, resSvcIncludes, getPPStats, getCollarsStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel } from "../../shared/opsHelpers";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
@@ -31,8 +31,8 @@ const K9Check = ({ checked, disabled, onChange, color = C.pri, size = 18 }) => (
 
 function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params }) {
   const td = todayStr();
-  // Belongings defaults to tomorrow (prep for next day's departures)
-  const [viewDate, setViewDate] = useState(() => sub === "belongings" ? addDays(td, 1) : td);
+  // Belongings + Collars default to tomorrow (prep for next day)
+  const [viewDate, setViewDate] = useState(() => (sub === "belongings" || sub === "collars") ? addDays(td, 1) : td);
   const [rcFilter, setRcFilter] = useState("all"); // all | incomplete | setup | refresh | disinfect | asNeeded
   const [recentlyCompleted, setRecentlyCompleted] = useState(new Set()); // room keys with grace period
   const dayIdx = new Date(viewDate + "T12:00:00").getDay();
@@ -1546,6 +1546,257 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     );
   };
 
+  // ─── Collars Report (server-computed via ops-compute) ────────────────────────
+  const [collarsCompleted, setCollarsCompleted] = useState({});
+  const [collarsExpanded, setCollarsExpanded] = useState({}); // { colorSection: boolean }
+  const [expandedCollar, setExpandedCollar] = useState(null);
+
+  // Load collars completions from Supabase
+  useEffect(() => {
+    if (sub !== "collars" || !profile?.location_id) return;
+    const key = `ops_collars_completions_${viewDate}`;
+    supabase.from("lite_settings").select("setting_value")
+      .eq("location_id", profile.location_id)
+      .eq("setting_key", key)
+      .limit(1)
+      .then(({ data: rows }) => {
+        if (rows && rows.length > 0 && rows[0].setting_value) {
+          setCollarsCompleted(rows[0].setting_value);
+        } else {
+          setCollarsCompleted({});
+        }
+      });
+  }, [sub, viewDate, profile?.location_id]);
+
+  const saveCollarsCompleted = async (newCompleted) => {
+    setCollarsCompleted(newCompleted);
+    if (!profile?.location_id) return;
+    const key = `ops_collars_completions_${viewDate}`;
+    await supabase.from("lite_settings").upsert({
+      location_id: profile.location_id,
+      setting_key: key,
+      setting_value: newCompleted,
+    }, { onConflict: "location_id,setting_key" });
+    // Also update lite_daily_ops computed_items for dashboard refresh
+    const eid = `ops_collars_${viewDate}`;
+    const collarsEntry = allOps.find(e => e.id === eid);
+    if (collarsEntry?.computed_items) {
+      const completedCount = Object.values(newCompleted).filter(c => c && c.status === "complete").length;
+      await supabase.from("lite_daily_ops").update({
+        computed_items: { ...collarsEntry.computed_items, completions: newCompleted, completedCount, totalCount: (collarsEntry.computed_items.dogs || []).length },
+        computed_at: new Date().toISOString(),
+      }).eq("id", eid).eq("location_id", profile.location_id);
+    }
+  };
+
+  const renderCollars = () => {
+    const collarsEntry = allOps.find(e => e.id === `ops_collars_${viewDate}`);
+    const computedDogs = collarsEntry?.computed_items?.dogs || [];
+    const summary = collarsEntry?.computed_items?.summary || {};
+    const totalDogs = computedDogs.length;
+    const doneDogs = Object.values(collarsCompleted).filter(c => c && c.status === "complete").length;
+
+    if (totalDogs === 0 && !collarsEntry) {
+      return (
+        <div>
+          <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "inherit" }}>Next Day Collars</span>
+          </Card>
+          <Card style={{ padding: "48px 20px", textAlign: "center" }}>
+            <K9LoadingAnimation size={64} message="Loading collars data..." subMessage="Waiting for server data" />
+          </Card>
+        </div>
+      );
+    }
+
+    const COLLAR_COLORS = [
+      { key: "pink", label: "Pink — Daycare", bg: "#FCE4EC", text: "#C2185B", border: "#F48FB1" },
+      { key: "red", label: "Red — Private Play", bg: "#FFEBEE", text: "#C62828", border: "#EF9A9A" },
+      { key: "green", label: "Green — Large Boarding", bg: "#E8F5E9", text: "#2E7D32", border: "#A5D6A7" },
+      { key: "blue", label: "Blue — Small Boarding", bg: "#E3F2FD", text: "#1565C0", border: "#90CAF9" },
+      { key: "yellow", label: "Yellow — Evaluation", bg: "#FFFDE7", text: "#F9A825", border: "#FFF176" },
+      { key: "halfAndHalf", label: "Half & Half", bg: "#F3E5F5", text: "#7B1FA2", border: "#CE93D8" },
+    ];
+
+    const setCollarStatus = (resId, status) => {
+      const nc = { ...collarsCompleted };
+      if (status === "not_started") { delete nc[resId]; }
+      else { nc[resId] = { status, by: profile?.name || profile?.full_name || profile?.email || "Staff", at: new Date().toISOString() }; }
+      saveCollarsCompleted(nc);
+    };
+
+    const checkAllInSection = (dogs) => {
+      const nc = { ...collarsCompleted };
+      const allDone = dogs.every(d => (nc[`g${d.reservationGingrId}`]?.status === "complete"));
+      dogs.forEach(d => {
+        const k = `g${d.reservationGingrId}`;
+        if (allDone) { delete nc[k]; }
+        else { nc[k] = { status: "complete", by: profile?.name || profile?.full_name || profile?.email || "Staff", at: new Date().toISOString() }; }
+      });
+      saveCollarsCompleted(nc);
+    };
+
+    const checkAll = () => {
+      const nc = { ...collarsCompleted };
+      const allDone = computedDogs.every(d => (nc[`g${d.reservationGingrId}`]?.status === "complete"));
+      computedDogs.forEach(d => {
+        const k = `g${d.reservationGingrId}`;
+        if (allDone) { delete nc[k]; }
+        else { nc[k] = { status: "complete", by: profile?.name || profile?.full_name || profile?.email || "Staff", at: new Date().toISOString() }; }
+      });
+      saveCollarsCompleted(nc);
+    };
+
+    const isBoarding = (dog) => dog.collarColor === "green" || dog.collarColor === "blue" || dog.collarColor === "red";
+
+    return (
+      <div>
+        {/* Summary Header */}
+        <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "inherit" }}>{totalDogs} Collars</span>
+              {COLLAR_COLORS.map(cc => {
+                const count = cc.key === "halfAndHalf" ? (summary.halfAndHalf || 0) : (summary[cc.key] || 0);
+                if (count === 0) return null;
+                return (
+                  <span key={cc.key} style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: cc.bg, color: cc.text, border: `1px solid ${cc.border}` }}>
+                    {cc.key === "halfAndHalf" ? "Half & Half" : cc.key.charAt(0).toUpperCase() + cc.key.slice(1)} {count}
+                  </span>
+                );
+              })}
+            </div>
+            <button onClick={checkAll} style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: doneDogs === totalDogs && totalDogs > 0 ? "#10B981" : C.surface, color: doneDogs === totalDogs && totalDogs > 0 ? "#fff" : C.text, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>
+              {doneDogs === totalDogs && totalDogs > 0 ? "✓ All Done" : "Check All"}
+            </button>
+          </div>
+          {totalDogs > 0 && (
+            <div style={{ marginTop: 10, height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
+              <div style={{ width: `${Math.round((doneDogs / totalDogs) * 100)}%`, height: "100%", borderRadius: 3, background: doneDogs === totalDogs ? "#10B981" : "#F59E0B", transition: "width 0.3s" }} />
+            </div>
+          )}
+          <div style={{ marginTop: 6, fontSize: 12, color: C.textSec }}>{doneDogs}/{totalDogs} complete</div>
+        </Card>
+
+        {totalDogs === 0 ? (
+          <Card style={{ padding: 32, textAlign: "center" }}>
+            <div style={{ fontSize: 14, color: C.textMut, fontFamily: "inherit" }}>No dogs for {fmtDate(viewDate)}</div>
+          </Card>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {COLLAR_COLORS.map(cc => {
+              const sectionDogs = cc.key === "halfAndHalf"
+                ? computedDogs.filter(d => d.isHalfAndHalf)
+                : computedDogs.filter(d => d.collarColor === cc.key);
+              if (sectionDogs.length === 0) return null;
+              const sectionDone = sectionDogs.filter(d => collarsCompleted[`g${d.reservationGingrId}`]?.status === "complete").length;
+              const isOpen = collarsExpanded[cc.key] !== false; // default open
+
+              return (
+                <Card key={cc.key} style={{ padding: 0, overflow: "hidden", border: `1.5px solid ${cc.border}` }}>
+                  {/* Section header */}
+                  <div
+                    onClick={() => setCollarsExpanded(prev => ({ ...prev, [cc.key]: !isOpen }))}
+                    style={{ padding: "12px 18px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", background: cc.bg }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: cc.text }}>{cc.label}</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: cc.text, opacity: 0.7 }}>({sectionDogs.length})</span>
+                      <span style={{ fontSize: 11, color: cc.text, opacity: 0.6 }}>{sectionDone}/{sectionDogs.length}</span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <button
+                        onClick={e => { e.stopPropagation(); checkAllInSection(sectionDogs); }}
+                        style={{ padding: "4px 12px", borderRadius: 6, border: `1px solid ${cc.border}`, background: sectionDone === sectionDogs.length ? cc.text : "rgba(255,255,255,0.8)", color: sectionDone === sectionDogs.length ? "#fff" : cc.text, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}
+                      >
+                        {sectionDone === sectionDogs.length ? "✓ Done" : "Check All"}
+                      </button>
+                      <span style={{ fontSize: 14, color: cc.text, transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>{"›"}</span>
+                    </div>
+                  </div>
+
+                  {/* Dog rows */}
+                  {isOpen && (
+                    <div style={{ borderTop: `1px solid ${cc.border}` }}>
+                      {sectionDogs.map(dog => {
+                        const resId = `g${dog.reservationGingrId}`;
+                        const isDone = collarsCompleted[resId]?.status === "complete";
+                        const isExp = expandedCollar === resId;
+                        const showDetails = isBoarding(dog) || dog.isHalfAndHalf;
+
+                        return (
+                          <div key={resId} style={{ borderBottom: `1px solid ${cc.border}30` }}>
+                            <div
+                              style={{ padding: "10px 18px", display: "flex", alignItems: "center", gap: 12, cursor: showDetails ? "pointer" : "default" }}
+                              onClick={() => showDetails && setExpandedCollar(isExp ? null : resId)}
+                            >
+                              <K9Check checked={isDone} color={cc.text} onChange={() => setCollarStatus(resId, isDone ? "not_started" : "complete")} />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                  <span style={{ fontSize: 13, fontWeight: 700, color: isDone ? C.textMut : C.text, textDecoration: isDone ? "line-through" : "none" }}>{dog.animalName}</span>
+                                  <span style={{ fontSize: 12, color: C.textSec }}>{(dog.ownerName || "").split(" ").pop()}</span>
+                                  {dog.isHalfAndHalf && cc.key !== "halfAndHalf" && (
+                                    <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#F3E5F5", color: "#7B1FA2" }}>H&H</span>
+                                  )}
+                                </div>
+                              </div>
+                              {isDone && collarsCompleted[resId] && (
+                                <span style={{ fontSize: 10, color: C.textMut }}>{collarsCompleted[resId].by}</span>
+                              )}
+                              {showDetails && (
+                                <span style={{ fontSize: 12, color: C.textMut, transform: isExp ? "rotate(90deg)" : "none", transition: "transform 0.2s" }}>{"›"}</span>
+                              )}
+                            </div>
+
+                            {/* Expanded boarding details */}
+                            {isExp && showDetails && (
+                              <div style={{ padding: "10px 18px 14px 50px", borderTop: `1px solid ${cc.border}20`, background: "rgba(255,255,255,0.5)" }}>
+                                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                                  {dog.roomLabel && (
+                                    <div>
+                                      <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Room</div>
+                                      <div style={{ fontSize: 12, fontWeight: 600, color: C.pri }}>{dog.roomLabel}</div>
+                                    </div>
+                                  )}
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Check-In</div>
+                                    <div style={{ fontSize: 12, color: C.text }}>{dog.startDate ? fmtDateShort(dog.startDate) : "—"} {dog.startTime || ""}</div>
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Check-Out</div>
+                                    <div style={{ fontSize: 12, color: C.text }}>{dog.endDate ? fmtDateShort(dog.endDate) : "—"} {dog.endTime || ""}</div>
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Breed</div>
+                                    <div style={{ fontSize: 12, color: C.text }}>{dog.breed || "—"}</div>
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Weight</div>
+                                    <div style={{ fontSize: 12, color: C.text }}>{dog.weight ? `${dog.weight} lbs` : "—"}</div>
+                                  </div>
+                                  {dog.sizeCategory && (
+                                    <div>
+                                      <div style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 3 }}>Size</div>
+                                      <div style={{ fontSize: 12, fontWeight: 600, color: dog.sizeCategory === "LG" ? "#D97706" : "#2563EB" }}>{dog.sizeCategory}</div>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // ─── Pamper Package Plus Report ─────────────────────────────────────────────
   const [pamperCompleted, setPamperCompleted] = useState({});
 
@@ -1908,6 +2159,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         : sub === "pp" ? renderPP()
         : sub === "bathing" ? renderBathing()
         : sub === "belongings" ? renderBelongings()
+        : sub === "collars" ? renderCollars()
         : sub === "pamper" ? renderPamper()
         : sub === "svc" ? renderGenericService()
         : <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec }}>Unknown checklist type</div></Card>}

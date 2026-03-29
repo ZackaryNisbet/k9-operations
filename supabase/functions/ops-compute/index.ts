@@ -1698,6 +1698,207 @@ async function computeBelongingsReport(
   return { dogs, completions, totalCount, completedCount };
 }
 
+// ─── 8c. Collars Report (next-day collar preparation) ─────────────────────
+
+async function computeCollarsReport(
+  supabase: any,
+  locationId: string,
+  targetDate: string,
+): Promise<any> {
+  // Query all reservations starting on the target date (not cancelled)
+  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, room_assignment, services";
+  const nextDay = addDays(targetDate, 1);
+
+  const { data: targetRes } = await supabase
+    .from("gingr_reservations")
+    .select(resSelect)
+    .eq("location_id", locationId)
+    .is("cancelled_date", null)
+    .gte("start_date", `${targetDate}T00:00:00`)
+    .lt("start_date", `${nextDay}T00:00:00`);
+
+  const allRes = targetRes || [];
+  if (allRes.length === 0) {
+    return { dogs: [], summary: { total: 0, pink: 0, red: 0, green: 0, blue: 0, yellow: 0, halfAndHalf: 0 }, completions: {}, totalCount: 0, completedCount: 0 };
+  }
+
+  // Categorize reservations by type
+  const categorized: Array<{ res: any; category: string }> = [];
+  for (const r of allRes) {
+    const typeName = (r.reservation_type_name || "").toLowerCase();
+    let category = "";
+    if (typeName.includes("evaluation")) {
+      category = "evaluation";
+    } else if (typeName.includes("day boarding")) {
+      category = "dayboarding";
+    } else if (typeName.includes("daycare") || typeName.includes("day care")) {
+      category = "daycare";
+    } else if (typeName.includes("boarding")) {
+      category = "boarding";
+    }
+    if (category) {
+      categorized.push({ res: r, category });
+    }
+  }
+
+  if (categorized.length === 0) {
+    return { dogs: [], summary: { total: 0, pink: 0, red: 0, green: 0, blue: 0, yellow: 0, halfAndHalf: 0 }, completions: {}, totalCount: 0, completedCount: 0 };
+  }
+
+  // Gather all animal IDs for icon + weight/breed lookup
+  const animalIds = categorized.map(c => String(c.res.animal_gingr_id || c.res.raw_data?.animal?.id || "").trim()).filter(Boolean);
+  const uniqueAnimalIds = [...new Set(animalIds)];
+
+  // Fetch icons + weights/breeds in parallel
+  const [iconsResult, animalsResult] = await Promise.all([
+    uniqueAnimalIds.length > 0
+      ? supabase.from("gingr_animal_icons_live")
+          .select("animal_gingr_id, icon_title, icon_group")
+          .eq("location_id", locationId)
+          .eq("icon_group", "Play")
+          .in("animal_gingr_id", uniqueAnimalIds)
+      : { data: [] },
+    uniqueAnimalIds.length > 0
+      ? supabase.from("gingr_animals")
+          .select("gingr_id, weight, breed")
+          .in("gingr_id", uniqueAnimalIds)
+      : { data: [] },
+  ]);
+
+  // Build icon maps per animal
+  const playIconMap: Record<string, { hasSmall: boolean; hasLarge: boolean; hasPrivatePlay: boolean }> = {};
+  for (const icon of (iconsResult.data || [])) {
+    const aid = String(icon.animal_gingr_id);
+    if (!playIconMap[aid]) playIconMap[aid] = { hasSmall: false, hasLarge: false, hasPrivatePlay: false };
+    const title = (icon.icon_title || "").toLowerCase();
+    if (title.includes("private") && title.includes("play")) {
+      playIconMap[aid].hasPrivatePlay = true;
+    } else if (title.includes("small")) {
+      playIconMap[aid].hasSmall = true;
+    } else if (title.includes("large")) {
+      playIconMap[aid].hasLarge = true;
+    }
+  }
+
+  // Build weight/breed maps
+  const weightMap: Record<string, number | null> = {};
+  const breedMap: Record<string, string> = {};
+  for (const a of (animalsResult.data || [])) {
+    const w = a.weight ? parseFloat(a.weight) : null;
+    weightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
+    breedMap[a.gingr_id] = a.breed || "";
+  }
+
+  // Classify each dog into collar color
+  const dogs: any[] = [];
+  const seen = new Set<string>();
+
+  for (const { res: r, category } of categorized) {
+    const rd = r.raw_data || {};
+    const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
+    const reservationGingrId = String(r.gingr_id || "");
+
+    // Deduplicate by animal + category (same dog can have multiple reservations)
+    const dedupeKey = `${animalGingrId}_${category}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    const icons = playIconMap[animalGingrId] || { hasSmall: false, hasLarge: false, hasPrivatePlay: false };
+    const weight = weightMap[animalGingrId] ?? null;
+    const sizeCategory = weight != null ? (weight < 30 ? "SM" : "LG") : null;
+    const breed = breedMap[animalGingrId] || rd.animal?.breed || "";
+    const roomLabel = r.room_assignment || rd.run?.name || "";
+
+    // Also check room assignment for Private Play
+    const roomLower = (roomLabel || "").toLowerCase();
+    const roomHasPP = roomLower.includes("private play") || roomLower.includes(" pp");
+
+    const hasPrivatePlay = icons.hasPrivatePlay || roomHasPP;
+    const hasSizeIcon = icons.hasSmall || icons.hasLarge;
+
+    let collarColor = "";
+    let isHalfAndHalf = false;
+
+    if (category === "daycare") {
+      collarColor = "pink";
+    } else if (category === "dayboarding") {
+      collarColor = "red";
+    } else if (category === "evaluation") {
+      collarColor = "yellow";
+    } else if (category === "boarding") {
+      if (hasPrivatePlay) {
+        collarColor = "red";
+        if (hasSizeIcon) {
+          isHalfAndHalf = true;
+        }
+      } else if (icons.hasLarge || sizeCategory === "LG") {
+        collarColor = "green";
+      } else if (icons.hasSmall || sizeCategory === "SM") {
+        collarColor = "blue";
+      } else {
+        // No icon or size info — default to green (large) as safer assumption
+        collarColor = "green";
+      }
+    }
+
+    if (!collarColor) continue;
+
+    dogs.push({
+      animalName: r.animal_name || rd.animal?.name || "Unknown",
+      animalGingrId,
+      ownerName: [r.owner_first_name || rd.owner?.first_name || "", r.owner_last_name || rd.owner?.last_name || ""].filter(Boolean).join(" "),
+      breed,
+      weight,
+      sizeCategory,
+      collarColor,
+      reservationType: r.reservation_type_name || "",
+      roomLabel,
+      startDate: (r.start_date || "").split("T")[0] || "",
+      startTime: formatTimeHuman(r.start_date || ""),
+      endDate: (r.end_date || "").split("T")[0] || "",
+      endTime: formatTimeHuman(r.end_date || ""),
+      hasPrivatePlay,
+      isHalfAndHalf,
+      reservationGingrId,
+    });
+  }
+
+  // Sort by collar color group, then by animal name
+  const colorOrder: Record<string, number> = { pink: 0, red: 1, green: 2, blue: 3, yellow: 4 };
+  dogs.sort((a, b) => {
+    const ca = colorOrder[a.collarColor] ?? 5;
+    const cb = colorOrder[b.collarColor] ?? 5;
+    if (ca !== cb) return ca - cb;
+    return (a.animalName || "").localeCompare(b.animalName || "");
+  });
+
+  // Build summary counts
+  const summary = { total: dogs.length, pink: 0, red: 0, green: 0, blue: 0, yellow: 0, halfAndHalf: 0 };
+  for (const d of dogs) {
+    if (d.collarColor === "pink") summary.pink++;
+    else if (d.collarColor === "red") summary.red++;
+    else if (d.collarColor === "green") summary.green++;
+    else if (d.collarColor === "blue") summary.blue++;
+    else if (d.collarColor === "yellow") summary.yellow++;
+    if (d.isHalfAndHalf) summary.halfAndHalf++;
+  }
+
+  // Fetch completions from lite_settings
+  const completionKey = `ops_collars_completions_${targetDate}`;
+  const { data: completionRows } = await supabase
+    .from("lite_settings")
+    .select("setting_value")
+    .eq("location_id", locationId)
+    .eq("setting_key", completionKey)
+    .limit(1);
+  const completions: Record<string, any> = (completionRows && completionRows.length > 0 && completionRows[0].setting_value) ? completionRows[0].setting_value : {};
+
+  const totalCount = dogs.length;
+  const completedCount = Object.values(completions).filter((c: any) => c && c.status === "complete").length;
+
+  return { dogs, summary, completions, totalCount, completedCount };
+}
+
 // ─── 9. Service Reports (pamper, enrichment, etc.) ────────────────────────
 
 interface ServiceDog {
@@ -1944,6 +2145,9 @@ Deno.serve(async (req: Request) => {
     // 10. Belongings Report (departing dogs — fetch belongings from Gingr API)
     const belongingsReport = await computeBelongingsReport(supabase, locationId, today, gingrSubdomain, gingrApiKey);
 
+    // 11. Collars Report (next-day collar preparation)
+    const collarsReport = await computeCollarsReport(supabase, locationId, today);
+
     // ─── Compute FUTURE days (today + 1 through today + 7) ─────────────
     // Skip Gingr web auth (service notes) for future days — only today gets those.
     const futureReports: Array<{
@@ -1953,6 +2157,7 @@ Deno.serve(async (req: Request) => {
       pamper: any;
       enrichment: any;
       belongings: any;
+      collars: any;
     }> = [];
 
     for (let offset = 1; offset <= 14; offset++) {
@@ -1990,6 +2195,9 @@ Deno.serve(async (req: Request) => {
       const pamperFuture = computeServiceReport(reservationsFuture, "pamper");
       const enrichmentFuture = computeServiceReport(reservationsFuture, "enrichment");
 
+      // Collars: DB-only for all future days
+      const collarsFuture = await computeCollarsReport(supabase, locationId, futureDate);
+
       futureReports.push({
         date: futureDate,
         bathing: bathingFuture,
@@ -1997,6 +2205,7 @@ Deno.serve(async (req: Request) => {
         pamper: pamperFuture,
         enrichment: enrichmentFuture,
         belongings: belongingsFuture,
+        collars: collarsFuture,
       });
     }
 
@@ -2102,6 +2311,15 @@ Deno.serve(async (req: Request) => {
         today,
         belongingsReport,
       ),
+      upsertComputedItems(
+        supabase,
+        `ops_collars_${today}`,
+        locationId,
+        "collars",
+        "collars",
+        today,
+        collarsReport,
+      ),
       // ─── Future days upserts (14 days) ────────────────────────────
       ...futureReports.flatMap(fr => [
         upsertComputedItems(supabase, `ops_bathing_${fr.date}`, locationId, "bathing", "bathing", fr.date, fr.bathing),
@@ -2109,6 +2327,7 @@ Deno.serve(async (req: Request) => {
         upsertComputedItems(supabase, `ops_pamper_${fr.date}`, locationId, "pamper", "pamper", fr.date, fr.pamper),
         upsertComputedItems(supabase, `ops_svc_${fr.date}`, locationId, "svc", "svc", fr.date, fr.enrichment),
         upsertComputedItems(supabase, `ops_belongings_${fr.date}`, locationId, "belongings", "belongings", fr.date, fr.belongings),
+        upsertComputedItems(supabase, `ops_collars_${fr.date}`, locationId, "collars", "collars", fr.date, fr.collars),
       ]),
     ];
 
@@ -2138,6 +2357,7 @@ Deno.serve(async (req: Request) => {
           pamper: { dogs: pamperReport.dogs.length },
           enrichment: { dogs: enrichmentReport.dogs.length },
           belongings: { dogs: belongingsReport.dogs.length },
+          collars: { dogs: collarsReport.dogs.length, summary: collarsReport.summary },
         },
         computed_future: futureReports.map(fr => ({
           date: fr.date,
@@ -2146,6 +2366,7 @@ Deno.serve(async (req: Request) => {
           pamper: { dogs: fr.pamper.dogs.length },
           enrichment: { dogs: fr.enrichment.dogs.length },
           belongings: { dogs: fr.belongings.dogs.length },
+          collars: { dogs: fr.collars.dogs.length, summary: fr.collars.summary },
         })),
         errors: errors.length > 0 ? errors : undefined,
       }),
