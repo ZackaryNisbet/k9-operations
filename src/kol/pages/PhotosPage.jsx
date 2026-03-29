@@ -2,6 +2,7 @@
 // Full photo management: grid display, upload (drag-and-drop + file picker),
 // filters (All/Unpaired/By Date), photo detail modal with breed info and pairing,
 // bulk actions for multi-select pairing.
+// HEIC→JPEG conversion on upload, thumbnail generation, multi-dog pairing.
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import ReactDOM from "react-dom";
@@ -22,8 +23,9 @@ const PHOTO_BUCKET = "pet-photos";
 const photoPublicUrl = (storagePath) =>
   `${SUPABASE_URL}/storage/v1/object/public/${PHOTO_BUCKET}/${storagePath}`;
 
-const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic"];
+const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 const MAX_FILE_SIZE = 25 * 1024 * 1024; // 25MB
+const THUMBNAIL_WIDTH = 300;
 
 const COMMON_BREEDS = [
   "Labrador Retriever", "Golden Retriever", "German Shepherd", "Bulldog", "Poodle",
@@ -34,6 +36,50 @@ const COMMON_BREEDS = [
   "French Bulldog", "Cocker Spaniel", "Chihuahua", "Yorkshire Terrier", "Border Collie",
   "Pit Bull", "Mixed Breed",
 ];
+
+// ─── HEIC detection ─────────────────────────────────────────────────────────
+function isHeicFile(file) {
+  if (file.type === "image/heic" || file.type === "image/heif") return true;
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  return ext === "heic" || ext === "heif";
+}
+
+// ─── Convert HEIC to JPEG ───────────────────────────────────────────────────
+async function convertHeicToJpeg(file) {
+  const heic2any = (await import("heic2any")).default;
+  const blob = await heic2any({ blob: file, toType: "image/jpeg", quality: 0.85 });
+  const converted = Array.isArray(blob) ? blob[0] : blob;
+  const newName = file.name.replace(/\.(heic|heif)$/i, ".jpg");
+  return new File([converted], newName, { type: "image/jpeg", lastModified: file.lastModified });
+}
+
+// ─── Generate thumbnail via Canvas ──────────────────────────────────────────
+function generateThumbnail(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = THUMBNAIL_WIDTH / img.naturalWidth;
+      const thumbH = Math.round(img.naturalHeight * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = THUMBNAIL_WIDTH;
+      canvas.height = thumbH;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, THUMBNAIL_WIDTH, thumbH);
+      canvas.toBlob(
+        (blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error("Canvas toBlob failed"));
+        },
+        "image/jpeg",
+        0.8
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Failed to load image")); };
+    img.src = url;
+  });
+}
 
 // ─── Fuzzy breed matching ────────────────────────────────────────────────────
 function breedMatchScore(detected, dogBreed) {
@@ -131,6 +177,51 @@ async function getSuggestedPairings(photo, locationId) {
     .slice(0, 3);
 }
 
+// ─── Get all checked-in dogs for multi-dog pairing ──────────────────────────
+async function getCheckedInDogs(locationId) {
+  const today = todayStr();
+  const { data: reservations } = await supabase
+    .from("gingr_reservations")
+    .select("animal_gingr_id, animal_name, status")
+    .eq("location_id", locationId)
+    .lte("start_date", today)
+    .gte("end_date", today)
+    .not("status", "eq", "cancelled");
+
+  if (!reservations || reservations.length === 0) return [];
+
+  const animalIds = [...new Set(reservations.map(r => r.animal_gingr_id).filter(Boolean))];
+  if (animalIds.length === 0) return [];
+
+  const { data: animals } = await supabase
+    .from("gingr_animals")
+    .select("gingr_id, name, breed, weight, gender")
+    .eq("location_id", locationId)
+    .in("gingr_id", animalIds);
+
+  if (!animals) return [];
+
+  // Fetch icons
+  const { data: icons } = await supabase
+    .from("gingr_animal_icons")
+    .select("animal_gingr_id, icon_url, is_primary")
+    .eq("location_id", locationId)
+    .in("animal_gingr_id", animalIds)
+    .eq("is_primary", true);
+
+  const iconMap = {};
+  (icons || []).forEach(ic => { iconMap[ic.animal_gingr_id] = ic.icon_url; });
+
+  const resMap = {};
+  reservations.forEach(r => { resMap[r.animal_gingr_id] = r.status; });
+
+  return animals.map(a => ({
+    ...a,
+    icon_url: iconMap[a.gingr_id] || null,
+    isCheckedIn: resMap[a.gingr_id] === "checked_in" || resMap[a.gingr_id] === "checked-in",
+  })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 
 // ─── Photo Detail Modal ─────────────────────────────────────────────────────
 function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
@@ -144,14 +235,35 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
   const [breedValue, setBreedValue] = useState(photo.detected_breed || "");
   const [savingBreed, setSavingBreed] = useState(false);
 
-  // Load suggestions for unpaired photos
+  // Multi-dog pairing state
+  const [showMultiPair, setShowMultiPair] = useState(false);
+  const [checkedInDogs, setCheckedInDogs] = useState([]);
+  const [loadingDogs, setLoadingDogs] = useState(false);
+  const [multiSearch, setMultiSearch] = useState("");
+  const [selectedDogIds, setSelectedDogIds] = useState(new Set(
+    Array.isArray(photo.paired_dog_ids) ? photo.paired_dog_ids : []
+  ));
+  const [savingMulti, setSavingMulti] = useState(false);
+
+  // Load suggestions for unpaired photos (legacy single-pair)
   useEffect(() => {
-    if (photo.paired_dog_id) return;
+    const hasPairing = photo.paired_dog_id ||
+      (Array.isArray(photo.paired_dog_ids) && photo.paired_dog_ids.length > 0);
+    if (hasPairing) return;
     setLoadingSuggestions(true);
     getSuggestedPairings(photo, locationId)
       .then(setSuggestions)
       .finally(() => setLoadingSuggestions(false));
-  }, [photo.id, photo.paired_dog_id, locationId]);
+  }, [photo.id, photo.paired_dog_id, photo.paired_dog_ids, locationId]);
+
+  // Load checked-in dogs for multi-pair modal
+  useEffect(() => {
+    if (!showMultiPair) return;
+    setLoadingDogs(true);
+    getCheckedInDogs(locationId)
+      .then(setCheckedInDogs)
+      .finally(() => setLoadingDogs(false));
+  }, [showMultiPair, locationId]);
 
   // Search dogs by name
   const handleSearch = useCallback(async (term) => {
@@ -168,7 +280,7 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
     setSearching(false);
   }, [locationId]);
 
-  // Pair photo with dog
+  // Pair photo with single dog (legacy compat)
   const handlePair = async (dogId, dogName) => {
     setPairing(true);
     const { error } = await supabase
@@ -176,12 +288,21 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
       .update({
         paired_dog_id: dogId,
         paired_dog_name: dogName,
+        paired_dog_ids: [dogId],
+        paired_dog_names: [dogName],
         paired_at: new Date().toISOString(),
         paired_by: profile?.id || null,
       })
       .eq("id", photo.id);
     if (!error) {
-      onUpdate({ ...photo, paired_dog_id: dogId, paired_dog_name: dogName, paired_at: new Date().toISOString() });
+      onUpdate({
+        ...photo,
+        paired_dog_id: dogId,
+        paired_dog_name: dogName,
+        paired_dog_ids: [dogId],
+        paired_dog_names: [dogName],
+        paired_at: new Date().toISOString(),
+      });
     }
     setPairing(false);
   };
@@ -191,12 +312,60 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
     setPairing(true);
     const { error } = await supabase
       .from("photos")
-      .update({ paired_dog_id: null, paired_dog_name: null, paired_at: null, paired_by: null })
+      .update({
+        paired_dog_id: null, paired_dog_name: null,
+        paired_dog_ids: [], paired_dog_names: [],
+        paired_at: null, paired_by: null,
+      })
       .eq("id", photo.id);
     if (!error) {
-      onUpdate({ ...photo, paired_dog_id: null, paired_dog_name: null, paired_at: null, paired_by: null });
+      onUpdate({
+        ...photo,
+        paired_dog_id: null, paired_dog_name: null,
+        paired_dog_ids: [], paired_dog_names: [],
+        paired_at: null, paired_by: null,
+      });
     }
     setPairing(false);
+  };
+
+  // Multi-dog toggle
+  const toggleDogSelection = (dogId) => {
+    setSelectedDogIds(prev => {
+      const next = new Set(prev);
+      if (next.has(dogId)) next.delete(dogId); else next.add(dogId);
+      return next;
+    });
+  };
+
+  // Save multi-dog pairing
+  const handleSaveMultiPair = async () => {
+    setSavingMulti(true);
+    const ids = [...selectedDogIds];
+    // Get names for the selected IDs
+    const dogNameMap = {};
+    checkedInDogs.forEach(d => { dogNameMap[d.gingr_id] = d.name; });
+    const names = ids.map(id => dogNameMap[id] || "Unknown");
+
+    const updateData = {
+      paired_dog_ids: ids,
+      paired_dog_names: names,
+      paired_dog_id: ids.length > 0 ? ids[0] : null,
+      paired_dog_name: ids.length > 0 ? names.join(", ") : null,
+      paired_at: ids.length > 0 ? new Date().toISOString() : null,
+      paired_by: ids.length > 0 ? (profile?.id || null) : null,
+    };
+
+    const { error } = await supabase
+      .from("photos")
+      .update(updateData)
+      .eq("id", photo.id);
+
+    if (!error) {
+      onUpdate({ ...photo, ...updateData });
+      setShowMultiPair(false);
+    }
+    setSavingMulti(false);
   };
 
   // Save breed
@@ -214,6 +383,19 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
   };
 
   const imgUrl = photo.storage_path ? photoPublicUrl(photo.storage_path) : null;
+
+  // Get paired dog names display
+  const pairedNames = Array.isArray(photo.paired_dog_names) && photo.paired_dog_names.length > 0
+    ? photo.paired_dog_names
+    : photo.paired_dog_name ? [photo.paired_dog_name] : [];
+
+  const hasPairing = photo.paired_dog_id ||
+    (Array.isArray(photo.paired_dog_ids) && photo.paired_dog_ids.length > 0);
+
+  // Filter checked-in dogs by search
+  const filteredDogs = multiSearch
+    ? checkedInDogs.filter(d => d.name.toLowerCase().includes(multiSearch.toLowerCase()) || (d.breed || "").toLowerCase().includes(multiSearch.toLowerCase()))
+    : checkedInDogs;
 
   return (
     <Modal title="Photo Detail" onClose={onClose} wide>
@@ -289,15 +471,30 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
           </div>
 
           {/* Pairing section */}
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-            Dog Pairing
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Dog Pairing
+            </div>
+            <button
+              onClick={() => setShowMultiPair(true)}
+              style={{ background: "none", border: "none", cursor: "pointer", color: C.pri, fontSize: 11, fontWeight: 600, fontFamily: "inherit" }}
+            >
+              Multi-dog pair
+            </button>
           </div>
 
-          {photo.paired_dog_id ? (
+          {hasPairing ? (
             <div style={{ padding: "14px 16px", borderRadius: 10, background: C.sucLt, border: `1px solid ${C.suc}30`, marginBottom: 12 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{photo.paired_dog_name || "Paired"}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
+                    {pairedNames.join(", ") || "Paired"}
+                  </div>
+                  {pairedNames.length > 1 && (
+                    <div style={{ fontSize: 11, color: C.suc, fontWeight: 600, marginTop: 2 }}>
+                      {pairedNames.length} dogs paired
+                    </div>
+                  )}
                   {photo.paired_at && <div style={{ fontSize: 11, color: C.textSec, marginTop: 2 }}>Paired {fmtDateShort(photo.paired_at)}</div>}
                 </div>
                 <Btn size="sm" variant="ghost" onClick={handleUnpair} disabled={pairing}>
@@ -416,6 +613,113 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
           )}
         </div>
       </div>
+
+      {/* Multi-dog pairing modal */}
+      {showMultiPair && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1100,
+        }}
+          onClick={() => setShowMultiPair(false)}
+        >
+          <div
+            style={{
+              background: C.surface, borderRadius: 16, padding: 24,
+              width: "90%", maxWidth: 420, maxHeight: "70vh", display: "flex", flexDirection: "column",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.text, marginBottom: 4 }}>
+              Pair with Multiple Dogs
+            </div>
+            <div style={{ fontSize: 12, color: C.textMut, marginBottom: 12 }}>
+              Select all dogs that appear in this photo. Showing checked-in dogs.
+            </div>
+
+            {/* Search bar */}
+            <input
+              type="text"
+              value={multiSearch}
+              onChange={e => setMultiSearch(e.target.value)}
+              placeholder="Search dogs..."
+              style={{
+                width: "100%", padding: "8px 12px", borderRadius: 8,
+                border: `1.5px solid ${C.border}`, fontSize: 13,
+                fontFamily: "inherit", color: C.text, background: C.bg,
+                outline: "none", boxSizing: "border-box", marginBottom: 12,
+              }}
+              onFocus={e => { e.target.style.borderColor = C.pri; }}
+              onBlur={e => { e.target.style.borderColor = C.border; }}
+            />
+
+            {/* Dog list */}
+            <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, minHeight: 0 }}>
+              {loadingDogs ? (
+                <div style={{ padding: 24, textAlign: "center", color: C.textMut, fontSize: 12 }}>Loading dogs...</div>
+              ) : filteredDogs.length === 0 ? (
+                <div style={{ padding: 24, textAlign: "center", color: C.textMut, fontSize: 12 }}>
+                  {multiSearch ? "No dogs match search" : "No checked-in dogs found"}
+                </div>
+              ) : filteredDogs.map(dog => {
+                const isSelected = selectedDogIds.has(dog.gingr_id);
+                return (
+                  <div
+                    key={dog.gingr_id}
+                    onClick={() => toggleDogSelection(dog.gingr_id)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10,
+                      padding: "10px 12px", borderRadius: 10, cursor: "pointer",
+                      background: isSelected ? C.priLt : C.bg,
+                      border: `1.5px solid ${isSelected ? C.pri : C.borderLight}`,
+                      transition: "all 0.15s",
+                    }}
+                  >
+                    {/* Checkbox */}
+                    <div style={{
+                      width: 20, height: 20, borderRadius: 5, flexShrink: 0,
+                      border: `2px solid ${isSelected ? C.pri : C.border}`,
+                      background: isSelected ? C.pri : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      {isSelected && <I.Check />}
+                    </div>
+                    {dog.icon_url ? (
+                      <img src={dog.icon_url} alt="" style={{ width: 30, height: 30, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
+                    ) : (
+                      <div style={{ width: 30, height: 30, borderRadius: 8, background: C.priLt, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: C.pri, flexShrink: 0 }}>
+                        {(dog.name || "?")[0]}
+                      </div>
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {dog.name}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.textSec }}>
+                        {dog.breed || "Unknown breed"}{dog.weight ? ` · ${dog.weight} lbs` : ""}
+                        {dog.isCheckedIn && <span style={{ color: C.suc, fontWeight: 600 }}> · Checked in</span>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.borderLight}` }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>
+                {selectedDogIds.size} selected
+              </span>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn size="sm" variant="ghost" onClick={() => setShowMultiPair(false)}>Cancel</Btn>
+                <Btn size="sm" onClick={handleSaveMultiPair} disabled={savingMulti}>
+                  {savingMulti ? "Saving..." : "Save Pairing"}
+                </Btn>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }
@@ -447,6 +751,8 @@ function BulkPairModal({ selectedIds, onClose, locationId, profile, onBulkUpdate
     const updateData = {
       paired_dog_id: dogId,
       paired_dog_name: dogName,
+      paired_dog_ids: [dogId],
+      paired_dog_names: [dogName],
       paired_at: new Date().toISOString(),
       paired_by: profile?.id || null,
     };
@@ -536,7 +842,7 @@ function PhotosPage({ data, nav, profile }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [showBulkPair, setShowBulkPair] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -559,31 +865,45 @@ function PhotosPage({ data, nav, profile }) {
   const filteredPhotos = useMemo(() => {
     let list = photos;
     if (filter === "unpaired") {
-      list = list.filter(p => !p.paired_dog_id);
+      list = list.filter(p => !p.paired_dog_id && !(Array.isArray(p.paired_dog_ids) && p.paired_dog_ids.length > 0));
     } else if (filter === "date" && dateFilter) {
       list = list.filter(p => p.taken_at && p.taken_at.startsWith(dateFilter));
     }
     return list;
   }, [photos, filter, dateFilter]);
 
-  // ─── Upload handler ────────────────────────────────────────────────────────
+  // ─── Upload handler (with HEIC conversion + thumbnail generation) ─────────
   const handleUpload = useCallback(async (files) => {
     if (!locationId || !files || files.length === 0) return;
     setUploading(true);
-    setUploadProgress(0);
-    const total = files.length;
+    setUploadProgress({ done: 0, total: files.length });
+
     let done = 0;
 
-    for (const file of files) {
-      if (!ACCEPTED_TYPES.includes(file.type)) {
+    for (let file of files) {
+      // Check type (allow HEIC files through for conversion)
+      const isHeic = isHeicFile(file);
+      if (!isHeic && !ACCEPTED_TYPES.includes(file.type)) {
         done++;
-        setUploadProgress(Math.round((done / total) * 100));
+        setUploadProgress({ done, total: files.length });
         continue;
       }
       if (file.size > MAX_FILE_SIZE) {
         done++;
-        setUploadProgress(Math.round((done / total) * 100));
+        setUploadProgress({ done, total: files.length });
         continue;
+      }
+
+      // Convert HEIC → JPEG if needed
+      if (isHeic) {
+        try {
+          file = await convertHeicToJpeg(file);
+        } catch (err) {
+          console.warn("HEIC conversion failed:", err);
+          done++;
+          setUploadProgress({ done, total: files.length });
+          continue;
+        }
       }
 
       const ext = file.name.split(".").pop()?.toLowerCase() || "jpg";
@@ -605,16 +925,30 @@ function PhotosPage({ data, nav, profile }) {
         ? new Date(file.lastModified).toISOString()
         : new Date().toISOString();
 
-      // Upload to storage
+      // Upload full-res to storage
       const { error: uploadErr } = await supabase.storage
         .from(PHOTO_BUCKET)
-        .upload(storagePath, file, { contentType: file.type, upsert: false });
+        .upload(storagePath, file, { contentType: file.type || "image/jpeg", upsert: false });
+
+      // Generate and upload thumbnail
+      let thumbnailPath = null;
+      if (!uploadErr) {
+        try {
+          const thumbBlob = await generateThumbnail(file);
+          const thumbPath = `${locationId}/${dateStr}/thumb_${uuid}.jpg`;
+          const { error: thumbErr } = await supabase.storage
+            .from(PHOTO_BUCKET)
+            .upload(thumbPath, thumbBlob, { contentType: "image/jpeg", upsert: false });
+          if (!thumbErr) thumbnailPath = thumbPath;
+        } catch (_) { /* thumbnail generation failed, continue without */ }
+      }
 
       if (!uploadErr) {
         // Insert row
         await supabase.from("photos").insert({
           location_id: locationId,
           storage_path: storagePath,
+          thumbnail_path: thumbnailPath,
           original_filename: file.name,
           taken_at: takenAt,
           uploaded_at: new Date().toISOString(),
@@ -627,11 +961,11 @@ function PhotosPage({ data, nav, profile }) {
       }
 
       done++;
-      setUploadProgress(Math.round((done / total) * 100));
+      setUploadProgress({ done, total: files.length });
     }
 
     setUploading(false);
-    setUploadProgress(0);
+    setUploadProgress({ done: 0, total: 0 });
     fetchPhotos();
   }, [locationId, profile, fetchPhotos]);
 
@@ -652,8 +986,10 @@ function PhotosPage({ data, nav, profile }) {
     e.preventDefault();
     e.stopPropagation();
     setDragOver(false);
-    const files = Array.from(e.dataTransfer.files).filter(f => ACCEPTED_TYPES.includes(f.type));
-    if (files.length > 0) handleUpload(files);
+    const droppedFiles = Array.from(e.dataTransfer.files).filter(f =>
+      ACCEPTED_TYPES.includes(f.type) || isHeicFile(f)
+    );
+    if (droppedFiles.length > 0) handleUpload(droppedFiles);
   }, [handleUpload]);
 
   const handleFileSelect = useCallback((e) => {
@@ -686,7 +1022,7 @@ function PhotosPage({ data, nav, profile }) {
 
   // ─── Stats ─────────────────────────────────────────────────────────────────
   const totalCount = photos.length;
-  const unpairedCount = photos.filter(p => !p.paired_dog_id).length;
+  const unpairedCount = photos.filter(p => !p.paired_dog_id && !(Array.isArray(p.paired_dog_ids) && p.paired_dog_ids.length > 0)).length;
   const pairedCount = totalCount - unpairedCount;
 
   // ─── Render ────────────────────────────────────────────────────────────────
@@ -706,7 +1042,7 @@ function PhotosPage({ data, nav, profile }) {
           <input
             ref={fileInputRef}
             type="file"
-            accept={ACCEPTED_TYPES.join(",")}
+            accept={ACCEPTED_TYPES.join(",") + ",.heic,.heif"}
             multiple
             onChange={handleFileSelect}
             style={{ display: "none" }}
@@ -752,9 +1088,17 @@ function PhotosPage({ data, nav, profile }) {
       >
         {uploading ? (
           <div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: C.pri, marginBottom: 8 }}>Uploading... {uploadProgress}%</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: C.pri, marginBottom: 8 }}>
+              Uploading {uploadProgress.done}/{uploadProgress.total} photos...
+            </div>
             <div style={{ width: "100%", height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
-              <div style={{ width: `${uploadProgress}%`, height: "100%", borderRadius: 3, background: C.pri, transition: "width 0.3s" }} />
+              <div style={{
+                width: uploadProgress.total > 0 ? `${Math.round((uploadProgress.done / uploadProgress.total) * 100)}%` : "0%",
+                height: "100%", borderRadius: 3, background: C.pri, transition: "width 0.3s",
+              }} />
+            </div>
+            <div style={{ fontSize: 11, color: C.textMut, marginTop: 6 }}>
+              {uploadProgress.done < uploadProgress.total ? "Converting & uploading..." : "Finishing up..."}
             </div>
           </div>
         ) : (
@@ -764,7 +1108,7 @@ function PhotosPage({ data, nav, profile }) {
               {dragOver ? "Drop photos here" : "Drag & drop photos here"}
             </div>
             <div style={{ fontSize: 12, color: C.textMut, marginTop: 4 }}>
-              or click to browse · JPG, PNG, WebP · Max 25MB per file
+              or click to browse · JPG, PNG, WebP, HEIC · Max 25MB per file
             </div>
           </>
         )}
@@ -842,8 +1186,21 @@ function PhotosPage({ data, nav, profile }) {
           gap: 12,
         }}>
           {filteredPhotos.map(photo => {
-            const imgUrl = photo.storage_path ? photoPublicUrl(photo.storage_path) : null;
+            // Fix 1: Use thumbnail_path for grid view, fall back to full-res
+            const thumbUrl = photo.thumbnail_path
+              ? photoPublicUrl(photo.thumbnail_path)
+              : photo.storage_path
+                ? photoPublicUrl(photo.storage_path)
+                : null;
             const isSelected = selectedIds.has(photo.id);
+
+            // Multi-dog display
+            const dogNames = Array.isArray(photo.paired_dog_names) && photo.paired_dog_names.length > 0
+              ? photo.paired_dog_names
+              : photo.paired_dog_name ? [photo.paired_dog_name] : [];
+            const hasPairing = photo.paired_dog_id ||
+              (Array.isArray(photo.paired_dog_ids) && photo.paired_dog_ids.length > 0);
+
             return (
               <div
                 key={photo.id}
@@ -876,9 +1233,9 @@ function PhotosPage({ data, nav, profile }) {
 
                 {/* Photo thumbnail */}
                 <div onClick={() => setSelectedPhoto(photo)}>
-                  {imgUrl ? (
+                  {thumbUrl ? (
                     <img
-                      src={imgUrl}
+                      src={thumbUrl}
                       alt={photo.original_filename || "Photo"}
                       loading="lazy"
                       style={{ width: "100%", height: 200, objectFit: "cover", display: "block" }}
@@ -893,14 +1250,18 @@ function PhotosPage({ data, nav, profile }) {
                   <div style={{ padding: "10px 12px" }}>
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {photo.paired_dog_name || (photo.original_filename ? photo.original_filename.replace(/\.[^.]+$/, "") : "Untitled")}
+                        {dogNames.length > 0
+                          ? dogNames.join(", ")
+                          : (photo.original_filename ? photo.original_filename.replace(/\.[^.]+$/, "") : "Untitled")}
                       </div>
-                      {photo.paired_dog_id ? (
+                      {hasPairing ? (
                         <span style={{
                           display: "inline-flex", padding: "2px 8px", borderRadius: 5,
                           background: C.sucLt, color: C.suc,
                           fontSize: 9, fontWeight: 700, textTransform: "uppercase", flexShrink: 0,
-                        }}>Paired</span>
+                        }}>
+                          {dogNames.length > 1 ? `${dogNames.length} Dogs` : "Paired"}
+                        </span>
                       ) : (
                         <span style={{
                           display: "inline-flex", padding: "2px 8px", borderRadius: 5,
