@@ -988,6 +988,61 @@ function OperationsHub({ data, save, nav, profile }) {
         );
       })()}
 
+      {/* Belongings / Checkout Prep Section */}
+      {hp("view_daily_ops") && (() => {
+        const allOps = data.dailyOps || [];
+        const belongingsEntry = allOps.find(e => e.id === `ops_belongings_${viewDate}`);
+        const belongingsDogs = belongingsEntry?.computed_items?.dogs || [];
+        const belongingsTotal = belongingsDogs.length;
+        const belongingsCompletions = belongingsEntry?.computed_items?.completions || {};
+        const belongingsDone = Object.values(belongingsCompletions).filter(c => c && c.status === "complete").length;
+        const belongingsPct = belongingsTotal > 0 ? Math.round((belongingsDone / belongingsTotal) * 100) : 0;
+        const belongingsStatus = belongingsTotal === 0 ? "not_started" : belongingsDone >= belongingsTotal ? "completed" : belongingsDone > 0 ? "in_progress" : "not_started";
+        const bsc = statusConfig[belongingsStatus];
+        return (
+          <div style={{ marginBottom: 32 }}>
+            <div style={{ margin: "8px 0 18px", height: 1, background: C.borderLight }} />
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+              Checkout Prep
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
+              <div
+                onClick={() => nav("ops-belongings")}
+                style={{
+                  background: C.surface, borderRadius: 16,
+                  border: `1.5px solid ${belongingsStatus === "completed" ? C.suc : belongingsStatus === "in_progress" ? C.warn : C.border}`,
+                  cursor: "pointer", transition: "all 0.2s cubic-bezier(0.4,0,0.2,1)", position: "relative",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04)"; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)"; }}
+              >
+                <div style={{ padding: "18px 20px" }}>
+                  <div style={{ marginBottom: 10, display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Belongings</div>
+                      <div style={{ fontSize: 12, color: C.textSec, marginTop: 3 }}>
+                        {belongingsTotal > 0 ? `${belongingsDone}/${belongingsTotal} dogs` : "No departing dogs"}
+                      </div>
+                    </div>
+                    <span style={{ color: C.textMut, fontSize: 16, marginTop: -2 }}>{"›"}</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: bsc.bg, color: bsc.color, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      {bsc.label}
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: bsc.color }}>{belongingsPct}%</span>
+                  </div>
+                  <div style={{ marginTop: 8, height: 4, borderRadius: 2, background: C.borderLight, overflow: "hidden" }}>
+                    <div style={{ width: `${belongingsPct}%`, height: "100%", borderRadius: 2, background: bsc.barColor, transition: "width 0.4s cubic-bezier(0.4,0,0.2,1)" }} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Management Section */}
       {(hp("view_management") || hp("view_daily_ops")) && (
         <div style={{ marginBottom: 32 }}>

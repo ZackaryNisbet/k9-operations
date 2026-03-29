@@ -283,7 +283,7 @@ const PAGE_SLUGS = {
   messages:"messages", payments:"payments", operations:"operations",
   "ops-opening":"ops/opening", "ops-fe":"ops/front-end", "ops-be":"ops/back-end", "ops-rooms":"ops/rooms",
   "ops-pp":"ops/private-play", "ops-closing":"ops/closing",
-  "ops-bathing":"ops/bathing", "ops-pamper":"ops/pamper", "ops-svc":"ops/service",
+  "ops-bathing":"ops/bathing", "ops-belongings":"ops/belongings", "ops-pamper":"ops/pamper", "ops-svc":"ops/service",
   management:"management", "mgmt-attendance":"management/attendance", "mgmt-audit-log":"management/audit-log",
   "checkout-tv":"checkout-tv",
   "checkout-notes":"checkout-notes",
@@ -400,7 +400,7 @@ const LITE_DEF_PRICING = {
 const CHART_PTS = 30;
 
 // ── K9 Loading Animation (orbiting nodes — matches POS Ask AI) ──
-const OPS_TYPES = {opening:{key:"openingTemplate",def:DEF_OPENING_TEMPLATE,title:"Opening Checklist"},fe_checklist:{key:"feTemplate",def:DEF_FE_TEMPLATE,title:"Front-End Checklist",showTime:true},be_checklist:{key:"beTemplate",def:DEF_BE_TEMPLATE,title:"Back-End Checklist",showTime:true},closing:{key:"closingTemplate",def:DEF_CLOSING_TEMPLATE,title:"Closing Checklist"},room_cleaning:{title:"Room Cleaning & Setups"},pp:{title:"Private Play Checklist"},bathing:{title:"Bathing Report"},pamper:{title:"Pamper Package Plus"},svc:{title:"Service Report"},eod:{title:"End-of-Day Report",isEod:true}};
+const OPS_TYPES = {opening:{key:"openingTemplate",def:DEF_OPENING_TEMPLATE,title:"Opening Checklist"},fe_checklist:{key:"feTemplate",def:DEF_FE_TEMPLATE,title:"Front-End Checklist",showTime:true},be_checklist:{key:"beTemplate",def:DEF_BE_TEMPLATE,title:"Back-End Checklist",showTime:true},closing:{key:"closingTemplate",def:DEF_CLOSING_TEMPLATE,title:"Closing Checklist"},room_cleaning:{title:"Room Cleaning & Setups"},pp:{title:"Private Play Checklist"},bathing:{title:"Bathing Report"},belongings:{title:"Belongings"},pamper:{title:"Pamper Package Plus"},svc:{title:"Service Report"},eod:{title:"End-of-Day Report",isEod:true}};
 
 const DEF_LITE_EOD_TEMPLATE = [
   { id:"sales", title:"Sales", emoji:"💵", type:"text", defaultContent:"Today's Goal:\nWTD:\nMTD:\nYTD:" },

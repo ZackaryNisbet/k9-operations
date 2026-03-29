@@ -1545,6 +1545,159 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
   return { dogs, completions, totalCount, completedCount };
 }
 
+// ─── 8b. Belongings Report (for departing dogs — prep the night before) ──
+
+async function fetchBelongingsForReservations(
+  gingrSubdomain: string,
+  gingrApiKey: string,
+  reservationGingrIds: string[],
+  concurrency: number = 5,
+): Promise<Record<string, { belongings: string; healthNotes: string; checkedInBy: string }>> {
+  const results: Record<string, { belongings: string; healthNotes: string; checkedInBy: string }> = {};
+  const queue = [...reservationGingrIds];
+
+  async function worker() {
+    while (queue.length > 0) {
+      const resId = queue.shift();
+      if (!resId) break;
+      try {
+        const url = `https://${gingrSubdomain}.gingrapp.com/api/v1/existing_reservation_estimate?key=${gingrApiKey}&id=${resId}`;
+        const resp = await fetch(url);
+        if (!resp.ok) { results[resId] = { belongings: "", healthNotes: "", checkedInBy: "" }; continue; }
+        const json = await resp.json();
+        const resData = json?.data?.reservations?.[0]?.reservation;
+        results[resId] = {
+          belongings: resData?.answer_1 || "",
+          healthNotes: resData?.answer_2 || "",
+          checkedInBy: resData?.answer_3 || "",
+        };
+      } catch {
+        results[resId] = { belongings: "", healthNotes: "", checkedInBy: "" };
+      }
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(concurrency, queue.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
+async function computeBelongingsReport(
+  supabase: any,
+  locationId: string,
+  targetDate: string,
+  gingrSubdomain?: string,
+  gingrApiKey?: string,
+): Promise<any> {
+  // Query dogs departing on the target date: boarding dogs with end_date on targetDate
+  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, room_assignment, services";
+  const nextDay = addDays(targetDate, 1);
+
+  const { data: departingRes } = await supabase
+    .from("gingr_reservations")
+    .select(resSelect)
+    .eq("location_id", locationId)
+    .not("check_in_date", "is", null)  // actually checked in
+    .is("check_out_date", null)         // hasn't left yet
+    .is("cancelled_date", null)         // not cancelled
+    .gte("end_date", `${targetDate}T00:00:00`)
+    .lt("end_date", `${nextDay}T00:00:00`);
+
+  // Filter to boarding reservations (multi-day stay)
+  const boardingDogs: any[] = [];
+  for (const r of (departingRes || [])) {
+    const resTypeName = (r.reservation_type_name || "").toLowerCase();
+    if (!resTypeName.includes("boarding")) continue;
+
+    // Must be multi-day: start_date's date < end_date's date
+    const startDay = (r.start_date || "").split("T")[0];
+    const endDay = (r.end_date || "").split("T")[0];
+    if (!startDay || !endDay || startDay >= endDay) continue;
+
+    boardingDogs.push(r);
+  }
+
+  if (boardingDogs.length === 0) {
+    return { dogs: [], totalCount: 0, completedCount: 0 };
+  }
+
+  // Fetch weight/breed for all departing dogs
+  const animalIds = boardingDogs.map(r => String(r.animal_gingr_id || r.raw_data?.animal?.id || "").trim()).filter(Boolean);
+  let weightMap: Record<string, number | null> = {};
+  let breedMap: Record<string, string> = {};
+  if (animalIds.length > 0) {
+    const { data: animals } = await supabase
+      .from("gingr_animals")
+      .select("gingr_id, weight, breed")
+      .in("gingr_id", animalIds);
+    for (const a of (animals || [])) {
+      const w = a.weight ? parseFloat(a.weight) : null;
+      weightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
+      breedMap[a.gingr_id] = a.breed || "";
+    }
+  }
+
+  // Fetch belongings from Gingr API (only if API key available)
+  let belongingsMap: Record<string, { belongings: string; healthNotes: string; checkedInBy: string }> = {};
+  if (gingrSubdomain && gingrApiKey) {
+    const resIds = boardingDogs.map(r => String(r.gingr_id));
+    try {
+      belongingsMap = await fetchBelongingsForReservations(gingrSubdomain, gingrApiKey, resIds, 5);
+    } catch (err) {
+      console.error("Belongings fetch error:", err);
+    }
+  }
+
+  // Build report
+  const dogs = boardingDogs.map(r => {
+    const rd = r.raw_data || {};
+    const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
+    const reservationGingrId = String(r.gingr_id || "");
+    const roomLabel = r.room_assignment || rd.run?.name || "";
+    const weight = weightMap[animalGingrId] ?? null;
+    const sizeCategory = weight != null ? (weight < 30 ? "SM" : "LG") : null;
+    const breed = breedMap[animalGingrId] || rd.animal?.breed || "";
+
+    const belongingsData = belongingsMap[reservationGingrId] || { belongings: "", healthNotes: "", checkedInBy: "" };
+
+    return {
+      animalName: r.animal_name || rd.animal?.name || "Unknown",
+      animalGingrId,
+      ownerName: [r.owner_first_name || rd.owner?.first_name || "", r.owner_last_name || rd.owner?.last_name || ""].filter(Boolean).join(" "),
+      breed,
+      roomLabel,
+      weight,
+      sizeCategory,
+      checkInDate: (r.check_in_date || r.start_date || "").split("T")[0] || "",
+      checkInTime: formatTimeHuman(r.check_in_date || r.start_date || ""),
+      checkOutDate: (r.end_date || "").split("T")[0] || "",
+      checkOutTime: formatTimeHuman(r.end_date || ""),
+      belongings: belongingsData.belongings,
+      healthNotes: belongingsData.healthNotes,
+      checkedInBy: belongingsData.checkedInBy,
+      reservationGingrId,
+    };
+  });
+
+  // Sort by room label
+  dogs.sort((a, b) => (a.roomLabel || "").localeCompare(b.roomLabel || "", undefined, { numeric: true }));
+
+  // Fetch completions from lite_settings
+  const completionKey = `ops_belongings_completions_${targetDate}`;
+  const { data: completionRows } = await supabase
+    .from("lite_settings")
+    .select("setting_value")
+    .eq("location_id", locationId)
+    .eq("setting_key", completionKey)
+    .limit(1);
+  const completions: Record<string, any> = (completionRows && completionRows.length > 0 && completionRows[0].setting_value) ? completionRows[0].setting_value : {};
+
+  const totalCount = dogs.length;
+  const completedCount = Object.values(completions).filter((c: any) => c && c.status === "complete").length;
+
+  return { dogs, completions, totalCount, completedCount };
+}
+
 // ─── 9. Service Reports (pamper, enrichment, etc.) ────────────────────────
 
 interface ServiceDog {
@@ -1788,6 +1941,9 @@ Deno.serve(async (req: Request) => {
     const pamperReport = computeServiceReport(reservations, "pamper");
     const enrichmentReport = computeServiceReport(reservations, "enrichment");
 
+    // 10. Belongings Report (departing dogs — fetch belongings from Gingr API)
+    const belongingsReport = await computeBelongingsReport(supabase, locationId, today, gingrSubdomain, gingrApiKey);
+
     // ─── Compute FUTURE days (today + 1 through today + 7) ─────────────
     // Skip Gingr web auth (service notes) for future days — only today gets those.
     const futureReports: Array<{
@@ -1796,6 +1952,7 @@ Deno.serve(async (req: Request) => {
       privatePlay: any;
       pamper: any;
       enrichment: any;
+      belongings: any;
     }> = [];
 
     for (let offset = 1; offset <= 14; offset++) {
@@ -1805,6 +1962,11 @@ Deno.serve(async (req: Request) => {
       const bathingFuture = offset <= 3
         ? await computeBathingReport(supabase, locationId, futureDate, gingrSubdomain, gingrApiKey)
         : await computeBathingReport(supabase, locationId, futureDate);
+
+      // Belongings: fetch Gingr API data for next 3 days, DB-only for days 4-14
+      const belongingsFuture = offset <= 3
+        ? await computeBelongingsReport(supabase, locationId, futureDate, gingrSubdomain, gingrApiKey)
+        : await computeBelongingsReport(supabase, locationId, futureDate);
 
       // Fetch DB reservations covering this future date
       const reservationsFuture = await fetchReservationsForDate(supabase, locationId, futureDate);
@@ -1834,6 +1996,7 @@ Deno.serve(async (req: Request) => {
         privatePlay: privatePlayFuture,
         pamper: pamperFuture,
         enrichment: enrichmentFuture,
+        belongings: belongingsFuture,
       });
     }
 
@@ -1930,12 +2093,22 @@ Deno.serve(async (req: Request) => {
         today,
         enrichmentReport,
       ),
-      // ─── Future days upserts (7 days) ─────────────────────────────
+      upsertComputedItems(
+        supabase,
+        `ops_belongings_${today}`,
+        locationId,
+        "belongings",
+        "belongings",
+        today,
+        belongingsReport,
+      ),
+      // ─── Future days upserts (14 days) ────────────────────────────
       ...futureReports.flatMap(fr => [
         upsertComputedItems(supabase, `ops_bathing_${fr.date}`, locationId, "bathing", "bathing", fr.date, fr.bathing),
         upsertComputedItems(supabase, `ops_pp_${fr.date}`, locationId, "pp", "pp", fr.date, fr.privatePlay),
         upsertComputedItems(supabase, `ops_pamper_${fr.date}`, locationId, "pamper", "pamper", fr.date, fr.pamper),
         upsertComputedItems(supabase, `ops_svc_${fr.date}`, locationId, "svc", "svc", fr.date, fr.enrichment),
+        upsertComputedItems(supabase, `ops_belongings_${fr.date}`, locationId, "belongings", "belongings", fr.date, fr.belongings),
       ]),
     ];
 
@@ -1964,6 +2137,7 @@ Deno.serve(async (req: Request) => {
           bathing: { dogs: bathingReport.dogs.length },
           pamper: { dogs: pamperReport.dogs.length },
           enrichment: { dogs: enrichmentReport.dogs.length },
+          belongings: { dogs: belongingsReport.dogs.length },
         },
         computed_future: futureReports.map(fr => ({
           date: fr.date,
@@ -1971,6 +2145,7 @@ Deno.serve(async (req: Request) => {
           private_play: fr.privatePlay.summary,
           pamper: { dogs: fr.pamper.dogs.length },
           enrichment: { dogs: fr.enrichment.dogs.length },
+          belongings: { dogs: fr.belongings.dogs.length },
         })),
         errors: errors.length > 0 ? errors : undefined,
       }),
