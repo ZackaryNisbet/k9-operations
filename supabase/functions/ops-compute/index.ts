@@ -1753,7 +1753,7 @@ async function computeCollarsReport(
   const [iconsResult, animalsResult] = await Promise.all([
     uniqueAnimalIds.length > 0
       ? supabase.from("gingr_animal_icons_live")
-          .select("animal_gingr_id, icon_title, icon_group")
+          .select("animal_gingr_id, icon_title, icon_group, icon_comment")
           .eq("location_id", locationId)
           .eq("icon_group", "Play")
           .in("animal_gingr_id", uniqueAnimalIds)
@@ -1766,17 +1766,27 @@ async function computeCollarsReport(
   ]);
 
   // Build icon maps per animal
-  const playIconMap: Record<string, { hasSmall: boolean; hasLarge: boolean; hasPrivatePlay: boolean }> = {};
+  const playIconMap: Record<string, { hasSmall: boolean; hasLarge: boolean; hasPrivatePlay: boolean; playGroupTitle: string; playGroupComment: string; privatePlayTitle: string; privatePlayComment: string; iconDetails: Array<{ title: string; group: string; comment: string }> }> = {};
   for (const icon of (iconsResult.data || [])) {
     const aid = String(icon.animal_gingr_id);
-    if (!playIconMap[aid]) playIconMap[aid] = { hasSmall: false, hasLarge: false, hasPrivatePlay: false };
+    if (!playIconMap[aid]) playIconMap[aid] = { hasSmall: false, hasLarge: false, hasPrivatePlay: false, playGroupTitle: "", playGroupComment: "", privatePlayTitle: "", privatePlayComment: "", iconDetails: [] };
     const title = (icon.icon_title || "").toLowerCase();
+    const rawTitle = icon.icon_title || "";
+    const comment = icon.icon_comment || "";
+    const group = icon.icon_group || "";
+    playIconMap[aid].iconDetails.push({ title: rawTitle, group, comment });
     if (title.includes("private") && title.includes("play")) {
       playIconMap[aid].hasPrivatePlay = true;
+      playIconMap[aid].privatePlayTitle = rawTitle;
+      playIconMap[aid].privatePlayComment = comment;
     } else if (title.includes("small")) {
       playIconMap[aid].hasSmall = true;
+      playIconMap[aid].playGroupTitle = rawTitle;
+      playIconMap[aid].playGroupComment = comment;
     } else if (title.includes("large")) {
       playIconMap[aid].hasLarge = true;
+      playIconMap[aid].playGroupTitle = rawTitle;
+      playIconMap[aid].playGroupComment = comment;
     }
   }
 
@@ -1803,7 +1813,7 @@ async function computeCollarsReport(
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
 
-    const icons = playIconMap[animalGingrId] || { hasSmall: false, hasLarge: false, hasPrivatePlay: false };
+    const icons = playIconMap[animalGingrId] || { hasSmall: false, hasLarge: false, hasPrivatePlay: false, playGroupTitle: "", playGroupComment: "", privatePlayTitle: "", privatePlayComment: "", iconDetails: [] };
     const weight = weightMap[animalGingrId] ?? null;
     const sizeCategory = weight != null ? (weight < 30 ? "SM" : "LG") : null;
     const breed = breedMap[animalGingrId] || rd.animal?.breed || "";
@@ -1860,6 +1870,11 @@ async function computeCollarsReport(
       hasPrivatePlay,
       isHalfAndHalf,
       reservationGingrId,
+      playGroupTitle: icons.playGroupTitle,
+      playGroupComment: icons.playGroupComment,
+      privatePlayTitle: icons.hasPrivatePlay ? icons.privatePlayTitle : "",
+      privatePlayComment: icons.hasPrivatePlay ? icons.privatePlayComment : "",
+      iconDetails: icons.iconDetails,
     });
   }
 
