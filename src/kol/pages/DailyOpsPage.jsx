@@ -31,7 +31,8 @@ const K9Check = ({ checked, disabled, onChange, color = C.pri, size = 18 }) => (
 
 function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params }) {
   const td = todayStr();
-  const [viewDate, setViewDate] = useState(td);
+  // Belongings defaults to tomorrow (prep for next day's departures)
+  const [viewDate, setViewDate] = useState(() => sub === "belongings" ? addDays(td, 1) : td);
   const [rcFilter, setRcFilter] = useState("all"); // all | incomplete | setup | refresh | disinfect | asNeeded
   const [recentlyCompleted, setRecentlyCompleted] = useState(new Set()); // room keys with grace period
   const dayIdx = new Date(viewDate + "T12:00:00").getDay();
