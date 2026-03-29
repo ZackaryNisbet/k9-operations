@@ -247,7 +247,7 @@ async function syncReservations(
   endDate?: string
 ) {
   const now = new Date();
-  const end = endDate || new Date(now.getTime() + 14 * 86400000).toISOString().split("T")[0];
+  const end = endDate || now.toISOString().split("T")[0];
 
   // Resumable: check where we left off from sync state
   let start = startDate || "2015-01-01";
@@ -274,77 +274,88 @@ async function syncReservations(
   const daysLeft = Math.round((endD.getTime() - startD.getTime()) / 86400000);
   const isBackfillComplete = daysLeft <= 90;
 
-  if (isBackfillComplete) {
-    // Normal ongoing sync: just last 90 days
-    start = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-  }
-
-  const chunks = getDateChunks(start, end, 30);
   let total = 0;
-  const MAX_CHUNKS_PER_RUN = 10; // ~10 chunks per invocation — empty chunks are fast
   let chunksProcessed = 0;
   let lastChunkEnd = start;
   const errors: string[] = [];
 
-  for (const [chunkStart, chunkEnd] of chunks) {
-    if (!isBackfillComplete && chunksProcessed >= MAX_CHUNKS_PER_RUN) break;
+  // ── Backfill: chunked historical fetch (only when backfill is in progress) ─
+  if (!isBackfillComplete) {
+    const chunks = getDateChunks(start, end, 30);
+    const MAX_CHUNKS_PER_RUN = 3; // keep low to leave room for parallel queries + post-sync
 
-    try {
-      const result = await gingrFetch(subdomain, "reservations", apiKey, "POST", {
-        checked_in: "false",
-        start_date: chunkStart,
-        end_date: chunkEnd,
-      });
+    for (const [chunkStart, chunkEnd] of chunks) {
+      if (chunksProcessed >= MAX_CHUNKS_PER_RUN) break;
 
-      const resMap = result.data || {};
-      const reservations = Object.values(resMap) as any[];
-      lastChunkEnd = chunkEnd;
-      chunksProcessed++;
+      try {
+        const result = await gingrFetch(subdomain, "reservations", apiKey, "POST", {
+          checked_in: "false",
+          start_date: chunkStart,
+          end_date: chunkEnd,
+        });
 
-      if (reservations.length === 0) continue;
+        const resMap = result.data || {};
+        const reservations = Object.values(resMap) as any[];
+        lastChunkEnd = chunkEnd;
+        chunksProcessed++;
 
-      const batchSize = 500;
-      for (let i = 0; i < reservations.length; i += batchSize) {
-        const batch = reservations.slice(i, i + batchSize);
-        const rows = batch.map((r: any) => mapReservationRow(r, locationId));
+        if (reservations.length === 0) continue;
 
-        const { error } = await supabase
-          .from("gingr_reservations")
-          .upsert(rows, { onConflict: "location_id,gingr_id" });
+        const batchSize = 500;
+        for (let i = 0; i < reservations.length; i += batchSize) {
+          const batch = reservations.slice(i, i + batchSize);
+          const rows = batch.map((r: any) => mapReservationRow(r, locationId));
 
-        if (error) throw new Error(`Reservation upsert error: ${error.message}`);
-        total += batch.length;
+          const { error } = await supabase
+            .from("gingr_reservations")
+            .upsert(rows, { onConflict: "location_id,gingr_id" });
+
+          if (error) throw new Error(`Reservation upsert error: ${error.message}`);
+          total += batch.length;
+        }
+      } catch (chunkErr: any) {
+        errors.push(`${chunkStart}-${chunkEnd}: ${chunkErr.message}`);
+        lastChunkEnd = chunkEnd;
+        chunksProcessed++;
       }
-    } catch (chunkErr: any) {
-      // Log but don't fail entire sync — skip this chunk and continue
-      errors.push(`${chunkStart}-${chunkEnd}: ${chunkErr.message}`);
-      lastChunkEnd = chunkEnd;
-      chunksProcessed++;
     }
-  }
 
-  // Save backfill cursor so next run picks up where we left off
-  try {
-    if (!isBackfillComplete) {
+    // Save backfill cursor so next run picks up where we left off
+    try {
       await supabase.from("gingr_sync_state").upsert(
         { location_id: locationId, entity_type: "reservations", backfill_cursor: lastChunkEnd },
         { onConflict: "location_id,entity_type" }
       );
-    } else {
-      // Backfill done — clear cursor
+    } catch (_) {
+      // backfill_cursor column may not exist — non-fatal
+    }
+  } else {
+    // Backfill done — keep cursor at today so next run stays in "complete" mode
+    try {
       await supabase.from("gingr_sync_state").upsert(
-        { location_id: locationId, entity_type: "reservations", backfill_cursor: null },
+        { location_id: locationId, entity_type: "reservations", backfill_cursor: end },
         { onConflict: "location_id,entity_type" }
       );
-    }
-  } catch (_) {
-    // backfill_cursor column may not exist — non-fatal
+    } catch (_) {}
   }
 
-  // Also sync currently checked-in
-  const checkedInResult = await gingrFetch(subdomain, "reservations", apiKey, "POST", {
-    checked_in: "true",
-  });
+  // ── Parallel Gingr API fetches ──────────────────────────────────────────
+  // Fire checked-in, all-states (today), and future reservation queries in
+  // parallel to stay within the edge-function timeout (~150 s).
+  const tomorrow = new Date(now.getTime() + 1 * 86400000).toISOString().split("T")[0];
+  const futureEndDate = new Date(now.getTime() + 14 * 86400000).toISOString().split("T")[0];
+  const recentDate = dateStrET();
+
+  const [checkedInResult, allResult, futureResult] = await Promise.all([
+    gingrFetch(subdomain, "reservations", apiKey, "POST", { checked_in: "true" })
+      .catch((e: any) => { console.error("checked-in fetch error:", e.message); return { data: {} }; }),
+    gingrFetch(subdomain, "reservations", apiKey, "POST", { start_date: recentDate, end_date: recentDate })
+      .catch((e: any) => { console.error("all-states fetch error:", e.message); return { data: {} }; }),
+    gingrFetch(subdomain, "reservations", apiKey, "POST", { checked_in: "false", start_date: tomorrow, end_date: futureEndDate })
+      .catch((e: any) => { console.error("future fetch error:", e.message); return { data: {} }; }),
+  ]);
+
+  // ── Upsert checked-in reservations ────────────────────────────────────
   const checkedInMap = checkedInResult.data || {};
   const checkedIn = Object.values(checkedInMap) as any[];
 
@@ -400,17 +411,8 @@ async function syncReservations(
     // Non-fatal — reconciliation is best-effort
   }
 
-  // ── Catch cancellations: re-fetch recent window without checked_in filter ──
-  // The checked_in:"false" query above excludes cancelled reservations.
-  // Re-fetch the recent 7-day window with NO checked_in filter so we get
-  // ALL reservation states including cancelled (which have cancelled_date set).
+  // ── Upsert all-states (cancellations) for today ───────────────────────
   try {
-    const recentStart = dateStrET();
-    const recentEnd = dateStrET();
-    const allResult = await gingrFetch(subdomain, "reservations", apiKey, "POST", {
-      start_date: recentStart,
-      end_date: recentEnd,
-    });
     const allMap = allResult.data || {};
     const allReservations = Object.values(allMap) as any[];
 
@@ -422,10 +424,35 @@ async function syncReservations(
           .from("gingr_reservations")
           .upsert(chunk, { onConflict: "location_id,gingr_id" });
       }
-      console.log(`Re-synced ${allReservations.length} reservations (all states) for ${recentStart} to ${recentEnd}`);
+      console.log(`Re-synced ${allReservations.length} reservations (all states) for ${recentDate}`);
     }
   } catch (allErr: any) {
     console.error("All-states reservation re-sync error:", allErr.message);
+  }
+
+  // ── Upsert future reservations (next 14 days) ────────────────────────
+  let futureSynced = 0;
+  try {
+    const futureResMap = futureResult.data || {};
+    const futureReservations = (Object.values(futureResMap) as any[]).filter(
+      (r) => typeof r === "object" && r.start_date >= tomorrow
+    );
+
+    if (futureReservations.length > 0) {
+      const rows = futureReservations.map((r: any) => mapReservationRow(r, locationId));
+      for (let i = 0; i < rows.length; i += 500) {
+        const chunk = rows.slice(i, i + 500);
+        const { error } = await supabase
+          .from("gingr_reservations")
+          .upsert(chunk, { onConflict: "location_id,gingr_id" });
+        if (error) console.error("syncReservations: failed to upsert future:", error.message);
+      }
+      futureSynced = futureReservations.length;
+      total += futureSynced;
+    }
+    console.log(`Future reservations synced: ${futureSynced} (${tomorrow} to ${futureEndDate})`);
+  } catch (futureErr: any) {
+    console.error("Future reservation sync error:", futureErr.message);
   }
 
   return {
@@ -433,7 +460,7 @@ async function syncReservations(
     backfill_complete: isBackfillComplete,
     backfill_cursor: isBackfillComplete ? null : lastChunkEnd,
     chunks_processed: chunksProcessed,
-    chunks_remaining: isBackfillComplete ? 0 : chunks.length - chunksProcessed,
+    chunks_remaining: 0,
     chunk_errors: errors.length > 0 ? errors : undefined,
   };
 }
