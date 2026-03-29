@@ -1311,7 +1311,8 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
 
     const scheduledAt = bathSvc?.scheduled_at || "";
     const isScheduledToday = scheduledAt.includes(today);
-    const endDate = r.end_date || "";
+    // Prefer raw_data.end_date (has timezone like -04:00) over DB column (UTC)
+    const endDate = rd.end_date || r.end_date || "";
     const isDepartingToday = endDate.includes(today);
     if (!isScheduledToday && !isDepartingToday) continue;
 
@@ -1365,7 +1366,9 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     if (!resTypeName.includes("boarding")) continue;
 
     // Must be departing on the target date
-    const endDate = r.end_date || "";
+    // Prefer raw_data.end_date (has timezone) over DB column (UTC)
+    const rd2 = r.raw_data || {};
+    const endDate = rd2.end_date || r.end_date || "";
     if (!endDate.includes(today)) continue;
 
     // Must be exactly 1 night: start_date's date is 1 day before end_date's date
@@ -1668,10 +1671,10 @@ async function computeBelongingsReport(
       roomLabel,
       weight,
       sizeCategory,
-      checkInDate: (r.check_in_date || r.start_date || "").split("T")[0] || "",
-      checkInTime: formatTimeHuman(r.check_in_date || r.start_date || ""),
-      checkOutDate: (r.end_date || "").split("T")[0] || "",
-      checkOutTime: formatTimeHuman(r.end_date || ""),
+      checkInDate: ((r.raw_data?.check_in_date || r.check_in_date || r.raw_data?.start_date || r.start_date || "").split("T")[0]) || "",
+      checkInTime: formatTimeHuman(r.raw_data?.check_in_date || r.check_in_date || r.raw_data?.start_date || r.start_date || ""),
+      checkOutDate: ((r.raw_data?.end_date || r.end_date || "").split("T")[0]) || "",
+      checkOutTime: formatTimeHuman(r.raw_data?.end_date || r.end_date || ""),
       belongings: belongingsData.belongings,
       healthNotes: belongingsData.healthNotes,
       checkedInBy: belongingsData.checkedInBy,
@@ -1863,10 +1866,10 @@ async function computeCollarsReport(
       collarColor,
       reservationType: r.reservation_type_name || "",
       roomLabel,
-      startDate: (r.start_date || "").split("T")[0] || "",
-      startTime: formatTimeHuman(r.start_date || ""),
-      endDate: (r.end_date || "").split("T")[0] || "",
-      endTime: formatTimeHuman(r.end_date || ""),
+      startDate: ((r.raw_data?.start_date || r.start_date || "").split("T")[0]) || "",
+      startTime: formatTimeHuman(r.raw_data?.start_date || r.start_date || ""),
+      endDate: ((r.raw_data?.end_date || r.end_date || "").split("T")[0]) || "",
+      endTime: formatTimeHuman(r.raw_data?.end_date || r.end_date || ""),
       hasPrivatePlay,
       isHalfAndHalf,
       reservationGingrId,
