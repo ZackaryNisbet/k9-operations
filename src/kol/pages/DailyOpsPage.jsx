@@ -1268,6 +1268,283 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     );
   };
 
+  // ─── Belongings Report (server-computed via ops-compute) ─────────────────────
+  const [belongingsCompleted, setBelongingsCompleted] = useState({});
+  const [expandedBelonging, setExpandedBelonging] = useState(null);
+  const [missingItemsText, setMissingItemsText] = useState({});
+
+  // Load belongings completions from Supabase
+  useEffect(() => {
+    if (sub !== "belongings" || !profile?.location_id) return;
+    const key = `ops_belongings_completions_${viewDate}`;
+    supabase.from("lite_settings").select("setting_value")
+      .eq("location_id", profile.location_id)
+      .eq("setting_key", key)
+      .limit(1)
+      .then(({ data: rows }) => {
+        if (rows && rows.length > 0 && rows[0].setting_value) {
+          setBelongingsCompleted(rows[0].setting_value);
+          // Initialize missing items text from saved data
+          const mText = {};
+          Object.entries(rows[0].setting_value).forEach(([k, v]) => {
+            if (v && v.missingItems) mText[k] = v.missingItems;
+          });
+          setMissingItemsText(mText);
+        } else {
+          setBelongingsCompleted({});
+          setMissingItemsText({});
+        }
+      });
+  }, [sub, viewDate, profile?.location_id]);
+
+  const saveBelongingsCompleted = async (newCompleted) => {
+    setBelongingsCompleted(newCompleted);
+    if (!profile?.location_id) return;
+    const key = `ops_belongings_completions_${viewDate}`;
+    await supabase.from("lite_settings").upsert({
+      location_id: profile.location_id,
+      setting_key: key,
+      setting_value: newCompleted,
+    }, { onConflict: "location_id,setting_key" });
+    // Also update lite_daily_ops computed_items for instant dashboard refresh
+    const entryId = `ops_belongings_${viewDate}`;
+    const belongingsEntry = allOps.find(e => e.id === entryId);
+    if (belongingsEntry?.computed_items) {
+      const completedCount = Object.values(newCompleted).filter(c => c && c.status === "complete").length;
+      await supabase.from("lite_daily_ops").update({
+        computed_items: { ...belongingsEntry.computed_items, completions: newCompleted, completedCount, totalCount: (belongingsEntry.computed_items.dogs || []).length },
+        computed_at: new Date().toISOString(),
+      }).eq("id", entryId).eq("location_id", profile.location_id);
+    }
+  };
+
+  const renderBelongings = () => {
+    const belongingsEntry = allOps.find(e => e.id === `ops_belongings_${viewDate}`);
+    const computedDogs = belongingsEntry?.computed_items?.dogs || [];
+
+    const totalDogs = computedDogs.length;
+    const doneDogs = Object.values(belongingsCompleted).filter(c => c && c.status === "complete").length;
+
+    // Show loading state
+    if (totalDogs === 0 && !belongingsEntry) {
+      return (
+        <div>
+          <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "inherit" }}>Belongings</span>
+          </Card>
+          <Card style={{ padding: "48px 20px", textAlign: "center" }}>
+            <K9LoadingAnimation size={64}
+              message="Loading belongings data..."
+              subMessage={"Waiting for server data"} />
+          </Card>
+        </div>
+      );
+    }
+
+    const setBelongingStatus = (resId, status, missingItems) => {
+      const newCompleted = { ...belongingsCompleted };
+      if (status === "not_started") {
+        delete newCompleted[resId];
+      } else {
+        newCompleted[resId] = {
+          status,
+          missingItems: missingItems || "",
+          by: profile?.name || profile?.full_name || profile?.email || "Staff",
+          at: new Date().toISOString(),
+        };
+      }
+      saveBelongingsCompleted(newCompleted);
+    };
+
+    return (
+      <div>
+        <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "inherit" }}>Belongings</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec, fontFamily: "inherit" }}>{doneDogs}/{totalDogs} complete</span>
+            </div>
+          </div>
+          {totalDogs > 0 && (
+            <div style={{ marginTop: 10, height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
+              <div style={{ width: `${Math.round((doneDogs / totalDogs) * 100)}%`, height: "100%", borderRadius: 3, background: doneDogs === totalDogs ? "#10B981" : "#F59E0B", transition: "width 0.3s" }} />
+            </div>
+          )}
+        </Card>
+        {totalDogs === 0 ? (
+          <Card style={{ padding: 32, textAlign: "center" }}>
+            <div style={{ fontSize: 14, color: C.textMut, fontFamily: "inherit" }}>No departing dogs for {isToday ? "today" : fmtDate(viewDate)}</div>
+          </Card>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {computedDogs.map((dog, i) => {
+              const resId = `g${dog.reservationGingrId}`;
+              const completion = belongingsCompleted[resId] || null;
+              const status = completion?.status || "not_started";
+              const isExpanded = expandedBelonging === resId;
+              const statusColors = {
+                complete: { bg: "#F0FDF4", border: "#10B981", badge: "#ECFDF5", badgeText: "#059669", label: "Complete" },
+                missing: { bg: "#FEF2F2", border: "#F59E0B", badge: "#FEF3C7", badgeText: "#D97706", label: "Item Missing" },
+                not_started: { bg: C.surface, border: C.border, badge: C.surfaceHover, badgeText: C.textMut, label: "Not Started" },
+              };
+              const sc = statusColors[status] || statusColors.not_started;
+              const belongingsText = dog.belongings || "";
+              const truncatedBelongings = belongingsText.length > 80 ? belongingsText.slice(0, 80) + "..." : belongingsText;
+
+              return (
+                <Card key={resId} style={{ padding: 0, overflow: "hidden", border: `1.5px solid ${sc.border}`, background: sc.bg, transition: "all 0.2s" }}>
+                  {/* Collapsed row */}
+                  <div
+                    onClick={() => setExpandedBelonging(isExpanded ? null : resId)}
+                    style={{ padding: "14px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}
+                  >
+                    {/* Dog photo placeholder */}
+                    <div style={{ width: 42, height: 42, borderRadius: 10, background: C.borderLight, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 18 }}>
+                      {"🐕"}
+                    </div>
+                    {/* Dog name + owner + room */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: C.text, fontFamily: "inherit" }}>{dog.animalName}</span>
+                        <span style={{ fontSize: 12, color: C.textSec, fontFamily: "inherit" }}>{(dog.ownerName || "").split(" ").pop()}</span>
+                        {dog.roomLabel && <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: C.priLt, color: C.pri }}>Rm {dog.roomLabel}</span>}
+                        {dog.sizeCategory && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: dog.sizeCategory === "LG" ? "#FEF3C7" : "#DBEAFE", color: dog.sizeCategory === "LG" ? "#D97706" : "#2563EB" }}>{dog.sizeCategory}</span>}
+                      </div>
+                      {!isExpanded && belongingsText && (
+                        <div style={{ fontSize: 12, color: C.textMut, marginTop: 3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontFamily: "inherit" }}>{truncatedBelongings}</div>
+                      )}
+                    </div>
+                    {/* Status badge */}
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: sc.badge, color: sc.badgeText, textTransform: "uppercase", letterSpacing: "0.04em", flexShrink: 0 }}>{sc.label}</span>
+                    {/* Expand arrow */}
+                    <span style={{ fontSize: 14, color: C.textMut, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.2s", flexShrink: 0 }}>{"›"}</span>
+                  </div>
+
+                  {/* Expanded detail */}
+                  {isExpanded && (
+                    <div style={{ borderTop: `1px solid ${C.borderLight}`, padding: "16px 18px" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Dog</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{dog.animalName}</div>
+                          <div style={{ fontSize: 12, color: C.textSec }}>{dog.breed}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Owner</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{dog.ownerName}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Room</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>{dog.roomLabel || "—"}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Weight</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{dog.weight ? `${dog.weight} lbs` : "—"}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Check-In</div>
+                          <div style={{ fontSize: 13, color: C.text }}>{dog.checkInDate ? fmtDateShort(dog.checkInDate) : "—"} {dog.checkInTime || ""}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Departure</div>
+                          <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>{dog.checkOutDate ? fmtDateShort(dog.checkOutDate) : "—"} {dog.checkOutTime || ""}</div>
+                        </div>
+                      </div>
+
+                      {/* Belongings — highlighted box */}
+                      <div style={{ padding: "12px 16px", borderRadius: 10, background: "#FFFBEB", border: "1.5px solid #FDE68A", marginBottom: 12 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "#92400E", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Belongings</div>
+                        <div style={{ fontSize: 13, color: "#78350F", lineHeight: 1.5, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                          {belongingsText || <span style={{ fontStyle: "italic", color: "#D97706" }}>No belongings recorded at check-in</span>}
+                        </div>
+                      </div>
+
+                      {/* Health notes */}
+                      {dog.healthNotes && (
+                        <div style={{ padding: "10px 14px", borderRadius: 8, background: "#EFF6FF", border: "1px solid #BFDBFE", marginBottom: 12 }}>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#1E40AF", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Health Notes</div>
+                          <div style={{ fontSize: 12, color: "#1E3A5F", lineHeight: 1.4 }}>{dog.healthNotes}</div>
+                        </div>
+                      )}
+
+                      {/* Checked in by */}
+                      {dog.checkedInBy && (
+                        <div style={{ fontSize: 12, color: C.textMut, marginBottom: 14 }}>
+                          <span style={{ fontWeight: 600 }}>Checked in by:</span> {dog.checkedInBy}
+                        </div>
+                      )}
+
+                      {/* Action buttons */}
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          onClick={() => setBelongingStatus(resId, status === "complete" ? "not_started" : "complete")}
+                          style={{
+                            padding: "8px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontFamily: "inherit",
+                            fontSize: 13, fontWeight: 700, transition: "all 0.15s",
+                            background: status === "complete" ? "#10B981" : "#ECFDF5",
+                            color: status === "complete" ? "#fff" : "#059669",
+                          }}
+                        >
+                          {status === "complete" ? "✓ Complete" : "Mark Complete"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (status === "missing") {
+                              setBelongingStatus(resId, "not_started");
+                            } else {
+                              setBelongingStatus(resId, "missing", missingItemsText[resId] || "");
+                            }
+                          }}
+                          style={{
+                            padding: "8px 18px", borderRadius: 8, border: "none", cursor: "pointer", fontFamily: "inherit",
+                            fontSize: 13, fontWeight: 700, transition: "all 0.15s",
+                            background: status === "missing" ? "#F59E0B" : "#FEF3C7",
+                            color: status === "missing" ? "#fff" : "#D97706",
+                          }}
+                        >
+                          {status === "missing" ? "⚠ Item Missing" : "Item Missing"}
+                        </button>
+                      </div>
+
+                      {/* Missing items input */}
+                      {status === "missing" && (
+                        <div style={{ marginTop: 10 }}>
+                          <textarea
+                            placeholder="Describe what's missing..."
+                            value={missingItemsText[resId] || ""}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setMissingItemsText(prev => ({ ...prev, [resId]: val }));
+                            }}
+                            onBlur={() => {
+                              setBelongingStatus(resId, "missing", missingItemsText[resId] || "");
+                            }}
+                            style={{
+                              width: "100%", minHeight: 60, padding: "10px 12px", borderRadius: 8,
+                              border: `1.5px solid #FDE68A`, background: "#FFFBEB", fontSize: 13,
+                              fontFamily: "inherit", resize: "vertical", color: C.text,
+                            }}
+                          />
+                        </div>
+                      )}
+
+                      {/* Completion info */}
+                      {completion && (
+                        <div style={{ marginTop: 10, fontSize: 11, color: C.textMut }}>
+                          {completion.by} · {new Date(completion.at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // ─── Pamper Package Plus Report ─────────────────────────────────────────────
   const [pamperCompleted, setPamperCompleted] = useState({});
 
@@ -1629,6 +1906,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         : sub === "room_cleaning" ? renderRoomCleaning()
         : sub === "pp" ? renderPP()
         : sub === "bathing" ? renderBathing()
+        : sub === "belongings" ? renderBelongings()
         : sub === "pamper" ? renderPamper()
         : sub === "svc" ? renderGenericService()
         : <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec }}>Unknown checklist type</div></Card>}
