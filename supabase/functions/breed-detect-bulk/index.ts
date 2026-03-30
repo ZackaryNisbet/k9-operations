@@ -81,7 +81,7 @@ serve(async (req) => {
 
         // Build image URL — use Supabase image transform for ~800px version
         const imageUrl = photo.storage_path
-          ? `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${photo.storage_path}?width=800&quality=75`
+          ? `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${photo.storage_path}?width=1200&quality=80`
           : `${SUPABASE_URL}/storage/v1/object/public/pet-photos/${photo.thumbnail_path || photo.storage_path}`;
 
         // Download image and convert to base64
