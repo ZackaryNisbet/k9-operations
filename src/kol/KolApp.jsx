@@ -87,6 +87,7 @@ const LITE_PAGE_SLUGS = {
   "ops-bathing": "ops/bathing",
   "ops-belongings": "ops/belongings",
   "ops-collars": "ops/collars",
+  "ops-lodging-transfers": "ops/lodging-transfers",
   "ops-pamper": "ops/pamper",
   "ops-svc": "ops/service",
   "ops-weekly-maintenance": "ops/weekly-maintenance",
@@ -626,6 +627,7 @@ function LeanAppInner() {
       case "ops-bathing": return "Bathing Report";
       case "ops-belongings": return "Belongings";
       case "ops-collars": return "Next Day Collars";
+      case "ops-lodging-transfers": return "Lodging Transfers";
       case "ops-pamper": return "Pamper Package Plus";
       case "ops-svc": return params?.svcName || "Service Report";
       case "ops-weekly-maintenance": return "Weekly Maintenance";
@@ -844,6 +846,8 @@ function LeanAppInner() {
         return <DailyOpsPage data={data} save={save} sub="belongings" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "ops-collars":
         return <DailyOpsPage data={data} save={save} sub="collars" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "ops-lodging-transfers":
+        return <DailyOpsPage data={data} save={save} sub="lodging_transfer" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "ops-pamper":
         return <DailyOpsPage data={data} save={save} sub="pamper" nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "ops-svc":
