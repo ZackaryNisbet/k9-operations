@@ -79,9 +79,10 @@ serve(async (req) => {
           .update({ breed_detection_status: 'processing' })
           .eq('id', photo.id);
 
-        // Build image URL (prefer thumbnail)
-        const imagePath = photo.thumbnail_path || photo.storage_path;
-        const imageUrl = `${SUPABASE_URL}/storage/v1/object/public/pet-photos/${imagePath}`;
+        // Build image URL — use Supabase image transform for ~800px version
+        const imageUrl = photo.storage_path
+          ? `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${photo.storage_path}?width=800&quality=75`
+          : `${SUPABASE_URL}/storage/v1/object/public/pet-photos/${photo.thumbnail_path || photo.storage_path}`;
 
         // Download image and convert to base64
         const imgResponse = await fetch(imageUrl);
@@ -119,7 +120,19 @@ serve(async (req) => {
           body: JSON.stringify({
             model: 'claude-haiku-4-5-20251001',
             max_tokens: 256,
-            system: 'You are a dog breed identification expert. Analyze the photo and identify all dog breeds visible. Return ONLY a JSON array, nothing else. No markdown, no explanation.',
+            system: `You are an expert dog breed identifier working at a pet boarding facility. You MUST identify the specific breed of each dog visible in the photo. Pay close attention to:
+- Body proportions (height, leg length, body length, chest depth)
+- Head shape and muzzle length
+- Ear shape and position
+- Coat type, color, and pattern
+- Tail shape and carriage
+- Overall size category (toy, small, medium, large, giant)
+
+Common breeds at boarding facilities include sighthounds (Greyhound, Whippet, Italian Greyhound), bully breeds (Pit Bull, American Staffordshire Terrier, Boxer), retrievers (Golden, Labrador), shepherds (German Shepherd, Australian Shepherd), doodles (Goldendoodle, Labradoodle, Bernedoodle), spaniels, terriers, and many mixes.
+
+Be specific. A tall, lean dog with long thin legs is likely a Greyhound or Whippet, NOT a Boxer. A stocky muscular dog with a wide head is a Pit Bull or Boxer.
+
+Return ONLY a valid JSON array. No markdown, no explanation, no text outside the array.`,
             messages: [
               {
                 role: 'user',
@@ -134,7 +147,7 @@ serve(async (req) => {
                   },
                   {
                     type: 'text',
-                    text: 'Identify every dog breed in this photo. For each dog, return breed name (use common American Kennel Club names like "Golden Retriever", "French Bulldog", "Labrador Retriever"). If a dog appears to be a mix, include the most likely parent breeds as separate entries. Return JSON only: [{"breed": "Golden Retriever", "confidence": 0.95}]',
+                    text: 'Identify every dog breed in this photo. For each dog visible, return the most likely breed using standard AKC breed names. If mixed, list the most likely parent breeds separately. Return JSON only: [{"breed": "Greyhound", "confidence": 0.95}]',
                   },
                 ],
               },
