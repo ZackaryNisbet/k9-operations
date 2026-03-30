@@ -1,7 +1,7 @@
 // K9 Operations — PhotosPage
 // Full photo management: grid display, upload (drag-and-drop + file picker),
-// filters (All/Unpaired/By Date), photo detail modal with breed info and pairing,
-// bulk actions for multi-select pairing.
+// filters (All/Unpaired/By Date), full-screen photo viewer with breed info and pairing,
+// bulk actions for multi-select pairing, background breed detection.
 // HEIC→JPEG conversion on upload, thumbnail generation, multi-dog pairing.
 
 import React, { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
@@ -88,7 +88,6 @@ function breedMatchScore(detected, dogBreed) {
   const b = dogBreed.toLowerCase().trim();
   if (a === b) return 50;
   if (a.includes(b) || b.includes(a)) return 40;
-  // Check word overlap
   const aWords = a.split(/[\s\-\/]+/);
   const bWords = b.split(/[\s\-\/]+/);
   const overlap = aWords.filter(w => w.length > 2 && bWords.some(bw => bw.includes(w) || w.includes(bw)));
@@ -102,7 +101,6 @@ async function getSuggestedPairings(photo, locationId) {
 
   const takenAt = photo.taken_at.split("T")[0];
 
-  // Query reservations on-site at photo time
   const { data: reservations } = await supabase
     .from("gingr_reservations")
     .select("animal_gingr_id, animal_name, animal_breed, reservation_type, start_date, end_date, check_in_date, check_out_date")
@@ -113,11 +111,9 @@ async function getSuggestedPairings(photo, locationId) {
 
   if (!reservations || reservations.length === 0) return [];
 
-  // Get unique animal IDs
   const animalIds = [...new Set(reservations.map(r => r.animal_gingr_id).filter(Boolean))];
   if (animalIds.length === 0) return [];
 
-  // Fetch animal details
   const { data: animals } = await supabase
     .from("gingr_animals")
     .select("gingr_id, name, breed_name, weight, gender")
@@ -126,7 +122,6 @@ async function getSuggestedPairings(photo, locationId) {
 
   if (!animals || animals.length === 0) return [];
 
-  // Fetch animal icons for thumbnails
   const { data: icons } = await supabase
     .from("gingr_animal_icons")
     .select("animal_gingr_id, icon_url, is_primary")
@@ -137,19 +132,16 @@ async function getSuggestedPairings(photo, locationId) {
   const iconMap = {};
   (icons || []).forEach(ic => { iconMap[ic.animal_gingr_id] = ic.icon_url; });
 
-  // Count breeds on-site for uniqueness scoring
   const breedCounts = {};
   animals.forEach(a => {
     const b = (a.breed_name || "").toLowerCase();
     breedCounts[b] = (breedCounts[b] || 0) + 1;
   });
 
-  // Score each candidate against ALL detected breeds
   const candidates = animals.map(animal => {
     let score = 0;
     const animalBreed = animal.breed_name || "";
 
-    // Multi-breed matching: check against each detected breed
     if (photo.detected_breeds?.length > 0) {
       let bestBreedScore = 0;
       photo.detected_breeds.forEach(db => {
@@ -158,16 +150,13 @@ async function getSuggestedPairings(photo, locationId) {
       });
       score += bestBreedScore;
     } else {
-      // Fallback to legacy single breed
       score += breedMatchScore(photo.detected_breed, animalBreed);
     }
 
-    // Check-in bonus (use check_in_date presence instead of status field)
     const animalRes = reservations.filter(r => r.animal_gingr_id === animal.gingr_id);
     const isCheckedIn = animalRes.some(r => r.check_in_date && !r.check_out_date);
     if (isCheckedIn) score += 20;
 
-    // Uniqueness: only dog of that breed on-site
     const b = (animalBreed || "").toLowerCase();
     if (b && breedCounts[b] === 1 && score > 0) score += 30;
 
@@ -185,6 +174,62 @@ async function getSuggestedPairings(photo, locationId) {
   return candidates
     .sort((a, b) => b.score - a.score)
     .slice(0, 3);
+}
+
+// ─── Get dogs on-site for a given date ──────────────────────────────────────
+async function getDogsOnDate(locationId, dateStr) {
+  if (!locationId || !dateStr) return [];
+
+  const { data: reservations } = await supabase
+    .from("gingr_reservations")
+    .select("animal_gingr_id, animal_name, animal_breed, check_in_date, check_out_date, start_date, end_date")
+    .eq("location_id", locationId)
+    .lte("start_date", dateStr)
+    .gte("end_date", dateStr)
+    .is("cancelled_date", null);
+
+  if (!reservations || reservations.length === 0) return [];
+
+  const animalIds = [...new Set(reservations.map(r => r.animal_gingr_id).filter(Boolean))];
+  if (animalIds.length === 0) return [];
+
+  const { data: animals } = await supabase
+    .from("gingr_animals")
+    .select("gingr_id, name, breed_name, weight, gender")
+    .eq("location_id", locationId)
+    .in("gingr_id", animalIds);
+
+  if (!animals) return [];
+
+  const { data: icons } = await supabase
+    .from("gingr_animal_icons")
+    .select("animal_gingr_id, icon_url, is_primary")
+    .eq("location_id", locationId)
+    .in("animal_gingr_id", animalIds)
+    .eq("is_primary", true);
+
+  const iconMap = {};
+  (icons || []).forEach(ic => { iconMap[ic.animal_gingr_id] = ic.icon_url; });
+
+  // Get owner info from reservations
+  const ownerMap = {};
+  reservations.forEach(r => {
+    if (r.animal_gingr_id && r.animal_name) {
+      ownerMap[r.animal_gingr_id] = r;
+    }
+  });
+
+  const checkedInSet = new Set();
+  reservations.forEach(r => {
+    if (r.check_in_date && !r.check_out_date) checkedInSet.add(r.animal_gingr_id);
+  });
+
+  return animals.map(a => ({
+    ...a,
+    breed: a.breed_name,
+    icon_url: iconMap[a.gingr_id] || null,
+    isCheckedIn: checkedInSet.has(a.gingr_id),
+  })).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // ─── Get all checked-in dogs for multi-dog pairing ──────────────────────────
@@ -211,7 +256,6 @@ async function getCheckedInDogs(locationId) {
 
   if (!animals) return [];
 
-  // Fetch icons
   const { data: icons } = await supabase
     .from("gingr_animal_icons")
     .select("animal_gingr_id, icon_url, is_primary")
@@ -222,7 +266,6 @@ async function getCheckedInDogs(locationId) {
   const iconMap = {};
   (icons || []).forEach(ic => { iconMap[ic.animal_gingr_id] = ic.icon_url; });
 
-  // Build check-in map from reservation check_in_date/check_out_date
   const checkedInSet = new Set();
   reservations.forEach(r => {
     if (r.check_in_date && !r.check_out_date) checkedInSet.add(r.animal_gingr_id);
@@ -237,128 +280,590 @@ async function getCheckedInDogs(locationId) {
 }
 
 
-// ─── Photo Detail Modal ─────────────────────────────────────────────────────
-function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
+// ─── CSS Keyframes (injected once) ──────────────────────────────────────────
+const STYLE_ID = "k9-photos-magic-styles";
+if (typeof document !== "undefined" && !document.getElementById(STYLE_ID)) {
+  const style = document.createElement("style");
+  style.id = STYLE_ID;
+  style.textContent = `
+    @keyframes k9PhotoCheckPop {
+      0% { transform: scale(0); opacity: 0; }
+      50% { transform: scale(1.3); }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    @keyframes k9PhotoShimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    @keyframes k9PhotoFadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes k9PhotoSlideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+    @keyframes k9PhotoSlideDown {
+      from { transform: translateY(0); }
+      to { transform: translateY(100%); }
+    }
+    .k9-photo-grid-img {
+      background-color: #f3f4f6;
+      will-change: transform;
+    }
+    .k9-fullscreen-viewer {
+      position: fixed; inset: 0; z-index: 9999;
+      background: rgba(0,0,0,0.95);
+      display: flex; flex-direction: column;
+      touch-action: pan-y;
+    }
+    .k9-photo-transition {
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .k9-bottom-sheet {
+      animation: k9PhotoSlideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
+    .k9-browse-panel {
+      animation: k9PhotoSlideUp 0.35s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+
+// ─── Full-Screen Photo Viewer ───────────────────────────────────────────────
+function FullScreenViewer({ photos, initialIndex, onClose, locationId, profile, onUpdate }) {
+  const [currentIndex, setCurrentIndex] = useState(initialIndex);
+  const [enterRect, setEnterRect] = useState(null);
+  const [animState, setAnimState] = useState("entering"); // entering | open | exiting
+  const [fullResLoaded, setFullResLoaded] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [searchResults, setSearchResults] = useState([]);
-  const [searching, setSearching] = useState(false);
-  const [pairing, setPairing] = useState(false);
-  const [editBreed, setEditBreed] = useState(false);
-  const [breedValue, setBreedValue] = useState(photo.detected_breed || "");
-  const [savingBreed, setSavingBreed] = useState(false);
+  const [showBrowse, setShowBrowse] = useState(false);
+  const [pairCheckId, setPairCheckId] = useState(null); // show green check animation
+  const touchStartRef = useRef(null);
+  const swipeRef = useRef(null);
+  const viewerRef = useRef(null);
 
-  // Multi-dog pairing state
-  const [showMultiPair, setShowMultiPair] = useState(false);
-  const [checkedInDogs, setCheckedInDogs] = useState([]);
-  const [loadingDogs, setLoadingDogs] = useState(false);
-  const [multiSearch, setMultiSearch] = useState("");
-  const [selectedDogIds, setSelectedDogIds] = useState(new Set(
-    Array.isArray(photo.paired_dog_ids) ? photo.paired_dog_ids : []
-  ));
-  const [savingMulti, setSavingMulti] = useState(false);
+  const photo = photos[currentIndex];
+  if (!photo) { onClose(); return null; }
 
-  // Load suggestions for unpaired photos (legacy single-pair)
+  const thumbUrl = photo.thumbnail_path ? photoPublicUrl(photo.thumbnail_path) : null;
+  const fullUrl = photo.storage_path ? photoPublicUrl(photo.storage_path) : null;
+  const hasPairing = photo.paired_dog_id || (Array.isArray(photo.paired_dog_ids) && photo.paired_dog_ids.length > 0);
+  const pairedNames = Array.isArray(photo.paired_dog_names) && photo.paired_dog_names.length > 0
+    ? photo.paired_dog_names
+    : photo.paired_dog_name ? [photo.paired_dog_name] : [];
+
+  // Enter animation
   useEffect(() => {
-    const hasPairing = photo.paired_dog_id ||
-      (Array.isArray(photo.paired_dog_ids) && photo.paired_dog_ids.length > 0);
-    if (hasPairing) return;
+    const thumbEl = document.querySelector(`[data-photo-id="${photo.id}"]`);
+    if (thumbEl) {
+      setEnterRect(thumbEl.getBoundingClientRect());
+    }
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => setAnimState("open"));
+    });
+  }, []);
+
+  // Load full-res with crossfade
+  useEffect(() => {
+    setFullResLoaded(false);
+    if (fullUrl) {
+      const img = new Image();
+      img.onload = () => setFullResLoaded(true);
+      img.src = fullUrl;
+    }
+  }, [fullUrl]);
+
+  // Load breed suggestions
+  useEffect(() => {
+    if (hasPairing) { setSuggestions([]); return; }
+    if (photo.breed_detection_status !== "completed") { setSuggestions([]); return; }
     setLoadingSuggestions(true);
     getSuggestedPairings(photo, locationId)
       .then(setSuggestions)
       .finally(() => setLoadingSuggestions(false));
-  }, [photo.id, photo.paired_dog_id, photo.paired_dog_ids, locationId]);
+  }, [photo.id, photo.breed_detection_status, hasPairing, locationId]);
 
-  // Load checked-in dogs for multi-pair modal
+  // Close with reverse animation
+  const handleClose = useCallback(() => {
+    setAnimState("exiting");
+    setTimeout(() => onClose(), 280);
+  }, [onClose]);
+
+  // Navigate photos
+  const goTo = useCallback((idx) => {
+    if (idx >= 0 && idx < photos.length) {
+      setCurrentIndex(idx);
+      setShowBrowse(false);
+      setPairCheckId(null);
+    }
+  }, [photos.length]);
+
+  // Touch handling for swipe
+  const handleTouchStart = useCallback((e) => {
+    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+  }, []);
+
+  const handleTouchEnd = useCallback((e) => {
+    if (!touchStartRef.current) return;
+    const dx = e.changedTouches[0].clientX - touchStartRef.current.x;
+    const dy = e.changedTouches[0].clientY - touchStartRef.current.y;
+    const dt = Date.now() - touchStartRef.current.t;
+    touchStartRef.current = null;
+    if (dt > 500) return;
+    if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 50) {
+      if (dx < 0) goTo(currentIndex + 1);
+      else goTo(currentIndex - 1);
+    }
+  }, [currentIndex, goTo]);
+
+  // One-tap pair
+  const handleQuickPair = useCallback(async (dogId, dogName) => {
+    setPairCheckId(dogId);
+    const updateData = {
+      paired_dog_id: dogId,
+      paired_dog_name: dogName,
+      paired_dog_ids: [dogId],
+      paired_dog_names: [dogName],
+      paired_at: new Date().toISOString(),
+      paired_by: profile?.id || null,
+    };
+    const { error } = await supabase
+      .from("photos")
+      .update(updateData)
+      .eq("id", photo.id);
+    if (!error) {
+      onUpdate({ ...photo, ...updateData });
+    }
+    setTimeout(() => setPairCheckId(null), 1200);
+  }, [photo, profile, onUpdate]);
+
+  // Unpair
+  const handleUnpair = useCallback(async () => {
+    const updateData = {
+      paired_dog_id: null, paired_dog_name: null,
+      paired_dog_ids: [], paired_dog_names: [],
+      paired_at: null, paired_by: null,
+    };
+    const { error } = await supabase
+      .from("photos")
+      .update(updateData)
+      .eq("id", photo.id);
+    if (!error) {
+      onUpdate({ ...photo, ...updateData });
+    }
+  }, [photo, onUpdate]);
+
+  // Determine viewer opacity for animation
+  const isVisible = animState === "open";
+  const bgOpacity = animState === "entering" ? 0 : animState === "exiting" ? 0 : 1;
+
+  return ReactDOM.createPortal(
+    <div
+      ref={viewerRef}
+      className="k9-fullscreen-viewer"
+      style={{
+        opacity: animState === "entering" ? 0 : 1,
+        transition: "opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+      }}
+      onClick={(e) => { if (e.target === viewerRef.current) handleClose(); }}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
+      {/* Close button */}
+      <button
+        onClick={handleClose}
+        style={{
+          position: "absolute", top: 16, left: 16, zIndex: 10002,
+          width: 36, height: 36, borderRadius: 18,
+          background: "rgba(0,0,0,0.5)", border: "none",
+          color: "#fff", fontSize: 20, cursor: "pointer",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          backdropFilter: "blur(8px)",
+        }}
+      >
+        ✕
+      </button>
+
+      {/* Photo counter */}
+      <div style={{
+        position: "absolute", top: 20, right: 16, zIndex: 10002,
+        color: "rgba(255,255,255,0.7)", fontSize: 13, fontWeight: 600,
+        fontFamily: "'Outfit', sans-serif",
+      }}>
+        {currentIndex + 1} of {photos.length}
+      </div>
+
+      {/* Navigation arrows (desktop) */}
+      {currentIndex > 0 && (
+        <button
+          onClick={(e) => { e.stopPropagation(); goTo(currentIndex - 1); }}
+          style={{
+            position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", zIndex: 10002,
+            width: 40, height: 40, borderRadius: 20,
+            background: "rgba(255,255,255,0.15)", border: "none",
+            color: "#fff", fontSize: 22, cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          ‹
+        </button>
+      )}
+      {currentIndex < photos.length - 1 && (
+        <button
+          onClick={(e) => { e.stopPropagation(); goTo(currentIndex + 1); }}
+          style={{
+            position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", zIndex: 10002,
+            width: 40, height: 40, borderRadius: 20,
+            background: "rgba(255,255,255,0.15)", border: "none",
+            color: "#fff", fontSize: 22, cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            backdropFilter: "blur(8px)",
+          }}
+        >
+          ›
+        </button>
+      )}
+
+      {/* Main photo area */}
+      <div style={{
+        flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+        overflow: "hidden", padding: "60px 16px 0",
+        minHeight: 0,
+      }}>
+        <div style={{ position: "relative", maxWidth: "100%", maxHeight: "100%" }}>
+          {/* Thumbnail (instant display) */}
+          {thumbUrl && (
+            <img
+              src={thumbUrl}
+              alt=""
+              style={{
+                maxWidth: "100%", maxHeight: "calc(100vh - 280px)", objectFit: "contain",
+                borderRadius: 4,
+                opacity: fullResLoaded ? 0 : 1,
+                transition: "opacity 0.4s ease",
+                position: fullResLoaded ? "absolute" : "relative",
+                inset: 0,
+                width: "100%", height: "100%",
+              }}
+            />
+          )}
+          {/* Full-res (crossfade in) */}
+          {fullUrl && (
+            <img
+              src={fullUrl}
+              alt={photo.original_filename || "Photo"}
+              style={{
+                maxWidth: "100%", maxHeight: "calc(100vh - 280px)", objectFit: "contain",
+                borderRadius: 4,
+                opacity: fullResLoaded ? 1 : 0,
+                transition: "opacity 0.4s ease",
+              }}
+            />
+          )}
+          {!thumbUrl && !fullUrl && (
+            <div style={{ width: 200, height: 200, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.3)" }}>
+              <Icons.Image />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Bottom sheet - breed detection + pairing */}
+      {!showBrowse && (
+        <div className="k9-bottom-sheet" style={{
+          background: "rgba(20, 20, 20, 0.95)",
+          backdropFilter: "blur(20px)",
+          borderRadius: "20px 20px 0 0",
+          padding: "16px 20px max(16px, env(safe-area-inset-bottom))",
+          maxHeight: "40vh",
+          overflowY: "auto",
+          WebkitOverflowScrolling: "touch",
+        }}>
+          {/* Already paired */}
+          {hasPairing ? (
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <div style={{
+                  width: 8, height: 8, borderRadius: 4, background: "#84CC16", flexShrink: 0,
+                }} />
+                <span style={{ color: "#fff", fontSize: 15, fontWeight: 700, fontFamily: "'Outfit', sans-serif" }}>
+                  {pairedNames.join(", ")}
+                </span>
+                {pairedNames.length > 1 && (
+                  <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 12 }}>
+                    ({pairedNames.length} dogs)
+                  </span>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  onClick={handleUnpair}
+                  style={{
+                    background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 10,
+                    padding: "8px 16px", color: "rgba(255,255,255,0.6)", fontSize: 13,
+                    fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit', sans-serif",
+                  }}
+                >
+                  Unpair
+                </button>
+                <button
+                  onClick={() => setShowBrowse(true)}
+                  style={{
+                    background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 10,
+                    padding: "8px 16px", color: "rgba(255,255,255,0.6)", fontSize: 13,
+                    fontWeight: 600, cursor: "pointer", fontFamily: "'Outfit', sans-serif",
+                  }}
+                >
+                  Change
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Breed detection status */}
+              {photo.breed_detection_status === "completed" && photo.detected_breeds?.length > 0 ? (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                    {photo.detected_breeds.map((b, i) => (
+                      <span key={i} style={{
+                        background: "rgba(132, 204, 22, 0.2)",
+                        color: "#84CC16",
+                        fontSize: 13, fontWeight: 700, fontFamily: "'Outfit', sans-serif",
+                        padding: "5px 14px", borderRadius: 20,
+                        border: "1px solid rgba(132, 204, 22, 0.3)",
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                      }}>
+                        <span>🐕</span> {b.breed} · {Math.round(b.confidence * 100)}%
+                      </span>
+                    ))}
+                  </div>
+
+                  {/* Suggested matches */}
+                  {loadingSuggestions ? (
+                    <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, padding: "8px 0" }}>
+                      Finding matches...
+                    </div>
+                  ) : suggestions.length > 0 ? (
+                    <div>
+                      <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+                        Suggested Matches
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {suggestions.map(dog => (
+                          <div
+                            key={dog.gingr_id}
+                            onClick={() => handleQuickPair(dog.gingr_id, dog.name)}
+                            style={{
+                              display: "flex", alignItems: "center", gap: 10,
+                              padding: "10px 12px", borderRadius: 12,
+                              background: pairCheckId === dog.gingr_id ? "rgba(132, 204, 22, 0.15)" : "rgba(255,255,255,0.08)",
+                              border: `1px solid ${pairCheckId === dog.gingr_id ? "rgba(132, 204, 22, 0.4)" : "rgba(255,255,255,0.08)"}`,
+                              cursor: "pointer",
+                              transition: "all 0.2s",
+                            }}
+                          >
+                            {dog.icon_url ? (
+                              <img src={dog.icon_url} alt="" style={{ width: 40, height: 40, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
+                            ) : (
+                              <div style={{
+                                width: 40, height: 40, borderRadius: 10,
+                                background: "rgba(132, 204, 22, 0.15)",
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                fontSize: 16, fontWeight: 800, color: "#84CC16", flexShrink: 0,
+                              }}>
+                                {(dog.name || "?")[0]}
+                              </div>
+                            )}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", fontFamily: "'Outfit', sans-serif" }}>
+                                {dog.name}
+                              </div>
+                              <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+                                {dog.breed}{dog.isCheckedIn ? " · Checked in" : ""}
+                              </div>
+                            </div>
+                            {pairCheckId === dog.gingr_id ? (
+                              <div style={{
+                                width: 32, height: 32, borderRadius: 16,
+                                background: "#84CC16",
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                animation: "k9PhotoCheckPop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards",
+                              }}>
+                                <span style={{ color: "#14532D", fontSize: 18, fontWeight: 800 }}>✓</span>
+                              </div>
+                            ) : (
+                              <div style={{
+                                width: 32, height: 32, borderRadius: 16,
+                                background: "rgba(255,255,255,0.1)",
+                                display: "flex", alignItems: "center", justifyContent: "center",
+                                color: "rgba(255,255,255,0.4)", fontSize: 14,
+                              }}>
+                                +
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <button
+                    onClick={() => setShowBrowse(true)}
+                    style={{
+                      width: "100%", marginTop: 12,
+                      background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
+                      borderRadius: 12, padding: "12px 16px",
+                      color: "#fff", fontSize: 14, fontWeight: 600,
+                      cursor: "pointer", fontFamily: "'Outfit', sans-serif",
+                      transition: "background 0.2s",
+                    }}
+                  >
+                    Browse All Dogs In House
+                  </button>
+                </div>
+              ) : photo.breed_detection_status === "processing" || photo.breed_detection_status === "pending" ? (
+                <div>
+                  <div style={{
+                    height: 32, borderRadius: 16, marginBottom: 12,
+                    background: "linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0.05) 75%)",
+                    backgroundSize: "200% 100%",
+                    animation: "k9PhotoShimmer 1.5s infinite",
+                  }} />
+                  <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, fontFamily: "'Outfit', sans-serif" }}>
+                    Analyzing photo...
+                  </div>
+                  <button
+                    onClick={() => setShowBrowse(true)}
+                    style={{
+                      width: "100%", marginTop: 12,
+                      background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
+                      borderRadius: 12, padding: "12px 16px",
+                      color: "#fff", fontSize: 14, fontWeight: 600,
+                      cursor: "pointer", fontFamily: "'Outfit', sans-serif",
+                    }}
+                  >
+                    Browse Dogs In House
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 13, marginBottom: 12, fontFamily: "'Outfit', sans-serif" }}>
+                    No breed detected
+                  </div>
+                  <button
+                    onClick={() => setShowBrowse(true)}
+                    style={{
+                      width: "100%",
+                      background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)",
+                      borderRadius: 12, padding: "12px 16px",
+                      color: "#fff", fontSize: 14, fontWeight: 600,
+                      cursor: "pointer", fontFamily: "'Outfit', sans-serif",
+                    }}
+                  >
+                    Browse Dogs In House
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Browse All Dogs panel (slide-up full screen) */}
+      {showBrowse && (
+        <BrowseDogsPanel
+          photo={photo}
+          locationId={locationId}
+          profile={profile}
+          onClose={() => setShowBrowse(false)}
+          onUpdate={onUpdate}
+          onPairCheck={setPairCheckId}
+          pairCheckId={pairCheckId}
+        />
+      )}
+    </div>,
+    document.body
+  );
+}
+
+
+// ─── Browse Dogs In House Panel ─────────────────────────────────────────────
+function BrowseDogsPanel({ photo, locationId, profile, onClose, onUpdate, onPairCheck, pairCheckId }) {
+  const [dogs, setDogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set(
+    Array.isArray(photo.paired_dog_ids) ? photo.paired_dog_ids : []
+  ));
+  const [saving, setSaving] = useState(false);
+  const [expandedIcon, setExpandedIcon] = useState(null);
+
+  const photoDate = photo.taken_at ? photo.taken_at.split("T")[0] : todayStr();
+
+  // Load dogs on-site for photo date
   useEffect(() => {
-    if (!showMultiPair) return;
-    setLoadingDogs(true);
-    getCheckedInDogs(locationId)
-      .then(setCheckedInDogs)
-      .finally(() => setLoadingDogs(false));
-  }, [showMultiPair, locationId]);
+    setLoading(true);
+    getDogsOnDate(locationId, photoDate)
+      .then(setDogs)
+      .finally(() => setLoading(false));
+  }, [locationId, photoDate]);
 
-  // Search dogs by name
-  const handleSearch = useCallback(async (term) => {
-    setSearchTerm(term);
-    if (term.length < 2) { setSearchResults([]); return; }
+  // Search all gingr_animals when term doesn't match in-house dogs
+  useEffect(() => {
+    if (!searchTerm || searchTerm.length < 2) { setSearchResults([]); return; }
+    let cancelled = false;
+    const inHouseIds = new Set(dogs.map(d => d.gingr_id));
     setSearching(true);
-    const { data } = await supabase
+    supabase
       .from("gingr_animals")
-      .select("gingr_id, name, breed_name, weight")
+      .select("gingr_id, name, breed_name, weight, gender")
       .eq("location_id", locationId)
-      .ilike("name", `%${term}%`)
-      .limit(10);
-    setSearchResults((data || []).map(d => ({ ...d, breed: d.breed_name })));
-    setSearching(false);
-  }, [locationId]);
-
-  // Pair photo with single dog (legacy compat)
-  const handlePair = async (dogId, dogName) => {
-    setPairing(true);
-    const { error } = await supabase
-      .from("photos")
-      .update({
-        paired_dog_id: dogId,
-        paired_dog_name: dogName,
-        paired_dog_ids: [dogId],
-        paired_dog_names: [dogName],
-        paired_at: new Date().toISOString(),
-        paired_by: profile?.id || null,
-      })
-      .eq("id", photo.id);
-    if (!error) {
-      onUpdate({
-        ...photo,
-        paired_dog_id: dogId,
-        paired_dog_name: dogName,
-        paired_dog_ids: [dogId],
-        paired_dog_names: [dogName],
-        paired_at: new Date().toISOString(),
+      .ilike("name", `%${searchTerm}%`)
+      .limit(50)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const filtered = (data || []).filter(a => !inHouseIds.has(a.gingr_id));
+        const ids = filtered.map(a => a.gingr_id).filter(Boolean);
+        if (ids.length === 0) { setSearchResults([]); setSearching(false); return; }
+        supabase
+          .from("gingr_animal_icons")
+          .select("animal_gingr_id, icon_url, is_primary")
+          .eq("location_id", locationId)
+          .in("animal_gingr_id", ids)
+          .eq("is_primary", true)
+          .then(({ data: icons }) => {
+            if (cancelled) return;
+            const iconMap = {};
+            (icons || []).forEach(ic => { iconMap[ic.animal_gingr_id] = ic.icon_url; });
+            setSearchResults(filtered.map(a => ({
+              ...a, breed: a.breed_name, icon_url: iconMap[a.gingr_id] || null, isCheckedIn: false, notInHouse: true,
+            })));
+            setSearching(false);
+          });
       });
-    }
-    setPairing(false);
-  };
+    return () => { cancelled = true; };
+  }, [searchTerm, locationId, dogs]);
 
-  // Unpair photo
-  const handleUnpair = async () => {
-    setPairing(true);
-    const { error } = await supabase
-      .from("photos")
-      .update({
-        paired_dog_id: null, paired_dog_name: null,
-        paired_dog_ids: [], paired_dog_names: [],
-        paired_at: null, paired_by: null,
-      })
-      .eq("id", photo.id);
-    if (!error) {
-      onUpdate({
-        ...photo,
-        paired_dog_id: null, paired_dog_name: null,
-        paired_dog_ids: [], paired_dog_names: [],
-        paired_at: null, paired_by: null,
-      });
-    }
-    setPairing(false);
-  };
-
-  // Multi-dog toggle
-  const toggleDogSelection = (dogId) => {
-    setSelectedDogIds(prev => {
+  const toggleDog = (id) => {
+    setSelectedIds(prev => {
       const next = new Set(prev);
-      if (next.has(dogId)) next.delete(dogId); else next.add(dogId);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
 
-  // Save multi-dog pairing
-  const handleSaveMultiPair = async () => {
-    setSavingMulti(true);
-    const ids = [...selectedDogIds];
-    // Get names for the selected IDs
+  const handleSavePairing = async () => {
+    setSaving(true);
+    const ids = [...selectedIds];
+    const allDogs = [...dogs, ...searchResults];
     const dogNameMap = {};
-    checkedInDogs.forEach(d => { dogNameMap[d.gingr_id] = d.name; });
+    allDogs.forEach(d => { dogNameMap[d.gingr_id] = d.name; });
     const names = ids.map(id => dogNameMap[id] || "Unknown");
 
     const updateData = {
@@ -377,446 +882,194 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
 
     if (!error) {
       onUpdate({ ...photo, ...updateData });
-      setShowMultiPair(false);
+      onClose();
     }
-    setSavingMulti(false);
+    setSaving(false);
   };
 
-  // Save breed
-  const handleSaveBreed = async () => {
-    setSavingBreed(true);
-    const { error } = await supabase
-      .from("photos")
-      .update({ detected_breed: breedValue || null, breed_confidence: breedValue ? 1.0 : null })
-      .eq("id", photo.id);
-    if (!error) {
-      onUpdate({ ...photo, detected_breed: breedValue || null });
-      setEditBreed(false);
-    }
-    setSavingBreed(false);
-  };
+  // Filter in-house dogs by search
+  const filteredDogs = searchTerm
+    ? dogs.filter(d => d.name.toLowerCase().includes(searchTerm.toLowerCase()) || (d.breed || "").toLowerCase().includes(searchTerm.toLowerCase()))
+    : dogs;
 
-  const imgUrl = photo.storage_path ? photoPublicUrl(photo.storage_path) : null;
-
-  // Get paired dog names display
-  const pairedNames = Array.isArray(photo.paired_dog_names) && photo.paired_dog_names.length > 0
-    ? photo.paired_dog_names
-    : photo.paired_dog_name ? [photo.paired_dog_name] : [];
-
-  const hasPairing = photo.paired_dog_id ||
-    (Array.isArray(photo.paired_dog_ids) && photo.paired_dog_ids.length > 0);
-
-  // Search ALL dogs from gingr_animals when multi-pair search is active
-  const [multiSearchResults, setMultiSearchResults] = useState([]);
-  const [multiSearching, setMultiSearching] = useState(false);
-  useEffect(() => {
-    if (!multiSearch || multiSearch.length < 2) { setMultiSearchResults([]); return; }
-    let cancelled = false;
-    setMultiSearching(true);
-    supabase
-      .from("gingr_animals")
-      .select("gingr_id, name, breed_name, weight, gender")
-      .eq("location_id", locationId)
-      .ilike("name", `%${multiSearch}%`)
-      .limit(50)
-      .then(({ data }) => {
-        if (cancelled) return;
-        // Fetch icons for results
-        const ids = (data || []).map(a => a.gingr_id).filter(Boolean);
-        if (ids.length === 0) { setMultiSearchResults([]); setMultiSearching(false); return; }
-        supabase
-          .from("gingr_animal_icons")
-          .select("animal_gingr_id, icon_url, is_primary")
-          .eq("location_id", locationId)
-          .in("animal_gingr_id", ids)
-          .eq("is_primary", true)
-          .then(({ data: icons }) => {
-            if (cancelled) return;
-            const iconMap = {};
-            (icons || []).forEach(ic => { iconMap[ic.animal_gingr_id] = ic.icon_url; });
-            const checkedInIds = new Set(checkedInDogs.map(d => d.gingr_id));
-            setMultiSearchResults((data || [])
-              .filter(a => !checkedInIds.has(a.gingr_id)) // exclude already-in checked-in list
-              .map(a => ({ ...a, breed: a.breed_name, icon_url: iconMap[a.gingr_id] || null, isCheckedIn: false })));
-            setMultiSearching(false);
-          });
-      });
-    return () => { cancelled = true; };
-  }, [multiSearch, locationId, checkedInDogs]);
-
-  // Filter checked-in dogs by search, then append search results from all dogs
-  const filteredCheckedIn = multiSearch
-    ? checkedInDogs.filter(d => d.name.toLowerCase().includes(multiSearch.toLowerCase()) || (d.breed || "").toLowerCase().includes(multiSearch.toLowerCase()))
-    : checkedInDogs;
-  const filteredDogs = multiSearch ? [...filteredCheckedIn, ...multiSearchResults] : checkedInDogs;
+  const allDisplayDogs = searchTerm ? [...filteredDogs, ...searchResults] : dogs;
 
   return (
-    <Modal title="Photo Detail" onClose={onClose} wide>
-      <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-        {/* Left: Photo */}
-        <div style={{ flex: "1 1 340px", minWidth: 280 }}>
-          {imgUrl ? (
-            <img
-              src={imgUrl}
-              alt={photo.original_filename || "Photo"}
-              style={{ width: "100%", borderRadius: 12, objectFit: "contain", maxHeight: 500, background: "#F1F5F9" }}
-            />
-          ) : (
-            <div style={{ width: "100%", height: 300, borderRadius: 12, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut }}>
-              <Icons.Image />
-            </div>
-          )}
-          <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 12, fontSize: 12, color: C.textSec }}>
-            {photo.taken_at && <span>Taken: {fmtDateFull(photo.taken_at)}{photo.taken_at.includes("T") ? ` at ${formatTime12hr(photo.taken_at.split("T")[1]?.slice(0, 5))}` : ""}</span>}
-            {photo.original_filename && <span>File: {photo.original_filename}</span>}
-            {photo.file_size && <span>Size: {(photo.file_size / 1024 / 1024).toFixed(1)} MB</span>}
-            {photo.width && photo.height && <span>{photo.width}×{photo.height}</span>}
+    <div className="k9-browse-panel" style={{
+      position: "absolute", inset: 0, zIndex: 10003,
+      background: "rgba(15, 15, 15, 0.98)",
+      backdropFilter: "blur(20px)",
+      display: "flex", flexDirection: "column",
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
+        borderBottom: "1px solid rgba(255,255,255,0.1)",
+      }}>
+        <div>
+          <div style={{ color: "#fff", fontSize: 17, fontWeight: 800, fontFamily: "'Outfit', sans-serif" }}>
+            Dogs at K9 on {fmtDateShort(photoDate)}
+          </div>
+          <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 12, marginTop: 2 }}>
+            {dogs.length} dogs in house
           </div>
         </div>
-
-        {/* Right: Info & Pairing */}
-        <div style={{ flex: "1 1 260px", minWidth: 240 }}>
-          {/* AI Breed Detection Results */}
-          {photo.detected_breeds?.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-              <span style={{ fontSize: 12, color: '#9ca3af' }}>AI Detected:</span>
-              {photo.detected_breeds.map((b, i) => (
-                <span key={i} style={{
-                  background: '#14532d20', color: '#14532d', fontSize: 12, fontWeight: 600,
-                  padding: '2px 8px', borderRadius: 12, border: '1px solid #14532d30',
-                }}>
-                  {b.breed} ({Math.round(b.confidence * 100)}%)
-                </span>
-              ))}
-            </div>
-          )}
-          {photo.breed_detection_status === 'processing' && (
-            <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12 }}>
-              Detecting breeds...
-            </div>
-          )}
-          {/* Detect Breeds button for unprocessed photos */}
-          {(!photo.detected_breeds?.length && photo.breed_detection_status !== 'processing') && (
-            <div style={{ marginBottom: 12 }}>
-              <Btn size="sm" onClick={async () => {
-                onUpdate({ ...photo, breed_detection_status: 'processing' });
-                const { data: { session } } = await supabase.auth.getSession();
-                const res = await fetch(`${SUPABASE_URL}/functions/v1/breed-detect`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${session?.access_token}`,
-                  },
-                  body: JSON.stringify({ photo_id: photo.id }),
-                });
-                if (res.ok) {
-                  const result = await res.json();
-                  if (result.photo) onUpdate({ ...photo, ...result.photo });
-                }
-              }}>
-                Detect Breeds
-              </Btn>
-            </div>
-          )}
-
-          {/* Breed info */}
-          <div style={{ marginBottom: 20 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
-              Breed Detection
-            </div>
-            {editBreed ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <CustomSelect
-                  value={breedValue}
-                  onChange={setBreedValue}
-                  options={COMMON_BREEDS.map(b => ({ value: b, label: b }))}
-                  placeholder="Select breed..."
-                  small
-                />
-                <div style={{ display: "flex", gap: 8 }}>
-                  <Btn size="sm" onClick={handleSaveBreed} disabled={savingBreed}>
-                    {savingBreed ? "Saving..." : "Save"}
-                  </Btn>
-                  <Btn size="sm" variant="ghost" onClick={() => { setEditBreed(false); setBreedValue(photo.detected_breed || ""); }}>
-                    Cancel
-                  </Btn>
-                </div>
-              </div>
-            ) : (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                {photo.detected_breed ? (
-                  <>
-                    <Badge color="primary">{photo.detected_breed}</Badge>
-                    {photo.breed_confidence != null && (
-                      <span style={{ fontSize: 11, color: C.textMut }}>
-                        {Math.round(photo.breed_confidence * 100)}% conf.
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <span style={{ fontSize: 13, color: C.textMut, fontStyle: "italic" }}>No breed detected</span>
-                )}
-                <button
-                  onClick={() => setEditBreed(true)}
-                  style={{ background: "none", border: "none", cursor: "pointer", color: C.pri, fontSize: 12, fontWeight: 600, fontFamily: "inherit" }}
-                >
-                  {photo.detected_breed ? "Edit" : "Set breed"}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Pairing section */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Dog Pairing
-            </div>
-            <button
-              onClick={() => setShowMultiPair(true)}
-              style={{ background: "none", border: "none", cursor: "pointer", color: C.pri, fontSize: 11, fontWeight: 600, fontFamily: "inherit" }}
-            >
-              Multi-dog pair
-            </button>
-          </div>
-
-          {hasPairing ? (
-            <div style={{ padding: "14px 16px", borderRadius: 10, background: C.sucLt, border: `1px solid ${C.suc}30`, marginBottom: 12 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>
-                    {pairedNames.join(", ") || "Paired"}
-                  </div>
-                  {pairedNames.length > 1 && (
-                    <div style={{ fontSize: 11, color: C.suc, fontWeight: 600, marginTop: 2 }}>
-                      {pairedNames.length} dogs paired
-                    </div>
-                  )}
-                  {photo.paired_at && <div style={{ fontSize: 11, color: C.textSec, marginTop: 2 }}>Paired {fmtDateShort(photo.paired_at)}</div>}
-                </div>
-                <Btn size="sm" variant="ghost" onClick={handleUnpair} disabled={pairing}>
-                  Unpair
-                </Btn>
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* Suggestions */}
-              {loadingSuggestions ? (
-                <div style={{ padding: 16, textAlign: "center", color: C.textMut, fontSize: 12 }}>Finding matches...</div>
-              ) : suggestions.length > 0 ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: C.pri, marginBottom: 4 }}>Suggested Matches</div>
-                  {suggestions.map(dog => (
-                    <div
-                      key={dog.gingr_id}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 10,
-                        padding: "10px 14px", borderRadius: 10,
-                        background: C.bg, border: `1px solid ${C.borderLight}`,
-                      }}
-                    >
-                      {dog.icon_url ? (
-                        <img src={dog.icon_url} alt="" style={{ width: 32, height: 32, borderRadius: 8, objectFit: "cover" }} />
-                      ) : (
-                        <div style={{ width: 32, height: 32, borderRadius: 8, background: C.priLt, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: C.pri }}>
-                          {(dog.name || "?")[0]}
-                        </div>
-                      )}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {dog.name}
-                        </div>
-                        <div style={{ fontSize: 11, color: C.textSec }}>
-                          {dog.breed}{dog.weight ? ` · ${dog.weight} lbs` : ""}
-                          {dog.isCheckedIn && <span style={{ color: C.suc, fontWeight: 600 }}> · Checked in</span>}
-                        </div>
-                      </div>
-                      <Btn size="sm" onClick={() => handlePair(dog.gingr_id, dog.name)} disabled={pairing}>
-                        Pair
-                      </Btn>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ fontSize: 12, color: C.textMut, fontStyle: "italic", marginBottom: 12 }}>
-                  No auto-suggestions available
-                </div>
-              )}
-
-              {/* Manual search */}
-              <div style={{ marginBottom: 8, fontSize: 12, fontWeight: 600, color: C.textSec }}>Search by name</div>
-              <input
-                type="text"
-                value={searchTerm}
-                onChange={e => handleSearch(e.target.value)}
-                placeholder="Type dog name..."
-                style={{
-                  width: "100%", padding: "8px 12px", borderRadius: 8,
-                  border: `1.5px solid ${C.border}`, fontSize: 13,
-                  fontFamily: "inherit", color: C.text, background: C.surface,
-                  outline: "none", boxSizing: "border-box",
-                }}
-                onFocus={e => { e.target.style.borderColor = C.pri; }}
-                onBlur={e => { e.target.style.borderColor = C.border; }}
-              />
-              {searching && <div style={{ fontSize: 11, color: C.textMut, marginTop: 6 }}>Searching...</div>}
-              {searchResults.length > 0 && (
-                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto" }}>
-                  {searchResults.map(dog => (
-                    <div
-                      key={dog.gingr_id}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 10,
-                        padding: "8px 12px", borderRadius: 8, cursor: "pointer",
-                        background: C.bg, border: `1px solid ${C.borderLight}`,
-                        transition: "background 0.1s",
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.background = C.priLt; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = C.bg; }}
-                    >
-                      <div style={{ width: 28, height: 28, borderRadius: 7, background: C.priLt, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: C.pri }}>
-                        {(dog.name || "?")[0]}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{dog.name}</div>
-                        <div style={{ fontSize: 11, color: C.textMut }}>{dog.breed || "Unknown breed"}</div>
-                      </div>
-                      <Btn size="sm" onClick={() => handlePair(dog.gingr_id, dog.name)} disabled={pairing}>
-                        Pair
-                      </Btn>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
-
-          {/* Notes */}
-          {photo.notes && (
-            <div style={{ marginTop: 16 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Notes</div>
-              <div style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>{photo.notes}</div>
-            </div>
-          )}
-
-          {/* Tags */}
-          {photo.tags && photo.tags.length > 0 && (
-            <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {(Array.isArray(photo.tags) ? photo.tags : []).map(tag => (
-                <Badge key={tag} color="accent">{tag}</Badge>
-              ))}
-            </div>
-          )}
-        </div>
+        <button
+          onClick={onClose}
+          style={{
+            background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 10,
+            padding: "8px 16px", color: "#fff", fontSize: 13, fontWeight: 600,
+            cursor: "pointer", fontFamily: "'Outfit', sans-serif",
+          }}
+        >
+          Back
+        </button>
       </div>
 
-      {/* Multi-dog pairing modal */}
-      {showMultiPair && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
-          display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1100,
-        }}
-          onClick={() => setShowMultiPair(false)}
-        >
-          <div
-            style={{
-              background: C.surface, borderRadius: 16, padding: 24,
-              width: "90%", maxWidth: 420, maxHeight: "70vh", display: "flex", flexDirection: "column",
-              boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
-            }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ fontSize: 16, fontWeight: 800, color: C.text, marginBottom: 4 }}>
-              Pair with Multiple Dogs
-            </div>
-            <div style={{ fontSize: 12, color: C.textMut, marginBottom: 12 }}>
-              Select all dogs that appear in this photo. Showing checked-in dogs.
-            </div>
+      {/* Search bar */}
+      <div style={{ padding: "12px 20px" }}>
+        <input
+          type="text"
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+          placeholder="Search by name..."
+          autoFocus
+          style={{
+            width: "100%", padding: "12px 16px", borderRadius: 12,
+            border: "1px solid rgba(255,255,255,0.15)",
+            background: "rgba(255,255,255,0.08)",
+            color: "#fff", fontSize: 15, fontFamily: "'Outfit', sans-serif",
+            outline: "none", boxSizing: "border-box",
+          }}
+        />
+      </div>
 
-            {/* Search bar */}
-            <input
-              type="text"
-              value={multiSearch}
-              onChange={e => setMultiSearch(e.target.value)}
-              placeholder="Search dogs..."
-              style={{
-                width: "100%", padding: "8px 12px", borderRadius: 8,
-                border: `1.5px solid ${C.border}`, fontSize: 13,
-                fontFamily: "inherit", color: C.text, background: C.bg,
-                outline: "none", boxSizing: "border-box", marginBottom: 12,
-              }}
-              onFocus={e => { e.target.style.borderColor = C.pri; }}
-              onBlur={e => { e.target.style.borderColor = C.border; }}
-            />
-
-            {/* Dog list */}
-            <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, minHeight: 0 }}>
-              {loadingDogs || multiSearching ? (
-                <div style={{ padding: 24, textAlign: "center", color: C.textMut, fontSize: 12 }}>Loading dogs...</div>
-              ) : filteredDogs.length === 0 ? (
-                <div style={{ padding: 24, textAlign: "center", color: C.textMut, fontSize: 12 }}>
-                  {multiSearch ? "No dogs match search" : "No checked-in dogs found"}
-                </div>
-              ) : filteredDogs.map(dog => {
-                const isSelected = selectedDogIds.has(dog.gingr_id);
-                return (
+      {/* Dog list */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "0 20px", WebkitOverflowScrolling: "touch" }}>
+        {loading ? (
+          <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+            Loading dogs...
+          </div>
+        ) : allDisplayDogs.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 13 }}>
+            {searchTerm ? "No dogs found" : "No dogs in house on this date"}
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, paddingBottom: 80 }}>
+            {allDisplayDogs.map(dog => {
+              const isSelected = selectedIds.has(dog.gingr_id);
+              return (
+                <div key={dog.gingr_id} style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "10px 12px", borderRadius: 12,
+                  background: isSelected ? "rgba(132, 204, 22, 0.1)" : "rgba(255,255,255,0.04)",
+                  border: `1px solid ${isSelected ? "rgba(132, 204, 22, 0.3)" : "transparent"}`,
+                  transition: "all 0.15s",
+                }}>
+                  {/* Dog photo - tap to enlarge */}
                   <div
-                    key={dog.gingr_id}
-                    onClick={() => toggleDogSelection(dog.gingr_id)}
+                    onClick={(e) => { e.stopPropagation(); setExpandedIcon(dog.icon_url || null); }}
+                    style={{ flexShrink: 0, cursor: dog.icon_url ? "pointer" : "default" }}
+                  >
+                    {dog.icon_url ? (
+                      <img src={dog.icon_url} alt="" style={{ width: 44, height: 44, borderRadius: 11, objectFit: "cover" }} />
+                    ) : (
+                      <div style={{
+                        width: 44, height: 44, borderRadius: 11,
+                        background: "rgba(132, 204, 22, 0.15)",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 18, fontWeight: 800, color: "#84CC16",
+                      }}>
+                        {(dog.name || "?")[0]}
+                      </div>
+                    )}
+                  </div>
+                  {/* Dog info - tap to select */}
+                  <div
+                    onClick={() => toggleDog(dog.gingr_id)}
+                    style={{ flex: 1, minWidth: 0, cursor: "pointer" }}
+                  >
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", fontFamily: "'Outfit', sans-serif" }}>
+                      {dog.name}
+                      {dog.notInHouse && (
+                        <span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginLeft: 6, fontWeight: 400 }}>
+                          (not in house)
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)" }}>
+                      {dog.breed || "Unknown breed"}
+                      {dog.isCheckedIn && <span style={{ color: "#84CC16" }}> · Checked in</span>}
+                    </div>
+                  </div>
+                  {/* Checkbox */}
+                  <div
+                    onClick={() => toggleDog(dog.gingr_id)}
                     style={{
-                      display: "flex", alignItems: "center", gap: 10,
-                      padding: "10px 12px", borderRadius: 10, cursor: "pointer",
-                      background: isSelected ? C.priLt : C.bg,
-                      border: `1.5px solid ${isSelected ? C.pri : C.borderLight}`,
+                      width: 24, height: 24, borderRadius: 7, flexShrink: 0, cursor: "pointer",
+                      border: `2px solid ${isSelected ? "#84CC16" : "rgba(255,255,255,0.2)"}`,
+                      background: isSelected ? "#84CC16" : "transparent",
+                      display: "flex", alignItems: "center", justifyContent: "center",
                       transition: "all 0.15s",
                     }}
                   >
-                    {/* Checkbox */}
-                    <div style={{
-                      width: 20, height: 20, borderRadius: 5, flexShrink: 0,
-                      border: `2px solid ${isSelected ? C.pri : C.border}`,
-                      background: isSelected ? C.pri : "transparent",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                    }}>
-                      {isSelected && <I.Check />}
-                    </div>
-                    {dog.icon_url ? (
-                      <img src={dog.icon_url} alt="" style={{ width: 30, height: 30, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
-                    ) : (
-                      <div style={{ width: 30, height: 30, borderRadius: 8, background: C.priLt, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: C.pri, flexShrink: 0 }}>
-                        {(dog.name || "?")[0]}
-                      </div>
-                    )}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {dog.name}
-                      </div>
-                      <div style={{ fontSize: 11, color: C.textSec }}>
-                        {dog.breed || "Unknown breed"}{dog.weight ? ` · ${dog.weight} lbs` : ""}
-                        {dog.isCheckedIn && <span style={{ color: C.suc, fontWeight: 600 }}> · Checked in</span>}
-                      </div>
-                    </div>
+                    {isSelected && <span style={{ color: "#14532D", fontSize: 14, fontWeight: 800 }}>✓</span>}
                   </div>
-                );
-              })}
-            </div>
-
-            {/* Footer */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.borderLight}` }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: C.pri }}>
-                {selectedDogIds.size} selected
-              </span>
-              <div style={{ display: "flex", gap: 8 }}>
-                <Btn size="sm" variant="ghost" onClick={() => setShowMultiPair(false)}>Cancel</Btn>
-                <Btn size="sm" onClick={handleSaveMultiPair} disabled={savingMulti}>
-                  {savingMulti ? "Saving..." : "Save Pairing"}
-                </Btn>
+                </div>
+              );
+            })}
+            {searching && (
+              <div style={{ padding: 16, textAlign: "center", color: "rgba(255,255,255,0.3)", fontSize: 12 }}>
+                Searching all dogs...
               </div>
-            </div>
+            )}
           </div>
+        )}
+      </div>
+
+      {/* Bottom bar with pair button */}
+      <div style={{
+        padding: "12px 20px max(12px, env(safe-area-inset-bottom))",
+        borderTop: "1px solid rgba(255,255,255,0.1)",
+        background: "rgba(15, 15, 15, 0.98)",
+      }}>
+        <button
+          onClick={handleSavePairing}
+          disabled={saving || selectedIds.size === 0}
+          style={{
+            width: "100%", padding: "14px 20px", borderRadius: 14,
+            background: selectedIds.size > 0 ? "#84CC16" : "rgba(255,255,255,0.1)",
+            border: "none",
+            color: selectedIds.size > 0 ? "#14532D" : "rgba(255,255,255,0.3)",
+            fontSize: 16, fontWeight: 800, cursor: selectedIds.size > 0 ? "pointer" : "default",
+            fontFamily: "'Outfit', sans-serif",
+            transition: "all 0.2s",
+            opacity: saving ? 0.6 : 1,
+          }}
+        >
+          {saving ? "Pairing..." : selectedIds.size > 0 ? `Pair Selected (${selectedIds.size})` : "Select Dogs to Pair"}
+        </button>
+      </div>
+
+      {/* Expanded icon overlay */}
+      {expandedIcon && (
+        <div
+          onClick={() => setExpandedIcon(null)}
+          style={{
+            position: "absolute", inset: 0, zIndex: 10010,
+            background: "rgba(0,0,0,0.9)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            animation: "k9PhotoFadeIn 0.2s ease",
+          }}
+        >
+          <img
+            src={expandedIcon}
+            alt=""
+            style={{ maxWidth: "90%", maxHeight: "90%", borderRadius: 16, objectFit: "contain" }}
+          />
         </div>
       )}
-    </Modal>
+    </div>
   );
 }
 
@@ -934,13 +1187,14 @@ function PhotosPage({ data, nav, profile }) {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("all"); // all | unpaired | date
   const [dateFilter, setDateFilter] = useState("");
-  const [selectedPhoto, setSelectedPhoto] = useState(null);
+  const [viewerIndex, setViewerIndex] = useState(null); // index into filteredPhotos for full-screen viewer
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [showBulkPair, setShowBulkPair] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef(null);
+  const breedProcessingRef = useRef(false);
 
   // ─── Fetch photos ──────────────────────────────────────────────────────────
   const fetchPhotos = useCallback(async () => {
@@ -957,6 +1211,57 @@ function PhotosPage({ data, nav, profile }) {
 
   useEffect(() => { fetchPhotos(); }, [fetchPhotos]);
 
+  // ─── Background breed detection (silent, fire-and-forget) ──────────────────
+  useEffect(() => {
+    if (!locationId || breedProcessingRef.current) return;
+    const pendingCount = photos.filter(p => p.breed_detection_status === "pending" && p.thumbnail_path).length;
+    if (pendingCount === 0) return;
+
+    breedProcessingRef.current = true;
+
+    const processBatch = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) return;
+
+        let hasMore = true;
+        while (hasMore) {
+          const res = await fetch(`${SUPABASE_URL}/functions/v1/breed-detect-bulk`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({ location_id: locationId, batch_size: 10 }),
+          });
+
+          if (!res.ok) break;
+          const result = await res.json();
+          hasMore = result.remaining > 0 && result.processed > 0;
+
+          // Refresh photos to show newly detected breeds
+          if (result.processed > 0) {
+            const { data: rows } = await supabase
+              .from("photos")
+              .select("*")
+              .eq("location_id", locationId)
+              .order("taken_at", { ascending: false });
+            if (rows) setPhotos(rows);
+          }
+
+          // Small delay between batches
+          if (hasMore) await new Promise(r => setTimeout(r, 1000));
+        }
+      } catch (e) {
+        console.warn("Background breed detection error:", e);
+      } finally {
+        breedProcessingRef.current = false;
+      }
+    };
+
+    processBatch();
+  }, [locationId, photos.length]);
+
   // ─── Filtered photos ───────────────────────────────────────────────────────
   const filteredPhotos = useMemo(() => {
     let list = photos;
@@ -968,7 +1273,7 @@ function PhotosPage({ data, nav, profile }) {
     return list;
   }, [photos, filter, dateFilter]);
 
-  // ─── Breed detection (fire-and-forget) ──────────────────────────────────────
+  // ─── Breed detection (fire-and-forget for single photo) ────────────────────
   const detectBreeds = async (photoId) => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -994,7 +1299,6 @@ function PhotosPage({ data, nav, profile }) {
     let done = 0;
 
     for (let file of files) {
-      // Check type (allow HEIC files through for conversion)
       const isHeic = isHeicFile(file);
       if (!isHeic && !ACCEPTED_TYPES.includes(file.type)) {
         done++;
@@ -1007,7 +1311,6 @@ function PhotosPage({ data, nav, profile }) {
         continue;
       }
 
-      // Convert HEIC → JPEG if needed
       if (isHeic) {
         try {
           file = await convertHeicToJpeg(file);
@@ -1024,7 +1327,6 @@ function PhotosPage({ data, nav, profile }) {
       const dateStr = todayStr();
       const storagePath = `${locationId}/${dateStr}/${uuid}.${ext}`;
 
-      // Get image dimensions
       let width = null;
       let height = null;
       try {
@@ -1033,17 +1335,14 @@ function PhotosPage({ data, nav, profile }) {
         height = dims.height;
       } catch (_) { /* skip */ }
 
-      // Read EXIF date if available (use file lastModified as fallback)
       const takenAt = file.lastModified
         ? new Date(file.lastModified).toISOString()
         : new Date().toISOString();
 
-      // Upload full-res to storage
       const { error: uploadErr } = await supabase.storage
         .from(PHOTO_BUCKET)
         .upload(storagePath, file, { contentType: file.type || "image/jpeg", upsert: false });
 
-      // Generate and upload thumbnail
       let thumbnailPath = null;
       if (!uploadErr) {
         try {
@@ -1057,7 +1356,6 @@ function PhotosPage({ data, nav, profile }) {
       }
 
       if (!uploadErr) {
-        // Insert row
         const { data: insertedRows } = await supabase.from("photos").insert({
           location_id: locationId,
           storage_path: storagePath,
@@ -1072,7 +1370,6 @@ function PhotosPage({ data, nav, profile }) {
           sync_source: "desktop",
         }).select("id");
 
-        // Fire breed detection (non-blocking)
         if (insertedRows?.[0]?.id) {
           detectBreeds(insertedRows[0].id);
         }
@@ -1130,7 +1427,6 @@ function PhotosPage({ data, nav, profile }) {
   // ─── Photo update callback ─────────────────────────────────────────────────
   const handlePhotoUpdate = useCallback((updated) => {
     setPhotos(prev => prev.map(p => p.id === updated.id ? updated : p));
-    setSelectedPhoto(updated);
   }, []);
 
   const handleBulkUpdate = useCallback((ids, updateData) => {
@@ -1153,7 +1449,7 @@ function PhotosPage({ data, nav, profile }) {
             Photos
           </h2>
           <p style={{ margin: 0, fontSize: 13, color: C.textMut, lineHeight: 1.5 }}>
-            Upload, tag, and pair photos with dogs
+            {totalCount.toLocaleString()} Photos · {pairedCount} paired · {unpairedCount} unpaired
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1169,22 +1465,6 @@ function PhotosPage({ data, nav, profile }) {
             <I.Camera /> Upload Photos
           </Btn>
         </div>
-      </div>
-
-      {/* Stats row */}
-      <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
-        <Card style={{ padding: "14px 20px", flex: "1 1 120px", minWidth: 120 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em" }}>Total</div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginTop: 2 }}>{totalCount}</div>
-        </Card>
-        <Card style={{ padding: "14px 20px", flex: "1 1 120px", minWidth: 120 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.suc, textTransform: "uppercase", letterSpacing: "0.05em" }}>Paired</div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: C.suc, marginTop: 2 }}>{pairedCount}</div>
-        </Card>
-        <Card style={{ padding: "14px 20px", flex: "1 1 120px", minWidth: 120 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: C.warn, textTransform: "uppercase", letterSpacing: "0.05em" }}>Unpaired</div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: C.warn, marginTop: 2 }}>{unpairedCount}</div>
-        </Card>
       </div>
 
       {/* Upload zone */}
@@ -1303,8 +1583,7 @@ function PhotosPage({ data, nav, profile }) {
           gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
           gap: 12,
         }}>
-          {filteredPhotos.map(photo => {
-            // Fix 1: Use thumbnail_path for grid view, fall back to full-res
+          {filteredPhotos.map((photo, idx) => {
             const thumbUrl = photo.thumbnail_path
               ? photoPublicUrl(photo.thumbnail_path)
               : photo.storage_path
@@ -1312,16 +1591,25 @@ function PhotosPage({ data, nav, profile }) {
                 : null;
             const isSelected = selectedIds.has(photo.id);
 
-            // Multi-dog display
             const dogNames = Array.isArray(photo.paired_dog_names) && photo.paired_dog_names.length > 0
               ? photo.paired_dog_names
               : photo.paired_dog_name ? [photo.paired_dog_name] : [];
             const hasPairing = photo.paired_dog_id ||
               (Array.isArray(photo.paired_dog_ids) && photo.paired_dog_ids.length > 0);
 
+            // Status dot: green (paired), blue (detected not paired), none (pending/failed)
+            const hasBreed = photo.breed_detection_status === "completed" && photo.detected_breeds?.length > 0;
+            let statusDot = null;
+            if (hasPairing) {
+              statusDot = "#84CC16"; // Electric Lime = paired
+            } else if (hasBreed) {
+              statusDot = "#3B82F6"; // Blue = detected, not paired
+            }
+
             return (
               <div
                 key={photo.id}
+                data-photo-id={photo.id}
                 style={{
                   position: "relative",
                   borderRadius: 14,
@@ -1349,17 +1637,30 @@ function PhotosPage({ data, nav, profile }) {
                   {isSelected && <I.Check />}
                 </div>
 
+                {/* Status indicator dot */}
+                {statusDot && (
+                  <div style={{
+                    position: "absolute", top: 10, right: 10, zIndex: 2,
+                    width: 10, height: 10, borderRadius: 5,
+                    background: statusDot,
+                    border: "2px solid rgba(255,255,255,0.8)",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+                  }} />
+                )}
+
                 {/* Photo thumbnail */}
-                <div onClick={() => setSelectedPhoto(photo)}>
+                <div onClick={() => setViewerIndex(idx)}>
                   {thumbUrl ? (
                     <img
                       src={thumbUrl}
                       alt={photo.original_filename || "Photo"}
                       loading="lazy"
+                      decoding="async"
+                      className="k9-photo-grid-img"
                       style={{ width: "100%", height: 200, objectFit: "cover", display: "block" }}
                     />
                   ) : (
-                    <div style={{ width: "100%", height: 200, background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut }}>
+                    <div style={{ width: "100%", height: 200, background: "#f3f4f6", display: "flex", alignItems: "center", justifyContent: "center", color: C.textMut }}>
                       <Icons.Image />
                     </div>
                   )}
@@ -1406,11 +1707,12 @@ function PhotosPage({ data, nav, profile }) {
         </div>
       )}
 
-      {/* Photo detail modal */}
-      {selectedPhoto && (
-        <PhotoDetailModal
-          photo={selectedPhoto}
-          onClose={() => setSelectedPhoto(null)}
+      {/* Full-screen photo viewer */}
+      {viewerIndex !== null && filteredPhotos[viewerIndex] && (
+        <FullScreenViewer
+          photos={filteredPhotos}
+          initialIndex={viewerIndex}
+          onClose={() => setViewerIndex(null)}
           locationId={locationId}
           profile={profile}
           onUpdate={handlePhotoUpdate}
