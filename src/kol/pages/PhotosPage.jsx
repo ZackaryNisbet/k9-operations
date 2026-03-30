@@ -105,11 +105,11 @@ async function getSuggestedPairings(photo, locationId) {
   // Query reservations on-site at photo time
   const { data: reservations } = await supabase
     .from("gingr_reservations")
-    .select("animal_gingr_id, animal_name, reservation_type, status, start_date, end_date")
+    .select("animal_gingr_id, animal_name, animal_breed, reservation_type, start_date, end_date, check_in_date, check_out_date")
     .eq("location_id", locationId)
     .lte("start_date", takenAt)
     .gte("end_date", takenAt)
-    .not("status", "eq", "cancelled");
+    .is("cancelled_date", null);
 
   if (!reservations || reservations.length === 0) return [];
 
@@ -120,7 +120,7 @@ async function getSuggestedPairings(photo, locationId) {
   // Fetch animal details
   const { data: animals } = await supabase
     .from("gingr_animals")
-    .select("gingr_id, name, breed, weight, gender")
+    .select("gingr_id, name, breed_name, weight, gender")
     .eq("location_id", locationId)
     .in("gingr_id", animalIds);
 
@@ -140,31 +140,41 @@ async function getSuggestedPairings(photo, locationId) {
   // Count breeds on-site for uniqueness scoring
   const breedCounts = {};
   animals.forEach(a => {
-    const b = (a.breed || "").toLowerCase();
+    const b = (a.breed_name || "").toLowerCase();
     breedCounts[b] = (breedCounts[b] || 0) + 1;
   });
 
-  // Score each candidate
+  // Score each candidate against ALL detected breeds
   const candidates = animals.map(animal => {
     let score = 0;
+    const animalBreed = animal.breed_name || "";
 
-    // Breed match
-    const bMatch = breedMatchScore(photo.detected_breed, animal.breed);
-    score += bMatch;
+    // Multi-breed matching: check against each detected breed
+    if (photo.detected_breeds?.length > 0) {
+      let bestBreedScore = 0;
+      photo.detected_breeds.forEach(db => {
+        const bScore = breedMatchScore(db.breed, animalBreed) * db.confidence;
+        if (bScore > bestBreedScore) bestBreedScore = bScore;
+      });
+      score += bestBreedScore;
+    } else {
+      // Fallback to legacy single breed
+      score += breedMatchScore(photo.detected_breed, animalBreed);
+    }
 
-    // Check if actively checked in (vs just having reservation)
+    // Check-in bonus (use check_in_date presence instead of status field)
     const animalRes = reservations.filter(r => r.animal_gingr_id === animal.gingr_id);
-    const isCheckedIn = animalRes.some(r => r.status === "checked_in" || r.status === "checked-in");
+    const isCheckedIn = animalRes.some(r => r.check_in_date && !r.check_out_date);
     if (isCheckedIn) score += 20;
 
     // Uniqueness: only dog of that breed on-site
-    const b = (animal.breed || "").toLowerCase();
-    if (b && breedCounts[b] === 1 && bMatch > 0) score += 30;
+    const b = (animalBreed || "").toLowerCase();
+    if (b && breedCounts[b] === 1 && score > 0) score += 30;
 
     return {
       gingr_id: animal.gingr_id,
       name: animal.name,
-      breed: animal.breed,
+      breed: animalBreed,
       weight: animal.weight,
       icon_url: iconMap[animal.gingr_id] || null,
       score,
@@ -182,11 +192,11 @@ async function getCheckedInDogs(locationId) {
   const today = todayStr();
   const { data: reservations } = await supabase
     .from("gingr_reservations")
-    .select("animal_gingr_id, animal_name, status")
+    .select("animal_gingr_id, animal_name, check_in_date, check_out_date")
     .eq("location_id", locationId)
     .lte("start_date", today)
     .gte("end_date", today)
-    .not("status", "eq", "cancelled");
+    .is("cancelled_date", null);
 
   if (!reservations || reservations.length === 0) return [];
 
@@ -195,7 +205,7 @@ async function getCheckedInDogs(locationId) {
 
   const { data: animals } = await supabase
     .from("gingr_animals")
-    .select("gingr_id, name, breed, weight, gender")
+    .select("gingr_id, name, breed_name, weight, gender")
     .eq("location_id", locationId)
     .in("gingr_id", animalIds);
 
@@ -212,13 +222,17 @@ async function getCheckedInDogs(locationId) {
   const iconMap = {};
   (icons || []).forEach(ic => { iconMap[ic.animal_gingr_id] = ic.icon_url; });
 
-  const resMap = {};
-  reservations.forEach(r => { resMap[r.animal_gingr_id] = r.status; });
+  // Build check-in map from reservation check_in_date/check_out_date
+  const checkedInSet = new Set();
+  reservations.forEach(r => {
+    if (r.check_in_date && !r.check_out_date) checkedInSet.add(r.animal_gingr_id);
+  });
 
   return animals.map(a => ({
     ...a,
+    breed: a.breed_name,
     icon_url: iconMap[a.gingr_id] || null,
-    isCheckedIn: resMap[a.gingr_id] === "checked_in" || resMap[a.gingr_id] === "checked-in",
+    isCheckedIn: checkedInSet.has(a.gingr_id),
   })).sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -272,11 +286,11 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
     setSearching(true);
     const { data } = await supabase
       .from("gingr_animals")
-      .select("gingr_id, name, breed, weight")
+      .select("gingr_id, name, breed_name, weight")
       .eq("location_id", locationId)
       .ilike("name", `%${term}%`)
       .limit(10);
-    setSearchResults(data || []);
+    setSearchResults((data || []).map(d => ({ ...d, breed: d.breed_name })));
     setSearching(false);
   }, [locationId]);
 
@@ -401,7 +415,7 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
     setMultiSearching(true);
     supabase
       .from("gingr_animals")
-      .select("gingr_id, name, breed, weight, gender")
+      .select("gingr_id, name, breed_name, weight, gender")
       .eq("location_id", locationId)
       .ilike("name", `%${multiSearch}%`)
       .limit(50)
@@ -423,7 +437,7 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
             const checkedInIds = new Set(checkedInDogs.map(d => d.gingr_id));
             setMultiSearchResults((data || [])
               .filter(a => !checkedInIds.has(a.gingr_id)) // exclude already-in checked-in list
-              .map(a => ({ ...a, icon_url: iconMap[a.gingr_id] || null, isCheckedIn: false })));
+              .map(a => ({ ...a, breed: a.breed_name, icon_url: iconMap[a.gingr_id] || null, isCheckedIn: false })));
             setMultiSearching(false);
           });
       });
@@ -462,6 +476,49 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
 
         {/* Right: Info & Pairing */}
         <div style={{ flex: "1 1 260px", minWidth: 240 }}>
+          {/* AI Breed Detection Results */}
+          {photo.detected_breeds?.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+              <span style={{ fontSize: 12, color: '#9ca3af' }}>AI Detected:</span>
+              {photo.detected_breeds.map((b, i) => (
+                <span key={i} style={{
+                  background: '#14532d20', color: '#14532d', fontSize: 12, fontWeight: 600,
+                  padding: '2px 8px', borderRadius: 12, border: '1px solid #14532d30',
+                }}>
+                  {b.breed} ({Math.round(b.confidence * 100)}%)
+                </span>
+              ))}
+            </div>
+          )}
+          {photo.breed_detection_status === 'processing' && (
+            <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12 }}>
+              Detecting breeds...
+            </div>
+          )}
+          {/* Detect Breeds button for unprocessed photos */}
+          {(!photo.detected_breeds?.length && photo.breed_detection_status !== 'processing') && (
+            <div style={{ marginBottom: 12 }}>
+              <Btn size="sm" onClick={async () => {
+                onUpdate({ ...photo, breed_detection_status: 'processing' });
+                const { data: { session } } = await supabase.auth.getSession();
+                const res = await fetch(`${SUPABASE_URL}/functions/v1/breed-detect`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session?.access_token}`,
+                  },
+                  body: JSON.stringify({ photo_id: photo.id }),
+                });
+                if (res.ok) {
+                  const result = await res.json();
+                  if (result.photo) onUpdate({ ...photo, ...result.photo });
+                }
+              }}>
+                Detect Breeds
+              </Btn>
+            </div>
+          )}
+
           {/* Breed info */}
           <div style={{ marginBottom: 20 }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>
@@ -777,11 +834,11 @@ function BulkPairModal({ selectedIds, onClose, locationId, profile, onBulkUpdate
     setSearching(true);
     const { data } = await supabase
       .from("gingr_animals")
-      .select("gingr_id, name, breed, weight")
+      .select("gingr_id, name, breed_name, weight")
       .eq("location_id", locationId)
       .ilike("name", `%${term}%`)
       .limit(10);
-    setSearchResults(data || []);
+    setSearchResults((data || []).map(d => ({ ...d, breed: d.breed_name })));
     setSearching(false);
   }, [locationId]);
 
@@ -911,6 +968,23 @@ function PhotosPage({ data, nav, profile }) {
     return list;
   }, [photos, filter, dateFilter]);
 
+  // ─── Breed detection (fire-and-forget) ──────────────────────────────────────
+  const detectBreeds = async (photoId) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      await fetch(`${SUPABASE_URL}/functions/v1/breed-detect`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({ photo_id: photoId }),
+      });
+    } catch (e) {
+      console.warn('Breed detection failed:', e);
+    }
+  };
+
   // ─── Upload handler (with HEIC conversion + thumbnail generation) ─────────
   const handleUpload = useCallback(async (files) => {
     if (!locationId || !files || files.length === 0) return;
@@ -984,7 +1058,7 @@ function PhotosPage({ data, nav, profile }) {
 
       if (!uploadErr) {
         // Insert row
-        await supabase.from("photos").insert({
+        const { data: insertedRows } = await supabase.from("photos").insert({
           location_id: locationId,
           storage_path: storagePath,
           thumbnail_path: thumbnailPath,
@@ -996,7 +1070,12 @@ function PhotosPage({ data, nav, profile }) {
           width,
           height,
           sync_source: "desktop",
-        });
+        }).select("id");
+
+        // Fire breed detection (non-blocking)
+        if (insertedRows?.[0]?.id) {
+          detectBreeds(insertedRows[0].id);
+        }
       }
 
       done++;
