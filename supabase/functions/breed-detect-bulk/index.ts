@@ -119,18 +119,18 @@ serve(async (req) => {
           },
           body: JSON.stringify({
             model: 'claude-haiku-4-5-20251001',
-            max_tokens: 256,
-            system: `You are an expert dog breed identifier working at a pet boarding facility. You MUST identify the specific breed of each dog visible in the photo. Pay close attention to:
-- Body proportions (height, leg length, body length, chest depth)
-- Head shape and muzzle length
-- Ear shape and position
-- Coat type, color, and pattern
-- Tail shape and carriage
-- Overall size category (toy, small, medium, large, giant)
+            max_tokens: 512,
+            system: `You are an expert dog breed identifier and photo analyst working at K9 Operations, a pet boarding facility. For EVERY dog visible in the photo, analyze:
 
-Common breeds at boarding facilities include sighthounds (Greyhound, Whippet, Italian Greyhound), bully breeds (Pit Bull, American Staffordshire Terrier, Boxer), retrievers (Golden, Labrador), shepherds (German Shepherd, Australian Shepherd), doodles (Goldendoodle, Labradoodle, Bernedoodle), spaniels, terriers, and many mixes.
+1. BREED: Identify the specific breed. Pay close attention to body proportions (height, leg length, chest depth), head shape, muzzle length, ear shape, coat type/color, tail shape, and overall size. Common boarding facility breeds: sighthounds (Greyhound, Whippet, Italian Greyhound), bully breeds (Pit Bull, American Staffordshire Terrier, Boxer), retrievers (Golden, Labrador), shepherds (German Shepherd, Australian Shepherd), doodles (Goldendoodle, Labradoodle, Bernedoodle), spaniels, terriers. Be SPECIFIC — a tall lean dog with long thin legs is a Greyhound or Whippet, NOT a Boxer. A stocky muscular dog with a wide head is a Pit Bull or Boxer.
 
-Be specific. A tall, lean dog with long thin legs is likely a Greyhound or Whippet, NOT a Boxer. A stocky muscular dog with a wide head is a Pit Bull or Boxer.
+2. COLLAR COLOR: If the dog wears a collar, report its color exactly. Key colors at this facility: green, blue, yellow, pink, red. If no collar visible or color unclear, set to null.
+
+3. COLLAR TEXT: If you can read ANY text, numbers, or letters on the collar or tag, report exactly what you see. Even partial text helps. If unreadable, set to null.
+
+4. SIZE CATEGORY: Estimate as "small" (under ~25 lbs), "medium" (25-50 lbs), or "large" (50+ lbs).
+
+5. POSITION: "foreground" if main subject, "background" if partially visible.
 
 Return ONLY a valid JSON array. No markdown, no explanation, no text outside the array.`,
             messages: [
@@ -147,7 +147,7 @@ Return ONLY a valid JSON array. No markdown, no explanation, no text outside the
                   },
                   {
                     type: 'text',
-                    text: 'Identify every dog breed in this photo. For each dog visible, return the most likely breed using standard AKC breed names. If mixed, list the most likely parent breeds separately. Return JSON only: [{"breed": "Greyhound", "confidence": 0.95}]',
+                    text: 'Analyze every dog in this photo. Return JSON: [{"breed": "Greyhound", "confidence": 0.95, "collar_color": "green", "collar_text": "K9-142", "size_category": "large", "position": "foreground"}]',
                   },
                 ],
               },
@@ -170,7 +170,7 @@ Return ONLY a valid JSON array. No markdown, no explanation, no text outside the
         const content = anthropicData.content?.[0]?.text || '';
 
         // Parse the JSON array from the response
-        let detectedBreeds: Array<{ breed: string; confidence: number }> = [];
+        let detectedBreeds: Array<{ breed: string; confidence: number; collar_color?: string | null; collar_text?: string | null; size_category?: string | null; position?: string | null }> = [];
         try {
           detectedBreeds = JSON.parse(content);
         } catch {
@@ -187,9 +187,16 @@ Return ONLY a valid JSON array. No markdown, no explanation, no text outside the
         if (!Array.isArray(detectedBreeds)) {
           detectedBreeds = [];
         }
-        detectedBreeds = detectedBreeds.filter(
-          (b) => b && typeof b.breed === 'string' && typeof b.confidence === 'number'
-        );
+        detectedBreeds = detectedBreeds
+          .filter((b) => b && typeof b.breed === 'string' && typeof b.confidence === 'number')
+          .map((b) => ({
+            breed: b.breed,
+            confidence: b.confidence,
+            collar_color: b.collar_color || null,
+            collar_text: b.collar_text || null,
+            size_category: b.size_category || null,
+            position: b.position || null,
+          }));
 
         // Determine highest confidence breed
         const topBreed = detectedBreeds.length > 0
