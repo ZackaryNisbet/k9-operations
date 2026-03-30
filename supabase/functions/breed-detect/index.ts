@@ -74,10 +74,9 @@ serve(async (req) => {
       });
     }
 
-    // Use Supabase image transform for ~800px wide version (much better than 300px thumbnail)
-    // Falls back to public URL if transforms aren't available
+    // Use Supabase image transform for ~1200px wide version — high enough res for collar text detection
     const imageUrl = photo.storage_path
-      ? `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${photo.storage_path}?width=800&quality=75`
+      ? `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${photo.storage_path}?width=1200&quality=80`
       : `${SUPABASE_URL}/storage/v1/object/public/pet-photos/${storagePath}`;
 
     // 5. Download image and convert to base64 for Anthropic API
