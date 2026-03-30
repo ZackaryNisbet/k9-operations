@@ -8,7 +8,7 @@ import { C, OPERATIONS_CATALOG, OPS_TYPES, LITE_DEF_PRICING, CHART_PTS, DEF_CLIE
 import { I, Icons } from "../../shared/icons";
 import { Tip, Badge, Btn, CustomSelect, MiniDatePicker, ComplianceCheckItem, Inp, CalendarPicker, Modal, Card, K9Logo, K9LogoMini, isFieldRequired, validateClientFields } from "../../shared/ui";  // formatDogNames, fmtPhoneInput are in theme.js
 import { hasPermission, hasLeanPermission, _resolveRole, LEGACY_ROLE_MAP, ROLE_CODE_MAP } from "../../shared/permissions";
-import { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, resSvcIncludes, getPPStats, getCollarsStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel } from "../../shared/opsHelpers";
+import { classifyReservationType, classifyReservationStatus, extractRoomFromType, getRoomCleaningStats, resSvcIncludes, getPPStats, getCollarsStats, getLodgingTransferStats, getOpsCardStatus, getOpsProgress, getOpsCountLabel } from "../../shared/opsHelpers";
 import K9LoadingAnimation from "../../shared/K9LoadingAnimation";
 import InteractiveLineChart from "../../shared/InteractiveLineChart";
 import LocationSelector from "../../shared/LocationSelector";
@@ -33,6 +33,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const td = todayStr();
   // Belongings + Collars default to tomorrow (prep for next day)
   const [viewDate, setViewDate] = useState(() => (sub === "belongings" || sub === "collars") ? addDays(td, 1) : td);
+
   const [rcFilter, setRcFilter] = useState("all"); // all | incomplete | setup | refresh | disinfect | asNeeded
   const [recentlyCompleted, setRecentlyCompleted] = useState(new Set()); // room keys with grace period
   const dayIdx = new Date(viewDate + "T12:00:00").getDay();
@@ -1797,6 +1798,244 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     );
   };
 
+  // ─── Lodging Transfers Report ───────────────────────────────────────────────
+  const [transfersCompleted, setTransfersCompleted] = useState({});
+  const [expandedTransfer, setExpandedTransfer] = useState(null);
+
+  useEffect(() => {
+    if (sub !== "lodging_transfer" || !profile?.location_id) return;
+    const key = `ops_lodging_transfer_completions_${viewDate}`;
+    supabase.from("lite_settings").select("setting_value")
+      .eq("location_id", profile.location_id)
+      .eq("setting_key", key)
+      .limit(1)
+      .then(({ data: rows }) => {
+        if (rows && rows.length > 0 && rows[0].setting_value) {
+          setTransfersCompleted(rows[0].setting_value);
+        } else {
+          setTransfersCompleted({});
+        }
+      });
+  }, [sub, viewDate, profile?.location_id]);
+
+  const saveTransfersCompleted = async (newCompleted) => {
+    setTransfersCompleted(newCompleted);
+    if (!profile?.location_id) return;
+    const key = `ops_lodging_transfer_completions_${viewDate}`;
+    await supabase.from("lite_settings").upsert({
+      location_id: profile.location_id,
+      setting_key: key,
+      setting_value: newCompleted,
+    }, { onConflict: "location_id,setting_key" });
+    const eid = `ops_lodging_transfer_${viewDate}`;
+    const ltEntry = allOps.find(e => e.id === eid);
+    if (ltEntry?.computed_items) {
+      const completedCount = Object.values(newCompleted).filter(c => c && c.status === "complete").length;
+      await supabase.from("lite_daily_ops").update({
+        computed_items: { ...ltEntry.computed_items, completions: newCompleted, completedCount, totalCount: (ltEntry.computed_items.transfers || []).length },
+        computed_at: new Date().toISOString(),
+      }).eq("id", eid).eq("location_id", profile.location_id);
+    }
+  };
+
+  const renderLodgingTransfers = () => {
+    const ltEntry = allOps.find(e => e.id === `ops_lodging_transfer_${viewDate}`);
+    const transfers = ltEntry?.computed_items?.transfers || [];
+    const totalTransfers = transfers.length;
+    const doneTransfers = Object.values(transfersCompleted).filter(c => c && c.status === "complete").length;
+
+    if (totalTransfers === 0 && !ltEntry) {
+      return (
+        <div>
+          <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
+            <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "inherit" }}>Lodging Transfers</span>
+          </Card>
+          <Card style={{ padding: "48px 20px", textAlign: "center" }}>
+            <K9LoadingAnimation size={64} message="Loading transfer data..." subMessage="Waiting for server data" />
+          </Card>
+        </div>
+      );
+    }
+
+    const setTransferStatus = (transferKey, status) => {
+      const nc = { ...transfersCompleted };
+      if (status === "not_started") { delete nc[transferKey]; }
+      else { nc[transferKey] = { status, by: profile?.name || profile?.full_name || profile?.email || "Staff", at: new Date().toISOString() }; }
+      saveTransfersCompleted(nc);
+    };
+
+    const setActionItemStatus = (transferKey, actionIdx, checked) => {
+      const nc = { ...transfersCompleted };
+      if (!nc[transferKey]) nc[transferKey] = { status: "in_progress", by: profile?.name || profile?.full_name || profile?.email || "Staff", at: new Date().toISOString(), actions: {} };
+      if (!nc[transferKey].actions) nc[transferKey].actions = {};
+      nc[transferKey].actions[actionIdx] = checked;
+      // Check if ALL action items are done
+      const transfer = transfers.find(t => `t_${t.reservationGingrId}` === transferKey);
+      if (transfer) {
+        const allDone = transfer.actionItems.every((_, i) => nc[transferKey].actions[i]);
+        if (allDone) {
+          nc[transferKey].status = "complete";
+        } else {
+          nc[transferKey].status = "in_progress";
+        }
+      }
+      saveTransfersCompleted(nc);
+    };
+
+    return (
+      <div>
+        {/* Summary Header */}
+        <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 15, fontWeight: 700, color: C.text, fontFamily: "inherit" }}>
+                {totalTransfers} Transfer{totalTransfers !== 1 ? "s" : ""}
+              </span>
+              {transfers.some(t => t.roomTypeChanged) && (
+                <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: "#FEF3C7", color: "#92400E", border: "1px solid #FDE68A" }}>
+                  {transfers.filter(t => t.roomTypeChanged).length} room type change{transfers.filter(t => t.roomTypeChanged).length !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
+          </div>
+          {totalTransfers > 0 && (
+            <div style={{ marginTop: 10, height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
+              <div style={{ width: `${Math.round((doneTransfers / totalTransfers) * 100)}%`, height: "100%", borderRadius: 3, background: doneTransfers === totalTransfers ? "#10B981" : "#F59E0B", transition: "width 0.3s" }} />
+            </div>
+          )}
+          <div style={{ marginTop: 6, fontSize: 12, color: C.textSec }}>{doneTransfers}/{totalTransfers} fully handled</div>
+        </Card>
+
+        {totalTransfers === 0 ? (
+          <Card style={{ padding: 32, textAlign: "center" }}>
+            <div style={{ fontSize: 14, color: C.textMut, fontFamily: "inherit" }}>No lodging transfers detected for {fmtDate(viewDate)}</div>
+          </Card>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {transfers.map(transfer => {
+              const tKey = `t_${transfer.reservationGingrId}`;
+              const completion = transfersCompleted[tKey] || {};
+              const isDone = completion.status === "complete";
+              const isExp = expandedTransfer === tKey;
+              const actions = completion.actions || {};
+
+              const sc = isDone
+                ? { border: "#10B981", bg: "#F0FDF4", badge: "#10B981", badgeText: "#fff", label: "Done" }
+                : Object.keys(actions).length > 0
+                ? { border: "#F59E0B", bg: "#FFFBEB", badge: "#F59E0B", badgeText: "#fff", label: "In Progress" }
+                : { border: C.border, bg: C.surface, badge: C.borderLight, badgeText: C.textMut, label: "Pending" };
+
+              return (
+                <Card key={tKey} style={{ padding: 0, overflow: "hidden", border: `1.5px solid ${sc.border}`, background: sc.bg, transition: "all 0.2s" }}>
+                  {/* Collapsed row */}
+                  <div
+                    onClick={() => setExpandedTransfer(isExp ? null : tKey)}
+                    style={{ padding: "14px 18px", cursor: "pointer", display: "flex", alignItems: "center", gap: 14 }}
+                  >
+                    <div style={{ width: 42, height: 42, borderRadius: 10, background: transfer.roomTypeChanged ? "#FEF3C7" : C.borderLight, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: 18 }}>
+                      {transfer.roomTypeChanged ? "!" : "\u2192"}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{transfer.animalName}</span>
+                        <span style={{ fontSize: 12, color: C.textSec }}>{(transfer.ownerName || "").split(" ").pop()}</span>
+                        {transfer.roomTypeChanged && (
+                          <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEF3C7", color: "#92400E", border: "1px solid #FDE68A" }}>TYPE CHANGE</span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 12, color: C.textSec, marginTop: 3, display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ fontWeight: 600, color: "#DC2626" }}>{transfer.previousRoom}</span>
+                        <span style={{ color: C.textMut }}>{"\u2192"}</span>
+                        <span style={{ fontWeight: 600, color: "#059669" }}>{transfer.currentRoom}</span>
+                      </div>
+                    </div>
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: sc.badge, color: sc.badgeText, textTransform: "uppercase", letterSpacing: "0.04em", flexShrink: 0 }}>{sc.label}</span>
+                    <span style={{ fontSize: 14, color: C.textMut, transform: isExp ? "rotate(90deg)" : "none", transition: "transform 0.2s", flexShrink: 0 }}>{"\u203A"}</span>
+                  </div>
+
+                  {/* Expanded detail section */}
+                  {isExp && (
+                    <div style={{ borderTop: `1px solid ${C.borderLight}`, padding: "16px 18px" }}>
+                      {/* Details grid */}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Dog</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{transfer.animalName}</div>
+                          <div style={{ fontSize: 12, color: C.textSec }}>{transfer.breed || "\u2014"}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Owner</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{transfer.ownerName || "\u2014"}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Weight</div>
+                          <div style={{ fontSize: 13, color: C.text }}>{transfer.weight ? `${transfer.weight} lbs` : "\u2014"} {transfer.sizeCategory ? `(${transfer.sizeCategory})` : ""}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Reservation</div>
+                          <div style={{ fontSize: 13, color: C.text }}>{transfer.reservationType || "\u2014"}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>Transfer Date</div>
+                          <div style={{ fontSize: 13, color: C.text }}>{transfer.transferDate ? fmtDate(transfer.transferDate) : "\u2014"}</div>
+                        </div>
+                      </div>
+
+                      {/* Room change highlight */}
+                      <div style={{ padding: "12px 16px", borderRadius: 10, background: transfer.roomTypeChanged ? "#FEF3C7" : "#EFF6FF", border: `1.5px solid ${transfer.roomTypeChanged ? "#FDE68A" : "#BFDBFE"}`, marginBottom: 14 }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: transfer.roomTypeChanged ? "#92400E" : "#1E40AF", textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>Room Transfer</div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ flex: 1, textAlign: "center", padding: "8px 12px", borderRadius: 8, background: "#FEE2E2", border: "1px solid #FECACA" }}>
+                            <div style={{ fontSize: 11, color: "#991B1B", fontWeight: 600 }}>FROM</div>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: "#DC2626" }}>{transfer.previousRoom}</div>
+                            {transfer.previousRoomType && <div style={{ fontSize: 10, color: "#991B1B", marginTop: 2 }}>{transfer.previousRoomType}</div>}
+                          </div>
+                          <span style={{ fontSize: 20, color: C.textMut, flexShrink: 0 }}>{"\u2192"}</span>
+                          <div style={{ flex: 1, textAlign: "center", padding: "8px 12px", borderRadius: 8, background: "#D1FAE5", border: "1px solid #A7F3D0" }}>
+                            <div style={{ fontSize: 11, color: "#065F46", fontWeight: 600 }}>TO</div>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: "#059669" }}>{transfer.currentRoom}</div>
+                            {transfer.currentRoomType && <div style={{ fontSize: 10, color: "#065F46", marginTop: 2 }}>{transfer.currentRoomType}</div>}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action items checklist */}
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>Action Items</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {(transfer.actionItems || []).map((item, idx) => {
+                          const isChecked = !!actions[idx];
+                          return (
+                            <div key={idx}
+                              onClick={() => setActionItemStatus(tKey, idx, !isChecked)}
+                              style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderRadius: 8, background: isChecked ? "#F0FDF4" : C.bg, border: `1px solid ${isChecked ? "#A7F3D0" : C.border}`, cursor: "pointer", transition: "all 0.15s" }}
+                            >
+                              <K9Check checked={isChecked} color="#10B981" onChange={() => setActionItemStatus(tKey, idx, !isChecked)} />
+                              <span style={{ fontSize: 13, color: isChecked ? C.textMut : C.text, textDecoration: isChecked ? "line-through" : "none", flex: 1 }}>{item}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Quick complete button */}
+                      <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+                        <button
+                          onClick={() => setTransferStatus(tKey, isDone ? "not_started" : "complete")}
+                          style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: `1.5px solid #10B981`, background: isDone ? "#10B981" : "transparent", color: isDone ? "#fff" : "#10B981", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}
+                        >
+                          {isDone ? "Marked Complete" : "Mark All Complete"}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // ─── Pamper Package Plus Report ─────────────────────────────────────────────
   const [pamperCompleted, setPamperCompleted] = useState({});
 
@@ -2160,6 +2399,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         : sub === "bathing" ? renderBathing()
         : sub === "belongings" ? renderBelongings()
         : sub === "collars" ? renderCollars()
+        : sub === "lodging_transfer" ? renderLodgingTransfers()
         : sub === "pamper" ? renderPamper()
         : sub === "svc" ? renderGenericService()
         : <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec }}>Unknown checklist type</div></Card>}

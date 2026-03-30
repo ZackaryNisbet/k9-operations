@@ -1122,6 +1122,69 @@ function OperationsHub({ data, save, nav, profile }) {
         );
       })()}
 
+      {/* Lodging Transfers Section */}
+      {hp("view_daily_ops") && (() => {
+        const allOps = data.dailyOps || [];
+        const ltEntry = allOps.find(e => e.id === `ops_lodging_transfer_${viewDate}`);
+        const ltTransfers = ltEntry?.computed_items?.transfers || [];
+        const ltTotal = ltTransfers.length;
+        const ltCompletions = ltEntry?.computed_items?.completions || {};
+        const ltDone = Object.values(ltCompletions).filter(c => c && c.status === "complete").length;
+        const ltPct = ltTotal > 0 ? Math.round((ltDone / ltTotal) * 100) : 0;
+        const ltStatus = ltTotal === 0 ? "not_started" : ltDone >= ltTotal ? "completed" : ltDone > 0 ? "in_progress" : "not_started";
+        const ltsc = statusConfig[ltStatus];
+        const typeChanges = ltTransfers.filter(t => t.roomTypeChanged).length;
+        return (
+          <div style={{ marginBottom: 32 }}>
+            <div style={{ margin: "8px 0 18px", height: 1, background: C.borderLight }} />
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.text, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+              Lodging Transfers
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
+              <div
+                onClick={() => nav("ops-lodging-transfers")}
+                style={{
+                  background: C.surface, borderRadius: 16,
+                  border: `1.5px solid ${ltStatus === "completed" ? C.suc : ltStatus === "in_progress" ? C.warn : C.border}`,
+                  cursor: "pointer", transition: "all 0.2s cubic-bezier(0.4,0,0.2,1)", position: "relative",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 8px 24px rgba(0,0,0,0.08), 0 2px 6px rgba(0,0,0,0.04)"; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)"; }}
+              >
+                <div style={{ padding: "18px 20px" }}>
+                  <div style={{ marginBottom: 10, display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Lodging Transfers</div>
+                      <div style={{ fontSize: 12, color: C.textSec, marginTop: 3 }}>
+                        {ltTotal > 0 ? `${ltDone}/${ltTotal} transfers` : "No transfers today"}
+                      </div>
+                      {typeChanges > 0 && (
+                        <div style={{ marginTop: 4 }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 7px", borderRadius: 10, background: "#FEF3C7", color: "#92400E" }}>
+                            {typeChanges} type change{typeChanges !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <span style={{ color: C.textMut, fontSize: 16, marginTop: -2 }}>{"\u203A"}</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, background: ltsc.bg, color: ltsc.color, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                      {ltsc.label}
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: ltsc.color }}>{ltPct}%</span>
+                  </div>
+                  <div style={{ marginTop: 8, height: 4, borderRadius: 2, background: C.borderLight, overflow: "hidden" }}>
+                    <div style={{ width: `${ltPct}%`, height: "100%", borderRadius: 2, background: ltsc.barColor, transition: "width 0.4s cubic-bezier(0.4,0,0.2,1)" }} />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Management Section */}
       {(hp("view_management") || hp("view_daily_ops")) && (
         <div style={{ marginBottom: 32 }}>
