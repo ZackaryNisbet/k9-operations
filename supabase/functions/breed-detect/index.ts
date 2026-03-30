@@ -1,7 +1,7 @@
 // © 2026 K9 Operations LLC. All Rights Reserved.
 // Supabase Edge Function: breed-detect
-// AI-powered dog breed detection using GPT-4.1-nano vision.
-// Receives a photo_id, fetches the image, calls OpenAI to detect breeds,
+// AI-powered dog breed detection using Claude Haiku 3.5 vision.
+// Receives a photo_id, fetches the image, calls Anthropic to detect breeds,
 // and updates the photo row with detected_breeds JSONB array.
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
@@ -14,7 +14,7 @@ const corsHeaders = {
 
 const SUPABASE_URL = 'https://xuzvqcpthqikyroqhypw.supabase.co';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') || '';
+const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || '';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -74,43 +74,85 @@ serve(async (req) => {
 
     const imageUrl = `${SUPABASE_URL}/storage/v1/object/public/pet-photos/${imagePath}`;
 
-    // 5. Call OpenAI GPT-4.1-nano with vision
-    const openaiRes = await fetch('https://api.openai.com/v1/chat/completions', {
+    // 5. Download image and convert to base64 for Anthropic API
+    const imgResponse = await fetch(imageUrl);
+    if (!imgResponse.ok) {
+      await supabase
+        .from('photos')
+        .update({ breed_detection_status: 'failed' })
+        .eq('id', photo_id);
+      return new Response(JSON.stringify({ error: 'Failed to download image' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const imgBuffer = await imgResponse.arrayBuffer();
+    // Chunked base64 encoding to avoid max call stack on large images
+    const bytes = new Uint8Array(imgBuffer);
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    const base64Image = btoa(binary);
+    const contentType = imgResponse.headers.get('content-type') || 'image/jpeg';
+    // Anthropic accepts: image/jpeg, image/png, image/gif, image/webp
+    const mediaType = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(contentType)
+      ? contentType
+      : 'image/jpeg';
+
+    // 6. Call Anthropic Claude Haiku 3.5 with vision
+    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'gpt-4.1-nano',
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 256,
+        system: 'You are a dog breed identification expert. Analyze the photo and identify all dog breeds visible. Return ONLY a JSON array, nothing else. No markdown, no explanation.',
         messages: [
-          {
-            role: 'system',
-            content: 'You are a dog breed identification expert. Analyze the photo and identify all dog breeds visible. Return ONLY a JSON array, nothing else.',
-          },
           {
             role: 'user',
             content: [
               {
-                type: 'text',
-                text: 'Identify every dog breed in this photo. For each dog, return breed name (use common American Kennel Club names like \'Golden Retriever\', \'French Bulldog\', \'Labrador Retriever\'). If a dog appears to be a mix, include both parent breeds. Return JSON: [{"breed": "Golden Retriever", "confidence": 0.95}]',
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: mediaType,
+                  data: base64Image,
+                },
               },
               {
-                type: 'image_url',
-                image_url: { url: imageUrl, detail: 'low' },
+                type: 'text',
+                text: 'Identify every dog breed in this photo. For each dog, return breed name (use common American Kennel Club names like "Golden Retriever", "French Bulldog", "Labrador Retriever"). If a dog appears to be a mix, include the most likely parent breeds as separate entries. Return JSON only: [{"breed": "Golden Retriever", "confidence": 0.95}]',
               },
             ],
           },
         ],
-        max_tokens: 200,
-        temperature: 0.1,
       }),
     });
 
-    const openaiData = await openaiRes.json();
-    const content = openaiData.choices?.[0]?.message?.content || '';
+    const anthropicData = await anthropicRes.json();
 
-    // 6. Parse the JSON array from the response
+    // Debug: if Anthropic returned an error, surface it
+    if (anthropicData.error) {
+      console.error('Anthropic API error:', JSON.stringify(anthropicData.error));
+      await supabase
+        .from('photos')
+        .update({ breed_detection_status: 'failed' })
+        .eq('id', photo_id);
+      return new Response(
+        JSON.stringify({ error: 'AI detection failed', details: anthropicData.error }),
+        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const content = anthropicData.content?.[0]?.text || '';
+
+    // 7. Parse the JSON array from the response
     let detectedBreeds: Array<{ breed: string; confidence: number }> = [];
     try {
       // Try direct parse first
@@ -135,12 +177,12 @@ serve(async (req) => {
       (b) => b && typeof b.breed === 'string' && typeof b.confidence === 'number'
     );
 
-    // 7. Determine highest confidence breed for backward compat
+    // 8. Determine highest confidence breed for backward compat
     const topBreed = detectedBreeds.length > 0
       ? detectedBreeds.reduce((best, cur) => (cur.confidence > best.confidence ? cur : best))
       : null;
 
-    // 8. Update photo row
+    // 9. Update photo row
     const updateData: Record<string, unknown> = {
       detected_breeds: detectedBreeds,
       breed_detection_status: detectedBreeds.length > 0 ? 'completed' : 'failed',
