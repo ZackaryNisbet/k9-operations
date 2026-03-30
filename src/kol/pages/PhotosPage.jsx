@@ -392,10 +392,49 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
   const hasPairing = photo.paired_dog_id ||
     (Array.isArray(photo.paired_dog_ids) && photo.paired_dog_ids.length > 0);
 
-  // Filter checked-in dogs by search
-  const filteredDogs = multiSearch
+  // Search ALL dogs from gingr_animals when multi-pair search is active
+  const [multiSearchResults, setMultiSearchResults] = useState([]);
+  const [multiSearching, setMultiSearching] = useState(false);
+  useEffect(() => {
+    if (!multiSearch || multiSearch.length < 2) { setMultiSearchResults([]); return; }
+    let cancelled = false;
+    setMultiSearching(true);
+    supabase
+      .from("gingr_animals")
+      .select("gingr_id, name, breed, weight, gender")
+      .eq("location_id", locationId)
+      .ilike("name", `%${multiSearch}%`)
+      .limit(50)
+      .then(({ data }) => {
+        if (cancelled) return;
+        // Fetch icons for results
+        const ids = (data || []).map(a => a.gingr_id).filter(Boolean);
+        if (ids.length === 0) { setMultiSearchResults([]); setMultiSearching(false); return; }
+        supabase
+          .from("gingr_animal_icons")
+          .select("animal_gingr_id, icon_url, is_primary")
+          .eq("location_id", locationId)
+          .in("animal_gingr_id", ids)
+          .eq("is_primary", true)
+          .then(({ data: icons }) => {
+            if (cancelled) return;
+            const iconMap = {};
+            (icons || []).forEach(ic => { iconMap[ic.animal_gingr_id] = ic.icon_url; });
+            const checkedInIds = new Set(checkedInDogs.map(d => d.gingr_id));
+            setMultiSearchResults((data || [])
+              .filter(a => !checkedInIds.has(a.gingr_id)) // exclude already-in checked-in list
+              .map(a => ({ ...a, icon_url: iconMap[a.gingr_id] || null, isCheckedIn: false })));
+            setMultiSearching(false);
+          });
+      });
+    return () => { cancelled = true; };
+  }, [multiSearch, locationId, checkedInDogs]);
+
+  // Filter checked-in dogs by search, then append search results from all dogs
+  const filteredCheckedIn = multiSearch
     ? checkedInDogs.filter(d => d.name.toLowerCase().includes(multiSearch.toLowerCase()) || (d.breed || "").toLowerCase().includes(multiSearch.toLowerCase()))
     : checkedInDogs;
+  const filteredDogs = multiSearch ? [...filteredCheckedIn, ...multiSearchResults] : checkedInDogs;
 
   return (
     <Modal title="Photo Detail" onClose={onClose} wide>
@@ -655,7 +694,7 @@ function PhotoDetailModal({ photo, onClose, locationId, profile, onUpdate }) {
 
             {/* Dog list */}
             <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, minHeight: 0 }}>
-              {loadingDogs ? (
+              {loadingDogs || multiSearching ? (
                 <div style={{ padding: 24, textAlign: "center", color: C.textMut, fontSize: 12 }}>Loading dogs...</div>
               ) : filteredDogs.length === 0 ? (
                 <div style={{ padding: 24, textAlign: "center", color: C.textMut, fontSize: 12 }}>

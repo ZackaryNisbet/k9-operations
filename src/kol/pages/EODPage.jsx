@@ -522,15 +522,88 @@ function LiteEODPage({ data, save, nav, profile, addGlobalToast }) {
     return results.slice(0, 20);
   }, [searchQuery, data.eodEntries, activeTemplate]);
 
+  // ── Direct Supabase query for ALL animals + owners (not filtered by reservations) ──
+  const [allAnimals, setAllAnimals] = useState(null);
+  const [allOwners, setAllOwners] = useState(null);
+  useEffect(() => {
+    const locationId = profile?.location_id;
+    if (!locationId) return;
+    // Fetch all animals from gingr_animals (paginated — Supabase default limit is 1000)
+    (async () => {
+      const PAGE = 1000;
+      let allRows = [];
+      let from = 0;
+      while (true) {
+        const { data: rows, error } = await supabase
+          .from("gingr_animals")
+          .select("gingr_id, name, breed_name, owner_gingr_id")
+          .eq("location_id", locationId)
+          .order("name")
+          .range(from, from + PAGE - 1);
+        if (error) { console.error("[EOD] gingr_animals fetch error:", error.message); break; }
+        if (!rows || rows.length === 0) break;
+        allRows = allRows.concat(rows);
+        if (rows.length < PAGE) break;
+        from += PAGE;
+      }
+      setAllAnimals(allRows);
+    })();
+    // Fetch all owners from gingr_owners
+    (async () => {
+      const PAGE = 1000;
+      let allRows = [];
+      let from = 0;
+      while (true) {
+        const { data: rows, error } = await supabase
+          .from("gingr_owners")
+          .select("gingr_id, first_name, last_name")
+          .eq("location_id", locationId)
+          .order("last_name")
+          .range(from, from + PAGE - 1);
+        if (error) { console.error("[EOD] gingr_owners fetch error:", error.message); break; }
+        if (!rows || rows.length === 0) break;
+        allRows = allRows.concat(rows);
+        if (rows.length < PAGE) break;
+        from += PAGE;
+      }
+      setAllOwners(allRows);
+    })();
+  }, [profile?.location_id]);
+
   // Entities (ALL dogs + owners from Gingr) for @ mention suggest
+  // Uses direct gingr_animals/gingr_owners query (allAnimals/allOwners) when available,
+  // falls back to data.dogs/data.clients (which may be filtered by useGingrData transform)
   const mentionEntities = useMemo(() => {
-    const dogs = data.dogs || [];
-    const clients = data.clients || [];
-    const ownerIds = new Set();
-    const dogEntities = dogs
-      .map(d => {
+    // Build owner lookup from direct query or fallback
+    const ownerMap = new Map();
+    if (allOwners) {
+      allOwners.forEach(o => ownerMap.set(o.gingr_id, { first_name: o.first_name || "", last_name: o.last_name || "" }));
+    } else {
+      (data.clients || []).forEach(c => {
+        const gid = c.gingrId || (c.id && c.id.startsWith("g") ? Number(c.id.slice(1)) : null);
+        if (gid) ownerMap.set(gid, { first_name: c.fields?.first_name || "", last_name: c.fields?.last_name || "" });
+      });
+    }
+
+    // Build dog entities from direct query or fallback
+    let dogEntities;
+    if (allAnimals) {
+      dogEntities = allAnimals.map(a => {
+        const owner = ownerMap.get(a.owner_gingr_id);
+        return {
+          id: `g${a.gingr_id}`,
+          name: a.name || "Unknown",
+          ownerName: owner ? `${owner.first_name} ${owner.last_name}`.trim() : "",
+          ownerLastName: owner?.last_name || "",
+          breed: a.breed_name || "",
+          type: "dog",
+        };
+      });
+    } else {
+      const dogs = data.dogs || [];
+      const clients = data.clients || [];
+      dogEntities = dogs.map(d => {
         const client = clients.find(c => c.id === d.clientId);
-        if (client) ownerIds.add(client.id);
         return {
           id: d.id,
           name: d.fields?.name || "Unknown",
@@ -539,17 +612,29 @@ function LiteEODPage({ data, save, nav, profile, addGlobalToast }) {
           breed: d.fields?.breed || d.fields?.breed_name || "",
           type: "dog",
         };
-      })
-      .sort((a, b) => a.name.localeCompare(b.name));
-    const ownerEntities = clients
-      .map(c => ({
+      });
+    }
+    dogEntities.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Build owner entities
+    let ownerEntities;
+    if (allOwners) {
+      ownerEntities = allOwners.map(o => ({
+        id: `g${o.gingr_id}`,
+        name: `${o.first_name || ""} ${o.last_name || ""}`.trim() || "Unknown",
+        type: "owner",
+      }));
+    } else {
+      ownerEntities = (data.clients || []).map(c => ({
         id: c.id,
         name: `${c.fields?.first_name || ""} ${c.fields?.last_name || ""}`.trim() || "Unknown",
         type: "owner",
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      }));
+    }
+    ownerEntities.sort((a, b) => a.name.localeCompare(b.name));
+
     return [...dogEntities, ...ownerEntities];
-  }, [data.dogs, data.clients]);
+  }, [allAnimals, allOwners, data.dogs, data.clients]);
 
 
   return (
