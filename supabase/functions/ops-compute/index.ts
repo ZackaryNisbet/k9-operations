@@ -1917,6 +1917,197 @@ async function computeCollarsReport(
   return { dogs, summary, completions, totalCount, completedCount };
 }
 
+// ─── 8d. Lodging Transfers (room changes detected from occupancy data) ────
+
+const ROOM_TYPE_MAP: Record<string, string> = {
+  "luxury": "Luxury Suite",
+  "executive": "Executive Room",
+  "double": "Double Compartment",
+  "single": "Single Compartment",
+};
+
+function classifyRoomType(roomName: string): string {
+  const lower = (roomName || "").toLowerCase();
+  if (lower.includes("luxury")) return "Luxury Suite";
+  if (lower.includes("executive")) return "Executive Room";
+  if (lower.includes("double")) return "Double Compartment";
+  if (lower.includes("single")) return "Single Compartment";
+  return "";
+}
+
+async function computeLodgingTransfers(
+  supabase: any,
+  locationId: string,
+  targetDate: string,
+): Promise<any> {
+  // 1. Get today's room occupancy (occupied rooms with animal names)
+  const { data: occupancy } = await supabase
+    .from("gingr_room_occupancy")
+    .select("run_name, animal_names, gingr_run_id")
+    .eq("location_id", locationId)
+    .eq("occupancy_date", targetDate)
+    .eq("occupied", true);
+
+  if (!occupancy || occupancy.length === 0) {
+    return { transfers: [], summary: { total: 0 }, completions: {}, totalCount: 0, completedCount: 0 };
+  }
+
+  // 2. Parse occupancy → animal name → current room
+  const occupancyMap: Record<string, { runName: string; ownerName: string }> = {};
+  for (const occ of occupancy) {
+    if (!occ.animal_names || !occ.run_name) continue;
+    const entries = (occ.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
+    for (const entry of entries) {
+      const match = entry.match(/^(.+?)\s*\((.+?)\)/);
+      const dogName = match ? match[1].trim() : entry.trim();
+      const ownerName = match ? match[2].trim() : "";
+      if (dogName) {
+        occupancyMap[dogName.toLowerCase()] = { runName: occ.run_name, ownerName };
+      }
+    }
+  }
+
+  // 3. Get active reservations (checked in, not checked out, not cancelled)
+  const { data: activeRes } = await supabase
+    .from("gingr_reservations")
+    .select("gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, room_assignment, start_date, end_date, raw_data")
+    .eq("location_id", locationId)
+    .not("check_in_date", "is", null)
+    .is("check_out_date", null)
+    .is("cancelled_date", null);
+
+  if (!activeRes || activeRes.length === 0) {
+    return { transfers: [], summary: { total: 0 }, completions: {}, totalCount: 0, completedCount: 0 };
+  }
+
+  // 4. Gather animal IDs for weight/breed lookup
+  const animalIds = activeRes.map((r: any) => String(r.animal_gingr_id || "")).filter(Boolean);
+  const uniqueAnimalIds = [...new Set(animalIds)];
+
+  let weightMap: Record<string, number | null> = {};
+  let breedMap: Record<string, string> = {};
+  if (uniqueAnimalIds.length > 0) {
+    const { data: animals } = await supabase
+      .from("gingr_animals")
+      .select("gingr_id, weight, breed")
+      .in("gingr_id", uniqueAnimalIds);
+    for (const a of animals || []) {
+      const w = a.weight ? parseFloat(a.weight) : null;
+      weightMap[a.gingr_id] = (w && !isNaN(w)) ? w : null;
+      breedMap[a.gingr_id] = a.breed || "";
+    }
+  }
+
+  // 5. Compare: reservation room_assignment vs occupancy run_name
+  const transfers: any[] = [];
+  for (const res of activeRes) {
+    const name = (res.animal_name || "").toLowerCase().trim();
+    if (!name) continue;
+    const occ = occupancyMap[name];
+    if (!occ) continue;
+
+    const previousRoom = res.room_assignment || "";
+    const currentRoom = occ.runName;
+
+    // Only flag if there's a mismatch AND the reservation had a previous room
+    if (!previousRoom || previousRoom === currentRoom) continue;
+
+    const prevType = classifyRoomType(previousRoom);
+    const currType = classifyRoomType(currentRoom);
+    const roomTypeChanged = prevType !== currType && prevType !== "" && currType !== "";
+
+    const animalGingrId = String(res.animal_gingr_id || "");
+    const weight = weightMap[animalGingrId] ?? null;
+    const sizeCategory = weight != null ? (weight < 30 ? "SM" : "LG") : null;
+    const breed = breedMap[animalGingrId] || res.raw_data?.animal?.breed || "";
+    const ownerName = [res.owner_first_name || "", res.owner_last_name || ""].filter(Boolean).join(" ") || occ.ownerName;
+
+    // Build action items
+    const actionItems: string[] = [
+      `Move belongings from ${previousRoom} to ${currentRoom}`,
+      `Clean/disinfect old room (${previousRoom})`,
+      `Set up new room (${currentRoom})`,
+    ];
+    if (roomTypeChanged) {
+      actionItems.splice(1, 0, `Update collar — was ${prevType}, now ${currType}`);
+    }
+
+    transfers.push({
+      animalName: res.animal_name || "Unknown",
+      animalGingrId,
+      ownerName,
+      breed,
+      weight,
+      sizeCategory,
+      previousRoom,
+      currentRoom,
+      transferDate: targetDate,
+      reservationType: res.reservation_type_name || "",
+      reservationGingrId: String(res.gingr_id || ""),
+      roomTypeChanged,
+      previousRoomType: prevType,
+      currentRoomType: currType,
+      actionItems,
+    });
+  }
+
+  // 6. Also check yesterday's occupancy vs today's to detect transfer timing
+  const yesterday = addDays(targetDate, -1);
+  const { data: yesterdayOcc } = await supabase
+    .from("gingr_room_occupancy")
+    .select("run_name, animal_names")
+    .eq("location_id", locationId)
+    .eq("occupancy_date", yesterday)
+    .eq("occupied", true);
+
+  if (yesterdayOcc && yesterdayOcc.length > 0) {
+    const yesterdayMap: Record<string, string> = {};
+    for (const occ of yesterdayOcc) {
+      if (!occ.animal_names || !occ.run_name) continue;
+      const entries = (occ.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
+      for (const entry of entries) {
+        const match = entry.match(/^(.+?)\s*\(/);
+        const dogName = match ? match[1].trim() : entry.trim();
+        if (dogName) {
+          yesterdayMap[dogName.toLowerCase()] = occ.run_name;
+        }
+      }
+    }
+    // Update transfer dates: if dog was already in new room yesterday, the transfer was earlier
+    for (const t of transfers) {
+      const yRoom = yesterdayMap[(t.animalName || "").toLowerCase()];
+      if (yRoom === t.currentRoom) {
+        // Dog was in the new room yesterday too — transfer happened before yesterday
+        t.transferDate = yesterday;
+      }
+    }
+  }
+
+  // Sort by animal name
+  transfers.sort((a: any, b: any) => (a.animalName || "").localeCompare(b.animalName || ""));
+
+  // Fetch completions from lite_settings
+  const completionKey = `ops_lodging_transfer_completions_${targetDate}`;
+  const { data: completionRows } = await supabase
+    .from("lite_settings")
+    .select("setting_value")
+    .eq("location_id", locationId)
+    .eq("setting_key", completionKey)
+    .limit(1);
+  const completions: Record<string, any> = (completionRows && completionRows.length > 0 && completionRows[0].setting_value) ? completionRows[0].setting_value : {};
+
+  const totalCount = transfers.length;
+  const completedCount = Object.values(completions).filter((c: any) => c && c.status === "complete").length;
+
+  return {
+    transfers,
+    summary: { total: transfers.length, roomTypeChanged: transfers.filter((t: any) => t.roomTypeChanged).length },
+    completions,
+    totalCount,
+    completedCount,
+  };
+}
+
 // ─── 9. Service Reports (pamper, enrichment, etc.) ────────────────────────
 
 interface ServiceDog {
@@ -2166,6 +2357,9 @@ Deno.serve(async (req: Request) => {
     // 11. Collars Report (next-day collar preparation)
     const collarsReport = await computeCollarsReport(supabase, locationId, today);
 
+    // 12. Lodging Transfers (room changes — day-of only, not in future loop)
+    const lodgingTransfers = await computeLodgingTransfers(supabase, locationId, today);
+
     // ─── Compute FUTURE days (today + 1 through today + 7) ─────────────
     // Skip Gingr web auth (service notes) for future days — only today gets those.
     const futureReports: Array<{
@@ -2338,6 +2532,15 @@ Deno.serve(async (req: Request) => {
         today,
         collarsReport,
       ),
+      upsertComputedItems(
+        supabase,
+        `ops_lodging_transfer_${today}`,
+        locationId,
+        "lodging_transfer",
+        "lodging_transfer",
+        today,
+        lodgingTransfers,
+      ),
       // ─── Future days upserts (14 days) ────────────────────────────
       ...futureReports.flatMap(fr => [
         upsertComputedItems(supabase, `ops_bathing_${fr.date}`, locationId, "bathing", "bathing", fr.date, fr.bathing),
@@ -2376,6 +2579,7 @@ Deno.serve(async (req: Request) => {
           enrichment: { dogs: enrichmentReport.dogs.length },
           belongings: { dogs: belongingsReport.dogs.length },
           collars: { dogs: collarsReport.dogs.length, summary: collarsReport.summary },
+          lodging_transfers: { transfers: lodgingTransfers.transfers.length, summary: lodgingTransfers.summary },
         },
         computed_future: futureReports.map(fr => ({
           date: fr.date,

@@ -1741,6 +1741,67 @@ async function persistBohRoomAssignments(
   }
 
   console.log(`BOH room sync: ${allBohDogs.length} dogs in-house, ${animalIds.length} with rooms, ${updated} reservations updated`);
+
+  // ── Occupancy-based room sync (catches mid-stay transfers missed by BOH) ──
+  // After syncRunsAndOccupancy populates gingr_room_occupancy, use that as
+  // ground truth for room assignments. BOH only shows checking_in/checking_out
+  // dogs, but occupancy shows ALL dogs currently in rooms.
+  try {
+    const todayET = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const { data: occupancy } = await supabase
+      .from("gingr_room_occupancy")
+      .select("run_name, animal_names")
+      .eq("location_id", locationId)
+      .eq("occupancy_date", todayET)
+      .eq("occupied", true);
+
+    if (occupancy && occupancy.length > 0) {
+      // Build map: animal_name (lowercase) → run_name from occupancy
+      const occupancyRoomMap: Record<string, string> = {};
+      for (const occ of occupancy) {
+        if (!occ.animal_names || !occ.run_name) continue;
+        const entries = occ.animal_names.split("<br>").map((e: string) => e.trim()).filter(Boolean);
+        for (const entry of entries) {
+          // Format: "Callie (Amy Mullen)" — extract dog name
+          const match = entry.match(/^(.+?)\s*\(/);
+          const dogName = match ? match[1].trim() : entry.trim();
+          if (dogName) {
+            occupancyRoomMap[dogName.toLowerCase()] = occ.run_name;
+          }
+        }
+      }
+
+      // Find active reservations (checked in, not checked out, not cancelled)
+      const { data: activeRes } = await supabase
+        .from("gingr_reservations")
+        .select("gingr_id, animal_gingr_id, animal_name, room_assignment")
+        .eq("location_id", locationId)
+        .not("check_in_date", "is", null)
+        .is("check_out_date", null)
+        .is("cancelled_date", null);
+
+      let occupancyUpdated = 0;
+      for (const res of activeRes || []) {
+        const name = (res.animal_name || "").toLowerCase().trim();
+        if (!name) continue;
+        const occRoom = occupancyRoomMap[name];
+        if (occRoom && res.room_assignment !== occRoom) {
+          const { error } = await supabase
+            .from("gingr_reservations")
+            .update({ room_assignment: occRoom })
+            .eq("gingr_id", res.gingr_id)
+            .eq("location_id", locationId);
+          if (!error) occupancyUpdated++;
+        }
+      }
+      if (occupancyUpdated > 0) {
+        console.log(`Occupancy-based room sync: ${occupancyUpdated} reservations updated from room occupancy data`);
+      }
+    }
+  } catch (occErr: any) {
+    console.error("Occupancy-based room sync error:", occErr.message);
+  }
+
   return { assigned: updated, bohDogs: allBohDogs.length };
 }
 
