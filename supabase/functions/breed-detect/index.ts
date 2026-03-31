@@ -76,7 +76,7 @@ serve(async (req) => {
 
     // Use Supabase image transform at 1568px — Anthropic's max useful resolution
     const imageUrl = photo.storage_path
-      ? `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${photo.storage_path}?width=1568&quality=85`
+      ? `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${photo.storage_path}?width=4000&quality=85`
       : `${SUPABASE_URL}/storage/v1/object/public/pet-photos/${storagePath}`;
 
     // 5. Download image and convert to base64 for Anthropic API
