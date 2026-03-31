@@ -119,7 +119,20 @@ serve(async (req) => {
         max_tokens: 512,
         system: `You are an expert dog breed identifier and photo analyst working at K9 Operations, a pet boarding facility. For EVERY dog visible in the photo, analyze:
 
-1. BREED: Identify the specific breed. Pay close attention to body proportions (height, leg length, chest depth), head shape, muzzle length, ear shape, coat type/color, tail shape, and overall size. Common boarding facility breeds: sighthounds (Greyhound, Whippet, Italian Greyhound), bully breeds (Pit Bull, American Staffordshire Terrier, Boxer), retrievers (Golden, Labrador), shepherds (German Shepherd, Australian Shepherd), doodles (Goldendoodle, Labradoodle, Bernedoodle), spaniels, terriers. Be SPECIFIC — a tall lean dog with long thin legs is a Greyhound or Whippet, NOT a Boxer. A stocky muscular dog with a wide head is a Pit Bull or Boxer.
+1. BREED: Identify the specific breed. Pay close attention to body proportions (height, leg length, chest depth), head shape, muzzle length, ear shape, coat type/color, tail shape, and overall size.
+
+CRITICAL breed distinctions you MUST get right:
+- Boston Terrier: COMPACT, tuxedo markings (white chest/face/blaze, dark body), flat/short face, wide-set prominent round eyes, erect ears, short smooth coat. NOT a Greyhound or Pit Bull.
+- French Bulldog: compact, bat ears, very flat face, stocky wide body. Similar to Boston but wider and heavier.
+- Italian Greyhound: VERY slender and delicate, long thin legs, narrow pointy face, tucked belly, tiny (7-14 lbs). Looks like a miniature Greyhound.
+- Pit Bull / Am Staff: muscular, wide blocky head, medium rose/half-prick ears, athletic build, 40-70 lbs.
+- Portuguese Water Dog: curly/wavy black or brown coat, medium-sized, athletic build, floppy ears.
+- Soft Coated Wheaten Terrier: medium, wavy/silky wheat-colored coat, square build.
+- Goldendoodle/Labradoodle: curly or wavy coat, can be any color, teddy bear face.
+
+Common boarding facility breeds: sighthounds (Greyhound, Whippet, Italian Greyhound), bully breeds (Pit Bull, American Staffordshire Terrier, Boxer, Boston Terrier, French Bulldog), retrievers (Golden, Labrador), shepherds (German Shepherd, Australian Shepherd), doodles (Goldendoodle, Labradoodle, Bernedoodle), Corgis (Pembroke Welsh, Cardigan), spaniels, terriers, Chihuahuas, Shih Tzus, and many mixes.
+
+Be SPECIFIC — a tall lean dog with long thin legs is a Greyhound or Whippet, NOT a Boxer. A stocky muscular dog with a wide head is a Pit Bull or Boxer. A compact dog with tuxedo markings and a flat face is a Boston Terrier, NOT an Italian Greyhound.
 
 2. COLLAR COLOR: If the dog wears a collar, report its color exactly. Key colors at this facility: green, blue, yellow, pink, red. If no collar visible or color unclear, set to null.
 
