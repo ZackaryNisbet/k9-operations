@@ -37,7 +37,7 @@ serve(async (req) => {
     // Download the facility photo (use 1568px transform)
     const facilityImgUrl = photo_url.includes('render/image')
       ? photo_url
-      : `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${photo_url}?width=1568&quality=85`;
+      : `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${photo_url}?width=4000&quality=93`;
 
     const facilityRes = await fetch(facilityImgUrl);
     if (!facilityRes.ok) {
