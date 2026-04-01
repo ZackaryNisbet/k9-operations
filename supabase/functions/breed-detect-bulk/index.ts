@@ -1,7 +1,7 @@
 // © 2026 K9 Operations LLC. All Rights Reserved.
 // Supabase Edge Function: breed-detect-bulk
-// Bulk AI-powered dog breed detection using Claude Haiku 4.5 vision.
-// Processes pending photos in batches for a given location.
+// Bulk breed detection using GPT-4.1 with describe-then-classify.
+// Processes pending photos in batches.
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.1';
@@ -13,7 +13,18 @@ const corsHeaders = {
 
 const SUPABASE_URL = 'https://YOUR_SUPABASE_PROJECT_REF.supabase.co';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || '';
+const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY') || '';
+
+const BREED_SYSTEM_PROMPT = `You are an expert veterinary professional specializing in dog breed identification at a pet boarding facility.
+
+For each dog visible in the photo, FIRST describe their physical appearance, THEN classify their breed.
+
+STEP 1 — DESCRIBE physical features: coat (color, pattern, texture), head shape, muzzle, ears, body proportions, size, distinctive markings.
+STEP 2 — CLASSIFY the breed based on your description. If mixed breed, list the 2-3 most likely component breeds.
+STEP 3 — COLLAR: color (green/blue/pink/red/yellow/teal/null) and any readable text.
+
+Return ONLY a valid JSON array:
+[{"description": "physical features", "breed": "breed name", "confidence": 0.0-1.0, "collar_color": "color"|null, "collar_text": "text"|null, "size_category": "small"|"medium"|"large", "position": "foreground"|"background"}]`;
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -21,34 +32,25 @@ serve(async (req) => {
   }
 
   try {
-    const { location_id, batch_size = 10 } = await req.json();
+    const { location_id, batch_size = 5 } = await req.json();
     if (!location_id) {
       return new Response(JSON.stringify({ error: 'Missing location_id' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // 1. Query pending photos with thumbnails
+    // Get pending photos (with storage_path for full-quality processing)
     const { data: pendingPhotos, error: queryErr } = await supabase
       .from('photos')
       .select('id, storage_path, thumbnail_path')
       .eq('location_id', location_id)
       .eq('breed_detection_status', 'pending')
-      .not('thumbnail_path', 'is', null)
+      .not('storage_path', 'is', null)
       .limit(batch_size);
 
-    if (queryErr) {
-      return new Response(JSON.stringify({ error: 'Query failed', details: queryErr.message }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    if (!pendingPhotos || pendingPhotos.length === 0) {
-      // Check total remaining (including those without thumbnails)
+    if (queryErr || !pendingPhotos || pendingPhotos.length === 0) {
       const { count } = await supabase
         .from('photos')
         .select('id', { count: 'exact', head: true })
@@ -60,163 +62,74 @@ serve(async (req) => {
       });
     }
 
-    // Count total remaining for progress
-    const { count: totalRemaining } = await supabase
+    const { count: remainingCount } = await supabase
       .from('photos')
       .select('id', { count: 'exact', head: true })
       .eq('location_id', location_id)
-      .eq('breed_detection_status', 'pending')
-      .not('thumbnail_path', 'is', null);
+      .eq('breed_detection_status', 'pending');
 
-    const results: Array<{ photo_id: string; status: string; breeds: unknown[] }> = [];
+    const results: Array<Record<string, unknown>> = [];
 
-    // 2. Process each photo sequentially
     for (const photo of pendingPhotos) {
+      await supabase.from('photos').update({ breed_detection_status: 'processing' }).eq('id', photo.id);
+
+      const imageUrl = `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${photo.storage_path}?width=4000&quality=95`;
+
       try {
-        // Mark as processing
-        await supabase
-          .from('photos')
-          .update({ breed_detection_status: 'processing' })
-          .eq('id', photo.id);
-
-        // Build image URL — use Supabase image transform for ~800px version
-        const imageUrl = photo.storage_path
-          ? `${SUPABASE_URL}/storage/v1/render/image/public/pet-photos/${photo.storage_path}?width=4000&quality=93`
-          : `${SUPABASE_URL}/storage/v1/object/public/pet-photos/${photo.thumbnail_path || photo.storage_path}`;
-
-        // Download image and convert to base64
-        const imgResponse = await fetch(imageUrl);
-        if (!imgResponse.ok) {
-          await supabase
-            .from('photos')
-            .update({ breed_detection_status: 'failed' })
-            .eq('id', photo.id);
-          results.push({ photo_id: photo.id, status: 'failed', breeds: [] });
-          continue;
-        }
-
-        const imgBuffer = await imgResponse.arrayBuffer();
-        // Chunked base64 encoding to avoid max call stack on large images
-        const bytes = new Uint8Array(imgBuffer);
-        let binary = '';
-        const chunkSize = 8192;
-        for (let i = 0; i < bytes.length; i += chunkSize) {
-          binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-        }
-        const base64Image = btoa(binary);
-        const contentType = imgResponse.headers.get('content-type') || 'image/jpeg';
-        const mediaType = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(contentType)
-          ? contentType
-          : 'image/jpeg';
-
-        // Call Anthropic Claude Haiku 4.5 with vision
-        const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'x-api-key': ANTHROPIC_API_KEY,
-            'anthropic-version': '2023-06-01',
+            'Authorization': `Bearer ${OPENAI_API_KEY}`,
           },
           body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 512,
-            system: `You are an expert dog breed identifier and photo analyst working at K9 Operations, a pet boarding facility. For EVERY dog visible in the photo, analyze:
-
-1. BREED: Identify the specific breed. Pay close attention to body proportions (height, leg length, chest depth), head shape, muzzle length, ear shape, coat type/color, tail shape, and overall size.
-
-CRITICAL breed distinctions you MUST get right:
-- Boston Terrier: COMPACT, tuxedo markings (white chest/face/blaze, dark body), flat/short face, wide-set prominent round eyes, erect ears, short smooth coat. NOT a Greyhound or Pit Bull.
-- French Bulldog: compact, bat ears, very flat face, stocky wide body. Similar to Boston but wider and heavier.
-- Italian Greyhound: VERY slender and delicate, long thin legs, narrow pointy face, tucked belly, tiny (7-14 lbs). Looks like a miniature Greyhound.
-- Pit Bull / Am Staff: muscular, wide blocky head, medium rose/half-prick ears, athletic build, 40-70 lbs.
-- Portuguese Water Dog: curly/wavy black or brown coat, medium-sized, athletic build, floppy ears.
-- Soft Coated Wheaten Terrier: medium, wavy/silky wheat-colored coat, square build.
-- Goldendoodle/Labradoodle: curly or wavy coat, can be any color, teddy bear face.
-
-Common boarding facility breeds: sighthounds (Greyhound, Whippet, Italian Greyhound), bully breeds (Pit Bull, American Staffordshire Terrier, Boxer, Boston Terrier, French Bulldog), retrievers (Golden, Labrador), shepherds (German Shepherd, Australian Shepherd), doodles (Goldendoodle, Labradoodle, Bernedoodle), Corgis (Pembroke Welsh, Cardigan), spaniels, terriers, Chihuahuas, Shih Tzus, and many mixes.
-
-Be SPECIFIC — a tall lean dog with long thin legs is a Greyhound or Whippet, NOT a Boxer. A stocky muscular dog with a wide head is a Pit Bull or Boxer. A compact dog with tuxedo markings and a flat face is a Boston Terrier, NOT an Italian Greyhound.
-
-2. COLLAR COLOR: If the dog wears a collar, report its color exactly. Key colors at this facility: green, blue, yellow, pink, red. If no collar visible or color unclear, set to null.
-
-3. COLLAR TEXT: If you can read ANY text, numbers, or letters on the collar or tag, report exactly what you see. Even partial text helps. If unreadable, set to null.
-
-4. SIZE CATEGORY: Estimate as "small" (under ~25 lbs), "medium" (25-50 lbs), or "large" (50+ lbs).
-
-5. POSITION: "foreground" if main subject, "background" if partially visible.
-
-Return ONLY a valid JSON array. No markdown, no explanation, no text outside the array.`,
+            model: 'gpt-4.1',
+            max_tokens: 2048,
+            temperature: 0.1,
             messages: [
-              {
-                role: 'user',
-                content: [
-                  {
-                    type: 'image',
-                    source: {
-                      type: 'base64',
-                      media_type: mediaType,
-                      data: base64Image,
-                    },
-                  },
-                  {
-                    type: 'text',
-                    text: 'Analyze every dog in this photo. Return JSON: [{"breed": "Greyhound", "confidence": 0.95, "collar_color": "green", "collar_text": "K9-142", "size_category": "large", "position": "foreground"}]',
-                  },
-                ],
-              },
+              { role: 'system', content: BREED_SYSTEM_PROMPT },
+              { role: 'user', content: [
+                { type: 'image_url', image_url: { url: imageUrl, detail: 'high' } },
+                { type: 'text', text: 'Describe and classify every dog. Note collar color and text. Return JSON array.' },
+              ]},
             ],
           }),
         });
 
-        const anthropicData = await anthropicRes.json();
-
-        if (anthropicData.error) {
-          console.error('Anthropic API error for photo', photo.id, ':', JSON.stringify(anthropicData.error));
-          await supabase
-            .from('photos')
-            .update({ breed_detection_status: 'failed' })
-            .eq('id', photo.id);
+        const data = await res.json();
+        if (data.error) {
+          console.error('OpenAI error for photo', photo.id, ':', JSON.stringify(data.error));
+          await supabase.from('photos').update({ breed_detection_status: 'failed' }).eq('id', photo.id);
           results.push({ photo_id: photo.id, status: 'failed', breeds: [] });
           continue;
         }
 
-        const content = anthropicData.content?.[0]?.text || '';
-
-        // Parse the JSON array from the response
-        let detectedBreeds: Array<{ breed: string; confidence: number; collar_color?: string | null; collar_text?: string | null; size_category?: string | null; position?: string | null }> = [];
+        const content = data.choices?.[0]?.message?.content || '';
+        let detectedBreeds: Array<Record<string, unknown>> = [];
         try {
           detectedBreeds = JSON.parse(content);
         } catch {
           const match = content.match(/\[[\s\S]*\]/);
-          if (match) {
-            try {
-              detectedBreeds = JSON.parse(match[0]);
-            } catch {
-              // Could not parse
-            }
-          }
+          if (match) { try { detectedBreeds = JSON.parse(match[0]); } catch { /* skip */ } }
         }
 
-        if (!Array.isArray(detectedBreeds)) {
-          detectedBreeds = [];
-        }
+        if (!Array.isArray(detectedBreeds)) detectedBreeds = [];
         detectedBreeds = detectedBreeds
-          .filter((b) => b && typeof b.breed === 'string' && typeof b.confidence === 'number')
+          .filter((b) => b && typeof b.breed === 'string')
           .map((b) => ({
-            breed: b.breed,
-            confidence: b.confidence,
-            collar_color: b.collar_color || null,
-            collar_text: b.collar_text || null,
-            size_category: b.size_category || null,
-            position: b.position || null,
+            breed: b.breed as string,
+            confidence: typeof b.confidence === 'number' ? b.confidence : 0.7,
+            collar_color: (b.collar_color as string) || null,
+            collar_text: (b.collar_text as string) || null,
+            size_category: (b.size_category as string) || null,
+            position: (b.position as string) || null,
+            description: (b.description as string) || null,
           }));
 
-        // Determine highest confidence breed
         const topBreed = detectedBreeds.length > 0
-          ? detectedBreeds.reduce((best, cur) => (cur.confidence > best.confidence ? cur : best))
+          ? detectedBreeds.reduce((best, cur) => ((cur.confidence as number) > (best.confidence as number) ? cur : best))
           : null;
 
-        // Update photo row
         const updateData: Record<string, unknown> = {
           detected_breeds: detectedBreeds,
           breed_detection_status: detectedBreeds.length > 0 ? 'completed' : 'failed',
@@ -226,46 +139,26 @@ Return ONLY a valid JSON array. No markdown, no explanation, no text outside the
           updateData.breed_confidence = topBreed.confidence;
         }
 
-        await supabase
-          .from('photos')
-          .update(updateData)
-          .eq('id', photo.id);
-
-        results.push({
-          photo_id: photo.id,
-          status: detectedBreeds.length > 0 ? 'completed' : 'failed',
-          breeds: detectedBreeds,
-        });
-
-        // Small delay between calls to avoid rate limits
-        await new Promise((r) => setTimeout(r, 200));
-      } catch (err) {
-        console.error('Error processing photo', photo.id, ':', (err as Error).message);
-        await supabase
-          .from('photos')
-          .update({ breed_detection_status: 'failed' })
-          .eq('id', photo.id);
+        await supabase.from('photos').update(updateData).eq('id', photo.id);
+        results.push({ photo_id: photo.id, status: detectedBreeds.length > 0 ? 'completed' : 'failed', breeds: detectedBreeds });
+      } catch (photoErr) {
+        console.error('Error processing photo', photo.id, ':', (photoErr as Error).message);
+        await supabase.from('photos').update({ breed_detection_status: 'failed' }).eq('id', photo.id);
         results.push({ photo_id: photo.id, status: 'failed', breeds: [] });
       }
+
+      // Small delay between calls
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    const remaining = (totalRemaining || 0) - pendingPhotos.length;
-
     return new Response(
-      JSON.stringify({
-        processed: pendingPhotos.length,
-        remaining: Math.max(0, remaining),
-        results,
-      }),
+      JSON.stringify({ processed: results.length, remaining: (remainingCount || 0) - results.length, results }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   } catch (err) {
     return new Response(
-      JSON.stringify({ error: 'Bulk breed detection failed', details: (err as Error).message }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
+      JSON.stringify({ error: 'Bulk detection failed', details: (err as Error).message }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 });
