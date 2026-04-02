@@ -16,15 +16,13 @@ const corsHeaders = {
 // Module-level playgroup map — populated in serve handler before reports run
 let _globalPlaygroupMap: Record<string, string> = {};
 
-// Get size category from Gingr playgroup icons (source of truth), fallback to weight
-function getSizeCategory(animalGingrId: string, weight: number | null): string | null {
+// Get size category from Gingr playgroup icons ONLY — no weight fallback
+function getSizeCategory(animalGingrId: string, _weight: number | null): string | null {
   const pg = _globalPlaygroupMap[animalGingrId];
   if (pg === 'large') return 'LG';
   if (pg === 'small') return 'SM';
   if (pg === 'private_play') return 'PP';
   if (pg === 'evaluation') return 'EVAL';
-  // Fallback to weight only if no playgroup icon
-  if (weight != null) return weight < 30 ? 'SM' : 'LG';
   return null;
 }
 
