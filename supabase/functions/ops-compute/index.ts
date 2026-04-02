@@ -13,6 +13,21 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// Module-level playgroup map — populated in serve handler before reports run
+let _globalPlaygroupMap: Record<string, string> = {};
+
+// Get size category from Gingr playgroup icons (source of truth), fallback to weight
+function getSizeCategory(animalGingrId: string, weight: number | null): string | null {
+  const pg = _globalPlaygroupMap[animalGingrId];
+  if (pg === 'large') return 'LG';
+  if (pg === 'small') return 'SM';
+  if (pg === 'private_play') return 'PP';
+  if (pg === 'evaluation') return 'EVAL';
+  // Fallback to weight only if no playgroup icon
+  if (weight != null) return weight < 30 ? 'SM' : 'LG';
+  return null;
+}
+
 // ─── Constants ─────────────────────────────────────────────────────────────
 // Gingr credentials are now loaded dynamically per location from k9_gingr_credentials
 
@@ -2286,25 +2301,14 @@ Deno.serve(async (req: Request) => {
       .from('gingr_animal_icons_live')
       .select('animal_gingr_id, icon_title, icon_group')
       .eq('icon_group', 'Play');
-    const globalPlaygroupMap: Record<string, string> = {};
+    // Populate the module-level map
+    _globalPlaygroupMap = {};
     for (const icon of liveIconRows || []) {
       const title = (icon.icon_title || '').toLowerCase();
-      if (title.includes('large')) globalPlaygroupMap[icon.animal_gingr_id] = 'large';
-      else if (title.includes('small')) globalPlaygroupMap[icon.animal_gingr_id] = 'small';
-      else if (title.includes('private')) globalPlaygroupMap[icon.animal_gingr_id] = 'private_play';
-      else if (title.includes('evaluation')) globalPlaygroupMap[icon.animal_gingr_id] = 'evaluation';
-    }
-
-    // Helper: get size category from playgroup icons (source of truth), fallback to weight
-    function getSizeCategory(animalGingrId: string, weight: number | null): string | null {
-      const pg = globalPlaygroupMap[animalGingrId];
-      if (pg === 'large') return 'LG';
-      if (pg === 'small') return 'SM';
-      if (pg === 'private_play') return 'PP';
-      if (pg === 'evaluation') return 'EVAL';
-      // Fallback to weight only if no playgroup icon
-      if (weight != null) return weight < 30 ? 'SM' : 'LG';
-      return null;
+      if (title.includes('large')) _globalPlaygroupMap[icon.animal_gingr_id] = 'large';
+      else if (title.includes('small')) _globalPlaygroupMap[icon.animal_gingr_id] = 'small';
+      else if (title.includes('private')) _globalPlaygroupMap[icon.animal_gingr_id] = 'private_play';
+      else if (title.includes('evaluation')) _globalPlaygroupMap[icon.animal_gingr_id] = 'evaluation';
     }
 
     // ─── Fetch Gingr data in parallel ──────────────────────────────────
