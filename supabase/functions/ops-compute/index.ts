@@ -1012,7 +1012,7 @@ function computePrivatePlay(reservations: Record<string, any>, weightMap: Record
       const startTime = formatTimeHuman(startDate);
       const roomLabel = res.roomLabel || res.room?.name || "";
       const weight = weightMap[animalGingrId] ?? null;
-      const sizeCategory = weight != null ? (weight < 30 ? "SM" : "LG") : null;
+      const sizeCategory = getSizeCategory(animalGingrId, weight);
       const breed = breedMap[animalGingrId] || res.breed || res.animal?.breed || "";
 
       dogs.push({
@@ -1490,7 +1490,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
         || "Standard");
     const weight = weightMap[d.animalGingrId] ?? null;
     // Size classification: <30 lbs = small, >=30 lbs = large
-    const sizeCategory = weight != null ? (weight < 30 ? "SM" : "LG") : null;
+    const sizeCategory = getSizeCategory(animalGingrId, weight);
     const hasPrivatePlay = !!playIconMap[d.animalGingrId];
 
     return {
@@ -1658,7 +1658,7 @@ async function computeBelongingsReport(
     const reservationGingrId = String(r.gingr_id || "");
     const roomLabel = r.room_assignment || rd.run?.name || "";
     const weight = weightMap[animalGingrId] ?? null;
-    const sizeCategory = weight != null ? (weight < 30 ? "SM" : "LG") : null;
+    const sizeCategory = getSizeCategory(animalGingrId, weight);
     const breed = breedMap[animalGingrId] || rd.animal?.breed || "";
 
     const belongingsData = belongingsMap[reservationGingrId] || { belongings: "", healthNotes: "", checkedInBy: "" };
@@ -1818,7 +1818,7 @@ async function computeCollarsReport(
 
     const icons = playIconMap[animalGingrId] || { hasSmall: false, hasLarge: false, hasPrivatePlay: false, playGroupTitle: "", playGroupComment: "", privatePlayTitle: "", privatePlayComment: "", iconDetails: [] };
     const weight = weightMap[animalGingrId] ?? null;
-    const sizeCategory = weight != null ? (weight < 30 ? "SM" : "LG") : null;
+    const sizeCategory = getSizeCategory(animalGingrId, weight);
     const breed = breedMap[animalGingrId] || rd.animal?.breed || "";
     const roomLabel = r.room_assignment || rd.run?.name || "";
 
@@ -2018,7 +2018,7 @@ async function computeLodgingTransfers(
 
     const animalGingrId = String(res.animal_gingr_id || "");
     const weight = weightMap[animalGingrId] ?? null;
-    const sizeCategory = weight != null ? (weight < 30 ? "SM" : "LG") : null;
+    const sizeCategory = getSizeCategory(animalGingrId, weight);
     const breed = breedMap[animalGingrId] || res.raw_data?.animal?.breed || "";
     const ownerName = [res.owner_first_name || "", res.owner_last_name || ""].filter(Boolean).join(" ") || occ.ownerName;
 
@@ -2279,6 +2279,26 @@ Deno.serve(async (req: Request) => {
       gingrSubdomain = creds.gingr_subdomain;
       gingrApiKey = creds.gingr_api_key;
       gingrLocationId = creds.gingr_location_id || "1";
+    }
+
+    // ─── Fetch playgroup assignments (source of truth for size) ────────
+    const { data: playgroupRows } = await supabase
+      .from('v_dog_playgroups')
+      .select('animal_gingr_id, playgroup');
+    const globalPlaygroupMap: Record<string, string> = {};
+    for (const pg of playgroupRows || []) {
+      globalPlaygroupMap[pg.animal_gingr_id] = pg.playgroup;
+    }
+
+    // Helper: get size category from playgroup icons (source of truth), fallback to weight
+    function getSizeCategory(animalGingrId: string, weight: number | null): string | null {
+      const pg = globalPlaygroupMap[animalGingrId];
+      if (pg === 'large') return 'LG';
+      if (pg === 'small') return 'SM';
+      if (pg === 'private_play') return 'PP';
+      // Fallback to weight only if no playgroup icon
+      if (weight != null) return weight < 30 ? 'SM' : 'LG';
+      return null;
     }
 
     // ─── Fetch Gingr data in parallel ──────────────────────────────────
