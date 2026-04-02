@@ -1502,8 +1502,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
         || extractBathTypeFromName(d.bathServiceName)
         || "Standard");
     const weight = weightMap[d.animalGingrId] ?? null;
-    // Size classification: <30 lbs = small, >=30 lbs = large
-    const sizeCategory = getSizeCategory(animalGingrId, weight);
+    const sizeCategory = getSizeCategory(d.animalGingrId, weight);
     const hasPrivatePlay = !!playIconMap[d.animalGingrId];
 
     return {
