@@ -2281,13 +2281,18 @@ Deno.serve(async (req: Request) => {
       gingrLocationId = creds.gingr_location_id || "1";
     }
 
-    // ─── Fetch playgroup assignments (source of truth for size) ────────
-    const { data: playgroupRows } = await supabase
-      .from('v_dog_playgroups')
-      .select('animal_gingr_id, playgroup');
+    // ─── Fetch playgroup icons from LIVE data (source of truth for size) ───
+    const { data: liveIconRows } = await supabase
+      .from('gingr_animal_icons_live')
+      .select('animal_gingr_id, icon_title, icon_group')
+      .eq('icon_group', 'Play');
     const globalPlaygroupMap: Record<string, string> = {};
-    for (const pg of playgroupRows || []) {
-      globalPlaygroupMap[pg.animal_gingr_id] = pg.playgroup;
+    for (const icon of liveIconRows || []) {
+      const title = (icon.icon_title || '').toLowerCase();
+      if (title.includes('large')) globalPlaygroupMap[icon.animal_gingr_id] = 'large';
+      else if (title.includes('small')) globalPlaygroupMap[icon.animal_gingr_id] = 'small';
+      else if (title.includes('private')) globalPlaygroupMap[icon.animal_gingr_id] = 'private_play';
+      else if (title.includes('evaluation')) globalPlaygroupMap[icon.animal_gingr_id] = 'evaluation';
     }
 
     // Helper: get size category from playgroup icons (source of truth), fallback to weight
@@ -2296,6 +2301,7 @@ Deno.serve(async (req: Request) => {
       if (pg === 'large') return 'LG';
       if (pg === 'small') return 'SM';
       if (pg === 'private_play') return 'PP';
+      if (pg === 'evaluation') return 'EVAL';
       // Fallback to weight only if no playgroup icon
       if (weight != null) return weight < 30 ? 'SM' : 'LG';
       return null;
