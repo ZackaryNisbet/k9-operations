@@ -1309,7 +1309,17 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   // ── Week + Day navigation ──
   const [currentWeekStart, setCurrentWeekStart] = useState(() => getWeekStart(todayStr()));
   const thisWeekStart = getWeekStart(todayStr());
-  const [countedDate, setCountedDate] = useState(todayStr());
+  const [countedDate, setCountedDate] = useState(() => {
+    const saved = localStorage.getItem("k9_inventory_countedDate");
+    // Only restore if it's within the current week
+    if (saved && saved >= currentWeekStart) return saved;
+    return todayStr();
+  });
+
+  // Persist countedDate to localStorage
+  useEffect(() => {
+    localStorage.setItem("k9_inventory_countedDate", countedDate);
+  }, [countedDate]);
 
   // Reset countedDate when week changes
   useEffect(() => {
@@ -1525,7 +1535,8 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         // Audit: track who counted / who ordered
         if (pending.stock_count !== undefined || pending.in_transit !== undefined) {
           row.counted_by = userName;
-          row.counted_at = now;
+          // Use the selected countedDate (supports backdating), with current time
+          row.counted_at = countedDate === todayStr() ? now : `${countedDate}T${new Date().toISOString().split('T')[1]}`;
         }
         if (pending.ordered !== undefined) {
           row.ordered_by = userName;
