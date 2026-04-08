@@ -30,9 +30,10 @@ function fmtCurrency(val) {
 }
 
 function clampPositive(val) {
-  const n = parseInt(val, 10);
-  if (isNaN(n) || n < 0) return 0;
-  return n;
+  if (val === "" || val == null) return "";
+  const s = String(val).replace(/[^0-9]/g, ""); // digits only
+  if (s === "") return "";
+  return String(parseInt(s, 10)); // strips leading zeros: "02" → "2"
 }
 
 // ─── Dog-Days Helpers ─────────────────────────────────────────────────────────
