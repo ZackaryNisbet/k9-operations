@@ -1675,7 +1675,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
           gl_account: "",
           size: "",
           par_level: null,
-          min_reorder_qty: null,
+          min_reorder: null,
           unit_price: null,
           sort_order: maxSort + 10,
           is_active: true,
