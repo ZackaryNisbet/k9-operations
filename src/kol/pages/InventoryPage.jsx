@@ -1603,11 +1603,29 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       flushSave();
-    }, 1500);
+    }, 400); // Save quickly so data isn't lost on refresh
   }, [flushSave]);
 
-  // Cleanup timer on unmount
-  useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
+  // Flush pending saves on unmount or page close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // Synchronously trigger save — can't await in beforeunload, but
+      // navigator.sendBeacon can't do upserts. Instead, flush immediately.
+      if (Object.keys(pendingSave.current).length > 0) {
+        flushSave();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && Object.keys(pendingSave.current).length > 0) {
+        flushSave();
+      }
+    });
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [flushSave]);
 
   // ── Count change handler ──
   const handleCountChange = useCallback((itemId, field, val) => {
