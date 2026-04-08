@@ -1527,7 +1527,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         const pending = pendingSave.current[itemId];
         const merged = { ...(existing || {}), ...pending };
         const row = {
-          ...(merged.id ? { id: merged.id } : {}),
+          // Don't include 'id' — let onConflict(snapshot_id,catalog_item_id) handle upsert
           snapshot_id: snapshotId,
           catalog_item_id: itemId,
           stock_count: merged.stock_count != null && merged.stock_count !== "" ? parseInt(merged.stock_count, 10) : null,
