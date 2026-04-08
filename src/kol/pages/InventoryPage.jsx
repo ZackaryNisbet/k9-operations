@@ -1717,7 +1717,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
 
     const reordered = [...subcatItems];
     const [moved] = reordered.splice(fromIdx, 1);
-    reordered.splice(overIdx, 0, moved);
+    // After removing the dragged item, indices shift — adjust target if dragging down
+    const targetIdx = fromIdx < overIdx ? overIdx - 1 : overIdx;
+    reordered.splice(targetIdx, 0, moved);
 
     // Update sort_order for all items in this group
     const updates = reordered.map((item, i) => ({ id: item.id, sort_order: (i + 1) * 10 }));
