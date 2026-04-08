@@ -1311,8 +1311,9 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
   const thisWeekStart = getWeekStart(todayStr());
   const [countedDate, setCountedDate] = useState(() => {
     const saved = localStorage.getItem("k9_inventory_countedDate");
-    // Only restore if it's within the current week
-    if (saved && saved >= currentWeekStart) return saved;
+    const week = getWeekStart(todayStr());
+    // Restore if saved date is within the current week
+    if (saved && saved >= week && saved <= todayStr()) return saved;
     return todayStr();
   });
 
@@ -1321,10 +1322,13 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     localStorage.setItem("k9_inventory_countedDate", countedDate);
   }, [countedDate]);
 
-  // Reset countedDate when week changes
+  // Reset countedDate when week changes — but NOT on initial mount
+  const weekChangeRef = useRef(currentWeekStart);
   useEffect(() => {
+    if (weekChangeRef.current === currentWeekStart) return; // skip initial mount
+    weekChangeRef.current = currentWeekStart;
     if (currentWeekStart === thisWeekStart) setCountedDate(todayStr());
-    else setCountedDate(currentWeekStart); // default to Monday for past weeks
+    else setCountedDate(currentWeekStart);
   }, [currentWeekStart]);
 
   // ── Data state ──
