@@ -1902,10 +1902,13 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       grouped[cat][sub].push(item);
     });
 
-    // Convert to array
+    // Convert to array, sort items within each subcategory by sort_order
     return Object.entries(grouped).map(([category, subs]) => ({
       category,
-      subcategories: Object.entries(subs).map(([name, items]) => ({ name, items })),
+      subcategories: Object.entries(subs).map(([name, items]) => ({
+        name,
+        items: [...items].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0)),
+      })),
     }));
   }, [catalogItems, search]);
 
