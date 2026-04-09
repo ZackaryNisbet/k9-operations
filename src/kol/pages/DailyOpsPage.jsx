@@ -2275,7 +2275,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
           matchCount: (d.services || []).length || 1,
           resType: "",
           roomType: "",
-          isSuggested: !!d.isSuggested,
+          isSuggested: d.status === "suggested" || !!d.isSuggested,
           reason: d.reason || "",
         });
       });

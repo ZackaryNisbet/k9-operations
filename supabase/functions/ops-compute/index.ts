@@ -2358,9 +2358,17 @@ function computeEnrichmentReport(
   dbReservations: Record<string, any>,
   targetDate: string,
 ): any {
-  const scheduled: ServiceDog[] = [];
-  const suggested: Array<ServiceDog & { reason: string }> = [];
+  const scheduled: any[] = [];
+  const suggested: any[] = [];
   const seen = new Set<string>();
+
+  // Helper: format date for human-readable reason
+  const fmtDate = (d: string) => {
+    if (!d) return "unknown";
+    const [_y, m, day] = d.split("-");
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return `${months[parseInt(m, 10) - 1]} ${parseInt(day, 10)}`;
+  };
 
   // Merge live + DB reservations, preferring live data
   const merged: Record<string, any> = { ...dbReservations };
@@ -2384,6 +2392,7 @@ function computeEnrichmentReport(
 
     const ownerFirst = res.owner?.first_name || "";
     const ownerLast = res.owner?.last_name || "";
+    const resType = res.reservation_type?.type || "";
 
     // Check if any enrichment is scheduled for the target date
     const scheduledForToday = enrichmentServices.some((s: any) => {
@@ -2391,23 +2400,35 @@ function computeEnrichmentReport(
       return schedAt.includes(targetDate);
     });
 
-    const dog: ServiceDog = {
+    const dog: any = {
       animalId,
       animalName: res.animal?.name || "",
       ownerName: `${ownerFirst} ${ownerLast}`.trim(),
       services: enrichmentServices.map(
-        (s: any) => s.name || s.service_name || "enrichment",
+        (s: any) => s.name || s.service_name || "Enrichment",
       ),
+      reservationType: resType,
     };
 
     if (scheduledForToday) {
-      scheduled.push(dog);
+      scheduled.push({ ...dog, status: "scheduled" });
     } else {
-      // Has enrichment on reservation but not specifically scheduled for today — suggest it
-      const serviceDates = enrichmentServices.map((s: any) => s.scheduled_at || s.scheduled_date || "unknown").join(", ");
+      // Extract the scheduled date for the reason text
+      const schedAt = enrichmentServices[0]?.scheduled_at || enrichmentServices[0]?.scheduled_date || "";
+      const scheduledDate = schedAt ? schedAt.split(" ")[0].split("T")[0] : "";
+      const endDate = res.endDate || res.end_date || "";
+      const endDateStr = endDate ? endDate.split(" ")[0].split("T")[0] : "";
+
+      const isBoarding = resType.toLowerCase().includes("boarding");
+      const reason = isBoarding && endDateStr
+        ? `Enrichment scheduled for ${fmtDate(scheduledDate)} \u2014 still boarding through ${fmtDate(endDateStr)}`
+        : `Enrichment scheduled for ${fmtDate(scheduledDate)} \u2014 still in-house`;
+
       suggested.push({
         ...dog,
-        reason: `Enrichment on reservation (scheduled: ${serviceDates}) but not specifically for ${targetDate}`,
+        status: "suggested",
+        scheduledDate,
+        reason,
       });
     }
   }
@@ -2416,11 +2437,12 @@ function computeEnrichmentReport(
   suggested.sort((a, b) => a.animalName.localeCompare(b.animalName));
 
   return {
-    dogs: [...scheduled, ...suggested.map(s => ({ ...s, isSuggested: true }))],
-    scheduled,
-    suggested,
-    scheduledCount: scheduled.length,
-    suggestedCount: suggested.length,
+    dogs: [...scheduled, ...suggested],
+    summary: {
+      scheduled: scheduled.length,
+      suggested: suggested.length,
+      total: scheduled.length + suggested.length,
+    },
   };
 }
 
@@ -2471,6 +2493,7 @@ async function fetchReservationsForDate(
       startDate: r.start_date || "",
       roomLabel: r.room_assignment || rd.room?.name || "",
       breed: rd.animal?.breed || "",
+      endDate: r.end_date || rd.end_date || "",
     };
   }
   return result;

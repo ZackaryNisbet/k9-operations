@@ -149,6 +149,7 @@ async function fetchReservationsForDate(
       },
       reservation_type: rd.reservation_type || { type: r.reservation_type_name || "" },
       services: Array.isArray(r.services) ? r.services : (rd.services || []),
+      endDate: r.end_date || rd.end_date || "",
     };
   }
   return result;
@@ -357,6 +358,89 @@ function computeServiceReport(
 
   dogs.sort((a, b) => a.animalName.localeCompare(b.animalName));
   return { dogs };
+}
+
+// ─── Compute enrichment report (scheduled vs suggested) ─────────────────
+
+function computeEnrichmentReport(
+  reservations: Record<string, any>,
+  targetDate: string,
+): any {
+  const scheduled: any[] = [];
+  const suggested: any[] = [];
+  const seen = new Set<string>();
+
+  for (const res of Object.values(reservations)) {
+    const services = res.services || [];
+    const animalId = String(res.animal?.id || "");
+    if (!animalId || seen.has(animalId)) continue;
+
+    const enrichmentServices = services.filter((s: any) =>
+      (s.name || s.service_name || "").toLowerCase().includes("enrichment"),
+    );
+    if (enrichmentServices.length === 0) continue;
+    seen.add(animalId);
+
+    const ownerFirst = res.owner?.first_name || "";
+    const ownerLast = res.owner?.last_name || "";
+    const resType = res.reservation_type?.type || "";
+
+    const dog: any = {
+      animalId,
+      animalName: res.animal?.name || "",
+      ownerName: `${ownerFirst} ${ownerLast}`.trim(),
+      services: enrichmentServices.map((s: any) => s.name || s.service_name || "Enrichment"),
+      reservationType: resType,
+    };
+
+    // Check if any enrichment is scheduled for the target date
+    const scheduledForToday = enrichmentServices.some((s: any) => {
+      const schedAt = s.scheduled_at || s.scheduled_date || "";
+      return schedAt.includes(targetDate);
+    });
+
+    if (scheduledForToday) {
+      scheduled.push({ ...dog, status: "scheduled" });
+    } else {
+      // Extract the scheduled date for the reason text
+      const schedAt = enrichmentServices[0]?.scheduled_at || enrichmentServices[0]?.scheduled_date || "";
+      const scheduledDate = schedAt ? schedAt.split(" ")[0].split("T")[0] : "";
+      const endDate = res.endDate || "";
+      const endDateStr = endDate ? endDate.split(" ")[0].split("T")[0] : "";
+
+      // Format dates for human-readable reason
+      const fmtDate = (d: string) => {
+        if (!d) return "unknown";
+        const [y, m, day] = d.split("-");
+        const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        return `${months[parseInt(m, 10) - 1]} ${parseInt(day, 10)}`;
+      };
+
+      const isBoarding = resType.toLowerCase().includes("boarding");
+      const reason = isBoarding && endDateStr
+        ? `Enrichment scheduled for ${fmtDate(scheduledDate)} \u2014 still boarding through ${fmtDate(endDateStr)}`
+        : `Enrichment scheduled for ${fmtDate(scheduledDate)} \u2014 still in-house`;
+
+      suggested.push({
+        ...dog,
+        status: "suggested",
+        scheduledDate,
+        reason,
+      });
+    }
+  }
+
+  scheduled.sort((a, b) => a.animalName.localeCompare(b.animalName));
+  suggested.sort((a, b) => a.animalName.localeCompare(b.animalName));
+
+  return {
+    dogs: [...scheduled, ...suggested],
+    summary: {
+      scheduled: scheduled.length,
+      suggested: suggested.length,
+      total: scheduled.length + suggested.length,
+    },
+  };
 }
 
 // ─── Compute private play ─────────────────────────────────────────────────
@@ -612,7 +696,7 @@ Deno.serve(async (req: Request) => {
     const [bathing, pamper, enrichment, lodgingTransfers] = await Promise.all([
       computeBathingReport(sb, locationId, date),
       Promise.resolve(computeServiceReport(reservations, "pamper")),
-      Promise.resolve(computeServiceReport(reservations, "enrichment")),
+      Promise.resolve(computeEnrichmentReport(reservations, date)),
       computeLodgingTransfers(sb, locationId, date),
     ]);
     const privatePlay = computePrivatePlay(reservations);
