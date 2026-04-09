@@ -120,7 +120,7 @@ async function fetchReservationsForDate(
   const nextDay = addDays(targetDate, 1);
   const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, services";
 
-  const [{ data: activeRes }, { data: pendingRes }] = await Promise.all([
+  const [{ data: activeRes }, { data: pendingRes }, { data: completedRes }] = await Promise.all([
     supabase.from("gingr_reservations").select(resSelect)
       .eq("location_id", locationId)
       .not("check_in_date", "is", null).is("check_out_date", null).is("cancelled_date", null)
@@ -129,11 +129,16 @@ async function fetchReservationsForDate(
       .eq("location_id", locationId)
       .is("check_in_date", null).is("check_out_date", null).is("cancelled_date", null)
       .gte("start_date", `${targetDate}T00:00:00`).lt("start_date", nextDay + "T00:00:00"),
+    // Completed reservations (checked in AND checked out) that started on target date
+    supabase.from("gingr_reservations").select(resSelect)
+      .eq("location_id", locationId)
+      .not("check_in_date", "is", null).not("check_out_date", "is", null).is("cancelled_date", null)
+      .gte("start_date", `${targetDate}T00:00:00`).lte("start_date", `${targetDate}T23:59:59`),
   ]);
 
   const seen = new Set<string>();
   const result: Record<string, any> = {};
-  for (const r of [...(activeRes || []), ...(pendingRes || [])]) {
+  for (const r of [...(activeRes || []), ...(pendingRes || []), ...(completedRes || [])]) {
     const id = String(r.gingr_id);
     if (seen.has(id)) continue;
     seen.add(id);
@@ -178,11 +183,16 @@ async function fetchAvgCheckoutFromGingr(
   supabase: any,
 ): Promise<{ avgCheckoutTime: string | null; sampleCount: number; checkoutHistory: any[] }> {
   try {
-    const url = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/reservations_by_animal?key=${GINGR_API_KEY}&id=${animalId}&restrict_to=past&params[completedOnly]=true&limit=20`;
-    const resp = await fetch(url);
+    const url = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/reservations_by_animal`;
+    const body = new URLSearchParams({
+      key: GINGR_API_KEY,
+      id: animalId,
+      limit: "50",
+    });
+    const resp = await fetch(url, { method: "POST", body });
     if (!resp.ok) return { avgCheckoutTime: null, sampleCount: 0, checkoutHistory: [] };
     const json = await resp.json();
-    const reservations = json?.data?.reservations || json?.data || [];
+    const reservations = json?.data || [];
     if (!Array.isArray(reservations)) return { avgCheckoutTime: null, sampleCount: 0, checkoutHistory: [] };
 
     const allCheckoutTimes: number[] = []; // minutes since midnight
@@ -197,8 +207,13 @@ async function fetchAvgCheckoutFromGingr(
       const resType = r?.reservation_type?.type || r?.type || "";
 
       let coDate: Date;
-      if (typeof coStamp === "number") {
-        coDate = new Date(coStamp * 1000);
+      const stampNum = typeof coStamp === "number" ? coStamp : Number(coStamp);
+      if (!isNaN(stampNum) && stampNum > 1000000000 && stampNum < 10000000000) {
+        // Unix timestamp in seconds
+        coDate = new Date(stampNum * 1000);
+      } else if (!isNaN(stampNum) && stampNum > 10000000000) {
+        // Unix timestamp in milliseconds
+        coDate = new Date(stampNum);
       } else {
         coDate = new Date(coStamp);
       }
