@@ -1185,16 +1185,18 @@ async function syncRunsAndOccupancy(
 ): Promise<{ runs: number; occupancy: number; areas: number }> {
   // Format dates as MM-DD-YYYY (required by this endpoint)
   const now = nowET();
+  const yesterday = new Date(now.getTime() - 86400000);
   const tomorrow = new Date(now.getTime() + 86400000);
   const fmt = (d: Date) =>
     `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}-${d.getFullYear()}`;
 
   // Build form-encoded body — reservation_dates must be form-encoded arrays, NOT JSON
+  // Fetch [yesterday, today, tomorrow] to ensure we always have adjacent-day data for transfers
   const params = new URLSearchParams();
   params.append("key", apiKey);
   params.append("location_id", gingrLocationId);
   params.append("type_id", "5"); // any boarding type — returns ALL areas regardless
-  params.append("reservation_dates[0][startDate]", fmt(now));
+  params.append("reservation_dates[0][startDate]", fmt(yesterday));
   params.append("reservation_dates[0][endDate]", fmt(tomorrow));
 
   const url = `https://${subdomain}.gingrapp.com/api/v1/get_runs_and_reservations`;
@@ -1214,6 +1216,9 @@ async function syncRunsAndOccupancy(
   }
 
   const todayStr = dateStrET(now);
+  const yesterdayStr = dateStrET(yesterday);
+  const tomorrowStr = dateStrET(tomorrow);
+  const datesToSync = [yesterdayStr, todayStr, tomorrowStr];
   const runRows: any[] = [];
   const occupancyRows: any[] = [];
   const snapshotRows: any[] = [];
@@ -1222,20 +1227,22 @@ async function syncRunsAndOccupancy(
     const areaId = String(area.id || "");
     const areaName = area.name || "";
 
-    // Area-level occupancy snapshot
-    const occ = area.occupancy?.[todayStr];
-    if (occ) {
-      snapshotRows.push({
-        location_id: locationId,
-        snapshot_date: todayStr,
-        area_id: areaId,
-        area_name: areaName,
-        percent_occupied: occ.percent_occupied || "0%",
-        number_occupied: parseInt(occ.number_occupied) || 0,
-        number_available: parseInt(occ.number_available) || 0,
-        total_runs: parseInt(occ.total_runs) || 0,
-        synced_at: new Date().toISOString(),
-      });
+    // Area-level occupancy snapshot for each synced date
+    for (const syncDate of datesToSync) {
+      const occ = area.occupancy?.[syncDate];
+      if (occ) {
+        snapshotRows.push({
+          location_id: locationId,
+          snapshot_date: syncDate,
+          area_id: areaId,
+          area_name: areaName,
+          percent_occupied: occ.percent_occupied || "0%",
+          number_occupied: parseInt(occ.number_occupied) || 0,
+          number_available: parseInt(occ.number_available) || 0,
+          total_runs: parseInt(occ.total_runs) || 0,
+          synced_at: new Date().toISOString(),
+        });
+      }
     }
 
     // Individual runs
@@ -1287,12 +1294,14 @@ async function syncRunsAndOccupancy(
     if (error) throw new Error(`gingr_runs upsert error: ${error.message}`);
   }
 
-  // Upsert occupancy (clear today's stale data first, then insert fresh)
-  await supabase
-    .from("gingr_room_occupancy")
-    .delete()
-    .eq("location_id", locationId)
-    .eq("occupancy_date", todayStr);
+  // Upsert occupancy (clear stale data for all synced dates first, then insert fresh)
+  for (const syncDate of datesToSync) {
+    await supabase
+      .from("gingr_room_occupancy")
+      .delete()
+      .eq("location_id", locationId)
+      .eq("occupancy_date", syncDate);
+  }
 
   if (occupancyRows.length > 0) {
     for (let i = 0; i < occupancyRows.length; i += 500) {
@@ -1314,6 +1323,122 @@ async function syncRunsAndOccupancy(
 
   console.log(`Runs sync: ${runRows.length} runs, ${occupancyRows.length} occupied rooms, ${snapshotRows.length} area snapshots`);
   return { runs: runRows.length, occupancy: occupancyRows.length, areas: snapshotRows.length };
+}
+
+/**
+ * Backfill room occupancy for a date range.
+ * Fetches room data from Gingr for each day in the range and upserts into DB.
+ */
+async function backfillRoomOccupancy(
+  supabase: any,
+  subdomain: string,
+  apiKey: string,
+  gingrLocationId: string,
+  locationId: string,
+  startDate: string,
+  endDate: string,
+): Promise<{ days: number; totalOccupancy: number }> {
+  const fmt = (d: Date) =>
+    `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}-${d.getFullYear()}`;
+  const toDateStr = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  const start = new Date(startDate + "T12:00:00");
+  const end = new Date(endDate + "T12:00:00");
+  let totalOccupancy = 0;
+  let days = 0;
+
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    const nextDay = new Date(d.getTime() + 86400000);
+    const dateStr = toDateStr(d);
+
+    const params = new URLSearchParams();
+    params.append("key", apiKey);
+    params.append("location_id", gingrLocationId);
+    params.append("type_id", "5");
+    params.append("reservation_dates[0][startDate]", fmt(d));
+    params.append("reservation_dates[0][endDate]", fmt(nextDay));
+
+    const url = `https://${subdomain}.gingrapp.com/api/v1/get_runs_and_reservations`;
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded; charset=utf-8" },
+      body: params.toString(),
+    });
+
+    if (!resp.ok) {
+      console.error(`Backfill ${dateStr} failed: ${resp.status}`);
+      continue;
+    }
+
+    const areas = await resp.json();
+    if (!Array.isArray(areas)) continue;
+
+    const occupancyRows: any[] = [];
+    const snapshotRows: any[] = [];
+
+    for (const area of areas) {
+      const areaId = String(area.id || "");
+      const areaName = area.name || "";
+
+      const occ = area.occupancy?.[dateStr];
+      if (occ) {
+        snapshotRows.push({
+          location_id: locationId,
+          snapshot_date: dateStr,
+          area_id: areaId,
+          area_name: areaName,
+          percent_occupied: occ.percent_occupied || "0%",
+          number_occupied: parseInt(occ.number_occupied) || 0,
+          number_available: parseInt(occ.number_available) || 0,
+          total_runs: parseInt(occ.total_runs) || 0,
+          synced_at: new Date().toISOString(),
+        });
+      }
+
+      for (const run of area.runs || []) {
+        for (const resDate of run.reservation_date || []) {
+          if (!resDate.occupied) continue;
+          occupancyRows.push({
+            location_id: locationId,
+            gingr_run_id: String(run.id || ""),
+            run_name: run.name || "",
+            area_name: areaName,
+            occupancy_date: resDate.date,
+            animal_names: resDate.animal_name || null,
+            current_animals: parseInt(resDate.current_animals) || 0,
+            current_weight: parseInt(resDate.current_weight) || 0,
+            occupied: true,
+            end_date: resDate.end_date || null,
+            synced_at: new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    // Clear and insert for this date
+    await supabase.from("gingr_room_occupancy").delete()
+      .eq("location_id", locationId).eq("occupancy_date", dateStr);
+
+    if (occupancyRows.length > 0) {
+      for (let i = 0; i < occupancyRows.length; i += 500) {
+        const chunk = occupancyRows.slice(i, i + 500);
+        await supabase.from("gingr_room_occupancy")
+          .upsert(chunk, { onConflict: "location_id,gingr_run_id,occupancy_date" });
+      }
+    }
+
+    if (snapshotRows.length > 0) {
+      await supabase.from("gingr_occupancy_snapshot")
+        .upsert(snapshotRows, { onConflict: "location_id,snapshot_date,area_id" });
+    }
+
+    totalOccupancy += occupancyRows.length;
+    days++;
+    console.log(`Backfill ${dateStr}: ${occupancyRows.length} occupied rooms`);
+  }
+
+  return { days, totalOccupancy };
 }
 
 // ─── Sync Animal Icons via get_icons ──────────────────────────────────────
@@ -2249,6 +2374,22 @@ Deno.serve(async (req: Request) => {
               location_id
             );
             break;
+          case "backfill_room_occupancy": {
+            // Backfill room occupancy for a date range (default: last 7 days)
+            const now = nowET();
+            const backfillStart = dateStrET(new Date(now.getTime() - 7 * 86400000));
+            const backfillEnd = dateStrET(now);
+            results.backfill_room_occupancy = await backfillRoomOccupancy(
+              supabase,
+              subdomain,
+              api_key,
+              gingr_location_id || "1",
+              location_id,
+              backfillStart,
+              backfillEnd,
+            );
+            break;
+          }
         }
 
         await updateSyncState(supabase, location_id, entity, {
