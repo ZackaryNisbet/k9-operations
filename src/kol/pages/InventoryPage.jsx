@@ -423,14 +423,29 @@ const ItemRow = React.memo(function ItemRow({ item, count, isReadOnly, onChange,
 
 // ─── Adhoc Item Row ───────────────────────────────────────────────────────────
 
-function AdhocItemRow({ item, isReadOnly }) {
-  const stockValue = (item.stock_count != null && item.unit_price != null)
+function AdhocItemRow({ item, isReadOnly, onUpdate, onDelete }) {
+  const hasFilled = item.stock_count != null && item.stock_count !== "";
+  const stockValue = (hasFilled && item.unit_price != null)
     ? (parseInt(item.stock_count, 10) || 0) * parseFloat(item.unit_price || 0)
     : null;
+  const inputStyle = {
+    width: "100%",
+    padding: "6px 8px",
+    borderRadius: 8,
+    border: `2px solid ${isReadOnly ? C.border : hasFilled ? C.border : "#E6C200"}`,
+    background: isReadOnly ? C.bg : hasFilled ? C.surface : "#FFFDE0",
+    fontSize: 13,
+    fontWeight: 600,
+    textAlign: "center",
+    fontFamily: "inherit",
+    color: C.text,
+    outline: "none",
+    boxSizing: "border-box",
+  };
   return (
     <div style={{
       display: "grid",
-      gridTemplateColumns: "2fr 80px 80px 80px 80px",
+      gridTemplateColumns: "2fr 80px 80px 80px 80px 32px",
       gap: 8,
       alignItems: "center",
       padding: "10px 16px",
@@ -443,13 +458,41 @@ function AdhocItemRow({ item, isReadOnly }) {
         {item.notes && <div style={{ fontSize: 11, color: C.textSec, fontStyle: "italic" }}>{item.notes}</div>}
       </div>
       <div style={{ fontSize: 11, color: C.textMut, textAlign: "center" }}>Ad-hoc</div>
-      <div style={{ fontSize: 13, fontWeight: 600, textAlign: "center", color: C.text }}>{item.stock_count ?? "—"}</div>
-      <div style={{ fontSize: 12, color: C.textSec, textAlign: "right" }}>
-        {item.unit_price != null ? fmtCurrency(item.unit_price) : "—"}
+      <div>
+        <input
+          type="number"
+          min="0"
+          value={item.stock_count ?? ""}
+          readOnly={isReadOnly}
+          onChange={e => !isReadOnly && onUpdate(item.id, { stock_count: clampPositive(e.target.value) })}
+          placeholder="0"
+          style={inputStyle}
+        />
+      </div>
+      <div>
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={item.unit_price ?? ""}
+          readOnly={isReadOnly}
+          onChange={e => !isReadOnly && onUpdate(item.id, { unit_price: e.target.value === "" ? null : e.target.value })}
+          placeholder="0.00"
+          style={{ ...inputStyle, fontSize: 12 }}
+        />
       </div>
       <div style={{ fontSize: 12, fontWeight: 600, color: C.suc, textAlign: "right" }}>
         {stockValue != null ? fmtCurrency(stockValue) : "—"}
       </div>
+      {!isReadOnly && (
+        <button
+          onClick={() => onDelete(item.id)}
+          title="Remove ad-hoc item"
+          style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, fontSize: 14, padding: 2 }}
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 }
@@ -1949,6 +1992,43 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
     }
   };
 
+  // ── Update adhoc item (debounced save) ──
+  const adhocTimers = useRef({});
+  const updateAdhocItem = useCallback((itemId, updates) => {
+    // Optimistic UI update
+    setAdhocItems(prev => prev.map(item =>
+      item.id === itemId ? { ...item, ...updates } : item
+    ));
+    // Debounced save to DB
+    if (adhocTimers.current[itemId]) clearTimeout(adhocTimers.current[itemId]);
+    adhocTimers.current[itemId] = setTimeout(async () => {
+      try {
+        const saveData = {};
+        if (updates.stock_count !== undefined) {
+          saveData.stock_count = updates.stock_count === "" || updates.stock_count == null ? null : parseInt(updates.stock_count, 10);
+        }
+        if (updates.unit_price !== undefined) {
+          saveData.unit_price = updates.unit_price == null ? null : parseFloat(updates.unit_price);
+        }
+        const { error } = await supabase.from("inventory_adhoc_items").update(saveData).eq("id", itemId);
+        if (error) throw error;
+      } catch (err) {
+        console.error("Adhoc update error:", err);
+      }
+    }, 400);
+  }, []);
+
+  // ── Delete adhoc item ──
+  const deleteAdhocItem = useCallback(async (itemId) => {
+    try {
+      const { error } = await supabase.from("inventory_adhoc_items").delete().eq("id", itemId);
+      if (error) throw error;
+      setAdhocItems(prev => prev.filter(item => item.id !== itemId));
+    } catch (err) {
+      console.error("Adhoc delete error:", err);
+    }
+  }, []);
+
   // ── Filtered + grouped catalog ──
   const filteredGrouped = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -2435,7 +2515,7 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                     ))}
                   </div>
                   {adhocItems.map(item => (
-                    <AdhocItemRow key={item.id} item={item} isReadOnly={isReadOnly} />
+                    <AdhocItemRow key={item.id} item={item} isReadOnly={isReadOnly} onUpdate={updateAdhocItem} onDelete={deleteAdhocItem} />
                   ))}
                 </div>
               )}
