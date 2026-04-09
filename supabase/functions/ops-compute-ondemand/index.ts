@@ -396,6 +396,176 @@ function computePrivatePlay(reservations: Record<string, any>): any {
   };
 }
 
+// ─── Room type classification ─────────────────────────────────────────────
+
+function classifyRoomType(roomName: string): string {
+  const lower = (roomName || "").toLowerCase();
+  if (lower.includes("luxury")) return "Luxury Suite";
+  if (lower.includes("executive")) return "Executive Room";
+  if (lower.includes("double")) return "Double Compartment";
+  if (lower.includes("single")) return "Single Compartment";
+  return "";
+}
+
+// ─── Compute lodging transfers (occupancy comparison) ─────────────────────
+// Compares gingr_room_occupancy between targetDate - 1 and targetDate.
+// An animal whose run_name changed between the two days is a transfer.
+
+async function computeLodgingTransfers(
+  supabase: any,
+  locationId: string,
+  targetDate: string,
+): Promise<any> {
+  const prevDate = addDays(targetDate, -1);
+
+  // Fetch occupancy for both days in parallel
+  const [{ data: prevOcc }, { data: currOcc }] = await Promise.all([
+    supabase
+      .from("gingr_room_occupancy")
+      .select("run_name, animal_names, gingr_run_id")
+      .eq("location_id", locationId)
+      .eq("occupancy_date", prevDate)
+      .eq("occupied", true),
+    supabase
+      .from("gingr_room_occupancy")
+      .select("run_name, animal_names, gingr_run_id")
+      .eq("location_id", locationId)
+      .eq("occupancy_date", targetDate)
+      .eq("occupied", true),
+  ]);
+
+  // Parse animal_names into { animalName -> { runName, ownerName } }
+  function parseOccupancy(rows: any[]): Record<string, { runName: string; ownerName: string }> {
+    const map: Record<string, { runName: string; ownerName: string }> = {};
+    for (const row of rows || []) {
+      if (!row.animal_names || !row.run_name) continue;
+      const entries = (row.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
+      for (const entry of entries) {
+        // Handle names like "Oslo Teddy (Ozzy) (Samantha  Schramak)"
+        // Owner name is always the LAST parenthesized group
+        const parenGroups: string[] = [];
+        const parenRe = /\(([^)]+)\)/g;
+        let m;
+        while ((m = parenRe.exec(entry)) !== null) {
+          parenGroups.push(m[1].trim());
+        }
+        let dogName: string;
+        let ownerName = "";
+        if (parenGroups.length >= 1) {
+          ownerName = parenGroups[parenGroups.length - 1];
+          // Dog name is everything before the last paren group
+          const lastParenIdx = entry.lastIndexOf(`(${ownerName})`);
+          dogName = entry.substring(0, lastParenIdx).trim();
+          // Remove trailing paren content that's part of the dog name's own parens
+          // e.g., "Oslo Teddy (Ozzy)" stays as-is
+        } else {
+          dogName = entry.trim();
+        }
+        if (dogName) {
+          map[dogName.toLowerCase()] = { runName: row.run_name, ownerName };
+        }
+      }
+    }
+    return map;
+  }
+
+  const prevMap = parseOccupancy(prevOcc);
+  const currMap = parseOccupancy(currOcc);
+
+  const transfers: any[] = [];
+
+  // Find animals present on BOTH days whose room changed
+  for (const [nameKey, curr] of Object.entries(currMap)) {
+    const prev = prevMap[nameKey];
+    if (!prev) continue; // new arrival, not a transfer
+    if (prev.runName === curr.runName) continue; // same room
+
+    const previousRoom = prev.runName;
+    const currentRoom = curr.runName;
+    const prevType = classifyRoomType(previousRoom);
+    const currType = classifyRoomType(currentRoom);
+    const roomTypeChanged = prevType !== currType && prevType !== "" && currType !== "";
+
+    // Reconstruct display name from the key (use current day entry for casing)
+    // Find the original-cased name from currOcc
+    let displayName = nameKey;
+    for (const row of currOcc || []) {
+      if (!row.animal_names) continue;
+      const entries = (row.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
+      for (const entry of entries) {
+        if (entry.toLowerCase().startsWith(nameKey)) {
+          // Extract just the dog name portion (before owner paren)
+          const parenGroups: string[] = [];
+          const parenRe = /\(([^)]+)\)/g;
+          let m;
+          while ((m = parenRe.exec(entry)) !== null) {
+            parenGroups.push(m[1].trim());
+          }
+          if (parenGroups.length >= 1) {
+            const ownerParen = parenGroups[parenGroups.length - 1];
+            const lastIdx = entry.lastIndexOf(`(${ownerParen})`);
+            displayName = entry.substring(0, lastIdx).trim();
+          } else {
+            displayName = entry.trim();
+          }
+          break;
+        }
+      }
+      if (displayName !== nameKey) break;
+    }
+
+    const actionItems: string[] = [
+      `Move belongings from ${previousRoom} to ${currentRoom}`,
+      `Clean/disinfect old room (${previousRoom})`,
+      `Set up new room (${currentRoom})`,
+    ];
+    if (roomTypeChanged) {
+      actionItems.splice(1, 0, `Update collar — was ${prevType}, now ${currType}`);
+    }
+
+    transfers.push({
+      animalName: displayName || "Unknown",
+      animalGingrId: "",
+      ownerName: curr.ownerName || prev.ownerName || "",
+      breed: "",
+      weight: null,
+      sizeCategory: null,
+      previousRoom,
+      currentRoom,
+      transferDate: targetDate,
+      reservationType: "",
+      reservationGingrId: "",
+      roomTypeChanged,
+      previousRoomType: prevType,
+      currentRoomType: currType,
+      actionItems,
+    });
+  }
+
+  // Sort by animal name
+  transfers.sort((a: any, b: any) => (a.animalName || "").localeCompare(b.animalName || ""));
+
+  // Fetch completions from lite_settings
+  const completionKey = `ops_lodging_transfer_completions_${targetDate}`;
+  const { data: completionRows } = await supabase
+    .from("lite_settings")
+    .select("setting_value")
+    .eq("location_id", locationId)
+    .eq("setting_key", completionKey)
+    .limit(1);
+  const completions: Record<string, any> = (completionRows && completionRows.length > 0 && completionRows[0].setting_value) ? completionRows[0].setting_value : {};
+
+  const completedCount = Object.values(completions).filter((c: any) => c && c.status === "complete").length;
+
+  return {
+    transfers,
+    summary: { total: transfers.length, roomTypeChanged: transfers.filter((t: any) => t.roomTypeChanged).length },
+    completions,
+    totalCount: transfers.length,
+    completedCount,
+  };
+}
+
 // ─── Main handler ──────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -439,10 +609,11 @@ Deno.serve(async (req: Request) => {
     // Compute all service reports in parallel
     const reservations = await fetchReservationsForDate(sb, locationId, date);
 
-    const [bathing, pamper, enrichment] = await Promise.all([
+    const [bathing, pamper, enrichment, lodgingTransfers] = await Promise.all([
       computeBathingReport(sb, locationId, date),
       Promise.resolve(computeServiceReport(reservations, "pamper")),
       Promise.resolve(computeServiceReport(reservations, "enrichment")),
+      computeLodgingTransfers(sb, locationId, date),
     ]);
     const privatePlay = computePrivatePlay(reservations);
 
@@ -452,6 +623,7 @@ Deno.serve(async (req: Request) => {
       upsertComputedItems(sb, `ops_pp_${date}`, locationId, "pp", "pp", date, privatePlay),
       upsertComputedItems(sb, `ops_pamper_${date}`, locationId, "pamper", "pamper", date, pamper),
       upsertComputedItems(sb, `ops_svc_${date}`, locationId, "svc", "svc", date, enrichment),
+      upsertComputedItems(sb, `ops_lodging_transfer_${date}`, locationId, "lodging_transfer", "lodging_transfer", date, lodgingTransfers),
     ]);
 
     const duration = Date.now() - startTime;
@@ -466,6 +638,7 @@ Deno.serve(async (req: Request) => {
         pamper,
         enrichment,
         private_play: privatePlay,
+        lodging_transfers: lodgingTransfers,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
