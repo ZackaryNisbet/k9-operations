@@ -154,11 +154,163 @@ async function fetchReservationsForDate(
   return result;
 }
 
+// ─── Reservation type classification ─────────────────────────────────────
+
+function classifyReservationCategory(typeName: string): string {
+  if (!typeName) return "other";
+  const t = typeName.toLowerCase();
+  if (t.includes("evaluation") || t.includes("eval") || t.includes("first stay")) return "evaluation";
+  if (t.includes("day boarding") || t === "day boarding") return "day_boarding";
+  if (t.includes("daycare") || t.includes("day care")) return "daycare";
+  if (t.includes("boarding")) return "boarding";
+  return "other";
+}
+
+// ─── Average checkout time helpers ───────────────────────────────────────
+
+const GINGR_API_KEY = "a0fec5e66b3c3be8b6085b2708b3806e";
+const GINGR_SUBDOMAIN = "k9cherryhill";
+
+async function fetchAvgCheckoutFromGingr(
+  animalId: string,
+  animalName: string,
+  reservationType: string,
+  supabase: any,
+): Promise<{ avgCheckoutTime: string | null; sampleCount: number }> {
+  try {
+    // Query past 90 days in 30-day chunks (Gingr API max range)
+    const now = new Date();
+    const allCheckoutTimes: number[] = []; // minutes since midnight
+
+    for (let chunk = 0; chunk < 3; chunk++) {
+      const endDate = new Date(now);
+      endDate.setDate(endDate.getDate() - (chunk * 30));
+      const startDate = new Date(endDate);
+      startDate.setDate(startDate.getDate() - 30);
+
+      const startStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, "0")}-${String(startDate.getDate()).padStart(2, "0")}`;
+      const endStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, "0")}-${String(endDate.getDate()).padStart(2, "0")}`;
+
+      const url = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/reservations_by_animal?key=${GINGR_API_KEY}&id=${animalId}&restrict_to=past&params[completedOnly]=true&params[startDate]=${startStr}&params[endDate]=${endStr}`;
+      const resp = await fetch(url);
+      if (!resp.ok) continue;
+      const json = await resp.json();
+      const reservations = json?.data?.reservations || json?.data || [];
+      if (!Array.isArray(reservations)) continue;
+
+      for (const res of reservations) {
+        const r = res?.reservation || res;
+        const coStamp = r?.check_out_stamp || r?.check_out_date;
+        if (!coStamp) continue;
+
+        // Convert to time-of-day (minutes since midnight)
+        let coDate: Date;
+        if (typeof coStamp === "number") {
+          coDate = new Date(coStamp * 1000);
+        } else {
+          coDate = new Date(coStamp);
+        }
+        if (isNaN(coDate.getTime())) continue;
+
+        // Use Eastern time (UTC-4 or UTC-5)
+        const eastern = new Date(coDate.toLocaleString("en-US", { timeZone: "America/New_York" }));
+        const minutesSinceMidnight = eastern.getHours() * 60 + eastern.getMinutes();
+        // Filter out unreasonable times (before 6am or after 10pm)
+        if (minutesSinceMidnight >= 360 && minutesSinceMidnight <= 1320) {
+          allCheckoutTimes.push(minutesSinceMidnight);
+        }
+      }
+    }
+
+    if (allCheckoutTimes.length === 0) return { avgCheckoutTime: null, sampleCount: 0 };
+
+    const avgMinutes = Math.round(allCheckoutTimes.reduce((a, b) => a + b, 0) / allCheckoutTimes.length);
+    const avgHours = Math.floor(avgMinutes / 60);
+    const avgMins = avgMinutes % 60;
+    const avgTimeStr = `${String(avgHours).padStart(2, "0")}:${String(avgMins).padStart(2, "0")}`;
+
+    // Cache the result
+    await supabase.from("animal_checkout_averages").upsert({
+      animal_id: animalId,
+      animal_name: animalName,
+      avg_checkout_time: avgTimeStr,
+      sample_count: allCheckoutTimes.length,
+      reservation_type: reservationType,
+      computed_at: new Date().toISOString(),
+    }, { onConflict: "animal_id" });
+
+    return { avgCheckoutTime: avgTimeStr, sampleCount: allCheckoutTimes.length };
+  } catch (err) {
+    console.error(`Error fetching checkout avg for animal ${animalId}:`, err);
+    return { avgCheckoutTime: null, sampleCount: 0 };
+  }
+}
+
+async function getAvgCheckoutTimes(
+  animalIds: string[],
+  animalNames: Record<string, string>,
+  resTypes: Record<string, string>,
+  supabase: any,
+): Promise<Record<string, { avgCheckoutTime: string | null; sampleCount: number }>> {
+  if (animalIds.length === 0) return {};
+
+  const result: Record<string, { avgCheckoutTime: string | null; sampleCount: number }> = {};
+
+  // Check cache first
+  const { data: cached } = await supabase
+    .from("animal_checkout_averages")
+    .select("animal_id, avg_checkout_time, sample_count")
+    .in("animal_id", animalIds);
+
+  const now = new Date();
+  const staleIds: string[] = [];
+  const freshCache: Record<string, any> = {};
+
+  for (const row of (cached || [])) {
+    // Check if cache is still fresh (24h TTL)
+    const computedAt = row.computed_at ? new Date(row.computed_at) : new Date(0);
+    const ageMs = now.getTime() - computedAt.getTime();
+    if (ageMs < 24 * 60 * 60 * 1000 && row.avg_checkout_time) {
+      freshCache[row.animal_id] = row;
+    } else {
+      staleIds.push(row.animal_id);
+    }
+  }
+
+  // Use cached values
+  for (const id of animalIds) {
+    if (freshCache[id]) {
+      result[id] = {
+        avgCheckoutTime: freshCache[id].avg_checkout_time,
+        sampleCount: freshCache[id].sample_count || 0,
+      };
+    }
+  }
+
+  // Fetch fresh data for animals not in cache or stale
+  const toFetch = animalIds.filter(id => !freshCache[id]);
+
+  // Limit concurrent Gingr API calls to 3 at a time
+  const queue = [...toFetch];
+  async function worker() {
+    while (queue.length > 0) {
+      const id = queue.shift();
+      if (!id) break;
+      const data = await fetchAvgCheckoutFromGingr(id, animalNames[id] || "", resTypes[id] || "", supabase);
+      result[id] = data;
+    }
+  }
+  const workers = Array.from({ length: Math.min(3, queue.length) }, () => worker());
+  await Promise.all(workers);
+
+  return result;
+}
+
 // ─── Compute bathing report (no Gingr web auth) ──────────────────────────
 
 async function computeBathingReport(supabase: any, locationId: string, targetDate: string): Promise<any> {
   const nextDay = addDays(targetDate, 1);
-  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_out_date, raw_data, room_assignment, services, notes_reservation, notes_animal, notes_owner";
+  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, cancelled_date, raw_data, room_assignment, services, notes_reservation, notes_animal, notes_owner";
 
   const [{ data: activeRes }, { data: coRes }, { data: pendingRes }] = await Promise.all([
     supabase.from("gingr_reservations").select(resSelect)
@@ -210,6 +362,7 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     const { addonType, modifiers } = parseBathAddonsFromServices(svcsForAddons);
     const resType = rd.reservation_type || {};
     const roomLabel = r.room_assignment || rd.run?.name || "";
+    const resTypeName = resType.type || r.reservation_type_name || "";
 
     const notesParts = [r.notes_reservation, r.notes_animal, r.notes_owner]
       .filter(Boolean)
@@ -225,7 +378,9 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
       ownerName: [r.owner_first_name || rd.owner?.first_name || "", r.owner_last_name || rd.owner?.last_name || ""].filter(Boolean).join(" "),
       breed: rd.animal?.breed || "",
       roomLabel,
-      suiteType: resType.type || r.reservation_type_name || "",
+      suiteType: resTypeName,
+      reservationType: resTypeName,
+      reservationCategory: classifyReservationCategory(resTypeName),
       addonType,
       bathServiceName: bathSvc?.name || "",
       bathModifiers: modifiers,
@@ -234,13 +389,87 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
       scheduledTime: formatTimeHuman(scheduledAt),
       departureTime: formatTimeHuman(endDate),
       departureTimeRaw: endDate,
+      startDate: r.start_date || "",
+      endDate: r.end_date || "",
       isCheckedOut: !!r.check_out_date,
       isDone: !!bathSvc?.completed_at,
+      status: "scheduled" as string,
+    });
+  }
+
+  // ─── Suggested baths: boarding dogs staying 2+ nights with no bath ─────
+  const bathDogResIds = new Set(bathDogs.map(d => d.gingrReservationId));
+  const suggestedDogs: any[] = [];
+
+  for (const r of allRes) {
+    const resId = String(r.gingr_id || "");
+    if (bathDogResIds.has(resId)) continue; // already has a bath
+
+    const resTypeName = (r.reservation_type_name || "").toLowerCase();
+    if (!resTypeName.includes("boarding")) continue; // must be boarding
+    if (resTypeName.includes("day boarding")) continue; // day boarding excluded
+
+    // Must be checked in (not just pending)
+    if (!r.check_in_date) continue;
+    if (r.check_out_date) continue; // already checked out
+
+    // Must be 2+ nights
+    const startDay = (r.start_date || "").split("T")[0];
+    const endDay = (r.end_date || "").split("T")[0];
+    if (!startDay || !endDay) continue;
+    const startMs = new Date(startDay + "T12:00:00").getTime();
+    const endMs = new Date(endDay + "T12:00:00").getTime();
+    const nights = Math.round((endMs - startMs) / (24 * 60 * 60 * 1000));
+    if (nights < 2) continue;
+
+    // Confirm no bath/grooming service on this reservation for today or tomorrow
+    const rd = r.raw_data || {};
+    const rawSvcs = rd.services || [];
+    const topSvcs = Array.isArray(r.services) ? r.services : [];
+    const allSvcs = [...rawSvcs, ...topSvcs];
+    const hasBathOrGroom = allSvcs.some((s: any) => {
+      const n = typeof s === "string" ? s : s?.name || "";
+      return n.toLowerCase().includes("bath") || n.toLowerCase().includes("groom");
+    });
+    if (hasBathOrGroom) continue;
+
+    const animalGingrId = String(r.animal_gingr_id || rd.animal?.id || "").trim();
+    if (animalGingrId) animalIds.push(animalGingrId);
+
+    const resType = rd.reservation_type || {};
+    const roomLabel = r.room_assignment || rd.run?.name || "";
+    const fullResTypeName = resType.type || r.reservation_type_name || "";
+
+    suggestedDogs.push({
+      animalGingrId,
+      gingrReservationId: resId,
+      bathServiceId: "",
+      animalName: r.animal_name || rd.animal?.name || "Unknown",
+      ownerName: [r.owner_first_name || rd.owner?.first_name || "", r.owner_last_name || rd.owner?.last_name || ""].filter(Boolean).join(" "),
+      breed: rd.animal?.breed || "",
+      roomLabel,
+      suiteType: fullResTypeName,
+      reservationType: fullResTypeName,
+      reservationCategory: classifyReservationCategory(fullResTypeName),
+      addonType: null,
+      bathServiceName: "",
+      bathModifiers: [],
+      reservationNotes: "",
+      scheduledAt: "",
+      scheduledTime: "—",
+      departureTime: formatTimeHuman(r.end_date || ""),
+      departureTimeRaw: r.end_date || "",
+      startDate: r.start_date || "",
+      endDate: r.end_date || "",
+      isCheckedOut: false,
+      isDone: false,
+      status: "suggested" as string,
     });
   }
 
   // Fetch bath icons, play icons, and weights
-  let iconMap: Record<string, { title: string; comment: string }> = {};
+  // iconMap stores ALL bath icons per dog (array) to support multiple bath types
+  let iconMap: Record<string, Array<{ title: string; comment: string }>> = {};
   let playIconMap: Record<string, string> = {};
   let weightMap: Record<string, number | null> = {};
   if (animalIds.length > 0) {
@@ -252,7 +481,9 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
       supabase.from("gingr_animals").select("gingr_id, weight").in("gingr_id", animalIds),
     ]);
     (icons || []).forEach((r: any) => {
-      iconMap[r.animal_gingr_id] = { title: r.icon_title || "", comment: r.icon_comment || "" };
+      const id = r.animal_gingr_id;
+      if (!iconMap[id]) iconMap[id] = [];
+      iconMap[id].push({ title: r.icon_title || "", comment: r.icon_comment || "" });
     });
     (playIcons || []).forEach((r: any) => {
       const title = (r.icon_title || "").toLowerCase();
@@ -266,13 +497,88 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     });
   }
 
-  // Resolve bath type: icon -> add-on -> service name -> Standard
-  const dogs = bathDogs.map((d) => {
-    const icon = iconMap[d.animalGingrId];
-    const bathType = icon?.title || d.addonType || extractBathTypeFromName(d.bathServiceName) || "Standard";
+  // ─── Room occupancy: sibling/roommate grouping ─────────────────────────
+  const { data: roomOcc } = await supabase
+    .from("gingr_room_occupancy")
+    .select("run_name, animal_names")
+    .eq("location_id", locationId)
+    .eq("occupancy_date", targetDate)
+    .eq("occupied", true);
+
+  // Build map: dogName (lowercased) → { runName, ownerName, animals: [{name, owner}] }
+  const roomByDogName: Record<string, { runName: string; ownerName: string; allOccupants: Array<{ name: string; owner: string }> }> = {};
+  for (const row of (roomOcc || [])) {
+    if (!row.animal_names || !row.run_name) continue;
+    const entries = (row.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
+    const occupants: Array<{ name: string; owner: string }> = [];
+    for (const entry of entries) {
+      const parenGroups: string[] = [];
+      const parenRe = /\(([^)]+)\)/g;
+      let m;
+      while ((m = parenRe.exec(entry)) !== null) parenGroups.push(m[1].trim());
+      let dogName: string;
+      let ownerName = "";
+      if (parenGroups.length >= 1) {
+        ownerName = parenGroups[parenGroups.length - 1];
+        const lastIdx = entry.lastIndexOf(`(${ownerName})`);
+        dogName = entry.substring(0, lastIdx).trim();
+      } else {
+        dogName = entry.trim();
+      }
+      if (dogName) occupants.push({ name: dogName, owner: ownerName });
+    }
+    for (const occ of occupants) {
+      roomByDogName[occ.name.toLowerCase()] = {
+        runName: row.run_name,
+        ownerName: occ.owner,
+        allOccupants: occupants,
+      };
+    }
+  }
+
+  // ─── Avg checkout time from cache ──────────────────────────────────────
+  const allDogEntries = [...bathDogs, ...suggestedDogs];
+  const uniqueAnimalIds = [...new Set(allDogEntries.map(d => d.animalGingrId).filter(Boolean))];
+  const animalNameMap: Record<string, string> = {};
+  const animalResTypeMap: Record<string, string> = {};
+  for (const d of allDogEntries) {
+    if (d.animalGingrId) {
+      animalNameMap[d.animalGingrId] = d.animalName;
+      animalResTypeMap[d.animalGingrId] = d.reservationType;
+    }
+  }
+
+  const checkoutAvgs = await getAvgCheckoutTimes(uniqueAnimalIds, animalNameMap, animalResTypeMap, supabase);
+
+  // ─── Build final dog objects ───────────────────────────────────────────
+  function buildDogOutput(d: any): any {
+    const icons = iconMap[d.animalGingrId] || [];
+    const iconTitles = icons.map(i => i.title).filter(Boolean);
+    const iconComments = icons.map(i => i.comment).filter(Boolean);
+    const bathType = iconTitles[0] || d.addonType || extractBathTypeFromName(d.bathServiceName) || "Standard";
+    const bathIcons = iconTitles;
     const weight = weightMap[d.animalGingrId] ?? null;
     const sizeCategory = weight != null ? (weight < 30 ? "small" : "large") : null;
     const hasPrivatePlay = !!playIconMap[d.animalGingrId];
+
+    // Room/sibling/roommate grouping
+    const roomInfo = roomByDogName[d.animalName.toLowerCase()];
+    const roomName = roomInfo?.runName || d.roomLabel || "";
+    let roommates: string[] = [];
+    let siblingGroup = "";
+    if (roomInfo && roomInfo.allOccupants.length > 1) {
+      siblingGroup = roomInfo.runName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      const myOwner = roomInfo.ownerName;
+      for (const occ of roomInfo.allOccupants) {
+        if (occ.name.toLowerCase() === d.animalName.toLowerCase()) continue;
+        const label = occ.owner === myOwner ? `${occ.name} (sibling)` : `${occ.name} (${occ.owner})`;
+        roommates.push(label);
+      }
+    }
+
+    // Avg checkout
+    const checkoutData = checkoutAvgs[d.animalGingrId];
+    const avgCheckoutTime = checkoutData?.avgCheckoutTime || null;
 
     return {
       animalGingrId: d.animalGingrId,
@@ -280,11 +586,12 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
       animalName: d.animalName,
       ownerName: d.ownerName,
       breed: d.breed,
-      roomLabel: d.roomLabel,
+      roomLabel: roomName || d.roomLabel,
       suiteType: d.suiteType,
-      bathType,
+      bathType: d.status === "suggested" ? "Suggested" : bathType,
+      bathIcons: d.status === "suggested" ? [] : bathIcons,
       bathModifiers: d.bathModifiers,
-      bathNotes: icon?.comment || "",
+      bathNotes: iconComments.join(" | "),
       reservationNotes: d.reservationNotes || "",
       serviceNotes: "",
       weight,
@@ -296,10 +603,45 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
       departureTimeRaw: d.departureTimeRaw,
       isCheckedOut: d.isCheckedOut,
       isDone: d.isDone,
+      status: d.status,
+      reservationType: d.reservationType,
+      reservationCategory: d.reservationCategory,
+      roomName,
+      roommates,
+      siblingGroup,
+      avgCheckoutTime,
+      reservationDates: { start: (d.startDate || "").split("T")[0], end: (d.endDate || "").split("T")[0] },
     };
+  }
+
+  const scheduledDogs = bathDogs.map(buildDogOutput);
+  const suggestedDogsOut = suggestedDogs.map(buildDogOutput);
+  const dogs = [...scheduledDogs, ...suggestedDogsOut];
+
+  // Sort: scheduled first (by scheduledAt), then suggested (by animalName)
+  dogs.sort((a, b) => {
+    if (a.status !== b.status) return a.status === "scheduled" ? -1 : 1;
+    if (a.siblingGroup && a.siblingGroup === b.siblingGroup) return a.animalName.localeCompare(b.animalName);
+    if (a.status === "scheduled") return (a.scheduledAt || "").localeCompare(b.scheduledAt || "");
+    return a.animalName.localeCompare(b.animalName);
   });
 
-  dogs.sort((a, b) => (a.scheduledAt || "").localeCompare(b.scheduledAt || ""));
+  // Re-sort to group siblings/roommates together
+  const grouped: any[] = [];
+  const used = new Set<number>();
+  for (let i = 0; i < dogs.length; i++) {
+    if (used.has(i)) continue;
+    grouped.push(dogs[i]);
+    used.add(i);
+    if (dogs[i].siblingGroup) {
+      for (let j = i + 1; j < dogs.length; j++) {
+        if (!used.has(j) && dogs[j].siblingGroup === dogs[i].siblingGroup) {
+          grouped.push(dogs[j]);
+          used.add(j);
+        }
+      }
+    }
+  }
 
   // Fetch bath completions
   const completionKey = `ops_bathing_${targetDate}`;
@@ -311,20 +653,43 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     .limit(1);
   const completions: Record<string, { by: string; at: string }> = (completionRows && completionRows.length > 0 && completionRows[0].setting_value) ? completionRows[0].setting_value : {};
 
-  for (const dog of dogs) {
+  for (const dog of grouped) {
     const resId = `g${dog.gingrReservationId}`;
     const completedInfo = completions[resId] || null;
     if (completedInfo) {
       dog.isDone = true;
-      (dog as any).completedBy = completedInfo.by || "";
-      (dog as any).completedAt = completedInfo.at || "";
+      dog.completedBy = completedInfo.by || "";
+      dog.completedAt = completedInfo.at || "";
     }
   }
 
-  const totalCount = dogs.length;
-  const completedCount = dogs.filter(d => d.isDone).length;
+  // Build summary with category counts
+  const scheduledCount = grouped.filter(d => d.status === "scheduled").length;
+  const suggestedCount = grouped.filter(d => d.status === "suggested").length;
+  const byCategory: Record<string, number> = { boarding: 0, daycare: 0, day_boarding: 0, evaluation: 0, suggested: suggestedCount };
+  for (const d of grouped) {
+    if (d.status === "scheduled" && d.reservationCategory && byCategory[d.reservationCategory] !== undefined) {
+      byCategory[d.reservationCategory]++;
+    } else if (d.status === "scheduled" && d.reservationCategory) {
+      byCategory[d.reservationCategory] = (byCategory[d.reservationCategory] || 0) + 1;
+    }
+  }
 
-  return { dogs, completions, totalCount, completedCount };
+  const totalCount = grouped.length;
+  const completedCount = grouped.filter(d => d.isDone).length;
+
+  return {
+    dogs: grouped,
+    summary: {
+      total: totalCount,
+      scheduled: scheduledCount,
+      suggested: suggestedCount,
+      byCategory,
+    },
+    completions,
+    totalCount,
+    completedCount,
+  };
 }
 
 // ─── Compute service report (pamper, enrichment) ──────────────────────────
