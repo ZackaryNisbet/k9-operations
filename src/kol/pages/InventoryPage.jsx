@@ -442,26 +442,30 @@ function AdhocItemRow({ item, isReadOnly, onUpdate, onDelete }) {
     outline: "none",
     boxSizing: "border-box",
   };
+  const cbStyle = {
+    width: 18, height: 18, cursor: isReadOnly ? "default" : "pointer",
+    accentColor: C.pri, borderRadius: 4,
+  };
   return (
     <div style={{
       display: "grid",
-      gridTemplateColumns: "2fr 80px 80px 80px 80px 32px",
+      gridTemplateColumns: "2fr 80px 80px 50px 50px 80px 80px 32px",
       gap: 8,
       alignItems: "center",
       padding: "10px 16px",
       borderBottom: `1px solid ${C.borderLight}`,
-      background: C.accLt + "44",
+      background: item.skipped ? C.bg : C.accLt + "44",
+      opacity: item.skipped ? 0.5 : 1,
     }}>
       <div>
         <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{item.item_name}</div>
         {item.category && <div style={{ fontSize: 11, color: C.textMut }}>{item.category}</div>}
         {item.notes && <div style={{ fontSize: 11, color: C.textSec, fontStyle: "italic" }}>{item.notes}</div>}
       </div>
-      <div style={{ fontSize: 11, color: C.textMut, textAlign: "center" }}>Ad-hoc</div>
+      {/* ON HAND */}
       <div>
         <input
-          type="number"
-          min="0"
+          type="number" min="0"
           value={item.stock_count ?? ""}
           readOnly={isReadOnly}
           onChange={e => !isReadOnly && onUpdate(item.id, { stock_count: clampPositive(e.target.value) })}
@@ -469,11 +473,10 @@ function AdhocItemRow({ item, isReadOnly, onUpdate, onDelete }) {
           style={inputStyle}
         />
       </div>
+      {/* UNIT COST */}
       <div>
         <input
-          type="number"
-          min="0"
-          step="0.01"
+          type="number" min="0" step="0.01"
           value={item.unit_price ?? ""}
           readOnly={isReadOnly}
           onChange={e => !isReadOnly && onUpdate(item.id, { unit_price: e.target.value === "" ? null : e.target.value })}
@@ -481,14 +484,40 @@ function AdhocItemRow({ item, isReadOnly, onUpdate, onDelete }) {
           style={{ ...inputStyle, fontSize: 12 }}
         />
       </div>
+      {/* ORDERED */}
+      <div style={{ textAlign: "center" }}>
+        <input
+          type="checkbox"
+          checked={!!item.ordered}
+          disabled={isReadOnly}
+          onChange={e => !isReadOnly && onUpdate(item.id, { ordered: e.target.checked, ...(e.target.checked ? { skipped: false } : {}) })}
+          style={cbStyle}
+          title="Mark as ordered"
+        />
+      </div>
+      {/* SKIP */}
+      <div style={{ textAlign: "center" }}>
+        <input
+          type="checkbox"
+          checked={!!item.skipped}
+          disabled={isReadOnly}
+          onChange={e => !isReadOnly && onUpdate(item.id, { skipped: e.target.checked, ...(e.target.checked ? { ordered: false } : {}) })}
+          style={cbStyle}
+          title="Skip this item"
+        />
+      </div>
+      {/* VALUE */}
       <div style={{ fontSize: 12, fontWeight: 600, color: C.suc, textAlign: "right" }}>
         {stockValue != null ? fmtCurrency(stockValue) : "—"}
       </div>
+      {/* TYPE */}
+      <div style={{ fontSize: 11, color: C.textMut, textAlign: "center" }}>Ad-hoc</div>
+      {/* DELETE */}
       {!isReadOnly && (
         <button
           onClick={() => onDelete(item.id)}
           title="Remove ad-hoc item"
-          style={{ background: "none", border: "none", cursor: "pointer", color: C.textMut, fontSize: 14, padding: 2 }}
+          style={{ background: "none", border: "none", cursor: "pointer", color: C.dan, fontSize: 16, padding: 2, fontWeight: 700 }}
         >
           ×
         </button>
@@ -1640,20 +1669,25 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         // Get latest counts after this save
         setCounts(latestCounts => {
           const activeItems = catalogItems.filter(c => c.is_active);
-          const allCounted = activeItems.every(c => {
+          // Check catalog items: all counted + all orders handled
+          const allCatalogCounted = activeItems.every(c => {
             const cnt = latestCounts[c.id];
             return cnt && cnt.stock_count != null && cnt.stock_count !== "";
           });
-          const allOrdersHandled = activeItems.every(c => {
+          const allCatalogOrdersHandled = activeItems.every(c => {
             const cnt = latestCounts[c.id];
             if (!cnt) return false;
             const stockCount = typeof cnt.stock_count === 'number' ? cnt.stock_count : parseInt(cnt.stock_count, 10);
             const par = c.par_level ?? 0;
             const needsOrder = par > 0 && stockCount < par;
-            if (!needsOrder) return true; // doesn't need ordering
-            return cnt.ordered || cnt.skipped; // must be ordered or skipped
+            if (!needsOrder) return true;
+            return cnt.ordered || cnt.skipped;
           });
-          if (allCounted && allOrdersHandled) {
+          // Check ad hoc items: all must have stock_count AND be ordered or skipped
+          const allAdhocHandled = adhocItems.every(a =>
+            a.stock_count != null && a.stock_count !== "" && (a.ordered || a.skipped)
+          );
+          if (allCatalogCounted && allCatalogOrdersHandled && allAdhocHandled) {
             // Auto-complete the snapshot
             supabase
               .from("inventory_snapshots")
@@ -2010,6 +2044,8 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         if (updates.unit_price !== undefined) {
           saveData.unit_price = updates.unit_price == null ? null : parseFloat(updates.unit_price);
         }
+        if (updates.ordered !== undefined) saveData.ordered = updates.ordered;
+        if (updates.skipped !== undefined) saveData.skipped = updates.skipped;
         const { error } = await supabase.from("inventory_adhoc_items").update(saveData).eq("id", itemId);
         if (error) throw error;
       } catch (err) {
@@ -2502,14 +2538,14 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
                   {/* Adhoc column headers */}
                   <div style={{
                     display: "grid",
-                    gridTemplateColumns: "2fr 80px 80px 80px 80px",
+                    gridTemplateColumns: "2fr 80px 80px 50px 50px 80px 80px 32px",
                     gap: 8,
                     padding: "8px 16px",
                     background: C.bg,
                     borderBottom: `1px solid ${C.borderLight}`,
                   }}>
-                    {["Item", "Type", "On Hand", "Unit Cost", "Value"].map((h, i) => (
-                      <div key={i} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", textAlign: i >= 2 ? "right" : "left" }}>
+                    {["Item", "On Hand", "Unit Cost", "Ordered", "Skip", "Value", "Type", ""].map((h, i) => (
+                      <div key={i} style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.06em", textAlign: i >= 3 ? "center" : "left" }}>
                         {h}
                       </div>
                     ))}
