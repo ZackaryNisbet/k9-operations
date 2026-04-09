@@ -278,6 +278,92 @@ async function fetchAllServiceNotes(
   return results;
 }
 
+/**
+ * Fetch lodging transfer report from Gingr web interface.
+ * Scrapes /reports/run_transfer?date=MM/DD/YYYY for transfer data.
+ * Returns array of { animalName, ownerName, fromRoom, toRoom }.
+ */
+async function fetchLodgingTransferReport(
+  subdomain: string,
+  cookies: string,
+  targetDate: string, // YYYY-MM-DD
+): Promise<Array<{ animalName: string; ownerName: string; fromRoom: string; toRoom: string }>> {
+  try {
+    // Convert YYYY-MM-DD to MM/DD/YYYY
+    const [y, m, d] = targetDate.split("-");
+    const dateParam = `${m}/${d}/${y}`;
+    const url = `https://${subdomain}.gingrapp.com/reports/run_transfer?date=${dateParam}`;
+    const resp = await fetch(url, {
+      headers: { "Cookie": cookies, "User-Agent": GINGR_UA },
+      redirect: "manual",
+    });
+    if (resp.status === 302 || resp.status === 301) {
+      console.error("Lodging transfer report: redirected (auth expired)");
+      return [];
+    }
+    const html = await resp.text();
+
+    // Parse the HTML table rows for transfer data
+    // The report table has rows with: Animal Name, Owner, From Room, To Room, Date/Time
+    const transfers: Array<{ animalName: string; ownerName: string; fromRoom: string; toRoom: string }> = [];
+
+    // Match table rows (Gingr uses standard HTML tables for reports)
+    // Each <tr> in the report body contains <td> cells
+    const rowRegex = /<tr[^>]*class="[^"]*data[^"]*"[^>]*>([\s\S]*?)<\/tr>/gi;
+    let rowMatch;
+    while ((rowMatch = rowRegex.exec(html)) !== null) {
+      const cells: string[] = [];
+      const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+      let cellMatch;
+      while ((cellMatch = cellRegex.exec(rowMatch[1])) !== null) {
+        cells.push(cellMatch[1].replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim());
+      }
+      if (cells.length >= 4) {
+        transfers.push({
+          animalName: cells[0] || "",
+          ownerName: cells[1] || "",
+          fromRoom: cells[2] || "",
+          toRoom: cells[3] || "",
+        });
+      }
+    }
+
+    // Fallback: try matching any table rows if the class-based match found nothing
+    if (transfers.length === 0) {
+      const allRowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+      const rows: string[][] = [];
+      let arMatch;
+      while ((arMatch = allRowRegex.exec(html)) !== null) {
+        const cells: string[] = [];
+        const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+        let cMatch;
+        while ((cMatch = cellRegex.exec(arMatch[1])) !== null) {
+          cells.push(cMatch[1].replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim());
+        }
+        if (cells.length >= 4) rows.push(cells);
+      }
+      // Skip header row if present, take data rows
+      for (const cells of rows) {
+        // Skip header rows (contain "Animal", "From", "To" etc.)
+        if (cells[0].toLowerCase().includes("animal") || cells[0].toLowerCase().includes("pet")) continue;
+        if (!cells[0] || !cells[2] || !cells[3]) continue;
+        transfers.push({
+          animalName: cells[0],
+          ownerName: cells[1] || "",
+          fromRoom: cells[2],
+          toRoom: cells[3],
+        });
+      }
+    }
+
+    console.log(`Lodging transfer report for ${targetDate}: ${transfers.length} transfers found`);
+    return transfers;
+  } catch (err) {
+    console.error("Lodging transfer report fetch error:", err);
+    return [];
+  }
+}
+
 // ─── Date helpers ──────────────────────────────────────────────────────────
 
 // Edge functions run in UTC. All date-sensitive operations must use ET.
@@ -1438,7 +1524,8 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
   }
 
   // Fetch bath icons, play icons, and weights for all dogs
-  let iconMap: Record<string, { title: string; comment: string }> = {};
+  // iconMap stores ALL bath icons per dog (not just the first) to support multiple bath types
+  let iconMap: Record<string, Array<{ title: string; comment: string }>> = {};
   let playIconMap: Record<string, string> = {}; // animal_id → play type (e.g. "Private Play")
   let weightMap: Record<string, number | null> = {};
   if (animalIds.length > 0) {
@@ -1461,7 +1548,9 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
         .in("gingr_id", animalIds),
     ]);
     (icons || []).forEach((r: any) => {
-      iconMap[r.animal_gingr_id] = { title: r.icon_title || "", comment: r.icon_comment || "" };
+      const id = r.animal_gingr_id;
+      if (!iconMap[id]) iconMap[id] = [];
+      iconMap[id].push({ title: r.icon_title || "", comment: r.icon_comment || "" });
     });
     (playIcons || []).forEach((r: any) => {
       const title = (r.icon_title || "").toLowerCase();
@@ -1492,15 +1581,24 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     }
   }
 
-  // Resolve bath type: Fresh N' Clean for auto-detected, else icon → add-on → service name → Standard
+  // Resolve bath type: Fresh N' Clean for auto-detected, else icons → add-on → service name → Standard
+  // Collect ALL bath icons per dog (e.g. "Hypo - NO Spray" AND "NO DRYER")
   const dogs = bathDogs.map((d, idx) => {
-    const icon = iconMap[d.animalGingrId];
+    const icons = iconMap[d.animalGingrId] || [];
+    const iconTitles = icons.map(i => i.title).filter(Boolean);
+    const iconComments = icons.map(i => i.comment).filter(Boolean);
+
+    // Primary bath type: first icon title, or addon, or service name extraction
     const bathType = d.isFreshNClean
       ? "Fresh N' Clean"
-      : (icon?.title
+      : (iconTitles[0]
         || d.addonType
         || extractBathTypeFromName(d.bathServiceName)
         || "Standard");
+
+    // All bath icons as an array for the UI to render multiple pills
+    const bathIcons = d.isFreshNClean ? [] : iconTitles;
+
     const weight = weightMap[d.animalGingrId] ?? null;
     const sizeCategory = getSizeCategory(d.animalGingrId, weight);
     const hasPrivatePlay = !!playIconMap[d.animalGingrId];
@@ -1514,8 +1612,9 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
       roomLabel: d.roomLabel,
       suiteType: d.suiteType,
       bathType,
+      bathIcons,
       bathModifiers: d.bathModifiers,
-      bathNotes: icon?.comment || "",
+      bathNotes: iconComments.join(" | "),
       reservationNotes: d.reservationNotes || "",
       serviceNotes: d.isFreshNClean ? "" : (serviceNotesMap[idx] || ""),
       weight,
@@ -1951,51 +2050,40 @@ async function computeLodgingTransfers(
   supabase: any,
   locationId: string,
   targetDate: string,
+  gingrSubdomain?: string,
+  gingrApiKey?: string,
 ): Promise<any> {
-  // 1. Get today's room occupancy (occupied rooms with animal names)
-  const { data: occupancy } = await supabase
-    .from("gingr_room_occupancy")
-    .select("run_name, animal_names, gingr_run_id")
-    .eq("location_id", locationId)
-    .eq("occupancy_date", targetDate)
-    .eq("occupied", true);
+  const transfers: any[] = [];
 
-  if (!occupancy || occupancy.length === 0) {
-    return { transfers: [], summary: { total: 0 }, completions: {}, totalCount: 0, completedCount: 0 };
-  }
-
-  // 2. Parse occupancy → animal name → current room
-  const occupancyMap: Record<string, { runName: string; ownerName: string }> = {};
-  for (const occ of occupancy) {
-    if (!occ.animal_names || !occ.run_name) continue;
-    const entries = (occ.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
-    for (const entry of entries) {
-      const match = entry.match(/^(.+?)\s*\((.+?)\)/);
-      const dogName = match ? match[1].trim() : entry.trim();
-      const ownerName = match ? match[2].trim() : "";
-      if (dogName) {
-        occupancyMap[dogName.toLowerCase()] = { runName: occ.run_name, ownerName };
-      }
+  // ── Primary: Fetch from Gingr's dedicated Lodging Transfer Report ──
+  // This is the source of truth — it catches within-day transfers that
+  // occupancy comparison misses, and doesn't depend on room sync being current.
+  let webTransfers: Array<{ animalName: string; ownerName: string; fromRoom: string; toRoom: string }> = [];
+  if (gingrSubdomain && gingrApiKey) {
+    try {
+      const webCookies = await gingrWebLogin(gingrSubdomain, gingrApiKey);
+      webTransfers = await fetchLodgingTransferReport(gingrSubdomain, webCookies, targetDate);
+    } catch (err) {
+      console.error("Lodging transfer web report error:", err);
     }
   }
 
-  // 3. Get active reservations (checked in, not checked out, not cancelled)
+  // Build weight/breed lookup for matched animals
   const { data: activeRes } = await supabase
     .from("gingr_reservations")
-    .select("gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, room_assignment, start_date, end_date, raw_data")
+    .select("gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, room_assignment, raw_data")
     .eq("location_id", locationId)
     .not("check_in_date", "is", null)
     .is("check_out_date", null)
     .is("cancelled_date", null);
 
-  if (!activeRes || activeRes.length === 0) {
-    return { transfers: [], summary: { total: 0 }, completions: {}, totalCount: 0, completedCount: 0 };
+  const resMap: Record<string, any> = {};
+  for (const r of activeRes || []) {
+    resMap[(r.animal_name || "").toLowerCase().trim()] = r;
   }
 
-  // 4. Gather animal IDs for weight/breed lookup
-  const animalIds = activeRes.map((r: any) => String(r.animal_gingr_id || "")).filter(Boolean);
+  const animalIds = (activeRes || []).map((r: any) => String(r.animal_gingr_id || "")).filter(Boolean);
   const uniqueAnimalIds = [...new Set(animalIds)];
-
   let weightMap: Record<string, number | null> = {};
   let breedMap: Record<string, string> = {};
   if (uniqueAnimalIds.length > 0) {
@@ -2010,87 +2098,122 @@ async function computeLodgingTransfers(
     }
   }
 
-  // 5. Compare: reservation room_assignment vs occupancy run_name
-  const transfers: any[] = [];
-  for (const res of activeRes) {
-    const name = (res.animal_name || "").toLowerCase().trim();
-    if (!name) continue;
-    const occ = occupancyMap[name];
-    if (!occ) continue;
+  if (webTransfers.length > 0) {
+    // Use web report transfers as the authoritative source
+    for (const wt of webTransfers) {
+      const previousRoom = wt.fromRoom;
+      const currentRoom = wt.toRoom;
+      const prevType = classifyRoomType(previousRoom);
+      const currType = classifyRoomType(currentRoom);
+      const roomTypeChanged = prevType !== currType && prevType !== "" && currType !== "";
 
-    const previousRoom = res.room_assignment || "";
-    const currentRoom = occ.runName;
+      // Try to match to a reservation for extra metadata
+      // The web report may have animal names like "Meg" or "Oslo Teddy (Ozzy)"
+      const nameKey = (wt.animalName || "").toLowerCase().trim().split(/\s*\(/)[0].trim();
+      const res = resMap[nameKey] || resMap[wt.animalName.toLowerCase().trim()];
+      const animalGingrId = res ? String(res.animal_gingr_id || "") : "";
+      const weight = animalGingrId ? (weightMap[animalGingrId] ?? null) : null;
+      const sizeCategory = animalGingrId ? getSizeCategory(animalGingrId, weight) : null;
+      const breed = animalGingrId ? (breedMap[animalGingrId] || res?.raw_data?.animal?.breed || "") : "";
+      const ownerName = wt.ownerName || (res ? [res.owner_first_name || "", res.owner_last_name || ""].filter(Boolean).join(" ") : "");
 
-    // Only flag if there's a mismatch AND the reservation had a previous room
-    if (!previousRoom || previousRoom === currentRoom) continue;
+      const actionItems: string[] = [
+        `Move belongings from ${previousRoom} to ${currentRoom}`,
+        `Clean/disinfect old room (${previousRoom})`,
+        `Set up new room (${currentRoom})`,
+      ];
+      if (roomTypeChanged) {
+        actionItems.splice(1, 0, `Update collar — was ${prevType}, now ${currType}`);
+      }
 
-    const prevType = classifyRoomType(previousRoom);
-    const currType = classifyRoomType(currentRoom);
-    const roomTypeChanged = prevType !== currType && prevType !== "" && currType !== "";
-
-    const animalGingrId = String(res.animal_gingr_id || "");
-    const weight = weightMap[animalGingrId] ?? null;
-    const sizeCategory = getSizeCategory(animalGingrId, weight);
-    const breed = breedMap[animalGingrId] || res.raw_data?.animal?.breed || "";
-    const ownerName = [res.owner_first_name || "", res.owner_last_name || ""].filter(Boolean).join(" ") || occ.ownerName;
-
-    // Build action items
-    const actionItems: string[] = [
-      `Move belongings from ${previousRoom} to ${currentRoom}`,
-      `Clean/disinfect old room (${previousRoom})`,
-      `Set up new room (${currentRoom})`,
-    ];
-    if (roomTypeChanged) {
-      actionItems.splice(1, 0, `Update collar — was ${prevType}, now ${currType}`);
+      transfers.push({
+        animalName: wt.animalName || "Unknown",
+        animalGingrId,
+        ownerName,
+        breed,
+        weight,
+        sizeCategory,
+        previousRoom,
+        currentRoom,
+        transferDate: targetDate,
+        reservationType: res?.reservation_type_name || "",
+        reservationGingrId: res ? String(res.gingr_id || "") : "",
+        roomTypeChanged,
+        previousRoomType: prevType,
+        currentRoomType: currType,
+        actionItems,
+      });
     }
+  } else {
+    // ── Fallback: Occupancy comparison (original logic) ──
+    const { data: occupancy } = await supabase
+      .from("gingr_room_occupancy")
+      .select("run_name, animal_names, gingr_run_id")
+      .eq("location_id", locationId)
+      .eq("occupancy_date", targetDate)
+      .eq("occupied", true);
 
-    transfers.push({
-      animalName: res.animal_name || "Unknown",
-      animalGingrId,
-      ownerName,
-      breed,
-      weight,
-      sizeCategory,
-      previousRoom,
-      currentRoom,
-      transferDate: targetDate,
-      reservationType: res.reservation_type_name || "",
-      reservationGingrId: String(res.gingr_id || ""),
-      roomTypeChanged,
-      previousRoomType: prevType,
-      currentRoomType: currType,
-      actionItems,
-    });
-  }
-
-  // 6. Also check yesterday's occupancy vs today's to detect transfer timing
-  const yesterday = addDays(targetDate, -1);
-  const { data: yesterdayOcc } = await supabase
-    .from("gingr_room_occupancy")
-    .select("run_name, animal_names")
-    .eq("location_id", locationId)
-    .eq("occupancy_date", yesterday)
-    .eq("occupied", true);
-
-  if (yesterdayOcc && yesterdayOcc.length > 0) {
-    const yesterdayMap: Record<string, string> = {};
-    for (const occ of yesterdayOcc) {
-      if (!occ.animal_names || !occ.run_name) continue;
-      const entries = (occ.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
-      for (const entry of entries) {
-        const match = entry.match(/^(.+?)\s*\(/);
-        const dogName = match ? match[1].trim() : entry.trim();
-        if (dogName) {
-          yesterdayMap[dogName.toLowerCase()] = occ.run_name;
+    if (occupancy && occupancy.length > 0) {
+      const occupancyMap: Record<string, { runName: string; ownerName: string }> = {};
+      for (const occ of occupancy) {
+        if (!occ.animal_names || !occ.run_name) continue;
+        const entries = (occ.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
+        for (const entry of entries) {
+          const match = entry.match(/^(.+?)\s*\((.+?)\)/);
+          const dogName = match ? match[1].trim() : entry.trim();
+          const ownerName = match ? match[2].trim() : "";
+          if (dogName) {
+            occupancyMap[dogName.toLowerCase()] = { runName: occ.run_name, ownerName };
+          }
         }
       }
-    }
-    // Update transfer dates: if dog was already in new room yesterday, the transfer was earlier
-    for (const t of transfers) {
-      const yRoom = yesterdayMap[(t.animalName || "").toLowerCase()];
-      if (yRoom === t.currentRoom) {
-        // Dog was in the new room yesterday too — transfer happened before yesterday
-        t.transferDate = yesterday;
+
+      for (const res of activeRes || []) {
+        const name = (res.animal_name || "").toLowerCase().trim();
+        if (!name) continue;
+        const occ = occupancyMap[name];
+        if (!occ) continue;
+
+        const previousRoom = res.room_assignment || "";
+        const currentRoom = occ.runName;
+        if (!previousRoom || previousRoom === currentRoom) continue;
+
+        const prevType = classifyRoomType(previousRoom);
+        const currType = classifyRoomType(currentRoom);
+        const roomTypeChanged = prevType !== currType && prevType !== "" && currType !== "";
+
+        const animalGingrId = String(res.animal_gingr_id || "");
+        const weight = weightMap[animalGingrId] ?? null;
+        const sizeCategory = getSizeCategory(animalGingrId, weight);
+        const breed = breedMap[animalGingrId] || res.raw_data?.animal?.breed || "";
+        const ownerName = [res.owner_first_name || "", res.owner_last_name || ""].filter(Boolean).join(" ") || occ.ownerName;
+
+        const actionItems: string[] = [
+          `Move belongings from ${previousRoom} to ${currentRoom}`,
+          `Clean/disinfect old room (${previousRoom})`,
+          `Set up new room (${currentRoom})`,
+        ];
+        if (roomTypeChanged) {
+          actionItems.splice(1, 0, `Update collar — was ${prevType}, now ${currType}`);
+        }
+
+        transfers.push({
+          animalName: res.animal_name || "Unknown",
+          animalGingrId,
+          ownerName,
+          breed,
+          weight,
+          sizeCategory,
+          previousRoom,
+          currentRoom,
+          transferDate: targetDate,
+          reservationType: res.reservation_type_name || "",
+          reservationGingrId: String(res.gingr_id || ""),
+          roomTypeChanged,
+          previousRoomType: prevType,
+          currentRoomType: currType,
+          actionItems,
+        });
       }
     }
   }
@@ -2166,6 +2289,83 @@ function computeServiceReport(
   dogs.sort((a, b) => a.animalName.localeCompare(b.animalName));
 
   return { dogs };
+}
+
+/**
+ * Enhanced enrichment report that includes:
+ * 1. ALL dogs with enrichment scheduled for today (boarding + daycare + pending)
+ * 2. "Suggested" enrichments: dogs checked in who have enrichment on their reservation
+ *    but not specifically scheduled for today
+ */
+function computeEnrichmentReport(
+  liveReservations: Record<string, any>,
+  dbReservations: Record<string, any>,
+  targetDate: string,
+): any {
+  const scheduled: ServiceDog[] = [];
+  const suggested: Array<ServiceDog & { reason: string }> = [];
+  const seen = new Set<string>();
+
+  // Merge live + DB reservations, preferring live data
+  const merged: Record<string, any> = { ...dbReservations };
+  for (const [id, res] of Object.entries(liveReservations)) {
+    merged[id] = res;
+  }
+
+  for (const res of Object.values(merged)) {
+    const services = res.services || [];
+    const animalId = String(res.animal?.id || res.animalGingrId || "");
+    if (!animalId || seen.has(animalId)) continue;
+
+    const enrichmentServices = services.filter((s: any) =>
+      (s.name || s.service_name || "")
+        .toLowerCase()
+        .includes("enrichment"),
+    );
+
+    if (enrichmentServices.length === 0) continue;
+    seen.add(animalId);
+
+    const ownerFirst = res.owner?.first_name || "";
+    const ownerLast = res.owner?.last_name || "";
+
+    // Check if any enrichment is scheduled for the target date
+    const scheduledForToday = enrichmentServices.some((s: any) => {
+      const schedAt = s.scheduled_at || s.scheduled_date || "";
+      return schedAt.includes(targetDate);
+    });
+
+    const dog: ServiceDog = {
+      animalId,
+      animalName: res.animal?.name || "",
+      ownerName: `${ownerFirst} ${ownerLast}`.trim(),
+      services: enrichmentServices.map(
+        (s: any) => s.name || s.service_name || "enrichment",
+      ),
+    };
+
+    if (scheduledForToday) {
+      scheduled.push(dog);
+    } else {
+      // Has enrichment on reservation but not specifically scheduled for today — suggest it
+      const serviceDates = enrichmentServices.map((s: any) => s.scheduled_at || s.scheduled_date || "unknown").join(", ");
+      suggested.push({
+        ...dog,
+        reason: `Enrichment on reservation (scheduled: ${serviceDates}) but not specifically for ${targetDate}`,
+      });
+    }
+  }
+
+  scheduled.sort((a, b) => a.animalName.localeCompare(b.animalName));
+  suggested.sort((a, b) => a.animalName.localeCompare(b.animalName));
+
+  return {
+    dogs: [...scheduled, ...suggested.map(s => ({ ...s, isSuggested: true }))],
+    scheduled,
+    suggested,
+    scheduledCount: scheduled.length,
+    suggestedCount: suggested.length,
+  };
 }
 
 // ─── Fetch DB reservations for a target date (for service reports) ─────────
@@ -2376,7 +2576,10 @@ Deno.serve(async (req: Request) => {
 
     // 9. Service Reports
     const pamperReport = computeServiceReport(reservations, "pamper");
-    const enrichmentReport = computeServiceReport(reservations, "enrichment");
+
+    // 9b. Enrichment: Merge live Gingr data with DB reservations to include daycare + pending dogs
+    const dbReservationsToday = await fetchReservationsForDate(supabase, locationId, today);
+    const enrichmentReport = computeEnrichmentReport(reservations, dbReservationsToday, today);
 
     // 10. Belongings Report (departing dogs — fetch belongings from Gingr API)
     const belongingsReport = await computeBelongingsReport(supabase, locationId, today, gingrSubdomain, gingrApiKey);
@@ -2384,8 +2587,8 @@ Deno.serve(async (req: Request) => {
     // 11. Collars Report (next-day collar preparation)
     const collarsReport = await computeCollarsReport(supabase, locationId, today);
 
-    // 12. Lodging Transfers (room changes — day-of only, not in future loop)
-    const lodgingTransfers = await computeLodgingTransfers(supabase, locationId, today);
+    // 12. Lodging Transfers (from Gingr transfer report — day-of only, not in future loop)
+    const lodgingTransfers = await computeLodgingTransfers(supabase, locationId, today, gingrSubdomain, gingrApiKey);
 
     // ─── Compute FUTURE days (today + 1 through today + 7) ─────────────
     // Skip Gingr web auth (service notes) for future days — only today gets those.
@@ -2432,7 +2635,7 @@ Deno.serve(async (req: Request) => {
       }
       const privatePlayFuture = computePrivatePlay(reservationsFuture, futureWeightMap, futureBreedMap);
       const pamperFuture = computeServiceReport(reservationsFuture, "pamper");
-      const enrichmentFuture = computeServiceReport(reservationsFuture, "enrichment");
+      const enrichmentFuture = computeEnrichmentReport(reservationsFuture, reservationsFuture, futureDate);
 
       // Collars: DB-only for all future days
       const collarsFuture = await computeCollarsReport(supabase, locationId, futureDate);
