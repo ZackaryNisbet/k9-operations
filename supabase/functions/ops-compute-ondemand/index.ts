@@ -176,73 +176,79 @@ async function fetchAvgCheckoutFromGingr(
   animalName: string,
   reservationType: string,
   supabase: any,
-): Promise<{ avgCheckoutTime: string | null; sampleCount: number }> {
+): Promise<{ avgCheckoutTime: string | null; sampleCount: number; checkoutHistory: any[] }> {
   try {
-    // Query past 90 days in 30-day chunks (Gingr API max range)
-    const now = new Date();
+    const url = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/reservations_by_animal?key=${GINGR_API_KEY}&id=${animalId}&restrict_to=past&params[completedOnly]=true&limit=20`;
+    const resp = await fetch(url);
+    if (!resp.ok) return { avgCheckoutTime: null, sampleCount: 0, checkoutHistory: [] };
+    const json = await resp.json();
+    const reservations = json?.data?.reservations || json?.data || [];
+    if (!Array.isArray(reservations)) return { avgCheckoutTime: null, sampleCount: 0, checkoutHistory: [] };
+
     const allCheckoutTimes: number[] = []; // minutes since midnight
+    const checkoutHistory: any[] = [];
 
-    for (let chunk = 0; chunk < 3; chunk++) {
-      const endDate = new Date(now);
-      endDate.setDate(endDate.getDate() - (chunk * 30));
-      const startDate = new Date(endDate);
-      startDate.setDate(startDate.getDate() - 30);
+    for (const res of reservations) {
+      const r = res?.reservation || res;
+      const coStamp = r?.check_out_stamp || r?.check_out_date;
+      if (!coStamp) continue;
 
-      const startStr = `${startDate.getFullYear()}-${String(startDate.getMonth() + 1).padStart(2, "0")}-${String(startDate.getDate()).padStart(2, "0")}`;
-      const endStr = `${endDate.getFullYear()}-${String(endDate.getMonth() + 1).padStart(2, "0")}-${String(endDate.getDate()).padStart(2, "0")}`;
+      // Filter to same reservation type if available
+      const resType = r?.reservation_type?.type || r?.type || "";
 
-      const url = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/reservations_by_animal?key=${GINGR_API_KEY}&id=${animalId}&restrict_to=past&params[completedOnly]=true&params[startDate]=${startStr}&params[endDate]=${endStr}`;
-      const resp = await fetch(url);
-      if (!resp.ok) continue;
-      const json = await resp.json();
-      const reservations = json?.data?.reservations || json?.data || [];
-      if (!Array.isArray(reservations)) continue;
+      let coDate: Date;
+      if (typeof coStamp === "number") {
+        coDate = new Date(coStamp * 1000);
+      } else {
+        coDate = new Date(coStamp);
+      }
+      if (isNaN(coDate.getTime())) continue;
 
-      for (const res of reservations) {
-        const r = res?.reservation || res;
-        const coStamp = r?.check_out_stamp || r?.check_out_date;
-        if (!coStamp) continue;
-
-        // Convert to time-of-day (minutes since midnight)
-        let coDate: Date;
-        if (typeof coStamp === "number") {
-          coDate = new Date(coStamp * 1000);
-        } else {
-          coDate = new Date(coStamp);
-        }
-        if (isNaN(coDate.getTime())) continue;
-
-        // Use Eastern time (UTC-4 or UTC-5)
-        const eastern = new Date(coDate.toLocaleString("en-US", { timeZone: "America/New_York" }));
-        const minutesSinceMidnight = eastern.getHours() * 60 + eastern.getMinutes();
-        // Filter out unreasonable times (before 6am or after 10pm)
-        if (minutesSinceMidnight >= 360 && minutesSinceMidnight <= 1320) {
-          allCheckoutTimes.push(minutesSinceMidnight);
-        }
+      // Use Eastern time
+      const eastern = new Date(coDate.toLocaleString("en-US", { timeZone: "America/New_York" }));
+      const minutesSinceMidnight = eastern.getHours() * 60 + eastern.getMinutes();
+      // Filter out unreasonable times (before 6am or after 10pm)
+      if (minutesSinceMidnight >= 360 && minutesSinceMidnight <= 1320) {
+        allCheckoutTimes.push(minutesSinceMidnight);
+        const h = eastern.getHours();
+        const m = eastern.getMinutes();
+        const ampm = h >= 12 ? "PM" : "AM";
+        const h12 = h % 12 || 12;
+        const timeStr = `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
+        const dateStr = `${eastern.getFullYear()}-${String(eastern.getMonth() + 1).padStart(2, "0")}-${String(eastern.getDate()).padStart(2, "0")}`;
+        checkoutHistory.push({
+          date: dateStr,
+          time: timeStr,
+          reservationType: resType,
+        });
       }
     }
 
-    if (allCheckoutTimes.length === 0) return { avgCheckoutTime: null, sampleCount: 0 };
+    if (allCheckoutTimes.length === 0) return { avgCheckoutTime: null, sampleCount: 0, checkoutHistory: [] };
 
     const avgMinutes = Math.round(allCheckoutTimes.reduce((a, b) => a + b, 0) / allCheckoutTimes.length);
     const avgHours = Math.floor(avgMinutes / 60);
     const avgMins = avgMinutes % 60;
     const avgTimeStr = `${String(avgHours).padStart(2, "0")}:${String(avgMins).padStart(2, "0")}`;
 
-    // Cache the result
+    // Sort history newest first
+    checkoutHistory.sort((a, b) => b.date.localeCompare(a.date));
+
+    // Cache the result with checkout history
     await supabase.from("animal_checkout_averages").upsert({
       animal_id: animalId,
       animal_name: animalName,
       avg_checkout_time: avgTimeStr,
       sample_count: allCheckoutTimes.length,
       reservation_type: reservationType,
+      checkout_history: checkoutHistory,
       computed_at: new Date().toISOString(),
     }, { onConflict: "animal_id" });
 
-    return { avgCheckoutTime: avgTimeStr, sampleCount: allCheckoutTimes.length };
+    return { avgCheckoutTime: avgTimeStr, sampleCount: allCheckoutTimes.length, checkoutHistory };
   } catch (err) {
     console.error(`Error fetching checkout avg for animal ${animalId}:`, err);
-    return { avgCheckoutTime: null, sampleCount: 0 };
+    return { avgCheckoutTime: null, sampleCount: 0, checkoutHistory: [] };
   }
 }
 
@@ -251,19 +257,18 @@ async function getAvgCheckoutTimes(
   animalNames: Record<string, string>,
   resTypes: Record<string, string>,
   supabase: any,
-): Promise<Record<string, { avgCheckoutTime: string | null; sampleCount: number }>> {
+): Promise<Record<string, { avgCheckoutTime: string | null; sampleCount: number; checkoutHistory: any[] }>> {
   if (animalIds.length === 0) return {};
 
-  const result: Record<string, { avgCheckoutTime: string | null; sampleCount: number }> = {};
+  const result: Record<string, { avgCheckoutTime: string | null; sampleCount: number; checkoutHistory: any[] }> = {};
 
   // Check cache first
   const { data: cached } = await supabase
     .from("animal_checkout_averages")
-    .select("animal_id, avg_checkout_time, sample_count")
+    .select("animal_id, avg_checkout_time, sample_count, checkout_history, computed_at")
     .in("animal_id", animalIds);
 
   const now = new Date();
-  const staleIds: string[] = [];
   const freshCache: Record<string, any> = {};
 
   for (const row of (cached || [])) {
@@ -272,8 +277,6 @@ async function getAvgCheckoutTimes(
     const ageMs = now.getTime() - computedAt.getTime();
     if (ageMs < 24 * 60 * 60 * 1000 && row.avg_checkout_time) {
       freshCache[row.animal_id] = row;
-    } else {
-      staleIds.push(row.animal_id);
     }
   }
 
@@ -283,6 +286,7 @@ async function getAvgCheckoutTimes(
       result[id] = {
         avgCheckoutTime: freshCache[id].avg_checkout_time,
         sampleCount: freshCache[id].sample_count || 0,
+        checkoutHistory: freshCache[id].checkout_history || [],
       };
     }
   }
@@ -290,7 +294,7 @@ async function getAvgCheckoutTimes(
   // Fetch fresh data for animals not in cache or stale
   const toFetch = animalIds.filter(id => !freshCache[id]);
 
-  // Limit concurrent Gingr API calls to 3 at a time
+  // Limit concurrent Gingr API calls to 5 at a time
   const queue = [...toFetch];
   async function worker() {
     while (queue.length > 0) {
@@ -300,7 +304,7 @@ async function getAvgCheckoutTimes(
       result[id] = data;
     }
   }
-  const workers = Array.from({ length: Math.min(3, queue.length) }, () => worker());
+  const workers = Array.from({ length: Math.min(5, queue.length) }, () => worker());
   await Promise.all(workers);
 
   return result;
@@ -421,6 +425,9 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     const endMs = new Date(endDay + "T12:00:00").getTime();
     const nights = Math.round((endMs - startMs) / (24 * 60 * 60 * 1000));
     if (nights < 2) continue;
+
+    // Must be departing on the target date (end_date equals target date)
+    if (endDay !== targetDate) continue;
 
     // Confirm no bath/grooming service on this reservation for today or tomorrow
     const rd = r.raw_data || {};
@@ -579,6 +586,7 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
     // Avg checkout
     const checkoutData = checkoutAvgs[d.animalGingrId];
     const avgCheckoutTime = checkoutData?.avgCheckoutTime || null;
+    const checkoutHistory = checkoutData?.checkoutHistory || [];
 
     return {
       animalGingrId: d.animalGingrId,
@@ -610,6 +618,7 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
       roommates,
       siblingGroup,
       avgCheckoutTime,
+      checkoutHistory,
       reservationDates: { start: (d.startDate || "").split("T")[0], end: (d.endDate || "").split("T")[0] },
     };
   }
@@ -692,7 +701,7 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
   };
 }
 
-// ─── Compute service report (pamper, enrichment) ──────────────────────────
+// ─── Compute service report (pamper only) ─────────────────────────────────
 
 function computeServiceReport(
   reservations: Record<string, any>,
@@ -722,6 +731,135 @@ function computeServiceReport(
 
   dogs.sort((a, b) => a.animalName.localeCompare(b.animalName));
   return { dogs };
+}
+
+// ─── Compute enrichment report (queries Gingr + snapshots for past/future) ─
+
+async function computeEnrichmentReport(
+  supabase: any,
+  locationId: string,
+  targetDate: string,
+  localReservations: Record<string, any>,
+): Promise<any> {
+  const scheduled: any[] = [];
+  const suggested: any[] = [];
+  const seen = new Set<string>();
+
+  // 1) First try local reservations (from Supabase — currently checked-in dogs)
+  for (const res of Object.values(localReservations)) {
+    const services = res.services || [];
+    const animalId = String(res.animal?.id || "");
+    if (!animalId || seen.has(animalId)) continue;
+
+    const enrichmentServices = services.filter((s: any) =>
+      (s.name || s.service_name || "").toLowerCase().includes("enrichment"),
+    );
+    if (enrichmentServices.length === 0) continue;
+    seen.add(animalId);
+
+    const ownerFirst = res.owner?.first_name || "";
+    const ownerLast = res.owner?.last_name || "";
+    const resType = res.reservation_type?.type || "";
+
+    const scheduledForToday = enrichmentServices.some((s: any) => {
+      const schedAt = s.scheduled_at || s.scheduled_date || "";
+      return schedAt.includes(targetDate);
+    });
+
+    const dog = {
+      animalId,
+      animalName: res.animal?.name || "",
+      ownerName: `${ownerFirst} ${ownerLast}`.trim(),
+      services: enrichmentServices.map((s: any) => s.name || s.service_name || "enrichment"),
+      status: scheduledForToday ? "scheduled" : "suggested",
+      reservationType: resType,
+      summary: enrichmentServices.map((s: any) => s.name || "enrichment").join(", "),
+    };
+
+    if (scheduledForToday) {
+      scheduled.push(dog);
+    } else {
+      suggested.push({ ...dog, isSuggested: true, reason: `Enrichment on reservation but not scheduled for ${targetDate}` });
+    }
+  }
+
+  // 2) Check enrichment_snapshots for historical data (catches daycare dogs that already checked out)
+  const { data: snapshots } = await supabase
+    .from("enrichment_snapshots")
+    .select("animal_id, animal_name, owner_name, services, reservation_type, status")
+    .eq("location_id", locationId)
+    .eq("report_date", targetDate);
+
+  for (const snap of (snapshots || [])) {
+    if (!snap.animal_id || seen.has(snap.animal_id)) continue;
+    seen.add(snap.animal_id);
+    scheduled.push({
+      animalId: snap.animal_id,
+      animalName: snap.animal_name || "",
+      ownerName: snap.owner_name || "",
+      services: Array.isArray(snap.services) ? snap.services : ["enrichment"],
+      status: snap.status || "scheduled",
+      reservationType: snap.reservation_type || "",
+      summary: Array.isArray(snap.services) ? snap.services.join(", ") : "enrichment",
+    });
+  }
+
+  // 3) If we still have very few results, try Gingr reservations API to find ALL reservations for this date
+  if (scheduled.length + suggested.length < 3) {
+    try {
+      const gingrUrl = `https://${GINGR_SUBDOMAIN}.gingrapp.com/api/v1/reservations`;
+      const params = new URLSearchParams({
+        key: GINGR_API_KEY,
+        "params[startDate]": targetDate,
+        "params[endDate]": targetDate,
+      });
+      const resp = await fetch(gingrUrl, { method: "POST", body: params });
+      if (resp.ok) {
+        const json = await resp.json();
+        const resData = json?.data || {};
+        const entries = typeof resData === "object" && !Array.isArray(resData)
+          ? Object.values(resData)
+          : (Array.isArray(resData) ? resData : []);
+
+        for (const entry of entries) {
+          const r = (entry as any)?.reservation || entry;
+          const animalId = String(r?.animal?.id || "");
+          if (!animalId || seen.has(animalId)) continue;
+
+          const services = r?.services || [];
+          const enrichmentSvcs = services.filter((s: any) =>
+            (s?.name || "").toLowerCase().includes("enrichment"),
+          );
+          if (enrichmentSvcs.length === 0) continue;
+          seen.add(animalId);
+
+          const resType = r?.reservation_type?.type || "";
+          scheduled.push({
+            animalId,
+            animalName: r?.animal?.name || "",
+            ownerName: `${r?.owner?.first_name || ""} ${r?.owner?.last_name || ""}`.trim(),
+            services: enrichmentSvcs.map((s: any) => s.name || "enrichment"),
+            status: "scheduled",
+            reservationType: resType,
+            summary: enrichmentSvcs.map((s: any) => s.name || "enrichment").join(", "),
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Gingr enrichment API fallback error:", err);
+    }
+  }
+
+  const allDogs = [...scheduled, ...suggested];
+  allDogs.sort((a, b) => a.animalName.localeCompare(b.animalName));
+
+  return {
+    dogs: allDogs,
+    scheduled,
+    suggested,
+    scheduledCount: scheduled.length,
+    suggestedCount: suggested.length,
+  };
 }
 
 // ─── Compute private play ─────────────────────────────────────────────────
@@ -977,7 +1115,7 @@ Deno.serve(async (req: Request) => {
     const [bathing, pamper, enrichment, lodgingTransfers] = await Promise.all([
       computeBathingReport(sb, locationId, date),
       Promise.resolve(computeServiceReport(reservations, "pamper")),
-      Promise.resolve(computeServiceReport(reservations, "enrichment")),
+      computeEnrichmentReport(sb, locationId, date, reservations),
       computeLodgingTransfers(sb, locationId, date),
     ]);
     const privatePlay = computePrivatePlay(reservations);

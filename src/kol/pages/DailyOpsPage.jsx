@@ -1021,6 +1021,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   // ─── Bathing Report (server-computed via ops-compute) ────────────────────────
   const [bathCompleted, setBathCompleted] = useState({});
   const [bathFilter, setBathFilter] = useState("all");
+  const [expandedCheckoutHistory, setExpandedCheckoutHistory] = useState(null);
   const [onDemandLoading, setOnDemandLoading] = useState(false);
 
   // Load bath completions from Supabase
@@ -1123,6 +1124,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         roommates: d.roommates || [],
         siblingGroup: d.siblingGroup || "",
         avgCheckoutTime: d.avgCheckoutTime || null,
+        checkoutHistory: d.checkoutHistory || [],
         reservationDates: d.reservationDates || {},
       };
     });
@@ -1331,7 +1333,26 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                         <td style={{ padding: "12px 14px", textAlign: "center", color: C.pri, fontSize: 12, fontWeight: 600, fontFamily: "inherit" }}>{row.schedTime}</td>
                         <td style={{ padding: "12px 14px", textAlign: "center", fontFamily: "inherit" }}>
                           <div style={{ color: C.textSec, fontSize: 12 }}>{row.coTime}</div>
-                          {avgTime && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }} title="Historical average checkout time">Avg: {avgTime}</div>}
+                          {avgTime && (
+                            <div
+                              onClick={() => row.checkoutHistory?.length > 0 && setExpandedCheckoutHistory(expandedCheckoutHistory === row.resId ? null : row.resId)}
+                              style={{ fontSize: 10, color: row.checkoutHistory?.length > 0 ? C.pri : C.textMut, marginTop: 2, cursor: row.checkoutHistory?.length > 0 ? "pointer" : "default", textDecoration: row.checkoutHistory?.length > 0 ? "underline" : "none" }}
+                              title="Click to see checkout history"
+                            >Avg: {avgTime}</div>
+                          )}
+                          {expandedCheckoutHistory === row.resId && row.checkoutHistory?.length > 0 && (
+                            <div style={{ marginTop: 6, padding: "8px 10px", background: "#F9FAFB", borderRadius: 8, border: `1px solid ${C.borderLight}`, textAlign: "left", fontSize: 11 }}>
+                              <div style={{ fontWeight: 700, color: C.text, marginBottom: 4, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.04em" }}>Checkout History</div>
+                              {row.checkoutHistory.slice(0, 10).map((h, hi) => (
+                                <div key={hi} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "2px 0", color: C.textSec, borderBottom: hi < Math.min(row.checkoutHistory.length, 10) - 1 ? `1px solid ${C.borderLight}` : "none" }}>
+                                  <span>{h.date}</span>
+                                  <span style={{ fontWeight: 600, color: C.text }}>{h.time}</span>
+                                  {h.reservationType && <span style={{ fontSize: 9, color: C.textMut }}>{h.reservationType}</span>}
+                                </div>
+                              ))}
+                              {row.checkoutHistory.length > 10 && <div style={{ fontSize: 10, color: C.textMut, marginTop: 4 }}>+{row.checkoutHistory.length - 10} more</div>}
+                            </div>
+                          )}
                         </td>
                         <td style={{ padding: "12px 14px", textAlign: "center" }}>
                           <button onClick={() => toggleBath(row.resId)} style={{
