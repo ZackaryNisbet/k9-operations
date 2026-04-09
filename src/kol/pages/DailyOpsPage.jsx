@@ -1100,6 +1100,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         roomNum: d.roomLabel || "—",
         roomType: d.suiteType || "",
         bathType: d.bathType || "Standard",
+        bathIcons: d.bathIcons || [],
         bathModifiers: d.bathModifiers || [],
         bathNotes: d.bathNotes || "",
         reservationNotes: d.reservationNotes || "",
@@ -1220,12 +1221,22 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                           {row.roomType === "Double Compartment" && <div style={{ fontSize: 9, fontWeight: 600, color: C.textMut, marginTop: 1 }}>Double</div>}
                         </td>
                         <td style={{ padding: "12px 14px", color: C.text }}>
-                          <span style={{
-                            display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "inherit",
-                            ...badgeStyle,
-                          }}>
-                            {row.bathType}
-                          </span>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                            {row.bathIcons && row.bathIcons.length > 0 ? (
+                              row.bathIcons.map((icon, ii) => {
+                                const iconBadge = getBathBadgeStyle(icon);
+                                return <span key={ii} style={{
+                                  display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "inherit",
+                                  ...iconBadge,
+                                }}>{icon}</span>;
+                              })
+                            ) : (
+                              <span style={{
+                                display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 11, fontWeight: 700, fontFamily: "inherit",
+                                ...badgeStyle,
+                              }}>{row.bathType}</span>
+                            )}
+                          </div>
                           {row.bathModifiers && row.bathModifiers.length > 0 && <div style={{ marginTop: 3, display: "flex", flexWrap: "wrap", gap: 3 }}>
                             {row.bathModifiers.map(m => <span key={m} style={{ fontSize: 9, fontWeight: 700, padding: "1px 5px", borderRadius: 4, background: "#FEE2E2", color: "#DC2626" }}>{m}</span>)}
                           </div>}
@@ -2241,40 +2252,69 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
   const renderGenericService = () => {
     if (!svcName) return <Card style={{ padding: 32, textAlign: "center" }}><div style={{ color: C.textSec }}>Unknown service</div></Card>;
 
-    const reservations = data.reservations || [];
-    const dogs = data.dogs || [];
-    const inHouse = reservations.filter(r =>
-      (r.status === "checked-in" || r.status === "upcoming") &&
-      r.checkIn <= viewDate && r.checkOut >= viewDate
-    );
     const svcRows = [];
-    inHouse.forEach(res => {
-      const names = getSvcNames(res._services);
-      // For enrichment, use case-insensitive includes to match variants like "Enrichment Activity"
-      const isEnrichmentSvc = svcName.toLowerCase() === "enrichment";
-      const matchCount = isEnrichmentSvc
-        ? names.filter(n => n.toLowerCase().includes("enrichment")).length
-        : names.filter(n => n === svcName).length;
-      if (matchCount === 0) return;
 
-      const dog = dogs.find(d => d.id === res.dogId);
-      const dogName = dog?.fields?.name || res._animalName || "Unknown";
-      const roomInfo = resolveRoomDisplay(res.room);
-      let roomNum = roomInfo.display;
-      let roomType = roomInfo.roomType;
-      // Fallback: if no room assigned, derive room type from reservation type name
-      if (roomNum === "—" && res._resTypeName) {
-        const rtn = res._resTypeName.toLowerCase();
-        if (rtn.includes("luxury")) { roomNum = "LS"; roomType = "Luxury Suite"; }
-        else if (rtn.includes("executive")) { roomNum = "ER"; roomType = "Executive Room"; }
-        else if (rtn.includes("double")) { roomNum = "DC"; roomType = "Double Compartment"; }
-        else if (rtn.includes("single")) { roomNum = "SC"; roomType = "Single Compartment"; }
-      }
-      const ownerName = res._ownerName || "Unknown";
-      const completedInfo = genericSvcCompleted[res.id];
-      const isDone = !!completedInfo;
-      svcRows.push({ resId: res.id, dogName, roomNum, ownerName, isDone, completedInfo, matchCount, resType: res.type, roomType, checkIn: res.checkIn, checkOut: res.checkOut });
-    });
+    // Use server-computed data from ops-compute when available (preserves historical data
+    // including daycare dogs that may have checked out)
+    const svcEntry = allOps.find(e => e.id === `ops_svc_${viewDate}`);
+    const computedDogs = svcEntry?.computed_items?.dogs || [];
+
+    if (computedDogs.length > 0) {
+      // Server-computed path: use the snapshot (includes daycare + boarding + suggested)
+      computedDogs.forEach(d => {
+        const resId = d.animalId || d.animalName || "";
+        const completedInfo = genericSvcCompleted[resId];
+        const isDone = !!completedInfo;
+        svcRows.push({
+          resId,
+          dogName: d.animalName || "Unknown",
+          roomNum: d.roomLabel || "—",
+          ownerName: d.ownerName || "Unknown",
+          isDone,
+          completedInfo,
+          matchCount: (d.services || []).length || 1,
+          resType: "",
+          roomType: "",
+          isSuggested: !!d.isSuggested,
+          reason: d.reason || "",
+        });
+      });
+    } else {
+      // Client-side fallback: use live reservation data
+      const reservations = data.reservations || [];
+      const dogs = data.dogs || [];
+      const inHouse = reservations.filter(r =>
+        (r.status === "checked-in" || r.status === "upcoming") &&
+        r.checkIn <= viewDate && r.checkOut >= viewDate
+      );
+      inHouse.forEach(res => {
+        const names = getSvcNames(res._services);
+        // For enrichment, use case-insensitive includes to match variants like "Enrichment Activity"
+        const isEnrichmentSvc = svcName.toLowerCase() === "enrichment";
+        const matchCount = isEnrichmentSvc
+          ? names.filter(n => n.toLowerCase().includes("enrichment")).length
+          : names.filter(n => n === svcName).length;
+        if (matchCount === 0) return;
+
+        const dog = dogs.find(d => d.id === res.dogId);
+        const dogName = dog?.fields?.name || res._animalName || "Unknown";
+        const roomInfo = resolveRoomDisplay(res.room);
+        let roomNum = roomInfo.display;
+        let roomType = roomInfo.roomType;
+        // Fallback: if no room assigned, derive room type from reservation type name
+        if (roomNum === "—" && res._resTypeName) {
+          const rtn = res._resTypeName.toLowerCase();
+          if (rtn.includes("luxury")) { roomNum = "LS"; roomType = "Luxury Suite"; }
+          else if (rtn.includes("executive")) { roomNum = "ER"; roomType = "Executive Room"; }
+          else if (rtn.includes("double")) { roomNum = "DC"; roomType = "Double Compartment"; }
+          else if (rtn.includes("single")) { roomNum = "SC"; roomType = "Single Compartment"; }
+        }
+        const ownerName = res._ownerName || "Unknown";
+        const completedInfo = genericSvcCompleted[res.id];
+        const isDone = !!completedInfo;
+        svcRows.push({ resId: res.id, dogName, roomNum, ownerName, isDone, completedInfo, matchCount, resType: res.type, roomType, checkIn: res.checkIn, checkOut: res.checkOut });
+      });
+    }
     svcRows.sort((a, b) => (a.roomNum || "").localeCompare(b.roomNum || "", undefined, { numeric: true }));
 
     const total = svcRows.length;
@@ -2294,12 +2334,20 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     const showQty = !isEnrichment; // Enrichment doesn't need quantity
     const showDates = isIceCream; // Ice cream needs check-in/check-out dates
 
+    const suggestedCount = svcRows.filter(r => r.isSuggested).length;
+    const scheduledCount = total - suggestedCount;
+
     return (
       <div>
         <Card style={{ padding: "14px 20px", marginBottom: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: 15, fontWeight: 700, color: C.text }}>{svcName}</span>
             <span style={{ fontSize: 13, fontWeight: 600, color: C.textSec }}>{done}/{total} complete</span>
+            {suggestedCount > 0 && (
+              <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: "#FEF3C7", color: "#D97706" }}>
+                +{suggestedCount} suggested
+              </span>
+            )}
           </div>
           {total > 0 && (
             <div style={{ marginTop: 10, height: 6, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
@@ -2332,11 +2380,14 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                   {svcRows.map((row, i) => (
                     <tr key={row.resId} style={{
                       borderBottom: i < svcRows.length - 1 ? `1px solid ${C.borderLight}` : "none",
-                      background: row.isDone ? "#F0FDF4" : "transparent",
+                      background: row.isDone ? "#F0FDF4" : row.isSuggested ? "#FFFBEB" : "transparent",
                       transition: "background 0.2s",
                     }}>
                       <td style={{ padding: "12px 14px", fontWeight: 600, color: C.text }}>
-                        {row.dogName}
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          {row.dogName}
+                          {row.isSuggested && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEF3C7", color: "#D97706" }}>Suggested</span>}
+                        </div>
                       </td>
                       <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri }}>
                         {row.roomNum}
