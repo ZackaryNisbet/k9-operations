@@ -1020,6 +1020,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
 
   // ─── Bathing Report (server-computed via ops-compute) ────────────────────────
   const [bathCompleted, setBathCompleted] = useState({});
+  const [bathFilter, setBathFilter] = useState("all");
   const [onDemandLoading, setOnDemandLoading] = useState(false);
 
   // Load bath completions from Supabase
@@ -1090,6 +1091,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
     // Read server-computed bathing data from ops-compute (single source of truth)
     const bathingEntry = allOps.find(e => e.id === `ops_bathing_${viewDate}`);
     const computedDogs = bathingEntry?.computed_items?.dogs || [];
+    const summary = bathingEntry?.computed_items?.summary || {};
 
     const bathRows = computedDogs.map(d => {
       const resId = `g${d.gingrReservationId}`;
@@ -1097,6 +1099,7 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
       return {
         resId,
         dogName: d.animalName || "Unknown",
+        ownerName: d.ownerName || "",
         roomNum: d.roomLabel || "—",
         roomType: d.suiteType || "",
         bathType: d.bathType || "Standard",
@@ -1113,13 +1116,37 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         coTime: d.departureTime || "—",
         isDone: !!completedInfo || d.isDone,
         completedInfo,
-        isDeparted: !!d.isCheckedOut,
-        resType: "boarding",
+        isCheckedOut: !!d.isCheckedOut,
+        status: d.status || "scheduled",
+        reservationCategory: d.reservationCategory || "other",
+        roomName: d.roomName || "",
+        roommates: d.roommates || [],
+        siblingGroup: d.siblingGroup || "",
+        avgCheckoutTime: d.avgCheckoutTime || null,
+        reservationDates: d.reservationDates || {},
       };
+    });
+
+    // Apply filter
+    const filteredRows = bathRows.filter(row => {
+      if (bathFilter === "all") return true;
+      if (bathFilter === "suggested") return row.status === "suggested";
+      return row.status === "scheduled" && row.reservationCategory === bathFilter;
     });
 
     const totalBaths = bathRows.length;
     const doneBaths = bathRows.filter(r => r.isDone).length;
+
+    // Category counts for filter pills
+    const catCounts = summary.byCategory || {};
+    const filterPills = [
+      { key: "all", label: "All", count: totalBaths },
+      { key: "boarding", label: "Boarding", count: catCounts.boarding || 0 },
+      { key: "daycare", label: "Daycare", count: catCounts.daycare || 0 },
+      { key: "day_boarding", label: "Day Boarding", count: catCounts.day_boarding || 0 },
+      { key: "evaluation", label: "Evaluation", count: catCounts.evaluation || 0 },
+      { key: "suggested", label: "Suggested", count: catCounts.suggested || 0 },
+    ].filter(p => p.key === "all" || p.count > 0);
 
     const toggleBath = (resId) => {
       const newCompleted = { ...bathCompleted };
@@ -1154,9 +1181,22 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
         "Shampoo From Home": { background: "#ECFDF5", color: "#059669" },
         "Fresh N Clean": { background: "#ECFDF5", color: "#059669" },
         "Water Rinse": { background: "#E0F2FE", color: "#0369A1" },
+        "Suggested": { background: "#FFF7ED", color: "#C2410C" },
       };
       if (type.includes("Hypo")) return { background: "#FEF3C7", color: "#D97706" };
       return styles[type] || { background: "#F3F4F6", color: "#6B7280" };
+    };
+
+    // Format avg checkout time for display
+    const fmtAvgTime = (timeStr) => {
+      if (!timeStr) return null;
+      try {
+        const [h, m] = timeStr.split(":").map(Number);
+        if (isNaN(h) || isNaN(m)) return null;
+        const ampm = h >= 12 ? "p" : "a";
+        const h12 = h % 12 || 12;
+        return `${h12}:${String(m).padStart(2, "0")}${ampm}`;
+      } catch { return null; }
     };
 
     const thStyle = { textAlign: "left", padding: "10px 14px", fontWeight: 700, color: C.textMut, fontSize: 11, letterSpacing: "0.04em", fontFamily: "inherit" };
@@ -1177,10 +1217,32 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
               <div style={{ width: `${Math.round((doneBaths / totalBaths) * 100)}%`, height: "100%", borderRadius: 3, background: doneBaths === totalBaths ? "#10B981" : "#F59E0B", transition: "width 0.3s" }} />
             </div>
           )}
+          {/* Filter pills */}
+          {filterPills.length > 2 && (
+            <div style={{ marginTop: 12, display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
+              {filterPills.map(f => (
+                <button key={f.key} onClick={() => setBathFilter(f.key)} style={{
+                  padding: "5px 14px", borderRadius: 20, whiteSpace: "nowrap",
+                  border: `1.5px solid ${bathFilter === f.key ? "#14532D" : C.border}`,
+                  background: bathFilter === f.key ? "#14532D" : "#fff",
+                  color: bathFilter === f.key ? "#fff" : C.text,
+                  fontWeight: bathFilter === f.key ? 700 : 500,
+                  fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+                  transition: "all 0.15s",
+                }}>
+                  {f.label}{f.count != null ? ` (${f.count})` : ""}
+                </button>
+              ))}
+            </div>
+          )}
         </Card>
-        {totalBaths === 0 ? (
+        {filteredRows.length === 0 ? (
           <Card style={{ padding: 32, textAlign: "center" }}>
-            <div style={{ fontSize: 14, color: C.textMut, fontFamily: "inherit" }}>No baths scheduled for {isToday ? "today" : fmtDate(viewDate)}</div>
+            <div style={{ fontSize: 14, color: C.textMut, fontFamily: "inherit" }}>
+              {totalBaths === 0
+                ? `No baths scheduled for ${isToday ? "today" : fmtDate(viewDate)}`
+                : `No ${bathFilter === "suggested" ? "suggested" : bathFilter} baths`}
+            </div>
           </Card>
         ) : (
           <Card style={{ padding: 0, overflow: "hidden" }}>
@@ -1198,27 +1260,43 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                   </tr>
                 </thead>
                 <tbody>
-                  {bathRows.map((row, i) => {
+                  {filteredRows.map((row, i) => {
                     const badgeStyle = getBathBadgeStyle(row.bathType);
+                    const prevRow = i > 0 ? filteredRows[i - 1] : null;
+                    const isNewGroup = row.siblingGroup && (!prevRow || prevRow.siblingGroup !== row.siblingGroup);
+                    const isInGroup = !!row.siblingGroup;
+                    const avgTime = fmtAvgTime(row.avgCheckoutTime);
+
                     return (
                       <tr key={row.resId} style={{
-                        borderBottom: i < bathRows.length - 1 ? `1px solid ${C.borderLight}` : "none",
-                        background: row.isDone ? "#F0FDF4" : row.isDeparted ? "#FAFAFA" : "transparent",
-                        opacity: row.isDeparted && !row.isDone ? 0.55 : 1,
+                        borderBottom: i < filteredRows.length - 1 ? `1px solid ${C.borderLight}` : "none",
+                        borderTop: isNewGroup ? `2px solid #A7F3D0` : "none",
+                        background: row.isDone ? "#F0FDF4" : row.status === "suggested" ? "#FFF7ED" : isInGroup ? "#F0FDF4" + "33" : "transparent",
                         transition: "background 0.2s",
                       }}>
                         <td style={{ padding: "12px 14px", fontWeight: 600, color: C.text, fontFamily: "inherit" }}>
                           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                             {row.dogName}
-                            {row.isDeparted && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEE2E2", color: "#DC2626" }}>Departed</span>}
+                            {row.status === "suggested" && <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FFF7ED", color: "#C2410C" }}>Suggested</span>}
                             {row.hasPrivatePlay && <span title="Private Play" style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#EDE9FE", color: "#7C3AED" }}>PP</span>}
                             {row.sizeCategory === "large" && <span title={row.weight ? `${row.weight} lbs` : "Large dog"} style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#FEF3C7", color: "#D97706" }}>LG</span>}
                             {row.sizeCategory === "small" && <span title={row.weight ? `${row.weight} lbs` : "Small dog"} style={{ fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 10, background: "#DBEAFE", color: "#2563EB" }}>SM</span>}
                           </div>
+                          {row.roommates.length > 0 && (
+                            <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }}>
+                              {row.roommates.map((rm, ri) => <span key={ri}>{ri > 0 ? ", " : ""}{rm}</span>)}
+                            </div>
+                          )}
+                          {row.status === "suggested" && row.reservationDates?.start && (
+                            <div style={{ fontSize: 10, color: "#C2410C", marginTop: 2 }}>
+                              Boarding {row.reservationDates.start.slice(5)} – {row.reservationDates.end.slice(5)}, no bath scheduled
+                            </div>
+                          )}
                         </td>
                         <td style={{ padding: "12px 14px", textAlign: "center", fontWeight: 600, color: C.pri, fontFamily: "inherit" }}>
                           {row.roomNum}
                           {row.roomType === "Double Compartment" && <div style={{ fontSize: 9, fontWeight: 600, color: C.textMut, marginTop: 1 }}>Double</div>}
+                          {isInGroup && <div style={{ fontSize: 9, fontWeight: 600, color: "#059669", marginTop: 1 }}>{row.roommates.some(r => r.includes("sibling")) ? "Siblings" : "Roommates"}</div>}
                         </td>
                         <td style={{ padding: "12px 14px", color: C.text }}>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
@@ -1251,7 +1329,10 @@ function DailyOpsPage({ data, save, sub, nav, profile, addGlobalToast, params })
                           ) : <span style={{ color: C.textMut }}>—</span>}
                         </td>
                         <td style={{ padding: "12px 14px", textAlign: "center", color: C.pri, fontSize: 12, fontWeight: 600, fontFamily: "inherit" }}>{row.schedTime}</td>
-                        <td style={{ padding: "12px 14px", textAlign: "center", color: C.textSec, fontSize: 12, fontFamily: "inherit" }}>{row.coTime}</td>
+                        <td style={{ padding: "12px 14px", textAlign: "center", fontFamily: "inherit" }}>
+                          <div style={{ color: C.textSec, fontSize: 12 }}>{row.coTime}</div>
+                          {avgTime && <div style={{ fontSize: 10, color: C.textMut, marginTop: 2 }} title="Historical average checkout time">Avg: {avgTime}</div>}
+                        </td>
                         <td style={{ padding: "12px 14px", textAlign: "center" }}>
                           <button onClick={() => toggleBath(row.resId)} style={{
                             width: 28, height: 28, borderRadius: 8,
