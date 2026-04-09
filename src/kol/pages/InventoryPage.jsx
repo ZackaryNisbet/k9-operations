@@ -1553,13 +1553,10 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         return row;
       });
 
-      console.log("[inventory-save] upserting", toUpsert.length, "rows:", JSON.stringify(toUpsert.map(r => ({ item: r.catalog_item_id?.slice(0,8), stock: r.stock_count, ordered: r.ordered }))));
       const { data: upserted, error } = await supabase
         .from("inventory_counts")
         .upsert(toUpsert, { onConflict: "snapshot_id,catalog_item_id" })
         .select();
-      if (error) { console.error("[inventory-save] ERROR:", error); throw error; }
-      console.log("[inventory-save] success:", upserted?.length, "rows returned");
 
       // Update counts state with returned IDs
       setCounts(prev => {
@@ -1594,6 +1591,43 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
       pendingSave.current = {};
       setSaveStatus("saved");
       setTimeout(() => setSaveStatus("idle"), 2200);
+
+      // ── Auto-complete: check if all items are counted + all needing order are ordered/skipped ──
+      if (snap.status !== "completed") {
+        // Get latest counts after this save
+        setCounts(latestCounts => {
+          const activeItems = catalogItems.filter(c => c.is_active);
+          const allCounted = activeItems.every(c => {
+            const cnt = latestCounts[c.id];
+            return cnt && cnt.stock_count != null && cnt.stock_count !== "";
+          });
+          const allOrdersHandled = activeItems.every(c => {
+            const cnt = latestCounts[c.id];
+            if (!cnt) return false;
+            const stockCount = typeof cnt.stock_count === 'number' ? cnt.stock_count : parseInt(cnt.stock_count, 10);
+            const par = c.par_level ?? 0;
+            const needsOrder = par > 0 && stockCount < par;
+            if (!needsOrder) return true; // doesn't need ordering
+            return cnt.ordered || cnt.skipped; // must be ordered or skipped
+          });
+          if (allCounted && allOrdersHandled) {
+            // Auto-complete the snapshot
+            supabase
+              .from("inventory_snapshots")
+              .update({
+                status: "completed",
+                completed_at: new Date().toISOString(),
+                completed_by: profile?.name || profile?.email || "Auto",
+              })
+              .eq("id", snap.id)
+              .then(() => {
+                setSnapshot(prev => ({ ...prev, status: "completed", completed_at: new Date().toISOString() }));
+                if (addGlobalToast) addGlobalToast({ type: "success", message: "Inventory count auto-completed!" });
+              });
+          }
+          return latestCounts; // don't modify, just reading
+        });
+      }
     } catch (err) {
       console.error("Auto-save error:", err);
       setSaveStatus("error");
