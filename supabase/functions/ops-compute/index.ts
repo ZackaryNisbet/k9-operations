@@ -2145,76 +2145,132 @@ async function computeLodgingTransfers(
       });
     }
   } else {
-    // ── Fallback: Occupancy comparison (original logic) ──
-    const { data: occupancy } = await supabase
-      .from("gingr_room_occupancy")
-      .select("run_name, animal_names, gingr_run_id")
-      .eq("location_id", locationId)
-      .eq("occupancy_date", targetDate)
-      .eq("occupied", true);
+    // ── Fallback: Day-over-day occupancy comparison ──
+    // Compare gingr_room_occupancy between targetDate - 1 and targetDate.
+    // Animals present on both days whose run_name changed are transfers.
+    const prevDate = addDays(targetDate, -1);
 
-    if (occupancy && occupancy.length > 0) {
-      const occupancyMap: Record<string, { runName: string; ownerName: string }> = {};
-      for (const occ of occupancy) {
-        if (!occ.animal_names || !occ.run_name) continue;
-        const entries = (occ.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
+    const [{ data: prevOcc }, { data: currOcc }] = await Promise.all([
+      supabase
+        .from("gingr_room_occupancy")
+        .select("run_name, animal_names, gingr_run_id")
+        .eq("location_id", locationId)
+        .eq("occupancy_date", prevDate)
+        .eq("occupied", true),
+      supabase
+        .from("gingr_room_occupancy")
+        .select("run_name, animal_names, gingr_run_id")
+        .eq("location_id", locationId)
+        .eq("occupancy_date", targetDate)
+        .eq("occupied", true),
+    ]);
+
+    // Parse animal_names into { animalName -> { runName, ownerName } }
+    function parseOccupancyRows(rows: any[]): Record<string, { runName: string; ownerName: string }> {
+      const map: Record<string, { runName: string; ownerName: string }> = {};
+      for (const row of rows || []) {
+        if (!row.animal_names || !row.run_name) continue;
+        const entries = (row.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
         for (const entry of entries) {
-          const match = entry.match(/^(.+?)\s*\((.+?)\)/);
-          const dogName = match ? match[1].trim() : entry.trim();
-          const ownerName = match ? match[2].trim() : "";
+          // Handle names like "Oslo Teddy (Ozzy) (Samantha  Schramak)"
+          // Owner name is the LAST parenthesized group
+          const parenGroups: string[] = [];
+          const parenRe = /\(([^)]+)\)/g;
+          let m;
+          while ((m = parenRe.exec(entry)) !== null) {
+            parenGroups.push(m[1].trim());
+          }
+          let dogName: string;
+          let ownerName = "";
+          if (parenGroups.length >= 1) {
+            ownerName = parenGroups[parenGroups.length - 1];
+            const lastParenIdx = entry.lastIndexOf(`(${ownerName})`);
+            dogName = entry.substring(0, lastParenIdx).trim();
+          } else {
+            dogName = entry.trim();
+          }
           if (dogName) {
-            occupancyMap[dogName.toLowerCase()] = { runName: occ.run_name, ownerName };
+            map[dogName.toLowerCase()] = { runName: row.run_name, ownerName };
           }
         }
       }
+      return map;
+    }
 
-      for (const res of activeRes || []) {
-        const name = (res.animal_name || "").toLowerCase().trim();
-        if (!name) continue;
-        const occ = occupancyMap[name];
-        if (!occ) continue;
+    const prevMap = parseOccupancyRows(prevOcc);
+    const currMap = parseOccupancyRows(currOcc);
 
-        const previousRoom = res.room_assignment || "";
-        const currentRoom = occ.runName;
-        if (!previousRoom || previousRoom === currentRoom) continue;
+    for (const [nameKey, curr] of Object.entries(currMap)) {
+      const prev = prevMap[nameKey];
+      if (!prev) continue; // new arrival, not a transfer
+      if (prev.runName === curr.runName) continue; // same room
 
-        const prevType = classifyRoomType(previousRoom);
-        const currType = classifyRoomType(currentRoom);
-        const roomTypeChanged = prevType !== currType && prevType !== "" && currType !== "";
+      const previousRoom = prev.runName;
+      const currentRoom = curr.runName;
+      const prevType = classifyRoomType(previousRoom);
+      const currType = classifyRoomType(currentRoom);
+      const roomTypeChanged = prevType !== currType && prevType !== "" && currType !== "";
 
-        const animalGingrId = String(res.animal_gingr_id || "");
-        const weight = weightMap[animalGingrId] ?? null;
-        const sizeCategory = getSizeCategory(animalGingrId, weight);
-        const breed = breedMap[animalGingrId] || res.raw_data?.animal?.breed || "";
-        const ownerName = [res.owner_first_name || "", res.owner_last_name || ""].filter(Boolean).join(" ") || occ.ownerName;
+      // Try to enrich with reservation data
+      const res = resMap[nameKey] || resMap[nameKey.split(/\s*\(/)[0].trim()];
+      const animalGingrId = res ? String(res.animal_gingr_id || "") : "";
+      const weight = animalGingrId ? (weightMap[animalGingrId] ?? null) : null;
+      const sizeCategory = animalGingrId ? getSizeCategory(animalGingrId, weight) : null;
+      const breed = animalGingrId ? (breedMap[animalGingrId] || res?.raw_data?.animal?.breed || "") : "";
+      const ownerName = res ? [res.owner_first_name || "", res.owner_last_name || ""].filter(Boolean).join(" ") : (curr.ownerName || prev.ownerName || "");
 
-        const actionItems: string[] = [
-          `Move belongings from ${previousRoom} to ${currentRoom}`,
-          `Clean/disinfect old room (${previousRoom})`,
-          `Set up new room (${currentRoom})`,
-        ];
-        if (roomTypeChanged) {
-          actionItems.splice(1, 0, `Update collar — was ${prevType}, now ${currType}`);
+      // Reconstruct display name from current occupancy data
+      let displayName = nameKey;
+      for (const row of currOcc || []) {
+        if (!row.animal_names) continue;
+        const entries = (row.animal_names as string).split("<br>").map((e: string) => e.trim()).filter(Boolean);
+        for (const entry of entries) {
+          if (entry.toLowerCase().startsWith(nameKey)) {
+            const parenGroups: string[] = [];
+            const parenRe = /\(([^)]+)\)/g;
+            let m2;
+            while ((m2 = parenRe.exec(entry)) !== null) {
+              parenGroups.push(m2[1].trim());
+            }
+            if (parenGroups.length >= 1) {
+              const ownerParen = parenGroups[parenGroups.length - 1];
+              const lastIdx = entry.lastIndexOf(`(${ownerParen})`);
+              displayName = entry.substring(0, lastIdx).trim();
+            } else {
+              displayName = entry.trim();
+            }
+            break;
+          }
         }
-
-        transfers.push({
-          animalName: res.animal_name || "Unknown",
-          animalGingrId,
-          ownerName,
-          breed,
-          weight,
-          sizeCategory,
-          previousRoom,
-          currentRoom,
-          transferDate: targetDate,
-          reservationType: res.reservation_type_name || "",
-          reservationGingrId: String(res.gingr_id || ""),
-          roomTypeChanged,
-          previousRoomType: prevType,
-          currentRoomType: currType,
-          actionItems,
-        });
+        if (displayName !== nameKey) break;
       }
+
+      const actionItems: string[] = [
+        `Move belongings from ${previousRoom} to ${currentRoom}`,
+        `Clean/disinfect old room (${previousRoom})`,
+        `Set up new room (${currentRoom})`,
+      ];
+      if (roomTypeChanged) {
+        actionItems.splice(1, 0, `Update collar — was ${prevType}, now ${currType}`);
+      }
+
+      transfers.push({
+        animalName: displayName || "Unknown",
+        animalGingrId,
+        ownerName,
+        breed,
+        weight,
+        sizeCategory,
+        previousRoom,
+        currentRoom,
+        transferDate: targetDate,
+        reservationType: res?.reservation_type_name || "",
+        reservationGingrId: res ? String(res.gingr_id || "") : "",
+        roomTypeChanged,
+        previousRoomType: prevType,
+        currentRoomType: currType,
+        actionItems,
+      });
     }
   }
 
