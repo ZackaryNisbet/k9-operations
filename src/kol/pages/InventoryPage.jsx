@@ -1553,11 +1553,13 @@ export default function InventoryPage({ data, save, nav, profile, addGlobalToast
         return row;
       });
 
+      console.log("[inventory-save] upserting", toUpsert.length, "rows:", JSON.stringify(toUpsert.map(r => ({ item: r.catalog_item_id?.slice(0,8), stock: r.stock_count, ordered: r.ordered }))));
       const { data: upserted, error } = await supabase
         .from("inventory_counts")
         .upsert(toUpsert, { onConflict: "snapshot_id,catalog_item_id" })
         .select();
-      if (error) throw error;
+      if (error) { console.error("[inventory-save] ERROR:", error); throw error; }
+      console.log("[inventory-save] success:", upserted?.length, "rows returned");
 
       // Update counts state with returned IDs
       setCounts(prev => {
