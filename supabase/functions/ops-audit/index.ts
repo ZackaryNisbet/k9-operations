@@ -173,13 +173,17 @@ async function fetchGingrGroundTruth(
     const svcsForAddons = rawSvcs.length > 0 ? rawSvcs : topSvcs;
     const addonNames: string[] = [];
     const modifiers: string[] = [];
+    const MODIFIER_SET = new Set(["NO CRATE DRYER", "NO VELOCITY DRYER", "TOWEL DRY ONLY", "*See account notes*"]);
+    const BATH_ADDON_KEYWORDS = ["premium", "hypo", "medicated", "shampoo", "no spray", "standard", "fresh", "velocity", "crate", "dryer", "towel"];
     for (const svc of svcsForAddons) {
       const n = typeof svc === "string" ? svc : svc?.name || "";
       if (!n || n.toLowerCase().includes("bath")) continue;
-      // Classify as modifier or addon
-      const MODIFIER_SET = new Set(["NO CRATE DRYER", "NO VELOCITY DRYER", "TOWEL DRY ONLY", "*See account notes*"]);
+      // Only include bath-related addons — skip food, ice cream, medication, enrichment, etc.
+      const lower = n.toLowerCase();
+      const isBathRelated = BATH_ADDON_KEYWORDS.some(kw => lower.includes(kw));
       if (MODIFIER_SET.has(n)) modifiers.push(n);
-      else addonNames.push(n);
+      else if (isBathRelated) addonNames.push(n);
+      // else: non-bath service, skip (food from home, ice cream, medication, etc.)
     }
 
     const resType = rd.reservation_type || {};
