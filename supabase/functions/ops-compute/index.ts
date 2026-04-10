@@ -1376,7 +1376,7 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
   //   1) Checked-in and not yet checked out (boarding dogs in-house)
   //   2) Checked out today (departures)
   //   3) NOT yet checked in but starting today (daycare, day-boarding, evaluation — may not be checked in yet)
-  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_out_date, raw_data, room_assignment, services, notes_reservation, notes_animal, notes_owner";
+  const resSelect = "gingr_id, animal_gingr_id, animal_name, owner_first_name, owner_last_name, reservation_type_name, start_date, end_date, check_in_date, check_out_date, raw_data, room_assignment, services, notes_reservation, notes_animal, notes_owner";
   const [{ data: activeRes }, { data: coRes }, { data: pendingRes }] = await Promise.all([
     // 1) Checked in, not checked out, not cancelled, date range includes today
     supabase.from("gingr_reservations").select(resSelect)
