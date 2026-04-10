@@ -714,6 +714,32 @@ function OperationsHub({ data, save, nav, profile }) {
       })()}
 
 
+      {/* ─── My Tasks (Role Page) card ──────────────────────────────────────── */}
+      <div
+        onClick={() => nav("role-page")}
+        style={{
+          marginBottom: 24, padding: "18px 24px", borderRadius: 16, cursor: "pointer",
+          background: `linear-gradient(135deg, ${C.pri}08 0%, ${C.acc}10 100%)`,
+          border: `2px solid ${C.pri}30`,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          transition: "all 0.2s",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+        }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = C.pri + "60"; e.currentTarget.style.boxShadow = "0 6px 20px rgba(0,0,0,0.08)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = C.pri + "30"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.04)"; e.currentTarget.style.transform = "none"; }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: `${C.pri}15`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke={C.pri} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          </div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.text }}>My Tasks</div>
+            <div style={{ fontSize: 12, color: C.textSec, marginTop: 2 }}>Opening · Midday · Closing · As Needed sections</div>
+          </div>
+        </div>
+        <span style={{ fontSize: 18, color: C.pri, fontWeight: 600 }}>→</span>
+      </div>
+
       {groups.map(group => {
         const visibleItems = group.items.filter(item => item.comingSoon || !item.permission || hp(item.permission));
         if (visibleItems.length === 0) return null;
