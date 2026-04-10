@@ -1613,7 +1613,8 @@ async function computeBathingReport(supabase: any, locationId: string, today: st
     const rtName = (r.reservation_type_name || "").toLowerCase();
     if (!rtName.includes("boarding")) continue;
     if (rtName.includes("day boarding")) continue;
-    if (!r.check_in_date || r.check_out_date) continue;
+    if (!r.check_in_date) continue;
+    // Do NOT skip checked-out dogs — a dog that left without a bath is a missed bath
 
     const startDay = (r.start_date || "").split("T")[0];
     const endDay = (r.end_date || "").split("T")[0];
