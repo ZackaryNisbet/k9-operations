@@ -430,7 +430,7 @@ async function computeBathingReport(supabase: any, locationId: string, targetDat
 
     // Must be checked in (not just pending)
     if (!r.check_in_date) continue;
-    if (r.check_out_date) continue; // already checked out
+    // NOTE: do NOT skip checked-out dogs — a dog that left without a bath is a missed bath
 
     // Must be 2+ nights
     const startDay = (r.start_date || "").split("T")[0];
