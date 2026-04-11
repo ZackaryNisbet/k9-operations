@@ -72,6 +72,7 @@ const LEAN_PERMISSION_AREAS = [
   "Financial Reporting",
   "Occupancy Reports",
   "Services Management",
+  "Training Management",
 ];
 
 const LEAN_PERMISSION_MATRIX = {
@@ -91,6 +92,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Financial Reporting": false,
     "Occupancy Reports": false,
     "Services Management": false,
+    "Training Management": false,
   },
   csr: {
     "Operations Hub": true,
@@ -108,6 +110,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Financial Reporting": false,
     "Occupancy Reports": false,
     "Services Management": true,
+    "Training Management": false,
   },
   supervisor: {
     "Operations Hub": true,
@@ -125,6 +128,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Financial Reporting": false,
     "Occupancy Reports": false,
     "Services Management": true,
+    "Training Management": true,
   },
   manager: {
     "Operations Hub": true,
@@ -142,6 +146,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Financial Reporting": true,
     "Occupancy Reports": true,
     "Services Management": true,
+    "Training Management": true,
   },
   location_admin: {
     "Operations Hub": true,
@@ -159,6 +164,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Financial Reporting": true,
     "Occupancy Reports": true,
     "Services Management": true,
+    "Training Management": true,
   },
   multi_location_admin: {
     "Operations Hub": true,
@@ -176,6 +182,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Financial Reporting": true,
     "Occupancy Reports": true,
     "Services Management": true,
+    "Training Management": true,
   },
   enterprise_admin: {
     "Operations Hub": true,
@@ -193,6 +200,7 @@ const LEAN_PERMISSION_MATRIX = {
     "Financial Reporting": true,
     "Occupancy Reports": true,
     "Services Management": true,
+    "Training Management": true,
   },
 };
 
