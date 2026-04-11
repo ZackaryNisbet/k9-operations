@@ -103,7 +103,6 @@ const LITE_PAGE_SLUGS = {
   "refunds": "refunds",
   "photos": "photos",
   "checkout-tv": "checkout-tv",
-  "roadmap": "roadmap",
   "settings": "settings",
   "inventory": "inventory",
   "inventory-report": "inventory/report",
@@ -198,7 +197,6 @@ const LEAN_NAV_ITEMS = [
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "TV", icon: "Monitor" },
-  { id: "test-health", label: "Test Health", icon: "CheckCircle" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -211,7 +209,6 @@ const ANALYTICS_NAV_ITEMS = [
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
   { id: "checkout-tv", label: "TV", icon: "Monitor" },
-  { id: "test-health", label: "Test Health", icon: "CheckCircle" },
   { id: "settings", label: "Settings", icon: "Settings" },
 ];
 
@@ -908,8 +905,6 @@ function LeanAppInner() {
         return <OccupancyReportPage nav={nav} locationId={currentLocation} refreshOptions={refreshOptions} />;
       case "test-health":
         return <TestHealthPage />;
-      case "roadmap":
-        return <RoadmapPage nav={nav} />;
       case "settings":
         return <SettingsPage profile={profile} addGlobalToast={addGlobalToast} />;
       case "onboarding":
