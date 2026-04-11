@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { supabase } from "../../supabaseClient";
-import { C, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, LEAN_ROLES } from "../../shared/theme";
+import { C, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, LEAN_ROLES, WORKFLOW_SECTION_MAP } from "../../shared/theme";
 import { Card, Btn, Modal, Inp, Badge, CustomSelect } from "../../shared/ui";
 import { useAuth } from "../../AuthProvider";
 
@@ -29,6 +29,17 @@ const SOURCE_LABELS = {
   legacy_fe: "Front-End Checklist",
   legacy_be: "Back-End Checklist",
   custom: "Custom",
+};
+
+const WORKFLOW_LABELS = {
+  bathing: "Bathing",
+  room_cleaning: "Room Cleaning",
+  pp: "Private Play",
+  pamper: "Pamper Package",
+  lodging_transfer: "Lodging Transfers",
+  collars: "Next Day Collars",
+  belongings: "Belongings",
+  weekly_maintenance: "Weekly Maintenance",
 };
 
 // Default task mappings from legacy checklists into fixed sections
@@ -389,6 +400,26 @@ function RolePageConfigTab() {
                     {sectionTasks.length} task{sectionTasks.length !== 1 ? "s" : ""}
                   </span>
                 </div>
+
+                {/* Workflow assignments for this section (read-only) */}
+                {(() => {
+                  const roleMap = WORKFLOW_SECTION_MAP[selectedRole] || {};
+                  const wfs = Object.entries(roleMap).filter(([, sec]) => sec === section.id);
+                  if (wfs.length === 0) return null;
+                  return (
+                    <div style={{ padding: "6px 12px 4px", display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {wfs.map(([wfId]) => (
+                        <span key={wfId} style={{
+                          fontSize: 10, fontWeight: 600, padding: "3px 8px", borderRadius: 6,
+                          background: `${section.color}12`, color: section.color,
+                          border: `1px solid ${section.color}25`,
+                        }}>
+                          {WORKFLOW_LABELS[wfId] || wfId}
+                        </span>
+                      ))}
+                    </div>
+                  );
+                })()}
 
                 {sectionTasks.length === 0 ? (
                   <div style={{ padding: "12px 16px", fontSize: 13, color: C.textMut, fontStyle: "italic" }}>

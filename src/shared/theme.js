@@ -425,6 +425,62 @@ const DEF_LITE_EOD_TEMPLATE = [
   { id:"other", title:"Other", emoji:"📝", type:"text", defaultContent:"" },
 ];
 const DAY_NAMES_SHORT=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+// ─── Workflow → Section mapping per role ──────────────────────────────────────
+// Maps each workflow card into the appropriate time-of-day section on role pages.
+// This aligns the web with the corrected mobile IA: workflows inside Opening/Midday/Closing/As Needed.
+const WORKFLOW_SECTION_MAP = {
+  pct: {
+    bathing: "opening",
+    room_cleaning: "midday",
+    pp: "midday",
+    pamper: "midday",
+    lodging_transfer: "midday",
+    collars: "opening",
+    belongings: "closing",
+    weekly_maintenance: "as_needed",
+  },
+  csr: {
+    pamper: "closing",
+    pp: "midday",
+    collars: "opening",
+    lodging_transfer: "midday",
+    bathing: "opening",
+    room_cleaning: "midday",
+    belongings: "closing",
+    weekly_maintenance: "as_needed",
+  },
+  supervisor: {
+    bathing: "opening",
+    room_cleaning: "midday",
+    pp: "midday",
+    pamper: "midday",
+    lodging_transfer: "midday",
+    collars: "opening",
+    belongings: "closing",
+    weekly_maintenance: "as_needed",
+  },
+  manager: {
+    bathing: "opening",
+    room_cleaning: "midday",
+    pp: "midday",
+    pamper: "midday",
+    lodging_transfer: "closing",
+    collars: "opening",
+    belongings: "closing",
+    weekly_maintenance: "as_needed",
+  },
+  location_admin: {
+    bathing: "opening",
+    room_cleaning: "midday",
+    pp: "midday",
+    pamper: "midday",
+    lodging_transfer: "midday",
+    collars: "opening",
+    belongings: "closing",
+    weekly_maintenance: "as_needed",
+  },
+};
 const OPERATIONS_CATALOG = [
   // Daily items (route to existing pages)
   { id:"ops-opening", label:"Opening Checklist", frequency:"daily", dataKey:"dailyOps", typeSub:"opening", routeTo:"ops-opening", permission:"view_daily_ops" },
@@ -511,4 +567,4 @@ const LC_OP_LABELS = {"contains":"contains","equals":"equals","starts":"starts w
 
 // ─── Operations Stats Helpers ──────────────────────────────────────────────
 
-export { C, LEAN_ROLES, LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX, IDB_VERSION, idbGet, idbSet, LITE_DEF_PRICING, CHART_PTS, OPERATIONS_CATALOG, OPS_TYPES, LITE_ACTION_LABELS, LITE_ACTION_LEVELS, DEF_CLIENT_FIELDS, DEF_DOG_FIELDS, DEFAULT_LIFECYCLE_BANNERS, LIFECYCLE_STAGE_MAP, LIFECYCLE_STORAGE_KEY, LC_OP_LABELS, LC_FILTER_FIELDS, K9_LOGO_SRC, K9_LOGO_PNG, ROOM_TYPES, NAV_ITEMS, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, DEF_LITE_EOD_TEMPLATE, DAY_NAMES_SHORT, K9_LOCATIONS, POS_BASE, PAGE_SLUGS, SLUG_TO_PAGE, ENT_SLUG_TO_PAGE, buildUrl, parseUrl, gid, formatDogNames, fmtPhoneInput, titleCase, fmtPhone, fmtDate, fmtDateFull, fmtDateShort, fmtTime, fmtInstr, todayStr, addDays, formatTime12hr, countNights, countHours, IDB_NAME, IDB_STORE, idbOpen };
+export { C, LEAN_ROLES, LEAN_PERMISSION_AREAS, LEAN_PERMISSION_MATRIX, IDB_VERSION, idbGet, idbSet, LITE_DEF_PRICING, CHART_PTS, OPERATIONS_CATALOG, OPS_TYPES, LITE_ACTION_LABELS, LITE_ACTION_LEVELS, DEF_CLIENT_FIELDS, DEF_DOG_FIELDS, DEFAULT_LIFECYCLE_BANNERS, LIFECYCLE_STAGE_MAP, LIFECYCLE_STORAGE_KEY, LC_OP_LABELS, LC_FILTER_FIELDS, K9_LOGO_SRC, K9_LOGO_PNG, ROOM_TYPES, NAV_ITEMS, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, DEF_LITE_EOD_TEMPLATE, DAY_NAMES_SHORT, K9_LOCATIONS, POS_BASE, PAGE_SLUGS, SLUG_TO_PAGE, ENT_SLUG_TO_PAGE, buildUrl, parseUrl, gid, formatDogNames, fmtPhoneInput, titleCase, fmtPhone, fmtDate, fmtDateFull, fmtDateShort, fmtTime, fmtInstr, todayStr, addDays, formatTime12hr, countNights, countHours, IDB_NAME, IDB_STORE, idbOpen, WORKFLOW_SECTION_MAP };
