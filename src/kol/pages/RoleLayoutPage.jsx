@@ -749,8 +749,8 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
 
             {addType === "task" ? (
               <>
-                <Inp label="Task Description" value={addLabel} onChange={(e) => setAddLabel(e.target.value)} required />
-                <Inp label="Time (optional, HH:MM)" value={addTime} onChange={(e) => setAddTime(e.target.value)} />
+                <Inp label="Task Description" value={addLabel} onChange={setAddLabel} required />
+                <Inp label="Time (optional, HH:MM)" value={addTime} onChange={setAddTime} />
               </>
             ) : (
               <div>
