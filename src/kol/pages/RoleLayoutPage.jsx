@@ -33,6 +33,13 @@ const WORKFLOW_DEFS = [
   { id: "collars", label: "Next Day Collars" },
   { id: "belongings", label: "Belongings" },
   { id: "weekly_maintenance", label: "Weekly Maintenance" },
+  { id: "enrichment", label: "Enrichment" },
+  { id: "ice_cream", label: "Gourmet Ice Cream" },
+  { id: "roll_call", label: "Roll Call" },
+  { id: "emergency_contacts", label: "Emergency Contacts" },
+  { id: "attendance", label: "Attendance" },
+  { id: "meds", label: "Medications" },
+  { id: "evaluations", label: "Evaluations" },
 ];
 
 const LEGACY_SOURCES = {
