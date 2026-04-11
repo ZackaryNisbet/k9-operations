@@ -18,6 +18,13 @@ const WORKFLOW_CARDS = [
   { id: "collars", label: "Next Day Collars" },
   { id: "belongings", label: "Belongings" },
   { id: "weekly_maintenance", label: "Weekly Maintenance" },
+  { id: "enrichment", label: "Enrichment" },
+  { id: "ice_cream", label: "Gourmet Ice Cream" },
+  { id: "roll_call", label: "Roll Call" },
+  { id: "emergency_contacts", label: "Emergency Contacts" },
+  { id: "attendance", label: "Attendance" },
+  { id: "meds", label: "Medications" },
+  { id: "evaluations", label: "Evaluations" },
 ];
 
 const WORKFLOW_SECTION_MAP = {
@@ -25,6 +32,9 @@ const WORKFLOW_SECTION_MAP = {
     bathing: "opening", room_cleaning: "midday", pp: "midday",
     pamper: "midday", lodging_transfer: "midday", collars: "opening",
     belongings: "closing", weekly_maintenance: "as_needed",
+    enrichment: "midday", ice_cream: "midday", roll_call: "opening",
+    emergency_contacts: "as_needed", attendance: "opening", meds: "opening",
+    evaluations: "midday",
   },
 };
 
@@ -87,11 +97,11 @@ describe("RolePage workflowsBySection", () => {
   it("falls back to WORKFLOW_SECTION_MAP when role has no config rows", () => {
     const result = buildWorkflowsBySection("pct", []);
 
-    // All 8 workflows from the static map should appear
+    // All 15 workflows from the static map should appear
     const allWorkflows = [
       ...result.opening, ...result.midday, ...result.closing, ...result.as_needed,
     ];
-    expect(allWorkflows).toHaveLength(8);
+    expect(allWorkflows).toHaveLength(15);
     expect(result.opening.map(w => w.id)).toContain("bathing");
     expect(result.midday.map(w => w.id)).toContain("room_cleaning");
     expect(result.closing.map(w => w.id)).toContain("belongings");

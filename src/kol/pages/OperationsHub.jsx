@@ -173,7 +173,7 @@ function OperationsHub({ data, save, nav, profile }) {
     let cancelled = false;
     (async () => {
       try {
-        const locId = profile?.location_id;
+        const locId = profile?.location_id || "cherry-hill";
         if (!locId) { setInvStatus({ status: "not_started", itemsCounted: 0, totalItems: 0, phase: "counting", phaseLabel: "" }); return; }
 
         // Compute Monday of the viewed week

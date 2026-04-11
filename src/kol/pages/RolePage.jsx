@@ -19,7 +19,10 @@ const FIXED_SECTIONS = [
   { id: "as_needed", label: "As Needed", icon: "RefreshCw", color: "#6B7280", bg: "#F9FAFB", borderColor: "#D1D5DB" },
 ];
 
-// Workflows that remain as separate pages with summary cards
+// Workflows that remain as separate pages with summary cards.
+// Must stay in sync with WORKFLOW_DEFS in RoleLayoutPage and
+// WORKFLOW_SECTION_MAP in theme.js — any workflow the admin can
+// assign to a role must appear here so RolePage can render it.
 const WORKFLOW_CARDS = [
   { id: "bathing", label: "Bathing", icon: "Droplet", routeTo: "ops-bathing", typeSub: "bathing" },
   { id: "room_cleaning", label: "Room Cleaning", icon: "Home", routeTo: "ops-rooms", typeSub: "room_cleaning" },
@@ -28,6 +31,14 @@ const WORKFLOW_CARDS = [
   { id: "lodging_transfer", label: "Lodging Transfers", icon: "ArrowRightCircle", routeTo: "ops-lodging-transfers", typeSub: "lodging_transfer" },
   { id: "collars", label: "Next Day Collars", icon: "Tag", routeTo: "ops-collars", typeSub: "collars" },
   { id: "belongings", label: "Belongings", icon: "Package", routeTo: "ops-belongings", typeSub: "belongings" },
+  { id: "weekly_maintenance", label: "Weekly Maintenance", icon: "Tool", routeTo: "ops-weekly-maintenance", typeSub: "weekly_maintenance" },
+  { id: "enrichment", label: "Enrichment", icon: "Zap", routeTo: "ops-svc", typeSub: "enrichment" },
+  { id: "ice_cream", label: "Gourmet Ice Cream", icon: "Coffee", routeTo: "eod", typeSub: "ice_cream" },
+  { id: "roll_call", label: "Roll Call", icon: "Users", routeTo: "attendance", typeSub: "roll_call" },
+  { id: "emergency_contacts", label: "Emergency Contacts", icon: "Phone", routeTo: "settings", typeSub: "emergency_contacts" },
+  { id: "attendance", label: "Attendance", icon: "ClipboardCheck", routeTo: "attendance", typeSub: "attendance" },
+  { id: "meds", label: "Medications", icon: "Heart", routeTo: "eod", typeSub: "meds" },
+  { id: "evaluations", label: "Evaluations", icon: "BarChart2", routeTo: "eod", typeSub: "evaluations" },
 ];
 
 // Checkbox component (matches DailyOpsPage K9Check)
@@ -313,6 +324,7 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
   const totalTasks = activeTasks.length;
   const totalDone = activeTasks.filter(t => taskStates[t.task_id]?.completed).length;
   const totalPct = totalTasks > 0 ? Math.round((totalDone / totalTasks) * 100) : 0;
+  const totalWorkflows = Object.values(workflowsBySection).reduce((sum, arr) => sum + arr.length, 0);
 
   // ─── Collapsed sections state ───────────────────────────────────────────
   const [collapsedSections, setCollapsedSections] = useState({});
@@ -424,7 +436,7 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
       )}
 
       {/* ─── Empty state hint (no checklist tasks configured) ──────────── */}
-      {totalTasks === 0 && !configLoading && (
+      {totalTasks === 0 && totalWorkflows === 0 && !configLoading && (
         <div style={{
           padding: "12px 16px", borderRadius: 10,
           background: C.surfaceHover, border: `1px solid ${C.border}`, marginBottom: 16,
