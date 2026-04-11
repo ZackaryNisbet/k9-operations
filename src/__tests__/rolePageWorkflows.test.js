@@ -229,3 +229,54 @@ describe("RolePage tasksBySection (checklist filtering)", () => {
     ]);
   });
 });
+
+// ─── Role derivation logic matching RolePage.jsx ────────────────────────────
+// Mirrors the role resolution that determines which role_page_config rows
+// to query. The profile mock has role="owner" which never matches DB rows;
+// the actual role comes from location_roles.
+function deriveRole(roleProp, userLocationRoles, currentLocation, profileRole) {
+  const locationRole = (userLocationRoles || []).find(r => r.location_id === currentLocation);
+  const rawRole = roleProp || locationRole?.role_code || profileRole || "pct";
+  return rawRole === "mod" ? "supervisor" : rawRole;
+}
+
+describe("RolePage role derivation", () => {
+  it("uses role_code from location_roles when available", () => {
+    const roles = [{ location_id: "loc-1", role_code: "mod" }];
+    const result = deriveRole(undefined, roles, "loc-1", "owner");
+    // "mod" should resolve to "supervisor"
+    expect(result).toBe("supervisor");
+  });
+
+  it("prefers roleProp over location_roles", () => {
+    const roles = [{ location_id: "loc-1", role_code: "pct" }];
+    const result = deriveRole("supervisor", roles, "loc-1", "owner");
+    expect(result).toBe("supervisor");
+  });
+
+  it("falls back to profile.role when location_roles has no match", () => {
+    const roles = [{ location_id: "loc-other", role_code: "pct" }];
+    const result = deriveRole(undefined, roles, "loc-1", "manager");
+    expect(result).toBe("manager");
+  });
+
+  it("falls back to pct when nothing is available", () => {
+    const result = deriveRole(undefined, [], "loc-1", undefined);
+    expect(result).toBe("pct");
+  });
+
+  it("does not use mock owner role when location_roles provides real role", () => {
+    // This is the exact production bug: profile.role is always "owner"
+    // but the user's actual role at Cherry Hill is "mod" (→ "supervisor")
+    const roles = [
+      { location_id: "8ea382b0-63f7-44ac-b6f8-83243c03d946", role_code: "mod" },
+    ];
+    const result = deriveRole(undefined, roles, "8ea382b0-63f7-44ac-b6f8-83243c03d946", "owner");
+    expect(result).toBe("supervisor");
+
+    // With "owner", the query would search for role_page_config where role='owner'
+    // which returns zero rows — causing only fallback workflows to render
+    const brokenResult = deriveRole(undefined, [], "8ea382b0-63f7-44ac-b6f8-83243c03d946", "owner");
+    expect(brokenResult).toBe("owner"); // This was the bug: "owner" never matches DB rows
+  });
+});
