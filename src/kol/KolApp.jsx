@@ -905,7 +905,7 @@ function LeanAppInner() {
       case "ops-weekly-maintenance":
         return <WeeklyMaintenancePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} />;
       case "role-page":
-        return <RolePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+        return <RolePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} userLocationRoles={userLocationRoles} currentLocation={currentLocation} />;
       case "role-layout":
         return <RoleLayoutPage profile={profile} addGlobalToast={addGlobalToast} />;
       case "eod":

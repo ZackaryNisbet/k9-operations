@@ -57,13 +57,18 @@ const K9Check = ({ checked, disabled, onChange, color = C.pri, size = 18 }) => (
   </div>
 );
 
-function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) {
+function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, userLocationRoles, currentLocation }) {
   const td = todayStr();
   const [viewDate, setViewDate] = useState(td);
   const locationId = profile?.location_id || "cherry-hill";
+  // Derive the user's actual role at the current location from location_roles,
+  // which stores the real role_code (e.g. "mod", "pct", "supervisor").
+  // The profile prop is a mock with role="owner" and does not reflect the
+  // user's operational role, so prefer location_roles when available.
+  const locationRole = (userLocationRoles || []).find(r => r.location_id === currentLocation);
+  const rawRole = roleProp || locationRole?.role_code || profile?.role || "pct";
   // Normalise role codes so DB queries match RoleLayoutPage's persisted keys.
   // RoleLayoutPage stores MOD data under role='supervisor', so resolve "mod" here.
-  const rawRole = roleProp || profile?.role || "pct";
   const role = rawRole === "mod" ? "supervisor" : rawRole;
 
   // ─── Date Navigation ────────────────────────────────────────────────────
