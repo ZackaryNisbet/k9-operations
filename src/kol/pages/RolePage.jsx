@@ -328,7 +328,7 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <h2 style={{ fontSize: 24, fontWeight: 800, color: C.text, margin: 0, letterSpacing: "-0.02em" }}>
-            My Tasks
+            My Work
           </h2>
           {totalTasks > 0 && (
             <div style={{
