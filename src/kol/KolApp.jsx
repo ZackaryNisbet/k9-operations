@@ -47,6 +47,7 @@ import OnboardingPage from "./pages/OnboardingPage";
 import PricingPage from "./pages/PricingPage";
 import CheckoutNotesPage from "./pages/CheckoutNotesPage";
 import DogProfilePage from "./pages/DogProfilePage";
+import RolePage from "./pages/RolePage";
 import SubscriptionGate from "../shared/SubscriptionGate";
 import useSubscription from "../hooks/useSubscription";
 
@@ -91,6 +92,7 @@ const LITE_PAGE_SLUGS = {
   "ops-pamper": "ops/pamper",
   "ops-svc": "ops/service",
   "ops-weekly-maintenance": "ops/weekly-maintenance",
+  "role-page": "role-page",
   "eod": "eod",
   "attendance": "attendance",
   "mgmt-attendance": "attendance",
@@ -631,6 +633,7 @@ function LeanAppInner() {
       case "ops-pamper": return "Pamper Package Plus";
       case "ops-svc": return params?.svcName || "Service Report";
       case "ops-weekly-maintenance": return "Weekly Maintenance";
+      case "role-page": return "My Tasks";
       case "eod": return "End of Day";
       case "daily-ops": return "Daily Ops";
       case "attendance": case "mgmt-attendance": return "Attendance Tracker";
@@ -854,6 +857,8 @@ function LeanAppInner() {
         return <DailyOpsPage data={data} save={save} sub="svc" nav={nav} profile={profile} addGlobalToast={addGlobalToast} params={params} />;
       case "ops-weekly-maintenance":
         return <WeeklyMaintenancePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} />;
+      case "role-page":
+        return <RolePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "eod":
         return <LiteEODPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "mgmt-audit-log":

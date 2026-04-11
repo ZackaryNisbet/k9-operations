@@ -29,6 +29,7 @@ import IgniteParserConfigTab from "../settings/IgniteParserConfigTab";
 import DashboardRefreshTab from "../settings/DashboardRefreshTab";
 import ApiOverviewTab from "../settings/ApiOverviewTab";
 import ApiDashboardTab from "../settings/ApiDashboardTab";
+import RolePageConfigTab from "../settings/RolePageConfigTab";
 
 // ── Subscription Management Tab ────────────────────────────────────────────
 const PLAN_LABELS = {
@@ -222,6 +223,7 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       label: "Operations",
       cards: [
         { id: "room-cleaning", label: "Room Cleaning", desc: "Configure missed cleaning carry-over behavior and display settings" },
+        { id: "role-page-config", label: "Role Page Sections", desc: "Configure Opening, Midday, Closing, and As Needed task sections per role" },
       ],
     },
     {
@@ -282,6 +284,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
         return <ApiOverviewTab />;
       case "api-dashboard":
         return <ApiDashboardTab />;
+      case "role-page-config":
+        return <RolePageConfigTab />;
       case "subscription":
         return <SubscriptionTab profile={profile} addGlobalToast={addGlobalToast} />;
       case "room-cleaning":
