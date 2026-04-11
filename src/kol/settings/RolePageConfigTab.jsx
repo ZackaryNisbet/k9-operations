@@ -122,6 +122,9 @@ function RolePageConfigTab() {
   const [editingTask, setEditingTask] = useState(null);
   const [showSeedConfirm, setShowSeedConfirm] = useState(false);
 
+  // Drag-and-drop state
+  const [dragState, setDragState] = useState({ draggingId: null, overIdx: null, overSection: null });
+
   // Load tasks from Supabase
   const loadTasks = useCallback(async () => {
     setLoading(true);
@@ -281,6 +284,39 @@ function RolePageConfigTab() {
     setDirty(true);
   };
 
+  // Drag-and-drop handlers
+  const handleDragStart = (e, taskId) => {
+    e.dataTransfer.effectAllowed = "move";
+    setDragState(prev => ({ ...prev, draggingId: taskId }));
+  };
+  const handleDragOver = (e, idx, sectionId) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    setDragState(prev => ({ ...prev, overIdx: idx, overSection: sectionId }));
+  };
+  const handleDrop = (e, sectionId) => {
+    e.preventDefault();
+    const { draggingId, overIdx, overSection } = dragState;
+    if (!draggingId) { setDragState({ draggingId: null, overIdx: null, overSection: null }); return; }
+
+    const draggedTask = tasks.find(t => t.task_id === draggingId);
+    if (!draggedTask) { setDragState({ draggingId: null, overIdx: null, overSection: null }); return; }
+
+    const targetSection = overSection || sectionId;
+    const sectionTasks = tasks.filter(t => t.section === targetSection && t.task_id !== draggingId);
+    const insertIdx = overIdx != null && overIdx >= 0 ? Math.min(overIdx, sectionTasks.length) : sectionTasks.length;
+    sectionTasks.splice(insertIdx, 0, { ...draggedTask, section: targetSection });
+
+    const otherTasks = tasks.filter(t => t.section !== targetSection && t.task_id !== draggingId);
+    const newTasks = [...otherTasks, ...sectionTasks.map((t, i) => ({ ...t, sort_order: i }))];
+    setTasks(newTasks);
+    setDirty(true);
+    setDragState({ draggingId: null, overIdx: null, overSection: null });
+  };
+  const handleDragEnd = () => {
+    setDragState({ draggingId: null, overIdx: null, overSection: null });
+  };
+
   // Update task label
   const updateTaskLabel = (taskId, newLabel) => {
     const newTasks = tasks.map(t =>
@@ -426,12 +462,26 @@ function RolePageConfigTab() {
                     No tasks assigned to this section
                   </div>
                 ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}
+                    onDragOver={(e) => { e.preventDefault(); handleDragOver(e, sectionTasks.length, section.id); }}
+                    onDrop={(e) => handleDrop(e, section.id)}
+                  >
                     {sectionTasks.map((task, idx) => (
-                      <div key={task.task_id} style={{
-                        display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
-                        borderRadius: 8, background: C.surface, border: `1px solid ${C.border}`,
-                      }}>
+                      <div key={task.task_id}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, task.task_id)}
+                        onDragOver={(e) => handleDragOver(e, idx, section.id)}
+                        onDrop={(e) => handleDrop(e, section.id)}
+                        onDragEnd={handleDragEnd}
+                        style={{
+                          display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
+                          borderRadius: 8, background: C.surface, border: `1px solid ${C.border}`,
+                          borderTop: dragState.overIdx === idx && dragState.overSection === section.id ? `2.5px solid ${section.color}` : undefined,
+                          opacity: dragState.draggingId === task.task_id ? 0.4 : 1,
+                          cursor: "grab",
+                          transition: "opacity 0.15s",
+                        }}>
+                        <span style={{ fontSize: 12, color: C.textMut, cursor: "grab", userSelect: "none" }} title="Drag to reorder">⠿</span>
                         <span style={{ fontSize: 11, color: C.textMut, fontWeight: 700, minWidth: 24 }}>{idx + 1}</span>
                         {task.task_time && (
                           <span style={{
@@ -482,19 +532,6 @@ function RolePageConfigTab() {
                             <option key={s.id} value={s.id}>{s.label}</option>
                           ))}
                         </select>
-                        <button onClick={() => moveTask(section.id, idx, -1)} disabled={idx === 0}
-                          style={{
-                            padding: "3px 6px", borderRadius: 5, border: `1px solid ${C.border}`, background: C.bg,
-                            color: idx === 0 ? C.textMut : C.text, fontSize: 11, cursor: idx === 0 ? "not-allowed" : "pointer",
-                            fontFamily: "inherit", opacity: idx === 0 ? 0.4 : 1,
-                          }}>↑</button>
-                        <button onClick={() => moveTask(section.id, idx, 1)} disabled={idx === sectionTasks.length - 1}
-                          style={{
-                            padding: "3px 6px", borderRadius: 5, border: `1px solid ${C.border}`, background: C.bg,
-                            color: idx === sectionTasks.length - 1 ? C.textMut : C.text, fontSize: 11,
-                            cursor: idx === sectionTasks.length - 1 ? "not-allowed" : "pointer",
-                            fontFamily: "inherit", opacity: idx === sectionTasks.length - 1 ? 0.4 : 1,
-                          }}>↓</button>
                         <button onClick={() => deleteTask(task.task_id)}
                           style={{
                             padding: "3px 6px", borderRadius: 5, border: "1px solid #FCA5A5", background: "#FEF2F2",
