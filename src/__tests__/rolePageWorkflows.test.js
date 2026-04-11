@@ -1,6 +1,7 @@
-// Tests for RolePage workflowsBySection derivation logic
+// Tests for RolePage workflowsBySection and tasksBySection derivation logic
 // Verifies that workflow cards are derived from role_page_config rows (DB authority)
 // rather than unconditionally from WORKFLOW_SECTION_MAP (static defaults).
+// Also verifies that checklist tasks exclude wf_ workflow references.
 
 import { describe, it, expect } from 'vitest';
 
@@ -60,6 +61,18 @@ function buildWorkflowsBySection(role, configTasks) {
     });
   }
 
+  return grouped;
+}
+
+// ─── Extracted logic matching RolePage.jsx tasksBySection ─────────────────
+// Mirrors the filtering that excludes wf_ items from checklist rendering.
+function buildTasksBySection(activeTasks) {
+  const grouped = {};
+  FIXED_SECTIONS.forEach(s => { grouped[s.id] = []; });
+  activeTasks.forEach(t => {
+    if (t.task_id?.startsWith("wf_")) return;
+    if (grouped[t.section]) grouped[t.section].push(t);
+  });
   return grouped;
 }
 
@@ -145,5 +158,74 @@ describe("RolePage workflowsBySection", () => {
     expect(result.midday).toHaveLength(1);
     expect(result.closing).toHaveLength(1);
     expect(result.as_needed).toHaveLength(0);
+  });
+});
+
+describe("RolePage tasksBySection (checklist filtering)", () => {
+  it("excludes wf_ rows from checklist tasks", () => {
+    const activeTasks = [
+      { task_id: "wf_bathing", section: "opening", task_label: "Bathing" },
+      { task_id: "legacy_opening_o1", section: "opening", task_label: "Check security cameras" },
+      { task_id: "custom_123", section: "midday", task_label: "Complete feeding report" },
+      { task_id: "wf_room_cleaning", section: "midday", task_label: "Room Cleaning" },
+    ];
+    const result = buildTasksBySection(activeTasks);
+
+    expect(result.opening).toHaveLength(1);
+    expect(result.opening[0].task_id).toBe("legacy_opening_o1");
+    expect(result.midday).toHaveLength(1);
+    expect(result.midday[0].task_id).toBe("custom_123");
+  });
+
+  it("returns all non-wf tasks when no workflow refs exist", () => {
+    const activeTasks = [
+      { task_id: "legacy_opening_o1", section: "opening", task_label: "Check cameras" },
+      { task_id: "legacy_be_be1", section: "midday", task_label: "Morning feeding" },
+      { task_id: "custom_abc", section: "closing", task_label: "Lock up" },
+    ];
+    const result = buildTasksBySection(activeTasks);
+
+    expect(result.opening).toHaveLength(1);
+    expect(result.midday).toHaveLength(1);
+    expect(result.closing).toHaveLength(1);
+  });
+
+  it("returns empty sections when only wf_ rows exist", () => {
+    const activeTasks = [
+      { task_id: "wf_bathing", section: "opening", task_label: "Bathing" },
+      { task_id: "wf_meds", section: "midday", task_label: "Medications" },
+    ];
+    const result = buildTasksBySection(activeTasks);
+
+    expect(result.opening).toHaveLength(0);
+    expect(result.midday).toHaveLength(0);
+    expect(result.closing).toHaveLength(0);
+    expect(result.as_needed).toHaveLength(0);
+  });
+
+  it("correctly handles mixed MOD-style checklist + workflows", () => {
+    // Simulates MOD role with custom checklist items and workflow refs
+    const activeTasks = [
+      { task_id: "custom_rot", section: "opening", task_label: "Create back-end rotation schedule" },
+      { task_id: "custom_feed", section: "opening", task_label: "Complete feeding report for previous night PM and today AM" },
+      { task_id: "custom_med", section: "opening", task_label: "Complete medication report for today AM" },
+      { task_id: "wf_bathing", section: "opening", task_label: "Bathing" },
+      { task_id: "custom_bath_chk", section: "midday", task_label: "Verify departing body check forms from bathing" },
+      { task_id: "custom_eval", section: "midday", task_label: "Input eval notes to Gingr and EOD" },
+      { task_id: "custom_mid_feed", section: "midday", task_label: "Midday feeding/meds/services" },
+      { task_id: "wf_meds", section: "midday", task_label: "Medications" },
+      { task_id: "wf_evaluations", section: "midday", task_label: "Evaluations" },
+    ];
+    const result = buildTasksBySection(activeTasks);
+
+    // Only non-wf_ items should appear as checklist tasks
+    expect(result.opening).toHaveLength(3);
+    expect(result.opening.map(t => t.task_id)).toEqual([
+      "custom_rot", "custom_feed", "custom_med",
+    ]);
+    expect(result.midday).toHaveLength(3);
+    expect(result.midday.map(t => t.task_id)).toEqual([
+      "custom_bath_chk", "custom_eval", "custom_mid_feed",
+    ]);
   });
 });
