@@ -119,7 +119,11 @@ function RolePageConfigTab() {
   const [addSection, setAddSection] = useState("opening");
   const [addLabel, setAddLabel] = useState("");
   const [addTime, setAddTime] = useState("");
-  const [editingTask, setEditingTask] = useState(null);
+  const [addDesc, setAddDesc] = useState("");
+  const [editTaskModal, setEditTaskModal] = useState(null); // task object for editing
+  const [editLabel, setEditLabel] = useState("");
+  const [editTime, setEditTime] = useState("");
+  const [editDesc, setEditDesc] = useState("");
   const [showSeedConfirm, setShowSeedConfirm] = useState(false);
 
   // Drag-and-drop state
@@ -183,10 +187,9 @@ function RolePageConfigTab() {
     setSaving(false);
   };
 
-  // Save reordered/edited tasks
+  // Save reordered/edited tasks — delete-then-insert for consistency
   const saveTasks = async () => {
     setSaving(true);
-    // Rebuild sort order by section
     const allTasks = [];
     let idx = 0;
     FIXED_SECTIONS.forEach(section => {
@@ -202,6 +205,7 @@ function RolePageConfigTab() {
       task_id: t.task_id,
       task_label: t.task_label,
       task_time: t.task_time || null,
+      task_description: t.task_description || null,
       sort_order: t.sort_order,
       source: t.source || "custom",
       day_of_week: t.day_of_week ?? null,
@@ -209,10 +213,21 @@ function RolePageConfigTab() {
       updated_at: new Date().toISOString(),
     }));
 
-    const { error } = await supabase.from("role_page_config")
-      .upsert(rows, { onConflict: "location_id,role,section,task_id" });
-    if (error) {
-      console.log("[RolePageConfig] Save error:", error.message);
+    // Delete all rows for this role, then re-insert to ensure DB matches UI
+    const { error: delErr } = await supabase.from("role_page_config")
+      .delete()
+      .eq("location_id", locationId)
+      .eq("role", selectedRole);
+    if (delErr) {
+      console.log("[RolePageConfig] Delete error:", delErr.message);
+    }
+
+    if (rows.length > 0) {
+      const { error: insErr } = await supabase.from("role_page_config")
+        .insert(rows);
+      if (insErr) {
+        console.log("[RolePageConfig] Insert error:", insErr.message);
+      }
     }
     setSaving(false);
     setDirty(false);
@@ -232,6 +247,7 @@ function RolePageConfigTab() {
       task_id: taskId,
       task_label: addLabel.trim(),
       task_time: addTime || null,
+      task_description: addDesc.trim() || null,
       sort_order: maxSort + 1,
       source: "custom",
       is_active: true,
@@ -241,6 +257,7 @@ function RolePageConfigTab() {
     if (!error) {
       setAddLabel("");
       setAddTime("");
+      setAddDesc("");
       setShowAddTask(false);
       await loadTasks();
     }
@@ -316,13 +333,25 @@ function RolePageConfigTab() {
     setDragState({ draggingId: null, overIdx: null, overSection: null });
   };
 
-  // Update task label
-  const updateTaskLabel = (taskId, newLabel) => {
+  // Open edit modal for a task
+  const openEditTask = (task) => {
+    setEditTaskModal(task);
+    setEditLabel(task.task_label || "");
+    setEditTime(task.task_time || "");
+    setEditDesc(task.task_description || "");
+  };
+
+  // Save edit modal
+  const saveEditTask = () => {
+    if (!editTaskModal || !editLabel.trim()) return;
     const newTasks = tasks.map(t =>
-      t.task_id === taskId ? { ...t, task_label: newLabel } : t
+      t.task_id === editTaskModal.task_id
+        ? { ...t, task_label: editLabel.trim(), task_time: editTime || null, task_description: editDesc.trim() || null }
+        : t
     );
     setTasks(newTasks);
     setDirty(true);
+    setEditTaskModal(null);
   };
 
   const totalTasks = tasks.length;
@@ -490,26 +519,18 @@ function RolePageConfigTab() {
                             {task.task_time}
                           </span>
                         )}
-                        {editingTask === task.task_id ? (
-                          <input
-                            autoFocus
-                            value={task.task_label}
-                            onChange={e => updateTaskLabel(task.task_id, e.target.value)}
-                            onBlur={() => setEditingTask(null)}
-                            onKeyDown={e => { if (e.key === "Enter") setEditingTask(null); }}
-                            style={{
-                              flex: 1, padding: "4px 8px", borderRadius: 6, border: `1.5px solid ${C.pri}`,
-                              background: C.bg, color: C.text, fontSize: 12, fontFamily: "inherit",
-                            }}
-                          />
-                        ) : (
-                          <span
-                            onClick={() => setEditingTask(task.task_id)}
-                            style={{ flex: 1, fontSize: 12, color: C.text, cursor: "pointer" }}
-                            title="Click to edit"
-                          >
-                            {task.task_label}
-                          </span>
+                        <span
+                          onClick={() => openEditTask(task)}
+                          style={{ flex: 1, fontSize: 12, color: C.text, cursor: "pointer" }}
+                          title="Click to edit"
+                        >
+                          {task.task_label}
+                        </span>
+                        {task.task_description && (
+                          <span style={{
+                            fontSize: 8, fontWeight: 700, padding: "1px 4px", borderRadius: 3,
+                            background: `${C.pri}12`, color: C.pri, flexShrink: 0,
+                          }} title={task.task_description}>DESC</span>
                         )}
                         {task.source && task.source !== "custom" && (
                           <span style={{
@@ -562,11 +583,27 @@ function RolePageConfigTab() {
                 ))}
               </select>
             </div>
-            <Inp label="Task Description" value={addLabel} onChange={setAddLabel} required />
+            <Inp label="Task Name" value={addLabel} onChange={setAddLabel} required />
             <Inp label="Time (optional, HH:MM)" value={addTime} onChange={setAddTime} />
+            <Inp label="Description (optional)" value={addDesc} onChange={setAddDesc} rows={2} />
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
               <Btn variant="primary" onClick={addTask} disabled={!addLabel.trim()}>Add Task</Btn>
               <Btn variant="ghost" onClick={() => setShowAddTask(false)}>Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Edit task modal */}
+      {editTaskModal && (
+        <Modal title="Edit Task" onClose={() => setEditTaskModal(null)}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <Inp label="Task Name" value={editLabel} onChange={setEditLabel} required />
+            <Inp label="Time (HH:MM)" value={editTime} onChange={setEditTime} />
+            <Inp label="Description (optional)" value={editDesc} onChange={setEditDesc} rows={2} />
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <Btn variant="primary" onClick={saveEditTask} disabled={!editLabel.trim()}>Save</Btn>
+              <Btn variant="ghost" onClick={() => setEditTaskModal(null)}>Cancel</Btn>
             </div>
           </div>
         </Modal>

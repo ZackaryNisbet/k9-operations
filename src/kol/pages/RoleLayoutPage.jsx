@@ -85,8 +85,12 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
   const [addType, setAddType] = useState("task"); // task | workflow
   const [addLabel, setAddLabel] = useState("");
   const [addTime, setAddTime] = useState("");
+  const [addDesc, setAddDesc] = useState("");
   const [addWorkflowId, setAddWorkflowId] = useState("");
-  const [editItem, setEditItem] = useState(null); // { role, section, item } for inline editing
+  const [editModal, setEditModal] = useState(null); // { role, section, item } for edit modal
+  const [editLabel, setEditLabel] = useState("");
+  const [editTime, setEditTime] = useState("");
+  const [editDesc, setEditDesc] = useState("");
   const [seedModal, setSeedModal] = useState(null); // role string or null
 
   // Drag state
@@ -156,17 +160,19 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
   useEffect(() => { loadAll(); }, [loadAll]);
 
   // ─── Autosave with debounce ─────────────────────────────────────────────
+  // Uses delete-then-insert to ensure DB exactly mirrors UI state.
+  // This fixes: delete not persisting, ordering reverting, stale rows reappearing.
   const persistChanges = useCallback(async (items) => {
     setSaveState("saving");
     try {
-      // Collect all non-default, non-workflow items for upsert
+      // Collect all non-default, non-workflow items
       const rows = [];
       let globalIdx = 0;
       ROLES.forEach(r => {
         SECTIONS.forEach(s => {
           const key = cellKey(r.id, s.id);
-          (items[key] || []).forEach((item, i) => {
-            if (item._isDefault && item.item_type === "workflow") return; // don't persist default workflow refs
+          (items[key] || []).forEach((item) => {
+            if (item._isDefault && item.item_type === "workflow") return;
             rows.push({
               location_id: locationId,
               role: r.id,
@@ -174,6 +180,7 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
               task_id: item.task_id,
               task_label: item.task_label,
               task_time: item.task_time || null,
+              task_description: item.task_description || null,
               sort_order: globalIdx++,
               source: item.source || "custom",
               day_of_week: item.day_of_week ?? null,
@@ -184,10 +191,19 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
         });
       });
 
+      // Delete all existing rows for these roles, then re-insert.
+      // This ensures removed items are gone and sort_order is authoritative.
+      const roleIds = ROLES.map(r => r.id);
+      const { error: delErr } = await supabase.from("role_page_config")
+        .delete()
+        .eq("location_id", locationId)
+        .in("role", roleIds);
+      if (delErr) throw delErr;
+
       if (rows.length > 0) {
-        const { error } = await supabase.from("role_page_config")
-          .upsert(rows, { onConflict: "location_id,role,section,task_id" });
-        if (error) throw error;
+        const { error: insErr } = await supabase.from("role_page_config")
+          .insert(rows);
+        if (insErr) throw insErr;
       }
 
       lastSavedRef.current = JSON.stringify(items);
@@ -295,6 +311,7 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
         task_id: taskId,
         task_label: addLabel.trim(),
         task_time: addTime || null,
+        task_description: addDesc.trim() || null,
         item_type: "task",
         section,
         role,
@@ -339,11 +356,14 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
     setAddModal(null);
     setAddLabel("");
     setAddTime("");
+    setAddDesc("");
     setAddWorkflowId("");
     setAddType("task");
-  }, [addModal, addType, addLabel, addTime, addWorkflowId, cellItems, updateCellItems, addGlobalToast]);
+  }, [addModal, addType, addLabel, addTime, addDesc, addWorkflowId, cellItems, updateCellItems, addGlobalToast]);
 
   // ─── Delete Item ────────────────────────────────────────────────────────
+  // Only updates UI state — the debounced persistChanges (delete-then-insert)
+  // will remove it from DB, so there's no race condition.
   const deleteItem = useCallback((role, section, taskId) => {
     const key = cellKey(role, section);
     updateCellItems(prev => {
@@ -352,27 +372,31 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
       next[key].forEach((it, i) => { it.sort_order = i; });
       return next;
     });
+  }, [updateCellItems]);
 
-    // Also delete from DB
-    supabase.from("role_page_config")
-      .delete()
-      .eq("location_id", locationId)
-      .eq("role", role)
-      .eq("task_id", taskId)
-      .then(() => {});
-  }, [locationId, updateCellItems]);
+  // ─── Edit Item (modal-based: label + time + description) ─────────────────
+  const openEditModal = useCallback((role, section, item) => {
+    setEditModal({ role, section, item });
+    setEditLabel(item.task_label || "");
+    setEditTime(item.task_time || "");
+    setEditDesc(item.task_description || "");
+  }, []);
 
-  // ─── Inline Edit ────────────────────────────────────────────────────────
-  const updateItemLabel = useCallback((role, section, taskId, newLabel) => {
+  const saveEditModal = useCallback(() => {
+    if (!editModal || !editLabel.trim()) return;
+    const { role, section, item } = editModal;
     const key = cellKey(role, section);
     updateCellItems(prev => {
       const next = { ...prev };
       next[key] = (next[key] || []).map(i =>
-        i.task_id === taskId ? { ...i, task_label: newLabel } : i
+        i.task_id === item.task_id
+          ? { ...i, task_label: editLabel.trim(), task_time: editTime || null, task_description: editDesc.trim() || null }
+          : i
       );
       return next;
     });
-  }, [updateCellItems]);
+    setEditModal(null);
+  }, [editModal, editLabel, editTime, editDesc, updateCellItems]);
 
   // ─── Seed from Legacy ───────────────────────────────────────────────────
   const seedRole = useCallback(async (role) => {
@@ -547,7 +571,6 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
                     const isBeingDragged = dragItem && dragItem.role === role.id && dragItem.section === section.id && dragItem.index === idx;
                     const isDropTarget = dragOver && dragOver.role === role.id && dragOver.section === section.id && dragOver.index === idx;
                     const isWorkflow = item.item_type === "workflow";
-                    const isEditing = editItem && editItem.role === role.id && editItem.section === section.id && editItem.item?.task_id === item.task_id;
 
                     return (
                       <div
@@ -588,34 +611,27 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
                           }}>{item.task_time}</span>
                         ) : null}
 
-                        {/* Label */}
-                        {isEditing && !isWorkflow ? (
-                          <input
-                            autoFocus
-                            value={item.task_label}
-                            onChange={(e) => updateItemLabel(role.id, section.id, item.task_id, e.target.value)}
-                            onBlur={() => setEditItem(null)}
-                            onKeyDown={(e) => { if (e.key === "Enter") setEditItem(null); }}
-                            style={{
-                              flex: 1, padding: "2px 4px", borderRadius: 4,
-                              border: `1.5px solid ${C.pri}`, background: C.bg,
-                              color: C.text, fontSize: 11, fontFamily: "inherit", minWidth: 0,
-                            }}
-                          />
-                        ) : (
-                          <span
-                            onClick={() => !isWorkflow && setEditItem({ role: role.id, section: section.id, item })}
-                            style={{
-                              flex: 1, fontSize: 11, fontWeight: isWorkflow ? 600 : 400,
-                              color: isWorkflow ? section.color : C.text,
-                              cursor: isWorkflow ? "default" : "text",
-                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                              minWidth: 0,
-                            }}
-                            title={isWorkflow ? `Workflow: ${item.task_label}` : "Click to edit"}
-                          >
-                            {item.task_label}
-                          </span>
+                        {/* Label — click opens edit modal for tasks */}
+                        <span
+                          onClick={() => !isWorkflow && openEditModal(role.id, section.id, item)}
+                          style={{
+                            flex: 1, fontSize: 11, fontWeight: isWorkflow ? 600 : 400,
+                            color: isWorkflow ? section.color : C.text,
+                            cursor: isWorkflow ? "default" : "pointer",
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                            minWidth: 0,
+                          }}
+                          title={isWorkflow ? `Workflow: ${item.task_label}` : "Click to edit"}
+                        >
+                          {item.task_label}
+                        </span>
+
+                        {/* Description indicator */}
+                        {item.task_description && (
+                          <span style={{
+                            fontSize: 8, fontWeight: 700, padding: "1px 4px", borderRadius: 3,
+                            background: `${C.pri}12`, color: C.pri, flexShrink: 0,
+                          }} title={item.task_description}>DESC</span>
                         )}
 
                         {/* Source badge for legacy items */}
@@ -745,8 +761,9 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
 
             {addType === "task" ? (
               <>
-                <Inp label="Task Description" value={addLabel} onChange={setAddLabel} required />
+                <Inp label="Task Name" value={addLabel} onChange={setAddLabel} required />
                 <Inp label="Time (optional, HH:MM)" value={addTime} onChange={setAddTime} />
+                <Inp label="Description (optional)" value={addDesc} onChange={setAddDesc} rows={2} />
               </>
             ) : (
               <div>
@@ -773,6 +790,21 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
                 Add {addType === "task" ? "Task" : "Workflow"}
               </Btn>
               <Btn variant="ghost" onClick={() => setAddModal(null)}>Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ─── Edit Task Modal ──────────────────────────────────────────────── */}
+      {editModal && (
+        <Modal title="Edit Task" onClose={() => setEditModal(null)}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <Inp label="Task Name" value={editLabel} onChange={setEditLabel} required />
+            <Inp label="Time (HH:MM)" value={editTime} onChange={setEditTime} />
+            <Inp label="Description (optional)" value={editDesc} onChange={setEditDesc} rows={2} />
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <Btn variant="primary" onClick={saveEditModal} disabled={!editLabel.trim()}>Save</Btn>
+              <Btn variant="ghost" onClick={() => setEditModal(null)}>Cancel</Btn>
             </div>
           </div>
         </Modal>
