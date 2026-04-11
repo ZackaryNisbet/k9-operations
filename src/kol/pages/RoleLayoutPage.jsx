@@ -114,21 +114,28 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
     (rows || []).forEach(row => {
       const key = cellKey(row.role, row.section);
       if (items[key]) {
+        // Infer item_type from task_id prefix since the DB schema has no
+        // item_type column — workflow refs are stored with `wf_` prefix.
+        const isWf = row.task_id?.startsWith("wf_");
         items[key].push({
           ...row,
-          item_type: row.item_type || "task",
+          item_type: isWf ? "workflow" : "task",
+          ...(isWf ? { workflow_id: row.task_id.replace("wf_", "") } : {}),
         });
       }
     });
 
-    // Add workflow references from WORKFLOW_SECTION_MAP
+    // Add workflow references from WORKFLOW_SECTION_MAP only for roles that
+    // have NO persisted rows at all (i.e. the role is unconfigured).  Once a
+    // role has any DB rows the persisted state is authoritative — this prevents
+    // deleted workflows from being silently re-injected on every load.
     ROLES.forEach(r => {
-      const roleMap = WORKFLOW_SECTION_MAP[r.id] || {};
-      Object.entries(roleMap).forEach(([wfId, sectionId]) => {
-        const key = cellKey(r.id, sectionId);
-        if (!items[key]) return;
-        const exists = items[key].some(i => i.task_id === `wf_${wfId}`);
-        if (!exists) {
+      const roleHasRows = SECTIONS.some(s => (items[cellKey(r.id, s.id)] || []).length > 0);
+      if (!roleHasRows) {
+        const roleMap = WORKFLOW_SECTION_MAP[r.id] || {};
+        Object.entries(roleMap).forEach(([wfId, sectionId]) => {
+          const key = cellKey(r.id, sectionId);
+          if (!items[key]) return;
           const wfDef = WORKFLOW_DEFS.find(w => w.id === wfId);
           if (wfDef) {
             items[key].push({
@@ -143,8 +150,8 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
               _isDefault: true,
             });
           }
-        }
-      });
+        });
+      }
       // Sort each cell by sort_order
       SECTIONS.forEach(s => {
         const key = cellKey(r.id, s.id);
@@ -165,14 +172,14 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
   const persistChanges = useCallback(async (items) => {
     setSaveState("saving");
     try {
-      // Collect all non-default, non-workflow items
+      // Collect ALL items — including workflow references so their presence
+      // (or absence after deletion) is persisted authoritatively in the DB.
       const rows = [];
       let globalIdx = 0;
       ROLES.forEach(r => {
         SECTIONS.forEach(s => {
           const key = cellKey(r.id, s.id);
           (items[key] || []).forEach((item) => {
-            if (item._isDefault && item.item_type === "workflow") return;
             rows.push({
               location_id: locationId,
               role: r.id,
