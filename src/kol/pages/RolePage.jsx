@@ -268,16 +268,35 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
   }, [data, viewDate]);
 
   // ─── Group workflow cards into sections per role ─────────────────────────
+  // Derive from role_page_config rows so Role Layout is authoritative.
+  // Only fall back to WORKFLOW_SECTION_MAP when the role has zero config rows
+  // (i.e. completely unconfigured), matching the admin page's logic.
   const workflowsBySection = useMemo(() => {
-    const roleMap = WORKFLOW_SECTION_MAP[role] || WORKFLOW_SECTION_MAP.pct || {};
     const grouped = {};
     FIXED_SECTIONS.forEach(s => { grouped[s.id] = []; });
-    WORKFLOW_CARDS.forEach(wf => {
-      const sectionId = roleMap[wf.id] || "as_needed";
-      if (grouped[sectionId]) grouped[sectionId].push(wf);
-    });
+
+    const hasConfig = configTasks.length > 0;
+    if (hasConfig) {
+      // Show only workflows explicitly present in role_page_config (wf_ prefix)
+      configTasks.forEach(row => {
+        if (!row.task_id?.startsWith("wf_")) return;
+        const wfId = row.task_id.replace("wf_", "");
+        const wfDef = WORKFLOW_CARDS.find(w => w.id === wfId);
+        if (wfDef && grouped[row.section]) {
+          grouped[row.section].push(wfDef);
+        }
+      });
+    } else {
+      // Unconfigured role — use static defaults
+      const roleMap = WORKFLOW_SECTION_MAP[role] || WORKFLOW_SECTION_MAP.pct || {};
+      WORKFLOW_CARDS.forEach(wf => {
+        const sectionId = roleMap[wf.id] || "as_needed";
+        if (grouped[sectionId]) grouped[sectionId].push(wf);
+      });
+    }
+
     return grouped;
-  }, [role]);
+  }, [role, configTasks]);
 
   // ─── Section progress stats ─────────────────────────────────────────────
   const sectionStats = useMemo(() => {
