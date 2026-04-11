@@ -30,6 +30,7 @@ import DashboardRefreshTab from "../settings/DashboardRefreshTab";
 import ApiOverviewTab from "../settings/ApiOverviewTab";
 import ApiDashboardTab from "../settings/ApiDashboardTab";
 import RolePageConfigTab from "../settings/RolePageConfigTab";
+import RoleLayoutPage from "./RoleLayoutPage";
 
 // ── Subscription Management Tab ────────────────────────────────────────────
 const PLAN_LABELS = {
@@ -223,7 +224,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
       label: "Operations",
       cards: [
         { id: "room-cleaning", label: "Room Cleaning", desc: "Configure missed cleaning carry-over behavior and display settings" },
-        { id: "role-page-config", label: "Role Page Sections", desc: "Configure Opening, Midday, Closing, and As Needed task sections per role" },
+        { id: "role-layout", label: "Role Layout", desc: "Matrix view: configure tasks and workflows across PCT, CSR, and MOD for all time-of-day sections" },
+        { id: "role-page-config", label: "Role Page Sections", desc: "Configure Opening, Midday, Closing, and As Needed task sections per role (legacy)" },
       ],
     },
     {
@@ -284,6 +286,8 @@ function SettingsPage({ profile: parentProfile, addGlobalToast }) {
         return <ApiOverviewTab />;
       case "api-dashboard":
         return <ApiDashboardTab />;
+      case "role-layout":
+        return <RoleLayoutPage profile={profile} addGlobalToast={addGlobalToast} />;
       case "role-page-config":
         return <RolePageConfigTab />;
       case "subscription":

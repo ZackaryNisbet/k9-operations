@@ -48,6 +48,7 @@ import PricingPage from "./pages/PricingPage";
 import CheckoutNotesPage from "./pages/CheckoutNotesPage";
 import DogProfilePage from "./pages/DogProfilePage";
 import RolePage from "./pages/RolePage";
+import RoleLayoutPage from "./pages/RoleLayoutPage";
 import SubscriptionGate from "../shared/SubscriptionGate";
 import useSubscription from "../hooks/useSubscription";
 
@@ -93,6 +94,7 @@ const LITE_PAGE_SLUGS = {
   "ops-svc": "ops/service",
   "ops-weekly-maintenance": "ops/weekly-maintenance",
   "role-page": "role-page",
+  "role-layout": "role-layout",
   "eod": "eod",
   "attendance": "attendance",
   "mgmt-attendance": "attendance",
@@ -859,6 +861,8 @@ function LeanAppInner() {
         return <WeeklyMaintenancePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} locationId={currentLocation} />;
       case "role-page":
         return <RolePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "role-layout":
+        return <RoleLayoutPage profile={profile} addGlobalToast={addGlobalToast} />;
       case "eod":
         return <LiteEODPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "mgmt-audit-log":
