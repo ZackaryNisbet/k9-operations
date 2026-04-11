@@ -374,7 +374,7 @@ function AdminHome({ data, nav, profile, bohStats, analyticsMode }) {
 function HomePage({ data, save, nav, profile, addGlobalToast, bohStats, analyticsMode, userLocationRoles, currentLocation }) {
   // Determine role classification
   const currentRole = (userLocationRoles || []).find(r => r.location_id === currentLocation);
-  const roleCode = currentRole?.role_code;
+  const roleCode = currentRole?.role_code || currentRole?.role;
   const tier = classifyRole(roleCode, profile?.role);
 
   if (tier === "staff") {
