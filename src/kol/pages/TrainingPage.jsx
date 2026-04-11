@@ -100,6 +100,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
   const [showNewRecord, setShowNewRecord] = useState(false);
   const [selectedRecordId, setSelectedRecordId] = useState(null);
   const [expandedSections, setExpandedSections] = useState({});
+  const [previewTemplateId, setPreviewTemplateId] = useState(null);
 
   // New record form
   const [newEmployeeName, setNewEmployeeName] = useState("");
@@ -198,15 +199,53 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
     return itemResults.find(r => r.template_item_id === itemId);
   }, [itemResults]);
 
+  // Template stats: section and item counts per template
+  const templateStats = useMemo(() => {
+    const stats = {};
+    templates.forEach(t => {
+      const v = templateVersions.find(tv => tv.template_id === t.id);
+      if (!v) { stats[t.id] = { sectionCount: 0, itemCount: 0 }; return; }
+      const tSections = sections.filter(s => s.template_version_id === v.id && !s.parent_section_id);
+      const tItems = items.filter(i => i.template_version_id === v.id);
+      stats[t.id] = { sectionCount: tSections.length, itemCount: tItems.length };
+    });
+    return stats;
+  }, [templates, templateVersions, sections, items]);
+
+  // Template preview data
+  const previewTemplate = useMemo(() => {
+    if (!previewTemplateId) return null;
+    const t = templates.find(x => x.id === previewTemplateId);
+    if (!t) return null;
+    const v = templateVersions.find(tv => tv.template_id === t.id);
+    if (!v) return { ...t, version: null, sections: [] };
+    const tSections = sections.filter(s => s.template_version_id === v.id && !s.parent_section_id)
+      .sort((a, b) => a.sequence_order - b.sequence_order);
+    const sectionData = tSections.map(sec => {
+      const childSecs = sections.filter(s => s.parent_section_id === sec.id)
+        .sort((a, b) => a.sequence_order - b.sequence_order);
+      const directItems = items.filter(i => i.template_section_id === sec.id)
+        .sort((a, b) => a.sequence_order - b.sequence_order);
+      const childData = childSecs.map(cs => ({
+        ...cs,
+        items: items.filter(i => i.template_section_id === cs.id)
+          .sort((a, b) => a.sequence_order - b.sequence_order),
+      }));
+      return { ...sec, children: childData, directItems };
+    });
+    return { ...t, version: v, sections: sectionData };
+  }, [previewTemplateId, templates, templateVersions, sections, items]);
+
   // Role-filtered template options for new record
   const templateOptions = useMemo(() => {
     return activeTemplates
       .filter(t => t.template_class === "training_plan")
       .map(t => {
         const v = templateVersions.find(tv => tv.template_id === t.id);
-        return { value: t.id, label: `${t.name} (${t.role_scopes.join(", ")})`, versionId: v?.id };
+        const stats = templateStats[t.id] || {};
+        return { value: t.id, label: `${t.name} (${t.role_scopes.join(", ")})`, versionId: v?.id, roleScopes: t.role_scopes, stats };
       });
-  }, [activeTemplates, templateVersions]);
+  }, [activeTemplates, templateVersions, templateStats]);
 
   // ── Create record ──
   const handleCreateRecord = useCallback(async () => {
@@ -745,7 +784,7 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
         </div>
       )}
 
-      {!loading && tab === "templates" && (
+      {!loading && tab === "templates" && !previewTemplateId && (
         <div>
           <SectionHeader title="Training Templates" count={templates.length} />
           {templates.length === 0 ? (
@@ -757,17 +796,24 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
                   <th style={tableHeaderStyle}>Name</th>
                   <th style={tableHeaderStyle}>Class</th>
                   <th style={tableHeaderStyle}>Roles</th>
+                  <th style={tableHeaderStyle}>Sections</th>
+                  <th style={tableHeaderStyle}>Items</th>
                   <th style={tableHeaderStyle}>Version</th>
                   <th style={tableHeaderStyle}>Status</th>
                 </tr></thead>
                 <tbody>
                   {templates.map(t => {
                     const v = templateVersions.find(tv => tv.template_id === t.id);
+                    const stats = templateStats[t.id] || {};
                     return (
-                      <tr key={t.id} style={{ borderBottom: `1px solid ${C.borderLight}` }}>
-                        <td style={{ padding: "10px 12px", fontSize: 13, fontWeight: 600, color: C.text }}>{t.name}</td>
+                      <tr key={t.id} onClick={() => setPreviewTemplateId(t.id)} style={{ cursor: "pointer", borderBottom: `1px solid ${C.borderLight}` }}
+                        onMouseEnter={e => e.currentTarget.style.background = C.surfaceHover}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <td style={{ padding: "10px 12px", fontSize: 13, fontWeight: 600, color: C.pri }}>{t.name}</td>
                         <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{t.template_class.replace(/_/g, " ")}</td>
                         <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{t.role_scopes.join(", ")}</td>
+                        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec, textAlign: "center" }}>{stats.sectionCount || 0}</td>
+                        <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec, textAlign: "center" }}>{stats.itemCount || 0}</td>
                         <td style={{ padding: "10px 12px", fontSize: 12, color: C.textSec }}>{v ? `v${v.version_no}` : "—"}</td>
                         <td style={{ padding: "10px 12px" }}>{t.is_active ? <Badge color="green">Active</Badge> : <Badge color="default">Inactive</Badge>}</td>
                       </tr>
@@ -777,6 +823,95 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               </table>
             </Card>
           )}
+        </div>
+      )}
+
+      {/* ─── Template Detail / Preview ─────────────────────────────────────── */}
+      {!loading && tab === "templates" && previewTemplateId && previewTemplate && (
+        <div>
+          <button onClick={() => setPreviewTemplateId(null)} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: C.pri, fontSize: 13, fontWeight: 600, cursor: "pointer", marginBottom: 16, fontFamily: "inherit", padding: 0 }}>
+            <I.Back /> Back to Templates
+          </button>
+
+          <Card style={{ padding: 24, marginBottom: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 16 }}>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 4 }}>{previewTemplate.name}</div>
+                <div style={{ fontSize: 14, color: C.textSec, marginBottom: 8 }}>{previewTemplate.template_class.replace(/_/g, " ")} — {previewTemplate.role_scopes.join(", ")}</div>
+                {previewTemplate.version && (
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", fontSize: 12, color: C.textMut }}>
+                    <span>Version {previewTemplate.version.version_no}</span>
+                    <span>Source: {previewTemplate.version.source_packet || "—"}</span>
+                    {previewTemplate.version.published_at && <span>Published: {fmtDate(previewTemplate.version.published_at)}</span>}
+                  </div>
+                )}
+              </div>
+              <div style={{ textAlign: "right" }}>
+                {previewTemplate.is_active ? <Badge color="green">Active</Badge> : <Badge color="default">Inactive</Badge>}
+                <div style={{ marginTop: 8, fontSize: 12, color: C.textMut }}>{(templateStats[previewTemplate.id] || {}).sectionCount || 0} sections — {(templateStats[previewTemplate.id] || {}).itemCount || 0} items</div>
+              </div>
+            </div>
+          </Card>
+
+          {previewTemplate.version?.metadata?.qa_flags?.length > 0 && (
+            <Card style={{ padding: 14, marginBottom: 16, background: "#FEF3C7", border: "1.5px solid #F59E0B40" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#D97706", marginBottom: 4 }}>QA Flags</div>
+              {previewTemplate.version.metadata.qa_flags.map((f, i) => (
+                <div key={i} style={{ fontSize: 12, color: "#92400E", marginTop: 4 }}>{f}</div>
+              ))}
+            </Card>
+          )}
+
+          <SectionHeader title="Template Structure" count={previewTemplate.sections.length} />
+          {previewTemplate.sections.map(sec => {
+            const isOpen = expandedSections[`tpl_${sec.id}`];
+            const totalItems = sec.children.reduce((sum, c) => sum + c.items.length, 0) + sec.directItems.length;
+            return (
+              <Card key={sec.id} style={{ marginBottom: 8, padding: 0, overflow: "hidden" }}>
+                <button onClick={() => toggleSection(`tpl_${sec.id}`)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: isOpen ? C.priLt : "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", textAlign: "left", transition: "background 0.15s" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
+                    <span style={{ transform: isOpen ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}><I.ChevronRight /></span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sec.title}</div>
+                      {sec.day_number && <div style={{ fontSize: 11, color: C.textMut }}>
+                        {sec.time_block_start && sec.time_block_end ? `${sec.time_block_start} - ${sec.time_block_end}` : `Day ${sec.day_number}`}
+                      </div>}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 11, color: C.textMut, fontWeight: 600, flexShrink: 0 }}>
+                    {sec.children.length > 0 ? `${sec.children.length} module${sec.children.length !== 1 ? "s" : ""}` : ""}{sec.children.length > 0 && totalItems > 0 ? " — " : ""}{totalItems > 0 ? `${totalItems} item${totalItems !== 1 ? "s" : ""}` : ""}
+                  </span>
+                </button>
+
+                {isOpen && (
+                  <div style={{ padding: "0 16px 14px" }}>
+                    {sec.children.map(child => (
+                      <div key={child.id} style={{ marginTop: 12 }}>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: C.pri, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" }}>{child.title}</div>
+                        {child.items.map(item => (
+                          <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: `1px solid ${C.borderLight}` }}>
+                            <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.border, flexShrink: 0 }} />
+                            <span style={{ fontSize: 13, color: C.text, flex: 1 }}>{item.label}</span>
+                            <span style={{ fontSize: 10, color: C.textMut }}>{item.item_type}</span>
+                            {!item.required && <span style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>optional</span>}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                    {sec.directItems.map(item => (
+                      <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: `1px solid ${C.borderLight}` }}>
+                        <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.border, flexShrink: 0 }} />
+                        <span style={{ fontSize: 13, color: C.text, flex: 1 }}>{item.label}</span>
+                        <span style={{ fontSize: 10, color: C.textMut }}>{item.item_type}</span>
+                        {!item.required && <span style={{ fontSize: 10, color: C.textMut, fontStyle: "italic" }}>optional</span>}
+                      </div>
+                    ))}
+                    {sec.instructions && <div style={{ marginTop: 8, fontSize: 11, color: C.textMut, fontStyle: "italic" }}>{sec.instructions}</div>}
+                  </div>
+                )}
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -821,8 +956,10 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
             <Inp label="Employee Full Name" value={newEmployeeName} onChange={e => setNewEmployeeName(e.target.value)} required />
             <CustomSelect label="Target Role" value={newTargetRole} onChange={v => {
               setNewTargetRole(v);
-              // Auto-select first matching template
-              const match = templateOptions.find(t => t.label.toLowerCase().includes(v.toLowerCase()));
+              // Auto-select first template whose role_scopes includes the selected role
+              const match = templateOptions.find(t =>
+                t.roleScopes.some(rs => rs.toUpperCase() === v.toUpperCase())
+              );
               if (match) setNewTemplateId(match.value);
             }} options={[
               { value: "PCT", label: "PCT (Pet Care Tech)" },
@@ -830,6 +967,15 @@ export default function TrainingPage({ data, save, nav, profile, addGlobalToast 
               { value: "Supervisor", label: "Supervisor" },
             ]} />
             <CustomSelect label="Training Template" value={newTemplateId} onChange={v => setNewTemplateId(v)} options={templateOptions} />
+            {newTemplateId && (() => {
+              const opt = templateOptions.find(o => o.value === newTemplateId);
+              const st = opt?.stats || {};
+              return st.sectionCount > 0 ? (
+                <div style={{ padding: "8px 12px", borderRadius: 8, background: C.priLt, fontSize: 12, color: C.pri, fontWeight: 600 }}>
+                  {st.sectionCount} section{st.sectionCount !== 1 ? "s" : ""} — {st.itemCount} checklist item{st.itemCount !== 1 ? "s" : ""}
+                </div>
+              ) : null;
+            })()}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <Inp label="Hire Date" type="date" value={newHireDate} onChange={e => setNewHireDate(e.target.value)} />
               <Inp label="Training Start Date" type="date" value={newStartDate} onChange={e => setNewStartDate(e.target.value)} />
