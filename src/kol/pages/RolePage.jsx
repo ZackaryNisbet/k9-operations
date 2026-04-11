@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
-import { C, OPERATIONS_CATALOG, OPS_TYPES, todayStr, addDays, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE } from "../../shared/theme";
+import { C, OPERATIONS_CATALOG, OPS_TYPES, todayStr, addDays, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE, WORKFLOW_SECTION_MAP } from "../../shared/theme";
 import { Card, Badge, Btn, Modal } from "../../shared/ui";
 import { I, Icons } from "../../shared/icons";
 import { getOpsCardStatus, getOpsProgress, getOpsCountLabel, getRoomCleaningStats, getPPStats, resSvcIncludes } from "../../shared/opsHelpers";
@@ -267,6 +267,18 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
     return summaries;
   }, [data, viewDate]);
 
+  // ─── Group workflow cards into sections per role ─────────────────────────
+  const workflowsBySection = useMemo(() => {
+    const roleMap = WORKFLOW_SECTION_MAP[role] || WORKFLOW_SECTION_MAP.pct || {};
+    const grouped = {};
+    FIXED_SECTIONS.forEach(s => { grouped[s.id] = []; });
+    WORKFLOW_CARDS.forEach(wf => {
+      const sectionId = roleMap[wf.id] || "as_needed";
+      if (grouped[sectionId]) grouped[sectionId].push(wf);
+    });
+    return grouped;
+  }, [role]);
+
   // ─── Section progress stats ─────────────────────────────────────────────
   const sectionStats = useMemo(() => {
     const stats = {};
@@ -386,74 +398,76 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
         </div>
       )}
 
-      {/* ─── Empty state ─────────────────────────────────────────────────── */}
+      {/* ─── Empty state hint (no checklist tasks configured) ──────────── */}
       {totalTasks === 0 && !configLoading && (
         <div style={{
-          padding: "48px 32px", textAlign: "center", borderRadius: 16,
-          background: C.surface, border: `2px dashed ${C.border}`, marginBottom: 24,
+          padding: "12px 16px", borderRadius: 10,
+          background: C.surfaceHover, border: `1px solid ${C.border}`, marginBottom: 16,
+          display: "flex", alignItems: "center", gap: 10,
         }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
-          <h3 style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 8 }}>No Tasks Configured</h3>
-          <p style={{ fontSize: 14, color: C.textSec, marginBottom: 20, maxWidth: 400, margin: "0 auto 20px" }}>
-            Role page tasks haven't been set up yet. An admin can configure tasks
-            for this role in Settings → Role Page Sections.
-          </p>
+          <span style={{ fontSize: 12, color: C.textMut }}>
+            No checklist tasks configured yet for this role.
+          </span>
           <button onClick={() => nav("settings")}
             style={{
-              padding: "10px 24px", borderRadius: 10, border: "none",
-              background: C.pri, color: "#fff", fontSize: 13, fontWeight: 700,
+              padding: "4px 12px", borderRadius: 6, border: "none",
+              background: C.pri, color: "#fff", fontSize: 11, fontWeight: 600,
               cursor: "pointer", fontFamily: "inherit",
             }}>
-            Go to Settings
+            Configure
           </button>
         </div>
       )}
 
-      {/* ─── Fixed Sections with Tasks ───────────────────────────────────── */}
+      {/* ─── Fixed Sections with Tasks & Workflow Cards ──────────────────── */}
       {FIXED_SECTIONS.map(section => {
         const sectionTasks = tasksBySection[section.id] || [];
-        if (sectionTasks.length === 0) return null;
+        const sectionWorkflows = workflowsBySection[section.id] || [];
         const stats = sectionStats[section.id];
         const isCollapsed = collapsedSections[section.id];
+        const hasContent = sectionTasks.length > 0 || sectionWorkflows.length > 0;
 
         return (
           <div key={section.id} style={{ marginBottom: 20 }}>
-            {/* Section header */}
+            {/* Section header — subtle, no emoji/icon per spec */}
             <div
               onClick={() => toggleCollapse(section.id)}
               style={{
-                display: "flex", alignItems: "center", gap: 10, padding: "12px 16px",
+                display: "flex", alignItems: "center", gap: 10, padding: "10px 16px",
                 borderRadius: isCollapsed ? 12 : "12px 12px 0 0",
-                background: section.bg,
-                border: `1.5px solid ${section.borderColor}`,
-                borderBottom: isCollapsed ? `1.5px solid ${section.borderColor}` : "none",
+                background: C.surfaceHover,
+                border: `1px solid ${C.border}`,
+                borderBottom: isCollapsed ? `1px solid ${C.border}` : "none",
                 cursor: "pointer", userSelect: "none",
                 transition: "all 0.15s",
               }}>
-              <div style={{
-                width: 28, height: 28, borderRadius: 8, background: `${section.color}20`,
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>
-                <div style={{ width: 12, height: 12, borderRadius: "50%", background: section.color }} />
-              </div>
-              <span style={{ fontSize: 15, fontWeight: 700, color: section.color, flex: 1 }}>{section.label}</span>
-              <span style={{ fontSize: 12, fontWeight: 700, color: stats.pct === 100 ? C.suc : section.color }}>
-                {stats.done}/{stats.total}
-              </span>
-              {/* Mini progress bar */}
-              <div style={{ width: 60, height: 5, borderRadius: 3, background: `${section.color}20`, overflow: "hidden" }}>
-                <div style={{ width: `${stats.pct}%`, height: "100%", borderRadius: 3, background: stats.pct === 100 ? C.suc : section.color, transition: "width 0.3s" }} />
-              </div>
-              <span style={{ fontSize: 14, color: section.color, fontWeight: 600, transition: "transform 0.2s", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0)" }}>▼</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.textSec, flex: 1 }}>{section.label}</span>
+              {sectionTasks.length > 0 && (
+                <span style={{ fontSize: 12, fontWeight: 600, color: stats.pct === 100 ? C.suc : C.textMut }}>
+                  {stats.done}/{stats.total}
+                </span>
+              )}
+              {sectionTasks.length > 0 && (
+                <div style={{ width: 48, height: 4, borderRadius: 2, background: C.borderLight, overflow: "hidden" }}>
+                  <div style={{ width: `${stats.pct}%`, height: "100%", borderRadius: 2, background: stats.pct === 100 ? C.suc : section.color, transition: "width 0.3s" }} />
+                </div>
+              )}
+              {sectionWorkflows.length > 0 && sectionTasks.length === 0 && (
+                <span style={{ fontSize: 11, color: C.textMut, fontWeight: 500 }}>
+                  {sectionWorkflows.length} workflow{sectionWorkflows.length !== 1 ? "s" : ""}
+                </span>
+              )}
+              <span style={{ fontSize: 12, color: C.textMut, fontWeight: 600, transition: "transform 0.2s", transform: isCollapsed ? "rotate(-90deg)" : "rotate(0)" }}>▼</span>
             </div>
 
-            {/* Task list */}
+            {/* Section body */}
             {!isCollapsed && (
               <div style={{
-                border: `1.5px solid ${section.borderColor}`,
+                border: `1px solid ${C.border}`,
                 borderTop: "none", borderRadius: "0 0 12px 12px",
                 background: C.surface, overflow: "hidden",
               }}>
+                {/* Checklist tasks */}
                 {sectionTasks.map((task, idx) => {
                   const state = taskStates[task.task_id];
                   const isCompleted = state?.completed;
@@ -463,7 +477,7 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
                   return (
                     <div key={task.task_id} style={{
                       display: "flex", alignItems: "center", gap: 10, padding: "10px 16px",
-                      borderBottom: idx < sectionTasks.length - 1 ? `1px solid ${C.borderLight}` : "none",
+                      borderBottom: `1px solid ${C.borderLight}`,
                       background: isCompleted ? `${C.suc}06` : "transparent",
                       transition: "background 0.15s",
                     }}>
@@ -490,14 +504,6 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
                       }}>
                         {task.task_label}
                       </span>
-                      {task.source && task.source !== "custom" && (
-                        <span style={{
-                          fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4,
-                          background: "#DBEAFE", color: "#1D4ED8",
-                        }}>
-                          {task.source.replace("legacy_", "").toUpperCase()}
-                        </span>
-                      )}
                       {isCompleted && completedBy && (
                         <span style={{ fontSize: 10, color: C.suc, fontWeight: 600 }}>
                           {completedBy}
@@ -514,67 +520,70 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
                     </div>
                   );
                 })}
+
+                {/* Workflow cards embedded in this section */}
+                {sectionWorkflows.length > 0 && (
+                  <div style={{ padding: "10px 12px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
+                    {sectionWorkflows.map(wf => {
+                      const summary = workflowSummaries[wf.id] || { status: "not_started", progress: 0, countLabel: "" };
+                      const sc = statusConfig[summary.status] || statusConfig.not_started;
+                      return (
+                        <div key={wf.id}
+                          onClick={() => nav(wf.routeTo)}
+                          style={{
+                            padding: "12px 14px", borderRadius: 12, cursor: "pointer",
+                            background: C.bg, border: `1.5px solid ${C.border}`,
+                            transition: "all 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
+                          }}
+                          onMouseEnter={e => {
+                            e.currentTarget.style.borderColor = section.color + "60";
+                            e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.06)";
+                          }}
+                          onMouseLeave={e => {
+                            e.currentTarget.style.borderColor = C.border;
+                            e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.03)";
+                          }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 700, color: C.text }}>{wf.label}</span>
+                            <span style={{
+                              fontSize: 8, fontWeight: 700, padding: "2px 6px", borderRadius: 5,
+                              background: sc.bg, color: sc.color, textTransform: "uppercase",
+                              letterSpacing: "0.04em",
+                            }}>
+                              {sc.label}
+                            </span>
+                          </div>
+                          {summary.countLabel && (
+                            <div style={{ fontSize: 11, color: C.textSec, fontWeight: 600, marginBottom: 4 }}>
+                              {summary.countLabel}
+                            </div>
+                          )}
+                          <div style={{ height: 4, borderRadius: 2, background: C.borderLight, overflow: "hidden" }}>
+                            <div style={{
+                              width: `${summary.progress || 0}%`, height: "100%", borderRadius: 2,
+                              background: sc.barColor, transition: "width 0.3s",
+                            }} />
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 10, color: section.color, fontWeight: 600 }}>
+                            View Details →
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Empty section indicator */}
+                {!hasContent && (
+                  <div style={{ padding: "14px 16px", fontSize: 12, color: C.textMut, fontStyle: "italic" }}>
+                    No tasks or workflows assigned
+                  </div>
+                )}
               </div>
             )}
           </div>
         );
       })}
-
-      {/* ─── Workflow Summary Cards ───────────────────────────────────────── */}
-      <div style={{ marginTop: 28, marginBottom: 8 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 14, letterSpacing: "-0.01em" }}>
-          Live Workflows
-        </h3>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
-          {WORKFLOW_CARDS.map(wf => {
-            const summary = workflowSummaries[wf.id] || { status: "not_started", progress: 0, countLabel: "" };
-            const sc = statusConfig[summary.status] || statusConfig.not_started;
-
-            return (
-              <div key={wf.id}
-                onClick={() => nav(wf.routeTo)}
-                style={{
-                  padding: "14px 18px", borderRadius: 14, cursor: "pointer",
-                  background: C.surface, border: `1.5px solid ${C.border}`,
-                  transition: "all 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.borderColor = C.pri + "60";
-                  e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)";
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.borderColor = C.border;
-                  e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04)";
-                }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>{wf.label}</span>
-                  <span style={{
-                    fontSize: 9, fontWeight: 700, padding: "3px 8px", borderRadius: 6,
-                    background: sc.bg, color: sc.color, textTransform: "uppercase",
-                    letterSpacing: "0.04em",
-                  }}>
-                    {sc.label}
-                  </span>
-                </div>
-                {summary.countLabel && (
-                  <div style={{ fontSize: 12, color: C.textSec, fontWeight: 600, marginBottom: 6 }}>
-                    {summary.countLabel}
-                  </div>
-                )}
-                <div style={{ height: 5, borderRadius: 3, background: C.borderLight, overflow: "hidden" }}>
-                  <div style={{
-                    width: `${summary.progress || 0}%`, height: "100%", borderRadius: 3,
-                    background: sc.barColor, transition: "width 0.3s",
-                  }} />
-                </div>
-                <div style={{ marginTop: 6, fontSize: 11, color: C.pri, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
-                  View Details →
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
 }
