@@ -192,7 +192,8 @@ function parseLiteUrl(pathname, dataRef) {
 // Default: ops-only nav (K9 Operations core)
 const LEAN_NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
-  { id: "ops-hub", label: "Operations", icon: "Clipboard" },
+  { id: "role-page", label: "My Work", icon: "Clipboard" },
+  { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -203,8 +204,9 @@ const LEAN_NAV_ITEMS = [
 // Full nav when ?mode=analytics is active (K9 Operations + Analytics)
 const ANALYTICS_NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
+  { id: "role-page", label: "My Work", icon: "Clipboard" },
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
-  { id: "ops-hub", label: "Operations", icon: "Clipboard" },
+  { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -356,6 +358,24 @@ function LeanAppInner() {
     supabase.from("location_roles").select("*").eq("user_id", user.id)
       .then(({ data: rows }) => { if (rows) setUserLocationRoles(rows); });
   }, [user?.id]);
+
+  // ── Role-based default landing ───────────────────────────────────────────
+  // Frontline roles (pct, csr) land on My Work; everyone else stays on Dashboard.
+  const roleLandingApplied = useRef(false);
+  useEffect(() => {
+    if (roleLandingApplied.current || !userLocationRoles.length) return;
+    // Only redirect if user is still on the initial default page
+    if (page !== "dashboard") return;
+    const currentRole = userLocationRoles.find(r => r.location_id === currentLocation);
+    const code = currentRole?.role_code;
+    if (code === "pct" || code === "csr") {
+      roleLandingApplied.current = true;
+      setPage("role-page");
+      setNavStack([{ page: "role-page", params: {} }]);
+    } else {
+      roleLandingApplied.current = true;
+    }
+  }, [userLocationRoles, currentLocation, page]);
 
   // Compute accessible location IDs (null = all)
   const userLocationIds = useMemo(
@@ -600,7 +620,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "test-health", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -617,7 +637,7 @@ function LeanAppInner() {
       case "dashboard": return "Dashboard";
       case "lifecycle": return "Customer Lifecycle";
       case "funnel": return "Lead Funnel";
-      case "ops-hub": return "Operations";
+      case "ops-hub": return "Ops Overview";
       case "ops-opening": return "Opening Checklist";
       case "ops-fe": return "FE Checklist";
       case "ops-be": return "BE Checklist";
@@ -632,7 +652,7 @@ function LeanAppInner() {
       case "ops-pamper": return "Pamper Package Plus";
       case "ops-svc": return params?.svcName || "Service Report";
       case "ops-weekly-maintenance": return "Weekly Maintenance";
-      case "role-page": return "My Tasks";
+      case "role-page": return "My Work";
       case "eod": return "End of Day";
       case "daily-ops": return "Daily Ops";
       case "attendance": case "mgmt-attendance": return "Attendance Tracker";
