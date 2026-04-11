@@ -301,6 +301,12 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
     setCollapsedSections(prev => ({ ...prev, [sectionId]: !prev[sectionId] }));
   };
 
+  // ─── Expanded task descriptions ────────────────────────────────────────
+  const [expandedDescs, setExpandedDescs] = useState({});
+  const toggleDesc = (taskId) => {
+    setExpandedDescs(prev => ({ ...prev, [taskId]: !prev[taskId] }));
+  };
+
   // Status config for workflow cards
   const statusConfig = {
     not_started: { label: "Not Started", bg: C.surfaceHover, color: C.textMut, barColor: C.borderLight },
@@ -473,49 +479,76 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
                   const isCompleted = state?.completed;
                   const completedBy = state?.completed_by;
                   const completedAt = state?.completed_at;
+                  const hasDesc = !!task.task_description;
+                  const isExpanded = expandedDescs[task.task_id];
 
                   return (
                     <div key={task.task_id} style={{
-                      display: "flex", alignItems: "center", gap: 10, padding: "10px 16px",
                       borderBottom: `1px solid ${C.borderLight}`,
                       background: isCompleted ? `${C.suc}06` : "transparent",
                       transition: "background 0.15s",
                     }}>
-                      <K9Check
-                        checked={!!isCompleted}
-                        disabled={isPast && !isToday}
-                        onChange={() => toggleTask(task.task_id)}
-                        color={section.color}
-                        size={20}
-                      />
-                      {task.task_time && (
-                        <span style={{
-                          fontSize: 10, fontWeight: 700, color: C.textMut,
-                          background: C.surfaceHover, padding: "2px 6px", borderRadius: 4,
-                          minWidth: 40, textAlign: "center",
-                        }}>
-                          {task.task_time}
-                        </span>
-                      )}
-                      <span style={{
-                        flex: 1, fontSize: 13, color: isCompleted ? C.textMut : C.text,
-                        textDecoration: isCompleted ? "line-through" : "none",
-                        fontWeight: 500,
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: 10, padding: "10px 16px",
                       }}>
-                        {task.task_label}
-                      </span>
-                      {isCompleted && completedBy && (
-                        <span style={{ fontSize: 10, color: C.suc, fontWeight: 600 }}>
-                          {completedBy}
-                          {completedAt && (() => {
-                            const d = new Date(completedAt);
-                            const h = d.getHours();
-                            const m = String(d.getMinutes()).padStart(2, "0");
-                            const ampm = h >= 12 ? "PM" : "AM";
-                            const hr = h > 12 ? h - 12 : h || 12;
-                            return ` · ${hr}:${m} ${ampm}`;
-                          })()}
+                        <K9Check
+                          checked={!!isCompleted}
+                          disabled={isPast && !isToday}
+                          onChange={() => toggleTask(task.task_id)}
+                          color={section.color}
+                          size={20}
+                        />
+                        {task.task_time && (
+                          <span style={{
+                            fontSize: 10, fontWeight: 700, color: C.textMut,
+                            background: C.surfaceHover, padding: "2px 6px", borderRadius: 4,
+                            minWidth: 40, textAlign: "center",
+                          }}>
+                            {task.task_time}
+                          </span>
+                        )}
+                        <span
+                          onClick={hasDesc ? () => toggleDesc(task.task_id) : undefined}
+                          style={{
+                            flex: 1, fontSize: 13, color: isCompleted ? C.textMut : C.text,
+                            textDecoration: isCompleted ? "line-through" : "none",
+                            fontWeight: 500,
+                            cursor: hasDesc ? "pointer" : "default",
+                          }}
+                        >
+                          {task.task_label}
+                          {hasDesc && (
+                            <span style={{
+                              fontSize: 10, marginLeft: 6, color: section.color,
+                              fontWeight: 600, transition: "transform 0.2s",
+                              display: "inline-block",
+                              transform: isExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                            }}>&#9656;</span>
+                          )}
                         </span>
+                        {isCompleted && completedBy && (
+                          <span style={{ fontSize: 10, color: C.suc, fontWeight: 600 }}>
+                            {completedBy}
+                            {completedAt && (() => {
+                              const d = new Date(completedAt);
+                              const h = d.getHours();
+                              const m = String(d.getMinutes()).padStart(2, "0");
+                              const ampm = h >= 12 ? "PM" : "AM";
+                              const hr = h > 12 ? h - 12 : h || 12;
+                              return ` · ${hr}:${m} ${ampm}`;
+                            })()}
+                          </span>
+                        )}
+                      </div>
+                      {/* Expandable description */}
+                      {hasDesc && isExpanded && (
+                        <div style={{
+                          padding: "0 16px 10px 56px",
+                          fontSize: 12, color: C.textSec, lineHeight: 1.5,
+                          whiteSpace: "pre-wrap",
+                        }}>
+                          {task.task_description}
+                        </div>
                       )}
                     </div>
                   );
