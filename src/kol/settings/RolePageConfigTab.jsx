@@ -563,8 +563,8 @@ function RolePageConfigTab() {
                 ))}
               </select>
             </div>
-            <Inp label="Task Description" value={addLabel} onChange={e => setAddLabel(e.target.value)} required />
-            <Inp label="Time (optional, HH:MM)" value={addTime} onChange={e => setAddTime(e.target.value)} />
+            <Inp label="Task Description" value={addLabel} onChange={setAddLabel} required />
+            <Inp label="Time (optional, HH:MM)" value={addTime} onChange={setAddTime} />
             <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
               <Btn variant="primary" onClick={addTask} disabled={!addLabel.trim()}>Add Task</Btn>
               <Btn variant="ghost" onClick={() => setShowAddTask(false)}>Cancel</Btn>
