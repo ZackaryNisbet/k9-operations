@@ -130,7 +130,7 @@ function OperationsHub({ data, save, nav, profile }) {
   // their RolePage, preventing web/mobile mismatch.
   const [roleConfigTasks, setRoleConfigTasks] = useState(null); // null = loading, [] = loaded empty
   useEffect(() => {
-    const locId = profile?.location_id;
+    const locId = profile?.location_id || "cherry-hill";
     if (!locId) { setRoleConfigTasks([]); return; }
     let cancelled = false;
     supabase.from("role_page_config").select("*")
@@ -249,13 +249,29 @@ function OperationsHub({ data, save, nav, profile }) {
   const [showTodayProgress, setShowTodayProgress] = useState(false);
 
   // Summary stats — lightweight: only today's completion for the progress footer
+  // Role-config-aware: use DB templates for opening/fe/be/closing when available
   const summaryStats = useMemo(() => {
     const activeItems = OPERATIONS_CATALOG.filter(c => c.frequency === "daily" && !c.comingSoon && c.dataKey !== "eodEntries");
-    const todayCompleted = activeItems.filter(c => getOpsCardStatus(data, c, viewDate) === "completed").length;
+    const rcSectionMap = { opening: "opening", fe_checklist: "midday", be_checklist: "midday", closing: "closing" };
+    const todayCompleted = activeItems.filter(c => {
+      const rcSection = rcSectionMap[c.typeSub];
+      const rcTemplate = rcSection && roleConfigTemplates?.[rcSection];
+      if (rcTemplate && rcTemplate.length > 0) {
+        const dayIdx = new Date(viewDate + "T12:00:00").getDay();
+        const todayItems = rcTemplate.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
+        const entryId = `ops_${c.typeSub}_${viewDate}`;
+        const entry = (data.dailyOps || []).find(e => e.id === entryId);
+        if (entry?.locked) return true;
+        const ei = entry?.items || {};
+        const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : ei.filter(i => i.checked).length;
+        return todayItems.length > 0 && checked >= todayItems.length;
+      }
+      return getOpsCardStatus(data, c, viewDate) === "completed";
+    }).length;
     const todayTotal = activeItems.length;
     const todayPct = todayTotal > 0 ? Math.round((todayCompleted / todayTotal) * 100) : 0;
     return { todayCompleted, todayTotal, todayPct };
-  }, [data, viewDate]);
+  }, [data, viewDate, roleConfigTemplates]);
 
   // ─── Inline Checklist Expansion (OPS-007, OPS-008, OPS-009) ────────────────
   const [expandedCard, setExpandedCard] = useState(null);
@@ -404,13 +420,32 @@ function OperationsHub({ data, save, nav, profile }) {
       if (d && d.sessions) d.sessions.forEach(s => { if (s.time) ppLastTime = s.time; });
     });
 
-    // Checklist progress for each ops type
+    // Checklist progress for each ops type — role-config-aware
     const checklistProgress = {};
+    const rcSectionMap = { opening: "opening", fe_checklist: "midday", be_checklist: "midday", closing: "closing" };
     const activeItems = OPERATIONS_CATALOG.filter(c => c.frequency === "daily" && !c.comingSoon && c.dataKey !== "eodEntries");
     activeItems.forEach(item => {
-      const progress = getOpsProgress(data, item, viewDate);
-      const status = getOpsCardStatus(data, item, viewDate);
-      const countLabel = getOpsCountLabel(data, item, viewDate);
+      const rcSection = rcSectionMap[item.typeSub];
+      const rcTemplate = rcSection && roleConfigTemplates?.[rcSection];
+      let progress, status, countLabel;
+      if (rcTemplate && rcTemplate.length > 0) {
+        const dayIdx2 = new Date(viewDate + "T12:00:00").getDay();
+        const todayItems = rcTemplate.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx2);
+        const entryId = `ops_${item.typeSub}_${viewDate}`;
+        const entry = allOps.find(e => e.id === entryId);
+        const ei = entry?.items || {};
+        const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : ei.filter(i => i.checked).length;
+        const total = todayItems.length;
+        if (entry?.locked) { status = "completed"; progress = 100; }
+        else if (total > 0 && checked >= total) { status = "completed"; progress = 100; }
+        else if (checked > 0) { status = "in_progress"; progress = Math.round((checked / total) * 100); }
+        else { status = "not_started"; progress = 0; }
+        countLabel = `${checked}/${total} tasks`;
+      } else {
+        progress = getOpsProgress(data, item, viewDate);
+        status = getOpsCardStatus(data, item, viewDate);
+        countLabel = getOpsCountLabel(data, item, viewDate);
+      }
       checklistProgress[item.typeSub || item.id] = { label: item.label, progress, status, countLabel };
     });
 
@@ -529,7 +564,7 @@ function OperationsHub({ data, save, nav, profile }) {
       newCustomersToday,
       newPayingToday,
     };
-  }, [data, viewDate, showTodayProgress]);
+  }, [data, viewDate, showTodayProgress, roleConfigTemplates]);
 
   const groups = [
     { key: "daily", label: "Daily Operations", items: OPERATIONS_CATALOG.filter(c => c.frequency === "daily") },
@@ -809,17 +844,42 @@ function OperationsHub({ data, save, nav, profile }) {
               {visibleItems.map(item => {
                 // Inventory card: override status from Supabase snapshot
                 const isInv = item.id === "weekly-inventory";
-                const status = isInv && invStatus ? invStatus.status : getOpsCardStatus(data, item, viewDate);
-                const progress = isInv && invStatus ? (
-                  invStatus.status === "completed" ? 100
-                  : invStatus.phase === "ordering" ? (invStatus.needsOrder > 0 ? Math.round((invStatus.ordered / invStatus.needsOrder) * 100) : 100)
-                  : invStatus.totalItems > 0 ? Math.round((invStatus.itemsCounted / invStatus.totalItems) * 100) : 0
-                ) : getOpsProgress(data, item, viewDate);
-                const countLabel = isInv && invStatus ? invStatus.phaseLabel : getOpsCountLabel(data, item, viewDate);
+                // Role-config-aware card metrics: when roleConfigTemplates has data
+                // for this card's section, compute status/progress from the DB source
+                // instead of opsHelpers' hardcoded templates.
+                const rcSectionMap = { opening: "opening", fe_checklist: "midday", be_checklist: "midday", closing: "closing" };
+                const rcSection = rcSectionMap[item.typeSub];
+                const rcTemplate = rcSection && roleConfigTemplates?.[rcSection];
+                let status, progress, countLabel;
+                if (isInv && invStatus) {
+                  status = invStatus.status;
+                  progress = invStatus.status === "completed" ? 100
+                    : invStatus.phase === "ordering" ? (invStatus.needsOrder > 0 ? Math.round((invStatus.ordered / invStatus.needsOrder) * 100) : 100)
+                    : invStatus.totalItems > 0 ? Math.round((invStatus.itemsCounted / invStatus.totalItems) * 100) : 0;
+                  countLabel = invStatus.phaseLabel;
+                } else if (rcTemplate && rcTemplate.length > 0) {
+                  // DB-sourced template: compute locally so cards match RolePage
+                  const dayIdx = new Date(viewDate + "T12:00:00").getDay();
+                  const todayItems = rcTemplate.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
+                  const entryId = `ops_${item.typeSub}_${viewDate}`;
+                  const entry = (data.dailyOps || []).find(e => e.id === entryId);
+                  const ei = entry?.items || {};
+                  const checked = !Array.isArray(ei) ? Object.values(ei).filter(i => i && i.checked).length : ei.filter(i => i.checked).length;
+                  const total = todayItems.length;
+                  if (entry?.locked) { status = "completed"; progress = 100; }
+                  else if (total > 0 && checked >= total) { status = "completed"; progress = 100; }
+                  else if (checked > 0) { status = "in_progress"; progress = Math.round((checked / total) * 100); }
+                  else { status = "not_started"; progress = 0; }
+                  countLabel = `${checked}/${total} tasks`;
+                } else {
+                  status = getOpsCardStatus(data, item, viewDate);
+                  progress = getOpsProgress(data, item, viewDate);
+                  countLabel = getOpsCountLabel(data, item, viewDate);
+                }
                 const sc = statusConfig[status];
                 const isComingSoon = item.comingSoon;
                 const isEod = item.dataKey === "eodEntries";
-                const hasInlineChecklist = ["opening", "fe", "be", "closing"].includes(item.typeSub);
+                const hasInlineChecklist = ["opening", "fe_checklist", "be_checklist", "closing"].includes(item.typeSub);
                 const isExpanded = expandedCard === item.id;
                 const templateItems = isExpanded && hasInlineChecklist ? getTemplateForType(item.typeSub) : [];
                 const opsEntry = isExpanded && hasInlineChecklist ? getOpsEntry(item.typeSub) : null;
