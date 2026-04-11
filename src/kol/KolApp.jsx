@@ -50,6 +50,7 @@ import DogProfilePage from "./pages/DogProfilePage";
 import RolePage from "./pages/RolePage";
 import RoleLayoutPage from "./pages/RoleLayoutPage";
 import HomePage from "./pages/HomePage";
+import TrainingPage from "./pages/TrainingPage";
 import SubscriptionGate from "../shared/SubscriptionGate";
 import useSubscription from "../hooks/useSubscription";
 
@@ -116,6 +117,7 @@ const LITE_PAGE_SLUGS = {
   "cash-tips": "cash-tips",
   "onboarding": "onboarding",
   "pricing": "pricing",
+  "training": "training",
 };
 const LITE_SLUG_TO_PAGE = {};
 Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v]) LITE_SLUG_TO_PAGE[v] = k; });
@@ -211,6 +213,7 @@ const MANAGER_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
   { id: "role-page", label: "My Work", icon: "Clipboard" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
+  { id: "training", label: "Training", icon: "GraduationCap" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -221,6 +224,7 @@ const LEAN_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
+  { id: "training", label: "Training", icon: "GraduationCap" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -234,6 +238,7 @@ const ANALYTICS_NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
+  { id: "training", label: "Training", icon: "GraduationCap" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
   { id: "photos", label: "Photos", icon: "Image" },
@@ -638,7 +643,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "training", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -687,6 +692,7 @@ function LeanAppInner() {
       case "enterprise-ops": return "Operations Matrix";
       case "enterprise-attendance": return "Attendance";
       case "enterprise-users": return "User Management";
+      case "training": return "Training";
       case "inventory": return "Inventory";
       case "inventory-report": return "Inventory Reports";
       case "cash-tips": return "Cash Tips";
@@ -791,6 +797,7 @@ function LeanAppInner() {
       "reports": null,
       "photos": "Photos Module",
       "settings": null, // settings handles its own per-tab permissions
+      "training": "Training Management",
       "inventory": "Inventory Management",
       "inventory-report": "Inventory Management",
       "occupancy-report": "Occupancy Reports",
@@ -936,6 +943,8 @@ function LeanAppInner() {
         return <EnterpriseAttendance profile={profile} userLocationIds={userLocationIds} />;
       case "enterprise-users":
         return <EnterpriseUserManagement profile={profile} userLocationIds={userLocationIds} />;
+      case "training":
+        return <TrainingPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "inventory":
         return <InventoryPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "inventory-report":
