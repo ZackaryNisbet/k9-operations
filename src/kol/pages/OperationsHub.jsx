@@ -123,6 +123,49 @@ function OperationsHub({ data, save, nav, profile }) {
   const dateLbl = new Date(viewDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
   const hp = (k) => hasPermission(profile, data, k);
 
+  // ─── Role page config (authoritative checklist source) ─────────────────────
+  // Loads ALL roles' config for this location so OperationsHub (used by
+  // supervisors/managers) can show the union of configured tasks. This ensures
+  // the inline checklist cards display the same items that each role sees on
+  // their RolePage, preventing web/mobile mismatch.
+  const [roleConfigTasks, setRoleConfigTasks] = useState(null); // null = loading, [] = loaded empty
+  useEffect(() => {
+    const locId = profile?.location_id;
+    if (!locId) { setRoleConfigTasks([]); return; }
+    let cancelled = false;
+    supabase.from("role_page_config").select("*")
+      .eq("location_id", locId)
+      .eq("is_active", true)
+      .order("sort_order", { ascending: true })
+      .then(({ data: rows }) => {
+        if (!cancelled) setRoleConfigTasks(rows || []);
+      });
+    return () => { cancelled = true; };
+  }, [profile?.location_id]);
+
+  // Build section-based templates from DB config, de-duplicated by task_id.
+  // Maps opening/closing/midday tasks from role_page_config into the same
+  // { id, label, time, dayOfWeek } shape the hardcoded templates use.
+  const roleConfigTemplates = useMemo(() => {
+    if (!roleConfigTasks || roleConfigTasks.length === 0) return null; // fall back to hardcoded
+    const bySection = { opening: [], midday: [], closing: [], as_needed: [] };
+    const seen = new Set();
+    roleConfigTasks.forEach(row => {
+      if (row.task_id?.startsWith("wf_")) return; // skip workflow references
+      if (seen.has(row.task_id)) return; // de-dup across roles
+      seen.add(row.task_id);
+      if (bySection[row.section]) {
+        bySection[row.section].push({
+          id: row.task_id,
+          label: row.task_label,
+          time: row.task_time || "",
+          dayOfWeek: row.day_of_week,
+        });
+      }
+    });
+    return bySection;
+  }, [roleConfigTasks]);
+
   // ─── Inventory snapshot status for weekly-inventory card ────────────────────
   // Reads from inventory_snapshots + inventory_counts (consolidated source of truth)
   const [invStatus, setInvStatus] = useState(null); // { status, itemsCounted, totalItems, phase, phaseLabel }
@@ -218,14 +261,25 @@ function OperationsHub({ data, save, nav, profile }) {
   const [expandedCard, setExpandedCard] = useState(null);
   const [savingCard, setSavingCard] = useState(null);
 
-  // Resolve template items for a given checklist type
+  // Resolve template items for a given checklist type.
+  // Prefers role_page_config DB rows (authoritative source shared with RolePage
+  // and mobile) and only falls back to hardcoded templates when the role has no
+  // DB config. This fixes web/mobile checklist mismatch.
   const getTemplateForType = useCallback((typeSub) => {
+    // Map ops typeSub to role_page_config section ids
+    const sectionMap = { opening: "opening", fe_checklist: "midday", be_checklist: "midday", closing: "closing" };
+    const sectionId = sectionMap[typeSub];
+    if (roleConfigTemplates && sectionId && roleConfigTemplates[sectionId]?.length > 0) {
+      const dayIdx = new Date(viewDate + "T12:00:00").getDay();
+      return roleConfigTemplates[sectionId].filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
+    }
+    // Fall back to hardcoded templates for unconfigured roles
     const templates = { opening: data.openingTemplate || DEF_OPENING_TEMPLATE, fe_checklist: data.feTemplate || POS_FE_TEMPLATE, be_checklist: data.beTemplate || POS_BE_TEMPLATE, closing: data.closingTemplate || DEF_CLOSING_TEMPLATE };
     const template = templates[typeSub];
     if (!template) return [];
     const dayIdx = new Date(viewDate + "T12:00:00").getDay();
     return template.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
-  }, [data, viewDate]);
+  }, [data, viewDate, roleConfigTemplates]);
 
   // Get saved items for an ops entry
   const getOpsEntry = useCallback((typeSub) => {
@@ -360,10 +414,10 @@ function OperationsHub({ data, save, nav, profile }) {
       checklistProgress[item.typeSub || item.id] = { label: item.label, progress, status, countLabel };
     });
 
-    // Closing procedures specifically
+    // Closing procedures specifically — prefer DB config for parity with RolePage
     const closingEntryId = `ops_closing_${viewDate}`;
     const closingEntry = allOps.find(e => e.id === closingEntryId);
-    const closingTemplate = data.closingTemplate || DEF_CLOSING_TEMPLATE;
+    const closingTemplate = (roleConfigTemplates?.closing?.length > 0) ? roleConfigTemplates.closing : (data.closingTemplate || DEF_CLOSING_TEMPLATE);
     const dayIdx = new Date(viewDate + "T12:00:00").getDay();
     const closingItems = closingTemplate.filter(t => t.dayOfWeek == null || t.dayOfWeek === dayIdx);
     const closingTotal = closingItems.length;
