@@ -49,6 +49,7 @@ import CheckoutNotesPage from "./pages/CheckoutNotesPage";
 import DogProfilePage from "./pages/DogProfilePage";
 import RolePage from "./pages/RolePage";
 import RoleLayoutPage from "./pages/RoleLayoutPage";
+import HomePage from "./pages/HomePage";
 import SubscriptionGate from "../shared/SubscriptionGate";
 import useSubscription from "../hooks/useSubscription";
 
@@ -71,6 +72,7 @@ class LeanAppErrorBoundary extends React.Component {
 // Maps page IDs to URL slugs (root-level: /cherry-hill/dashboard)
 const LITE_BASE = "";
 const LITE_PAGE_SLUGS = {
+  "home": "home",
   "dashboard": "dashboard",
   "lifecycle": "lifecycle",
   "client-detail": "client",
@@ -145,7 +147,7 @@ function parseLiteUrl(pathname, dataRef) {
   if (cleanPath.startsWith("/lite")) cleanPath = cleanPath.slice(5) || "/";
   if (LITE_BASE && cleanPath.startsWith(LITE_BASE)) cleanPath = cleanPath.slice(LITE_BASE.length) || "/";
   const parts = cleanPath.replace(/^\/+|\/+$/g, "").split("/").filter(Boolean);
-  if (parts.length === 0) return { locSlug: "cherry-hill", page: "dashboard", params: {} };
+  if (parts.length === 0) return { locSlug: "cherry-hill", page: "home", params: {} };
   // Top-level pages (no location slug): /lite/onboarding, /lite/pricing
   if (parts[0] === "onboarding") return { locSlug: null, page: "onboarding", params: {} };
   if (parts[0] === "pricing") return { locSlug: null, page: "pricing", params: {} };
@@ -155,7 +157,7 @@ function parseLiteUrl(pathname, dataRef) {
     const pg = LITE_SLUG_TO_PAGE["enterprise/" + epSlug] || LITE_SLUG_TO_PAGE[epSlug] || "enterprise-ops";
     return { locSlug: "enterprise", page: pg, params: {} };
   }
-  if (parts.length === 1) return { locSlug, page: "dashboard", params: {} };
+  if (parts.length === 1) return { locSlug, page: "home", params: {} };
   // Client detail: /{loc}/client/{phone_or_lc_id}
   if (parts[1] === "client" && parts[2]) {
     // Lite client by ID: /client/lc_{uuid}
@@ -184,15 +186,40 @@ function parseLiteUrl(pathname, dataRef) {
     return { locSlug, page: "lifecycle", params: {} };
   }
   const pgSlug = parts.slice(1).join("/");
-  const pg = LITE_SLUG_TO_PAGE[pgSlug] || "dashboard";
+  const pg = LITE_SLUG_TO_PAGE[pgSlug] || "home";
   return { locSlug, page: pg, params: {} };
 }
 
 // ─── Navigation Config ───────────────────────────────────────────────────
-// Default: ops-only nav (K9 Operations core)
-const LEAN_NAV_ITEMS = [
-  { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
+// Role-aware navigation aligned to mobile product model.
+// Home is the universal landing; My Work is the staff execution surface;
+// Ops Overview is demoted to managers+ only; Dashboard (analytics) is secondary.
+// Staff roles: Home, My Work, Inventory, Photos, TV, Settings
+// Manager roles: Home, My Work, Ops Overview, Inventory, Cash Tips, Photos, Settings
+// Admin/owner roles: Home, Dashboard, Ops Overview, Inventory, Cash Tips, Photos, Settings
+
+const STAFF_NAV_ITEMS = [
+  { id: "home", label: "Home", icon: "Home" },
   { id: "role-page", label: "My Work", icon: "Clipboard" },
+  { id: "inventory", label: "Inventory", icon: "Package" },
+  { id: "photos", label: "Photos", icon: "Image" },
+  { id: "checkout-tv", label: "TV", icon: "Monitor" },
+  { id: "settings", label: "Settings", icon: "Settings" },
+];
+
+const MANAGER_NAV_ITEMS = [
+  { id: "home", label: "Home", icon: "Home" },
+  { id: "role-page", label: "My Work", icon: "Clipboard" },
+  { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
+  { id: "inventory", label: "Inventory", icon: "Package" },
+  { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
+  { id: "photos", label: "Photos", icon: "Image" },
+  { id: "settings", label: "Settings", icon: "Settings" },
+];
+
+const LEAN_NAV_ITEMS = [
+  { id: "home", label: "Home", icon: "Home" },
+  { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
@@ -203,8 +230,8 @@ const LEAN_NAV_ITEMS = [
 
 // Full nav when ?mode=analytics is active (K9 Operations + Analytics)
 const ANALYTICS_NAV_ITEMS = [
+  { id: "home", label: "Home", icon: "Home" },
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
-  { id: "role-page", label: "My Work", icon: "Clipboard" },
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
   { id: "inventory", label: "Inventory", icon: "Package" },
@@ -242,7 +269,7 @@ function LeanAppInner() {
   const initialParsed = useMemo(() => {
     const path = window.location.pathname;
     if (path.startsWith(LITE_BASE)) return parseLiteUrl(path, null);
-    return { locSlug: null, page: "dashboard", params: {} };
+    return { locSlug: null, page: "home", params: {} };
   }, []);
 
   // Resolve initial location from URL slug or auth profile
@@ -360,21 +387,12 @@ function LeanAppInner() {
   }, [user?.id]);
 
   // ── Role-based default landing ───────────────────────────────────────────
-  // Frontline roles (pct, csr) land on My Work; everyone else stays on Dashboard.
+  // All roles land on the new role-aware Home page.
+  // The Home component itself renders different content per role tier.
   const roleLandingApplied = useRef(false);
   useEffect(() => {
-    if (roleLandingApplied.current || !userLocationRoles.length) return;
-    // Only redirect if user is still on the initial default page
-    if (page !== "dashboard") return;
-    const currentRole = userLocationRoles.find(r => r.location_id === currentLocation);
-    const code = currentRole?.role_code;
-    if (code === "pct" || code === "csr") {
-      roleLandingApplied.current = true;
-      setPage("role-page");
-      setNavStack([{ page: "role-page", params: {} }]);
-    } else {
-      roleLandingApplied.current = true;
-    }
+    if (roleLandingApplied.current) return;
+    roleLandingApplied.current = true;
   }, [userLocationRoles, currentLocation, page]);
 
   // Compute accessible location IDs (null = all)
@@ -620,7 +638,7 @@ function LeanAppInner() {
   }, [data]);
 
   // Navigation function with breadcrumb stack
-  const TOP_LEVEL_PAGES = useMemo(() => new Set(["dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
+  const TOP_LEVEL_PAGES = useMemo(() => new Set(["home", "dashboard", "role-page", "lifecycle", "funnel", "ops-hub", "reports", "inventory", "cash-tips", "photos", "settings", "enterprise-ops", "enterprise-attendance", "enterprise-users"]), []);
   const nav = useCallback((newPage, newParams = {}) => {
     setPage(newPage);
     setParams(newParams);
@@ -634,6 +652,7 @@ function LeanAppInner() {
   // Breadcrumb label formatter
   const breadcrumbLabel = useCallback((pg, prms) => {
     switch(pg) {
+      case "home": return "Home";
       case "dashboard": return "Dashboard";
       case "lifecycle": return "Customer Lifecycle";
       case "funnel": return "Lead Funnel";
@@ -731,9 +750,9 @@ function LeanAppInner() {
       setParams({});
       setNavStack([{ page: "enterprise-ops", params: {} }]);
     } else if (!isEnterprise && wasEnterprise) {
-      setPage("dashboard");
+      setPage("home");
       setParams({});
-      setNavStack([{ page: "dashboard", params: {} }]);
+      setNavStack([{ page: "home", params: {} }]);
     }
     try { localStorage.setItem("k9_lite_location", locId); } catch {}
   }, [allLocations, currentLocation]);
@@ -787,6 +806,8 @@ function LeanAppInner() {
     }
 
     switch (page) {
+      case "home":
+        return <HomePage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} bohStats={bohStats} analyticsMode={IS_ANALYTICS_MODE} userLocationRoles={userLocationRoles} currentLocation={currentLocation} />;
       case "dashboard": {
         // DASH-002: Permission-based dashboard views — driven by permission matrix, not hardcoded roles
         // When ?mode=analytics is active, show the full K9 Operations + Analytics dashboard
@@ -938,6 +959,7 @@ function LeanAppInner() {
 
   const isFullscreenPage = page === "checkout-tv" || page === "onboarding" || page === "pricing";
   const isEdgeToEdgePage = page === "dashboard" || isFullscreenPage;
+  const isHomePage = page === "home";
 
   return (
     <div style={{ display: "flex", height: "100vh", background: C.bg, fontFamily: "'Outfit', -apple-system, BlinkMacSystemFont, sans-serif" }}>
@@ -947,28 +969,28 @@ function LeanAppInner() {
         onMouseLeave={() => setSidebarOpen(false)}
         style={{
           width: sbExpanded ? 240 : 68,
-          background: `linear-gradient(180deg, ${C.pri} 0%, #0D3B1E 100%)`,
+          background: `linear-gradient(180deg, ${C.pri} 0%, #0B3018 100%)`,
           display: "flex",
           flexDirection: "column",
-          transition: "width 0.15s cubic-bezier(0.4,0,0.2,1)",
+          transition: "width 0.18s cubic-bezier(0.4,0,0.2,1)",
           overflow: "hidden",
           flexShrink: 0,
           zIndex: 50,
+          borderRight: "1px solid rgba(132,204,22,0.06)",
         }}
       >
         {/* Logo Header */}
-        <div style={{ padding: "22px 15px 18px", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 12, height: 40, boxSizing: "content-box" }}>
+        <div style={{ padding: "20px 15px 14px", display: "flex", alignItems: "center", justifyContent: "flex-start", gap: 12, height: 40, boxSizing: "content-box" }}>
           <div style={{ flexShrink: 0, width: 34, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            {sbExpanded ? <K9Logo size={38} variant="white" /> : <K9LogoMini size={34} variant="white" />}
+            {sbExpanded ? <K9Logo size={36} variant="white" /> : <K9LogoMini size={32} variant="white" />}
           </div>
-          <div style={{ overflow: "hidden", opacity: sbExpanded ? 1 : 0, transition: "opacity 0.1s", whiteSpace: "nowrap" }}>
-            <div style={{ fontSize: 16, fontWeight: 700, color: C.acc, fontFamily: "'Outfit', sans-serif", letterSpacing: "0.02em" }}>K9 Operations</div>
-
+          <div style={{ overflow: "hidden", opacity: sbExpanded ? 1 : 0, transition: "opacity 0.12s", whiteSpace: "nowrap" }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: C.acc, fontFamily: "'Outfit', sans-serif", letterSpacing: "0.01em" }}>K9 Operations</div>
           </div>
         </div>
 
         {/* Divider */}
-        <div style={{ margin: "0 14px 8px", height: 1, background: "rgba(132,204,22,0.12)" }} />
+        <div style={{ margin: "0 14px 10px", height: 1, background: "rgba(132,204,22,0.08)" }} />
 
         {/* Location Selector */}
         <div style={{ padding: "0 10px 8px", height: 44, boxSizing: "border-box" }}>
@@ -982,8 +1004,18 @@ function LeanAppInner() {
         </div>
 
         {/* Navigation */}
-        <nav style={{ flex: 1, padding: "0 10px", overflowY: "auto" }}>
-          {(currentLocation === "enterprise" ? LEAN_ENTERPRISE_NAV_ITEMS : IS_ANALYTICS_MODE ? ANALYTICS_NAV_ITEMS : LEAN_NAV_ITEMS).map(item => {
+        <nav style={{ flex: 1, padding: "4px 10px 0", overflowY: "auto" }}>
+          {(currentLocation === "enterprise" ? LEAN_ENTERPRISE_NAV_ITEMS : (() => {
+            // Role-aware nav: staff get minimal nav, managers get oversight, admins get full
+            const currentRole = userLocationRoles.find(r => r.location_id === currentLocation);
+            const code = currentRole?.role_code;
+            const isStaff = code === "pct" || code === "csr";
+            const isManager = code === "supervisor" || code === "manager" || code === "mod";
+            if (IS_ANALYTICS_MODE) return ANALYTICS_NAV_ITEMS;
+            if (isStaff) return STAFF_NAV_ITEMS;
+            if (isManager) return MANAGER_NAV_ITEMS;
+            return LEAN_NAV_ITEMS;
+          })()).map(item => {
             const act = page === item.id;
             const IconComp = I[item.icon];
             return (
@@ -1138,7 +1170,7 @@ function LeanAppInner() {
       )}
 
       {/* Main Content */}
-      <div style={{ flex: 1, overflow: page === "dashboard" ? "hidden" : "auto", background: isFullscreenPage ? "transparent" : C.bg, padding: isEdgeToEdgePage ? 0 : "32px 40px" }}>
+      <div style={{ flex: 1, overflow: page === "dashboard" ? "hidden" : "auto", background: isFullscreenPage ? "transparent" : isHomePage ? "#FAFBFC" : C.bg, padding: isEdgeToEdgePage ? 0 : isHomePage ? "36px 44px" : "32px 40px" }}>
         <div style={{ maxWidth: isEdgeToEdgePage ? "none" : 1440, margin: "0 auto", height: isEdgeToEdgePage ? "100%" : "auto" }}>
           {navStack.length > 1 && !isFullscreenPage && (
             <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:16,fontSize:13,flexWrap:"wrap"}}>
