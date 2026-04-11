@@ -168,7 +168,6 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
           (items[key] || []).forEach((item, i) => {
             if (item._isDefault && item.item_type === "workflow") return; // don't persist default workflow refs
             rows.push({
-              id: item.id || undefined,
               location_id: locationId,
               role: r.id,
               section: s.id,
@@ -195,7 +194,7 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
       setSaveState("saved");
       setTimeout(() => setSaveState(prev => prev === "saved" ? "idle" : prev), 2000);
     } catch (err) {
-      console.log("[RoleLayout] Save error:", err.message);
+      console.error("[RoleLayout] Save error:", err.message, err.details || "", err.code || "");
       setSaveState("error");
       addGlobalToast?.("Failed to save changes. Please try again.", "error");
     }
