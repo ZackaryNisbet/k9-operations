@@ -79,6 +79,8 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
   const [saveState, setSaveState] = useState("idle"); // idle | saving | saved | error
   const saveTimerRef = useRef(null);
   const lastSavedRef = useRef(null);
+  const saveInFlightRef = useRef(false); // guard against concurrent saves
+  const pendingSaveRef = useRef(null); // queued items if save was in-flight
 
   // Modal state
   const [addModal, setAddModal] = useState(null); // { role, section } or null
@@ -170,6 +172,13 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
   // Uses delete-then-insert to ensure DB exactly mirrors UI state.
   // This fixes: delete not persisting, ordering reverting, stale rows reappearing.
   const persistChanges = useCallback(async (items) => {
+    // Guard: if a save is already in-flight, queue this one and return.
+    // When the in-flight save finishes it will pick up the queued items.
+    if (saveInFlightRef.current) {
+      pendingSaveRef.current = items;
+      return;
+    }
+    saveInFlightRef.current = true;
     setSaveState("saving");
     try {
       // Collect ALL items — including workflow references so their presence
@@ -220,6 +229,14 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
       console.error("[RoleLayout] Save error:", err.message, err.details || "", err.code || "");
       setSaveState("error");
       addGlobalToast?.("Failed to save changes. Please try again.", "error");
+    } finally {
+      saveInFlightRef.current = false;
+      // Drain queued save if another was requested during this save
+      const queued = pendingSaveRef.current;
+      if (queued) {
+        pendingSaveRef.current = null;
+        persistChanges(queued);
+      }
     }
   }, [locationId, addGlobalToast]);
 
