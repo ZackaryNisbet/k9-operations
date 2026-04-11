@@ -11,8 +11,10 @@ function _resolveRole(profile, data) {
   // First try: match via locationRoles from location_roles table (new system)
   const locationRoles = data.locationRoles || [];
   if (locationRoles.length > 0) {
+    // Normalise accessor: the table may have the column as role_code or role
+    const getCode = (r) => r.role_code || r.role;
     // Try matching by profile.role as role_code
-    let role = locationRoles.find(r => r.role_code === profile.role);
+    let role = locationRoles.find(r => getCode(r) === profile.role);
     if (role) return role;
     // Try matching by legacy role map
     const legacyId = LEGACY_ROLE_MAP[profile.role];
@@ -20,7 +22,7 @@ function _resolveRole(profile, data) {
       // Map legacy IDs to new role codes: owner→admin, manager→manager, staff→csr, enterprise_admin→developer
       const legacyToCode = { role_owner:"admin", role_manager:"manager", role_staff:"csr", role_enterprise_admin:"developer" };
       const code = legacyToCode[legacyId];
-      if (code) role = locationRoles.find(r => r.role_code === code);
+      if (code) role = locationRoles.find(r => getCode(r) === code);
       if (role) return role;
     }
   }
@@ -67,7 +69,7 @@ function getUserLocationIds(profile, locationRoles) {
   if (role === "enterprise_admin" || role === "developer" || role === "owner") return null;
   // multi_location_admin sees their assigned locations from location_roles table
   if (role === "multi_location_admin" && locationRoles && locationRoles.length > 0) {
-    const ids = locationRoles.filter(r => r.role_code === "multi_location_admin").map(r => r.location_id);
+    const ids = locationRoles.filter(r => (r.role_code || r.role) === "multi_location_admin").map(r => r.location_id);
     return ids.length > 0 ? ids : [profile.location_id];
   }
   // Default: single location from profile

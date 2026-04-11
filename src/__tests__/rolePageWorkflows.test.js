@@ -234,9 +234,14 @@ describe("RolePage tasksBySection (checklist filtering)", () => {
 // Mirrors the role resolution that determines which role_page_config rows
 // to query. The profile mock has role="owner" which never matches DB rows;
 // the actual role comes from location_roles.
+// The location_roles table may store the role under `role_code` or `role`
+// depending on how the row was created, so read both defensively.
+// The mock profile role "owner" is skipped in the fallback chain.
 function deriveRole(roleProp, userLocationRoles, currentLocation, profileRole) {
   const locationRole = (userLocationRoles || []).find(r => r.location_id === currentLocation);
-  const rawRole = roleProp || locationRole?.role_code || profileRole || "pct";
+  const locationRoleCode = locationRole?.role_code || locationRole?.role;
+  const fallbackRole = profileRole !== "owner" ? profileRole : undefined;
+  const rawRole = roleProp || locationRoleCode || fallbackRole || "pct";
   return rawRole === "mod" ? "supervisor" : rawRole;
 }
 
@@ -245,6 +250,19 @@ describe("RolePage role derivation", () => {
     const roles = [{ location_id: "loc-1", role_code: "mod" }];
     const result = deriveRole(undefined, roles, "loc-1", "owner");
     // "mod" should resolve to "supervisor"
+    expect(result).toBe("supervisor");
+  });
+
+  it("reads role column when role_code is missing", () => {
+    // location_roles rows created via onboarding have `role` not `role_code`
+    const roles = [{ location_id: "loc-1", role: "mod" }];
+    const result = deriveRole(undefined, roles, "loc-1", "owner");
+    expect(result).toBe("supervisor");
+  });
+
+  it("prefers role_code over role when both exist", () => {
+    const roles = [{ location_id: "loc-1", role_code: "supervisor", role: "pct" }];
+    const result = deriveRole(undefined, roles, "loc-1", "owner");
     expect(result).toBe("supervisor");
   });
 
@@ -265,6 +283,14 @@ describe("RolePage role derivation", () => {
     expect(result).toBe("pct");
   });
 
+  it("skips mock owner role and falls back to pct", () => {
+    // When location_roles is empty and profile.role is the mock "owner",
+    // the derivation should skip "owner" and fall through to "pct"
+    // instead of querying role_page_config with role='owner' (which has no rows).
+    const result = deriveRole(undefined, [], "loc-1", "owner");
+    expect(result).toBe("pct");
+  });
+
   it("does not use mock owner role when location_roles provides real role", () => {
     // This is the exact production bug: profile.role is always "owner"
     // but the user's actual role at Cherry Hill is "mod" (→ "supervisor")
@@ -273,10 +299,14 @@ describe("RolePage role derivation", () => {
     ];
     const result = deriveRole(undefined, roles, "8ea382b0-63f7-44ac-b6f8-83243c03d946", "owner");
     expect(result).toBe("supervisor");
+  });
 
-    // With "owner", the query would search for role_page_config where role='owner'
-    // which returns zero rows — causing only fallback workflows to render
-    const brokenResult = deriveRole(undefined, [], "8ea382b0-63f7-44ac-b6f8-83243c03d946", "owner");
-    expect(brokenResult).toBe("owner"); // This was the bug: "owner" never matches DB rows
+  it("reads role column for Cherry Hill production scenario", () => {
+    // Same production scenario but location_roles stores `role` not `role_code`
+    const roles = [
+      { location_id: "8ea382b0-63f7-44ac-b6f8-83243c03d946", role: "mod" },
+    ];
+    const result = deriveRole(undefined, roles, "8ea382b0-63f7-44ac-b6f8-83243c03d946", "owner");
+    expect(result).toBe("supervisor");
   });
 });

@@ -1017,7 +1017,7 @@ function LeanAppInner() {
           {(currentLocation === "enterprise" ? LEAN_ENTERPRISE_NAV_ITEMS : (() => {
             // Role-aware nav: staff get minimal nav, managers get oversight, admins get full
             const currentRole = userLocationRoles.find(r => r.location_id === currentLocation);
-            const code = currentRole?.role_code;
+            const code = currentRole?.role_code || currentRole?.role;
             const isStaff = code === "pct" || code === "csr";
             const isManager = code === "supervisor" || code === "manager" || code === "mod";
             if (IS_ANALYTICS_MODE) return ANALYTICS_NAV_ITEMS;

@@ -60,13 +60,18 @@ const K9Check = ({ checked, disabled, onChange, color = C.pri, size = 18 }) => (
 function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, userLocationRoles, currentLocation }) {
   const td = todayStr();
   const [viewDate, setViewDate] = useState(td);
-  const locationId = profile?.location_id || "cherry-hill";
-  // Derive the user's actual role at the current location from location_roles,
-  // which stores the real role_code (e.g. "mod", "pct", "supervisor").
-  // The profile prop is a mock with role="owner" and does not reflect the
-  // user's operational role, so prefer location_roles when available.
+  // Use currentLocation directly; gate queries on it being resolved so we
+  // never query with the stale "cherry-hill" fallback string.
+  const locationId = currentLocation || profile?.location_id || "cherry-hill";
+  // Derive the user's actual role at the current location from location_roles.
+  // The table may store the role under either `role_code` or `role` depending
+  // on how the row was created, so read both defensively.
+  // The profile prop is a mock with role="owner" — skip "owner" in the
+  // fallback chain because it never has role_page_config rows.
   const locationRole = (userLocationRoles || []).find(r => r.location_id === currentLocation);
-  const rawRole = roleProp || locationRole?.role_code || profile?.role || "pct";
+  const locationRoleCode = locationRole?.role_code || locationRole?.role;
+  const profileRole = profile?.role !== "owner" ? profile?.role : undefined;
+  const rawRole = roleProp || locationRoleCode || profileRole || "pct";
   // Normalise role codes so DB queries match RoleLayoutPage's persisted keys.
   // RoleLayoutPage stores MOD data under role='supervisor', so resolve "mod" here.
   const role = rawRole === "mod" ? "supervisor" : rawRole;
@@ -129,6 +134,10 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
   const [configLoading, setConfigLoading] = useState(true);
 
   useEffect(() => {
+    // Skip the query while currentLocation is still resolving — querying
+    // with the "cherry-hill" fallback would return 0 rows and briefly
+    // flash empty state before the real locationId arrives.
+    if (!currentLocation) return;
     let cancelled = false;
     setConfigLoading(true);
     supabase
@@ -144,7 +153,7 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
         setConfigLoading(false);
       });
     return () => { cancelled = true; };
-  }, [locationId, role]);
+  }, [currentLocation, locationId, role]);
 
   // Filter tasks by day of week
   const dayIdx = new Date(viewDate + "T12:00:00").getDay();
