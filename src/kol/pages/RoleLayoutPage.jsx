@@ -179,8 +179,6 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
               source: item.source || "custom",
               day_of_week: item.day_of_week ?? null,
               is_active: true,
-              item_type: item.item_type || "task",
-              workflow_id: item.workflow_id || null,
               updated_at: new Date().toISOString(),
             });
           });
@@ -393,7 +391,6 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
       source: t.source,
       day_of_week: t.day_of_week,
       is_active: true,
-      item_type: "task",
     }));
 
     await supabase.from("role_page_config").delete()
