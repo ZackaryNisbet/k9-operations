@@ -145,11 +145,13 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
     [configTasks, dayIdx]
   );
 
-  // Group active tasks by section
+  // Group active checklist tasks by section (exclude wf_ workflow references —
+  // those render as workflow cards via workflowsBySection, not as checkboxes)
   const tasksBySection = useMemo(() => {
     const grouped = {};
     FIXED_SECTIONS.forEach(s => { grouped[s.id] = []; });
     activeTasks.forEach(t => {
+      if (t.task_id?.startsWith("wf_")) return; // workflow cards, not checklist items
       if (grouped[t.section]) grouped[t.section].push(t);
     });
     return grouped;
@@ -321,8 +323,13 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
     return stats;
   }, [tasksBySection, taskStates]);
 
-  const totalTasks = activeTasks.length;
-  const totalDone = activeTasks.filter(t => taskStates[t.task_id]?.completed).length;
+  // Derive totals from tasksBySection (already excludes wf_ workflow refs)
+  const allChecklistTasks = useMemo(() =>
+    Object.values(tasksBySection).flat(),
+    [tasksBySection]
+  );
+  const totalTasks = allChecklistTasks.length;
+  const totalDone = allChecklistTasks.filter(t => taskStates[t.task_id]?.completed).length;
   const totalPct = totalTasks > 0 ? Math.round((totalDone / totalTasks) * 100) : 0;
   const totalWorkflows = Object.values(workflowsBySection).reduce((sum, arr) => sum + arr.length, 0);
 
