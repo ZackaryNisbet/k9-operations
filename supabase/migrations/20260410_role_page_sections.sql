@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS role_page_config (
   task_id TEXT NOT NULL,                    -- unique task identifier
   task_label TEXT NOT NULL,                 -- display label
   task_time TEXT,                           -- optional scheduled time (HH:MM)
+  task_description TEXT,                   -- optional longer description / notes
   sort_order INT NOT NULL DEFAULT 0,
   source TEXT DEFAULT 'custom',             -- 'legacy_opening', 'legacy_closing', 'legacy_fe', 'legacy_be', 'custom'
   day_of_week INT,                          -- null = every day, 0-6 = specific day
