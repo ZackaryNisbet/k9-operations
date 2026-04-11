@@ -196,7 +196,6 @@ function RolePageConfigTab() {
     });
 
     const rows = allTasks.map(t => ({
-      id: t.id || undefined,
       location_id: locationId,
       role: selectedRole,
       section: t.section,
