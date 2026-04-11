@@ -61,7 +61,10 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp }) 
   const td = todayStr();
   const [viewDate, setViewDate] = useState(td);
   const locationId = profile?.location_id || "cherry-hill";
-  const role = roleProp || profile?.role || "pct";
+  // Normalise role codes so DB queries match RoleLayoutPage's persisted keys.
+  // RoleLayoutPage stores MOD data under role='supervisor', so resolve "mod" here.
+  const rawRole = roleProp || profile?.role || "pct";
+  const role = rawRole === "mod" ? "supervisor" : rawRole;
 
   // ─── Date Navigation ────────────────────────────────────────────────────
   const isToday = viewDate === td;
