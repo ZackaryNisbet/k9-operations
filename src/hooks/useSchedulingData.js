@@ -10,6 +10,8 @@ import {
   computeRequiredHeadcount,
   computeStaffingStatus,
   isWeekend,
+  serializeSchedule,
+  buildDaySummary,
 } from "../shared/schedulingEngine";
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -167,6 +169,144 @@ export function useSchedulingData(locationId, startDate) {
     await fetchAll(); // Refresh data
   }, [locationId, fetchAll]);
 
+  // ─── Schedule Persistence ──────────────────────────────────────────────
+
+  /**
+   * Save a generated schedule as a new draft version in rotation_schedules.
+   * Auto-increments version for the same date/shift.
+   */
+  const saveSchedule = useCallback(async (schedulePayload) => {
+    // Get the next version number
+    const { data: existing } = await supabase
+      .from("rotation_schedules")
+      .select("version")
+      .eq("location_id", locationId)
+      .eq("schedule_date", schedulePayload.schedule_date)
+      .eq("shift", schedulePayload.shift)
+      .order("version", { ascending: false })
+      .limit(1);
+
+    const nextVersion = (existing?.[0]?.version || 0) + 1;
+
+    const row = {
+      ...schedulePayload,
+      location_id: locationId,
+      version: nextVersion,
+      status: "draft",
+      generated_by: "scheduling_engine",
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error: err } = await supabase
+      .from("rotation_schedules")
+      .insert(row)
+      .select("id, version, status")
+      .single();
+
+    if (err) throw err;
+    return data;
+  }, [locationId]);
+
+  /**
+   * Publish a draft schedule version. Archives any currently published version for the same date/shift.
+   */
+  const publishSchedule = useCallback(async (scheduleId) => {
+    // First, get the schedule we're publishing to find its date/shift
+    const { data: schedule, error: fetchErr } = await supabase
+      .from("rotation_schedules")
+      .select("schedule_date, shift, version")
+      .eq("id", scheduleId)
+      .single();
+
+    if (fetchErr) throw fetchErr;
+
+    // Archive any currently published version for this date/shift
+    await supabase
+      .from("rotation_schedules")
+      .update({ status: "archived", updated_at: new Date().toISOString() })
+      .eq("location_id", locationId)
+      .eq("schedule_date", schedule.schedule_date)
+      .eq("shift", schedule.shift)
+      .eq("status", "published");
+
+    // Mark the target version as published
+    const { error: pubErr } = await supabase
+      .from("rotation_schedules")
+      .update({
+        status: "published",
+        published_at: new Date().toISOString(),
+        published_by: "manager",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", scheduleId);
+
+    if (pubErr) throw pubErr;
+
+    return { scheduleId, version: schedule.version, status: "published" };
+  }, [locationId]);
+
+  /**
+   * Apply an override to a saved schedule. Updates the grid and appends to the overrides log.
+   */
+  const applyScheduleOverride = useCallback(async (scheduleId, lane, slot, newTask, reason) => {
+    // Fetch current schedule
+    const { data: schedule, error: fetchErr } = await supabase
+      .from("rotation_schedules")
+      .select("grid, overrides, warnings")
+      .eq("id", scheduleId)
+      .single();
+
+    if (fetchErr) throw fetchErr;
+
+    const currentGrid = schedule.grid || {};
+    const currentOverrides = schedule.overrides || [];
+
+    // Apply the override
+    const previousTask = currentGrid[lane]?.[slot] || null;
+    const newGrid = { ...currentGrid };
+    if (newGrid[lane]) {
+      newGrid[lane] = { ...newGrid[lane], [slot]: newTask };
+    }
+
+    const overrideEntry = {
+      lane,
+      slot,
+      previous_task: previousTask,
+      new_task: newTask,
+      reason: reason || "",
+      applied_at: new Date().toISOString(),
+    };
+
+    const { error: updateErr } = await supabase
+      .from("rotation_schedules")
+      .update({
+        grid: newGrid,
+        overrides: [...currentOverrides, overrideEntry],
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", scheduleId);
+
+    if (updateErr) throw updateErr;
+
+    return overrideEntry;
+  }, []);
+
+  /**
+   * Fetch saved schedule versions for a specific date.
+   */
+  const fetchScheduleVersions = useCallback(async (scheduleDate) => {
+    const { data, error: err } = await supabase
+      .from("rotation_schedules")
+      .select("id, version, status, generated_at, published_at, warnings, overrides")
+      .eq("location_id", locationId)
+      .eq("schedule_date", scheduleDate)
+      .order("version", { ascending: false });
+
+    if (err && err.code !== "42P01") throw err;
+    return data || [];
+  }, [locationId]);
+
   return {
     weekData,
     config,
@@ -174,6 +314,10 @@ export function useSchedulingData(locationId, startDate) {
     error,
     refresh: fetchAll,
     upsertStaffPlan,
+    saveSchedule,
+    publishSchedule,
+    applyScheduleOverride,
+    fetchScheduleVersions,
   };
 }
 
