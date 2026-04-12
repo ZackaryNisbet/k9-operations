@@ -496,6 +496,376 @@ export function generateOpeningGrid(matrix, staffPlan, openingResult, config) {
   return { lanes, slots: morningSlots, grid };
 }
 
+// ─── Full-Day Grid Generator (AM + PM) ──────────────────────────────────────
+
+/**
+ * Generate a full-day rotation grid covering opening through closing.
+ * Produces AM and PM shift grids with proper phase structure matching workbook patterns.
+ */
+export function generateFullDayGrid(matrix, staffPlan, openingResult, config) {
+  const weekend = isWeekend(matrix.matrix_date);
+  const siteHours = weekend ? config.weekend_site_hours : config.weekday_site_hours;
+  const publicHours = weekend ? config.public_hours_weekend : config.public_hours_weekday;
+  const openWindow = weekend ? config.weekend_am_open_window : config.weekday_am_open_window;
+
+  const allSlots = build15MinSlots(siteHours[0], siteHours[1]);
+
+  // Build lanes
+  const lanes = buildStaffLanes(staffPlan);
+
+  const grid = {};
+  lanes.forEach(lane => { grid[lane] = {}; });
+
+  const ppDogs = (matrix.pp_overnight_boarders || 0) + (matrix.pp_dayboarders || 0);
+  const hasBaths = (matrix.departure_baths || 0) > 0;
+  const strategy = openingResult?.strategy || "split_group_pp";
+  const hasSup = staffPlan.supervisor_present;
+  const publicOpenMin = timeToMinutes(publicHours[0]);
+  const openEndMin = timeToMinutes(openWindow[1]);
+
+  // Define phase boundaries (in minutes from midnight)
+  const phases = buildPhases(weekend, siteHours, openWindow);
+
+  // Track breaks for concurrency validation
+  const breakTracker = [];
+  const teamSize = computeAvailableFunctioningPct(staffPlan);
+  const maxConcurrentBreaks = teamSize >= (config.large_team_threshold || 6)
+    ? (config.max_breaks_large_team || 2)
+    : (config.max_breaks_small_team || 1);
+
+  allSlots.forEach((t, ti) => {
+    const slotMin = timeToMinutes(t);
+    const phase = getPhaseForSlot(slotMin, phases);
+
+    lanes.forEach((lane, li) => {
+      const isSup = lane === "SUP";
+      const isCsr = lane.startsWith("CSR");
+
+      // CSR prep protection: 30 min before public hours
+      if (isCsr && slotMin >= (publicOpenMin - 30) && slotMin < publicOpenMin) {
+        grid[lane][t] = "float";
+        return;
+      }
+
+      // Supervisor assignment by phase
+      if (isSup) {
+        grid[lane][t] = assignSupervisorTask(phase, slotMin, ti, phases, matrix, config, breakTracker, maxConcurrentBreaks, t);
+        return;
+      }
+
+      // PCT / CSR-as-PCT assignment by phase
+      grid[lane][t] = assignCrewTask(phase, slotMin, ti, li, lanes, strategy, matrix, config, hasBaths, ppDogs, hasSup, breakTracker, maxConcurrentBreaks, t);
+    });
+  });
+
+  return { lanes, slots: allSlots, grid, phases };
+}
+
+function buildStaffLanes(staffPlan) {
+  const numPct = staffPlan.pct_count || 0;
+  const numCsr = staffPlan.csr_count || 0;
+  const hasSup = staffPlan.supervisor_present;
+  const lanes = [];
+  for (let i = 1; i <= numPct; i++) lanes.push(`fPCT ${i}`);
+  if (staffPlan.allow_csr_as_pct && numCsr > 0) {
+    for (let i = 1; i <= numCsr; i++) lanes.push(`CSR→fPCT ${i}`);
+  }
+  if (hasSup) lanes.push("SUP");
+  if (lanes.length === 0) lanes.push("fPCT 1", "fPCT 2", "fPCT 3");
+  return lanes;
+}
+
+function buildPhases(weekend, siteHours, openWindow) {
+  const openStart = timeToMinutes(siteHours[0]);
+  const openEnd = timeToMinutes(openWindow[1]);
+  const siteEnd = timeToMinutes(siteHours[1]);
+
+  if (weekend) {
+    return {
+      OPEN: { start: openStart, end: openEnd },             // 07:00-09:00
+      PREP: { start: openEnd, end: openEnd + 60 },          // 09:00-10:00
+      CORE: { start: openEnd + 60, end: openEnd + 180 },    // 10:00-12:00
+      LATE_AM: { start: openEnd + 180, end: 750 },          // 12:00-12:30
+      PM_CORE: { start: 780, end: 900 },                    // 13:00-15:00
+      PM_MID: { start: 900, end: 990 },                     // 15:00-16:30
+      WINDDOWN: { start: 990, end: 1020 },                  // 16:30-17:00
+      CLOSE: { start: 1020, end: siteEnd },                 // 17:00-18:00
+    };
+  }
+  return {
+    OPEN: { start: openStart, end: openEnd },               // 06:00-07:00
+    PREP: { start: openEnd, end: openEnd + 60 },            // 07:00-08:00
+    CORE: { start: openEnd + 60, end: openEnd + 240 },      // 08:00-11:00
+    LATE_AM: { start: openEnd + 240, end: 750 },            // 11:00-12:30
+    PM_CORE: { start: 780, end: 900 },                      // 13:00-15:00
+    PM_MID: { start: 900, end: 1020 },                      // 15:00-17:00
+    WINDDOWN: { start: 1020, end: 1050 },                   // 17:00-17:30
+    CLOSE: { start: 1050, end: siteEnd },                   // 17:30-20:00
+  };
+}
+
+function getPhaseForSlot(slotMin, phases) {
+  for (const [name, { start, end }] of Object.entries(phases)) {
+    if (slotMin >= start && slotMin < end) return name;
+  }
+  return "CLOSE";
+}
+
+function assignSupervisorTask(phase, slotMin, ti, phases, matrix, config, breakTracker, maxConcurrent, t) {
+  switch (phase) {
+    case "OPEN": return "feed";
+    case "PREP": return ti % 4 < 2 ? "lgdc" : "float";
+    case "CORE": {
+      // SUP break early in core
+      const coreStart = phases.CORE.start;
+      if (slotMin === coreStart + 30 || slotMin === coreStart + 45) {
+        const breaksThisSlot = breakTracker.filter(b => b === t).length;
+        if (breaksThisSlot < maxConcurrent) { breakTracker.push(t); return "break"; }
+      }
+      return slotMin % 60 < 30 ? "float" : "lgdc";
+    }
+    case "LATE_AM": return "disinfect";
+    case "PM_CORE": return ti % 4 < 2 ? "float" : "lgdc";
+    case "PM_MID": return "float";
+    case "WINDDOWN": return "feed";
+    case "CLOSE": return "eod";
+    default: return "float";
+  }
+}
+
+function assignCrewTask(phase, slotMin, ti, li, lanes, strategy, matrix, config, hasBaths, ppDogs, hasSup, breakTracker, maxConcurrent, t) {
+  const crewLaneCount = lanes.filter(l => !l.startsWith("SUP")).length;
+
+  switch (phase) {
+    case "OPEN": {
+      if (strategy === "full_pod_pass") return "opening";
+      // Split: last crew member does PP pod pass, rest do group let-outs
+      if (ppDogs > 0 && li === crewLaneCount - 1) return "pp";
+      return "opening";
+    }
+    case "PREP": {
+      if (li === 0) return "transport";
+      if (li === 1 && hasBaths) return "bath";
+      if (li === 2) return "room_clean";
+      return (matrix.daycare_small || 0) > 0 ? "smdc" : "lgdc";
+    }
+    case "CORE": {
+      // Rotating daycare coverage + PP + baths + staggered breaks
+      return assignCoreTask(slotMin, ti, li, crewLaneCount, ppDogs, hasBaths, matrix, breakTracker, maxConcurrent, t);
+    }
+    case "LATE_AM": {
+      if (li === 0) return "lgdc";
+      if (li === 1) return "smdc";
+      if (li === 2) return ppDogs > 0 ? "pp" : "foam";
+      return "disinfect";
+    }
+    case "PM_CORE": {
+      // Afternoon core: daycare + PP + float
+      if (li === 0) return "lgdc";
+      if (li === 1) return (matrix.daycare_small || 0) > 0 ? "smdc" : "lgdc";
+      if (li === 2 && ppDogs > 0) return "pp";
+      return "housekeeping";
+    }
+    case "PM_MID": {
+      // Mid-PM: housekeeping + breaks
+      return assignPmMidTask(slotMin, ti, li, crewLaneCount, breakTracker, maxConcurrent, t);
+    }
+    case "WINDDOWN": {
+      if (li === 0) return "lgdc";
+      if (li <= 2) return "transport";
+      return "feed";
+    }
+    case "CLOSE": {
+      if (li === 0) return "lgdc";
+      if (li === 1) return "smdc";
+      return "eod";
+    }
+    default: return "float";
+  }
+}
+
+function assignCoreTask(slotMin, ti, li, crewCount, ppDogs, hasBaths, matrix, breakTracker, maxConcurrent, t) {
+  // Hour-based rotation within core (every 4 slots = 1 hour)
+  const hourBlock = Math.floor(ti / 4) % 4;
+  const breakSlot = (li * 4 + 2) % (crewCount * 4); // Stagger breaks across crew
+  const isBreakSlot = (ti % (crewCount * 4)) === breakSlot && slotMin % 60 === 0;
+
+  if (isBreakSlot) {
+    const breaksThisSlot = breakTracker.filter(b => b === t).length;
+    if (breaksThisSlot < maxConcurrent) {
+      breakTracker.push(t);
+      return "break";
+    }
+  }
+
+  // LGDC always covered by first person
+  if (li === 0) return "lgdc";
+
+  // SMDC always covered by second person when small dogs exist
+  if (li === 1 && (matrix.daycare_small || 0) > 0) return "smdc";
+
+  // PP on designated slots
+  if (ppDogs > 0 && li === Math.min(2, crewCount - 1)) {
+    // PP rounds: one hour on, one hour off
+    if (hourBlock % 2 === 0) return "pp";
+    return hasBaths ? "bath" : "foam";
+  }
+
+  // Bath worker
+  if (hasBaths && hourBlock < 2 && li === Math.min(3, crewCount - 1)) return "bath";
+
+  // Rotation for remaining crew
+  return hourBlock % 2 === 0 ? "lgdc" : "housekeeping";
+}
+
+function assignPmMidTask(slotMin, ti, li, crewCount, breakTracker, maxConcurrent, t) {
+  const breakSlot = (li * 4 + 2) % (crewCount * 4);
+  const isBreakSlot = (ti % (crewCount * 4)) === breakSlot;
+
+  if (isBreakSlot) {
+    const breaksThisSlot = breakTracker.filter(b => b === t).length;
+    if (breaksThisSlot < maxConcurrent) {
+      breakTracker.push(t);
+      return "break";
+    }
+  }
+
+  if (li === 0) return "lgdc";
+  if (li === 1) return "smdc";
+  return "housekeeping";
+}
+
+// ─── Constraint Validator ────────────────────────────────────────────────────
+
+/**
+ * Validate a generated grid against hard constraints.
+ * Returns { valid, violations[] }.
+ */
+export function validateGrid(grid, lanes, slots, matrix, config) {
+  const violations = [];
+  const weekend = isWeekend(matrix.matrix_date);
+  const siteHours = weekend ? config.weekend_site_hours : config.weekday_site_hours;
+  const publicHours = weekend ? config.public_hours_weekend : config.public_hours_weekday;
+  const coreStartMin = timeToMinutes(weekend ? config.weekend_am_open_window[1] : config.weekday_am_open_window[1]) + 60;
+  const coreEndMin = timeToMinutes(siteHours[1]) - 30;
+
+  for (const t of slots) {
+    const slotMin = timeToMinutes(t);
+    const isCore = slotMin >= coreStartMin && slotMin < coreEndMin;
+
+    // Check LGDC coverage during core hours
+    if (isCore && (matrix.daycare_large || 0) > 0) {
+      const lgdcCoverage = lanes.some(l => grid[l]?.[t] === "lgdc");
+      if (!lgdcCoverage) {
+        violations.push({ slot: t, type: "lgdc_uncovered", message: `LGDC uncovered at ${t} — hard constraint violation` });
+      }
+    }
+
+    // Check SMDC coverage during core hours
+    if (isCore && (matrix.daycare_small || 0) > 0) {
+      const smdcCoverage = lanes.some(l => grid[l]?.[t] === "smdc");
+      if (!smdcCoverage) {
+        violations.push({ slot: t, type: "smdc_uncovered", message: `SMDC uncovered at ${t} — hard constraint violation` });
+      }
+    }
+
+    // Check break concurrency
+    const breaksInSlot = lanes.filter(l => grid[l]?.[t] === "break").length;
+    const teamSize = lanes.length;
+    const maxBreaks = teamSize >= (config.large_team_threshold || 6)
+      ? (config.max_breaks_large_team || 2)
+      : (config.max_breaks_small_team || 1);
+    if (breaksInSlot > maxBreaks) {
+      violations.push({ slot: t, type: "break_concurrency", message: `${breaksInSlot} people on break at ${t} exceeds max of ${maxBreaks}` });
+    }
+
+    // Check CSR prep protection
+    const publicOpenMin = timeToMinutes(publicHours[0]);
+    if (slotMin >= publicOpenMin - 30 && slotMin < publicOpenMin) {
+      const csrLanes = lanes.filter(l => l.startsWith("CSR"));
+      const csrOnBackend = csrLanes.filter(l => grid[l]?.[t] && grid[l][t] !== "float");
+      if (csrOnBackend.length === csrLanes.length && csrLanes.length > 0) {
+        violations.push({ slot: t, type: "csr_prep_violation", message: `All CSRs assigned backend work at ${t} — no CSR available for front-desk prep` });
+      }
+    }
+  }
+
+  return { valid: violations.length === 0, violations };
+}
+
+// ─── Schedule Serialization (for persistence to rotation_schedules) ──────────
+
+/**
+ * Serialize a generated schedule for storage in rotation_schedules table.
+ */
+export function serializeSchedule(matrix, staffPlan, daySummary, config) {
+  return {
+    location_id: matrix.location_id,
+    schedule_date: matrix.matrix_date,
+    shift: "full",
+    staff_input: {
+      pct_count: staffPlan.pct_count,
+      csr_count: staffPlan.csr_count,
+      supervisor_count: staffPlan.supervisor_count || 0,
+      mod_count: staffPlan.mod_count || 0,
+      supervisor_present: staffPlan.supervisor_present,
+      allow_csr_as_pct: staffPlan.allow_csr_as_pct,
+      allow_mod_as_pct: staffPlan.allow_mod_as_pct,
+    },
+    dog_metrics: {
+      boarding_large: matrix.boarding_large,
+      boarding_small: matrix.boarding_small,
+      boarding_unknown_size: matrix.boarding_unknown_size,
+      daycare_large: matrix.daycare_large,
+      daycare_small: matrix.daycare_small,
+      pp_overnight_boarders: matrix.pp_overnight_boarders,
+      pp_dayboarders: matrix.pp_dayboarders,
+      departure_baths: matrix.departure_baths,
+      feeding_dogs: matrix.feeding_dogs,
+      medication_dogs: matrix.medication_dogs,
+      gross_dogs_in_building: matrix.gross_dogs_in_building,
+    },
+    assumptions_snapshot: { ...SCHEDULE_CONFIG_DEFAULTS, ...config },
+    time_slots: daySummary.grid?.slots || [],
+    persons: daySummary.grid?.lanes || [],
+    grid: daySummary.grid?.grid || {},
+    warnings: daySummary.warnings || [],
+    violations: daySummary.violations || [],
+    overrides: [],
+    explanation: {
+      headcount: daySummary.required,
+      opening: daySummary.openingResult,
+      lines: daySummary.explanation,
+    },
+    generated_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * Apply a single cell override to a grid. Returns a new grid (immutable).
+ */
+export function applyOverride(grid, lane, slot, newTask, reason) {
+  const newGrid = {};
+  for (const l of Object.keys(grid)) {
+    newGrid[l] = { ...grid[l] };
+  }
+  const previousTask = newGrid[lane]?.[slot] || null;
+  if (newGrid[lane]) {
+    newGrid[lane][slot] = newTask;
+  }
+  return {
+    grid: newGrid,
+    override: {
+      lane,
+      slot,
+      previous_task: previousTask,
+      new_task: newTask,
+      reason: reason || "",
+      applied_at: new Date().toISOString(),
+    },
+  };
+}
+
 // ─── Build Full Day Summary ───────────────────────────────────────────────
 
 /**
@@ -509,9 +879,17 @@ export function buildDaySummary(matrix, staffPlan, config) {
   const staffStatus = computeStaffingStatus(required, staffPlan, mergedConfig);
   const openingResult = staffPlan ? solveOpening(matrix, staffPlan, mergedConfig) : null;
 
+  // Generate full-day grid (AM + PM) instead of just opening
   const gridResult = staffPlan
-    ? generateOpeningGrid(matrix, staffPlan, openingResult, mergedConfig)
+    ? generateFullDayGrid(matrix, staffPlan, openingResult, mergedConfig)
     : null;
+
+  // Validate the grid
+  let violations = [];
+  if (gridResult) {
+    const validation = validateGrid(gridResult.grid, gridResult.lanes, gridResult.slots, matrix, mergedConfig);
+    violations = validation.violations;
+  }
 
   const allWarnings = [...required.warnings, ...(staffStatus.warnings || []), ...(openingResult?.warnings || [])];
 
@@ -522,6 +900,7 @@ export function buildDaySummary(matrix, staffPlan, config) {
     staffStatus,
     openingResult,
     grid: gridResult,
+    violations,
     warnings: allWarnings,
     explanation: [
       ...(required.explanation || []),
