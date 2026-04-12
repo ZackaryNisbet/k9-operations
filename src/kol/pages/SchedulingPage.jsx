@@ -1,0 +1,484 @@
+// K9 Operations — Scheduling Page
+// Week Plan + Day Rotation + Required Headcount + Explanation + Warnings + Assumptions
+// Uses live Supabase data from scheduling_matrix_daily (with dashboard_metrics fallback).
+
+import React, { useState, useMemo, useCallback } from "react";
+import { C, todayStr, addDays, DAY_NAMES_SHORT } from "../../shared/theme";
+import { I } from "../../shared/icons";
+import { Badge, Btn } from "../../shared/ui";
+import { useSchedulingData } from "../../hooks/useSchedulingData";
+import {
+  TASK_COLORS,
+  SCHEDULE_CONFIG_DEFAULTS,
+  solveOpening,
+  generateOpeningGrid,
+  buildDaySummary,
+} from "../../shared/schedulingEngine";
+
+// ─── Utility Components ───────────────────────────────────────────────────
+
+function SectionCard({ title, subtitle, icon, children, style }) {
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: "20px 24px", ...style }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: subtitle ? 4 : 16 }}>
+        {icon && <span style={{ color: C.pri, display: "flex" }}>{icon}</span>}
+        <h3 style={{ fontSize: 16, fontWeight: 700, color: C.text, margin: 0 }}>{title}</h3>
+      </div>
+      {subtitle && <p style={{ fontSize: 12, color: C.textMut, margin: "0 0 16px 0" }}>{subtitle}</p>}
+      {children}
+    </div>
+  );
+}
+
+function MetricPill({ label, value, sub, warn }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 56 }}>
+      <span style={{ fontSize: 20, fontWeight: 700, color: warn ? C.dan : C.text, lineHeight: 1 }}>{value}</span>
+      <span style={{ fontSize: 10, fontWeight: 600, color: C.textMut, textTransform: "uppercase", letterSpacing: "0.04em", textAlign: "center" }}>{label}</span>
+      {sub !== undefined && <span style={{ fontSize: 10, color: warn ? C.dan : C.textMut }}>{sub}</span>}
+    </div>
+  );
+}
+
+function StatusChip({ status }) {
+  const map = {
+    ok: { bg: C.sucLt, color: C.suc, label: "Covered" },
+    short: { bg: C.danLt, color: C.dan, label: "Short" },
+    borderline: { bg: C.warnLt, color: C.warn, label: "Borderline" },
+    no_plan: { bg: "#F1F5F9", color: C.textMut, label: "No Plan" },
+    draft: { bg: C.warnLt, color: C.warn, label: "Draft" },
+  };
+  const s = map[status] || map.ok;
+  return <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 12, fontSize: 11, fontWeight: 700, background: s.bg, color: s.color }}>{s.label}</span>;
+}
+
+function ConfidenceBadge({ source }) {
+  if (source === "empty" || source === "none") return <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "#FEE2E2", color: "#991B1B", fontWeight: 600 }}>No Data</span>;
+  if (source === "dashboard_fallback" || source === "low") return <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: C.warnLt, color: C.warn, fontWeight: 600 }}>Estimated</span>;
+  return null;
+}
+
+// ─── Staff Plan Input (inline mini-form) ──────────────────────────────────
+
+function StaffPlanInput({ day, onSave, disabled }) {
+  const sp = day.staffPlan || {};
+  const [pct, setPct] = useState(sp.pct_count || 0);
+  const [csr, setCsr] = useState(sp.csr_count || 0);
+  const [supPresent, setSupPresent] = useState(sp.supervisor_present || false);
+  const [csrAsPct, setCsrAsPct] = useState(sp.allow_csr_as_pct || false);
+  const [dirty, setDirty] = useState(false);
+
+  const handleSave = () => {
+    onSave({
+      plan_date: day.date,
+      shift: "full",
+      pct_count: pct,
+      csr_count: csr,
+      supervisor_count: supPresent ? 1 : 0,
+      mod_count: 0,
+      supervisor_present: supPresent,
+      allow_csr_as_pct: csrAsPct,
+      allow_mod_as_pct: false,
+      staff_names: [],
+    });
+    setDirty(false);
+  };
+
+  const inputStyle = { width: 48, padding: "4px 8px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, fontWeight: 600, textAlign: "center", fontFamily: "inherit" };
+  const labelStyle = { fontSize: 11, color: C.textMut, fontWeight: 600 };
+
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <span style={labelStyle}>PCTs</span>
+        <input type="number" min={0} max={20} value={pct} onChange={e => { setPct(+e.target.value); setDirty(true); }} style={inputStyle} disabled={disabled} />
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        <span style={labelStyle}>CSRs</span>
+        <input type="number" min={0} max={10} value={csr} onChange={e => { setCsr(+e.target.value); setDirty(true); }} style={inputStyle} disabled={disabled} />
+      </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: C.textSec, cursor: "pointer" }}>
+        <input type="checkbox" checked={supPresent} onChange={e => { setSupPresent(e.target.checked); setDirty(true); }} disabled={disabled} />
+        SUP present
+      </label>
+      <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: C.textSec, cursor: "pointer" }}>
+        <input type="checkbox" checked={csrAsPct} onChange={e => { setCsrAsPct(e.target.checked); setDirty(true); }} disabled={disabled} />
+        CSR→fPCT
+      </label>
+      {dirty && <Btn variant="primary" size="sm" onClick={handleSave}>Save Plan</Btn>}
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────
+
+export default function SchedulingPage({ data, nav, profile, addGlobalToast }) {
+  const locationId = profile?.location_id;
+  const today = todayStr();
+
+  const { weekData, config, loading, error, refresh, upsertStaffPlan } = useSchedulingData(locationId, today);
+
+  const [selectedDayIdx, setSelectedDayIdx] = useState(0);
+  const [viewDensity, setViewDensity] = useState("standard");
+  const [showAssumptions, setShowAssumptions] = useState(false);
+
+  const selectedDay = weekData[selectedDayIdx] || weekData[0];
+
+  // Build full day summary (including opening solver + grid) for selected day
+  const daySummary = useMemo(() => {
+    if (!selectedDay?.matrix) return null;
+    return buildDaySummary(selectedDay.matrix, selectedDay.staffPlan, config);
+  }, [selectedDay, config]);
+
+  const handleStaffPlanSave = useCallback(async (plan) => {
+    try {
+      await upsertStaffPlan(plan);
+      addGlobalToast?.("Staff plan saved", "success");
+    } catch (err) {
+      addGlobalToast?.("Failed to save staff plan: " + (err.message || "unknown error"), "error");
+    }
+  }, [upsertStaffPlan, addGlobalToast]);
+
+  const handleGenerate = useCallback(() => {
+    if (!daySummary?.openingResult) {
+      addGlobalToast?.("Enter a staff plan first to generate a schedule.", "info");
+      return;
+    }
+    addGlobalToast?.(`Schedule generated: ${daySummary.openingResult.selectedReason}`, "success");
+  }, [daySummary, addGlobalToast]);
+
+  const m = selectedDay?.matrix || {};
+  const req = daySummary?.required || { am: 0, midday: 0, pm: 0, functionalHours: 0 };
+  const assignedPct = selectedDay?.assignedFunctioningPct || 0;
+
+  const gridData = daySummary?.grid || { lanes: [], slots: [], grid: {} };
+  const { lanes, slots, grid } = gridData;
+
+  const fmt12 = (t) => {
+    const [h, mn] = t.split(":").map(Number);
+    const suffix = h >= 12 ? "PM" : "AM";
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+    return `${h12}:${String(mn).padStart(2, "0")} ${suffix}`;
+  };
+
+  const rowH = viewDensity === "compact" ? 26 : viewDensity === "expanded" ? 40 : 32;
+
+  if (loading && weekData.length === 0) {
+    return (
+      <div style={{ maxWidth: 1200, margin: "0 auto", padding: "40px 0", textAlign: "center" }}>
+        <p style={{ fontSize: 14, color: C.textMut }}>Loading scheduling data...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth: 1200, margin: "0 auto", padding: "0 0 48px" }}>
+      {/* ── Page Header ───────────────────────────────────────────────── */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
+        <div>
+          <h1 style={{ fontSize: 22, fontWeight: 800, color: C.text, margin: 0 }}>Scheduling</h1>
+          <p style={{ fontSize: 13, color: C.textMut, marginTop: 2 }}>Week plan, required headcount, and rotation rationale</p>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {error && <span style={{ fontSize: 11, color: C.dan }}>{error}</span>}
+          <Btn variant="secondary" size="sm" onClick={refresh}>Refresh</Btn>
+          <Btn variant="secondary" size="sm" onClick={() => setShowAssumptions(!showAssumptions)}>
+            {showAssumptions ? "Hide" : "Show"} Assumptions
+          </Btn>
+          <Btn variant="primary" size="sm" onClick={handleGenerate}>
+            Generate Schedule
+          </Btn>
+        </div>
+      </div>
+
+      {/* ── Section 1: 7-Day Raw Matrix ───────────────────────────────── */}
+      <SectionCard title="7-Day Demand Matrix" subtitle="Operational numbers for the upcoming week — live from Gingr data" icon={<I.Calendar />}>
+        <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, minWidth: 780 }}>
+            <thead>
+              <tr style={{ background: C.priLt }}>
+                {["Day", "Gross", "BDG LG", "BDG SM", "BDG ?", "DC LG", "DC SM", "PP", "Baths", "Feed", "Meds", "Arrive", "Depart", "Status"].map(h => (
+                  <th key={h} style={{ padding: "8px 8px", fontWeight: 700, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.04em", color: C.textMut, textAlign: h === "Day" ? "left" : "center", borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {weekData.map((day, i) => {
+                const sel = i === selectedDayIdx;
+                const mx = day.matrix || {};
+                return (
+                  <tr key={day.date} onClick={() => setSelectedDayIdx(i)} style={{ cursor: "pointer", background: sel ? C.priLt : i % 2 === 0 ? C.surface : C.surfaceHover, transition: "background 0.1s" }}>
+                    <td style={{ padding: "8px 8px", fontWeight: sel ? 700 : 500, color: sel ? C.pri : C.text, borderBottom: `1px solid ${C.borderLight}`, whiteSpace: "nowrap" }}>
+                      <span style={{ fontWeight: 700 }}>{day.dayName}</span> <span style={{ color: C.textMut }}>{day.dayNum}</span>
+                      {day.isWeekend && <span style={{ marginLeft: 4, fontSize: 9, padding: "1px 5px", borderRadius: 4, background: C.infoLt, color: C.info, fontWeight: 600 }}>WE</span>}
+                      {" "}<ConfidenceBadge source={mx._source || (day.hasLiveMatrix ? null : mx._confidence)} />
+                    </td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", fontWeight: 600, color: C.text, borderBottom: `1px solid ${C.borderLight}` }}>{mx.gross_dogs_in_building || 0}</td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.boarding_large || 0}</td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.boarding_small || 0}</td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}`, color: (mx.boarding_unknown_size || 0) > 0 ? C.warn : C.textMut }}>{mx.boarding_unknown_size || 0}</td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.daycare_large || 0}</td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.daycare_small || 0}</td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{(mx.pp_dayboarders || 0) + (mx.pp_overnight_boarders || 0)}</td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.departure_baths || 0}</td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}`, color: (mx.feeding_dogs || 0) === 0 && mx._confidence === "low" ? C.warn : undefined }}>
+                      {mx.feeding_dogs || 0}
+                    </td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}`, color: (mx.medication_dogs || 0) === 0 && mx._confidence === "low" ? C.warn : undefined }}>
+                      {mx.medication_dogs || 0}
+                    </td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.dogs_arriving || 0}</td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}>{mx.dogs_departing || 0}</td>
+                    <td style={{ textAlign: "center", padding: "8px 4px", borderBottom: `1px solid ${C.borderLight}` }}><StatusChip status={day.status} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </SectionCard>
+
+      {/* ── Section 1b: Staff Plan Input ──────────────────────────────── */}
+      {selectedDay && (
+        <SectionCard
+          title={`Staff Plan — ${selectedDay.dayName} ${selectedDay.dayNum}`}
+          subtitle="Enter available staff for this day. Drives required headcount and schedule generation."
+          icon={<I.Users />}
+          style={{ marginTop: 16 }}
+        >
+          <StaffPlanInput day={selectedDay} onSave={handleStaffPlanSave} />
+          {!selectedDay.staffPlan && (
+            <p style={{ fontSize: 11, color: C.warn, marginTop: 8, fontStyle: "italic" }}>
+              No staff plan entered yet. Required headcount is computed from the demand matrix; enter a staff plan to see gap analysis and generate schedules.
+            </p>
+          )}
+        </SectionCard>
+      )}
+
+      {/* ── Section 2: Required Headcount ──────────────────────────────── */}
+      {selectedDay && (
+        <SectionCard
+          title={`Required Headcount — ${selectedDay.dayName} ${selectedDay.dayNum}`}
+          subtitle="Functioning PCT requirement by daypart, driven by the demand matrix above"
+          icon={<I.Users />}
+          style={{ marginTop: 16 }}
+        >
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+            {[
+              { label: "Opening (AM)", required: req.am },
+              { label: "Midday", required: req.midday },
+              { label: "Closing (PM)", required: req.pm },
+            ].map(({ label, required: reqVal }) => {
+              const gap = Math.max(0, reqVal - assignedPct);
+              const hasGap = assignedPct > 0 && assignedPct < reqVal;
+              return (
+                <div key={label} style={{ border: `1px solid ${C.border}`, borderRadius: 10, padding: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", color: C.textMut, letterSpacing: "0.04em", marginBottom: 8 }}>{label}</div>
+                  <div style={{ display: "flex", gap: 20 }}>
+                    <MetricPill label="Required" value={reqVal} />
+                    {selectedDay.staffPlan && <MetricPill label="Assigned" value={assignedPct} warn={hasGap} />}
+                    {selectedDay.staffPlan && <MetricPill label="Gap" value={gap} sub={hasGap ? "short" : "covered"} warn={hasGap} />}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {/* Total hours strip */}
+          {selectedDay.staffPlan && (
+            <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 14, padding: "10px 14px", borderRadius: 10, background: req.functionalHours > 0 ? C.sucLt : C.surfaceHover }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Est. Functional Hours</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>{req.functionalHours} hrs</span>
+            </div>
+          )}
+        </SectionCard>
+      )}
+
+      {/* ── Section 3: 15-Minute Rotation Grid ────────────────────────── */}
+      {lanes.length > 0 && slots.length > 0 && (
+        <SectionCard
+          title={`AM Rotation — ${selectedDay.dayName} ${selectedDay.dayNum}`}
+          subtitle="15-minute slot assignments for opening block. Scroll horizontally on smaller screens."
+          icon={<I.Clipboard />}
+          style={{ marginTop: 16 }}
+        >
+          <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+            {["compact", "standard", "expanded"].map(d => (
+              <button key={d} onClick={() => setViewDensity(d)} style={{ padding: "4px 12px", border: `1px solid ${d === viewDensity ? C.pri : C.border}`, borderRadius: 8, background: d === viewDensity ? C.priLt : C.surface, color: d === viewDensity ? C.pri : C.textMut, fontSize: 11, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", textTransform: "capitalize" }}>{d}</button>
+            ))}
+          </div>
+          <div style={{ overflowX: "auto", borderRadius: 10, border: `1px solid ${C.border}` }}>
+            <table style={{ borderCollapse: "collapse", fontSize: viewDensity === "compact" ? 10 : 11, minWidth: 600, width: "100%" }}>
+              <thead>
+                <tr>
+                  <th style={{ position: "sticky", left: 0, zIndex: 2, background: "#F8FAFC", padding: "6px 10px", borderBottom: `1px solid ${C.border}`, borderRight: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, textAlign: "left", color: C.textMut }}>Time</th>
+                  {lanes.map(l => (
+                    <th key={l} style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}`, fontSize: 10, fontWeight: 700, textAlign: "center", color: C.textMut, whiteSpace: "nowrap", background: "#F8FAFC" }}>{l}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {slots.map((t, ti) => (
+                  <tr key={t}>
+                    <td style={{ position: "sticky", left: 0, zIndex: 1, background: ti % 4 === 0 ? "#F1F5F9" : "#F8FAFC", padding: `${rowH / 2 - 5}px 10px`, borderBottom: `1px solid ${ti % 4 === 3 ? C.border : C.borderLight}`, borderRight: `1px solid ${C.border}`, fontWeight: ti % 4 === 0 ? 700 : 400, color: ti % 4 === 0 ? C.text : C.textMut, whiteSpace: "nowrap", fontSize: 10 }}>{fmt12(t)}</td>
+                    {lanes.map(l => {
+                      const taskKey = grid[l]?.[t] || "float";
+                      const tc = TASK_COLORS[taskKey] || TASK_COLORS.float;
+                      return (
+                        <td key={l} style={{ padding: `${rowH / 2 - 5}px 6px`, textAlign: "center", borderBottom: `1px solid ${ti % 4 === 3 ? C.border : C.borderLight}`, background: tc.bg, color: tc.text, fontWeight: 600, fontSize: viewDensity === "compact" ? 9 : 10, whiteSpace: "nowrap", letterSpacing: "0.02em" }}>
+                          {viewDensity !== "compact" ? tc.label : taskKey.toUpperCase()}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {/* Legend */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
+            {Object.entries(TASK_COLORS).map(([k, v]) => (
+              <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 600, color: v.text }}>
+                <span style={{ width: 12, height: 12, borderRadius: 3, background: v.bg, border: `1px solid ${v.text}22` }} />
+                {v.label}
+              </span>
+            ))}
+          </div>
+        </SectionCard>
+      )}
+
+      {/* ── Section 4: Rationale / Explanation Panel ───────────────────── */}
+      {daySummary?.openingResult && (
+        <SectionCard
+          title="Opening Rationale"
+          subtitle="Why this headcount was recommended and which strategy was selected"
+          icon={<I.InfoCircle />}
+          style={{ marginTop: 16 }}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ padding: "12px 16px", borderRadius: 10, background: C.priLt, border: `1px solid ${C.pri}22` }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: C.pri, marginBottom: 4 }}>
+                Strategy: {daySummary.openingResult.strategy === "full_pod_pass" ? "Full Pod Pass" : "Split (Group Let-Outs + PP Pod Pass)"}
+              </div>
+              <p style={{ fontSize: 12, color: C.textSec, margin: 0, lineHeight: 1.6 }}>
+                {daySummary.openingResult.selectedReason}
+              </p>
+            </div>
+
+            {/* Explanation lines */}
+            <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
+              <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Explanation</span>
+              <ul style={{ margin: "6px 0 0", paddingLeft: 18, fontSize: 12, color: C.textSec, lineHeight: 1.8 }}>
+                {daySummary.explanation.map((line, i) => <li key={i}>{line}</li>)}
+              </ul>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+              <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Key Driver</span>
+                <p style={{ fontSize: 12, fontWeight: 600, color: C.text, margin: "4px 0 0" }}>
+                  {m.gross_dogs_in_building || 0} dogs in building drives {req.am} fPCT AM requirement
+                </p>
+              </div>
+              {daySummary.openingResult.yardOrder && (
+                <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>First Yard</span>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: C.text, margin: "4px 0 0" }}>
+                    {daySummary.openingResult.yardOrder === "large" ? "Large" : "Small"} daycare opened first
+                    ({daySummary.openingResult.yardOrder === "large" ? (m.boarding_large || 0) : (m.boarding_small || 0)} dogs &gt; {daySummary.openingResult.yardOrder === "large" ? (m.boarding_small || 0) : (m.boarding_large || 0)} other-side dogs)
+                  </p>
+                </div>
+              )}
+              <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Feasibility</span>
+                <p style={{ fontSize: 12, fontWeight: 600, color: daySummary.openingResult.feasible ? C.suc : C.dan, margin: "4px 0 0" }}>
+                  {daySummary.openingResult.feasible ? "Feasible — opening covered with current staffing" : "Infeasible — additional functioning PCTs needed"}
+                </p>
+              </div>
+              <div style={{ padding: "10px 14px", borderRadius: 8, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: C.textMut, textTransform: "uppercase" }}>Bath Target</span>
+                <p style={{ fontSize: 12, fontWeight: 600, color: C.text, margin: "4px 0 0" }}>
+                  {m.departure_baths || 0} departure baths — {(m.departure_baths || 0) > 6 ? "may require dedicated bath fPCT by 07:30" : "manageable within normal rotation"}
+                </p>
+              </div>
+            </div>
+          </div>
+        </SectionCard>
+      )}
+
+      {/* ── Section 5: Shortage / Warnings Area ───────────────────────── */}
+      <SectionCard
+        title="Shortages & Warnings"
+        subtitle="Issues that need manager attention for the selected day"
+        icon={<I.AlertTriangle />}
+        style={{ marginTop: 16 }}
+      >
+        {(!selectedDay?.warnings || selectedDay.warnings.length === 0) ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 0" }}>
+            <I.CheckCircle />
+            <span style={{ fontSize: 13, fontWeight: 600, color: C.suc }}>
+              {selectedDay?.staffPlan ? "No shortages or warnings for this day. All dayparts covered." : "Enter a staff plan to see shortage analysis."}
+            </span>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {selectedDay.warnings.map((w, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 14px", borderRadius: 10, background: C.warnLt, border: `1px solid ${C.warn}22` }}>
+                <I.AlertTriangle style={{ color: C.warn, flexShrink: 0, marginTop: 1 }} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text }}>{w}</div>
+                  <div style={{ fontSize: 11, color: C.textMut, marginTop: 2 }}>
+                    {w.includes("Opening") && "Consider moving a CSR to functioning PCT role during early AM or requesting MOD backfill."}
+                    {w.includes("Bath") && "Bath throughput may push completion past the target window. Consider starting baths at 06:30 or adding a second bath functioning PCT."}
+                    {w.includes("PM") && "Afternoon closing coverage is short. Return-to-room transport and dinner feed may run late."}
+                    {w.includes("unknown size") && "Future arrivals lack playgroup icon data. Size classification will update after check-in."}
+                    {w.includes("No staff plan") && "Enter a staff plan above to enable gap analysis and schedule generation."}
+                    {w.includes("PP") && "High private play load may require a dedicated functioning PCT throughout the day."}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </SectionCard>
+
+      {/* ── Section 6: Assumptions & Configuration ─────────────────────── */}
+      {showAssumptions && (
+        <SectionCard
+          title="Assumptions & Configuration"
+          subtitle="Current values driving headcount and rotation schedule. Overridable per location in Settings."
+          icon={<I.Settings />}
+          style={{ marginTop: 16 }}
+        >
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+            {[
+              { group: "Daycare Ratios", items: [{ l: "Large DC ratio", v: `${config.daycare_ratio_large}:1` }, { l: "Small DC ratio", v: `${config.daycare_ratio_small}:1` }] },
+              { group: "Transport & Room", items: [{ l: "Group transport (each way)", v: `${config.group_transport_minutes_each_way} min` }, { l: "Morning room clean", v: `${config.morning_room_clean_minutes} min` }] },
+              { group: "Private Play", items: [{ l: "PP move (each way)", v: `${config.private_play_move_minutes_each_way} min` }, { l: "PP box dwell", v: `${config.private_play_box_dwell_minutes} min` }, { l: "PP rounds/day", v: config.private_play_rounds_per_day }] },
+              { group: "Baths", items: [{ l: "Bath active", v: `${config.bath_active_minutes} min` }, { l: "Passive dry", v: `${config.bath_passive_dry_minutes} min` }, { l: "Dryer capacity", v: config.dryer_capacity }] },
+              { group: "Feed & Meds", items: [{ l: "Feed per dog", v: `${config.feeding_minutes_per_dog} min` }, { l: "Med per dog", v: `${config.medication_minutes_per_dog} min` }] },
+              { group: "Breaks & Staffing", items: [{ l: "Break length", v: `${config.break_minutes} min` }, { l: "Large team threshold", v: `${config.large_team_threshold}+` }, { l: "SUP buffer", v: `${config.supervisor_buffer_minutes} min` }] },
+              { group: "Time Windows", items: [
+                { l: "Weekday site hours", v: `${config.weekday_site_hours[0]} – ${config.weekday_site_hours[1]}` },
+                { l: "Weekend site hours", v: `${config.weekend_site_hours[0]} – ${config.weekend_site_hours[1]}` },
+                { l: "Weekday public hrs", v: `${config.public_hours_weekday[0]} – ${config.public_hours_weekday[1]}` },
+              ]},
+            ].map(({ group, items }) => (
+              <div key={group} style={{ padding: "12px 14px", borderRadius: 10, background: C.surfaceHover, border: `1px solid ${C.borderLight}` }}>
+                <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: C.textMut, letterSpacing: "0.04em", marginBottom: 8 }}>{group}</div>
+                {items.map(({ l, v }) => (
+                  <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", fontSize: 12 }}>
+                    <span style={{ color: C.textSec }}>{l}</span>
+                    <span style={{ fontWeight: 600, color: C.text }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+          <p style={{ fontSize: 11, color: C.textMut, marginTop: 14, fontStyle: "italic" }}>
+            Values are loaded from the schedule_config key in lite_settings. Defaults are used when no location override exists.
+          </p>
+        </SectionCard>
+      )}
+    </div>
+  );
+}
