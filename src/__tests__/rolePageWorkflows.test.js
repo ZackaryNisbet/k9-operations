@@ -19,6 +19,8 @@ const WORKFLOW_CARDS = [
   { id: "collars", label: "Next Day Collars" },
   { id: "belongings", label: "Belongings" },
   { id: "weekly_maintenance", label: "Weekly Maintenance" },
+  { id: "weekly_inventory", label: "Weekly Inventory" },
+  { id: "training", label: "Training" },
   { id: "enrichment", label: "Enrichment" },
   { id: "ice_cream", label: "Gourmet Ice Cream" },
   { id: "roll_call", label: "Roll Call" },
@@ -33,6 +35,7 @@ const WORKFLOW_SECTION_MAP = {
     bathing: "opening", room_cleaning: "midday", pp: "midday",
     pamper: "midday", lodging_transfer: "midday", collars: "opening",
     belongings: "closing", weekly_maintenance: "as_needed",
+    weekly_inventory: "as_needed", training: "as_needed",
     enrichment: "midday", ice_cream: "midday", roll_call: "opening",
     emergency_contacts: "as_needed", attendance: "opening", meds: "opening",
     evaluations: "midday",
@@ -110,15 +113,32 @@ describe("RolePage workflowsBySection", () => {
   it("falls back to WORKFLOW_SECTION_MAP when role has no config rows", () => {
     const result = buildWorkflowsBySection("pct", []);
 
-    // All 15 workflows from the static map should appear
+    // All 17 workflows from the static map should appear
     const allWorkflows = [
       ...result.opening, ...result.midday, ...result.closing, ...result.as_needed,
     ];
-    expect(allWorkflows).toHaveLength(15);
+    expect(allWorkflows).toHaveLength(17);
     expect(result.opening.map(w => w.id)).toContain("bathing");
     expect(result.midday.map(w => w.id)).toContain("room_cleaning");
     expect(result.closing.map(w => w.id)).toContain("belongings");
     expect(result.as_needed.map(w => w.id)).toContain("weekly_maintenance");
+  });
+
+  it("includes weekly_inventory and training in fallback defaults", () => {
+    const result = buildWorkflowsBySection("pct", []);
+    const asNeededIds = result.as_needed.map(w => w.id);
+    expect(asNeededIds).toContain("weekly_inventory");
+    expect(asNeededIds).toContain("training");
+  });
+
+  it("renders weekly_inventory and training from DB config", () => {
+    const configTasks = [
+      { task_id: "wf_weekly_inventory", section: "as_needed", sort_order: 0 },
+      { task_id: "wf_training", section: "as_needed", sort_order: 1 },
+    ];
+    const result = buildWorkflowsBySection("pct", configTasks);
+    expect(result.as_needed).toHaveLength(2);
+    expect(result.as_needed.map(w => w.id)).toEqual(["weekly_inventory", "training"]);
   });
 
   it("respects section placement from role_page_config, not static map", () => {
