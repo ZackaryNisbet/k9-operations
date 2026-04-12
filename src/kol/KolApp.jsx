@@ -51,6 +51,7 @@ import RolePage from "./pages/RolePage";
 import RoleLayoutPage from "./pages/RoleLayoutPage";
 import HomePage from "./pages/HomePage";
 import TrainingPage from "./pages/TrainingPage";
+import SchedulingPage from "./pages/SchedulingPage";
 import SubscriptionGate from "../shared/SubscriptionGate";
 import useSubscription from "../hooks/useSubscription";
 
@@ -118,6 +119,7 @@ const LITE_PAGE_SLUGS = {
   "onboarding": "onboarding",
   "pricing": "pricing",
   "training": "training",
+  "scheduling": "scheduling",
 };
 const LITE_SLUG_TO_PAGE = {};
 Object.entries(LITE_PAGE_SLUGS).forEach(([k, v]) => { if (!LITE_SLUG_TO_PAGE[v]) LITE_SLUG_TO_PAGE[v] = k; });
@@ -213,6 +215,7 @@ const MANAGER_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
   { id: "role-page", label: "My Work", icon: "Clipboard" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
+  { id: "scheduling", label: "Scheduling", icon: "Calendar" },
   { id: "training", label: "Training", icon: "GraduationCap" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
@@ -224,6 +227,7 @@ const LEAN_NAV_ITEMS = [
   { id: "home", label: "Home", icon: "Home" },
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
+  { id: "scheduling", label: "Scheduling", icon: "Calendar" },
   { id: "training", label: "Training", icon: "GraduationCap" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
@@ -238,6 +242,7 @@ const ANALYTICS_NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: "Dashboard" },
   { id: "lifecycle", label: "Customer Lifecycle", icon: "Users" },
   { id: "ops-hub", label: "Ops Overview", icon: "Dashboard" },
+  { id: "scheduling", label: "Scheduling", icon: "Calendar" },
   { id: "training", label: "Training", icon: "GraduationCap" },
   { id: "inventory", label: "Inventory", icon: "Package" },
   { id: "cash-tips", label: "Cash Tips", icon: "DollarSign" },
@@ -702,6 +707,7 @@ function LeanAppInner() {
       case "enterprise-attendance": return "Attendance";
       case "enterprise-users": return "User Management";
       case "training": return "Training";
+      case "scheduling": return "Scheduling";
       case "inventory": return "Inventory";
       case "inventory-report": return "Inventory Reports";
       case "cash-tips": return "Cash Tips";
@@ -810,6 +816,7 @@ function LeanAppInner() {
       "inventory": "Inventory Management",
       "inventory-report": "Inventory Management",
       "occupancy-report": "Occupancy Reports",
+      "scheduling": "Operations Hub",
       "cash-tips": null,
       "test-health": null,
       "enterprise-ops": "Enterprise View",
@@ -954,6 +961,8 @@ function LeanAppInner() {
         return <EnterpriseUserManagement profile={profile} userLocationIds={userLocationIds} />;
       case "training":
         return <TrainingPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
+      case "scheduling":
+        return <SchedulingPage data={data} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "inventory":
         return <InventoryPage data={data} save={save} nav={nav} profile={profile} addGlobalToast={addGlobalToast} />;
       case "inventory-report":
