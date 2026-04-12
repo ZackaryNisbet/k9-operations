@@ -1,0 +1,256 @@
+// K9 Operations — Scheduling Data Hook
+// Fetches scheduling_matrix_daily, daily_staff_plan, and schedule_config from Supabase.
+// Falls back to dashboard_metrics_daily + gingr_reservations when scheduling_matrix_daily
+// hasn't been populated yet (pre-compute-function deployment).
+
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { supabase } from "../supabaseClient";
+import {
+  SCHEDULE_CONFIG_DEFAULTS,
+  computeRequiredHeadcount,
+  computeStaffingStatus,
+  isWeekend,
+} from "../shared/schedulingEngine";
+
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * useSchedulingData(locationId, startDate)
+ *
+ * Returns:
+ *   weekData    — array of 7 day objects with matrix, staffPlan, required, status
+ *   config      — merged schedule config (defaults + location overrides)
+ *   loading     — true during initial fetch
+ *   error       — error message if any
+ *   refresh()   — manual refresh trigger
+ *   upsertStaffPlan(plan) — save a staff plan entry
+ */
+export function useSchedulingData(locationId, startDate) {
+  const [matrixRows, setMatrixRows] = useState([]);
+  const [staffPlans, setStaffPlans] = useState([]);
+  const [config, setConfig] = useState(SCHEDULE_CONFIG_DEFAULTS);
+  const [dashboardMetrics, setDashboardMetrics] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const fetchIdRef = useRef(0);
+  const intervalRef = useRef(null);
+
+  // Compute the 7-day date range
+  const dates = useMemo(() => {
+    if (!startDate) return [];
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(startDate + "T12:00:00");
+      d.setDate(d.getDate() + i);
+      return d.toISOString().slice(0, 10);
+    });
+  }, [startDate]);
+
+  const endDate = dates[6] || startDate;
+
+  const fetchAll = useCallback(async () => {
+    if (!locationId || !startDate || dates.length === 0) return;
+    const fetchId = ++fetchIdRef.current;
+
+    try {
+      // Fetch all data sources in parallel
+      const [matrixRes, staffRes, configRes, dashRes] = await Promise.all([
+        // 1. Scheduling matrix (may be empty if compute function hasn't run)
+        supabase
+          .from("scheduling_matrix_daily")
+          .select("*")
+          .eq("location_id", locationId)
+          .gte("matrix_date", startDate)
+          .lte("matrix_date", endDate)
+          .order("matrix_date", { ascending: true }),
+
+        // 2. Staff plans
+        supabase
+          .from("daily_staff_plan")
+          .select("*")
+          .eq("location_id", locationId)
+          .gte("plan_date", startDate)
+          .lte("plan_date", endDate)
+          .order("plan_date", { ascending: true }),
+
+        // 3. Schedule config from lite_settings
+        supabase
+          .from("lite_settings")
+          .select("setting_value")
+          .eq("location_id", locationId)
+          .eq("setting_key", "schedule_config")
+          .maybeSingle(),
+
+        // 4. Dashboard metrics as fallback data source
+        supabase
+          .from("dashboard_metrics_daily")
+          .select("*")
+          .eq("location_id", locationId)
+          .gte("metric_date", startDate)
+          .lte("metric_date", endDate)
+          .order("metric_date", { ascending: true }),
+      ]);
+
+      if (fetchId !== fetchIdRef.current) return; // stale
+
+      // Handle table-not-found gracefully (tables may not be deployed yet)
+      const matrix = matrixRes.error && matrixRes.error.code === "42P01" ? [] : (matrixRes.data || []);
+      const plans = staffRes.error && staffRes.error.code === "42P01" ? [] : (staffRes.data || []);
+      const dashRows = dashRes.data || [];
+      const configVal = configRes.data?.setting_value || {};
+
+      setMatrixRows(matrix);
+      setStaffPlans(plans);
+      setDashboardMetrics(dashRows);
+      setConfig({ ...SCHEDULE_CONFIG_DEFAULTS, ...configVal });
+      setError(null);
+    } catch (err) {
+      if (fetchId !== fetchIdRef.current) return;
+      setError(err.message || "Failed to load scheduling data");
+    } finally {
+      if (fetchId === fetchIdRef.current) setLoading(false);
+    }
+  }, [locationId, startDate, endDate, dates]);
+
+  useEffect(() => {
+    setLoading(true);
+    fetchAll();
+    intervalRef.current = setInterval(fetchAll, REFRESH_INTERVAL_MS);
+    return () => clearInterval(intervalRef.current);
+  }, [fetchAll]);
+
+  // Build week data by merging matrix + dashboard fallback + staff plans
+  const weekData = useMemo(() => {
+    return dates.map(date => {
+      const matrixRow = matrixRows.find(r => r.matrix_date === date);
+      const dashRow = dashboardMetrics.find(r => r.metric_date === date);
+      const staffPlan = staffPlans.find(r => r.plan_date === date);
+
+      // Build matrix: prefer scheduling_matrix_daily, fall back to dashboard_metrics_daily
+      const matrix = matrixRow || buildMatrixFromDashboard(dashRow, date);
+
+      // Compute required headcount
+      const required = computeRequiredHeadcount(matrix, config);
+
+      // Compute staffing status
+      const staffStatus = computeStaffingStatus(required, staffPlan, config);
+
+      const dt = new Date(date + "T12:00:00");
+      const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+      return {
+        date,
+        dayName: dayNames[dt.getDay()],
+        dayNum: dt.getDate(),
+        isWeekend: isWeekend(date),
+        matrix,
+        staffPlan: staffPlan || null,
+        required,
+        status: staffStatus.status,
+        warnings: [...required.warnings, ...(staffStatus.warnings || [])],
+        assignedFunctioningPct: staffStatus.assignedFunctioningPct || 0,
+        hasLiveMatrix: !!matrixRow,
+        hasDashboardFallback: !matrixRow && !!dashRow,
+        hasNoData: !matrixRow && !dashRow,
+      };
+    });
+  }, [dates, matrixRows, dashboardMetrics, staffPlans, config]);
+
+  // Upsert a staff plan
+  const upsertStaffPlan = useCallback(async (plan) => {
+    const { error: err } = await supabase
+      .from("daily_staff_plan")
+      .upsert(
+        { location_id: locationId, ...plan, updated_at: new Date().toISOString() },
+        { onConflict: "location_id,plan_date,shift" }
+      );
+    if (err) throw err;
+    await fetchAll(); // Refresh data
+  }, [locationId, fetchAll]);
+
+  return {
+    weekData,
+    config,
+    loading,
+    error,
+    refresh: fetchAll,
+    upsertStaffPlan,
+  };
+}
+
+/**
+ * Build a scheduling-matrix-compatible object from dashboard_metrics_daily.
+ * This is the fallback path when scheduling_matrix_daily hasn't been computed yet.
+ * Many fields are estimated or zero since dashboard_metrics doesn't have the full breakdown.
+ */
+function buildMatrixFromDashboard(dashRow, date) {
+  if (!dashRow) {
+    return buildEmptyMatrix(date);
+  }
+
+  // dashboard_metrics_daily has: dogs_in_house, boarding_in_house, daycare_in_house,
+  // dogs_going_home, dogs_arriving, occupancy_pct, tours_today, evals_today, total_room_count
+  const totalDogs = dashRow.dogs_in_house || dashRow.dogs_expected || 0;
+  const boarding = dashRow.boarding_in_house || 0;
+  const daycare = dashRow.daycare_in_house || 0;
+
+  // We don't have large/small split from dashboard_metrics, so mark as unknown
+  return {
+    matrix_date: date,
+    location_id: dashRow.location_id || "",
+    boarding_large: 0,
+    boarding_small: 0,
+    boarding_unknown_size: boarding,
+    daycare_large: 0,
+    daycare_small: 0,
+    daycare_unknown_size: daycare,
+    pp_dayboarders: 0,
+    pp_overnight_boarders: 0,
+    departure_baths: 0,
+    evaluations: dashRow.evals_today || 0,
+    tours: dashRow.tours_today || 0,
+    gross_dogs_in_building: totalDogs,
+    feeding_dogs: 0,
+    medication_dogs: 0,
+    dogs_arriving: dashRow.dogs_arriving || 0,
+    dogs_departing: dashRow.dogs_going_home || 0,
+    dogs_checked_out: dashRow.dogs_checked_out || 0,
+    rooms_occupied: Math.round((dashRow.occupancy_pct || 0) / 100 * (dashRow.total_room_count || 28)),
+    rooms_available: Math.round((1 - (dashRow.occupancy_pct || 0) / 100) * (dashRow.total_room_count || 28)),
+    total_rooms: dashRow.total_room_count || 28,
+    detail_json: {},
+    computed_at: dashRow.computed_at || null,
+    _source: "dashboard_fallback",
+    _confidence: "low",
+  };
+}
+
+function buildEmptyMatrix(date) {
+  return {
+    matrix_date: date,
+    location_id: "",
+    boarding_large: 0,
+    boarding_small: 0,
+    boarding_unknown_size: 0,
+    daycare_large: 0,
+    daycare_small: 0,
+    daycare_unknown_size: 0,
+    pp_dayboarders: 0,
+    pp_overnight_boarders: 0,
+    departure_baths: 0,
+    evaluations: 0,
+    tours: 0,
+    gross_dogs_in_building: 0,
+    feeding_dogs: 0,
+    medication_dogs: 0,
+    dogs_arriving: 0,
+    dogs_departing: 0,
+    dogs_checked_out: 0,
+    rooms_occupied: 0,
+    rooms_available: 0,
+    total_rooms: 0,
+    detail_json: {},
+    computed_at: null,
+    _source: "empty",
+    _confidence: "none",
+  };
+}
