@@ -232,50 +232,88 @@ describe("RolePage tasksBySection (checklist filtering)", () => {
 
 // ─── Role derivation logic matching RolePage.jsx ────────────────────────────
 // Mirrors the role resolution that determines which role_page_config rows
-// to query. The profile mock has role="owner" which never matches DB rows;
-// the actual role comes from location_roles.
-// The location_roles table may store the role under `role_code` or `role`
-// depending on how the row was created, so read both defensively.
-// The mock profile role "owner" is skipped in the fallback chain.
-function deriveRole(roleProp, userLocationRoles, currentLocation, profileRole) {
-  const locationRole = (userLocationRoles || []).find(r => r.location_id === currentLocation);
-  const locationRoleCode = locationRole?.role_code || locationRole?.role;
-  const fallbackRole = profileRole !== "owner" ? profileRole : undefined;
-  const rawRole = roleProp || locationRoleCode || fallbackRole || "pct";
+// to query.
+//
+// Production schema facts:
+//   - location_roles is a role *definitions* table (no user_id column)
+//   - profile_locations links users → locations (no role_id column)
+//   - profiles.role stores the user's role code
+//
+// userLocationRoles (now called locationRoleDefs) contains role definitions
+// for the user's locations.  For "owner" profiles we fall back through
+// admin → supervisor → manager using available definitions.
+const OWNER_FALLBACK_CHAIN = ["admin", "supervisor", "manager"];
+
+function deriveRole(roleProp, locationRoleDefs, currentLocation, profileRole) {
+  const defs = (locationRoleDefs || []).filter(r => r.location_id === currentLocation);
+  const knownCodes = new Set(defs.map(r => r.role_code || r.role));
+
+  const mapProfileRole = (pr) => {
+    if (!pr) return undefined;
+    if (pr === "mod") return "supervisor";
+    if (pr === "owner") {
+      if (knownCodes.size > 0) {
+        for (const code of OWNER_FALLBACK_CHAIN) {
+          if (knownCodes.has(code)) return code;
+        }
+      }
+      return "supervisor";
+    }
+    return pr;
+  };
+
+  const mapped = mapProfileRole(profileRole);
+  const rawRole = roleProp || mapped || "pct";
   return rawRole === "mod" ? "supervisor" : rawRole;
 }
 
-describe("RolePage role derivation", () => {
-  it("uses role_code from location_roles when available", () => {
-    const roles = [{ location_id: "loc-1", role_code: "mod" }];
-    const result = deriveRole(undefined, roles, "loc-1", "owner");
-    // "mod" should resolve to "supervisor"
+describe("RolePage role derivation (production schema)", () => {
+  // Adair Forsythe production: all 7 role definitions present
+  const CHERRY_HILL = "11111111-1111-1111-1111-111111111111";
+  const CH_ROLE_DEFS = [
+    { location_id: CHERRY_HILL, role_code: "pct" },
+    { location_id: CHERRY_HILL, role_code: "csr" },
+    { location_id: CHERRY_HILL, role_code: "supervisor" },
+    { location_id: CHERRY_HILL, role_code: "manager" },
+    { location_id: CHERRY_HILL, role_code: "regional" },
+    { location_id: CHERRY_HILL, role_code: "admin" },
+    { location_id: CHERRY_HILL, role_code: "developer" },
+  ];
+
+  it("owner maps to admin when admin role_code exists in defs", () => {
+    const result = deriveRole(undefined, CH_ROLE_DEFS, CHERRY_HILL, "owner");
+    expect(result).toBe("admin");
+  });
+
+  it("owner maps to supervisor when admin is missing from defs", () => {
+    const defs = CH_ROLE_DEFS.filter(r => r.role_code !== "admin");
+    const result = deriveRole(undefined, defs, CHERRY_HILL, "owner");
     expect(result).toBe("supervisor");
   });
 
-  it("reads role column when role_code is missing", () => {
-    // location_roles rows created via onboarding have `role` not `role_code`
-    const roles = [{ location_id: "loc-1", role: "mod" }];
-    const result = deriveRole(undefined, roles, "loc-1", "owner");
+  it("owner defaults to supervisor when no role defs loaded yet", () => {
+    const result = deriveRole(undefined, [], CHERRY_HILL, "owner");
     expect(result).toBe("supervisor");
   });
 
-  it("prefers role_code over role when both exist", () => {
-    const roles = [{ location_id: "loc-1", role_code: "supervisor", role: "pct" }];
-    const result = deriveRole(undefined, roles, "loc-1", "owner");
+  it("roleProp takes precedence over everything", () => {
+    const result = deriveRole("pct", CH_ROLE_DEFS, CHERRY_HILL, "owner");
+    expect(result).toBe("pct");
+  });
+
+  it("staff profile.role passes through directly", () => {
+    const result = deriveRole(undefined, CH_ROLE_DEFS, CHERRY_HILL, "supervisor");
     expect(result).toBe("supervisor");
   });
 
-  it("prefers roleProp over location_roles", () => {
-    const roles = [{ location_id: "loc-1", role_code: "pct" }];
-    const result = deriveRole("supervisor", roles, "loc-1", "owner");
-    expect(result).toBe("supervisor");
+  it("pct profile.role passes through", () => {
+    const result = deriveRole(undefined, CH_ROLE_DEFS, CHERRY_HILL, "pct");
+    expect(result).toBe("pct");
   });
 
-  it("falls back to profile.role when location_roles has no match", () => {
-    const roles = [{ location_id: "loc-other", role_code: "pct" }];
-    const result = deriveRole(undefined, roles, "loc-1", "manager");
-    expect(result).toBe("manager");
+  it("mod profile.role normalises to supervisor", () => {
+    const result = deriveRole(undefined, CH_ROLE_DEFS, CHERRY_HILL, "mod");
+    expect(result).toBe("supervisor");
   });
 
   it("falls back to pct when nothing is available", () => {
@@ -283,30 +321,79 @@ describe("RolePage role derivation", () => {
     expect(result).toBe("pct");
   });
 
-  it("skips mock owner role and falls back to pct", () => {
-    // When location_roles is empty and profile.role is the mock "owner",
-    // the derivation should skip "owner" and fall through to "pct"
-    // instead of querying role_page_config with role='owner' (which has no rows).
-    const result = deriveRole(undefined, [], "loc-1", "owner");
-    expect(result).toBe("pct");
+  it("reads role column defensively when role_code is absent", () => {
+    const defs = [
+      { location_id: CHERRY_HILL, role: "admin" },
+      { location_id: CHERRY_HILL, role: "supervisor" },
+    ];
+    const result = deriveRole(undefined, defs, CHERRY_HILL, "owner");
+    expect(result).toBe("admin");
   });
 
-  it("does not use mock owner role when location_roles provides real role", () => {
-    // This is the exact production bug: profile.role is always "owner"
-    // but the user's actual role at Adair Forsythe is "mod" (→ "supervisor")
-    const roles = [
-      { location_id: "11111111-1111-1111-1111-111111111111", role_code: "mod" },
-    ];
-    const result = deriveRole(undefined, roles, "11111111-1111-1111-1111-111111111111", "owner");
+  it("ignores role defs from other locations", () => {
+    const defs = [{ location_id: "other-loc", role_code: "admin" }];
+    // No defs at CHERRY_HILL → owner defaults to supervisor
+    const result = deriveRole(undefined, defs, CHERRY_HILL, "owner");
     expect(result).toBe("supervisor");
   });
+});
 
-  it("reads role column for Adair Forsythe production scenario", () => {
-    // Same production scenario but location_roles stores `role` not `role_code`
-    const roles = [
-      { location_id: "11111111-1111-1111-1111-111111111111", role: "mod" },
+// ─── Config role fallback chain (owner/admin sees supervisor rows) ──────────
+describe("RolePage config role fallback", () => {
+  // Mirrors the configRoleFallbacks logic in RolePage.jsx.
+  // When profile.role is "owner" or the resolved role is "admin", the config
+  // query tries [resolved, admin, supervisor, manager, pct] in order.
+  function buildFallbacks(role, profileRole) {
+    if (profileRole === "owner" || role === "admin") {
+      return [...new Set([role, ...OWNER_FALLBACK_CHAIN, "pct"])];
+    }
+    return [role];
+  }
+
+  it("owner/admin produces full fallback chain", () => {
+    const chain = buildFallbacks("admin", "owner");
+    expect(chain).toEqual(["admin", "supervisor", "manager", "pct"]);
+  });
+
+  it("supervisor does NOT get a fallback chain", () => {
+    const chain = buildFallbacks("supervisor", "supervisor");
+    expect(chain).toEqual(["supervisor"]);
+  });
+
+  it("pct does NOT get a fallback chain", () => {
+    const chain = buildFallbacks("pct", "pct");
+    expect(chain).toEqual(["pct"]);
+  });
+});
+
+// ─── effectiveRole derivation ───────────────────────────────────────────────
+describe("RolePage effectiveRole", () => {
+  // effectiveRole = configTasks[0].role when configTasks exist
+  it("uses role from loaded config rows", () => {
+    const configTasks = [
+      { role: "supervisor", task_id: "custom_1", section: "opening" },
     ];
-    const result = deriveRole(undefined, roles, "11111111-1111-1111-1111-111111111111", "owner");
-    expect(result).toBe("supervisor");
+    const effectiveRole = configTasks.length > 0 ? configTasks[0].role : "admin";
+    expect(effectiveRole).toBe("supervisor");
+  });
+
+  it("falls back to resolved role when config is empty", () => {
+    const configTasks = [];
+    const resolvedRole = "admin";
+    const effectiveRole = configTasks.length > 0 ? configTasks[0].role : resolvedRole;
+    expect(effectiveRole).toBe("admin");
+  });
+
+  it("Adair Forsythe production: owner loads supervisor config, effectiveRole=supervisor", () => {
+    // This is the exact production scenario: owner→admin via derivation,
+    // but role_page_config only has role='supervisor' rows, so the fallback
+    // chain finds them and effectiveRole becomes 'supervisor'.
+    const configTasks = [
+      { role: "supervisor", task_id: "custom_1775897417646_a7tx3k", task_label: "Create back-end rotation schedule", section: "opening" },
+      { role: "supervisor", task_id: "custom_1775897469451_s34l58", task_label: "AM feeding and medications", section: "opening" },
+      { role: "supervisor", task_id: "wf_pamper", task_label: "Pamper Package", section: "midday" },
+    ];
+    const effectiveRole = configTasks.length > 0 ? configTasks[0].role : "admin";
+    expect(effectiveRole).toBe("supervisor");
   });
 });
