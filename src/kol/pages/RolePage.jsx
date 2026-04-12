@@ -39,6 +39,8 @@ const WORKFLOW_CARDS = [
   { id: "attendance", label: "Attendance", icon: "ClipboardCheck", routeTo: "attendance", typeSub: "attendance" },
   { id: "meds", label: "Medications", icon: "Heart", routeTo: "eod", typeSub: "meds" },
   { id: "evaluations", label: "Evaluations", icon: "BarChart2", routeTo: "eod", typeSub: "evaluations" },
+  { id: "weekly_inventory", label: "Weekly Inventory", icon: "Package", routeTo: "inventory", typeSub: "weekly_inventory" },
+  { id: "training", label: "Training", icon: "GraduationCap", routeTo: "training", typeSub: "training" },
 ];
 
 // Checkbox component (matches DailyOpsPage K9Check)
@@ -357,6 +359,94 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
     return summaries;
   }, [data, viewDate]);
 
+  // ─── Inventory status from Supabase (mirrors OperationsHub logic) ───────
+  const [invStatus, setInvStatus] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const locId = locationId;
+        if (!locId) return;
+        const d = new Date(viewDate + "T12:00:00");
+        const day = d.getDay();
+        const diff = day === 0 ? 6 : day - 1;
+        const mon = new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff);
+        const monday = `${mon.getFullYear()}-${String(mon.getMonth() + 1).padStart(2, "0")}-${String(mon.getDate()).padStart(2, "0")}`;
+
+        const [catalogRes, snapRes] = await Promise.all([
+          supabase.from("inventory_catalog").select("id, par_level").eq("location_id", locId).eq("is_active", true),
+          supabase.from("inventory_snapshots").select("id, status").eq("location_id", locId).eq("week_start", monday).maybeSingle(),
+        ]);
+        if (cancelled) return;
+        const catalogItems = catalogRes.data || [];
+        const totalItems = catalogItems.length;
+        if (snapRes.data?.id) {
+          const { data: countRows } = await supabase.from("inventory_counts")
+            .select("stock_count, in_transit, ordered, catalog_item_id").eq("snapshot_id", snapRes.data.id);
+          if (cancelled) return;
+          const rows = countRows || [];
+          const counted = rows.filter(r => r.stock_count != null).length;
+          const countingDone = counted >= totalItems && totalItems > 0;
+          const countMap = {};
+          rows.forEach(r => { countMap[r.catalog_item_id] = r; });
+          let needsOrder = 0, ordered = 0;
+          catalogItems.forEach(item => {
+            const c = countMap[item.id];
+            if (!c || c.stock_count == null) return;
+            const toOrder = Math.max(0, (item.par_level || 0) - (parseInt(c.stock_count, 10) || 0) - (parseInt(c.in_transit, 10) || 0));
+            if (toOrder > 0) { needsOrder++; if (c.ordered) ordered++; }
+          });
+          const orderingDone = needsOrder === 0 || ordered >= needsOrder;
+          const allDone = countingDone && orderingDone;
+          let status, phaseLabel;
+          if (allDone) { status = "completed"; phaseLabel = "Completed this week"; }
+          else if (countingDone) { status = "in_progress"; phaseLabel = `${ordered}/${needsOrder} items ordered`; }
+          else if (counted > 0) { status = "in_progress"; phaseLabel = `${counted}/${totalItems} items counted`; }
+          else { status = "not_started"; phaseLabel = "Not started this week"; }
+          const progress = allDone ? 100 : countingDone && needsOrder > 0 ? Math.round((ordered / needsOrder) * 100) : totalItems > 0 ? Math.round((counted / totalItems) * 100) : 0;
+          if (!cancelled) setInvStatus({ status, progress, countLabel: phaseLabel });
+        } else {
+          if (!cancelled) setInvStatus({ status: "not_started", progress: 0, countLabel: totalItems > 0 ? "Not started this week" : "" });
+        }
+      } catch { if (!cancelled) setInvStatus({ status: "not_started", progress: 0, countLabel: "" }); }
+    })();
+    return () => { cancelled = true; };
+  }, [viewDate, locationId]);
+
+  // ─── Training status from Supabase ──────────────────────────────────────
+  const [trainingStatus, setTrainingStatus] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [tRes, tvRes, trRes] = await Promise.all([
+          supabase.from("training_templates").select("id, is_active, template_class").eq("is_active", true),
+          supabase.from("training_template_versions").select("id, template_id").eq("is_current", true).eq("status", "published"),
+          supabase.from("training_records").select("id, overall_status").in("overall_status", ["not_started", "in_progress", "needs_follow_up", "retest_required"]),
+        ]);
+        if (cancelled) return;
+        const templates = (tRes.data || []).filter(t => t.template_class === "training_plan");
+        const versions = tvRes.data || [];
+        const availableCount = templates.filter(t => versions.some(v => v.template_id === t.id)).length;
+        const activeRecords = (trRes.data || []).length;
+        let status, countLabel;
+        if (activeRecords > 0) { status = "in_progress"; countLabel = `${activeRecords} active record${activeRecords > 1 ? "s" : ""}`; }
+        else if (availableCount > 0) { status = "not_started"; countLabel = `${availableCount} template${availableCount > 1 ? "s" : ""} available`; }
+        else { status = "not_started"; countLabel = "No templates"; }
+        if (!cancelled) setTrainingStatus({ status, progress: 0, countLabel });
+      } catch { if (!cancelled) setTrainingStatus({ status: "not_started", progress: 0, countLabel: "" }); }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // ─── Merged workflow summaries (overrides for Supabase-backed cards) ─────
+  const mergedSummaries = useMemo(() => {
+    const merged = { ...workflowSummaries };
+    if (invStatus) merged.weekly_inventory = invStatus;
+    if (trainingStatus) merged.training = trainingStatus;
+    return merged;
+  }, [workflowSummaries, invStatus, trainingStatus]);
+
   // ─── Group workflow cards into sections per role ─────────────────────────
   // Derive from role_page_config rows so Role Layout is authoritative.
   // Only fall back to WORKFLOW_SECTION_MAP when the role has zero config rows
@@ -673,7 +763,7 @@ function RolePage({ data, save, nav, profile, addGlobalToast, role: roleProp, us
                 {sectionWorkflows.length > 0 && (
                   <div style={{ padding: "10px 12px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
                     {sectionWorkflows.map(wf => {
-                      const summary = workflowSummaries[wf.id] || { status: "not_started", progress: 0, countLabel: "" };
+                      const summary = mergedSummaries[wf.id] || { status: "not_started", progress: 0, countLabel: "" };
                       const sc = statusConfig[summary.status] || statusConfig.not_started;
                       return (
                         <div key={wf.id}
