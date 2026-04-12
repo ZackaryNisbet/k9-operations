@@ -6,7 +6,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { supabase } from "../../supabaseClient";
-import { C, WORKFLOW_SECTION_MAP, DEF_OPENING_TEMPLATE, DEF_FE_TEMPLATE, DEF_BE_TEMPLATE, DEF_CLOSING_TEMPLATE } from "../../shared/theme";
+import { C, WORKFLOW_SECTION_MAP } from "../../shared/theme";
 import { Btn, Modal, Inp, Badge } from "../../shared/ui";
 import { useAuth } from "../../AuthProvider";
 
@@ -54,26 +54,139 @@ const LEGACY_SOURCES = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function cellKey(role, section) { return `${role}::${section}`; }
 
-function buildDefaultTasks(role) {
-  const tasks = [];
-  let idx = 0;
-  DEF_OPENING_TEMPLATE.forEach(item => {
-    tasks.push({ task_id: `legacy_opening_${item.id}`, task_label: item.label, task_time: item.time || null, section: "opening", sort_order: idx++, source: "legacy_opening", day_of_week: item.dayOfWeek ?? null, item_type: "task" });
+// ─── Workflow Summary Helpers (exported for testing) ──────────────────────────
+export function buildWorkflowSummary(cellItems, roles, sections, workflowDefs) {
+  // Map each workflow to the set of roles that include it
+  const wfRoleMap = {}; // { workflowId: Set<roleId> }
+  workflowDefs.forEach(wf => { wfRoleMap[wf.id] = new Set(); });
+
+  roles.forEach(r => {
+    sections.forEach(s => {
+      const key = `${r.id}::${s.id}`;
+      (cellItems[key] || []).forEach(item => {
+        if (item.item_type === "workflow" && item.workflow_id) {
+          if (wfRoleMap[item.workflow_id]) {
+            wfRoleMap[item.workflow_id].add(r.id);
+          }
+        }
+      });
+    });
   });
-  DEF_FE_TEMPLATE.forEach(item => {
-    const hour = item.time ? parseInt(item.time.split(":")[0], 10) : 8;
-    const section = hour < 11 ? "opening" : hour < 15 ? "midday" : "closing";
-    tasks.push({ task_id: `legacy_fe_${item.id}`, task_label: item.label, task_time: item.time || null, section, sort_order: idx++, source: "legacy_fe", day_of_week: item.dayOfWeek ?? null, item_type: "task" });
+
+  const used = [];
+  const unused = [];
+  const shared = [];
+  const singleRole = [];
+
+  workflowDefs.forEach(wf => {
+    const roleSet = wfRoleMap[wf.id];
+    const roleCount = roleSet.size;
+    if (roleCount === 0) {
+      unused.push(wf);
+    } else {
+      used.push({ ...wf, roleCount, roles: [...roleSet] });
+      if (roleCount > 1) {
+        shared.push({ ...wf, roleCount, roles: [...roleSet] });
+      } else {
+        singleRole.push({ ...wf, roleCount, roles: [...roleSet] });
+      }
+    }
   });
-  DEF_BE_TEMPLATE.forEach(item => {
-    const hour = item.time ? parseInt(item.time.split(":")[0], 10) : 8;
-    const section = hour < 10 ? "opening" : hour < 15 ? "midday" : "closing";
-    tasks.push({ task_id: `legacy_be_${item.id}`, task_label: item.label, task_time: item.time || null, section, sort_order: idx++, source: "legacy_be", day_of_week: item.dayOfWeek ?? null, item_type: "task" });
-  });
-  DEF_CLOSING_TEMPLATE.forEach(item => {
-    tasks.push({ task_id: `legacy_closing_${item.id}`, task_label: item.label, task_time: item.time || null, section: "closing", sort_order: idx++, source: "legacy_closing", day_of_week: item.dayOfWeek ?? null, item_type: "task" });
-  });
-  return tasks;
+
+  return { used, unused, shared, singleRole, wfRoleMap };
+}
+
+function WorkflowSummary({ cellItems }) {
+  const summary = useMemo(
+    () => buildWorkflowSummary(cellItems, ROLES, SECTIONS, WORKFLOW_DEFS),
+    [cellItems],
+  );
+
+  const roleLabel = (id) => ROLES.find(r => r.id === id)?.label || id;
+
+  return (
+    <div style={{
+      marginTop: 16, padding: "14px 18px", borderRadius: 12,
+      border: `1.5px solid ${C.border}`, background: C.surface,
+    }}>
+      <div style={{ fontSize: 14, fontWeight: 800, color: C.text, marginBottom: 10 }}>
+        Workflow Summary
+      </div>
+
+      {/* Counts row */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+        <span style={{
+          padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+          background: `${C.suc}14`, color: C.suc,
+        }}>
+          {summary.used.length} in use
+        </span>
+        <span style={{
+          padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+          background: summary.unused.length > 0 ? `${C.warn}14` : `${C.suc}14`,
+          color: summary.unused.length > 0 ? C.warn : C.suc,
+        }}>
+          {summary.unused.length} unused
+        </span>
+        <span style={{
+          padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+          background: `${C.pri}10`, color: C.pri,
+        }}>
+          {summary.shared.length} shared across roles
+        </span>
+        <span style={{
+          padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+          background: `${C.textMut}14`, color: C.textSec,
+        }}>
+          {summary.singleRole.length} single-role
+        </span>
+      </div>
+
+      {/* Per-workflow breakdown */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+        gap: 6,
+      }}>
+        {WORKFLOW_DEFS.map(wf => {
+          const roleSet = summary.wfRoleMap[wf.id];
+          const count = roleSet.size;
+          const isUnused = count === 0;
+          const isShared = count > 1;
+
+          return (
+            <div key={wf.id} style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "5px 10px", borderRadius: 8,
+              background: isUnused ? `${C.warn}06` : C.bg,
+              border: `1px solid ${isUnused ? `${C.warn}30` : C.borderLight}`,
+              opacity: isUnused ? 0.7 : 1,
+            }}>
+              <span style={{
+                fontSize: 11, fontWeight: 600, color: isUnused ? C.warn : C.text,
+                flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              }}>
+                {wf.label}
+              </span>
+              {isUnused ? (
+                <span style={{
+                  fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4,
+                  background: `${C.warn}18`, color: C.warn,
+                }}>UNUSED</span>
+              ) : (
+                <span style={{
+                  fontSize: 9, fontWeight: 700, padding: "2px 6px", borderRadius: 4,
+                  background: isShared ? `${C.pri}12` : `${C.textMut}12`,
+                  color: isShared ? C.pri : C.textSec,
+                }}>
+                  {[...roleSet].map(roleLabel).join(" · ")}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -102,7 +215,6 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
   const [editLabel, setEditLabel] = useState("");
   const [editTime, setEditTime] = useState("");
   const [editDesc, setEditDesc] = useState("");
-  const [seedModal, setSeedModal] = useState(null); // role string or null
 
   // Drag state
   const [dragItem, setDragItem] = useState(null); // { role, section, index, item }
@@ -431,37 +543,6 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
     setEditModal(null);
   }, [editModal, editLabel, editTime, editDesc, updateCellItems]);
 
-  // ─── Seed from Legacy ───────────────────────────────────────────────────
-  const seedRole = useCallback(async (role) => {
-    setSeedModal(null);
-    setSaveState("saving");
-    const defaults = buildDefaultTasks(role);
-    const rows = defaults.map((t, i) => ({
-      location_id: locationId,
-      role,
-      section: t.section,
-      task_id: t.task_id,
-      task_label: t.task_label,
-      task_time: t.task_time,
-      sort_order: i,
-      source: t.source,
-      day_of_week: t.day_of_week,
-      is_active: true,
-    }));
-
-    await supabase.from("role_page_config").delete()
-      .eq("location_id", locationId).eq("role", role);
-    const { error } = await supabase.from("role_page_config").insert(rows);
-    if (error) {
-      addGlobalToast?.("Import failed: " + error.message, "error");
-      setSaveState("error");
-    } else {
-      addGlobalToast?.(`Imported legacy tasks for ${ROLES.find(r => r.id === role)?.label || role}.`, "success");
-    }
-    await loadAll();
-    setSaveState("idle");
-  }, [locationId, loadAll, addGlobalToast]);
-
   // ─── Manual Save ────────────────────────────────────────────────────────
   const manualSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -732,23 +813,8 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
         ))}
       </div>
 
-      {/* ─── Quick Actions ─────────────────────────────────────────────────── */}
-      <div style={{
-        display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap", alignItems: "center",
-      }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: C.textSec }}>Quick import:</span>
-        {ROLES.map(r => (
-          <button key={r.id} onClick={() => setSeedModal(r.id)}
-            style={{
-              padding: "5px 12px", borderRadius: 7, border: `1px solid ${C.border}`,
-              background: C.surface, color: C.textSec, fontSize: 11, fontWeight: 600,
-              cursor: "pointer", fontFamily: "inherit",
-            }}
-          >
-            Seed {r.label} from Legacy
-          </button>
-        ))}
-      </div>
+      {/* ─── Workflow Summary ─────────────────────────────────────────────── */}
+      <WorkflowSummary cellItems={cellItems} />
 
       {/* Legend */}
       <div style={{
@@ -839,23 +905,6 @@ function RoleLayoutPage({ profile: parentProfile, addGlobalToast }) {
               <Btn variant="primary" onClick={saveEditModal} disabled={!editLabel.trim()}>Save</Btn>
               <Btn variant="ghost" onClick={() => setEditModal(null)}>Cancel</Btn>
             </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* ─── Seed Confirmation Modal ───────────────────────────────────────── */}
-      {seedModal && (
-        <Modal title="Import Legacy Checklists" onClose={() => setSeedModal(null)}>
-          <p style={{ fontSize: 13, color: C.textSec, marginBottom: 16 }}>
-            This will import tasks from the Opening, Front-End, Back-End, and Closing checklists
-            into the {ROLES.find(r => r.id === seedModal)?.label} columns.
-            <span style={{ color: C.dan, fontWeight: 600 }}>
-              {" "}Existing tasks for this role will be replaced.
-            </span>
-          </p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <Btn variant="primary" onClick={() => seedRole(seedModal)}>Import</Btn>
-            <Btn variant="ghost" onClick={() => setSeedModal(null)}>Cancel</Btn>
           </div>
         </Modal>
       )}
