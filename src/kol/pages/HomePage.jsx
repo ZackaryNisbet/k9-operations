@@ -372,9 +372,10 @@ function AdminHome({ data, nav, profile, bohStats, analyticsMode }) {
 
 // ─── Main export ─────────────────────────────────────────────────────────────
 function HomePage({ data, save, nav, profile, addGlobalToast, bohStats, analyticsMode, userLocationRoles, currentLocation }) {
-  // Determine role classification
-  const currentRole = (userLocationRoles || []).find(r => r.location_id === currentLocation);
-  const roleCode = currentRole?.role_code || currentRole?.role;
+  // Determine role classification.
+  // userLocationRoles are role *definitions* (not per-user assignments) in
+  // the production schema, so derive the code from profile.role instead.
+  const roleCode = profile?.role;
   const tier = classifyRole(roleCode, profile?.role);
 
   if (tier === "staff") {
